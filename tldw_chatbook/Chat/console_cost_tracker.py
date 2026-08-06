@@ -33,6 +33,7 @@ from typing import Any, Mapping, Optional, Sequence
 from loguru import logger
 
 from tldw_chatbook.Chat.console_session_settings import _estimate_tokens_locally
+from tldw_chatbook.Chat.cost_display import format_cost_amount, format_token_count
 from tldw_chatbook.Chat.provider_readiness import provider_config_key
 from tldw_chatbook.Chat.provider_usage import ProviderUsage
 from tldw_chatbook.LLM_Calls.pricing_catalog import get_pricing_catalog
@@ -212,11 +213,11 @@ _GLYPH_NORMAL = "●"  # black circle
 def _format_amount(amount: float) -> str:
     """Format a dollar amount for chip/tooltip display.
 
-    Amounts at or above $1 use 2 decimal places. Amounts under $1 use up to
-    4 decimal places, trimmed of trailing zeros down to a 2-decimal floor
-    (``0.4821`` -> ``"0.4821"``, ``0.48`` -> ``"0.48"``, ``0.10`` ->
-    ``"0.10"``) so a coarse estimate doesn't display false precision while
-    a precise one isn't truncated.
+    Thin delegate to :func:`tldw_chatbook.Chat.cost_display.format_cost_amount`
+    -- kept under this name so existing call sites/tests in this module are
+    untouched. See that function for the full formatting contract (amounts
+    at or above $1 use 2 decimal places; amounts under $1 use up to 4,
+    trimmed of trailing zeros down to a 2-decimal floor).
 
     Args:
         amount: The dollar amount to format (assumed non-negative).
@@ -224,18 +225,15 @@ def _format_amount(amount: float) -> str:
     Returns:
         The formatted amount, without a leading ``$``.
     """
-    if abs(amount) >= 1:
-        return f"{amount:.2f}"
-    text = f"{amount:.4f}"
-    integer_part, _, frac = text.partition(".")
-    frac = frac.rstrip("0")
-    if len(frac) < 2:
-        frac = frac.ljust(2, "0")
-    return f"{integer_part}.{frac}"
+    return format_cost_amount(amount)
 
 
 def _format_tokens(count: int) -> str:
     """Format a token count as a compact chip-sized string.
+
+    Thin delegate to :func:`tldw_chatbook.Chat.cost_display.format_token_count`
+    -- kept under this name so existing call sites/tests in this module are
+    untouched.
 
     Args:
         count: Total token count.
@@ -244,9 +242,7 @@ def _format_tokens(count: int) -> str:
         ``"12.3k"`` for counts at or above 1,000 (one decimal place), or
         the plain integer string below that.
     """
-    if count >= 1000:
-        return f"{count / 1000:.1f}k"
-    return str(count)
+    return format_token_count(count)
 
 
 def _format_ttl(seconds: float) -> str:

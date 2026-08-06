@@ -980,3 +980,104 @@ def test_normal_200_response_unaffected_by_redirect_guard(mock_post):
     assert mock_post.call_args[1]["allow_redirects"] is False
     assert sent["contents"][0]["parts"][0]["text"] == "2+2?"
     mock_post.return_value.raise_for_status.assert_called_once()
+
+
+@patch("requests.Session.post")
+def test_google_api_key_comes_from_the_api_settings_google_table(mock_post):
+    """PR-T2 review round 3, finding I4: with no explicit `api_key`
+    argument, `chat_with_google` must find the credential in
+    `api_settings.google` -- the table `config.py`'s credential bridge
+    writes and the shipped default config declares.
+
+    It read `api_settings.google_api` instead, a table nothing in this app
+    produces, so this call raised "Google API Key required." for a config
+    that Console's readiness check and the Library RAG gate both reported
+    ready -- the single provider for which this branch's "one credential
+    truth" claim was false.
+    """
+    mock_response = Mock()
+    mock_response.json.return_value = _gemini_text_response()
+    mock_response.status_code = 200
+    mock_response.raise_for_status = Mock()
+    mock_post.return_value = mock_response
+
+    snapshot = Mock()
+    snapshot.values = {
+        "api_settings": {"google": {"api_key": "google-config-table-key"}}
+    }
+    with patch(
+        "tldw_chatbook.LLM_Calls.LLM_API_Calls.get_runtime_config_snapshot",
+        return_value=snapshot,
+    ):
+        chat_api_call(
+            "google",
+            messages_payload=[{"role": "user", "content": "hi"}],
+            model="gemini-1.5-flash-latest",
+            streaming=False,
+        )
+
+    assert (
+        mock_post.call_args[1]["headers"]["x-goog-api-key"]
+        == "google-config-table-key"
+    )
+
+
+@patch("requests.Session.post")
+def test_shipped_placeholder_google_key_raises_instead_of_reaching_the_wire(mock_post):
+    """PR-T2 review round 4, finding N1: the shipped default's placeholder
+    must never be sent as a credential.
+
+    `[api_settings.google]` is the only chat-provider table that ships an
+    `api_key` VALUE, and it ships `"<API_KEY_HERE>"` (`config.py:2785`).
+    Pointing `chat_with_google` at that real table (finding I4) turned a
+    default config's clear `ChatConfigurationError` into
+    `x-goog-api-key: <API_KEY_HERE>` on the wire and an upstream 400 with
+    no visible cause -- for the ungated `chat_api_call` callers (Evals,
+    briefings, agent runs, WebSearch) that never pass through a readiness
+    gate. The handler must apply the same validity check the credential
+    bridge and `get_provider_readiness` apply.
+    """
+    snapshot = Mock()
+    snapshot.values = {"api_settings": {"google": {"api_key": "<API_KEY_HERE>"}}}
+    with patch(
+        "tldw_chatbook.LLM_Calls.LLM_API_Calls.get_runtime_config_snapshot",
+        return_value=snapshot,
+    ):
+        with pytest.raises(Exception) as excinfo:
+            chat_api_call(
+                "google",
+                messages_payload=[{"role": "user", "content": "hi"}],
+                model="gemini-1.5-flash-latest",
+                streaming=False,
+            )
+
+    assert "API Key required" in str(excinfo.value)
+    # The decisive half: nothing was sent at all.
+    mock_post.assert_not_called()
+
+
+@patch("requests.Session.post")
+def test_whitespace_padded_google_key_is_stripped_before_the_wire(mock_post):
+    """N1's other half, matching the credential bridge's own contract
+    (minor 2): a padded key must reach the provider stripped, not as the
+    401-producing raw value."""
+    mock_response = Mock()
+    mock_response.json.return_value = _gemini_text_response()
+    mock_response.status_code = 200
+    mock_response.raise_for_status = Mock()
+    mock_post.return_value = mock_response
+
+    snapshot = Mock()
+    snapshot.values = {"api_settings": {"google": {"api_key": "  google-padded-key  "}}}
+    with patch(
+        "tldw_chatbook.LLM_Calls.LLM_API_Calls.get_runtime_config_snapshot",
+        return_value=snapshot,
+    ):
+        chat_api_call(
+            "google",
+            messages_payload=[{"role": "user", "content": "hi"}],
+            model="gemini-1.5-flash-latest",
+            streaming=False,
+        )
+
+    assert mock_post.call_args[1]["headers"]["x-goog-api-key"] == "google-padded-key"

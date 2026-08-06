@@ -189,6 +189,17 @@ visit. Whatever is currently staged, the strip's count, the tray's
 "Sources N" count, and the Inspector's Source Readiness line ("Evidence:
 N/N available") always agree on the same number.
 
+Staged evidence also counts toward the Console Settings context estimate
+and the running-session cost chip — it used to report zero for anything
+staged but not yet sent. The estimate counts the staged snippets as
+they'll actually be sent (each capped at 4,000 characters, the same cap
+enforced when the evidence was staged), so even a very large source
+contributes a bounded, non-zero number rather than nothing. Two honest
+gaps in that count: it doesn't add back in the small `[S1] label — title`
+header and separator each staged source gets at send time, and the cost
+chip marks the figure as an estimate (its existing `~` prefix) since
+nothing has actually been sent yet.
+
 ### Citations
 
 When a reply is grounded in sources, a **Sources (N)** button appears
@@ -280,4 +291,7 @@ supersedes a stale restored one. Media/notes/conversation handoffs
 delivering content on send is covered by capture round-trip tests
 (task-2374); the live check's own handoff scenario was blocked on this
 profile by an unrelated Library workspace-eligibility gate, so that part
-is verified at the code level, not live).*
+is verified at the code level, not live). Verified against e2c706303 —
+2026-08-06 (PR-T2, docs pass against shipped code/tests, live check
+pending Task 9): staged evidence now counts toward the context estimate
+and the cost chip (as an estimated `~` row) instead of reporting zero.*

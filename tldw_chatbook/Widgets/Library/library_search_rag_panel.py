@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from decimal import Decimal
+
 from rich.markup import escape as escape_markup
 
 from textual.app import ComposeResult
@@ -9,11 +11,14 @@ from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.widgets import Button, Collapsible, Input, Static
 from textual.widget import Widget
 
+from ...Chat.cost_display import build_provenance_line
+from ...LLM_Calls.pricing_catalog import get_pricing_catalog
 from ...Library.library_rag_answer_service import (
     ANSWER_STATUS_ABSTAINED,
     ANSWER_STATUS_FAILED,
     ANSWER_STATUS_NO_EVIDENCE,
     ANSWER_STATUS_READY,
+    LibraryRagAnswer,
 )
 from ...Library.library_rag_state import (
     LIBRARY_RAG_SCOPE_TOGGLE_SOURCE_TYPES,
@@ -24,6 +29,7 @@ from ...Library.library_rag_state import (
     LibraryRagSourceOption,
     library_rag_answer_display_text,
     library_rag_empty_state_quiet_copy,
+    library_rag_paid_mode_notice,
     library_rag_score_suffix,
     library_rag_scope_summary,
     searching_status_line,
@@ -279,6 +285,18 @@ def library_rag_answer_children(state: LibraryRagPanelState) -> list[Widget]:
     is suppressed in that case, `clean` or not, since there is nothing safe
     shown for it to vouch for.
 
+    Paid-moment footer (PR-3 Task 3): every settled status except
+    `no_evidence` (the one path where no provider call was ever attempted)
+    gets a trailing `#library-rag-answer-provenance` line naming what the
+    call actually cost -- provider, model, and either a real dollar figure
+    or an honest "pricing unknown"/no-usage statement, built by
+    `_answer_provenance_line` from Task 1's shared
+    `Chat.cost_display.build_provenance_line` and Task 2's
+    `answer.provider`/`model`/`usage`. It renders for `failed` too whenever
+    a real, billable response was already parsed before the failure (Task
+    2's fix round) -- a call that cost money says so even though it did
+    not produce a usable answer.
+
     Args:
         state: Current Library Search/RAG panel display state.
 
@@ -294,13 +312,34 @@ def library_rag_answer_children(state: LibraryRagPanelState) -> list[Widget]:
     )
 
     if state.retrieval_status == "answering":
+        # PR-3 Task 3: the one moment this region has something true to say
+        # about cost BEFORE the outcome (and its token usage) is even
+        # known -- which provider is about to be billed. Names it whenever
+        # the screen resolved one (`state.in_flight_answer_provider`);
+        # falls back to the pre-existing generic line when it did not
+        # (every state built before this field existed, and the "answering"
+        # override reached without ever resolving a provider -- unreachable
+        # through the UI, since `_start_library_rag_answer` only raises
+        # this status after `resolve_library_rag_answer_provider` already
+        # returned one, but still a safe default for a direct `from_values`
+        # call like this module's own gate16 tests use).
+        in_flight_text = (
+            f"Asking {state.in_flight_answer_provider}…"
+            if state.in_flight_answer_provider
+            else "Generating answer…"
+        )
         return [
             Vertical(
                 heading,
                 Static(
-                    "Generating answer…",
+                    in_flight_text,
                     id="library-rag-answer-status",
                     classes="library-rag-quiet-line",
+                    # The provider name is config-sourced (`default_api_
+                    # endpoint`), so this line interpolates a value the
+                    # user controls -- render it literally rather than as
+                    # Rich markup (PR-T2 review round 3, minor 1).
+                    markup=False,
                 ),
                 id="library-rag-answer",
                 classes="library-rag-region",
@@ -395,7 +434,79 @@ def library_rag_answer_children(state: LibraryRagPanelState) -> list[Widget]:
         # presentation for it.
         return []
 
+    provenance_line = _answer_provenance_line(answer)
+    if provenance_line is not None:
+        body.append(
+            Static(
+                provenance_line,
+                id="library-rag-answer-provenance",
+                classes="library-rag-quiet-line",
+                markup=False,
+            )
+        )
+
     return [Vertical(*body, id="library-rag-answer", classes="library-rag-region")]
+
+
+def _answer_provenance_line(answer: LibraryRagAnswer) -> str | None:
+    """The footer's provenance line for a settled answer, or `None` (PR-3 Task 3).
+
+    Priced at RENDER time from `pricing_catalog.get_pricing_catalog()` --
+    never stored on `answer` itself, so a pricing-config change is reflected
+    on the very next render rather than freezing whatever rate was live
+    when the answer landed.
+
+    `None` (no footer at all) in exactly one case:
+
+    * `answer.provider == ""` -- the no-evidence path, the ONLY path where
+      no provider call was ever attempted (Task 2's own contract). A line
+      naming an empty provider would be worse than no line.
+
+    A second, narrower case is suppressed too:
+
+    * `answer.model == "" and answer.usage is None` -- an exception fired
+      before `generate_library_rag_answer`'s containment `try` ever reached
+      `_invoke_chat` (a bundle-build failure, or the provider call itself
+      raising, e.g. a realistic upstream 503): `provider` is still set (a
+      plain function parameter, always safe -- Task 2's fix-review comment),
+      but nothing else is known -- no model, no usage, nothing was ever
+      spent. There is nothing true to report about cost here, so this
+      renderer says nothing at all rather than a maximally minimal
+      provider-only line.
+
+    A blank `model` with real `usage` -- e.g. a provider payload that omits
+    its own `"model"` key (`test_a_missing_model_key_yields_an_empty_model_
+    without_raising`) -- is NOT suppressed: money was spent, so this footer
+    must still say so. `build_provenance_line` itself renders a blank
+    `model` gracefully (fix-review: Task 1's header now joins only the
+    non-empty identifiers, so a blank model is OMITTED, never left as a
+    dangling `" · "` with nothing after it) -- fixed at the shared-module
+    source rather than papered over here, since any future caller of that
+    function could hit the same upstream shape.
+
+    Every other combination (model known, usage known, or both) renders --
+    including a `failed` status whose usage survived a post-call
+    processing failure (Task 2's fix round): a call that cost real money
+    must say so even though it ultimately failed.
+    """
+    if not answer.provider or (not answer.model and answer.usage is None):
+        return None
+
+    cost: Decimal | None = None
+    pricing_known = False
+    if answer.usage is not None:
+        breakdown = get_pricing_catalog().cost_for_usage(answer.usage)
+        if breakdown is not None:
+            cost = Decimal(str(breakdown.total))
+            pricing_known = True
+
+    return build_provenance_line(
+        provider=answer.provider,
+        model=answer.model,
+        usage=answer.usage,
+        cost=cost,
+        pricing_known=pricing_known,
+    )
 
 
 def _query_blocked_is_quiet(query_state: LibraryRagQueryState) -> bool:
@@ -414,20 +525,57 @@ def library_rag_query_shows_full_recovery(query_state: LibraryRagQueryState) -> 
     return bool(query_state.recovery_copy) and not _query_blocked_is_quiet(query_state)
 
 
+def library_rag_query_quiet_text(state: LibraryRagPanelState) -> str:
+    """Return the text of the query region's single reserved quiet row.
+
+    Extracted from `library_rag_query_status_children` (F1) so the screen's
+    NO-`await` snapshot sync can refresh that one row with a plain
+    `Static.update()` without rebuilding the callout block around it. Both
+    callers derive from the SAME `state` the run gate is derived from, so
+    the row can never disagree with the Run button beside it -- Task 4's
+    collapse of "is a paid call ready" into one source of truth
+    (`ready_answer_provider`) survives having two render sites.
+
+    Returns:
+        The quiet line's copy: a gate's quiet blocker, the ready `rag`
+        mode's paid-mode notice, or `""` for every state that reserves the
+        row without filling it.
+    """
+    query_state = state.query_state
+    if query_state.blocked_is_empty_query:
+        return "Enter a question or search query."
+    if query_state.blocked_is_no_scope and state.scope.has_available_sources:
+        return "Select at least one source."
+    if query_state.ready_answer_provider:
+        return library_rag_paid_mode_notice(query_state.ready_answer_provider)
+    return ""
+
+
 def library_rag_query_status_children(state: LibraryRagPanelState) -> list[Widget]:
     """Return the query region's status widgets (A1/A2).
 
     Shared by `compose()` and the screen's incremental refresh. The quiet
-    gate line is ALWAYS returned -- with empty text in the ready/searching
-    states, and a fixed one-row height so the Run button below it never
-    shifts vertically when a gate's copy appears or disappears (2026-07
-    UAT: the button jumped ~2 rows on valid input, breaking muscle
-    memory). The no-scope gate stays quiet-but-empty when the Library has
-    no sources at all: the scope region's single no-sources gate line +
-    "Open Import media" action own that state, so a second "Select at
-    least one source." line would just re-stack guidance. Real failures
-    (unsafe query, missing dependencies/index, no provider) additionally
-    render the callout + recovery-copy block.
+    gate line is ALWAYS returned -- with empty text in the searching state
+    and a fixed one-row height so the Run button below it never shifts
+    vertically when a gate's copy appears or disappears (2026-07 UAT: the
+    button jumped ~2 rows on valid input, breaking muscle memory). The
+    no-scope gate stays quiet-but-empty when the Library has no sources at
+    all: the scope region's single no-sources gate line + "Open Import
+    media" action own that state, so a second "Select at least one
+    source." line would just re-stack guidance. Real failures (unsafe
+    query, missing dependencies/index, no provider) additionally render
+    the callout + recovery-copy block.
+
+    The READY state is no longer always empty (PR-T2 Task 4): `rag` mode
+    with a provider actually configured fills this same reserved row with
+    `library_rag_paid_mode_notice`, naming the provider Run would bill --
+    until this task, the ONLY provider-adjacent copy on this whole panel
+    was the *blocked* branch's "Select a provider/model..." text, which
+    vanishes the instant a provider IS configured. `search` mode's ready
+    state is untouched -- it never calls a provider, so the row keeps its
+    original empty-and-reserved behavior there. The row's copy comes from
+    `library_rag_query_quiet_text`, which the screen's no-`await` snapshot
+    sync also calls to update the mounted row in place (F1).
 
     Args:
         state: Current Library Search/RAG panel display state.
@@ -437,15 +585,11 @@ def library_rag_query_status_children(state: LibraryRagPanelState) -> list[Widge
         widgets for full-recovery failures.
     """
     query_state = state.query_state
-    quiet_text = ""
-    if query_state.blocked_is_empty_query:
-        quiet_text = "Enter a question or search query."
-    elif query_state.blocked_is_no_scope and state.scope.has_available_sources:
-        quiet_text = "Select at least one source."
     quiet_line = Static(
-        quiet_text,
+        library_rag_query_quiet_text(state),
         id="library-rag-query-quiet-line",
         classes="library-rag-quiet-line",
+        markup=False,
     )
     quiet_line.styles.height = 1
     children: list[Widget] = [quiet_line]
@@ -488,8 +632,17 @@ def _mode_toggle_tooltip(state: LibraryRagPanelState) -> str:
     it reads `state.query_state.mode` fresh on every build (recompose is
     the only path that rebuilds this button -- see the mode-toggle
     `Button.Pressed` handler in `library_screen.py`).
+
+    PR-T2 Task 4: also names which side of the toggle spends money, in the
+    tooltip's own compact register -- unconditionally, since "RAG Answer
+    calls a provider" and "Search stays local" are properties of the MODE
+    itself, true whether or not a provider happens to be configured right
+    now (the quiet line's `library_rag_paid_mode_notice` is the one that
+    additionally names the actual provider, and only once one is ready).
     """
-    return f"Cycle Search/RAG mode. Next: {_other_mode_label(state)}."
+    other = _other_mode_label(state)
+    fact = "calls a paid provider" if other == "RAG Answer" else "stays local"
+    return f"Cycle Search/RAG mode. Next: {other} — {fact}."
 
 
 def results_heading_text(state: LibraryRagPanelState) -> str:

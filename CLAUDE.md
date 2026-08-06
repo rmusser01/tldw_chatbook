@@ -154,7 +154,27 @@ def _heavy_task(self):
 
 ### Configuration
 
-Priority: env vars → config.toml → defaults
+Priority: env vars → config.toml → defaults — **except provider API keys**,
+where an explicit `api_settings.<provider>.api_key` now outranks the
+matching environment variable (`chat_with_openai` did this first;
+PR-T2/task 7 made it uniform across the ~9 bridged chat providers). Legacy
+`[API] <provider>_api_key` values are the lowest-precedence fallback,
+normalized once at load time into both `api_settings.<provider>.api_key`
+and the legacy `<provider>_api` dict — the two places a `chat_with_
+<provider>` handler may read — so for those two **config-sourced**
+credentials Console's readiness check and the actual spend can no longer
+disagree (`config.py`'s `_normalize_legacy_provider_api_key`). Every
+source (modern table, env var, legacy `[API]`) is run through the same
+`resolve_provider_api_key` validity check, so a placeholder or a
+whitespace-padded value is never accepted by the loader. Two caveats worth
+knowing: a handler that reads its config table directly must apply that
+same check itself (`chat_with_google` does — the shipped
+`[api_settings.google] api_key = "<API_KEY_HERE>"` would otherwise go on
+the wire), and the guarantee does **not** cover env-only credentials for
+every provider — google is a known open case (env var set, readiness ready,
+nothing reaches `chat_with_google`), tracked separately. This is scoped to that one
+credential lookup — the general env-vars-first ordering is unaffected
+everywhere else in the config loader.
 
 Key sections:
 - `[API]` - Provider keys

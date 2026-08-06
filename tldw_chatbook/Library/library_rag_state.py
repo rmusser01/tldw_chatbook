@@ -218,6 +218,36 @@ def searching_status_line(source_types: Sequence[str]) -> str:
     return f"searching · {labels}…" if labels else "searching…"
 
 
+def library_rag_paid_mode_notice(provider: str) -> str:
+    """Return the quiet line's ready-state paid-mode notice (PR-T2 Task 4).
+
+    Until this task, the ONLY provider-adjacent copy on the Library
+    Search/RAG panel was the *blocked* branch's "Select a provider/model
+    before asking for a RAG answer." text (`LibraryRagQueryState.
+    from_values`) -- it vanishes the instant a provider IS configured,
+    the exact inversion of what a keyboard-fast user needs before
+    pressing a button that spends real money. This fills the query
+    region's reserved quiet-line row (`library_search_rag_panel.py`'s
+    `library_rag_query_status_children`) in the one state that row was
+    otherwise left empty for -- ready, `rag` mode, a provider configured
+    -- naming the provider that would actually be billed. No confirmation
+    dialog, no gate: a statement, not a speed bump.
+
+    Args:
+        provider: The provider `resolve_library_rag_answer_provider`
+            would call if Run were pressed right now
+            (`LibraryRagQueryState.ready_answer_provider`).
+
+    Returns:
+        One sentence naming `provider`, e.g. `RAG Answer sends your
+        question and the evidence to openai. Search stays local.`
+    """
+    return (
+        f"RAG Answer sends your question and the evidence to {provider}. "
+        "Search stays local."
+    )
+
+
 def _clean_text(value: Any, fallback: str = "") -> str:
     if value is None:
         return fallback
@@ -961,6 +991,19 @@ class LibraryRagQueryState:
     status: str
     run_action: LibraryRagActionState
     recovery_copy: str = ""
+    #: The provider that would be billed if Run were pressed right now
+    #: (PR-T2 Task 4) -- `""` whenever there is nothing pending to
+    #: announce: Search mode never calls a provider, and any blocked `rag`
+    #: state (empty query, no scope, missing deps/index, no provider) has
+    #: no run about to happen. Non-empty if and only if `mode == "rag"` and
+    #: `status == "ready"` -- `from_values` derives BOTH readiness and this
+    #: field from the same single `provider_name` argument (review round:
+    #: an earlier revision took readiness and the name as two independently
+    #: settable parameters, which let them disagree -- "ready to spend
+    #: money" while the quiet line stayed silent about it). Feeds the quiet
+    #: line's `library_rag_paid_mode_notice` (`library_search_rag_panel.
+    #: py`'s `library_rag_query_status_children`).
+    ready_answer_provider: str = ""
 
     @property
     def blocked_is_empty_query(self) -> bool:
@@ -992,7 +1035,8 @@ class LibraryRagQueryState:
         has_source_scope: bool = True,
         dependencies_ready: bool = True,
         index_ready: bool = True,
-        provider_ready: bool = True,
+        provider_name: str | None = None,
+        provider_credential_recovery: str = "",
     ) -> "LibraryRagQueryState":
         """Build query-control display state from UI or service values.
 
@@ -1004,12 +1048,54 @@ class LibraryRagQueryState:
             has_source_scope: Whether at least one source is selected.
             dependencies_ready: Whether Search/RAG optional dependencies are available.
             index_ready: Whether the selected source scope has an index.
-            provider_ready: Whether a provider/model is ready for RAG-answer mode.
+            provider_name: The provider `resolve_library_rag_answer_provider`
+                resolved, or `None`/blank when none is configured. This is
+                the SOLE source of RAG-mode provider readiness (PR-T2 Task 4
+                review) -- an earlier revision took a separate `provider_
+                ready: bool` alongside this, which let a caller pass
+                `provider_ready=True` with no name (or vice versa) and
+                silently produce "the mode can spend money and the quiet
+                line says nothing", the exact inversion this task exists to
+                fix. Collapsing to one parameter makes that combination
+                impossible to construct: readiness is derived here as
+                `bool((provider_name or "").strip())`, so "ready" and "has
+                a name to show" can no longer disagree.
+            provider_credential_recovery: The remedy for a provider that IS
+                named in config but cannot authenticate (`Library/library_
+                rag_answer_service.LibraryRagProviderGate.credential_
+                recovery`, ultimately `ProviderReadiness.recovery`, e.g.
+                "Set ANTHROPIC_API_KEY or add api_key under [api_settings.
+                anthropic]."). `""` for the genuinely-unselected case, and
+                `""` whenever `provider_name` is set. It is a MESSAGE, not
+                a second readiness input: readiness stays derived solely
+                from `provider_name` above, so passing this can never make
+                a blocked state look ready -- it only decides WHICH blocked
+                copy the RAG-mode branch shows. Without it the collapse to
+                one `provider_name` erased the distinction between "no
+                provider selected" and "selected, no credential", and the
+                only surviving copy told the second user to select the
+                provider they had already selected, pointing at Console
+                controls instead of at the credential (PR-T2 review round
+                3, finding I1).
 
         Returns:
             Display state for query controls and the run action.
         """
 
+        normalized_provider_name = (provider_name or "").strip()
+        provider_ready = bool(normalized_provider_name)
+        # Escaped like every other config-sourced display string in this
+        # module: the remedy text embeds a TOML table name in brackets
+        # ("... add api_key under [api_settings.anthropic].") and both of
+        # its sinks -- the run button's tooltip and the blocked callout /
+        # recovery `Static`s -- render Rich markup, which would eat the
+        # bracketed half of the instruction. Never shown when a provider
+        # IS ready: the ladder below only reads it in the blocked branch.
+        credential_recovery = (
+            ""
+            if provider_ready
+            else _sanitize_display_text(provider_credential_recovery, "")
+        )
         normalized_query, unsafe_query = _sanitize_query(query)
         normalized_mode = _normalize_mode(mode)
         mode_label = "Search" if normalized_mode == "search" else "RAG Answer"
@@ -1044,10 +1130,26 @@ class LibraryRagQueryState:
             next_action = "Build or refresh the Library index"
             recovery_action = "Library indexing"
         elif normalized_mode == "rag" and not provider_ready:
-            disabled_reason = "Select a provider/model before asking for a RAG answer."
-            owner = "LLM provider"
-            next_action = "Select a provider and model before running a RAG answer"
-            recovery_action = "Console controls"
+            # Two different blockers wear this one branch (finding I1). A
+            # provider that is NAMED but cannot authenticate gets the
+            # readiness object's own remedy -- naming the env var and the
+            # config table -- because telling that user to "select a
+            # provider/model" names a step they already completed.
+            if credential_recovery:
+                disabled_reason = (
+                    f"The configured provider has no usable API key. "
+                    f"{credential_recovery}"
+                )
+                owner = "LLM provider credential"
+                next_action = "Add the provider credential, then run again"
+                recovery_action = credential_recovery
+            else:
+                disabled_reason = (
+                    "Select a provider/model before asking for a RAG answer."
+                )
+                owner = "LLM provider"
+                next_action = "Select a provider and model before running a RAG answer"
+                recovery_action = "Console controls"
 
         enabled = not disabled_reason
         recovery_copy = ""
@@ -1060,6 +1162,15 @@ class LibraryRagQueryState:
                 recovery_action=recovery_action,
                 owner=owner,
             )
+        # Reuses `normalized_provider_name`/`enabled` rather than
+        # re-deriving readiness: in `rag` mode, `enabled` is `True` only
+        # when the gate ladder above never hit the provider branch, which
+        # itself only happens when `provider_ready` (== `bool(normalized_
+        # provider_name)`) was already `True` -- so "ready" and "has a name
+        # to show" cannot diverge by construction (PR-T2 Task 4 review).
+        ready_answer_provider = (
+            normalized_provider_name if normalized_mode == "rag" and enabled else ""
+        )
         return cls(
             query=normalized_query,
             mode=normalized_mode,
@@ -1074,6 +1185,7 @@ class LibraryRagQueryState:
                 disabled_reason=disabled_reason,
             ),
             recovery_copy=recovery_copy,
+            ready_answer_provider=ready_answer_provider,
         )
 
 
@@ -1540,6 +1652,17 @@ class LibraryRagPanelState:
     #: `None` in keyword (search) mode -- rag mode is the only mode Task 1's
     #: answer service is ever invoked for.
     answer: LibraryRagAnswer | None = None
+    #: The provider `resolve_library_rag_answer_provider` resolved for the
+    #: single grounded-answer call CURRENTLY IN FLIGHT (PR-3 Task 3) --
+    #: distinct from `answer.provider`, which only exists once a call has
+    #: SETTLED onto `answer`. Feeds `library_rag_answer_children`'s
+    #: "Asking <provider>..." in-flight line: the one moment the answer
+    #: region has something true to say about cost before the outcome
+    #: (and therefore the token usage) is known at all -- which provider is
+    #: about to be billed. `""` (the default -- every call site that
+    #: predates this field) keeps the prior generic "Generating answer..."
+    #: line, since there is no provider name to report.
+    in_flight_answer_provider: str = ""
 
     @classmethod
     def from_values(
@@ -1556,12 +1679,14 @@ class LibraryRagPanelState:
         recovery_selector: Any = "",
         dependencies_ready: bool = True,
         index_ready: bool = True,
-        provider_ready: bool = True,
+        provider_name: str | None = None,
+        provider_credential_recovery: str = "",
         selected_source_types: Sequence[str] | None = None,
         history: Sequence[str] = (),
         history_collapsed: bool = False,
         diagnostics: Mapping[str, Any] | None = None,
         answer: LibraryRagAnswer | None = None,
+        in_flight_answer_provider: str = "",
     ) -> "LibraryRagPanelState":
         """Build full Library Search/RAG panel display state.
 
@@ -1595,7 +1720,24 @@ class LibraryRagPanelState:
             recovery_selector: Stable selector used for explicit retrieval recovery.
             dependencies_ready: Whether Search/RAG optional dependencies are available.
             index_ready: Whether the selected source scope has an index.
-            provider_ready: Whether a provider/model is ready for RAG-answer mode.
+            provider_name: The provider `resolve_library_rag_answer_provider`
+                resolved, or `None`/blank when none is configured -- the
+                SOLE source of RAG-mode provider readiness, forwarded
+                unchanged to `LibraryRagQueryState.from_values` (PR-T2
+                Task 4 review: collapsed from two independently settable
+                parameters, `provider_ready: bool` and this, which could
+                disagree -- see that method's docstring). `None` is the
+                default, so `rag` mode is now BLOCKED by default (a
+                behavior change from the pre-collapse `provider_ready:
+                bool = True` default) -- every call site that wants a
+                ready `rag`-mode state must now name a provider
+                explicitly, which is the whole point: readiness can no
+                longer be asserted without a name to back it up.
+            provider_credential_recovery: Forwarded unchanged to
+                `LibraryRagQueryState.from_values` -- the remedy shown when
+                a provider IS named in config but cannot authenticate. See
+                that method's docstring; it is display copy only and never
+                affects readiness.
             selected_source_types: Selected source type IDs. `None` selects all available
                 source types; an empty sequence represents no selected sources.
             history: Prior submitted queries, most recent first.
@@ -1611,6 +1753,10 @@ class LibraryRagPanelState:
             answer: PR-3 Task 1's grounded-answer outcome for the current
                 `results`, or `None` before one has landed (every call site
                 that predates Task 3).
+            in_flight_answer_provider: The provider resolved for the answer
+                call currently in flight (PR-3 Task 3), or `""` (the
+                default -- every call site that predates this parameter)
+                when none is in flight or none was resolved yet.
 
         Returns:
             Display state for the destination-native Library Search/RAG panel.
@@ -1632,7 +1778,8 @@ class LibraryRagPanelState:
             has_source_scope=scope.has_selected_sources,
             dependencies_ready=dependencies_ready,
             index_ready=index_ready,
-            provider_ready=provider_ready,
+            provider_name=provider_name,
+            provider_credential_recovery=provider_credential_recovery,
         )
         normalized_searched_query, _ = _sanitize_query(
             query if searched_query is None else searched_query
@@ -1841,6 +1988,7 @@ class LibraryRagPanelState:
             coverage_note=coverage_note,
             searched_query=normalized_searched_query,
             answer=answer,
+            in_flight_answer_provider=str(in_flight_answer_provider or ""),
         )
 
 

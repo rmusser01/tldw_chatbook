@@ -19,6 +19,7 @@ from tldw_chatbook.Library.library_rag_state import (
     library_rag_all_matches_weak,
     library_rag_coverage_note,
     library_rag_empty_state_quiet_copy,
+    library_rag_paid_mode_notice,
     library_rag_score_suffix,
     library_rag_scope_summary,
     searching_status_line,
@@ -189,6 +190,7 @@ def test_query_state_blocks_empty_query_and_runtime_blockers() -> None:
         query="summarize the policy",
         mode="unknown",
         top_k="bad",
+        provider_name="openai",
     )
 
     assert ready_query.mode == "rag"
@@ -198,18 +200,24 @@ def test_query_state_blocks_empty_query_and_runtime_blockers() -> None:
 
 
 def test_query_state_provider_gate_is_rag_only() -> None:
-    """(PR-3 task 2) `provider_ready` feeds the ONE existing blocked branch
+    """(PR-3 task 2) `provider_name` feeds the ONE existing blocked branch
     at `Library/library_rag_state.py:893-897` -- and that branch is gated on
     `normalized_mode == "rag"`. A not-ready provider must therefore block
     `rag` mode with the pre-existing "Select a provider/model..." copy, and
     must leave `search` (keyword) mode completely unaffected: keyword mode
     never calls a provider at all, so gating it on one would block a query
     that could otherwise run.
+
+    (PR-T2 Task 4 review) Originally written against a separate
+    `provider_ready: bool` parameter, since collapsed into `provider_name`
+    alone (readiness is now DERIVED from it -- see that method's
+    docstring); updated to the new shape without changing what this test
+    verifies.
     """
     blocked_rag = LibraryRagQueryState.from_values(
         query="summarize the policy",
         mode="rag",
-        provider_ready=False,
+        provider_name=None,
     )
 
     assert blocked_rag.status == "blocked"
@@ -226,7 +234,7 @@ def test_query_state_provider_gate_is_rag_only() -> None:
     unaffected_search = LibraryRagQueryState.from_values(
         query="summarize the policy",
         mode="search",
-        provider_ready=False,
+        provider_name=None,
     )
 
     assert unaffected_search.status == "ready"
@@ -236,11 +244,151 @@ def test_query_state_provider_gate_is_rag_only() -> None:
     ready_rag = LibraryRagQueryState.from_values(
         query="summarize the policy",
         mode="rag",
-        provider_ready=True,
+        provider_name="openai",
     )
 
     assert ready_rag.status == "ready"
     assert ready_rag.run_action.enabled is True
+
+
+def test_query_state_ready_answer_provider_names_the_paid_mode_provider() -> None:
+    """(PR-T2 Task 4) `ready_answer_provider` feeds the quiet line's paid-
+    mode notice -- non-empty ONLY when `rag` mode is actually ready to run,
+    which (post-collapse) is itself derived from `provider_name`. Search
+    mode and every blocked state leave it empty.
+    """
+    ready = LibraryRagQueryState.from_values(
+        query="summarize the policy",
+        mode="rag",
+        provider_name="openai",
+    )
+    assert ready.status == "ready"
+    assert ready.ready_answer_provider == "openai"
+
+    search_mode = LibraryRagQueryState.from_values(
+        query="summarize the policy",
+        mode="search",
+        provider_name="openai",
+    )
+    assert search_mode.status == "ready"
+    assert search_mode.ready_answer_provider == ""
+
+    blocked_empty_query = LibraryRagQueryState.from_values(
+        query="",
+        mode="rag",
+        provider_name="openai",
+    )
+    assert blocked_empty_query.status == "blocked"
+    assert blocked_empty_query.ready_answer_provider == ""
+
+    blocked_no_provider = LibraryRagQueryState.from_values(
+        query="summarize the policy",
+        mode="rag",
+        provider_name=None,
+    )
+    assert blocked_no_provider.status == "blocked"
+    assert blocked_no_provider.ready_answer_provider == ""
+
+    blocked_default = LibraryRagQueryState.from_values(
+        query="summarize the policy",
+        mode="rag",
+    )
+    assert blocked_default.status == "blocked"
+    assert blocked_default.ready_answer_provider == ""
+
+
+@pytest.mark.parametrize("name", ["openai", "anthropic", "local-vllm", "  ollama  "])
+def test_ready_rag_mode_always_names_its_provider_invariant(name: str) -> None:
+    """(PR-T2 Task 4 review) The footgun this test exists to catch:
+    `provider_ready`/`provider_name` used to be two independently
+    settable parameters that could disagree -- a caller could pass
+    `provider_ready=True` with no name (or the reverse) and silently
+    produce "the mode can spend money and the quiet line says nothing",
+    the exact inversion Task 4 was written to fix, with no test able to
+    catch it because the API *permitted* the disagreement. Collapsing to
+    the single `provider_name` parameter makes that combination
+    impossible to construct rather than merely untested: this asserts the
+    INVARIANT itself, not just one happy-path example -- for ANY
+    non-blank name (including one needing a strip), a ready `rag`-mode
+    state's `ready_answer_provider` is always that same name, never
+    empty, and never a different name than what was supplied.
+    """
+    state = LibraryRagQueryState.from_values(
+        query="summarize the policy",
+        mode="rag",
+        provider_name=name,
+    )
+    assert state.status == "ready"
+    assert state.ready_answer_provider == name.strip()
+    assert state.ready_answer_provider != ""
+
+
+@pytest.mark.parametrize("blank", [None, "", "   "])
+def test_blank_provider_name_never_yields_a_ready_rag_mode_invariant(blank) -> None:
+    """The other half of the same invariant (PR-T2 Task 4 review): `None`,
+    `""`, and whitespace-only all mean "no provider" -- `rag` mode is
+    blocked for all three, and there is nothing to derive a notice from.
+    """
+    state = LibraryRagQueryState.from_values(
+        query="summarize the policy",
+        mode="rag",
+        provider_name=blank,
+    )
+    assert state.status == "blocked"
+    assert state.ready_answer_provider == ""
+    assert state.run_action.disabled_reason == (
+        "Select a provider/model before asking for a RAG answer."
+    )
+
+
+def test_provider_ready_parameter_no_longer_exists() -> None:
+    """(PR-T2 Task 4 review) `provider_ready` is fully retired as a
+    caller-facing parameter, not merely deprecated alongside `provider_
+    name` -- passing it is a `TypeError`, proving the two-parameter
+    footgun is now impossible to even attempt, not just discouraged.
+    """
+    with pytest.raises(TypeError):
+        LibraryRagQueryState.from_values(
+            query="summarize the policy",
+            mode="rag",
+            provider_ready=True,  # type: ignore[call-arg]
+        )
+    with pytest.raises(TypeError):
+        LibraryRagPanelState.from_values(
+            query="summarize the policy",
+            mode="rag",
+            provider_ready=True,  # type: ignore[call-arg]
+        )
+
+
+def test_library_rag_paid_mode_notice_names_the_provider() -> None:
+    assert library_rag_paid_mode_notice("openai") == (
+        "RAG Answer sends your question and the evidence to openai. "
+        "Search stays local."
+    )
+
+
+def test_panel_state_threads_provider_name_into_query_state() -> None:
+    """(PR-T2 Task 4) `LibraryRagPanelState.from_values`'s `provider_name`
+    reaches `query_state.ready_answer_provider` unchanged -- the screen
+    resolves it once (`resolve_library_rag_answer_provider()[0]`) and
+    passes it straight through, with readiness derived from it rather
+    than asserted separately.
+    """
+    ready = LibraryRagPanelState.from_values(
+        source_counts={"notes": 1},
+        query="summarize the policy",
+        mode="rag",
+        provider_name="anthropic",
+    )
+    assert ready.query_state.ready_answer_provider == "anthropic"
+
+    default_state = LibraryRagPanelState.from_values(
+        source_counts={"notes": 1},
+        query="summarize the policy",
+        mode="rag",
+    )
+    assert default_state.query_state.ready_answer_provider == ""
 
 
 def test_query_state_blocked_is_empty_query_and_no_scope_properties() -> None:
@@ -724,6 +872,7 @@ def test_panel_state_tracks_retrieval_status_and_console_action_readiness() -> N
         query="What did Gate 1.6 add?",
         results=(result,),
         selected_result_id=result.result_id,
+        provider_name="openai",
     )
 
     assert ready.retrieval_status == "ready"
@@ -738,6 +887,7 @@ def test_panel_state_tracks_retrieval_status_and_console_action_readiness() -> N
         source_counts={"notes": 1},
         query="What did Gate 1.6 add?",
         retrieval_status="searching",
+        provider_name="openai",
     )
 
     assert searching.retrieval_status == "searching"
@@ -756,6 +906,7 @@ def test_panel_state_searching_status_overrides_run_action_only_when_reached() -
         source_counts={"notes": 1},
         query="Find policy evidence",
         retrieval_status="searching",
+        provider_name="openai",
     )
     assert searching_ready.retrieval_status == "searching"
     assert searching_ready.query_state.run_action.label == "Searching…"
@@ -787,6 +938,7 @@ def test_panel_state_answering_status_overrides_run_action_only_when_reached() -
         query="Find policy evidence",
         mode="rag",
         retrieval_status="answering",
+        provider_name="openai",
     )
     assert answering_ready.retrieval_status == "answering"
     assert answering_ready.query_state.run_action.label == "Answering…"
@@ -829,6 +981,7 @@ def test_panel_state_answering_keeps_selected_evidence_usable_in_console() -> No
         results=(result,),
         selected_result_id=result.result_id,
         retrieval_status="answering",
+        provider_name="openai",
     )
 
     assert answering.retrieval_status == "answering"
@@ -846,8 +999,70 @@ def test_panel_state_answering_keeps_selected_evidence_usable_in_console() -> No
         mode="rag",
         results=(result,),
         retrieval_status="answering",
+        provider_name="openai",
     )
     assert nothing_selected.use_in_console_action.enabled is False
+
+
+def test_panel_state_carries_in_flight_answer_provider_for_the_asking_line() -> None:
+    """PR-3 Task 3: the panel state must carry the provider resolved for an
+    answer call CURRENTLY IN FLIGHT through to `library_rag_answer_children`'s
+    "Asking <provider>..." line -- distinct from `state.answer.provider`,
+    which is only set once a call has SETTLED onto `state.answer`. Defaults
+    to `""` (every call site that predates this field), so a caller that
+    never threads it through keeps the prior generic "Generating answer..."
+    line rather than a broken "Asking ..." with nothing named.
+    """
+    with_provider = LibraryRagPanelState.from_values(
+        source_counts={"notes": 1},
+        query="Find policy evidence",
+        mode="rag",
+        retrieval_status="answering",
+        in_flight_answer_provider="anthropic",
+    )
+    assert with_provider.in_flight_answer_provider == "anthropic"
+
+    default_state = LibraryRagPanelState.from_values(
+        source_counts={"notes": 1},
+        query="Find policy evidence",
+        mode="rag",
+        retrieval_status="answering",
+    )
+    assert default_state.in_flight_answer_provider == ""
+
+
+def test_panel_state_answer_field_round_trips_provider_model_usage() -> None:
+    """`from_values` must pass Task 2's `LibraryRagAnswer.provider`/`model`/
+    `usage` through to `state.answer` completely untouched -- the Task 3
+    footer's whole provenance depends on these three surviving the state
+    build unchanged."""
+    from tldw_chatbook.Chat.provider_usage import ProviderUsage
+    from tldw_chatbook.Library.library_rag_answer_service import (
+        ANSWER_STATUS_READY,
+        LibraryRagAnswer,
+    )
+
+    usage = ProviderUsage(
+        uncached_input=1000, output=240, provider="anthropic", model="claude-sonnet-4-6"
+    )
+    answer = LibraryRagAnswer(
+        status=ANSWER_STATUS_READY,
+        text="Expired credential caused the incident.",
+        citation_status="validated",
+        provider="anthropic",
+        model="claude-sonnet-4-6",
+        usage=usage,
+    )
+    state = LibraryRagPanelState.from_values(
+        source_counts={"notes": 1},
+        query="Why did the incident happen?",
+        mode="rag",
+        answer=answer,
+    )
+    assert state.answer is answer
+    assert state.answer.provider == "anthropic"
+    assert state.answer.model == "claude-sonnet-4-6"
+    assert state.answer.usage == usage
 
 
 def test_panel_state_defaults_stable_selectors_for_recovery_paths() -> None:
@@ -855,6 +1070,7 @@ def test_panel_state_defaults_stable_selectors_for_recovery_paths() -> None:
         source_counts={"notes": 1},
         query="Find policy evidence",
         retrieval_status="failed",
+        provider_name="openai",
     )
 
     assert failed.recovery_selector == LIBRARY_RAG_SERVICE_ERROR_SELECTOR
@@ -864,6 +1080,7 @@ def test_panel_state_defaults_stable_selectors_for_recovery_paths() -> None:
         source_counts={"notes": 1},
         query="Find policy evidence",
         retrieval_status="empty",
+        provider_name="openai",
     )
 
     assert empty.recovery_selector == LIBRARY_RAG_EMPTY_STATE_SELECTOR
@@ -970,6 +1187,7 @@ def test_prompts_source_toggle_label_and_gate_with_four_sources() -> None:
         source_counts={"notes": 0, "media": 0, "conversations": 0, "prompts": 5},
         selected_source_types=("prompts",),
         query="Find policy evidence",
+        provider_name="openai",
     )
 
     assert ready.scope.selected_source_types == ("prompts",)
@@ -1412,3 +1630,121 @@ def test_scope_source_type_map_matches_open_source_type_map_except_prompt() -> N
         )
     assert open_map["prompt"] == "prompt"  # _open_library_item_by_id's dispatch key
     assert scope_map["prompt"] == "prompts"  # the plural scope-toggle key
+
+
+# --- PR-T2 review round 3, finding I1 -------------------------------------
+
+_ANTHROPIC_CREDENTIAL_REMEDY = (
+    "Set ANTHROPIC_API_KEY or add api_key under [api_settings.anthropic]."
+)
+
+
+def test_unselected_provider_keeps_the_select_a_provider_copy() -> None:
+    """Half one of I1: the genuinely-unselected case is UNCHANGED.
+
+    No provider named and no credential remedy to offer -- "select a
+    provider/model", owner "LLM provider", recovery pointer "Console
+    controls" is the right copy here and must survive the fix that gave
+    the other half its own.
+    """
+    state = LibraryRagQueryState.from_values(
+        query="summarize the policy",
+        mode="rag",
+        provider_name=None,
+        provider_credential_recovery="",
+    )
+
+    assert state.run_action.enabled is False
+    assert state.run_action.disabled_reason == (
+        "Select a provider/model before asking for a RAG answer."
+    )
+    assert "Owner: LLM provider." in state.recovery_copy
+    assert "Recovery: Console controls." in state.recovery_copy
+
+
+def test_named_but_uncredentialed_provider_shows_the_real_remedy() -> None:
+    """Half two of I1: the case Task 7 newly routed into this branch.
+
+    Task 7 widened the blocked branch to include "endpoint named,
+    credential missing" -- which is now the ONLY way a user with a
+    configured provider reaches it -- while Task 4's collapse to a single
+    `provider_name` destroyed the reason at the call site. The result told
+    a user to select the provider they had already selected and pointed at
+    Console controls instead of at a credential. The remedy that
+    `ProviderReadiness` already carried must reach the tooltip (`disabled_
+    reason`), the Why line and the Recovery pointer, and the owner must
+    name the credential rather than the provider.
+    """
+    state = LibraryRagQueryState.from_values(
+        query="summarize the policy",
+        mode="rag",
+        provider_name=None,
+        provider_credential_recovery=_ANTHROPIC_CREDENTIAL_REMEDY,
+    )
+
+    assert state.run_action.enabled is False
+    assert "Select a provider/model" not in state.run_action.disabled_reason
+    assert "ANTHROPIC_API_KEY" in state.run_action.disabled_reason
+    assert "api_settings.anthropic" in state.run_action.disabled_reason
+    assert "Console controls" not in state.recovery_copy
+    assert "Owner: LLM provider credential." in state.recovery_copy
+    assert "ANTHROPIC_API_KEY" in state.recovery_copy
+
+
+def test_credential_remedy_is_markup_escaped_for_its_rendering_sinks() -> None:
+    """The remedy embeds a TOML table name in brackets, and both sinks --
+    the run button's tooltip and the blocked callout / recovery `Static`s
+    -- render Rich markup, which would swallow `[api_settings.anthropic]`
+    and leave a sentence pointing at nothing.
+    """
+    state = LibraryRagQueryState.from_values(
+        query="summarize the policy",
+        mode="rag",
+        provider_name=None,
+        provider_credential_recovery=_ANTHROPIC_CREDENTIAL_REMEDY,
+    )
+
+    assert r"\[api_settings.anthropic]" in state.run_action.disabled_reason
+
+
+def test_credential_remedy_cannot_make_a_blocked_state_look_ready() -> None:
+    """The new field is a MESSAGE, never a second readiness input (the
+    invariant PR-T2 Task 4's review established): readiness stays derived
+    from `provider_name` alone, so a remedy passed alongside a name is
+    simply never read, and a remedy passed without one never unblocks.
+    """
+    blocked = LibraryRagQueryState.from_values(
+        query="summarize the policy",
+        mode="rag",
+        provider_name=None,
+        provider_credential_recovery=_ANTHROPIC_CREDENTIAL_REMEDY,
+    )
+    assert blocked.status == "blocked"
+    assert blocked.ready_answer_provider == ""
+
+    ready = LibraryRagQueryState.from_values(
+        query="summarize the policy",
+        mode="rag",
+        provider_name="anthropic",
+        provider_credential_recovery=_ANTHROPIC_CREDENTIAL_REMEDY,
+    )
+    assert ready.status == "ready"
+    assert ready.run_action.enabled is True
+    assert ready.ready_answer_provider == "anthropic"
+    assert "ANTHROPIC_API_KEY" not in ready.run_action.disabled_reason
+
+
+def test_panel_state_threads_the_credential_remedy_into_query_state() -> None:
+    """The screen builds the panel state, not the query state directly --
+    so the remedy has to survive that layer too, or the fix never reaches
+    a rendered surface.
+    """
+    panel = LibraryRagPanelState.from_values(
+        source_counts={"notes": 1},
+        query="summarize the policy",
+        mode="rag",
+        provider_name=None,
+        provider_credential_recovery=_ANTHROPIC_CREDENTIAL_REMEDY,
+    )
+
+    assert "ANTHROPIC_API_KEY" in panel.query_state.run_action.disabled_reason

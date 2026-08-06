@@ -50,6 +50,7 @@ from tldw_chatbook.config import (
     get_cli_setting,
     get_runtime_config_snapshot,
     load_settings,
+    resolve_provider_api_key,
 )
 from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram
 from tldw_chatbook.Utils.input_validation import validate_url
@@ -3142,8 +3143,31 @@ def chat_with_google(
 ):
     start_time = time.time()
     loaded_config_data = get_runtime_config_snapshot().values.get("api_settings", {})
-    google_config = loaded_config_data.get("google_api", {})
-    final_api_key = api_key or google_config.get("api_key")
+    # `api_settings.google` -- NOT `api_settings.google_api` (PR-T2 review
+    # round 3, finding I4). Nothing in this app has ever produced a
+    # `google_api` table: the shipped default config writes `[api_settings.
+    # google]`, `config.py`'s credential bridge (`_normalize_legacy_
+    # provider_api_key`) writes `api_settings["google"]["api_key"]`, and
+    # the legacy dict is the top-level `google_generative_api` (not under
+    # `api_settings` at all). So this lookup always returned `{}` and every
+    # Google call fell back to the hardcoded defaults below -- meaning a
+    # credential set the modern OR legacy way could not reach the spend
+    # path even while readiness reported ready and the Library RAG gate
+    # opened. `chat_with_mistral` reads its own table the same way.
+    google_config = loaded_config_data.get("google", {})
+    # `resolve_provider_api_key`, not a bare read (PR-T2 review round 4,
+    # N1): `[api_settings.google]` is the ONLY chat-provider table that
+    # ships an `api_key` VALUE, and it ships the placeholder
+    # `"<API_KEY_HERE>"`. Pointing this lookup at the real table (finding
+    # I4, one commit earlier) therefore turned a default config's clear
+    # `ChatConfigurationError` into `x-goog-api-key: <API_KEY_HERE>` on
+    # the wire and an upstream 400 with an invisible cause. Gated surfaces
+    # never reached it -- readiness validates the placeholder away -- so
+    # this landed exactly on the ungated `chat_api_call` callers (Evals,
+    # briefings, agent runs, WebSearch). This is the same one definition
+    # of "valid provider API key" `config.py`'s credential bridge and
+    # `Chat/provider_readiness` both use.
+    final_api_key = api_key or resolve_provider_api_key(google_config.get("api_key"))
     if not final_api_key:
         raise ChatConfigurationError(
             provider="google", message="Google API Key required."

@@ -782,6 +782,260 @@ def resolve_tldw_api_config(app_config) -> Dict:
 TLDW_API_PLACEHOLDER_BASE_URL = "http://127.0.0.1:8000"
 TLDW_API_PLACEHOLDER_AUTH_TOKEN = "default-secret-key-for-single-user"
 
+#: Canonical "this is not a real credential" values for provider API keys --
+#: PR-T2 Task 7. Shared by `_normalize_legacy_provider_api_key` below and
+#: `Chat/provider_readiness.get_provider_readiness`, which imports these
+#: three names FROM this module rather than the reverse.
+#:
+#: (Review round 2 finding: the first fix round had `config.py` import
+#: `is_valid_provider_api_key` FROM `Chat/provider_readiness.py`, which
+#: reproduced a real cycle -- `config` -> `Chat/__init__` -> `server_chat_
+#: conversation_service` -> `runtime_policy.bootstrap` -> back into
+#: `config` -- breaking standalone collection of `Tests/RuntimePolicy/`
+#: even though the shipped app and the full-suite alphabetical collect
+#: order happened to hide it. `config.py` is the dependency ROOT nearly
+#: everything else in this app already imports directly (verified: none of
+#: this module's own top-level imports -- the `DB.*`/`Utils.*` modules --
+#: reach back into `Chat` or `runtime_policy`), so the shared definition
+#: belongs here, with `Chat/provider_readiness.py` importing it -- not the
+#: reverse. This keeps the actual property Task 7 exists for -- exactly
+#: ONE definition of "valid key", consumed by both the credential bridge
+#: and the readiness reader -- while fixing the layering.)
+PROVIDER_API_KEY_PLACEHOLDERS = frozenset(
+    {
+        "",
+        "<API_KEY_HERE>",
+        "YOUR_KEY",
+        "your_key",
+        "your-api-key",
+    }
+)
+
+
+def resolve_provider_api_key(value: object) -> Optional[str]:
+    """Return `value` stripped, or `None` if it is not a usable provider API
+    key (not a string, blank, or one of `PROVIDER_API_KEY_PLACEHOLDERS`)."""
+    if not isinstance(value, str):
+        return None
+    stripped = value.strip()
+    if stripped in PROVIDER_API_KEY_PLACEHOLDERS:
+        return None
+    return stripped or None
+
+
+def is_valid_provider_api_key(value: object) -> bool:
+    """Return whether `value` is a usable provider API key."""
+    return resolve_provider_api_key(value) is not None
+
+
+#: Providers whose legacy `[API] <provider>_api_key` TOML key and
+#: `<PROVIDER>_API_KEY` environment variable both follow the plain
+#: `_normalize_legacy_provider_api_key` convention, keyed by the SAME
+#: normalized provider key `Chat/provider_readiness.provider_config_key`
+#: would derive (e.g. `"anthropic"`, not `"anthropic_api"`) -- this is what
+#: lets the bridge below write into `api_settings.<provider_key>`, the
+#: table `get_provider_readiness` actually reads.
+#:
+#: `mistral` IS included, deliberately, even though the shipped default
+#: config's own decorative table is `[api_settings.mistralai]` (matching
+#: `[providers]`'s `MistralAI` listing): `LLM_Calls/LLM_API_Calls.py`'s
+#: `chat_with_mistral` (~4617-4621) reads `api_settings.mistral` -- NOT
+#: `api_settings.mistralai` -- so `"mistral"` (what `provider_config_key
+#: ("Mistral")` computes, and what this bridge writes into) IS the live
+#: table the spend path already reads. An earlier revision of this comment
+#: claimed bridging under `"mistral"` would create "a second, disconnected
+#: table" -- that was backwards: `[api_settings.mistralai]` is the
+#: disconnected one; `api_settings.mistral` was simply absent from the
+#: shipped defaults, not wrong to write into. (Whether `MistralAI`-display
+#: users should also read `[api_settings.mistralai]`, and whether that
+#: default table should be renamed, is a separate, pre-existing question
+#: out of scope for this task.)
+_LEGACY_PROVIDER_API_KEY_BRIDGE: tuple[tuple[str, str, str], ...] = (
+    ("openai", "openai_api_key", "OPENAI_API_KEY"),
+    ("anthropic", "anthropic_api_key", "ANTHROPIC_API_KEY"),
+    ("cohere", "cohere_api_key", "COHERE_API_KEY"),
+    ("groq", "groq_api_key", "GROQ_API_KEY"),
+    ("huggingface", "huggingface_api_key", "HUGGINGFACE_API_KEY"),
+    ("openrouter", "openrouter_api_key", "OPENROUTER_API_KEY"),
+    ("deepseek", "deepseek_api_key", "DEEPSEEK_API_KEY"),
+    ("google", "google_api_key", "GOOGLE_API_KEY"),
+    ("mistral", "mistral_api_key", "MISTRAL_API_KEY"),
+)
+
+
+def _normalize_legacy_provider_api_key(
+    api_settings_section: Dict[str, Any],
+    provider_key: str,
+    *,
+    raw_api_section: Dict[str, Any],
+    toml_key: str,
+    env_var: str,
+) -> Optional[str]:
+    """One normalized credential for `provider_key` -- PR-T2 Task 7.
+
+    The harm this closes: a config with only `[API] anthropic_api_key` set
+    spent real money through the Library path (`LLM_Calls/LLM_API_Calls.
+    py`'s `chat_with_anthropic` reads the legacy `anthropic_api` dict built
+    a few lines below this function's call sites, which DOES see that key)
+    while Console's own readiness check (`Chat/provider_readiness.get_
+    provider_readiness`, reading only `api_settings.<provider>.api_key`)
+    showed a blocking "Connect a provider" wall for the identical config.
+    Both the modern `api_settings` table and the legacy `<provider>_api`
+    dict must be built from the SAME resolved value -- never two
+    independent reads of `[API]` -- or the split just moves.
+
+    Which of the two a handler reads varies by provider, and the bridge is
+    only as true as the table the handler actually opens: `chat_with_
+    anthropic` reads the legacy dict, `chat_with_mistral` reads
+    `api_settings.mistral`, and `chat_with_google` reads `api_settings.
+    google` -- the last only since PR-T2 review round 3 (finding I4), which
+    found it reading `api_settings.google_api`, a table nothing in this app
+    has ever produced. Google was therefore the one provider for which
+    this docstring's claim was FALSE for a bridged `[API] google_api_key`:
+    it could not reach the spend path at all while readiness reported
+    ready. Pinned by `Tests/Chat/test_google_native_tools.py::test_google_
+    api_key_comes_from_the_api_settings_google_table` (handler half) and
+    `Tests/Chat/test_provider_readiness.py::test_legacy_only_google_key_
+    lands_in_the_table_chat_with_google_reads` (config half).
+
+    **Scope of the "both readers agree" guarantee: the two CONFIG sources
+    only** -- the modern `api_settings.<provider>.api_key` table and the
+    legacy `[API] <provider>_api_key`. It does NOT extend to the
+    environment variable for every provider, and google is a known open
+    case (PR-T2 review round 4, R1; pre-existing, filed separately, NOT
+    closed here). With only `GOOGLE_API_KEY` set: readiness reports ready
+    (it has its own env fallback), this bridge deliberately does not write
+    env-sourced values into `api_settings` (see the paragraph above on
+    `api_key_source` and prefill safety -- that behavior is pinned and
+    correct), google's legacy dict is `google_generative_api` which the
+    handler no longer reads, and `chat_with_google` has no env fallback of
+    its own. A caller that passes no explicit `api_key` -- the Library RAG
+    path among them -- is therefore gated OPEN and fails at the wire. Any
+    claim that google is fully closed must say "config-sourced" or name
+    this gap.
+
+    Precedence: (1) an explicit, non-placeholder `api_settings.<provider_
+    key>.api_key` always wins -- a value entered through the Settings
+    screen (the modern location) was a deliberate choice; (2) the
+    environment variable; (3) the legacy `[API] <toml_key>` value.
+
+    **This precedence deliberately inverts the module docstring's general
+    "env vars -> config.toml -> defaults" priority for this one credential
+    lookup.** Before this task, `chat_with_openai` ALREADY overlaid a
+    canonical `api_settings.openai` value onto the legacy dict for `api_
+    key`/`api_base_url` (see its own call site, `LLM_API_Calls.py:561-580`)
+    while every OTHER provider's `<provider>_api` dict resolved env-before-
+    TOML with no `api_settings` input at all -- two silently different
+    rules per provider. Extending "modern config wins" to all 9 bridged
+    providers, rather than restoring env-first everywhere, is the choice
+    that makes `get_provider_readiness` (which always shows the config
+    value first) and the actual spend agree on which key was used -- the
+    entire point of this task. A user who explicitly set `api_settings.
+    <provider>.api_key` (e.g. via the Settings screen) now spends with that
+    value even if a stale environment variable is also set; this is a
+    real, user-visible behavior change and is intentional. See PR-T2 Task
+    7's test `test_modern_api_settings_key_outranks_the_env_var_for_the_
+    spending_path` (`Tests/Chat/test_provider_readiness.py`) and Task 8's
+    docs pass, which should call this out explicitly.
+
+    Only the (3) TOML-sourced fallback is ever written back into
+    `api_settings_section` -- never an (2) env-sourced one. Writing an
+    env-derived secret into `api_settings` would flip its reported
+    `api_key_source` from `env:...` to `config:...`, and `provider_
+    readiness.chat_api_key_field_state` treats a `config:` source as safe
+    to prefill and persist in the inline Chat-Defaults API-key field --
+    silently exposing a secret that was never typed into config. `get_
+    provider_readiness`'s own environment fallback already reports the
+    env-only case as ready without this rewrite, so nothing is lost by
+    leaving `api_settings` untouched there.
+
+    A provider table that does not yet exist is created only when there is
+    an actual TOML-sourced value to write into it -- never eagerly, since
+    several tests pin an untouched config's `api_settings` as exactly `{}`.
+
+    "Non-placeholder" is delegated to THIS module's own `resolve_provider_
+    api_key` (see its definition above, near `PROVIDER_API_KEY_
+    PLACEHOLDERS`) -- the SAME function `Chat/provider_readiness.get_
+    provider_readiness` runs each of ITS candidate sources through (it
+    imports the name from here, aliased `_valid_api_key`), applied here to
+    all three sources rather than per-branch, so neither reader can see a
+    value the other rejects or a differently-trimmed form of it. An earlier
+    revision of this function defined its own single-value placeholder
+    check (`value != "<API_KEY_HERE>"`), which missed four of the five
+    placeholders that function recognizes (`""`, `"YOUR_KEY"`, `"your_
+    key"`, `"your-api-key"`). Concretely: `[api_settings.anthropic] api_key
+    = "YOUR_KEY"` alongside a REAL `[API] anthropic_api_key` used to have
+    the bridge treat `"YOUR_KEY"` as "explicit modern config wins" and
+    write it into the legacy `anthropic_api` dict `chat_with_anthropic`
+    spends through, while readiness (which DID recognize `"YOUR_KEY"`)
+    correctly reported not-ready -- recreating, inside the very function
+    meant to end it, the exact kind of two-readers-disagree split this
+    task exists to close. A review round then found a second layering bug
+    in the first fix for that: routing the import through `Chat/provider_
+    readiness.py` (i.e. `config` importing FROM `Chat`) created a real
+    cycle back through `Chat/__init__` -> `server_chat_conversation_
+    service` -> `runtime_policy.bootstrap` -> `config`, breaking
+    standalone collection of `Tests/RuntimePolicy/` (masked in the
+    full-suite run only by alphabetical import ordering). The definition
+    now lives here instead, with `provider_readiness.py` importing it --
+    matching the rest of the codebase's dependency direction (nearly every
+    other module already imports `config` directly; `config` importing
+    from a submodule of `Chat` was the anomaly).
+
+    Args:
+        api_settings_section: The (already TOML-loaded) `api_settings`
+            table, mutated in place only when a TOML-sourced fallback
+            applies.
+        provider_key: Normalized provider key, e.g. `"anthropic"` -- must
+            match `Chat/provider_readiness.provider_config_key`'s output
+            for this provider.
+        raw_api_section: The raw `[API]` TOML section (legacy namespace).
+        toml_key: The legacy key within `raw_api_section`, e.g.
+            `"anthropic_api_key"`.
+        env_var: The conventional environment variable, e.g.
+            `"ANTHROPIC_API_KEY"`.
+
+    Returns:
+        The normalized credential (feeds the legacy `<provider>_api` dict
+        built just below each call site), or `None` when no source
+        resolves one.
+    """
+    provider_table = api_settings_section.get(provider_key)
+    # EVERY source goes through `resolve_provider_api_key` -- the same
+    # function `get_provider_readiness` runs each of its own candidates
+    # through -- and what this function returns is that resolved (stripped,
+    # non-placeholder) value, never the raw one (PR-T2 review round 3,
+    # findings I5 + minor 2). Two ways the earlier per-branch handling
+    # split the two readers back apart:
+    #   * The env branch was a bare `os.getenv(env_var)` truth test, so
+    #     `ANTHROPIC_API_KEY="YOUR_KEY"` landed verbatim in the legacy
+    #     `anthropic_api` dict while readiness (which validates every
+    #     source) said not-ready -- gated surfaces failed safe, but an
+    #     ungated `chat_api_call` caller (Evals, briefings, agent runs)
+    #     would send the placeholder as a credential.
+    #   * The modern/legacy branches validated the STRIPPED form but
+    #     returned the raw one, so `api_key = " sk-xyz "` showed
+    #     `sk-xyz` in readiness and spent ` sk-xyz ` (a 401).
+    modern_value = resolve_provider_api_key(
+        provider_table.get("api_key") if isinstance(provider_table, dict) else None
+    )
+    if modern_value:
+        return modern_value  # explicit modern config always wins
+
+    env_value = resolve_provider_api_key(os.getenv(env_var))
+    if env_value:
+        return env_value
+
+    legacy_value = resolve_provider_api_key(raw_api_section.get(toml_key))
+    if legacy_value:
+        if not isinstance(provider_table, dict):
+            provider_table = {}
+            api_settings_section[provider_key] = provider_table
+        provider_table["api_key"] = legacy_value
+        return legacy_value
+
+    return None
+
 
 def load_settings(force_reload: bool = False) -> Dict:
     """
@@ -1004,15 +1258,34 @@ def load_settings(force_reload: bool = False) -> Dict:
     ) -> Optional[str]:
         return os.getenv(env_var, section.get(toml_key))
 
-    openai_api_key = get_api_key("openai_api_key", "OPENAI_API_KEY")
-    anthropic_api_key = get_api_key("anthropic_api_key", "ANTHROPIC_API_KEY")
-    cohere_api_key = get_api_key("cohere_api_key", "COHERE_API_KEY")
-    groq_api_key = get_api_key("groq_api_key", "GROQ_API_KEY")
-    huggingface_api_key = get_api_key("huggingface_api_key", "HUGGINGFACE_API_KEY")
-    openrouter_api_key = get_api_key("openrouter_api_key", "OPENROUTER_API_KEY")
-    deepseek_api_key = get_api_key("deepseek_api_key", "DEEPSEEK_API_KEY")
-    mistral_api_key = get_api_key("mistral_api_key", "MISTRAL_API_KEY")
-    google_api_key = get_api_key("google_api_key", "GOOGLE_API_KEY")
+    # PR-T2 Task 7: these 9 providers' legacy `[API] <provider>_api_key`
+    # value and `api_settings.<provider>.api_key` are resolved together by
+    # `_normalize_legacy_provider_api_key` -- ONE normalization -- so
+    # `final_api_settings` (below, "api_settings" in config_dict, what
+    # `get_provider_readiness` reads) and this same value (below, the
+    # `<provider>_api` dicts `chat_with_<provider>` spends through) can
+    # never disagree about the same config. `elevenlabs` is untouched: it
+    # is a TTS credential, not a Chat provider `get_provider_readiness`
+    # resolves.
+    _bridged_provider_api_keys = {
+        provider_key: _normalize_legacy_provider_api_key(
+            final_api_settings,
+            provider_key,
+            raw_api_section=api_section_legacy,
+            toml_key=toml_key,
+            env_var=env_var,
+        )
+        for provider_key, toml_key, env_var in _LEGACY_PROVIDER_API_KEY_BRIDGE
+    }
+    openai_api_key = _bridged_provider_api_keys["openai"]
+    anthropic_api_key = _bridged_provider_api_keys["anthropic"]
+    cohere_api_key = _bridged_provider_api_keys["cohere"]
+    groq_api_key = _bridged_provider_api_keys["groq"]
+    huggingface_api_key = _bridged_provider_api_keys["huggingface"]
+    openrouter_api_key = _bridged_provider_api_keys["openrouter"]
+    deepseek_api_key = _bridged_provider_api_keys["deepseek"]
+    google_api_key = _bridged_provider_api_keys["google"]
+    mistral_api_key = _bridged_provider_api_keys["mistral"]
     elevenlabs_api_key = get_api_key("elevenlabs_api_key", "ELEVENLABS_API_KEY")
 
     # Determine platform-specific default STT provider

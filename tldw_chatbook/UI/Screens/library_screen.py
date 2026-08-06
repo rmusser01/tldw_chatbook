@@ -162,8 +162,7 @@ from ...Widgets.Prompts.prompt_block_editor_state import (
 from ...Library.library_rag_answer_service import (
     LibraryRagAnswer,
     generate_library_rag_answer,
-    library_rag_answer_provider_ready,
-    resolve_library_rag_answer_provider,
+    library_rag_answer_provider_gate,
 )
 from ...Library.library_rag_service import (
     LibraryRagSearchOutcome,
@@ -260,6 +259,7 @@ from ...Widgets.Library import (
     library_dim_label_text,
     library_rag_answer_children,
     library_rag_history_children,
+    library_rag_query_quiet_text,
     library_rag_query_shows_full_recovery,
     library_rag_query_status_children,
     library_rag_results_body_children,
@@ -1270,6 +1270,14 @@ class LibraryScreen(BaseAppScreen):
         # screen is a new instance with no worker running, so a restored
         # "answering" status could never be resolved by anything.
         self._library_rag_answer_in_flight: bool = False
+        # The provider `resolve_library_rag_answer_provider` resolved for
+        # the answer call `_library_rag_answer_in_flight` is currently
+        # tracking (PR-3 Task 3) -- feeds the in-flight "Asking
+        # <provider>..." line. Cleared everywhere the flag above is
+        # cleared; the panel-state builder additionally only ever forwards
+        # this value while the flag is True, so a value left behind by a
+        # reset gap could never surface on its own.
+        self._library_rag_answer_in_flight_provider: str = ""
         # What the Answer region currently shows, as
         # `(mode, is_answering, answer_object)` -- the three inputs
         # `library_rag_answer_children` reads. `_refresh_library_rag_answer_
@@ -2033,10 +2041,11 @@ class LibraryScreen(BaseAppScreen):
         self._library_rag_answer_mode = (
             rag_answer_mode if rag_answer_mode in ("search", "rag") else ""
         )
-        # `_library_rag_answer_in_flight` is intentionally left at its
-        # `__init__` default (False): this instance has no answer worker
-        # running, so restoring an in-flight "answering" status would be a
-        # dangling one nothing could ever resolve.
+        # `_library_rag_answer_in_flight` (and its Task 3 companion,
+        # `_library_rag_answer_in_flight_provider`) are intentionally left
+        # at their `__init__` defaults (False / ""): this instance has no
+        # answer worker running, so restoring an in-flight "answering"
+        # status would be a dangling one nothing could ever resolve.
 
         media_type_filter = state.get("library_media_type_filter")
         self._library_media_type_filter = (
@@ -3791,6 +3800,12 @@ class LibraryScreen(BaseAppScreen):
         )
         if not (self._library_loaded and not self._library_lookup_error):
             selected_source_types = None
+        # ONE `resolve -> readiness -> name` pass per render (finding I1):
+        # the same call used to be made twice inline below, and the second
+        # of them threw away the `ProviderReadiness` object carrying the
+        # only text that can tell a user with a selected-but-uncredentialed
+        # provider what to actually do.
+        provider_gate = library_rag_answer_provider_gate()
         return LibraryRagPanelState.from_values(
             source_counts={
                 "notes": self._local_source_counts.get("notes", 0),
@@ -3821,6 +3836,15 @@ class LibraryScreen(BaseAppScreen):
                 if self._library_rag_answer_in_flight
                 else self._library_rag_retrieval_status
             ),
+            # PR-3 Task 3: named for the in-flight "Asking <provider>..."
+            # line -- gated on the same flag as `retrieval_status` above,
+            # belt-and-suspenders against a reset gap ever leaving a stale
+            # provider name forwarded once the flag itself reads False.
+            in_flight_answer_provider=(
+                self._library_rag_answer_in_flight_provider
+                if self._library_rag_answer_in_flight
+                else ""
+            ),
             recovery_copy=(
                 self._library_rag_recovery_state.visible_copy
                 if self._library_rag_recovery_state is not None
@@ -3842,19 +3866,33 @@ class LibraryScreen(BaseAppScreen):
             dependencies_ready=True,
             index_ready=True,
             # `provider_ready` joined this contract in task-249 as a
-            # hardcoded `True` -- PR-3 task 2 activates the gate for real:
-            # `library_rag_answer_provider_ready()` resolves whether a
-            # provider is actually configured
-            # (`Library/library_rag_answer_service.py`, precedent
-            # `Subscriptions/briefing_service.py:315 _default_provider()`),
-            # so a Library with no default LLM endpoint configured now sees
-            # the pre-existing "Select a provider/model before asking for a
-            # RAG answer." copy (`Library/library_rag_state.py:893-897`)
-            # instead of a Run button that silently could not answer.
+            # hardcoded `True` -- PR-3 task 2 activated the gate for real,
+            # and PR-T2 Task 4 review collapsed it into this single
+            # `provider_name` argument, derived inside `LibraryRagQueryState.
+            # from_values` as `bool((provider_name or "").strip())` -- see
+            # its docstring. A Library with no default LLM endpoint
+            # configured (`resolve_library_rag_answer_provider()` returns
+            # `(None, None)`) sees the pre-existing "Select a provider/model
+            # before asking for a RAG answer." copy -- while a provider that
+            # IS configured but cannot authenticate gets the credential
+            # remedy instead, carried by `provider_credential_recovery`
+            # below (finding I1). Once one is configured AND the gate
+            # confirms its credentials actually resolve (PR-T2 Task 7 -- an endpoint
+            # NAME alone used to be treated as ready, which is how the
+            # Library path spent money while Console's own readiness check
+            # showed a blocking wall for the same config), this same value
+            # also names the provider in the ready-state quiet line's
+            # paid-mode notice (`library_rag_paid_mode_notice`) -- the ONLY
+            # provider-adjacent copy on this panel used to be that
+            # blocked-branch text, which disappeared the instant a provider
+            # was configured, the exact inversion of what a keyboard-fast
+            # user needs before pressing a button that spends real money.
             # rag-mode-only by construction (`LibraryRagQueryState.
             # from_values`'s `normalized_mode == "rag"` check) -- keyword
-            # Search mode never calls a provider and stays unaffected.
-            provider_ready=library_rag_answer_provider_ready(),
+            # Search mode never calls a provider and stays unaffected
+            # regardless of this value.
+            provider_name=provider_gate.provider,
+            provider_credential_recovery=provider_gate.credential_recovery,
             selected_source_types=selected_source_types,
             history=self._library_search_history,
             history_collapsed=self._library_rag_history_collapsed,
@@ -16688,6 +16726,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_rag_answer_query = ""
         self._library_rag_answer_mode = ""
         self._library_rag_answer_in_flight = False
+        self._library_rag_answer_in_flight_provider = ""
 
     def _reset_library_rag_in_flight_status(self) -> None:
         """Un-stick the run gate without touching landed results (B5/task-284).
@@ -16714,6 +16753,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_rag_retrieval_status = ""
         self._library_rag_recovery_state = None
         self._library_rag_answer_in_flight = False
+        self._library_rag_answer_in_flight_provider = ""
 
     @on(Button.Pressed, "#library-rag-run-query")
     async def run_library_rag_query(self, event: Button.Pressed) -> None:
@@ -17404,15 +17444,20 @@ class LibraryScreen(BaseAppScreen):
         chat_kwargs = self._library_rag_answer_chat_kwargs()
         if chat_kwargs is None:
             return
-        # Resolved ONCE and reused: `library_rag_answer_provider_ready()`
-        # (the run gate) and this call are two facets of one resolution, so
-        # the tuple travels into generation rather than the boolean being
-        # re-derived into a second provider lookup that could disagree.
-        provider, model = resolve_library_rag_answer_provider()
+        # The run gate (`_library_rag_panel_state`'s `provider_name=`) and
+        # this call both go through `library_rag_answer_provider_gate()`
+        # (PR-T2 Task 7 -- endpoint name AND resolvable credentials, the
+        # same question Console's readiness check asks); a `None` provider
+        # below means the gate would already have blocked `rag` mode. One
+        # gate call resolves both halves, where this used to resolve the
+        # endpoint twice (finding I1).
+        answer_gate = library_rag_answer_provider_gate()
+        provider, model = answer_gate.provider, answer_gate.model
         if provider is None:
-            # The run gate blocks rag mode without a provider, so this is
-            # unreachable through the UI; if it ever is reached, saying
-            # nothing is honest -- that gate's copy already explains why.
+            # The run gate blocks rag mode without a ready provider, so
+            # this is unreachable through the UI; if it ever is reached,
+            # saying nothing is honest -- that gate's copy already explains
+            # why.
             logger.debug("Library RAG answer skipped: no provider configured.")
             return
         # Built from state that has just been applied, so the note describes
@@ -17423,6 +17468,11 @@ class LibraryScreen(BaseAppScreen):
         self._library_rag_answer_query = request.query
         self._library_rag_answer_mode = request.mode
         self._library_rag_answer_in_flight = bool(outcome.results)
+        # PR-3 Task 3: named for the in-flight "Asking <provider>..." line
+        # -- set unconditionally alongside the flag above (never gated on
+        # `outcome.results` itself) since the panel-state builder is what
+        # decides whether to forward it, keyed off that same flag.
+        self._library_rag_answer_in_flight_provider = provider
         self._execute_library_rag_answer(
             request,
             results=outcome.results,
@@ -17558,15 +17608,37 @@ class LibraryScreen(BaseAppScreen):
         `Static.update()` -- has no yield points at all, so it can never
         interleave with anything and needs no coordination.
 
-        Trade-off: the query region's quiet-line/blocked-callout/recovery
-        block (`library_rag_query_status_children`) is NOT refreshed here
-        (it requires remove/mount and would visually desync from an
-        unrefreshed callout) -- an ingest-driven scope change that flips
-        the run gate's *reason* text (as opposed to just enabled/disabled)
-        stays stale until the next full refresh. Accepted narrowly for
-        this snapshot-driven path only; every other caller above still
-        runs the full `_refresh_search_rag_panel_state_widgets` and is
-        unaffected.
+        The query region's reserved quiet line IS synced here (F1), by the
+        same yield-free `Static.update()` class of write as the scope
+        summary below -- no remove/mount, so RAG-27's constraint holds.
+        The original trade-off deferred that row along with the callout,
+        on the reasoning that it carried only the run gate's *reason*
+        text. That reasoning expired with PR-T2 Task 4: the same row now
+        also carries the money disclosure (`library_rag_paid_mode_notice`,
+        naming the provider Run would bill), and deferring it produced a
+        silent paid state. A Library revisit past
+        `LIBRARY_SNAPSHOT_CACHE_TTL_SECONDS` composes with all-zero counts
+        -> no scope -> a blocked-but-QUIET gate (no callout, empty row);
+        the snapshot then lands real counts and this method flips Run to
+        enabled, leaving a runnable paid button above an empty row that
+        never said a provider would be billed. Deriving the row's copy
+        from `library_rag_query_quiet_text(panel_state)` -- the same
+        builder `compose()` and the full refresh use, off the same state
+        the run gate above is read from -- keeps the disclosure and the
+        button they sit next to from ever disagreeing.
+
+        Trade-off (narrowed): the blocked-callout/recovery block below the
+        quiet line is still NOT refreshed here -- it is the part that
+        requires remove/mount, and `#library-rag-query-controls`'
+        `has-recovery` class with it. So a snapshot that lifts the
+        quiet no-scope blocker only to land on a LOUD one (rag mode with
+        no provider configured: "Select a provider/model...") still shows
+        no callout until the next full refresh. That residue cannot spend
+        money -- every blocker it covers leaves Run disabled, and the
+        quiet line, derived from the same state, shows no paid notice
+        while one is in force. Accepted narrowly for this snapshot-driven
+        path only; every other caller above still runs the full
+        `_refresh_search_rag_panel_state_widgets` and is unaffected.
 
         (task-2075 D5) The *scope* region's own recovery block --
         `#library-rag-source-scope`'s `has-recovery` class plus its
@@ -17603,6 +17675,19 @@ class LibraryScreen(BaseAppScreen):
         run_button.label = run_action.label
         run_button.disabled = not run_action.enabled
         run_button.tooltip = run_action.tooltip
+
+        # (F1) Written in the SAME pass as the button above, off the SAME
+        # `panel_state`, because this row carries rag mode's paid-mode
+        # notice: enabling Run without refreshing it is exactly how a
+        # revisit-past-the-snapshot-TTL produced a runnable paid button
+        # with no disclosure on screen. Plain `Static.update()` -- no
+        # yield point, so RAG-27's constraint (see the docstring) holds.
+        try:
+            self.query_one("#library-rag-query-quiet-line", Static).update(
+                library_rag_query_quiet_text(panel_state)
+            )
+        except (NoMatches, QueryError):
+            pass
 
         options_by_source_type = {
             option.source_type: option for option in panel_state.scope.options

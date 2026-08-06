@@ -11,6 +11,7 @@ from unittest.mock import Mock
 import pytest
 from textual.widgets import Button, Input, Static
 
+from tldw_chatbook import config as app_config
 from tldw_chatbook.Library.library_rag_state import LibraryRagResultRow
 from tldw_chatbook.Library.library_rag_service import (
     LibraryRagSearchOutcome,
@@ -37,6 +38,40 @@ from Tests.UI.test_library_shell import (
     _active_library_screen,
     _wait_for_library_shell,
 )
+
+
+@pytest.fixture(autouse=True)
+def _ready_library_rag_provider(monkeypatch):
+    """PR-T2 Task 7 made `library_rag_answer_provider_ready` also verify
+    credentials resolve (`Chat/provider_readiness.get_provider_readiness`),
+    not just that a default endpoint NAME is configured -- closing the gap
+    where the Library path spent money a credential-blind gate had no basis
+    to allow. This gate's own dedicated blocked-provider coverage
+    (`Tests/UI/test_library_shell.py::test_library_shell_search_rag_mode_
+    blocks_run_without_a_ready_provider`) already exercises the genuinely
+    unconfigured case; every OTHER mounted-UI test in this file uses `rag`
+    mode reachability purely as scaffolding for something else under test
+    (coverage notes, mid-flight answer discards, restore lifecycle, ...),
+    so autouse layers a resolvable OpenAI credential onto the REAL loaded
+    settings (never a hand-built stand-in, so the rest of app boot still
+    sees the genuine config shape) rather than requiring every test to opt
+    in individually.
+    """
+    monkeypatch.setattr(app_config, "default_api_endpoint", "openai", raising=False)
+    real_load_settings = app_config.load_settings
+
+    def _load_settings_with_ready_openai_key(*args, **kwargs):
+        settings = dict(real_load_settings(*args, **kwargs))
+        api_settings = dict(settings.get("api_settings") or {})
+        openai_settings = dict(api_settings.get("openai") or {})
+        openai_settings["api_key"] = "sk-test-gate16-ready-key"
+        api_settings["openai"] = openai_settings
+        settings["api_settings"] = api_settings
+        return settings
+
+    monkeypatch.setattr(
+        app_config, "load_settings", _load_settings_with_ready_openai_key
+    )
 
 
 async def _wait_for_library_shell_ready(screen, pilot, *, timeout: float = 2.0) -> None:
@@ -267,6 +302,7 @@ def test_empty_status_renders_quiet_two_line_state_not_full_dump() -> None:
         source_counts={"notes": 1, "media": 1},
         query="unicorn migration guide",
         retrieval_status="empty",
+        provider_name="openai",
     )
     empty_children = library_rag_results_body_children(empty_state)
     assert len(empty_children) == 1
@@ -286,6 +322,7 @@ def test_empty_status_renders_quiet_two_line_state_not_full_dump() -> None:
         source_counts={"notes": 1},
         query="unicorn migration guide",
         retrieval_status="failed",
+        provider_name="openai",
     )
     failed_children = library_rag_results_body_children(failed_state)
     assert len(failed_children) == 1
@@ -341,6 +378,157 @@ def test_history_row_tooltip_names_current_mode_and_tracks_mode_changes() -> Non
         search_rows["library-rag-history-1"].tooltip
         == "Re-runs under the current mode (Search)."
     )
+
+
+# --- PR-T2 Task 4: mark the paid mode as paid -------------------------------
+
+
+def test_query_quiet_line_names_the_paid_provider_when_rag_mode_is_ready() -> None:
+    """(PR-T2 Task 4) Until this task, the ONLY provider-adjacent copy on
+    this panel was the *blocked* branch's "Select a provider/model..."
+    text -- it vanishes the instant a provider IS configured, the exact
+    inversion of what a keyboard-fast user needs before pressing a button
+    that spends real money. The reserved quiet-line row
+    (`library_rag_query_status_children`) must fill with a plain,
+    provider-named statement in the one state that row was otherwise left
+    empty for: ready, `rag` mode, provider configured.
+    """
+    from tldw_chatbook.Library.library_rag_state import LibraryRagPanelState
+    from tldw_chatbook.Widgets.Library.library_search_rag_panel import (
+        library_rag_query_status_children,
+    )
+
+    state = LibraryRagPanelState.from_values(
+        source_counts={"notes": 1},
+        query="What changed?",
+        mode="rag",
+        provider_name="openai",
+    )
+    quiet_line = next(
+        child
+        for child in library_rag_query_status_children(state)
+        if child.id == "library-rag-query-quiet-line"
+    )
+    assert str(quiet_line.renderable) == (
+        "RAG Answer sends your question and the evidence to openai. "
+        "Search stays local."
+    )
+
+
+def test_query_quiet_line_stays_empty_in_search_mode() -> None:
+    """(PR-T2 Task 4) Search mode never calls a provider -- the reserved
+    quiet-line row's no-layout-shift property (2026-07 UAT) must not
+    regress: it stays empty, not fill with a fact about the OTHER mode.
+    """
+    from tldw_chatbook.Library.library_rag_state import LibraryRagPanelState
+    from tldw_chatbook.Widgets.Library.library_search_rag_panel import (
+        library_rag_query_status_children,
+    )
+
+    state = LibraryRagPanelState.from_values(
+        source_counts={"notes": 1},
+        query="What changed?",
+        mode="search",
+        provider_name="openai",
+    )
+    quiet_line = next(
+        child
+        for child in library_rag_query_status_children(state)
+        if child.id == "library-rag-query-quiet-line"
+    )
+    assert str(quiet_line.renderable) == ""
+    # Cheap Minor (review round): pin the no-layout-shift property
+    # directly -- the reserved row's fixed height is load-bearing (2026-07
+    # UAT finding, the Run button used to jump ~2 rows) and was previously
+    # preserved only by inspection. Mirrors the ingest-canvas quiet line's
+    # own height pin (`Tests/UI/test_library_shell.py`).
+    assert quiet_line.styles.height is not None
+    assert quiet_line.styles.height.value == 1
+
+
+def test_query_quiet_line_omits_the_paid_notice_when_run_is_blocked() -> None:
+    """(PR-T2 Task 4) The blocked branch's existing "Select a provider/
+    model..." copy already says the right thing for its case -- the new
+    ready-state notice must not also appear while Run is blocked on a
+    missing provider.
+    """
+    from tldw_chatbook.Library.library_rag_state import LibraryRagPanelState
+    from tldw_chatbook.Widgets.Library.library_search_rag_panel import (
+        library_rag_query_status_children,
+    )
+
+    blocked_no_provider = LibraryRagPanelState.from_values(
+        source_counts={"notes": 1},
+        query="What changed?",
+        mode="rag",
+    )
+    quiet_line = next(
+        child
+        for child in library_rag_query_status_children(blocked_no_provider)
+        if child.id == "library-rag-query-quiet-line"
+    )
+    assert str(quiet_line.renderable) == ""
+    assert blocked_no_provider.query_state.run_action.disabled_reason == (
+        "Select a provider/model before asking for a RAG answer."
+    )
+
+
+def test_mode_toggle_tooltip_names_the_paid_mode_fact() -> None:
+    """(PR-T2 Task 4) The tooltip carries the same paid/local fact as the
+    quiet line, in its own compact register -- stated unconditionally,
+    since "RAG Answer calls a provider" / "Search stays local" are
+    properties of the MODE itself, true whether or not a provider happens
+    to be configured right now.
+    """
+    from tldw_chatbook.Library.library_rag_state import LibraryRagPanelState
+    from tldw_chatbook.Widgets.Library.library_search_rag_panel import (
+        _mode_toggle_tooltip,
+    )
+
+    search_state = LibraryRagPanelState.from_values(mode="search")
+    rag_state = LibraryRagPanelState.from_values(mode="rag")
+
+    assert _mode_toggle_tooltip(search_state) == (
+        "Cycle Search/RAG mode. Next: RAG Answer — calls a paid provider."
+    )
+    assert _mode_toggle_tooltip(rag_state) == (
+        "Cycle Search/RAG mode. Next: Search — stays local."
+    )
+
+
+@pytest.mark.parametrize("provider", ["openai", "anthropic", "local-vllm"])
+def test_query_quiet_line_invariant_always_names_a_ready_providers(
+    provider: str,
+) -> None:
+    """(PR-T2 Task 4 review) The render-layer half of the footgun-fix
+    invariant: for ANY provider a ready `rag`-mode state names (not just
+    the "openai" happy-path example above), the quiet line's notice
+    contains that exact name. `provider_ready`/`provider_name` used to be
+    two independently settable parameters that could disagree -- this
+    would have caught a regression where the state derived `ready_answer_
+    provider` correctly but a render-layer change stopped using it, or
+    vice versa.
+    """
+    from tldw_chatbook.Library.library_rag_state import LibraryRagPanelState
+    from tldw_chatbook.Widgets.Library.library_search_rag_panel import (
+        library_rag_query_status_children,
+    )
+
+    state = LibraryRagPanelState.from_values(
+        source_counts={"notes": 1},
+        query="What changed?",
+        mode="rag",
+        provider_name=provider,
+    )
+    assert state.query_state.status == "ready"
+    quiet_line = next(
+        child
+        for child in library_rag_query_status_children(state)
+        if child.id == "library-rag-query-quiet-line"
+    )
+    text = str(quiet_line.renderable)
+    assert text != ""
+    assert provider in text
 
 
 # --- PR-3 Task 3: answer region ---------------------------------------------
@@ -643,6 +831,7 @@ def test_answer_region_shows_generating_indicator_while_answering() -> None:
         query="Why did the incident happen?",
         mode="rag",
         retrieval_status="answering",
+        provider_name="openai",
     )
     region = library_rag_answer_children(state)[0]
     assert region.id == "library-rag-answer"
@@ -686,6 +875,484 @@ def test_answer_region_absent_outside_rag_mode_and_before_any_answer() -> None:
         mode="rag",
     )
     assert library_rag_answer_children(idle_rag_state) == []
+
+
+def test_answer_region_asking_indicator_names_the_billed_provider_while_answering() -> (
+    None
+):
+    """PR-3 Task 3: before the call lands, the in-flight line names the
+    provider that is ABOUT to be billed -- "Asking <provider>..." replacing
+    the bare "Generating answer..." -- whenever the panel state carries a
+    resolved `in_flight_answer_provider` (`LibraryScreen` resolves it via
+    `resolve_library_rag_answer_provider()` before starting the answer
+    worker). The state-level default ("") keeps the pre-existing generic
+    line intact -- see
+    `test_answer_region_shows_generating_indicator_while_answering` above,
+    which this test does not touch -- so this is additive, not a
+    replacement of that oracle."""
+    from tldw_chatbook.Library.library_rag_state import LibraryRagPanelState
+    from tldw_chatbook.Widgets.Library import library_rag_answer_children
+
+    state = LibraryRagPanelState.from_values(
+        source_counts={"notes": 1},
+        query="Why did the incident happen?",
+        mode="rag",
+        retrieval_status="answering",
+        provider_name="anthropic",
+        in_flight_answer_provider="anthropic",
+    )
+    region = library_rag_answer_children(state)[0]
+    status_static = next(
+        child
+        for child in _answer_region_children(region)
+        if child.id == "library-rag-answer-status"
+    )
+    assert str(status_static.renderable) == "Asking anthropic…"
+    # PR-T2 review round 3, minor 1: the interpolated value is config-
+    # sourced (`default_api_endpoint`), so this line must render literally
+    # -- a provider name containing brackets would otherwise be eaten as
+    # Rich markup and the user would be told the app is "Asking …" nobody.
+    assert status_static._render_markup is False
+
+
+class _StubPricingCatalog:
+    """A `PricingCatalog`-shaped stub with a fixed `cost_for_usage` answer.
+
+    Deliberately not the real `PricingCatalog`: that instance loads live
+    config (`load_cli_config_and_ensure_existence`), which a unit test must
+    not depend on for a deterministic "known"/"unknown" pricing outcome.
+    """
+
+    def __init__(self, breakdown) -> None:
+        self._breakdown = breakdown
+
+    def cost_for_usage(self, usage):
+        return self._breakdown
+
+
+def test_answer_region_footer_shows_provider_model_and_known_cost(monkeypatch) -> None:
+    """After the call lands, a footer Static
+    (`#library-rag-answer-provenance`) names what it actually cost --
+    provider, model, and a real dollar figure derived from Task 2's
+    `answer.usage` at RENDER time via the pricing catalog (never stored)."""
+    import tldw_chatbook.Widgets.Library.library_search_rag_panel as panel_module
+    from tldw_chatbook.Chat.provider_usage import ProviderUsage
+    from tldw_chatbook.Library.library_rag_answer_service import (
+        ANSWER_STATUS_READY,
+        LibraryRagAnswer,
+    )
+    from tldw_chatbook.Library.library_rag_state import LibraryRagPanelState
+    from tldw_chatbook.LLM_Calls.pricing_catalog import CostBreakdown
+    from tldw_chatbook.Widgets.Library import library_rag_answer_children
+
+    breakdown = CostBreakdown(
+        input_cost=0.003,
+        cache_read_cost=0.0,
+        cache_write_cost=0.0,
+        output_cost=0.0001,
+        total=0.0031,
+        as_of="2026-08-02",
+    )
+    monkeypatch.setattr(
+        panel_module, "get_pricing_catalog", lambda: _StubPricingCatalog(breakdown)
+    )
+    usage = ProviderUsage(
+        uncached_input=1000, output=240, provider="anthropic", model="claude-sonnet-4-6"
+    )
+    answer = LibraryRagAnswer(
+        status=ANSWER_STATUS_READY,
+        text="Expired credential caused the incident.",
+        citation_status="validated",
+        provider="anthropic",
+        model="claude-sonnet-4-6",
+        usage=usage,
+    )
+    state = LibraryRagPanelState.from_values(
+        source_counts={"notes": 1},
+        query="Why did the incident happen?",
+        mode="rag",
+        answer=answer,
+    )
+    region = library_rag_answer_children(state)[0]
+    region_children = _answer_region_children(region)
+    provenance_static = next(
+        child
+        for child in region_children
+        if child.id == "library-rag-answer-provenance"
+    )
+    assert (
+        str(provenance_static.renderable)
+        == "anthropic · claude-sonnet-4-6 · $0.0031 (1,240 tok)"
+    )
+    assert provenance_static.has_class("library-rag-quiet-line")
+
+
+def test_answer_region_footer_states_pricing_unknown_never_a_dollar_figure(
+    monkeypatch,
+) -> None:
+    """A model the pricing catalog has no rate for must render "pricing
+    unknown", never a fabricated `$0.00` and never a silently omitted token
+    count (house precedent: `UI/Evals/inspector.py` refuses to claim a cost
+    it has no basis for)."""
+    import tldw_chatbook.Widgets.Library.library_search_rag_panel as panel_module
+    from tldw_chatbook.Chat.provider_usage import ProviderUsage
+    from tldw_chatbook.Library.library_rag_answer_service import (
+        ANSWER_STATUS_READY,
+        LibraryRagAnswer,
+    )
+    from tldw_chatbook.Library.library_rag_state import LibraryRagPanelState
+    from tldw_chatbook.Widgets.Library import library_rag_answer_children
+
+    monkeypatch.setattr(
+        panel_module, "get_pricing_catalog", lambda: _StubPricingCatalog(None)
+    )
+    usage = ProviderUsage(
+        uncached_input=1000, output=240, provider="anthropic", model="mystery-9000"
+    )
+    answer = LibraryRagAnswer(
+        status=ANSWER_STATUS_READY,
+        text="Expired credential caused the incident.",
+        citation_status="validated",
+        provider="anthropic",
+        model="mystery-9000",
+        usage=usage,
+    )
+    state = LibraryRagPanelState.from_values(
+        source_counts={"notes": 1},
+        query="Why did the incident happen?",
+        mode="rag",
+        answer=answer,
+    )
+    region = library_rag_answer_children(state)[0]
+    region_children = _answer_region_children(region)
+    provenance_static = next(
+        child
+        for child in region_children
+        if child.id == "library-rag-answer-provenance"
+    )
+    text = str(provenance_static.renderable)
+    assert "$" not in text
+    assert "pricing unknown" in text
+    assert "1,240 tok" in text
+
+
+def test_answer_region_footer_renders_a_blank_model_gracefully_when_billed(
+    monkeypatch,
+) -> None:
+    """Review finding: a provider response whose payload omits its own
+    `"model"` key is a real, reachable upstream shape Task 2 already tests
+    (`test_a_missing_model_key_yields_an_empty_model_without_raising`) --
+    `provider="anthropic"`, `model=""`, but `usage` IS known (money was
+    spent). The footer must still render the cost/token facts, and the
+    blank model must be OMITTED rather than left as a dangling `" · "` with
+    nothing after it (the "anthropic ·  · 11,251 tok · pricing unknown"
+    defect this test pins against regressing). Exercised for BOTH the
+    known-cost and pricing-unknown shapes, since either could reintroduce
+    the double-middot artifact independently."""
+    import tldw_chatbook.Widgets.Library.library_search_rag_panel as panel_module
+    from tldw_chatbook.Chat.provider_usage import ProviderUsage
+    from tldw_chatbook.Library.library_rag_answer_service import (
+        ANSWER_STATUS_READY,
+        LibraryRagAnswer,
+    )
+    from tldw_chatbook.Library.library_rag_state import LibraryRagPanelState
+    from tldw_chatbook.LLM_Calls.pricing_catalog import CostBreakdown
+    from tldw_chatbook.Widgets.Library import library_rag_answer_children
+
+    usage = ProviderUsage(
+        uncached_input=1000, output=240, provider="anthropic", model=""
+    )
+
+    # Known-cost shape.
+    breakdown = CostBreakdown(
+        input_cost=0.003,
+        cache_read_cost=0.0,
+        cache_write_cost=0.0,
+        output_cost=0.0001,
+        total=0.0031,
+        as_of="2026-08-02",
+    )
+    monkeypatch.setattr(
+        panel_module, "get_pricing_catalog", lambda: _StubPricingCatalog(breakdown)
+    )
+    answer = LibraryRagAnswer(
+        status=ANSWER_STATUS_READY,
+        text="Expired credential caused the incident.",
+        citation_status="validated",
+        provider="anthropic",
+        model="",
+        usage=usage,
+    )
+    state = LibraryRagPanelState.from_values(
+        source_counts={"notes": 1},
+        query="Why did the incident happen?",
+        mode="rag",
+        answer=answer,
+    )
+    region = library_rag_answer_children(state)[0]
+    region_children = _answer_region_children(region)
+    provenance_static = next(
+        child
+        for child in region_children
+        if child.id == "library-rag-answer-provenance"
+    )
+    text = str(provenance_static.renderable)
+    assert text == "anthropic · $0.0031 (1,240 tok)"
+    assert " ·  · " not in text
+    assert "$0.0031" in text
+    assert "1,240 tok" in text
+
+    # Pricing-unknown shape -- same blank model, no known rate.
+    monkeypatch.setattr(
+        panel_module, "get_pricing_catalog", lambda: _StubPricingCatalog(None)
+    )
+    unknown_pricing_answer = LibraryRagAnswer(
+        status=ANSWER_STATUS_READY,
+        text="Expired credential caused the incident.",
+        citation_status="validated",
+        provider="anthropic",
+        model="",
+        usage=usage,
+    )
+    unknown_pricing_state = LibraryRagPanelState.from_values(
+        source_counts={"notes": 1},
+        query="Why did the incident happen?",
+        mode="rag",
+        answer=unknown_pricing_answer,
+    )
+    unknown_pricing_region = library_rag_answer_children(unknown_pricing_state)[0]
+    unknown_pricing_static = next(
+        child
+        for child in _answer_region_children(unknown_pricing_region)
+        if child.id == "library-rag-answer-provenance"
+    )
+    unknown_pricing_text = str(unknown_pricing_static.renderable)
+    assert unknown_pricing_text == "anthropic · 1,240 tok · pricing unknown"
+    assert " ·  · " not in unknown_pricing_text
+    assert "$" not in unknown_pricing_text
+    assert "1,240 tok" in unknown_pricing_text
+    assert "pricing unknown" in unknown_pricing_text
+
+
+def test_answer_region_footer_renders_no_usage_form_without_a_dollar_or_crashing(
+    monkeypatch,
+) -> None:
+    """A `ready` answer whose usage payload the provider omitted
+    (`ProviderUsage.from_provider_payload` degrading to `None` -- a real,
+    tested Task 2 shape:
+    `test_a_payload_with_no_usage_key_yields_none_usage_without_raising`)
+    still names provider/model, but with NO token count and NO dollar
+    figure -- `build_provenance_line`'s "no usage yet" shape, reached
+    safely because `usage is None` short-circuits before either raising
+    formatter (`format_cost_amount`/`format_token_count`) ever runs. The
+    pricing catalog must not even be consulted in this shape."""
+    import tldw_chatbook.Widgets.Library.library_search_rag_panel as panel_module
+    from tldw_chatbook.Library.library_rag_answer_service import (
+        ANSWER_STATUS_READY,
+        LibraryRagAnswer,
+    )
+    from tldw_chatbook.Library.library_rag_state import LibraryRagPanelState
+    from tldw_chatbook.Widgets.Library import library_rag_answer_children
+
+    catalog_mock = Mock()
+    monkeypatch.setattr(panel_module, "get_pricing_catalog", lambda: catalog_mock)
+    answer = LibraryRagAnswer(
+        status=ANSWER_STATUS_READY,
+        text="Expired credential caused the incident.",
+        citation_status="validated",
+        provider="anthropic",
+        model="claude-sonnet-4-6",
+        usage=None,
+    )
+    state = LibraryRagPanelState.from_values(
+        source_counts={"notes": 1},
+        query="Why did the incident happen?",
+        mode="rag",
+        answer=answer,
+    )
+    region = library_rag_answer_children(state)[0]
+    region_children = _answer_region_children(region)
+    provenance_static = next(
+        child
+        for child in region_children
+        if child.id == "library-rag-answer-provenance"
+    )
+    assert str(provenance_static.renderable) == "anthropic · claude-sonnet-4-6"
+    catalog_mock.cost_for_usage.assert_not_called()
+
+
+def test_answer_region_footer_absent_for_no_evidence_empty_provider() -> None:
+    """The no-evidence path never calls a provider at all -- Task 2's
+    `LibraryRagAnswer.provider` stays `""` there, the one path where it
+    does. The footer must be ABSENT entirely in that case, never a line
+    naming an empty provider."""
+    from tldw_chatbook.Library.library_rag_answer_service import (
+        ANSWER_STATUS_NO_EVIDENCE,
+        LIBRARY_RAG_NO_EVIDENCE_TEXT,
+        LibraryRagAnswer,
+    )
+    from tldw_chatbook.Library.library_rag_state import LibraryRagPanelState
+    from tldw_chatbook.Widgets.Library import library_rag_answer_children
+
+    answer = LibraryRagAnswer(
+        status=ANSWER_STATUS_NO_EVIDENCE, text=LIBRARY_RAG_NO_EVIDENCE_TEXT
+    )
+    state = LibraryRagPanelState.from_values(
+        source_counts={"notes": 1},
+        query="Why did the incident happen?",
+        mode="rag",
+        answer=answer,
+    )
+    region = library_rag_answer_children(state)[0]
+    region_children = _answer_region_children(region)
+    assert not any(
+        child.id == "library-rag-answer-provenance" for child in region_children
+    )
+
+
+def test_answer_region_footer_shows_cost_for_a_failed_but_billed_answer(
+    monkeypatch,
+) -> None:
+    """Task 2's fix round: a post-call processing failure (citation
+    validation/abstention detection raising AFTER a real, billable response
+    was already parsed) still carries the real usage that call cost -- the
+    footer must show what it cost even though `status` is `failed`, not
+    silently report as if nothing had been spent."""
+    import tldw_chatbook.Widgets.Library.library_search_rag_panel as panel_module
+    from tldw_chatbook.Chat.provider_usage import ProviderUsage
+    from tldw_chatbook.Library.library_rag_answer_service import (
+        ANSWER_STATUS_FAILED,
+        LibraryRagAnswer,
+    )
+    from tldw_chatbook.Library.library_rag_state import LibraryRagPanelState
+    from tldw_chatbook.LLM_Calls.pricing_catalog import CostBreakdown
+    from tldw_chatbook.Widgets.Library import library_rag_answer_children
+
+    breakdown = CostBreakdown(
+        input_cost=0.0015,
+        cache_read_cost=0.0,
+        cache_write_cost=0.0,
+        output_cost=0.0015,
+        total=0.02,
+        as_of="2026-08-02",
+    )
+    monkeypatch.setattr(
+        panel_module, "get_pricing_catalog", lambda: _StubPricingCatalog(breakdown)
+    )
+    usage = ProviderUsage(
+        uncached_input=500, output=100, provider="anthropic", model="claude-sonnet-4-6"
+    )
+    answer = LibraryRagAnswer(
+        status=ANSWER_STATUS_FAILED,
+        text="",
+        error="Citation validation crashed",
+        provider="anthropic",
+        model="claude-sonnet-4-6",
+        usage=usage,
+    )
+    state = LibraryRagPanelState.from_values(
+        source_counts={"notes": 1},
+        query="Why did the incident happen?",
+        mode="rag",
+        answer=answer,
+    )
+    region = library_rag_answer_children(state)[0]
+    region_children = _answer_region_children(region)
+    provenance_static = next(
+        child
+        for child in region_children
+        if child.id == "library-rag-answer-provenance"
+    )
+    assert str(provenance_static.renderable) == "anthropic · claude-sonnet-4-6 · $0.02 (600 tok)"
+
+
+def test_answer_region_footer_absent_when_nothing_was_ever_spent_or_known() -> None:
+    """The OTHER failed sub-case (Task 2): an exception before any provider
+    call ever returned (e.g. the provider call itself raising -- a
+    realistic upstream 503). `provider` is always set (a plain function
+    parameter), but `model`/`usage` both stay at their empty defaults since
+    nothing was ever captured. Rendering `build_provenance_line`'s header
+    with an empty model would print a dangling "anthropic · " naming
+    nothing useful; since neither a model nor any usage is known, this
+    renderer says nothing rather than that half-line."""
+    from tldw_chatbook.Library.library_rag_answer_service import (
+        ANSWER_STATUS_FAILED,
+        LibraryRagAnswer,
+    )
+    from tldw_chatbook.Library.library_rag_state import LibraryRagPanelState
+    from tldw_chatbook.Widgets.Library import library_rag_answer_children
+
+    answer = LibraryRagAnswer(
+        status=ANSWER_STATUS_FAILED,
+        text="",
+        error="upstream 503",
+        provider="anthropic",
+        model="",
+        usage=None,
+    )
+    state = LibraryRagPanelState.from_values(
+        source_counts={"notes": 1},
+        query="Why did the incident happen?",
+        mode="rag",
+        answer=answer,
+    )
+    region = library_rag_answer_children(state)[0]
+    region_children = _answer_region_children(region)
+    assert not any(
+        child.id == "library-rag-answer-provenance" for child in region_children
+    )
+
+
+def test_answer_region_footer_also_renders_for_an_abstained_answer(monkeypatch) -> None:
+    """Abstained answers are also a settled, billed call (Task 2): the
+    model responded and declined. The footer must render for `abstained`
+    exactly as it does for `ready`, not only for the clean-answer branch."""
+    import tldw_chatbook.Widgets.Library.library_search_rag_panel as panel_module
+    from tldw_chatbook.Chat.provider_usage import ProviderUsage
+    from tldw_chatbook.Library.library_rag_answer_service import (
+        ANSWER_STATUS_ABSTAINED,
+        LibraryRagAnswer,
+    )
+    from tldw_chatbook.Library.library_rag_state import LibraryRagPanelState
+    from tldw_chatbook.LLM_Calls.pricing_catalog import CostBreakdown
+    from tldw_chatbook.Widgets.Library import library_rag_answer_children
+
+    breakdown = CostBreakdown(
+        input_cost=0.001,
+        cache_read_cost=0.0,
+        cache_write_cost=0.0,
+        output_cost=0.0002,
+        total=0.0012,
+        as_of="2026-08-02",
+    )
+    monkeypatch.setattr(
+        panel_module, "get_pricing_catalog", lambda: _StubPricingCatalog(breakdown)
+    )
+    usage = ProviderUsage(
+        uncached_input=300, output=50, provider="anthropic", model="claude-sonnet-4-6"
+    )
+    answer = LibraryRagAnswer(
+        status=ANSWER_STATUS_ABSTAINED,
+        text="I can't answer that from the evidence given.",
+        provider="anthropic",
+        model="claude-sonnet-4-6",
+        usage=usage,
+    )
+    state = LibraryRagPanelState.from_values(
+        source_counts={"notes": 1},
+        query="Why did the incident happen?",
+        mode="rag",
+        answer=answer,
+    )
+    region = library_rag_answer_children(state)[0]
+    region_children = _answer_region_children(region)
+    provenance_static = next(
+        child
+        for child in region_children
+        if child.id == "library-rag-answer-provenance"
+    )
+    assert "anthropic · claude-sonnet-4-6" in str(provenance_static.renderable)
+    assert "$0.0012" in str(provenance_static.renderable)
 
 
 @pytest.mark.asyncio
@@ -979,6 +1646,94 @@ async def test_library_search_rag_cold_boot_recovery_banner_agrees_with_real_sou
         )
         assert "(1)" in str(notes_toggle.label)
         assert notes_toggle.disabled is False
+
+
+@pytest.mark.asyncio
+async def test_library_search_rag_snapshot_that_enables_run_also_lands_paid_notice() -> (
+    None
+):
+    """(F1) A source snapshot may never leave a runnable paid button above a
+    row that never disclosed the spend.
+
+    The live UAT path: leaving Library and returning after
+    ``LIBRARY_SNAPSHOT_CACHE_TTL_SECONDS`` composes the Search canvas from
+    all-zero counts, so `rag` mode with a restored query renders
+    blocked-on-scope -- and no-scope is a *quiet* blocker, so the panel
+    shows no callout and an EMPTY quiet row. The real snapshot then lands
+    through ``_apply_local_source_snapshot``'s in-place branch, whose
+    ``_sync_library_rag_scope_toggle_and_run_gate_widgets`` flips Run to
+    enabled. Before this fix that method deliberately skipped the whole
+    query-status block (RAG-27), so Run went live beside a blank row: the
+    paid-mode notice PR-T2 Task 4 exists to show was nowhere on screen,
+    and pressing Run spent money with no disclosure.
+
+    Arranged from an empty Library rather than a timed revisit because the
+    seam under test is "composed with zero counts, snapshot brings real
+    ones" -- how the zeros got there is not what broke. Asserts the
+    INVARIANT (an enabled Run implies the mounted row says what the state
+    says, and that copy names the billed provider) rather than the literal
+    sentence, so a future divergence between the two render sites fails
+    here even if the copy is rewritten.
+    """
+    from tldw_chatbook.Widgets.Library import library_rag_query_quiet_text
+
+    app = _build_test_app()
+    app.notes_scope_service = StaticLibraryNotesScopeService([])
+    app.media_reading_scope_service = StaticLibraryMediaScopeService([])
+    app.chat_conversation_scope_service = StaticLibraryConversationScopeService([])
+    host = DestinationHarness(app, "library")
+    query = "Why did the incident happen?"
+
+    async with host.run_test(size=(170, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_library_shell_ready(screen, pilot)
+
+        screen.query_one("#library-row-browse-search", Button).press()
+        await _switch_to_rag_mode(screen, pilot)
+        screen.query_one("#library-rag-query-input", Input).value = query
+        await _wait_until(
+            pilot,
+            lambda: screen._library_rag_query == query,
+            "the restored query never reached the panel state",
+        )
+
+        # Precondition -- the exact live capture: blocked, but QUIETLY.
+        assert screen.query_one("#library-rag-run-query", Button).disabled is True
+        blocked_quiet_line = screen.query_one("#library-rag-query-quiet-line", Static)
+        assert str(blocked_quiet_line.renderable) == ""
+        assert not screen.query("#library-rag-query-blocked-callout")
+
+        screen._apply_local_source_snapshot(
+            {
+                "notes": ({"title": "Research Note", "id": "note-1"},),
+                "media": (),
+                "conversations": (),
+            },
+            {"notes": 1, "media": 0, "conversations": 0},
+            {"notes": True, "media": True, "conversations": True},
+        )
+        await pilot.pause()
+
+        run_button = screen.query_one("#library-rag-run-query", Button)
+        quiet_line = screen.query_one("#library-rag-query-quiet-line", Static)
+        assert run_button.disabled is False, (
+            "arrangement no longer reproduces the flip this pins -- the "
+            "snapshot must take the in-place branch and enable Run"
+        )
+        panel_state = screen._library_rag_panel_state()
+        provider = panel_state.query_state.ready_answer_provider
+        assert provider, (
+            "an enabled Run in rag mode means the next press bills a "
+            "provider -- the state must name it"
+        )
+        assert str(quiet_line.renderable) == library_rag_query_quiet_text(panel_state), (
+            "the mounted quiet row disagrees with the state the run gate "
+            "beside it was derived from"
+        )
+        assert provider in str(quiet_line.renderable), (
+            "Run is enabled for a paid call with no paid disclosure on "
+            "screen (F1)"
+        )
 
 
 @pytest.mark.asyncio

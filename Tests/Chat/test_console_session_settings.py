@@ -8,6 +8,7 @@ from tldw_chatbook.Chat.console_session_settings import (
     ConsoleSettingsContextEstimate,
     ConsoleSessionSettings,
     ConsoleSettingsSummaryState,
+    _estimate_tokens_locally,
     build_console_context_estimate,
     build_console_settings_summary_state,
     build_console_settings_readiness,
@@ -16,6 +17,7 @@ from tldw_chatbook.Chat.console_session_settings import (
     build_console_provider_options,
     validate_console_session_settings,
 )
+from tldw_chatbook.Utils.token_counter import count_tokens_messages
 
 
 def test_console_settings_exclude_presentation_while_session_owns_identity() -> None:
@@ -690,23 +692,96 @@ def test_readiness_configured_unknown_non_native_provider_is_unknown() -> None:
 
 
 def test_context_estimate_counts_messages_and_staged_sources() -> None:
+    """AUTHORIZED RE-BASELINE (task-6): staged evidence used to affect only
+    the label's "; N sources staged" suffix -- `used_tokens` silently
+    reported zero for content the send will actually carry. `staged_text`
+    now folds into `used_tokens` too; the label-suffix contract this test
+    originally pinned is unchanged and still asserted below."""
+    without_staged = build_console_context_estimate(
+        messages=[{"role": "user", "content": "hello world"}],
+        provider="openai",
+        model="gpt-3.5-turbo",
+        max_tokens_response=512,
+        system_prompt="You are concise.",
+    )
+
     estimate = build_console_context_estimate(
         messages=[{"role": "user", "content": "hello world"}],
         provider="openai",
         model="gpt-3.5-turbo",
         staged_source_count=2,
         staged_context_summary="2 staged sources",
+        staged_text="Evidence body text carried by the two staged sources.",
         max_tokens_response=512,
         system_prompt="You are concise.",
     )
 
     assert estimate.used_tokens is not None
     assert estimate.used_tokens > 0
+    assert estimate.used_tokens > without_staged.used_tokens
     assert estimate.token_limit == 4096
     assert "tokens" in estimate.label
     assert "2 sources staged" in estimate.label
     assert estimate.staged_source_count == 2
     assert estimate.staged_context_summary == "2 staged sources"
+
+
+def test_context_estimate_staged_text_delta_tracks_its_size() -> None:
+    """task-6: more staged evidence text must mean a bigger `used_tokens`
+    delta, not a fixed/ignored bump -- this is what distinguishes "counts
+    the evidence" from a hardcoded placeholder."""
+    short = build_console_context_estimate(
+        messages=[],
+        provider="openai",
+        model="gpt-3.5-turbo",
+        staged_text="short evidence snippet",
+    )
+    long = build_console_context_estimate(
+        messages=[],
+        provider="openai",
+        model="gpt-3.5-turbo",
+        staged_text="short evidence snippet " * 200,
+    )
+
+    assert short.used_tokens is not None
+    assert long.used_tokens is not None
+    assert long.used_tokens > short.used_tokens
+
+
+def test_context_estimate_large_staged_source_is_not_zero() -> None:
+    """task-6: reproduces the critique's exact observation -- '0 tok' with
+    five sources staged including a 942 KB corpus. A source of that class
+    must move `used_tokens` well off zero."""
+    large_source_text = "corpus text " * 80_000  # ~960 KB
+
+    estimate = build_console_context_estimate(
+        messages=[],
+        provider="openai",
+        model="gpt-3.5-turbo",
+        staged_source_count=1,
+        staged_text=large_source_text,
+    )
+
+    assert estimate.used_tokens is not None
+    assert estimate.used_tokens > 1000
+
+
+def test_context_estimate_blank_staged_text_does_not_change_tokens() -> None:
+    """Whitespace-only staged text is treated the same as none -- purity
+    guard: the builder must not fold in an empty/blank contribution."""
+    baseline = build_console_context_estimate(
+        messages=[{"role": "user", "content": "hi"}],
+        provider="openai",
+        model="gpt-3.5-turbo",
+    )
+    blank = build_console_context_estimate(
+        messages=[{"role": "user", "content": "hi"}],
+        provider="openai",
+        model="gpt-3.5-turbo",
+        staged_text="   ",
+    )
+
+    assert blank.used_tokens == baseline.used_tokens
 
 
 def test_context_estimate_uses_longest_matching_token_limit_prefix() -> None:
@@ -880,6 +955,89 @@ def test_context_estimate_counts_system_prompt_tokens():
     assert with_system.used_tokens is not None
     assert without_system.used_tokens is not None
     assert with_system.used_tokens > without_system.used_tokens
+
+
+# --- Task 5: _estimate_tokens_locally delegates to the real counter --------
+#
+# Before this task the estimator was a char-ratio placeholder (`del model`,
+# `CONSOLE_TOKEN_CHAR_RATIOS`, a fake `len(messages) * 10` overhead). These
+# tests pin it to `count_tokens_messages` (Utils/token_counter.py), which is
+# built on `estimate_tokens` -- custom tokenizer -> tiktoken -> conservative
+# chars floor, never a whitespace word count -- so they hold regardless of
+# which tier is active in the environment running them.
+
+
+def test_estimate_tokens_locally_matches_real_counter_for_short_text() -> None:
+    messages = [{"role": "user", "content": "hi"}]
+    assert _estimate_tokens_locally(
+        messages, "gpt-3.5-turbo", "openai"
+    ) == count_tokens_messages(messages, "gpt-3.5-turbo", "openai")
+
+
+def test_estimate_tokens_locally_matches_real_counter_for_long_text() -> None:
+    long_text = "The quick brown fox jumps over the lazy dog. " * 200
+    messages = [
+        {"role": "system", "content": "Answer concisely."},
+        {"role": "user", "content": long_text},
+    ]
+    assert _estimate_tokens_locally(
+        messages, "claude-sonnet-4-6", "anthropic"
+    ) == count_tokens_messages(messages, "claude-sonnet-4-6", "anthropic")
+
+
+def test_estimate_tokens_locally_matches_real_counter_for_code() -> None:
+    code = (
+        "def fibonacci(n: int) -> int:\n"
+        "    if n <= 1:\n"
+        "        return n\n"
+        "    return fibonacci(n - 1) + fibonacci(n - 2)\n\n"
+        "results = [fibonacci(i) for i in range(10)]\n"
+        "print({'results': results, 'ok': True})\n"
+    )
+    messages = [{"role": "assistant", "content": code}]
+    assert _estimate_tokens_locally(
+        messages, "gpt-4-turbo", "openai"
+    ) == count_tokens_messages(messages, "gpt-4-turbo", "openai")
+
+
+def test_estimate_tokens_locally_matches_real_counter_for_unicode() -> None:
+    text = "これはユニコードのテストです。日本語のテキストを推定します。" * 20
+    messages = [{"role": "user", "content": text}]
+    assert _estimate_tokens_locally(
+        messages, "gemini-1.5-pro", "google"
+    ) == count_tokens_messages(messages, "gemini-1.5-pro", "google")
+
+
+def test_estimate_tokens_locally_honors_model_argument() -> None:
+    """The placeholder began with `del model`, discarding it entirely."""
+    messages = [{"role": "user", "content": "hello there, this is a test message"}]
+    gpt_tokens = _estimate_tokens_locally(messages, "gpt-4", "openai")
+    claude_tokens = _estimate_tokens_locally(
+        messages, "claude-3-opus-20240229", "anthropic"
+    )
+    assert gpt_tokens != claude_tokens
+    assert gpt_tokens == count_tokens_messages(messages, "gpt-4", "openai")
+    assert claude_tokens == count_tokens_messages(
+        messages, "claude-3-opus-20240229", "anthropic"
+    )
+
+
+def test_estimate_tokens_locally_honors_provider_argument() -> None:
+    content = "some context content for token estimation " * 5
+    messages = [{"role": "user", "content": content}]
+    openai_tokens = _estimate_tokens_locally(messages, "gpt-3.5-turbo", "openai")
+    google_tokens = _estimate_tokens_locally(messages, "gpt-3.5-turbo", "google")
+    assert openai_tokens == count_tokens_messages(messages, "gpt-3.5-turbo", "openai")
+    assert google_tokens == count_tokens_messages(messages, "gpt-3.5-turbo", "google")
+
+
+def test_estimate_tokens_locally_source_no_longer_discards_model() -> None:
+    source = inspect.getsource(_estimate_tokens_locally)
+    assert "del model" not in source
+
+
+def test_estimate_tokens_locally_empty_messages_returns_zero() -> None:
+    assert _estimate_tokens_locally([], "gpt-3.5-turbo", "openai") == 0
 
 
 def test_rail_system_line_none_state_for_blank_or_missing_prompt():

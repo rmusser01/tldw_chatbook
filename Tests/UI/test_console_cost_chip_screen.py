@@ -34,8 +34,13 @@ from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
 )
 
+from tldw_chatbook.Chat.citation_evidence_models import (
+    EvidenceBundle,
+    EvidenceReference,
+)
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole, ConsoleRunStatus
 from tldw_chatbook.Chat.console_cost_tracker import ConsoleCacheState
+from tldw_chatbook.Chat.console_live_work import ConsoleLiveWorkLaunch
 from tldw_chatbook.UI.Screens import chat_screen as chat_screen_module
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.Widgets.Console import ConsoleComposerBar
@@ -481,6 +486,59 @@ def test_build_console_cost_state_returns_none_without_native_session():
 
     assert state is None
     assert screen._console_cost_cache_state == ConsoleCacheState.NONE
+
+
+@pytest.mark.asyncio
+async def test_build_console_cost_state_counts_staged_evidence_before_send():
+    """task-6: reproduces the critique's exact symptom -- "0 tok" with five
+    sources staged (one a 942 KB corpus), none of it sent yet. Staged,
+    unsent evidence must price into the chip as an ESTIMATED row so the
+    total moves off zero and the `~` honesty marker (an unsent estimate,
+    not a real spend) appears -- even though the session has zero
+    messages."""
+    app = _build_test_app()
+    _configure_anthropic_ready_console(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(200, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-cost-chip")
+
+        empty_state = console._build_console_cost_state()
+        assert empty_state is not None
+        assert "Tokens: 0" in empty_state.tooltip
+
+        big_reference = EvidenceReference(
+            evidence_id="S1",
+            source_id="media-1",
+            source_type="media",
+            title="Big corpus",
+            snippet="corpus text " * 80_000,  # ~960 KB before staging's own cap
+            authority_label="local",
+            status="available",
+            source_owner="local",
+        )
+        bundle = EvidenceBundle(
+            bundle_id="bundle-big",
+            query="question",
+            source="Library Search/RAG",
+            references=(big_reference,),
+        )
+        launch = ConsoleLiveWorkLaunch.from_values(
+            source="Library Search/RAG",
+            title="Library Search/RAG retrieval",
+            payload={"query": "question", "evidence_bundle": bundle.to_payload()},
+            status="staged",
+        )
+        console._stage_console_library_rag_launch(launch)
+        await pilot.pause()
+
+        state = console._build_console_cost_state()
+
+        assert state is not None
+        assert "Tokens: 0" not in state.tooltip
+        assert "includes estimated" in state.tooltip.lower()
+        assert state.label.startswith("~")
 
 
 @pytest.mark.asyncio

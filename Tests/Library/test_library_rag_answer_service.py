@@ -34,6 +34,7 @@ from tldw_chatbook.Chat.Chat_Deps import (
     ChatProviderError,
     ChatRateLimitError,
 )
+from tldw_chatbook.Chat.provider_usage import ProviderUsage
 from tldw_chatbook.Library.library_rag_answer_service import (
     ANSWER_MAX_TOKENS,
     ANSWER_STATUS_ABSTAINED,
@@ -47,6 +48,7 @@ from tldw_chatbook.Library.library_rag_answer_service import (
     LIBRARY_RAG_NO_EVIDENCE_TEXT,
     _is_abstention,
     generate_library_rag_answer,
+    library_rag_answer_provider_gate,
     library_rag_answer_provider_ready,
     resolve_library_rag_answer_provider,
 )
@@ -86,6 +88,46 @@ def _blocked_row():
         workspace_ids=("workspace-b",),
         active_workspace_id="workspace-a",
     )
+
+
+#: The exact Anthropic-native usage fixture from
+#: `Tests/Chat/test_provider_usage.py::test_anthropic_native_payload_maps_directly`
+#: -- copied, not invented, per the task-2 brief.
+ANTHROPIC_USAGE_PAYLOAD = {
+    "input_tokens": 3571,
+    "output_tokens": 727,
+    "cache_read_input_tokens": 6656,
+    "cache_creation_input_tokens": 1024,
+}
+
+
+def _anthropic_raw_response(
+    *, model="claude-sonnet-4-6", content=GROUNDED_ANSWER, usage=ANTHROPIC_USAGE_PAYLOAD
+):
+    """A realistic `chat_api_call` return value, Anthropic-normalized shape.
+
+    Matches the OpenAI-style envelope `LLM_API_Calls.py`'s Anthropic
+    normalizer builds (`normalized_response` at :1787-1800): the provider's
+    own `model` and raw `usage` block ride alongside the
+    `choices[0].message.content` that `extract_response_content` reads.
+    `resolve_library_rag_answer_provider` deliberately resolves `model=None`
+    (the handler picks its own default) -- this `model` field is the only
+    app-side source of the model that actually answered.
+    """
+    return {
+        "id": "anthropic-test-123",
+        "object": "chat.completion",
+        "created": 0,
+        "model": model,
+        "choices": [
+            {
+                "index": 0,
+                "message": {"role": "assistant", "content": content},
+                "finish_reason": "stop",
+            }
+        ],
+        "usage": usage,
+    }
 
 
 class _FakeChat:
@@ -649,6 +691,286 @@ def test_insufficient_evidence_validation_counts_as_an_abstention():
     assert _is_abstention("An expired credential caused the incident [S1].", "validated") is False
 
 
+# --- Contract 7: the answer keeps what the provider told it (PR-T2 task 2) -
+#
+# `chat_api_call` returns the handler's FULL response; `extract_response_
+# content` reads only `choices[0].message.content` and everything else used
+# to be discarded one line later. A real, billable provider call deserves to
+# have its provider/model/usage survive -- on the ready path, the abstained
+# path, AND the empty-response failure path (a call that cost money and
+# returned nothing still cost money). `resolve_library_rag_answer_provider`
+# deliberately resolves `model=None`, so `raw["model"]` -- the provider's own
+# answer -- is the ONLY app-side source of what model actually ran; it must
+# never be confused with `provider`, which is the configured endpoint name.
+
+
+async def test_a_ready_answer_carries_provider_model_and_usage():
+    raw = _anthropic_raw_response(model="claude-sonnet-4-6")
+    chat = _FakeChat(reply=raw)
+
+    answer = await generate_library_rag_answer(
+        query=QUERY,
+        results=[_row()],
+        coverage_note="",
+        provider="anthropic",
+        model=None,
+        chat=chat,
+    )
+
+    assert answer.status == ANSWER_STATUS_READY
+    assert answer.provider == "anthropic"
+    # The provider's OWN model, not the configured endpoint name.
+    assert answer.model == "claude-sonnet-4-6"
+    assert answer.model != answer.provider
+    assert answer.usage == ProviderUsage(
+        uncached_input=3571,
+        cache_read=6656,
+        cache_write=1024,
+        output=727,
+        provider="anthropic",
+        model="claude-sonnet-4-6",
+    )
+
+
+async def test_an_abstained_answer_carries_provider_model_and_usage():
+    raw = _anthropic_raw_response(
+        model="claude-haiku-4-5", content=f"  {LIBRARY_RAG_NO_EVIDENCE_TEXT}\n"
+    )
+    chat = _FakeChat(reply=raw)
+
+    answer = await generate_library_rag_answer(
+        query=QUERY,
+        results=[_row()],
+        coverage_note="",
+        provider="anthropic",
+        model=None,
+        chat=chat,
+    )
+
+    assert answer.status == ANSWER_STATUS_ABSTAINED
+    assert answer.provider == "anthropic"
+    assert answer.model == "claude-haiku-4-5"
+    assert answer.usage is not None
+    assert answer.usage.total_tokens == 3571 + 6656 + 1024 + 727
+
+
+async def test_an_empty_response_failure_still_carries_provider_model_and_usage():
+    """A call that cost money and returned nothing still cost money."""
+    raw = _anthropic_raw_response(model="claude-sonnet-4-6", content="")
+    chat = _FakeChat(reply=raw)
+
+    answer = await generate_library_rag_answer(
+        query=QUERY,
+        results=[_row()],
+        coverage_note="",
+        provider="anthropic",
+        model=None,
+        chat=chat,
+    )
+
+    assert answer.status == ANSWER_STATUS_FAILED
+    assert answer.error == EMPTY_ANSWER_ERROR
+    assert answer.provider == "anthropic"
+    assert answer.model == "claude-sonnet-4-6"
+    assert answer.usage == ProviderUsage(
+        uncached_input=3571,
+        cache_read=6656,
+        cache_write=1024,
+        output=727,
+        provider="anthropic",
+        model="claude-sonnet-4-6",
+    )
+
+
+async def test_a_payload_with_no_usage_key_yields_none_usage_without_raising():
+    """`response_data.get("usage")` is `None` when the provider's own
+    payload carried no usage block at all -- a realistic case, not an
+    invented one."""
+    raw = _anthropic_raw_response(usage=None)
+    chat = _FakeChat(reply=raw)
+
+    answer = await generate_library_rag_answer(
+        query=QUERY,
+        results=[_row()],
+        coverage_note="",
+        provider="anthropic",
+        model=None,
+        chat=chat,
+    )
+
+    assert answer.status == ANSWER_STATUS_READY
+    assert answer.usage is None
+    assert answer.model == "claude-sonnet-4-6"
+
+
+async def test_an_unrecognized_usage_shape_degrades_to_none_without_raising():
+    """A malformed/unrecognized usage payload must never raise -- it just
+    means the call's cost cannot be normalized, not that generation failed."""
+    raw = _anthropic_raw_response(usage={"tokens": 5})
+    chat = _FakeChat(reply=raw)
+
+    answer = await generate_library_rag_answer(
+        query=QUERY,
+        results=[_row()],
+        coverage_note="",
+        provider="anthropic",
+        model=None,
+        chat=chat,
+    )
+
+    assert answer.status == ANSWER_STATUS_READY
+    assert answer.usage is None
+
+
+async def test_a_missing_model_key_yields_an_empty_model_without_raising():
+    raw = _anthropic_raw_response()
+    del raw["model"]
+    chat = _FakeChat(reply=raw)
+
+    answer = await generate_library_rag_answer(
+        query=QUERY,
+        results=[_row()],
+        coverage_note="",
+        provider="anthropic",
+        model=None,
+        chat=chat,
+    )
+
+    assert answer.status == ANSWER_STATUS_READY
+    assert answer.model == ""
+    # Usage normalization is independent of the missing model key.
+    assert answer.usage is not None
+    assert answer.usage.total_tokens == 3571 + 6656 + 1024 + 727
+
+
+async def test_a_plain_string_reply_yields_empty_provider_fields_without_raising():
+    """Most of this suite's fakes return a plain string (the reply text
+    only), not a full response envelope -- `extract_response_content`
+    already tolerates that shape. The new provider/model/usage capture must
+    tolerate it too: no `.get()` call on a bare string."""
+    answer = await generate_library_rag_answer(
+        query=QUERY,
+        results=[_row()],
+        coverage_note="",
+        provider="openai",
+        model=None,
+        chat=_FakeChat(reply=GROUNDED_ANSWER),
+    )
+
+    assert answer.status == ANSWER_STATUS_READY
+    assert answer.model == ""
+    assert answer.usage is None
+
+
+# --- Contract 7b: a post-call failure never discards already-spent money --
+#
+# Fix-review finding on this same task: `build_answer_citation_validation`/
+# `_is_abstention` run AFTER `_invoke_chat` returns and AFTER provider/model/
+# usage are captured from `raw` -- and both are inside the containment `try`
+# widened by commit 375c267da specifically because they DO raise in
+# practice. An exception there must not discard usage that is already live
+# in scope: a call that produced a real answer and cost real money, then
+# failed one step later in post-processing, must still report what it cost.
+
+
+async def test_a_post_call_processing_failure_still_carries_the_already_captured_usage(
+    monkeypatch,
+):
+    """The money-lost-on-error case: `raw` was a real, billable Anthropic
+    response (model + usage both present) and `_invoke_chat` returned
+    successfully -- provider/model/usage were captured -- and THEN citation
+    validation raises. The failed answer must still carry all three; the
+    hoisted `response_model`/`usage` (mirroring the existing `bundle`
+    pattern) are what make that possible instead of the `except` block
+    silently reporting `provider=""`/`usage=None`.
+    """
+    from tldw_chatbook.Library import library_rag_answer_service
+
+    def _explode(body, bundle):
+        raise RuntimeError("citation validator exploded")
+
+    monkeypatch.setattr(
+        library_rag_answer_service, "build_answer_citation_validation", _explode
+    )
+
+    raw = _anthropic_raw_response(model="claude-sonnet-4-6")
+    answer = await generate_library_rag_answer(
+        query=QUERY,
+        results=[_row()],
+        coverage_note="",
+        provider="anthropic",
+        model=None,
+        chat=_FakeChat(reply=raw),
+    )
+
+    assert answer.status == ANSWER_STATUS_FAILED
+    assert answer.text == ""
+    assert answer.provider == "anthropic"
+    assert answer.model == "claude-sonnet-4-6"
+    assert answer.usage == ProviderUsage(
+        uncached_input=3571,
+        cache_read=6656,
+        cache_write=1024,
+        output=727,
+        provider="anthropic",
+        model="claude-sonnet-4-6",
+    )
+
+
+async def test_a_bundle_build_failure_still_defaults_model_and_usage_cleanly(
+    monkeypatch,
+):
+    """The other sub-case: an exception BEFORE `_invoke_chat` ever runs (no
+    call was made, nothing was spent) must still degrade cleanly to the
+    hoisted defaults -- not a `NameError` on top of the original exception.
+    """
+    from tldw_chatbook.Library import library_rag_answer_service
+
+    def _explode(results, *, query):
+        raise RuntimeError("bundle build exploded")
+
+    monkeypatch.setattr(
+        library_rag_answer_service, "build_library_rag_evidence_bundle", _explode
+    )
+
+    answer = await generate_library_rag_answer(
+        query=QUERY,
+        results=[_row()],
+        coverage_note="",
+        provider="anthropic",
+        model=None,
+        chat=_FakeChat(reply=GROUNDED_ANSWER),
+    )
+
+    assert answer.status == ANSWER_STATUS_FAILED
+    # `provider` is a function parameter -- always safe, always included.
+    assert answer.provider == "anthropic"
+    # Nothing was ever spent: no call was made, so these stay at default.
+    assert answer.model == ""
+    assert answer.usage is None
+
+
+async def test_a_provider_call_exception_still_defaults_model_and_usage_cleanly():
+    """The provider call itself raising (`_invoke_chat` never returns a
+    `raw`) is the other "before `_invoke_chat` returns" sub-case: genuinely
+    nothing was captured, and the answer must say so cleanly rather than
+    raising a `NameError` in the `except` block.
+    """
+    answer = await generate_library_rag_answer(
+        query=QUERY,
+        results=[_row()],
+        coverage_note="",
+        provider="openai",
+        model=None,
+        chat=_FakeChat(error=ChatProviderError("upstream 503", provider="openai")),
+    )
+
+    assert answer.status == ANSWER_STATUS_FAILED
+    assert answer.provider == "openai"
+    assert answer.model == ""
+    assert answer.usage is None
+
+
 # --- The honesty prompt itself ------------------------------------------
 
 
@@ -684,16 +1006,28 @@ def test_the_system_prompt_pins_the_honesty_contract():
 
 # --- Provider resolution (PR-3 task 2) --------------------------------------
 #
-# `LibraryRagQueryState.from_values`'s `provider_ready` gate
-# (`Library/library_rag_state.py:893-897`) has existed since before this
-# feature but was always fed a hardcoded `True` by the screen
-# (`UI/Screens/library_screen.py`, under task-249's "the runtime initializes
-# lazily" contract) -- these two functions are what task 2 uses to feed it
-# honestly. Precedent for the resolution shape (read `config.default_
-# api_endpoint` THROUGH the module, so a test can monkeypatch it) is
-# `Subscriptions/briefing_service.py:315 _default_provider()`; unlike that
-# function this one also reports "not ready" for an empty/missing endpoint
-# rather than assuming config.py's own "openai" fallback always holds.
+# `LibraryRagQueryState.from_values`'s provider-readiness gate has existed
+# since before this feature but was always fed a hardcoded `True` by the
+# screen (`UI/Screens/library_screen.py`, under task-249's "the runtime
+# initializes lazily" contract) -- these two functions are what task 2 uses
+# to feed it honestly. Precedent for the resolution shape (read `config.
+# default_api_endpoint` THROUGH the module, so a test can monkeypatch it)
+# is `Subscriptions/briefing_service.py:315 _default_provider()`; unlike
+# that function this one also reports "not ready" for an empty/missing
+# endpoint rather than assuming config.py's own "openai" fallback always
+# holds.
+#
+# Note on the gate's shape today (PR-T2): what was once a separately-
+# settable `provider_ready: bool` parameter on `LibraryRagQueryState.
+# from_values` is gone -- PR-T2 Task 4 collapsed it into one
+# `provider_name: str | None` parameter, with readiness DERIVED as
+# `bool((provider_name or "").strip())` (`Library/library_rag_state.py`,
+# `from_values`), so the two can no longer disagree. `library_rag_answer_
+# provider_ready()` below (this module's actual subject) stayed dead code
+# in production -- zero real callers -- until PR-T2 Task 7 wired it into
+# both of `UI/Screens/library_screen.py`'s run gates, asking the same
+# `Chat/provider_readiness.get_provider_readiness` question Console's own
+# gate asks instead of merely "was an endpoint name configured".
 
 
 def test_resolve_provider_reads_the_configured_default_endpoint(monkeypatch):
@@ -735,18 +1069,166 @@ def test_resolve_provider_reports_none_for_an_empty_or_missing_endpoint(
     assert model is None
 
 
-def test_provider_ready_is_true_when_a_default_endpoint_is_configured(monkeypatch):
-    monkeypatch.setattr(app_config, "default_api_endpoint", "openai", raising=False)
-
-    assert library_rag_answer_provider_ready() is True
-
-
 @pytest.mark.parametrize("blank_endpoint", ["", "   ", None])
 def test_provider_ready_is_false_for_an_empty_or_missing_endpoint(
     monkeypatch, blank_endpoint
 ):
+    """Unaffected by PR-T2 Task 7: `resolve_library_rag_answer_provider`
+    already short-circuits to `(None, None)` for a blank endpoint, so
+    `library_rag_answer_provider_ready` never even reaches the credential
+    check added below."""
     monkeypatch.setattr(
         app_config, "default_api_endpoint", blank_endpoint, raising=False
     )
 
     assert library_rag_answer_provider_ready() is False
+
+
+# --- PR-T2 Task 7: the Library gate asks the same question Console asks --
+#
+# Before this task, `library_rag_answer_provider_ready` (and the run gate
+# it feeds, via `provider_name=resolve_library_rag_answer_provider()[0]` at
+# `UI/Screens/library_screen.py`) only ever asked "is a default endpoint
+# NAME configured?" -- never whether that provider could actually
+# authenticate. `test_provider_ready_is_true_when_a_default_endpoint_is_
+# configured` (the test this section replaces) pinned exactly that gap: an
+# endpoint name with NO credentials anywhere read as ready. This is the
+# harm PR-T2 as a whole is named for: the Library path spent money a
+# credential-blind gate had no basis to allow. `library_rag_answer_
+# provider_ready` now also asks `Chat/provider_readiness.get_provider_
+# readiness` -- the exact function Console's own gate calls -- so the two
+# can no longer disagree about the same config.
+
+
+def test_provider_ready_is_true_when_endpoint_and_credentials_both_resolve(
+    monkeypatch,
+):
+    monkeypatch.setattr(app_config, "default_api_endpoint", "anthropic", raising=False)
+    monkeypatch.setattr(
+        app_config,
+        "load_settings",
+        lambda *args, **kwargs: {
+            "api_settings": {"anthropic": {"api_key": "sk-ant-test-key"}}
+        },
+    )
+
+    assert library_rag_answer_provider_ready() is True
+
+
+def test_provider_ready_is_false_when_endpoint_is_named_but_no_credential_resolves(
+    monkeypatch,
+):
+    """The exact inversion the harm was: a default endpoint NAME configured
+    with no way to authenticate must not read as ready -- an endpoint name
+    is not a credential."""
+    monkeypatch.setattr(app_config, "default_api_endpoint", "anthropic", raising=False)
+    monkeypatch.setattr(
+        app_config,
+        "load_settings",
+        lambda *args, **kwargs: {"api_settings": {}},
+    )
+
+    assert library_rag_answer_provider_ready() is False
+
+
+def test_provider_ready_rereads_settings_on_every_call_like_the_endpoint_does(
+    monkeypatch,
+):
+    """Same "read through the module, not once at import time" contract
+    `resolve_library_rag_answer_provider` already has for `default_api_
+    endpoint` (see `test_resolve_provider_rereads_the_module_global_on_
+    every_call` above) -- a settings save mid-session must be observed on
+    the very next call, not require a restart."""
+    monkeypatch.setattr(app_config, "default_api_endpoint", "anthropic", raising=False)
+    settings = {"api_settings": {}}
+    monkeypatch.setattr(app_config, "load_settings", lambda *a, **k: settings)
+
+    assert library_rag_answer_provider_ready() is False
+
+    settings["api_settings"]["anthropic"] = {"api_key": "sk-ant-test-key"}
+
+    assert library_rag_answer_provider_ready() is True
+
+
+# --- PR-T2 review round 3, finding I1 -------------------------------------
+#
+# `library_rag_answer_provider_ready`'s boolean threw away the
+# `ProviderReadiness` object that already carried the exact remedy, so the
+# run gate could only ever say "select a provider/model" -- to a user whose
+# provider WAS selected and whose only problem was a missing credential.
+# `library_rag_answer_provider_gate` is the single `resolve -> readiness ->
+# name` pass that keeps the reason.
+
+
+def test_provider_gate_carries_the_credential_remedy_when_a_name_resolves(
+    monkeypatch,
+):
+    """A named provider that cannot authenticate: no name to spend with,
+    but the readiness object's own remedy -- naming the env var AND the
+    config table -- comes back for the blocked copy to use."""
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.setattr(app_config, "default_api_endpoint", "anthropic", raising=False)
+    monkeypatch.setattr(
+        app_config, "load_settings", lambda *a, **k: {"api_settings": {}}
+    )
+
+    gate = library_rag_answer_provider_gate()
+
+    assert gate.provider is None
+    assert "ANTHROPIC_API_KEY" in gate.credential_recovery
+    assert "api_settings.anthropic" in gate.credential_recovery
+
+
+def test_provider_gate_offers_no_remedy_when_nothing_is_configured(monkeypatch):
+    """The genuinely-unselected case must stay distinguishable: an empty
+    remedy is what tells the state layer to keep the "select a
+    provider/model" copy."""
+    monkeypatch.setattr(app_config, "default_api_endpoint", "", raising=False)
+
+    gate = library_rag_answer_provider_gate()
+
+    assert gate.provider is None
+    assert gate.credential_recovery == ""
+
+
+def test_provider_gate_names_the_provider_and_stays_silent_when_ready(monkeypatch):
+    """A ready provider yields a name and NO remedy -- the state layer
+    reads the remedy only in the blocked branch, and a stale one here
+    would be copy about a problem that does not exist."""
+    monkeypatch.setattr(app_config, "default_api_endpoint", "anthropic", raising=False)
+    monkeypatch.setattr(
+        app_config,
+        "load_settings",
+        lambda *a, **k: {
+            "api_settings": {"anthropic": {"api_key": "sk-ant-test-key"}}
+        },
+    )
+
+    gate = library_rag_answer_provider_gate()
+
+    assert gate.provider == "anthropic"
+    assert gate.credential_recovery == ""
+    assert gate.model is None
+    # The boolean helper is now a view of this same pass -- they cannot
+    # answer differently.
+    assert library_rag_answer_provider_ready() is True
+
+
+def test_provider_gate_accepts_a_keyless_dispatchable_endpoint_spelling(monkeypatch):
+    """Finding I2 at the seam the Library run gate actually consumes: a
+    self-hoster's `default_api_endpoint = "custom-openai-api"` must come
+    back as a NAME (which is what `provider_name=` makes the Run button
+    enabled from -- see `Tests/Library/test_library_rag_state.py`), not as
+    a blocked gate with no credential to add.
+    """
+    monkeypatch.setattr(
+        app_config, "default_api_endpoint", "custom-openai-api", raising=False
+    )
+    monkeypatch.setattr(
+        app_config, "load_settings", lambda *a, **k: {"api_settings": {}}
+    )
+
+    gate = library_rag_answer_provider_gate()
+
+    assert gate.provider == "custom-openai-api"
+    assert gate.credential_recovery == ""

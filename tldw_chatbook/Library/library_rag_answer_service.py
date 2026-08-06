@@ -47,6 +47,7 @@ from tldw_chatbook.Chat.answer_citations import (
 )
 from tldw_chatbook.Chat.Chat_Functions import chat_api_call, extract_response_content
 from tldw_chatbook.Chat.citation_evidence_models import EvidenceBundle
+from tldw_chatbook.Chat.provider_usage import ProviderUsage
 from tldw_chatbook.UI.Views.RAGSearch.search_handoff import (
     build_library_rag_evidence_bundle,
 )
@@ -176,21 +177,112 @@ def resolve_library_rag_answer_provider() -> tuple[str | None, str | None]:
     return endpoint, None
 
 
-def library_rag_answer_provider_ready() -> bool:
-    """Whether a provider is configured to answer a Library RAG query.
+@dataclass(frozen=True)
+class LibraryRagProviderGate:
+    """One resolution of "can Library RAG Answer spend right now, and if
+    not, what does the user actually have to do?" (PR-T2 review round 3,
+    finding I1).
 
-    Feeds `LibraryRagQueryState.from_values`'s `provider_ready` parameter
-    (`Library/library_rag_state.py:893-897`), the RAG-mode-only run gate
-    whose blocked copy already reads "Select a provider/model before asking
-    for a RAG answer." -- this is what makes that branch reachable instead
-    of permanently dead code.
+    Built by `library_rag_answer_provider_gate` -- the single `resolve ->
+    readiness -> name` pass every Library RAG caller shares, replacing the
+    two-and-three-times-per-render re-resolution the panel-state builder
+    and the invocation guard each did on their own.
+
+    Attributes:
+        provider: The endpoint name callers may bill, or `None` when
+            nothing is configured OR the configured one cannot
+            authenticate. Deliberately `None` in BOTH not-ready cases:
+            this is the value the run gate takes as `provider_name`, whose
+            readiness is derived from it (`LibraryRagQueryState.from_
+            values`), so a name here always means "ready to spend".
+        credential_recovery: The readiness object's own remedy text (e.g.
+            "Set ANTHROPIC_API_KEY or add api_key under [api_settings.
+            anthropic].") -- non-empty ONLY in the named-but-uncredentialed
+            case, and `""` both when the provider is ready and when no
+            provider is configured at all. This is the REASON the collapse
+            to a single `provider_name` would otherwise destroy: without
+            it, a user whose provider IS selected and only lacks a key was
+            told to "select a provider/model" and pointed at Console
+            controls. Carrying it as a separate field keeps the readiness
+            invariant intact -- it is a message, never a second readiness
+            flag, and cannot make a blocked state look ready.
+        model: The model half of `resolve_library_rag_answer_provider`'s
+            pair, carried so the answer path does not have to resolve the
+            endpoint a second time just to read it. Always `None` today
+            (that function resolves no model by design -- the provider
+            handler picks its own default); meaningless, and unread, when
+            `provider` is `None`.
+    """
+
+    provider: str | None
+    credential_recovery: str = ""
+    model: str | None = None
+
+
+def library_rag_answer_provider_gate() -> LibraryRagProviderGate:
+    """Resolve the Library RAG provider and its credential readiness once.
+
+    Returns:
+        A `LibraryRagProviderGate`; see its attribute docs. Never raises --
+        an unconfigured or unreadable config is a blocked gate, not an
+        error.
+    """
+    provider, model = resolve_library_rag_answer_provider()
+    if provider is None:
+        return LibraryRagProviderGate(provider=None)
+
+    from .. import config as app_config
+    from ..Chat.provider_readiness import get_provider_readiness
+
+    readiness = get_provider_readiness(provider, app_config.load_settings())
+    if readiness.ready:
+        return LibraryRagProviderGate(provider=provider, model=model)
+    return LibraryRagProviderGate(
+        provider=None,
+        model=model,
+        # `recovery` is the actionable half ("Set ANTHROPIC_API_KEY or
+        # add api_key under [api_settings.anthropic]."); `reason` is the
+        # fallback for readiness states that carry no remedy, so the copy
+        # is never empty when a provider IS named.
+        credential_recovery=(readiness.recovery or readiness.reason or "").strip(),
+    )
+
+
+def library_rag_answer_provider_ready() -> bool:
+    """Whether a provider is configured AND able to authenticate for a
+    Library RAG query (PR-T2 Task 7).
+
+    Feeds the RAG-mode-only run gate at `UI/Screens/library_screen.py`
+    (`_library_rag_panel_state`'s `provider_name=` argument, and the
+    invocation guard in `_start_library_rag_answer`), whose blocked copy
+    already reads "Select a provider/model before asking for a RAG
+    answer." -- this is what makes that branch reachable instead of
+    permanently dead code.
+
+    Before this task, this function (and the gate it fed, until PR-T2 Task
+    4's review collapsed `provider_ready`/`provider_name` into one
+    parameter and the gate started reading `resolve_library_rag_answer_
+    provider()` directly) only ever asked "is a default endpoint NAME
+    configured?" -- an endpoint name is not a credential. That gap is the
+    harm PR-T2 as a whole is named for: a config with only `[API]
+    anthropic_api_key` set spent real money through this path while
+    Console's own readiness check showed a blocking "Connect a provider"
+    wall for the identical config, because the two asked different
+    questions. This now asks the SAME question Console asks --
+    `Chat/provider_readiness.get_provider_readiness`, the exact function
+    Console's run gate calls -- so the two can no longer disagree.
+
+    Thin boolean view of `library_rag_answer_provider_gate` (which also
+    carries the remedy text for the named-but-uncredentialed case) -- kept
+    as the single-question form callers that only need a yes/no already
+    use.
 
     Returns:
         `True` when `resolve_library_rag_answer_provider` resolves a
-        provider; `False` otherwise.
+        provider AND `get_provider_readiness` reports that provider ready
+        to authenticate; `False` otherwise.
     """
-    provider, _ = resolve_library_rag_answer_provider()
-    return provider is not None
+    return library_rag_answer_provider_gate().provider is not None
 
 
 @dataclass(frozen=True)
@@ -209,6 +301,30 @@ class LibraryRagAnswer:
         evidence_bundle: The bundle the attempt used, so the panel can map
             citation labels back to rows -- present even on the no-evidence
             path, where it explains why each row was ineligible.
+        provider: The configured endpoint, always present whenever a provider
+            call was attempted -- including every failure path, since it is
+            a plain function parameter and never depends on how far the
+            attempt got. ``""`` only on the no-evidence path, where no call
+            is ever attempted. NOT the provider's own model name -- see
+            ``model``.
+        model: The MODEL THE PROVIDER ACTUALLY RAN, read from the response
+            payload's own ``"model"`` key -- never the configured endpoint
+            name. This is the only app-side source of the model, since
+            ``resolve_library_rag_answer_provider`` deliberately resolves
+            ``model=None`` and leaves the handler to pick its own default.
+            ``""`` when no response was ever obtained -- no call was made
+            (no-evidence path), or an exception fired before `_invoke_chat`
+            returned one (a bundle-build failure, or the provider call
+            itself raising) -- or the response carried no ``"model"`` key.
+        usage: Normalized token usage from the response payload's ``"usage"``
+            block, or ``None`` under the same no-response conditions as
+            ``model``, or when the payload carried no usage the normalizer
+            recognizes. Populated whenever a response WAS obtained, whatever
+            happened next: the ready, abstained, and empty-response-failure
+            paths, but ALSO a post-call processing failure (citation
+            validation or abstention detection raising after a real,
+            billable response was already parsed) -- a call that cost money
+            and then failed one step later in processing still cost money.
     """
 
     status: str
@@ -217,6 +333,9 @@ class LibraryRagAnswer:
     citation_recovery: str = ""
     error: str = ""
     evidence_bundle: EvidenceBundle | None = None
+    provider: str = ""
+    model: str = ""
+    usage: ProviderUsage | None = None
 
 
 def _error_text(exc: BaseException) -> str:
@@ -427,11 +546,25 @@ async def generate_library_rag_answer(
     # worker that runs it with Textual's default `exit_on_error=True` and
     # crashing the whole app, while the top-level handler's traceback log
     # (diagnose=True) dumped this frame's locals: the user's own library
-    # content. `bundle` starts `None` and is only ever set once built, so a
-    # failure that happens before it exists still returns a well-formed
-    # `LibraryRagAnswer` rather than a `NameError` on top of the original
-    # exception.
+    # content. `bundle`, `response_model` and `usage` all start at their
+    # empty default and are only ever set once genuinely known, so a
+    # failure that happens before any of them exist still returns a
+    # well-formed `LibraryRagAnswer` rather than a `NameError` on top of the
+    # original exception.
+    #
+    # Task-2 fix-review: `response_model`/`usage` are hoisted here for the
+    # same reason `bundle` already was, and for a case `bundle` does not
+    # have -- `build_answer_citation_validation`/`_is_abstention` (both AFTER
+    # the provider call and both inside this containment net) can raise
+    # AFTER a billable call has already completed and its usage has already
+    # been captured into local variables. Without the hoist, the `except`
+    # block below would return a "failed, nothing spent" answer for a call
+    # that in fact spent real tokens -- the exact defect this task exists to
+    # close, just reached through the post-call-exception door instead of
+    # the empty-response one.
     bundle: EvidenceBundle | None = None
+    response_model: str = ""
+    usage: ProviderUsage | None = None
     try:
         bundle = build_library_rag_evidence_bundle(results, query=query)
 
@@ -461,6 +594,29 @@ async def generate_library_rag_answer(
             user=user_message,
         )
 
+        # Captured BEFORE `extract_response_content` discards `raw` --
+        # `chat_api_call` returns the handler's response unmodified, and the
+        # OpenAI/Anthropic normalizers both put the provider's own model and
+        # raw usage block in (`"model"`, `"usage"`). `raw` is not guaranteed
+        # to be a dict (several of this module's own tests fake a bare
+        # string reply, and `extract_response_content` itself tolerates
+        # that) -- so both reads are guarded rather than assumed.
+        #
+        # `model` here is the answer's own field: it is the provider's
+        # ACTUAL model, never the configured endpoint (`provider`) and never
+        # duplicated from `resolve_library_rag_answer_provider`, which
+        # deliberately resolves `model=None` for exactly this reason -- only
+        # the response itself knows what ran.
+        raw_model = raw.get("model") if isinstance(raw, dict) else None
+        response_model = str(raw_model or "")
+        raw_usage_payload = raw.get("usage") if isinstance(raw, dict) else None
+        # `from_provider_payload` never raises: a non-mapping, unrecognized,
+        # or otherwise malformed usage payload degrades to `None` rather
+        # than a fabricated zero-filled record.
+        usage = ProviderUsage.from_provider_payload(
+            raw_usage_payload, provider=provider, model=response_model
+        )
+
         body = extract_response_content(raw).strip()
         if not body:
             logger.warning(
@@ -471,6 +627,9 @@ async def generate_library_rag_answer(
                 text="",
                 error=EMPTY_ANSWER_ERROR,
                 evidence_bundle=bundle,
+                provider=provider,
+                model=response_model,
+                usage=usage,
             )
 
         validation = build_answer_citation_validation(body, bundle)
@@ -485,6 +644,9 @@ async def generate_library_rag_answer(
             citation_status=validation.status,
             citation_recovery=validation.recovery,
             evidence_bundle=bundle,
+            provider=provider,
+            model=response_model,
+            usage=usage,
         )
     except Exception as exc:  # noqa: BLE001 - every failure becomes an answer
         # Broad on purpose (briefing_service precedent): a provider handler
@@ -499,6 +661,20 @@ async def generate_library_rag_answer(
         # frame's locals -- and those locals are the prompt/response, i.e.
         # the user's own library content, in a file they never chose to
         # write it to. Only the exception's TYPE NAME is logged.
+        #
+        # `provider` is always safe here (a function parameter). `response_
+        # model`/`usage` are whatever was captured before the exception --
+        # `""`/`None` if it fired before the provider call returned (nothing
+        # was ever spent: bundle-build failure, or the call itself raising),
+        # but the REAL captured values if it fired in citation validation or
+        # abstention detection, i.e. AFTER a billable call already
+        # completed and its response was already parsed. That second case is
+        # exactly the region this same `try` was widened to contain
+        # (fix-review I1) -- a known-raising region, not a hypothetical one.
+        # Reporting `provider=""`/`usage=None` there would mean a call that
+        # cost real money and produced a real answer reports as if nothing
+        # had been spent, the moment it failed one step later in
+        # post-processing.
         logger.warning(
             f"library rag answer: generation failed for provider {provider}: "
             f"{type(exc).__name__}"
@@ -508,4 +684,7 @@ async def generate_library_rag_answer(
             text="",
             error=_error_text(exc),
             evidence_bundle=bundle,
+            provider=provider,
+            model=response_model,
+            usage=usage,
         )

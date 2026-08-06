@@ -6,6 +6,29 @@ import os
 from dataclasses import dataclass
 from typing import Mapping, Optional
 
+# "Valid provider API key" has exactly ONE definition in this codebase --
+# PR-T2 Task 7 -- shared with `config.py`'s `_normalize_legacy_provider_
+# api_key` (the credential bridge that keeps this module's readiness check
+# and the actual spend path from disagreeing about the same config).
+#
+# The definition lives in `config.py`, NOT here, even though this module
+# used it first: `config` is the dependency root nearly every other module
+# in this app (including this one) already imports directly, so `config`
+# importing FROM `Chat.provider_readiness` inverted the natural layering.
+# A first attempt at sharing this check did exactly that (a function-local
+# import inside `config.py`) and it reproduced a real cycle -- `config` ->
+# `Chat/__init__` -> `server_chat_conversation_service` -> `runtime_policy.
+# bootstrap` -> back into `config` -- that broke standalone collection of
+# `Tests/RuntimePolicy/` (hidden in a full-suite run only by alphabetical
+# import ordering happening to load `config` cleanly first). Importing
+# `config` from here instead is the direction every other Chat submodule
+# already takes, and cannot cycle back: `config.py`'s own top-level
+# imports (`DB.*`, `Utils.*`) never reach into `Chat`.
+from ..config import (
+    is_valid_provider_api_key,
+    resolve_provider_api_key as _valid_api_key,
+)
+
 
 PROVIDERS_REQUIRING_API_KEY_KEYS = frozenset(
     {
@@ -23,12 +46,32 @@ PROVIDERS_REQUIRING_API_KEY_KEYS = frozenset(
         "zai",
     }
 )
+#: Providers that dispatch without a credential. Membership is what makes a
+#: provider dispatchable at all through the readiness gate (`KNOWN_PROVIDER_
+#: KEYS` below), so it must be kept in terms of what `Chat/Chat_Functions.
+#: py`'s `API_CALL_HANDLERS` can actually dispatch -- normalized through
+#: `provider_config_key`, since that is the only form this module ever sees.
+#:
+#: `custom_openai_api`, `custom_openai_api_2` and `mlx_lm` are here for
+#: exactly that reason (PR-T2 review round 3, finding I2): the dispatch
+#: table's own keys are `"custom-openai-api"`, `"custom-openai-api-2"` and
+#: `"mlx_lm"` -- verbatim spellings a self-hoster puts in `default_api_
+#: endpoint` and which DO dispatch -- but `provider_config_key` normalizes
+#: the hyphens to `custom_openai_api`/`custom_openai_api_2`, neither of
+#: which is the same key as the `custom`/`custom_2` entries above (those
+#: are the `[api_settings.custom]` tables, a different provider row). Left
+#: out, all three fell to the "Unknown provider" branch below and a
+#: previously-working Run button went permanently disabled with copy that
+#: named no remedy.
 KEYLESS_PROVIDER_KEYS = frozenset(
     {
         "aphrodite",
         "custom",
         "custom_2",
+        "custom_openai_api",
+        "custom_openai_api_2",
         "koboldcpp",
+        "mlx_lm",
         "llama_cpp",
         "local_llm",
         "local_llamacpp",
@@ -46,15 +89,6 @@ KEYLESS_PROVIDER_KEYS = frozenset(
 )
 KNOWN_PROVIDER_KEYS = PROVIDERS_REQUIRING_API_KEY_KEYS | KEYLESS_PROVIDER_KEYS
 
-_PLACEHOLDER_KEYS = frozenset(
-    {
-        "",
-        "<API_KEY_HERE>",
-        "YOUR_KEY",
-        "your_key",
-        "your-api-key",
-    }
-)
 _DEFAULT_API_KEY_ENV_VAR_ALIASES = {
     "mistralai": "MISTRAL_API_KEY",
 }
@@ -91,20 +125,6 @@ class ProviderReadiness:
 def provider_config_key(provider: Optional[str]) -> str:
     """Return the normalized key used under ``api_settings``."""
     return (provider or "").strip().lower().replace(" ", "_").replace("-", "_")
-
-
-def _valid_api_key(value: object) -> Optional[str]:
-    if not isinstance(value, str):
-        return None
-    stripped = value.strip()
-    if stripped in _PLACEHOLDER_KEYS:
-        return None
-    return stripped or None
-
-
-def is_valid_provider_api_key(value: object) -> bool:
-    """Return whether value is a usable provider API key."""
-    return _valid_api_key(value) is not None
 
 
 def _requires_api_key(provider_key: str) -> bool:
