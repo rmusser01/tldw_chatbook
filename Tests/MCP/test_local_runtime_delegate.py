@@ -108,3 +108,27 @@ async def test_other_request_methods_are_still_dispatched():
     result = await delegate.request("tools/list", {})
 
     assert result == {"tools": []}
+
+
+def test_protocol_diagnostics_reports_tools_call_as_unsupported():
+    """Fix Round C (PR-T3 review), Item 1: the capability surface must not
+    contradict the enforcement above. `request()`'s `tools/call` branch
+    refuses unconditionally, so `get_protocol_diagnostics()` -- the surface
+    an agent reads via `run_action("runtime.protocol.inspect")` before
+    planning a `runtime.request` call -- must report it as unsupported
+    rather than as an ordinary, freely-callable method. This asserts
+    against the REAL delegate, not a hand-written double, so a future
+    change re-flipping the flag (or removing the entry) is caught here even
+    if a fake elsewhere drifts."""
+    delegate = _delegate()
+
+    diagnostics = delegate.get_protocol_diagnostics()
+
+    methods_by_name = {entry["name"]: entry["supported"] for entry in diagnostics["methods"]}
+    assert methods_by_name["tools/call"] is False
+    # Every other advertised method stays truthfully supported -- the
+    # refusal is scoped to `tools/call` alone, not a blanket downgrade.
+    for name, supported in methods_by_name.items():
+        if name == "tools/call":
+            continue
+        assert supported is True, name

@@ -52,6 +52,22 @@ class LocalMCPRuntimeDelegate:
         "prompts/get",
     )
     _UNAVAILABLE_DIRECT_TOOLS = {"chat_with_llm"}
+    #: Fix Round C (PR-T3 review), Item 1. `request()`'s `tools/call` branch
+    #: below refuses unconditionally (`RAW_TOOL_CALL_REFUSED_MESSAGE`), but
+    #: `tools/call` stayed listed as an ordinary, fully-supported entry in
+    #: `get_protocol_diagnostics()`'s `methods` list -- the exact surface an
+    #: agent reads before planning a `runtime.request` call (reachable via
+    #: `run_action("runtime.protocol.inspect")`). An agent that saw
+    #: `{"name": "tools/call", "supported": true}` there had no way to learn
+    #: the call would be refused short of trying it. Mirrors
+    #: `_UNAVAILABLE_DIRECT_TOOLS` above: `tools/call` stays a *recognized*
+    #: method (still enumerated in `_REQUEST_METHODS`, since `request()`
+    #: genuinely understands it well enough to refuse it by name rather than
+    #: raising "unsupported method") but is reported `supported: False` in
+    #: diagnostics, same shape the tools bucket already uses for
+    #: "exists, but you cannot call it directly." See
+    #: `get_protocol_diagnostics()` for where this is read.
+    _UNAVAILABLE_DIRECT_METHODS = frozenset({"tools/call"})
     _RESOURCE_URI_PREFIXES = (
         "conversation://",
         "note://",
@@ -89,6 +105,18 @@ class LocalMCPRuntimeDelegate:
         }
 
     def get_protocol_capabilities(self) -> dict[str, Any]:
+        """The methods `request()` recognizes and will dispatch on by name.
+
+        NOTE: "recognized" is not "will succeed" -- `tools/call` is listed
+        here because `request()` genuinely understands that method name (it
+        is not an "unsupported method" `KeyError`), but every call is
+        unconditionally refused (see `request()`'s `tools/call` branch and
+        `RAW_TOOL_CALL_REFUSED_MESSAGE`). `get_protocol_diagnostics()` is
+        the surface that answers "will this actually work" per method
+        (its `methods` list carries an explicit `supported` flag,
+        `False` for `tools/call`) -- read that one before planning a
+        `runtime.request` call around a name found here.
+        """
         return {
             "adapter": "direct_in_process",
             "supports_batch": True,
@@ -111,7 +139,11 @@ class LocalMCPRuntimeDelegate:
             "mcp_sdk_available": MCP_AVAILABLE,
             "supports_batch": True,
             "methods": [
-                {"name": method, "supported": True} for method in self._REQUEST_METHODS
+                {
+                    "name": method,
+                    "supported": method not in self._UNAVAILABLE_DIRECT_METHODS,
+                }
+                for method in self._REQUEST_METHODS
             ],
             "manifest": {
                 "tools": len(tools),
@@ -232,7 +264,12 @@ class LocalMCPRuntimeDelegate:
             # door through this delegate: `execute_tool()`, called directly
             # by `LocalMCPControlService.execute_tool()` for the gated,
             # logged `tool.execute` action -- never through this raw
-            # protocol branch.
+            # protocol branch. Fix Round C, Item 1: this refusal is now also
+            # advertised, not just enforced -- `get_protocol_diagnostics()`
+            # reports `tools/call` as `supported: False`
+            # (`_UNAVAILABLE_DIRECT_METHODS`), so an agent inspecting the
+            # protocol before planning a call sees the same "no" this raise
+            # produces, instead of discovering it by trying.
             raise PermissionError(RAW_TOOL_CALL_REFUSED_MESSAGE)
         if normalized_method == "resources/read":
             return {

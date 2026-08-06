@@ -168,7 +168,11 @@ class FakeLocalRuntimeDelegate:
             "supports_batch": True,
             "methods": [
                 {"name": "tools/list", "supported": True},
-                {"name": "tools/call", "supported": True},
+                # Fix Round C, Item 1: `tools/call` is refused
+                # unconditionally by the real delegate's `request()`, so
+                # diagnostics must not advertise it as callable -- this
+                # fake mirrors that shape (`_UNAVAILABLE_DIRECT_METHODS`).
+                {"name": "tools/call", "supported": False},
             ],
             "manifest": {"tools": 2, "resources": 1, "prompts": 1},
             "implementation": {
@@ -1044,7 +1048,11 @@ async def test_local_control_service_exposes_runtime_status_and_protocol_helpers
             "supports_batch": True,
             "methods": [
                 {"name": "tools/list", "supported": True},
-                {"name": "tools/call", "supported": True},
+                # Fix Round C, Item 1: `tools/call` is refused
+                # unconditionally by the real delegate's `request()`, so
+                # diagnostics must not advertise it as callable -- this
+                # fake mirrors that shape (`_UNAVAILABLE_DIRECT_METHODS`).
+                {"name": "tools/call", "supported": False},
             ],
             "manifest": {"tools": 2, "resources": 1, "prompts": 1},
             "implementation": {
