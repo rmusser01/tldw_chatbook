@@ -47,6 +47,8 @@ pytest --cov=tldw_chatbook  # With coverage
 - `Coding_Window.py` - Code-focused chat interface
 - `IngestTldwApiWindow.py` - Media ingestion forms
 
+**Settings**: `UI/Screens/settings_screen.py` (F9 Settings destination) is the canonical settings surface. The legacy `UI/Tools_Settings_Window.py` and `Widgets/enhanced_settings_sidebar.py` (legacy Chat window only) are deprecated parallels — do not add new settings there.
+
 **Key Widgets**:
 - `chat_message_enhanced.py` - Rich messages with actions
 - `tool_message_widgets.py` - Tool calling UI (ToolCallMessage, ToolResultMessage)

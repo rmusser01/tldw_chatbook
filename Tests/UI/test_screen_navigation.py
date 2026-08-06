@@ -559,6 +559,9 @@ async def test_screen_navigation_always_constructs_fresh_instances(monkeypatch):
 
     async with app.run_test(size=(160, 40)) as pilot:
         await pilot.pause(0.1)
+        # These direct handler calls simulate post-startup navigation; mark
+        # startup complete so the pre-initial-screen guard lets them through.
+        app._initial_screen_pushed = True
 
         await app.handle_screen_navigation(NavigateToScreen("chat"))
         await app.handle_screen_navigation(NavigateToScreen("library"))
@@ -613,6 +616,9 @@ async def test_navigation_flushes_outgoing_screen_and_honors_veto(monkeypatch):
     # stubbed -- patching the screen property this way would break the live
     # compositor under run_test.
     monkeypatch.setattr(type(app), "screen", property(lambda self: outgoing))
+    # Simulate post-startup state so the pre-initial-screen guard lets the
+    # direct handler call through.
+    app._initial_screen_pushed = True
 
     await app.handle_screen_navigation(NavigateToScreen("chat"))
     assert flush_calls, "outgoing screen's flush_pending_work was never awaited"
@@ -664,6 +670,9 @@ async def test_navigation_flush_exception_warns_and_aborts_switch(monkeypatch):
     )
     outgoing = FakeOutgoingScreen()
     monkeypatch.setattr(type(app), "screen", property(lambda self: outgoing))
+    # Simulate post-startup state so the pre-initial-screen guard lets the
+    # direct handler call through.
+    app._initial_screen_pushed = True
 
     await app.handle_screen_navigation(NavigateToScreen("chat"))
 
@@ -690,6 +699,7 @@ async def test_navigation_confirms_with_outgoing_screen_and_honors_veto(monkeypa
     "Leave") lets it proceed.
     """
     app = _build_test_app()
+    app._initial_screen_pushed = True
 
     class FakeTargetScreen:
         screen_name = "chat"
@@ -736,6 +746,7 @@ async def test_navigation_confirm_exception_warns_and_aborts_switch(monkeypatch)
     let navigation proceed and tear down live work nobody was asked about.
     """
     app = _build_test_app()
+    app._initial_screen_pushed = True
     created_screens = []
     switched_screens = []
     notifications = []
@@ -992,6 +1003,62 @@ async def test_overlapping_navigate_requests_complete_in_fifo_order() -> None:
     )
 
 
+
+@pytest.mark.asyncio
+async def test_navigation_keypress_during_splash_is_safely_ignored():
+    """Regression lock for the F9-during-splash crash (task-1339).
+
+    Pressing a shell-destination key (F7/F8/F9 or Ctrl+digit) while the
+    splash screen is still up posted ``NavigateToScreen`` before the initial
+    screen existed; ``switch_screen`` then hit Textual's empty
+    result-callback stack and raised ``IndexError: pop from empty list``.
+    Navigation requests must be ignored until the initial screen has been
+    pushed: pressing F9 mid-splash must raise nothing and must not navigate,
+    leaving the app to finish startup on its configured initial screen.
+    """
+    app = _build_test_app()  # splash enabled by default (skip_on_keypress=True)
+
+    def force_splash_config(section, key=None, default=None):
+        # ``_build_test_app`` only patches config lookups during __init__, so
+        # compose() at run_test time would read the real user config; force a
+        # deterministic splash here so "splash still active at press time"
+        # does not depend on the developer's machine. 1.5s matches the real
+        # default; pressing at 0.3s leaves ~1.2s of splash window.
+        if section == "splash_screen":
+            splash_defaults = {
+                "enabled": True,
+                "duration": 1.5,
+                "skip_on_keypress": True,
+                "show_progress": True,
+                "card_selection": "random",
+            }
+            return splash_defaults.get(key, default)
+        return default
+
+    with patch("tldw_chatbook.app.get_cli_setting", side_effect=force_splash_config):
+        async with app.run_test(size=(120, 35)) as pilot:
+            await pilot.pause(0.3)
+            assert app.splash_screen_active, "splash must still be active at press time"
+            assert not getattr(app, "_initial_screen_pushed", False)
+
+            await pilot.press("f9")  # F9 = Settings destination; must not crash
+            await pilot.pause(0.2)
+
+            # Wait for startup to finish: splash dismissed, initial screen pushed.
+            for _ in range(60):
+                await pilot.pause(0.05)
+                if not app.splash_screen_active and getattr(
+                    app, "_initial_screen_pushed", False
+                ):
+                    break
+            assert not app.splash_screen_active, "splash never dismissed"
+            assert app._initial_screen_pushed, "initial screen never mounted"
+
+            # The swallowed navigation must not have landed on Settings; the
+            # app settles on its configured initial screen instead.
+            assert type(app.screen).__name__ != "SettingsScreen"
+            assert app.screen.is_running
+
 # The shared app factory moved to Tests/UI/app_factory.py (task-1458) so a
 # test module no longer hosts suite-wide infrastructure and its temp dirs
 # get drained after every test. Re-exported here for in-flight branches
@@ -1236,6 +1303,7 @@ async def test_file_notes_navigation_transition_blocks_mutation_until_switch_fin
 ):
     """Transition admission immediately after flush closes the Stage race."""
     app = _build_test_app()
+    app._initial_screen_pushed = True
     owner = app.file_notes_session_owner
     binding = owner.select_root(tmp_path / "notes")
     switched = []
@@ -1286,6 +1354,7 @@ async def test_file_notes_mutation_admitted_during_flush_vetoes_navigation(
 ):
     """A Stage lease won during flush leaves the current screen mounted."""
     app = _build_test_app()
+    app._initial_screen_pushed = True
     owner = app.file_notes_session_owner
     binding = owner.select_root(tmp_path / "notes")
     flush_started = asyncio.Event()
@@ -2001,6 +2070,9 @@ async def test_screen_navigation_routes_reach_real_app_handler():
 
     async with app.run_test(size=(160, 40)) as pilot:
         await pilot.pause(0.1)
+        # Direct handler calls simulate post-startup navigation; mark startup
+        # complete so the pre-initial-screen guard lets them through.
+        app._initial_screen_pushed = True
 
         for route, expected_screen_class in cases:
             captured_destinations.clear()
@@ -2723,6 +2795,7 @@ async def test_navigation_survives_screen_construction_failure(monkeypatch):
     the user must be told and left on the screen they were already using.
     """
     app = _build_test_app()
+    app._initial_screen_pushed = True
 
     class ExplodingScreen:
         screen_name = "mcp"
@@ -2771,6 +2844,7 @@ async def test_navigation_survives_screen_mount_failure(monkeypatch):
     from ``__init__``. Both legs must fail soft.
     """
     app = _build_test_app()
+    app._initial_screen_pushed = True
 
     class FakeScreen:
         screen_name = "mcp"
@@ -2821,6 +2895,7 @@ async def test_navigation_flush_that_never_returns_does_not_freeze_the_app(monke
     (stays put, pending edits intact) and stays responsive.
     """
     app = _build_test_app()
+    app._initial_screen_pushed = True
 
     class FakeTargetScreen:
         screen_name = "chat"
@@ -2882,6 +2957,7 @@ async def test_navigation_timeout_does_not_cancel_the_in_flight_save(monkeypatch
     not stop saving.
     """
     app = _build_test_app()
+    app._initial_screen_pushed = True
 
     class FakeTargetScreen:
         screen_name = "chat"

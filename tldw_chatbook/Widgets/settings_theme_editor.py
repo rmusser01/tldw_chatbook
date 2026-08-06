@@ -13,14 +13,15 @@ from textual.color import Color
 from textual.containers import Horizontal, Vertical
 from textual.css.query import QueryError
 from textual.events import Click, DescendantFocus
+from textual.events import Click, DescendantFocus, Key
 from textual.message import Message
 from textual.reactive import reactive
 from textual.theme import Theme
-from textual.widgets import Button, Input, Static, Switch, Tree
+from textual.widgets import Button, Checkbox, Input, Static, Tree
 
-from .settings_splash_screen_viewer import switch_state_label
 from ..css.Themes.themes import ALL_THEMES, create_theme_from_dict
 from ..Utils.path_validation import validate_filename
+from .confirmation_dialog import ConfirmationDialog
 
 
 class SettingsThemeEditor(Vertical):
@@ -102,14 +103,7 @@ class SettingsThemeEditor(Vertical):
             )
         with Horizontal(classes="settings-input-row"):
             yield Static("Dark theme", classes="settings-input-label")
-            yield Switch(value=True, id="settings-theme-dark-mode")
-            # task-1582: the bare Switch was an empty rectangle with no
-            # text state -- mirror the Splash Screen switch-word pattern.
-            yield Static(
-                switch_state_label(True),
-                id="settings-theme-dark-mode-state",
-                classes="settings-input-label",
-            )
+            yield Checkbox(value=True, id="settings-theme-dark-mode")
         with Horizontal(classes="settings-action-row"):
             yield Button("New", id="settings-theme-new", variant="primary")
             yield Button("Clone", id="settings-theme-clone")
@@ -138,6 +132,12 @@ class SettingsThemeEditor(Vertical):
                 )
                 yield Static("", id=f"settings-theme-swatch-{color_name}", classes="color-swatch")
         yield Static("Color Presets", classes="destination-section")
+        # task-1369: swatches are focusable and apply on Enter/Space, not
+        # just on mouse click.
+        yield Static(
+            "Focus a swatch and press Enter or Space to apply it to the selected color.",
+            classes="settings-help-copy",
+        )
         for palette_name, colors in self.COLOR_PRESETS.items():
             with Horizontal(classes="settings-input-row preset-row"):
                 yield Static(palette_name, classes="settings-input-label")
@@ -148,10 +148,22 @@ class SettingsThemeEditor(Vertical):
                         classes="color-preset-swatch",
                     )
                     swatch.styles.background = color
+                    swatch.can_focus = True
+                    swatch.tooltip = f"Apply {color} to the selected color"
                     yield swatch
 
     def _compose_actions_section(self) -> ComposeResult:
         yield Static("Actions", classes="destination-section")
+        # task-1369: Apply re-themes the whole app instantly; say so with the
+        # Settings screen's instant-apply phrasing
+        # (INSTANT_APPLY_BEHAVIOR_COPY in UI/Screens/settings_screen.py -- the
+        # widget must not import the screen).
+        yield Static(
+            "Apply applies immediately - no Save needed; "
+            "Save stores the theme for future sessions.",
+            id="settings-theme-apply-hint",
+            classes="settings-help-copy",
+        )
         with Horizontal(classes="settings-action-row"):
             yield Button("Apply", id="settings-theme-apply", variant="primary")
             yield Button("Save", id="settings-theme-save", variant="success")
@@ -251,7 +263,7 @@ class SettingsThemeEditor(Vertical):
                 self.is_dark_theme = getattr(theme, "dark", True)
 
         self._update_color_inputs()
-        self._update_dark_mode_switch()
+        self._update_dark_mode_checkbox()
         self.is_modified = False
 
     def load_user_theme(self, theme_name: str) -> None:
@@ -277,7 +289,7 @@ class SettingsThemeEditor(Vertical):
                 name_input.disabled = False
 
                 self._update_color_inputs()
-                self._update_dark_mode_switch()
+                self._update_dark_mode_checkbox()
                 self.is_modified = False
 
             except Exception as e:
@@ -382,24 +394,10 @@ class SettingsThemeEditor(Vertical):
                 self.color_inputs[color_name].value = color_value
                 self._update_color_swatch(color_name, color_value)
 
-    def _update_dark_mode_switch(self) -> None:
-        """Update the dark mode switch and its text-state word."""
-        switch = self.query_one("#settings-theme-dark-mode", Switch)
-        switch.value = self.is_dark_theme
-        self._update_dark_mode_state_word(self.is_dark_theme)
-
-    def _update_dark_mode_state_word(self, value: bool) -> None:
-        """Sync the On/Off word beside the dark-mode switch.
-
-        Args:
-            value: The switch state the word should describe.
-        """
-        try:
-            self.query_one("#settings-theme-dark-mode-state", Static).update(
-                switch_state_label(value)
-            )
-        except QueryError:
-            pass
+    def _update_dark_mode_checkbox(self) -> None:
+        """Update the dark mode checkbox."""
+        checkbox = self.query_one("#settings-theme-dark-mode", Checkbox)
+        checkbox.value = self.is_dark_theme
 
     def _update_color_swatch(self, color_name: str, color_value: str) -> None:
         """Update a color swatch preview."""
@@ -459,10 +457,12 @@ class SettingsThemeEditor(Vertical):
             if color_value:
                 if self._validate_color_input(color_value):
                     self._update_color_swatch(color_name, color_value)
-                    # load_theme sets current_theme_data before writing the
-                    # Input values, so the Changed events it queues arrive
-                    # carrying values equal to the stored ones: a programmatic
-                    # reload, not a user edit.
+                    # task-1338: programmatic loads (_update_color_inputs during
+                    # load_theme) deliver Input.Changed asynchronously, AFTER
+                    # load_theme reset is_modified -- treat a value identical
+                    # to the loaded theme data as not-a-modification, otherwise
+                    # every mount flags modified and the screen's
+                    # recompose-on-modified loops forever.
                     if self.current_theme_data.get(color_name) != color_value:
                         self.current_theme_data[color_name] = color_value
                         self.is_modified = True
@@ -471,22 +471,14 @@ class SettingsThemeEditor(Vertical):
                     event.input.add_class("invalid-color")
                     self._update_color_swatch(color_name, "#000000")
 
-    @on(Switch.Changed, "#settings-theme-dark-mode")
-    def on_dark_mode_changed(self, event: Switch.Changed) -> None:
-        """Handle dark mode switch changes.
-
-        Args:
-            event: The Switch.Changed event; an event whose value already
-                matches the loaded theme's dark flag is a programmatic sync
-                and does not mark the editor modified.
-        """
-        self._update_dark_mode_state_word(event.value)
-        if event.value == self.is_dark_theme:
-            # _update_dark_mode_switch syncing the widget to the loaded
-            # theme -- not a user edit.
-            return
-        self.is_dark_theme = event.value
-        self.is_modified = True
+    @on(Checkbox.Changed, "#settings-theme-dark-mode")
+    def on_dark_mode_changed(self, event: Checkbox.Changed) -> None:
+        """Handle dark mode checkbox changes."""
+        # task-1338: ignore programmatic syncs from _update_dark_mode_checkbox;
+        # only a real change counts as a modification.
+        if event.value != self.is_dark_theme:
+            self.is_dark_theme = event.value
+            self.is_modified = True
 
     @on(Button.Pressed, "#settings-theme-apply")
     def on_apply_theme(self) -> None:
@@ -558,7 +550,31 @@ class SettingsThemeEditor(Vertical):
 
     @on(Button.Pressed, "#settings-theme-reset")
     def on_reset_theme(self) -> None:
-        """Reset theme to original values."""
+        """Reset theme to original values (confirms before discarding edits)."""
+        # task-1371: Reset throws away unapplied edits; the Settings screen
+        # confirms its equivalent discard (revert) per ADR-031 rule 3, so the
+        # editor follows the same confirmation rule.
+        if not self.is_modified:
+            self._reset_theme()
+            return
+
+        async def _confirmed_reset() -> None:
+            self._reset_theme()
+
+        self.app.push_screen(
+            ConfirmationDialog(
+                title="Reset theme",
+                message=(
+                    f"Discard all unsaved changes to '{self.current_theme_name}'?"
+                ),
+                confirm_label="Discard changes",
+                cancel_label="Keep editing",
+                confirm_callback=_confirmed_reset,
+            )
+        )
+
+    def _reset_theme(self) -> None:
+        """Reload original theme values (post-confirmation when modified)."""
         user_theme_path = self.custom_themes_path / f"{self.current_theme_name}.toml"
         if user_theme_path.exists():
             self.load_user_theme(self.current_theme_name)
@@ -568,7 +584,31 @@ class SettingsThemeEditor(Vertical):
 
     @on(Button.Pressed, "#settings-theme-new")
     def on_new_theme(self) -> None:
-        """Create a new theme."""
+        """Create a new theme (confirms before discarding unsaved edits)."""
+        # task-1371: starting a new theme replaces the working palette, so it
+        # follows the same discard confirmation rule as Reset/revert.
+        if not self.is_modified:
+            self._new_theme()
+            return
+
+        async def _confirmed_new() -> None:
+            self._new_theme()
+
+        self.app.push_screen(
+            ConfirmationDialog(
+                title="New theme",
+                message=(
+                    f"Discard all unsaved changes to '{self.current_theme_name}' "
+                    "and start a new theme?"
+                ),
+                confirm_label="Discard changes",
+                cancel_label="Keep editing",
+                confirm_callback=_confirmed_new,
+            )
+        )
+
+    def _new_theme(self) -> None:
+        """Populate a fresh default palette (post-confirmation when modified)."""
         self.current_theme_name = "new_theme"
         self.current_theme_data = {
             "primary": "#0099FF",
@@ -590,7 +630,7 @@ class SettingsThemeEditor(Vertical):
         name_input.focus()
 
         self._update_color_inputs()
-        self._update_dark_mode_switch()
+        self._update_dark_mode_checkbox()
         self.is_modified = True
 
         self.app.notify("Creating new theme", severity="information")
@@ -614,7 +654,7 @@ class SettingsThemeEditor(Vertical):
     def on_delete_theme(self) -> None:
         """Delete the current user theme."""
         built_in_names = {"textual-dark", "textual-light"}
-        custom_names = {t.name for t in ALL_THEMES if hasattr(t, "name")}
+        shipped_names = {t.name for t in ALL_THEMES if hasattr(t, "name")}
 
         try:
             validate_filename(self.current_theme_name)
@@ -622,34 +662,71 @@ class SettingsThemeEditor(Vertical):
             self.app.notify("Cannot delete theme: invalid theme name", severity="warning")
             return
 
-        if (
-            self.current_theme_name in built_in_names
-            or self.current_theme_name in custom_names
-        ):
-            self.app.notify("Cannot delete built-in or custom themes", severity="warning")
+        # File existence decides: anything saved in the user themes directory
+        # is a user theme and deletable, even when its name shadows a shipped
+        # catalog theme. The built-in/shipped guard only applies when no user
+        # file exists for the name.
+        theme_path = self.custom_themes_path / f"{self.current_theme_name}.toml"
+        if not theme_path.exists():
+            if self.current_theme_name in built_in_names:
+                self.app.notify(
+                    f"'{self.current_theme_name}' is a built-in theme and cannot be deleted",
+                    severity="warning",
+                )
+            elif self.current_theme_name in shipped_names:
+                self.app.notify(
+                    f"'{self.current_theme_name}' is a shipped theme and cannot be deleted",
+                    severity="warning",
+                )
+            else:
+                self.app.notify(
+                    f"No saved custom theme named '{self.current_theme_name}'",
+                    severity="warning",
+                )
             return
 
-        theme_path = self.custom_themes_path / f"{self.current_theme_name}.toml"
-        if theme_path.exists():
-            try:
-                theme_path.unlink()
-                self.app.notify(
-                    f"Deleted theme '{self.current_theme_name}'", severity="success"
-                )
+        # task-1367: unlinking a user theme file is irreversible -- confirm
+        # first, capturing the name so a theme switch while the dialog is up
+        # cannot delete the wrong file.
+        theme_name = self.current_theme_name
 
-                tree = self.query_one("#settings-theme-tree", Tree)
-                for node in tree.root.children:
-                    if str(node.label) == "User Themes":
-                        for child in node.children:
-                            if str(child.label) == f"user:{self.current_theme_name}":
-                                child.remove()
-                                break
-                        break
+        async def _confirmed_delete() -> None:
+            self._delete_user_theme(theme_path, theme_name)
 
-                self.load_theme("textual-dark")
-            except Exception as e:
-                logger.error(f"Failed to delete theme: {e}")
-                self.app.notify(f"Failed to delete theme: {e}", severity="error")
+        self.app.push_screen(
+            ConfirmationDialog(
+                title="Delete theme",
+                message=(
+                    f"Delete the saved theme '{theme_name}'?\n"
+                    "This removes the theme file and cannot be undone."
+                ),
+                confirm_label="Delete theme",
+                cancel_label="Keep theme",
+                confirm_callback=_confirmed_delete,
+            )
+        )
+
+    def _delete_user_theme(self, theme_path: Path, theme_name: str) -> None:
+        """Unlink a user theme file and reset the editor (post-confirmation)."""
+        try:
+            theme_path.unlink()
+            self.app.notify(
+                f"Deleted theme '{theme_name}'", severity="success"
+            )
+
+            tree = self.query_one("#settings-theme-tree", Tree)
+            for node in tree.root.children:
+                if str(node.label) == "User Themes":
+                    for child in node.children:
+                        if str(child.label) == f"user:{theme_name}":
+                            child.remove()
+                            break
+                    break
+
+            self.load_theme("textual-dark")
+        except Exception as e:
+            logger.error(f"Failed to delete theme: {e}")
+            self.app.notify(f"Failed to delete theme: {e}", severity="error")
 
     @on(Button.Pressed, "#settings-theme-export")
     def on_export_theme(self) -> None:
@@ -680,10 +757,11 @@ class SettingsThemeEditor(Vertical):
             logger.error(f"Failed to export theme: {e}")
             self.app.notify(f"Failed to export theme: {e}", severity="error")
 
-    @on(Click, ".color-preset-swatch")
-    def on_preset_color_clicked(self, event: Click) -> None:
-        """Handle clicks on color preset swatches."""
-        color = str(event.control.styles.background)
+    def _apply_preset_swatch(self, swatch: Static) -> None:
+        """Apply a preset swatch's color to the last focused color input."""
+        background = swatch.styles.background
+        # str(Color) is "Color(r, g, b)", not a usable hex value -- normalize.
+        color = background.hex if isinstance(background, Color) else str(background)
 
         target = self.last_focused_color_input or "primary"
         if target not in self.color_inputs:
@@ -694,6 +772,25 @@ class SettingsThemeEditor(Vertical):
         self.current_theme_data[target] = color
         self.is_modified = True
         self.color_inputs[target].add_class("selected")
+
+    @on(Click, ".color-preset-swatch")
+    def on_preset_color_clicked(self, event: Click) -> None:
+        """Handle clicks on color preset swatches."""
+        self._apply_preset_swatch(event.control)
+
+    def on_key(self, event: Key) -> None:
+        """task-1369: Enter/Space on a focused preset swatch applies it."""
+        if event.key not in ("enter", "space"):
+            return
+        focused = self.app.focused
+        if (
+            isinstance(focused, Static)
+            and focused.has_class("color-preset-swatch")
+            and str(focused.id or "").startswith("settings-theme-preset-")
+        ):
+            event.stop()
+            event.prevent_default()
+            self._apply_preset_swatch(focused)
 
     @on(Button.Pressed, "#settings-theme-generate")
     def on_generate_theme(self) -> None:
@@ -712,7 +809,7 @@ class SettingsThemeEditor(Vertical):
             self.current_theme_data.update(generated_theme)
             self.is_modified = True
 
-            self.app.notify("Theme generated from primary color!", severity="success")
+            self.app.notify("Theme generated from primary color.", severity="success")
         except Exception as e:
             logger.error(f"Failed to generate theme: {e}")
             self.app.notify(f"Failed to generate theme: {e}", severity="error")

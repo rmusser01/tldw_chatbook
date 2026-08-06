@@ -1,5 +1,14 @@
 # tldw_chatbook/UI/Tools_Settings_Window.py
 #
+# DEPRECATED (TASK-1346): This legacy "Tools & Settings" window is superseded by the
+# canonical Settings screen (tldw_chatbook/UI/Screens/settings_screen.py, the F9
+# Settings destination). It is not reachable through normal navigation: the
+# "tools_settings" route resolves to MCPScreen (see UI/Navigation/screen_registry.py)
+# and nothing composes a widget with id "tools_settings-window" anymore. It remains
+# only because Tests/UI/test_tools_settings_window.py still exercises it directly,
+# app.py handles its IngestUiStyleChanged message, and dead init scaffolding for it
+# lingers at app.py:8340-8368. Do not add new settings here;
+# migrate surviving behavior to the Settings screen before this module is deleted.
 #
 # Imports
 from typing import TYPE_CHECKING, Optional, List, Dict, NamedTuple
