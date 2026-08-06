@@ -92,6 +92,7 @@ class TTSSelectionSource(StrEnum):
 
     EXPLICIT = "explicit"
     CHARACTER_PROFILE = "character_profile"
+    DEFAULT_PROFILE = "default_profile"
     STUDIO_DRAFT = "studio_draft"
     STUDIO_SAVED = "studio_saved"
     GLOBAL = "global"
@@ -196,6 +197,27 @@ class TTSCharacterProfileSelection:
 
 
 @dataclass(frozen=True, slots=True)
+class TTSDefaultProfileSelection:
+    """A complete selection naming the app-wide default voice profile."""
+
+    selection: TTSSelectionOverrides
+    repository_generation: int
+    profile_revision: int
+
+    def __post_init__(self) -> None:
+        if type(self.selection) is not TTSSelectionOverrides:
+            raise TypeError("Default-profile TTS selection is invalid")
+        _validate_nonnegative_revision(
+            self.repository_generation,
+            "Default-profile TTS repository generation",
+        )
+        if type(self.profile_revision) is not int:
+            raise TypeError("Default-profile TTS profile revision must be an integer")
+        if self.profile_revision < 1:
+            raise ValueError("Default-profile TTS profile revision must be positive")
+
+
+@dataclass(frozen=True, slots=True)
 class TTSStudioDraftSelection:
     """Current validated Studio controls or one non-persistent preview."""
 
@@ -222,6 +244,8 @@ class TTSEffectiveSelectionRevisions:
     studio_preferences: int | None
     character_repository: int | None
     character_profile: int | None
+    default_profile_repository: int | None
+    default_profile_revision: int | None
     provider_configuration: int
     provider_catalog: int | None
 
@@ -237,6 +261,7 @@ class TTSEffectiveSelectionRevisions:
         for label, value in (
             ("Studio TTS preference revision", self.studio_preferences),
             ("Character TTS repository generation", self.character_repository),
+            ("Default-profile TTS repository generation", self.default_profile_repository),
             ("TTS provider catalog revision", self.provider_catalog),
         ):
             if value is not None:
@@ -248,6 +273,19 @@ class TTSEffectiveSelectionRevisions:
                 raise ValueError("Character TTS profile revision must be positive")
         if (self.character_repository is None) is not (self.character_profile is None):
             raise ValueError("Character TTS revisions must be recorded together")
+        if self.default_profile_revision is not None:
+            if type(self.default_profile_revision) is not int:
+                raise TypeError(
+                    "Default-profile TTS profile revision must be an integer"
+                )
+            if self.default_profile_revision < 1:
+                raise ValueError(
+                    "Default-profile TTS profile revision must be positive"
+                )
+        if (self.default_profile_repository is None) is not (
+            self.default_profile_revision is None
+        ):
+            raise ValueError("Default-profile TTS revisions must be recorded together")
 
 
 @dataclass(frozen=True, slots=True)
@@ -445,8 +483,10 @@ def _fallback_layer(provider_id: str) -> _SelectionLayer:
     )
 
 
-def _require_complete_character_profile(
-    profile: TTSCharacterProfileSelection,
+def _require_complete_profile_selection(
+    profile: TTSCharacterProfileSelection | TTSDefaultProfileSelection,
+    *,
+    source: TTSSelectionSource,
 ) -> None:
     """Reject an incomplete exact profile before any lower layer is consulted."""
 
@@ -463,39 +503,49 @@ def _require_complete_character_profile(
             raise TTSEffectiveResolutionError(
                 code="invalid_selection",
                 axis=axis,
-                source=TTSSelectionSource.CHARACTER_PROFILE,
+                source=source,
             )
     if selection.model_mode != "exact":
         raise TTSEffectiveResolutionError(
             code="invalid_selection",
             axis="model_mode",
-            source=TTSSelectionSource.CHARACTER_PROFILE,
+            source=source,
         )
     if selection.model_id is None:
         raise TTSEffectiveResolutionError(
             code="missing_exact",
             axis="model_id",
-            source=TTSSelectionSource.CHARACTER_PROFILE,
+            source=source,
         )
     if selection.voice_id is None:
         if selection.voice_mode == "exact":
             raise TTSEffectiveResolutionError(
                 code="missing_exact",
                 axis="voice_id",
-                source=TTSSelectionSource.CHARACTER_PROFILE,
+                source=source,
             )
         if selection.voice_mode != "server_default":
             raise TTSEffectiveResolutionError(
                 code="invalid_selection",
                 axis="voice_mode",
-                source=TTSSelectionSource.CHARACTER_PROFILE,
+                source=source,
             )
     elif selection.voice_mode != "exact":
         raise TTSEffectiveResolutionError(
             code="invalid_selection",
             axis="voice_mode",
-            source=TTSSelectionSource.CHARACTER_PROFILE,
+            source=source,
         )
+
+
+def _require_complete_character_profile(
+    profile: TTSCharacterProfileSelection,
+) -> None:
+    """Reject an incomplete exact character profile (thin named wrapper)."""
+
+    _require_complete_profile_selection(
+        profile, source=TTSSelectionSource.CHARACTER_PROFILE
+    )
 
 
 def _provider_for_layers(
@@ -1002,6 +1052,7 @@ async def _resolve_layers(
     global_preferences_revision: int,
     studio_preferences_revision: int | None,
     character_profile: TTSCharacterProfileSelection | None,
+    default_profile: TTSDefaultProfileSelection | None,
     provider_revision_reader: Callable[[str], int],
     catalog_reader: Callable[[str], Awaitable[TTSProviderCatalog]],
     native_capability_reader: NativeCapabilityReader | None,
@@ -1122,19 +1173,22 @@ async def _resolve_layers(
             source=provider_source,
         )
 
+    all_axis_sources = (
+        provider_source,
+        model_mode_source,
+        model_id_source,
+        voice_mode_source,
+        voice_id_source,
+        format_source,
+        speed_source,
+        options_source,
+        *option_sources.values(),
+    )
     uses_character = any(
-        source is TTSSelectionSource.CHARACTER_PROFILE
-        for source in (
-            provider_source,
-            model_mode_source,
-            model_id_source,
-            voice_mode_source,
-            voice_id_source,
-            format_source,
-            speed_source,
-            options_source,
-            *option_sources.values(),
-        )
+        source is TTSSelectionSource.CHARACTER_PROFILE for source in all_axis_sources
+    )
+    uses_default_profile = any(
+        source is TTSSelectionSource.DEFAULT_PROFILE for source in all_axis_sources
     )
     revisions = TTSEffectiveSelectionRevisions(
         global_preferences=global_revision,
@@ -1147,6 +1201,16 @@ async def _resolve_layers(
         character_profile=(
             character_profile.profile_revision
             if uses_character and character_profile is not None
+            else None
+        ),
+        default_profile_repository=(
+            default_profile.repository_generation
+            if uses_default_profile and default_profile is not None
+            else None
+        ),
+        default_profile_revision=(
+            default_profile.profile_revision
+            if uses_default_profile and default_profile is not None
             else None
         ),
         provider_configuration=provider_revision,
@@ -1190,8 +1254,9 @@ class TTSEffectiveSettingsResolver:
         native_capability_reader: NativeCapabilityReader | None = None,
         explicit: TTSSelectionOverrides | None = None,
         character_profile: TTSCharacterProfileSelection | None = None,
+        default_profile: TTSDefaultProfileSelection | None = None,
     ) -> TTSEffectiveSelectionSnapshot:
-        """Resolve explicit, authoritative-character, global, and fallback layers.
+        """Resolve explicit, character, default-profile, global, and fallback layers.
 
         Args:
             global_preferences: Persisted global selection, when configured.
@@ -1201,13 +1266,16 @@ class TTSEffectiveSettingsResolver:
             native_capability_reader: Optional reader for observed native capabilities.
             explicit: Optional request-scoped selection overrides.
             character_profile: Optional authoritative character-owned selection.
+            default_profile: Optional app-wide default-voice profile selection,
+                consulted only when no character profile supplies an axis.
 
         Returns:
             The immutable effective selection and its provenance.
 
         Raises:
             TypeError: If a supplied selection object has an invalid type.
-            ValueError: If an authoritative character selection is incomplete.
+            ValueError: If an authoritative character or default-profile selection
+                is incomplete.
             TTSEffectiveResolutionError: If the layers cannot produce a valid selection.
         """
 
@@ -1219,6 +1287,14 @@ class TTSEffectiveSettingsResolver:
             raise TypeError("Character TTS profile selection is invalid")
         if character_profile is not None:
             _require_complete_character_profile(character_profile)
+        if default_profile is not None and (
+            type(default_profile) is not TTSDefaultProfileSelection
+        ):
+            raise TypeError("Default-profile TTS selection is invalid")
+        if default_profile is not None:
+            _require_complete_profile_selection(
+                default_profile, source=TTSSelectionSource.DEFAULT_PROFILE
+            )
         if global_preferences is not None and (
             type(global_preferences) is not TTSPreferencesSnapshot
         ):
@@ -1233,6 +1309,13 @@ class TTSEffectiveSettingsResolver:
                     character_profile.selection,
                 )
             )
+        if default_profile is not None:
+            layers.append(
+                _SelectionLayer(
+                    TTSSelectionSource.DEFAULT_PROFILE,
+                    default_profile.selection,
+                )
+            )
         if global_preferences is not None:
             layers.append(_global_layer(global_preferences))
         return await _resolve_layers(
@@ -1240,6 +1323,7 @@ class TTSEffectiveSettingsResolver:
             global_preferences_revision=global_preferences_revision,
             studio_preferences_revision=None,
             character_profile=character_profile,
+            default_profile=default_profile,
             provider_revision_reader=provider_revision_reader,
             catalog_reader=catalog_reader,
             native_capability_reader=native_capability_reader,
@@ -1304,6 +1388,7 @@ class TTSEffectiveSettingsResolver:
             global_preferences_revision=global_preferences_revision,
             studio_preferences_revision=studio_preferences.revision,
             character_profile=None,
+            default_profile=None,
             provider_revision_reader=provider_revision_reader,
             catalog_reader=catalog_reader,
             native_capability_reader=native_capability_reader,
@@ -1313,6 +1398,7 @@ class TTSEffectiveSettingsResolver:
 
 __all__ = [
     "TTSCharacterProfileSelection",
+    "TTSDefaultProfileSelection",
     "TTSEffectiveResolutionError",
     "TTSEffectiveSelectionRevisions",
     "TTSEffectiveSelectionSnapshot",

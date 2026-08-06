@@ -12,6 +12,7 @@ from tldw_chatbook.TTS.adapter_types import (
 )
 from tldw_chatbook.TTS.effective_settings import (
     TTSCharacterProfileSelection,
+    TTSDefaultProfileSelection,
     TTSEffectiveResolutionError,
     TTSEffectiveSelectionRevisions,
     TTSEffectiveSelectionSnapshot,
@@ -193,6 +194,8 @@ async def test_global_only_resolution_preserves_legacy_selection_without_catalog
         studio_preferences=None,
         character_repository=None,
         character_profile=None,
+        default_profile_repository=None,
+        default_profile_revision=None,
         provider_configuration=4,
         provider_catalog=None,
     )
@@ -1070,3 +1073,96 @@ def test_resolution_error_copy_is_bounded_and_value_free() -> None:
     assert error.source is TTSSelectionSource.EXPLICIT
     assert "provider_options" in str(error)
     assert "credential" not in str(error)
+
+
+@pytest.mark.asyncio
+async def test_default_profile_wins_over_global_and_loses_to_character() -> None:
+    runtime = _ResolutionRuntime(
+        capability=_audio_cpp_capability("default-model", voices=("default-voice",))
+    )
+    default_profile = TTSDefaultProfileSelection(
+        selection=TTSSelectionOverrides(
+            provider_id="audio_cpp", model_mode="exact", model_id="default-model",
+            voice_mode="exact", voice_id="default-voice", response_format="wav",
+            speed=1.0, provider_options={},
+        ),
+        repository_generation=4,
+        profile_revision=2,
+    )
+    resolved = await TTSEffectiveSettingsResolver().resolve_non_studio(
+        default_profile=default_profile,
+        global_preferences=_global_preferences(),
+        global_preferences_revision=7,
+        provider_revision_reader=runtime.provider_revision,
+        catalog_reader=runtime.read_catalog,
+        native_capability_reader=runtime.read_native_capability,
+    )
+
+    assert resolved.voice_id == "default-voice"
+    assert resolved.sources["voice_id"] is TTSSelectionSource.DEFAULT_PROFILE
+    assert resolved.sources["model_id"] is TTSSelectionSource.DEFAULT_PROFILE
+    assert resolved.revisions.default_profile_repository == 4
+    assert resolved.revisions.default_profile_revision == 2
+
+
+@pytest.mark.asyncio
+async def test_character_profile_outranks_default_profile() -> None:
+    runtime = _ResolutionRuntime(
+        capability=_audio_cpp_capability("character-model", voices=("character-voice",))
+    )
+    character = TTSCharacterProfileSelection(
+        selection=TTSSelectionOverrides(
+            provider_id="audio_cpp", model_mode="exact", model_id="character-model",
+            voice_mode="exact", voice_id="character-voice", response_format="wav",
+            speed=1.0, provider_options={},
+        ),
+        repository_generation=9, profile_revision=6,
+    )
+    default_profile = TTSDefaultProfileSelection(
+        selection=TTSSelectionOverrides(
+            provider_id="audio_cpp", model_mode="exact", model_id="default-model",
+            voice_mode="exact", voice_id="default-voice", response_format="wav",
+            speed=1.0, provider_options={},
+        ),
+        repository_generation=4, profile_revision=2,
+    )
+    resolved = await TTSEffectiveSettingsResolver().resolve_non_studio(
+        character_profile=character,
+        default_profile=default_profile,
+        global_preferences=_global_preferences(),
+        global_preferences_revision=7,
+        provider_revision_reader=runtime.provider_revision,
+        catalog_reader=runtime.read_catalog,
+        native_capability_reader=runtime.read_native_capability,
+    )
+
+    assert resolved.voice_id == "character-voice"
+    assert resolved.sources["voice_id"] is TTSSelectionSource.CHARACTER_PROFILE
+
+
+@pytest.mark.asyncio
+async def test_no_default_profile_still_falls_through_to_global() -> None:
+    runtime = _ResolutionRuntime(
+        capability=_audio_cpp_capability("character-model", voices=("character-voice",))
+    )
+    resolved = await TTSEffectiveSettingsResolver().resolve_non_studio(
+        global_preferences=_global_preferences(),
+        global_preferences_revision=7,
+        provider_revision_reader=runtime.provider_revision,
+        catalog_reader=runtime.read_catalog,
+        native_capability_reader=runtime.read_native_capability,
+    )
+
+    assert resolved.sources["voice_id"] is TTSSelectionSource.GLOBAL
+    assert resolved.revisions.default_profile_repository is None
+    assert resolved.revisions.default_profile_revision is None
+
+
+def test_default_profile_revisions_must_travel_together() -> None:
+    with pytest.raises(ValueError):
+        TTSEffectiveSelectionRevisions(
+            global_preferences=1, studio_preferences=None,
+            character_repository=None, character_profile=None,
+            default_profile_repository=4, default_profile_revision=None,
+            provider_configuration=1, provider_catalog=1,
+        )
