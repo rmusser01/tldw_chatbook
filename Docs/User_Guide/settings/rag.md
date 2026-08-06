@@ -12,17 +12,18 @@ the app are read-only, so tuning always starts by cloning one.
 
 ## Getting there
 
-Open **Settings** — click it in the nav bar, or press **Ctrl+P** and pick
-"Tab Navigation: Switch to Settings" (there is no **Ctrl+digit** for Settings;
-it sits past the ten numbered destinations). Then pick **RAG** in the
-**Settings Sections** rail, under **Domain Defaults** — or press `/`, type
-`rag`, press Enter.
+Open **Settings** — press **F9**, click "F9 Settings" in the nav bar, or
+press **Ctrl+P** and pick "Tab Navigation: Switch to Settings". Then pick
+**RAG** in the
+category rail: click **Domain Defaults ▸ (10)** to expand the group (it is
+collapsed by default), then **RAG** — or skip the expanding entirely: press
+`/`, type `rag`, press Enter (the filter reveals collapsed rows).
 
 ## Layout tour
 
 ![RAG profiles](../images/settings/rag.svg)
 
-The **Preference Detail** pane stacks up to three bordered cards: **Profiles**
+The detail pane stacks up to three bordered cards: **Profiles**
 (the profile you are on, the picker, the five lifecycle buttons, the read-only
 banner, the index status line, and **Backfill**); the **first-run starter
 panel**, shown *instead of* the field wall on a fresh install; and **Editing:
@@ -125,9 +126,9 @@ not:
   **Clone** / **Rename**; Enter submits, Esc cancels.
 - **Unsaved Library/RAG changes** — "Save your changes before switching the
   active profile, or discard them?" (**Cancel** / **Discard** / **Save**),
-  raised only when you press **Set active** with an unsaved draft. **This is
-  the only unsaved-changes prompt anywhere in Settings**; every other category
-  keeps your draft silently.
+  raised only when you press **Set active** with an unsaved draft. Only one
+  other unsaved-changes prompt exists in Settings — leaving **Speech & TTS**
+  with edits; every other category keeps your draft silently.
 - **Delete profile** — 'Delete the "`<name>`" RAG profile? This cannot be
   undone.' (**Cancel** / **Delete**).
 - **Re-index required** — the destructive one, raised on **Save** when a ⚠
@@ -229,4 +230,4 @@ field has focus the footer relabels the hints as `Esc, s` / `Esc, r` /
   shortly." is different — that one is transient, so press **Backfill** again.
 
 —
-*Verified against dev @ fb2df0c8a — 2026-07-31*
+*Verified against dev @ e7b9ebabd — 2026-08-06*

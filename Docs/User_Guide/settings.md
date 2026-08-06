@@ -5,8 +5,8 @@
 Settings edits **saved defaults**. It is not a control room: nothing here starts
 a run, drives a chat, or manages a live server — those stay on
 [Console](console.md), MCP, and ACP. Reach for it to point the app at a provider
-and model, change how it looks, move where your databases live, create
-workspaces, or repair a broken configuration.
+and model, pick its default voice, change how it looks, move where your
+databases live, create workspaces, or repair a broken configuration.
 
 Learn this before anything else: **five save models coexist here**, and every
 category tells you which one it is using. The **State banner** pinned to the top
@@ -16,9 +16,14 @@ you touch them; some are read-only and point you elsewhere.
 
 ## Getting there
 
-- **Click Settings in the nav bar.** There is **no Ctrl+digit for Settings** —
-  it is the last of thirteen destinations and the ten hotkey digits run out
-  before it. The nav bar's right edge shows "More: Ctrl+P" for this reason.
+- **Press F9 from anywhere** — it works even while a text field has focus.
+  Settings is the last of thirteen destinations: the first ten get
+  **Ctrl+1 … Ctrl+0**, and the remaining three get function keys — the nav
+  bar labels say so ("F7 Lab", "F8 Logs", "F9 Settings").
+- **Click "F9 Settings" in the nav bar.** On a narrow window the bar becomes
+  a pager: a "More ›" button appears at the right edge (widening to
+  "F7 Lab · F8 Logs · F9 Settings · More ›" when there is room) and pages the
+  strip; when everything fits, no button shows.
 - **Ctrl+P** → "Tab Navigation: Switch to Settings", or "Settings &
   Preferences: Open Settings Tab". Typing **stats** also surfaces the Settings
   entry, because "stats" is one of this screen's legacy route names — but the
@@ -33,11 +38,11 @@ you touch them; some are read-only and point you elsewhere.
 
 | Region | What it shows |
 |---|---|
-| **Header line** | "Settings \| Global preferences, appearance, storage \| Local". |
+| **Header line** | "Settings \| Global preferences, appearance, storage, and app behavior \| Local". |
 | **Mode strip** | "Mode: \<category\>" — on Overview only, it adds "\| Runtime controls stay in MCP and ACP". |
-| **Settings Sections** (left rail) | A filter box ("Filter categories (/)"), a status line, then group headings — **Core**, **Interface**, **Data & Privacy**, **Troubleshooting**, **Expert**, **Domain Defaults** — with one row per category. A row is marked **>** when it is the one you are on, **(view)** when the page is read-only, and **\*** when it holds unsaved changes. |
-| **Preference Detail** (middle) | The category's page, with the **State banner** pinned above it; everything below the banner scrolls. |
-| **Scope Inspector** (right) | Who owns this setting and what saving it touches. Pinned at the top: "Selected category: \<title\>", "Unsaved changes" or "No unsaved changes", a one-line guided-action hint, the **Save (s)** and **Revert (r)** buttons (only on the five draft categories — Overview shows **Open Theme editor** instead), and the note "Local-only: saves write your config file." Below: field guides and the "Runtime owner", "Writes allowed", "Owns", and "Recovery" rows. "▼ more — scroll the inspector" appears when there is more below. |
+| **Category rail** (left, untitled) | A filter box ("Filter categories (/)"), a status line, then group headings — **Core**, **Interface**, **Data & Privacy**, **Troubleshooting**, **Expert** — with one row per category. The sixth heading is a button, "Domain Defaults ▸ (10)": that group is **collapsed by default** — click it (▸ becomes ▾) to show its ten rows; it opens itself while you are on one of them or while the filter has text. A row is marked **>** when it is the one you are on, **(view)** when the page is read-only, and **\*** when it holds unsaved changes. |
+| **Detail pane** (middle, untitled) | The category's page, with the **State banner** pinned above it; everything below the banner scrolls. |
+| **Scope Inspector** (right) | Who owns this setting and what saving it touches. Pinned at the top: "Selected category: \<title\>", "Unsaved changes" or "No unsaved changes", a one-line guided-action hint, the **Save (s)** and **Revert (r)** buttons (only on the six draft categories — Overview shows **Open Theme editor** instead), and the note "Local-only: saves write your config file." Below: field guides and the "Runtime owner", "Writes allowed", "Owns", and "Recovery" rows. "▼ more — scroll the inspector" appears when there is more below. |
 | **Footer** | This category's live shortcut hints (see [Keyboard & commands](#keyboard--commands)). |
 
 Moving around: **click** a rail row, or **Tab** from the nav bar to drop focus
@@ -65,7 +70,7 @@ Scope Inspector's buttons lose their "— no changes" suffix.
 
 | Badge | What it means | Categories |
 |---|---|---|
-| **Draft — save with s** | Edits are held as a draft; press **s** (or **Save (s)**) to write them. | Providers & Models, Appearance, Console Behavior, Storage, [RAG](settings/rag.md) |
+| **Draft — save with s** | Edits are held as a draft; press **s** (or **Save (s)**) to write them. | Providers & Models, Speech & TTS, Appearance, Console Behavior, Storage, [RAG](settings/rag.md) |
 | **Draft — save/revert below** | Drafted, but the panel has its own **Save** and **Revert**. | Image Gen |
 | **Auto-saved** | Written as you make each change; nothing to save. | Splash Screen |
 | **Applies immediately** | Each action takes effect at once; no draft to save or revert. | Workspaces |
@@ -74,12 +79,14 @@ Scope Inspector's buttons lose their "— no changes" suffix.
 | **Validate, then Save** | Save stays blocked until the current text validates. | Advanced Config |
 | **Read-only here** | Nothing on the page changes anything; it names the destination that owns it. | Overview, Privacy & Security, Diagnostics, and the eight view-only Domain Defaults pages |
 
-On the five **Draft — save with s** categories the banner switches to "State:
+On the six **Draft — save with s** categories the banner switches to "State:
 Unsaved changes | Save (s) or Revert (r) — switching categories keeps this
 draft." **That promise is literal:** no dialog warns you when you leave a
 category or the screen with unsaved edits, because the draft is kept — the
-**\*** in the rail is how you find it again. (The one exception is switching the
-active RAG profile; see [RAG defaults](settings/rag.md).) A draft that fails
+**\*** in the rail is how you find it again. (Two exceptions: switching the
+active RAG profile prompts — see [RAG defaults](settings/rag.md) — and leaving
+Speech & TTS with edits raises its own save/discard dialog instead of keeping
+the draft; see that section and Quirks.) A draft that fails
 validation shows "State: Needs correction | \<the problem\>" and Save stays
 blocked; with nothing pending, the buttons read **Save (s) — no changes** and
 **Revert (r) — no changes**. Saving is always local: nothing leaves your machine
@@ -91,6 +98,7 @@ unless you run Manual sync from Overview yourself.
 |---|---|---|---|
 | Core | **Overview** (view) | Readiness, storage, privacy, Console behavior, diagnostics. | Read-only here |
 | Core | **Providers & Models** | Default provider, model, and readiness shared with Console. | Draft — save with s |
+| Core | **Speech & TTS** | Application-wide TTS provider, model, voice, format, speed, and per-provider setup. | Draft — save with s (leave prompts) |
 | Interface | **Appearance** | Theme, density, and visual defaults shared with the app shell. | Draft — save with s |
 | Interface | **Theme** | Full theme editor, custom colors, presets, and live preview. | Managed in editor |
 | Interface | **Splash Screen** | Startup splash card selection, defaults, and preview gallery. | Auto-saved |
@@ -136,6 +144,37 @@ before saving; the result ends "status=ready" or "status=blocked", and the probe
 reports "reachable", "reachable (N models)", or a named failure ("timeout",
 "connection refused", "HTTP \<status\>"). A successful **Save** deliberately
 clears the previous verdict — run **Test Provider** again afterwards.
+
+### Core — Speech & TTS
+
+Application-wide speech and text-to-speech defaults — which TTS provider
+speaks by default, with what model, voice, output format, and speed — plus
+per-provider setup. The pane opens with its scope in a banner: "You are
+editing application-wide Speech & TTS defaults. The Speech Studio can keep
+separate Studio preferences without changing these values.", and an **Open
+Speech Lab** button (see Quirks before pressing it), because this pane
+deliberately does *not* talk to any server: "Settings reuses accepted in-memory observations only. Open Speech
+Lab to test the server or refresh models and voices." Ordinary **Save**
+"validates and persists locally. Use Speech Lab for connection tests,
+discovery, generation, and playback."
+
+| Card | What's in it |
+|---|---|
+| **Global defaults** | A status line ("Global default selection: … — effective source …"), the default voice-profile row, **Default TTS Provider** (audio.cpp, OpenAI, ElevenLabs, Kokoro, Chatterbox, Higgs, AllTalk), model policy (**Exact** with an "Exact model ID" box / **First available**), voice policy (**Exact** / **Server default**), **Output format** (MP3 / Opus / AAC / FLAC / WAV), and **Speed** ("0.25 - 4.0"). Capability limits are stated inline — "audio.cpp requires WAV output and speed 1.0." — and validated before Save. |
+| **Provider setup** | A **Configure Provider** picker for editing any provider's setup without switching the default ("Configure Provider does not change the Default TTS Provider."). Credentials get Set / Replace / Clear dialogs: the editor "starts empty", stores "a local config secret; an environment variable is safer and more portable", and Clear "removes only the local-config value. It cannot change a process environment variable." |
+| **Configuration inspector** | Read-out of the selected setup and where each value comes from ("Selected provider setup source: …"). |
+| **Realtime engine** | "Optional low-latency voice engine for the Console's hands-free loop (Ctrl+Shift+H)." — a switch plus its engine fields; off means the record → transcribe → reply → speak pipeline is used as before. |
+
+Buttons: **Save**, **Revert**, **Restore Non-secret Defaults** ("Non-secret
+defaults restored in the draft; choose Save to persist them." — credentials
+are left alone), **Open Speech Lab**.
+
+**This is the one draft category that will not let you walk away silently.**
+Leaving Speech & TTS with unsaved edits raises "Unsaved global Speech & TTS
+settings — Save these application-wide changes before continuing, or discard
+them?" with **Cancel** / **Discard and continue** / **Save and continue** —
+the draft is resolved, not kept (see Quirks: the State banner still claims
+otherwise, task-2708).
 
 ### Interface — Appearance
 
@@ -314,32 +353,38 @@ a note on what would have to exist before Settings could own a default.
    one. Press **Test Provider** *before* saving — it tests your draft. When the
    result ends "status=ready", press **s**, then run **Test Provider** once
    more: saving clears the previous verdict on purpose.
-2. **Change the theme and make it stick.** Open **Appearance**, choose a
+2. **Change what the app sounds like.** Open **Speech & TTS**, pick a
+   **Default TTS Provider**, set model and voice policy (or an exact ID),
+   choose **Output format** and **Speed**, then press **s** or **Save**.
+   Saving only validates and stores the defaults — to actually hear a voice,
+   test a connection, or refresh a provider's model list, press **Open Speech
+   Lab**; this pane never contacts a server.
+3. **Change the theme and make it stick.** Open **Appearance**, choose a
    **Theme**, press **Preview** for a look (this session only), then **s** to
    save the draft — the theme is applied at the next launch. If you built the
    theme yourself in the **Theme** editor, press **Save** there first, then come
    back to **Appearance** and select it; the editor never sets the launch
    default.
-3. **Move a database to a new location.** Open **Storage**, edit that database's
+4. **Move a database to a new location.** Open **Storage**, edit that database's
    path box, and press **Check Storage** — you want "ready", not "missing,
    create before restart" (Settings will not create the folder for you). Press
    **s**; the banner confirms "Storage defaults saved. Restart Chatbook to use
    saved paths." Move the file yourself, then restart: until you do, the app
    keeps using the old one, which is what **Active files (resolved this
    session)** is showing you.
-4. **Create a workspace and give an agent a folder.** Open **Workspaces**, type
+5. **Create a workspace and give an agent a folder.** Open **Workspaces**, type
    a name, press **Create**. Select the new workspace, press **Set active**,
    then under **Folders (agent file-tool access)** enter a folder path and press
    **Add folder** — it is bound read-only. Press **Allow write** on that row if
    the agent needs to write. Every step applies immediately; nothing to save.
-5. **Repair a configuration you broke.** Open **Diagnostics** and press
+6. **Repair a configuration you broke.** Open **Diagnostics** and press
    **Validate Config** — the error names the problem, with secrets redacted. Fix
    it in the guided pages if you can. If not, open **Advanced Config**, press
    **Load Backup** to pull the previous `.bak` copy into the editor, press
    **Validate Raw TOML**, and only then **Save Raw TOML** (disabled until the
    text on screen is the text that validated). Finish with **Reload Config** on
    Diagnostics if the app has not picked it up.
-6. **Re-run the first-run setup.** Open **Diagnostics** and press **Run Setup
+7. **Re-run the first-run setup.** Open **Diagnostics** and press **Run Setup
    Wizard** — see [First run setup](First_Run_Setup.md).
 
 ## Keyboard & commands
@@ -353,8 +398,8 @@ hints as "Esc, s" while a field has focus. Only then do the letters work.
 
 | Key | Action |
 |---|---|
-| s | Save this category — only on the five **Draft — save with s** categories |
-| r | Revert this category — same five. On Theme, Splash Screen, Internal Prompts, and Workspaces it answers "Use the editor's own buttons for this category" |
+| s | Save this category — only on the six **Draft — save with s** categories |
+| r | Revert this category — same six. On Theme, Splash Screen, Internal Prompts, and Workspaces it answers "Use the editor's own buttons for this category" |
 | t | Run this category's check. The footer names the real verb: **test provider**, **validate config**, **check storage**, **check privacy**, **preview appearance**, **check index**. Only Providers & Models, Diagnostics, Storage, Privacy & Security, Appearance, and RAG have one |
 | / | Focus the category filter from anywhere on the screen. Pressing it again while the filter has focus re-selects the text rather than typing a slash |
 | Esc | Release a focused field; or, when the filter has text, clear the filter |
@@ -385,17 +430,19 @@ not open an editor.
 - `config.toml` sections these pages write: `[chat_defaults]` (provider, model,
   global sampling fallbacks), `[api_settings.<provider>]` (endpoint, key,
   env-var name, per-model generation profiles), `[model_catalog]` (automatic
-  refresh), `[general]` + `[appearance]` + `[web_server]` (Appearance),
-  `[splash_screen]`, `[console]` and `[chat.images]` (Console Behavior),
-  `[database]` (Storage), `[image_generation]`, `[internal_prompts]`,
-  `[encryption]`, and `[rag.service]` (which RAG profile is active). Workspaces
-  are the exception — they live in their own database, not in `config.toml`.
+  refresh), `[app_tts]` (Speech & TTS defaults, per-provider setup, and the
+  default voice profile), `[general]` + `[appearance]` + `[web_server]`
+  (Appearance), `[splash_screen]`, `[console]` and `[chat.images]` (Console
+  Behavior), `[database]` (Storage), `[image_generation]`,
+  `[internal_prompts]`, `[encryption]`, and `[rag.service]` (which RAG profile
+  is active). Workspaces are the exception — they live in their own database,
+  not in `config.toml`.
 
 ## Quirks & troubleshooting
 
 - **"s" typed a letter instead of saving.** A text box had focus. Press **Esc**,
   then **s**. The footer tells you this is happening: its hints read "Esc, s".
-- **"s" did nothing at all.** That category is not one of the five draft
+- **"s" did nothing at all.** That category is not one of the six draft
   categories — read the State banner badge and use the control it names.
 - **Four Appearance fields are less than they appear.** **Animations** and
   **Smooth scrolling** are saved but **nothing in the app reads them yet**.
@@ -425,9 +472,20 @@ not open an editor.
   validated: stale after edits".
 - **A category still shows "\*" after you left it.** Deliberate: drafts survive
   switching categories and leaving the screen, and no dialog warns you, so the
-  **\*** is the reminder. Go back and press **s** or **r**.
+  **\*** is the reminder. Go back and press **s** or **r**. (Speech & TTS is
+  the exception — it never leaves a **\*** behind, because leaving it forces
+  the save/discard choice.)
+- **Speech & TTS's State banner promises what the category won't do.** While
+  its draft is dirty the shared banner reads "…switching categories keeps this
+  draft." — but leaving Speech & TTS raises "Unsaved global Speech & TTS
+  settings" and the draft is saved or discarded, never kept (backlog
+  task-2708).
+- **"Open Speech Lab" currently crashes the app.** Every Open Speech Lab
+  button on Speech & TTS lands on Lab ▸ Speech, which at the time of writing
+  crashes on mount ("DuplicateIds", reproduced 100%) — save your draft before
+  pressing it (backlog task-2610).
 - **The Scope Inspector looks truncated.** Scroll it — "▼ more — scroll the
   inspector" at the bottom means there is more below.
 
 —
-*Verified against dev @ fb2df0c8a — 2026-07-31*
+*Verified against dev @ e7b9ebabd — 2026-08-06*
