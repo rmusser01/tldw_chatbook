@@ -17,6 +17,7 @@ from .execution_log import MCPExecutionLog, build_record
 from .hub_tool_catalog import HubTool
 from .local_control_service import MCPGovernanceDenied
 from .local_runtime_delegate import (
+    PERMISSION_STATE_UNRESOLVED_CLAUSE,
     RAW_TOOL_CALL_REFUSED_MESSAGE,
     RawToolCallRefusedError,
 )
@@ -63,14 +64,24 @@ _ADVANCED_EXECUTE_BLOCKED_MESSAGE = "{tool} is set to Off in Permissions."
 # Test Tool panel's blocked-result body and task-2270's rider fixed on its
 # quiet decision note.
 #
-# Kept textually IDENTICAL to `mcp_inspector._UNKNOWN_ORIGIN_SENTENCE`
-# ("Permission state could not be resolved.") rather than re-imported:
-# this module is imported BY `mcp_workbench.py`/`mcp_inspector.py` (see
-# `_ADVANCED_EXECUTE_BLOCKED_MESSAGE`'s own mirrored-not-shared precedent,
-# and `_run_advanced_action()`'s docstring for why the reverse import would
-# be circular), so the two surfaces say the same true thing the same way
-# without either importing the other.
-_ADVANCED_EXECUTE_GATE_ERROR_MESSAGE = "Permission state could not be resolved."
+# Fix Round G, Item 7 (review of Fix Round F): the prior version of this
+# comment claimed the twin worth matching was `mcp_inspector._UNKNOWN_
+# ORIGIN_SENTENCE` -- wrong surface. `_UNKNOWN_ORIGIN_SENTENCE` is the
+# Permissions-detail-panel/quiet-decision-note sentence; the REAL twin is
+# `mcp_workbench._TOOL_TEST_BLOCKED_UNKNOWN_TEXT`, the Test Tool panel's
+# own LOUD blocked-run body for this identical `gate_error` condition. The
+# two now derive from one shared clause, `local_runtime_delegate.
+# PERMISSION_STATE_UNRESOLVED_CLAUSE` (see that module for the sharing
+# rationale -- same dependency-safe-common-ground precedent as `RAW_TOOL_
+# CALL_REFUSED_MESSAGE` just above), rather than being re-imported into
+# each other: this module is imported BY `mcp_workbench.py`/`mcp_
+# inspector.py` (see `_ADVANCED_EXECUTE_BLOCKED_MESSAGE`'s own mirrored-
+# not-shared precedent, and `_run_advanced_action()`'s docstring in
+# `mcp_inspector.py` for why the reverse import would be circular), so
+# deriving both from a THIRD, dependency-safe module lets a reword of the
+# underlying claim change both call sites, without either importing the
+# other.
+_ADVANCED_EXECUTE_GATE_ERROR_MESSAGE = f"{PERMISSION_STATE_UNRESOLVED_CLAUSE.capitalize()}."
 
 # task-2539 (PR-T3 fix round B, item 3): the exact message
 # `execute_hub_tool()` raises below for a server-source `server_key`. Its

@@ -31,6 +31,7 @@ from tldw_chatbook.MCP.hub_tool_catalog import (
     server_tools_from_inventory,
 )
 from tldw_chatbook.MCP.local_control_service import MCPGovernanceDenied
+from tldw_chatbook.MCP.local_runtime_delegate import PERMISSION_STATE_UNRESOLVED_CLAUSE
 from tldw_chatbook.MCP.mcp_import import ImportCandidate
 from tldw_chatbook.MCP.permission_store import (
     BUILTIN_DEFAULT_STATE,
@@ -361,7 +362,24 @@ _TOOL_TEST_BLOCKED_TEXT = "Blocked — this tool is set to Off in Permissions."
 # uses (a doubled "Blocked" against the heading is fine -- it is what the
 # genuine-deny text above does too, deliberately unchanged here) -- only
 # the redundant back half is gone.
-_TOOL_TEST_BLOCKED_UNKNOWN_TEXT = "Blocked — permission state could not be determined."
+#
+# Fix Round G, Item 7 (PR-T3): the clause used to be an independently
+# maintained literal, "permission state could not be determined" -- close
+# to, but not the same as, the Advanced hatch's own blocked body for this
+# identical `gate_error` condition (`unified_control_plane_service.
+# _ADVANCED_EXECUTE_GATE_ERROR_MESSAGE`, "Permission state could not be
+# RESOLVED"). Two independent sentences for one fact is exactly the
+# drifted-duplicate shape this whole PR exists to close. Converged on
+# "resolved" (the majority phrasing -- also used by `_decision_note()`'s
+# quiet note and the Permissions detail block's `_UNKNOWN_ORIGIN_
+# SENTENCE`), derived from the SAME shared clause the Advanced hatch now
+# also derives from (`local_runtime_delegate.PERMISSION_STATE_UNRESOLVED_
+# CLAUSE` -- see that module for the sharing rationale), so a reword
+# changes both surfaces or neither compiles/matches. The "Blocked —
+# <clause>." SHAPE is unchanged (still this surface's own, distinct from
+# the Advanced hatch's bare-sentence-under-a-heading shape); only the
+# clause's SOURCE and wording moved.
+_TOOL_TEST_BLOCKED_UNKNOWN_TEXT = f"Blocked — {PERMISSION_STATE_UNRESOLVED_CLAUSE}."
 # Arm notice shown under the Run button (Task 5) when an "ask" resolution
 # carries `config_changed` -- an explicit tool-level allow that the rug-pull
 # guard downgraded because the tool's live definition no longer matches what

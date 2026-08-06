@@ -4303,7 +4303,15 @@ async def test_gate_check_exception_fails_closed():
     Item 6 (PR-T3 fix round D): `_TOOL_TEST_BLOCKED_UNKNOWN_TEXT` dropped
     its redundant "; the tool did not run" clause (doubled against the
     "Blocked · not run" heading rendered directly above it) -- updated
-    here to match."""
+    here to match.
+
+    Fix Round G, Item 7 (PR-T3, PRE-AUTHORIZED CONTRACT CHANGE): this
+    surface's clause converged with the Advanced hatch's own identical-
+    condition blocked body (`unified_control_plane_service.
+    _ADVANCED_EXECUTE_GATE_ERROR_MESSAGE`) on "could not be resolved" --
+    was "could not be determined", an independently maintained near-
+    duplicate. Both now derive from `local_runtime_delegate.
+    PERMISSION_STATE_UNRESOLVED_CLAUSE`."""
     app = ToolTestApp()
 
     def _raise(tool: Any) -> Any:
@@ -4326,7 +4334,7 @@ async def test_gate_check_exception_fails_closed():
         assert app.unified_mcp_service.test_calls == []
         result = str(app.query_one("#mcp-inspector-test-result", Static).renderable)
         assert "Blocked — this tool is set to Off in Permissions." not in result
-        assert "Blocked — permission state could not be determined." in result
+        assert "Blocked — permission state could not be resolved." in result
 
 
 @pytest.mark.asyncio
@@ -4396,8 +4404,15 @@ async def test_gate_check_exception_decision_note_suppressed_after_real_run():
         # Positive anchor: proves the deny short-circuit actually ran
         # (`show_tool_result()` was called) -- not just that the note is
         # absent, which is equally true before anything has happened.
+        #
+        # Fix Round G, Item 7 (PR-T3, PRE-AUTHORIZED CONTRACT CHANGE): "could
+        # not be determined" -> "could not be resolved" -- see
+        # `test_gate_check_exception_fails_closed`'s docstring above for the
+        # full rationale (converged with the Advanced hatch's identical-
+        # condition body via `local_runtime_delegate.PERMISSION_STATE_
+        # UNRESOLVED_CLAUSE`).
         assert (
-            "Blocked — permission state could not be determined."
+            "Blocked — permission state could not be resolved."
             in str(result_widget.renderable)
         )
 

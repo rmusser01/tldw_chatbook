@@ -36,6 +36,38 @@ RAW_TOOL_CALL_REFUSED_MESSAGE = (
     "Permissions settings and records the run."
 )
 
+# Fix Round G, Item 7 (PR-T3 review of Fix Round F). Two independent
+# surfaces state the identical "the permission RESOLVER itself failed, not
+# a genuine verdict" condition (`EffectiveToolState(state="deny",
+# origin="gate_error")`) in their own sentence shape:
+#   - `unified_control_plane_service._ADVANCED_EXECUTE_GATE_ERROR_MESSAGE`:
+#     a bare, capitalized sentence -- the Advanced hatch already carries
+#     "Blocked · not run" on its own heading line (`MCPInspector.
+#     _ADVANCED_BLOCKED_HEADING`), so the body under it is just the claim.
+#   - `mcp_workbench._TOOL_TEST_BLOCKED_UNKNOWN_TEXT`: `"Blocked —
+#     <clause>."`, deliberately parallel to its own genuine-deny sibling
+#     `_TOOL_TEST_BLOCKED_TEXT` ("Blocked — this tool is set to Off in
+#     Permissions.") -- the Test Tool panel has no separate "Blocked"
+#     heading of its own, so each of its blocked bodies carries the prefix.
+#
+# Before this fix the two were independently maintained literals that
+# happened to read close ("could not be resolved" vs. "could not be
+# determined") -- exactly the drifted-duplicate shape this whole PR exists
+# to close. One clause here, lowercase and without terminal punctuation so
+# either sentence SHAPE can compose around it (a leading capital for the
+# bare-sentence surface, a lowercase mid-sentence fragment after the
+# "Blocked — " em-dash for the other) -- this is what both
+# `_ADVANCED_EXECUTE_GATE_ERROR_MESSAGE` and `_TOOL_TEST_BLOCKED_UNKNOWN_
+# TEXT` are now DERIVED from, not merely equal to: a reword here changes
+# both, or the two go visibly out of sync at the assertion syntax level
+# (a `.capitalize()`/f-string call site left unedited), not just at the
+# reader's eye. Homed here rather than in either `unified_control_plane_
+# service.py` or `mcp_workbench.py`, mirroring `RAW_TOOL_CALL_REFUSED_
+# MESSAGE` just above: this module imports from neither of them, and
+# `unified_control_plane_service.py` already imports from this module, so
+# both surfaces can depend on this one without a cycle.
+PERMISSION_STATE_UNRESOLVED_CLAUSE = "permission state could not be resolved"
+
 
 class RawToolCallRefusedError(PermissionError):
     """A raw ``tools/call`` was refused -- run it through Execute Local Tool.
