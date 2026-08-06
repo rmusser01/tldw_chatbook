@@ -8213,7 +8213,10 @@ class TldwCli(
         try:
             self.loguru_logger.info("Initializing TTS service...")
             handler = TTSEventHandler(
-                profile_service_loader=self._ensure_tts_profile_service
+                profile_service_loader=self._ensure_tts_profile_service,
+                default_profile_id_reader=(
+                    lambda: get_cli_setting("app_tts", "default_profile_id", None)
+                ),
             )
             handler.app = self
             await handler.initialize_tts()

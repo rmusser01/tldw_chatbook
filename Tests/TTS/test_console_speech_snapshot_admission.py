@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import asyncio
 from copy import deepcopy
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import cast
+from uuid import UUID
 
 import pytest
 from loguru import logger
@@ -28,13 +30,100 @@ from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import (
 from tldw_chatbook.TTS.character_request_resolver import (
     CharacterTTSRequestResolution,
 )
-from tldw_chatbook.TTS.profile_service import LoadedCharacterTTSAssignment
-from tldw_chatbook.TTS.profile_types import CharacterRef
+from tldw_chatbook.TTS.profile_errors import ProfileRepositoryError
+from tldw_chatbook.TTS.profile_service import (
+    LoadedCharacterTTSAssignment,
+    LoadedTTSProfile,
+)
+from tldw_chatbook.TTS.profile_types import (
+    AssignedTTSProfileSnapshot,
+    CharacterRef,
+    CharacterTTSAssignment,
+    TTSGenerationProfile,
+    TTSProfileDraft,
+)
+
+_DEFAULT_PROFILE_ID = UUID("22222222-2222-4222-8222-222222222222")
+_ASSIGNED_PROFILE_ID = UUID("33333333-3333-4333-8333-333333333333")
+_CREATED_AT = datetime(2026, 8, 6, tzinfo=UTC)
+
+
+def _generation_profile(
+    *,
+    profile_id: UUID,
+    revision: int = 2,
+    provider_id: str = "openai",
+    model_id: str = "gpt-4o-mini-tts",
+    voice_id: str | None = "verse",
+    response_format: str = "mp3",
+) -> TTSGenerationProfile:
+    draft = TTSProfileDraft(
+        display_name="Default voice",
+        provider_id=provider_id,
+        model_id=model_id,
+        voice_id=voice_id,
+        response_format=response_format,
+        speed=1.0,
+        options={},
+    )
+    return TTSGenerationProfile(
+        profile_id=profile_id,
+        display_name=draft.display_name,
+        normalized_name=draft.normalized_name,
+        provider_id=draft.provider_id,
+        model_id=draft.model_id,
+        voice_id=draft.voice_id,
+        response_format=draft.response_format,
+        speed=draft.speed,
+        options=draft.options,
+        revision=revision,
+        created_at=_CREATED_AT,
+        updated_at=_CREATED_AT,
+    )
+
+
+class _DefaultProfileFakeService:
+    """Duck-typed `get_profile` (and optionally `get_assigned_profile`)."""
+
+    def __init__(
+        self,
+        *,
+        default_profile: LoadedTTSProfile | None = None,
+        default_error: BaseException | None = None,
+        assigned_result: LoadedCharacterTTSAssignment | None = None,
+    ) -> None:
+        self.default_profile = default_profile
+        self.default_error = default_error
+        self.assigned_result = assigned_result
+        self.default_calls: list[UUID] = []
+        self.assigned_calls: list[CharacterRef] = []
+
+    async def get_profile(self, profile_id: UUID) -> LoadedTTSProfile:
+        self.default_calls.append(profile_id)
+        if self.default_error is not None:
+            raise self.default_error
+        assert self.default_profile is not None
+        return self.default_profile
+
+    async def get_assigned_profile(
+        self,
+        character_ref: CharacterRef,
+    ) -> LoadedCharacterTTSAssignment:
+        self.assigned_calls.append(character_ref)
+        assert self.assigned_result is not None
+        return self.assigned_result
 
 
 class _RecordingHandler(TTSEventHandler):
-    def __init__(self, profile_service_loader=None) -> None:
-        super().__init__(profile_service_loader=profile_service_loader)
+    def __init__(
+        self,
+        profile_service_loader=None,
+        default_profile_id_reader=None,
+    ) -> None:
+        super().__init__(
+            profile_service_loader=profile_service_loader,
+            default_profile_id_reader=default_profile_id_reader,
+        )
         self.messages: list[object] = []
         self.generated: list[tuple[str, str | None, str | None]] = []
         self.resolutions: list[CharacterTTSRequestResolution | None] = []
@@ -224,6 +313,198 @@ async def test_valid_snapshot_uses_existing_normalization_and_global_voice_path(
     assert handler.resolutions[0] is not None
     assert handler.resolutions[0].source == "global"
     assert snapshot.message_id in handler._request_cooldown
+
+
+@pytest.mark.asyncio
+async def test_no_character_voice_with_loadable_default_profile_uses_it() -> None:
+    """(a) No character voice + a loadable default profile -> it is used."""
+    store, snapshot = _issued_snapshot()
+    profile = _generation_profile(
+        profile_id=_DEFAULT_PROFILE_ID,
+        provider_id="elevenlabs",
+        model_id="eleven_turbo_v2",
+        voice_id="rachel",
+        response_format="mp3",
+    )
+    service = _DefaultProfileFakeService(
+        default_profile=LoadedTTSProfile(repository_generation=3, profile=profile)
+    )
+
+    async def load_profile_service():
+        return service
+
+    handler = _RecordingHandler(
+        load_profile_service,
+        lambda: str(_DEFAULT_PROFILE_ID),
+    )
+    handler._tts_service = object()
+
+    await handler.handle_tts_request(
+        TTSMessageSpeechRequestEvent(
+            snapshot,
+            store.validate_tts_message_speech_snapshot,
+        )
+    )
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+
+    assert service.default_calls == [_DEFAULT_PROFILE_ID]
+    resolution = handler.resolutions[0]
+    assert resolution is not None
+    assert resolution.source == "default_profile"
+    assert resolution.request is not None
+    assert resolution.request.provider_id == "elevenlabs"
+    assert resolution.request.model_id == "eleven_turbo_v2"
+    assert resolution.request.voice == "rachel"
+    assert resolution.profile_id == _DEFAULT_PROFILE_ID
+    assert resolution.profile_revision == 2
+    assert resolution.repository_generation == 3
+    assert handler.generated == [
+        ("Exact Console response.", snapshot.message_id, None)
+    ]
+
+
+@pytest.mark.asyncio
+async def test_missing_default_profile_refuses_with_override_naming_default() -> None:
+    """(b) default profile set but deleted -> refuse + override, honest copy."""
+    store, snapshot = _issued_snapshot()
+    service = _DefaultProfileFakeService(
+        default_error=ProfileRepositoryError("missing")
+    )
+
+    async def load_profile_service():
+        return service
+
+    handler = _RecordingHandler(
+        load_profile_service,
+        lambda: str(_DEFAULT_PROFILE_ID),
+    )
+    handler._tts_service = object()
+
+    await handler.handle_tts_request(
+        TTSMessageSpeechRequestEvent(
+            snapshot,
+            store.validate_tts_message_speech_snapshot,
+        )
+    )
+
+    completion = next(
+        message for message in handler.messages if isinstance(message, TTSCompleteEvent)
+    )
+    assert completion.error
+    assert "character" not in completion.error.lower()
+    assert "default voice" in completion.error.lower()
+    assert completion.global_override_token is not None
+    assert handler.generated == []
+    assert service.default_calls == [_DEFAULT_PROFILE_ID]
+
+
+@pytest.mark.asyncio
+async def test_unavailable_profile_store_refuses_with_override_for_default() -> None:
+    """(c) profile store unavailable -> same refuse + override."""
+    store, snapshot = _issued_snapshot()
+
+    handler = _RecordingHandler(
+        None,  # no profile service loader at all -- store unbound
+        lambda: str(_DEFAULT_PROFILE_ID),
+    )
+    handler._tts_service = object()
+
+    await handler.handle_tts_request(
+        TTSMessageSpeechRequestEvent(
+            snapshot,
+            store.validate_tts_message_speech_snapshot,
+        )
+    )
+
+    completion = next(
+        message for message in handler.messages if isinstance(message, TTSCompleteEvent)
+    )
+    assert completion.error
+    assert "character" not in completion.error.lower()
+    assert completion.global_override_token is not None
+    assert handler.generated == []
+
+
+@pytest.mark.asyncio
+async def test_no_default_profile_configured_leaves_global_axes_unchanged() -> None:
+    """(d) no default profile set -> unchanged global-axes behavior."""
+    store, snapshot = _issued_snapshot()
+
+    def forbidden_default_profile_id_reader() -> str | None:
+        return None
+
+    handler = _RecordingHandler(
+        None,
+        forbidden_default_profile_id_reader,
+    )
+    handler._tts_service = object()
+
+    await handler.handle_tts_request(
+        TTSMessageSpeechRequestEvent(
+            snapshot,
+            store.validate_tts_message_speech_snapshot,
+        )
+    )
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+
+    assert handler.generated == [
+        ("Exact Console response.", snapshot.message_id, None)
+    ]
+    assert handler.resolutions[0] is not None
+    assert handler.resolutions[0].source == "global"
+
+
+@pytest.mark.asyncio
+async def test_character_voice_present_skips_default_profile_entirely() -> None:
+    """(e) a character voice present -> default profile is never consulted."""
+    store, snapshot = _issued_character_snapshot()
+    character_ref = cast(CharacterRef, snapshot.character_ref)
+    assigned_profile = _generation_profile(
+        profile_id=_ASSIGNED_PROFILE_ID,
+        provider_id="audio_cpp",
+        model_id="supertonic-3",
+        voice_id="voice-7",
+        response_format="wav",
+    )
+    service = _DefaultProfileFakeService(
+        assigned_result=LoadedCharacterTTSAssignment(
+            repository_generation=9,
+            snapshot=AssignedTTSProfileSnapshot(
+                assignment=CharacterTTSAssignment(
+                    character_ref=character_ref,
+                    profile_id=assigned_profile.profile_id,
+                ),
+                profile=assigned_profile,
+            ),
+        ),
+    )
+
+    async def load_profile_service():
+        return service
+
+    handler = _RecordingHandler(
+        load_profile_service,
+        lambda: str(_DEFAULT_PROFILE_ID),
+    )
+    handler._tts_service = object()
+
+    await handler.handle_tts_request(
+        TTSMessageSpeechRequestEvent(
+            snapshot,
+            store.validate_tts_message_speech_snapshot,
+        )
+    )
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+
+    assert service.assigned_calls == [character_ref]
+    assert service.default_calls == []
+    resolution = handler.resolutions[0]
+    assert resolution is not None
+    assert resolution.source == "assigned"
+    assert resolution.profile_id == _ASSIGNED_PROFILE_ID
 
 
 @pytest.mark.asyncio

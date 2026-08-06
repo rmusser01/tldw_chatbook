@@ -1,4 +1,18 @@
-"""Fail-closed character assignment resolution for trusted Console speech."""
+"""Fail-closed character assignment resolution for trusted Console speech.
+
+`CharacterTTSRequestResolution` and the bounded `CharacterTTSResolutionError`
+mechanism defined here (the code table, its copy, and
+`_GLOBAL_OVERRIDE_CODES`) are also reused by the sibling app-wide
+default-voice resolver, `TTS/default_profile_request_resolver.py` -- the
+"one message, one immutable resolution, no silent fallback" contract is
+identical for both, only the identity being resolved differs (a
+`CharacterRef` here; a stored profile UUID from `[app_tts]
+default_profile_id` there). Keeping ONE error type and ONE code table means
+every surface that already enumerates them (the refuse+override UI, tests)
+only has to learn two new bounded codes, not a second parallel mechanism.
+`CharacterTTSRequestResolver` itself stays scoped to character-assignment
+resolution only -- it never reads `default_profile_id` or resolves it.
+"""
 
 from __future__ import annotations
 
@@ -21,6 +35,7 @@ from tldw_chatbook.TTS.profile_types import PROFILE_PROVIDER_IDS, CharacterRef
 CharacterTTSResolutionSource: TypeAlias = Literal[
     "global",
     "assigned",
+    "default_profile",
     "explicit_override",
 ]
 CharacterTTSResolutionCode: TypeAlias = Literal[
@@ -28,6 +43,8 @@ CharacterTTSResolutionCode: TypeAlias = Literal[
     "authorship_invalid",
     "authority_missing",
     "profile_store_unavailable",
+    "default_profile_missing",
+    "default_profile_store_unavailable",
 ]
 
 _RESOLUTION_COPY: dict[CharacterTTSResolutionCode, str] = {
@@ -44,12 +61,22 @@ _RESOLUTION_COPY: dict[CharacterTTSResolutionCode, str] = {
         "Character voice profiles are unavailable. Retry, or use the global "
         "voice for this message."
     ),
+    "default_profile_missing": (
+        "Your default voice profile could not be found. Choose a different "
+        "default voice in Settings, or use the global voice for this message."
+    ),
+    "default_profile_store_unavailable": (
+        "Your default voice profile is unavailable. Retry, or use the global "
+        "voice for this message."
+    ),
 }
 _GLOBAL_OVERRIDE_CODES = frozenset(
     {
         "assignment_invalid",
         "authority_missing",
         "profile_store_unavailable",
+        "default_profile_missing",
+        "default_profile_store_unavailable",
     }
 )
 
@@ -74,7 +101,17 @@ class CharacterTTSResolutionError(RuntimeError):
 
 @dataclass(frozen=True, slots=True)
 class CharacterTTSRequestResolution:
-    """Immutable exact-request or global-path decision."""
+    """Immutable exact-request or global-path decision.
+
+    ``source="default_profile"`` carries the same exact-request shape as
+    ``"assigned"`` (a fully populated ``request``/``repository_generation``/
+    ``profile_id``/``profile_revision``) -- it names the app-wide default
+    voice profile instead of a per-character assignment. Kept as one result
+    type so every consumer (`tts_events.py`'s `_generate_tts`) makes ONE
+    "is this an exact profile request" branch rather than juggling two
+    parallel resolution types for what is, from the request-admission
+    side, an identical shape with a different provenance tag.
+    """
 
     source: CharacterTTSResolutionSource
     request: TTSRequest | None
@@ -83,9 +120,14 @@ class CharacterTTSRequestResolution:
     profile_revision: int | None
 
     def __post_init__(self) -> None:
-        if self.source not in {"global", "assigned", "explicit_override"}:
+        if self.source not in {
+            "global",
+            "assigned",
+            "default_profile",
+            "explicit_override",
+        }:
             raise ValueError("source")
-        if self.source == "assigned":
+        if self.source in {"assigned", "default_profile"}:
             if (
                 type(self.request) is not TTSRequest
                 or self.request.provider_id not in PROFILE_PROVIDER_IDS
@@ -95,7 +137,7 @@ class CharacterTTSRequestResolution:
                 or type(self.profile_revision) is not int
                 or self.profile_revision < 1
             ):
-                raise ValueError("assigned resolution")
+                raise ValueError(f"{self.source} resolution")
             return
         if any(
             value is not None

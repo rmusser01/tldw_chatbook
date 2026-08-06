@@ -46,9 +46,13 @@ from tldw_chatbook.TTS.adapter_types import (
     TTSRequest,
     TTSRegistryClosedError,
 )
+from tldw_chatbook.TTS.default_profile_request_resolver import (
+    resolve_default_profile,
+)
 from tldw_chatbook.TTS.pcm_stream import SinkPlan, sink_plan
 from tldw_chatbook.TTS.effective_settings import (
     TTSCharacterProfileSelection,
+    TTSDefaultProfileSelection,
     TTSSelectionOverrides,
 )
 from tldw_chatbook.Utils.secure_temp_files import get_temp_manager, secure_delete_file
@@ -358,9 +362,15 @@ class TTSEventHandler:
     def __init__(
         self,
         profile_service_loader: Callable[[], Awaitable[object | None]] | None = None,
+        default_profile_id_reader: Callable[[], object | None] | None = None,
     ):
         self._tts_service = None
         self._profile_service_loader = profile_service_loader
+        # Task-4 (slice 3): reads the persisted `[app_tts] default_profile_id`
+        # setting -- injected, like `profile_service_loader` above, so tests
+        # never touch real config, and `None` means "no app-default voice is
+        # wired up here", identical in effect to it being unconfigured.
+        self._default_profile_id_reader = default_profile_id_reader
         self._pending_global_overrides: dict[str, _PendingGlobalOverride] = {}
         self._temp_manager = get_temp_manager()
         self._audio_files: Dict[str, Path] = {}  # Track audio files by message_id
@@ -525,7 +535,7 @@ class TTSEventHandler:
                         event.validator,
                     )
                 logger.warning(
-                    "Console character speech resolution failed (outcome_code={})",
+                    "Console speech voice resolution failed (outcome_code={})",
                     error.code,
                 )
                 await self._post_tts_message(
@@ -805,26 +815,84 @@ class TTSEventHandler:
         text: str,
         snapshot: TTSMessageSpeechSnapshot,
     ) -> CharacterTTSRequestResolution:
-        """Resolve an exact assignment only for verified character authorship."""
-        profile_service = None
+        """Resolve an exact character assignment, else the app default voice.
+
+        A per-character voice always wins when one is assigned -- the
+        default profile is never even loaded in that case (Task 4's
+        honesty requirement runs the other way too: a MORE specific voice
+        must not be silently overridden by a less specific one). Only once
+        `CharacterTTSRequestResolver` itself lands on `"global"` (no
+        character voice applies, whether because this message has no
+        character context at all or because its character has no
+        assignment) is the app-wide default profile even consulted, and
+        only when one is actually configured.
+        """
+        profile_service: object | None = None
+        profile_service_loaded = False
+
+        async def ensure_profile_service() -> object | None:
+            nonlocal profile_service, profile_service_loaded
+            if not profile_service_loaded:
+                loader = self._profile_service_loader
+                if loader is not None:
+                    try:
+                        profile_service = await loader()
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception as error:
+                        logger.warning(
+                            "TTS profile service load failed "
+                            "(exception_category={})",
+                            type(error).__name__,
+                        )
+                profile_service_loaded = True
+            return profile_service
+
         if snapshot.assistant_kind == "character":
-            loader = self._profile_service_loader
-            if loader is not None:
-                try:
-                    profile_service = await loader()
-                except asyncio.CancelledError:
-                    raise
-                except Exception as error:
-                    logger.warning(
-                        "TTS profile service load failed (exception_category={})",
-                        type(error).__name__,
-                    )
+            await ensure_profile_service()
+
         resolver = CharacterTTSRequestResolver(profile_service)
-        return await resolver.resolve(
+        resolution = await resolver.resolve(
             text=text,
             assistant_kind=snapshot.assistant_kind,
             character_ref=snapshot.character_ref,
         )
+        if resolution.source != "global":
+            return resolution
+
+        default_profile_id = self._read_default_profile_id()
+        if default_profile_id is None:
+            return resolution
+
+        default_profile_service = await ensure_profile_service()
+        return await resolve_default_profile(
+            text=text,
+            default_profile_id=default_profile_id,
+            profile_service=default_profile_service,
+        )
+
+    def _read_default_profile_id(self) -> str | None:
+        """Return the non-blank configured default profile id, or None.
+
+        Normalizes exactly like Task 3's own loader
+        (`settings_speech_tts.py::_normalize_default_profile_id`): absent,
+        non-string, empty, and whitespace-only values all mean "not
+        configured" and are indistinguishable from the default profile
+        never having been set. A non-blank string is passed through
+        as-is, whether or not it is a well-formed UUID -- Task 2's loader
+        deliberately keeps a malformed value as a defined dangling state
+        rather than discarding it, and `resolve_default_profile` is where
+        that state is finally interpreted (as unusable, refusing honestly,
+        never silently dropped).
+        """
+        reader = self._default_profile_id_reader
+        if reader is None:
+            return None
+        raw_value = reader()
+        if not isinstance(raw_value, str):
+            return None
+        stripped = raw_value.strip()
+        return stripped or None
 
     def _issue_global_override(
         self,
@@ -994,7 +1062,8 @@ class TTSEventHandler:
 
             exact_request = (
                 resolution.request
-                if resolution is not None and resolution.source == "assigned"
+                if resolution is not None
+                and resolution.source in ("assigned", "default_profile")
                 else None
             )
             if exact_request is not None:
@@ -1054,29 +1123,49 @@ class TTSEventHandler:
                     assert resolution is not None
                     assert resolution.repository_generation is not None
                     assert resolution.profile_revision is not None
-                    character_profile = TTSCharacterProfileSelection(
-                        selection=TTSSelectionOverrides(
-                            provider_id=exact_request.provider_id,
-                            model_mode="exact",
-                            model_id=exact_request.model_id,
-                            voice_mode=(
-                                "server_default"
-                                if exact_request.voice is None
-                                else "exact"
-                            ),
-                            voice_id=exact_request.voice,
-                            response_format=exact_request.response_format,
-                            speed=exact_request.speed,
-                            provider_options=exact_request.options,
+                    exact_selection = TTSSelectionOverrides(
+                        provider_id=exact_request.provider_id,
+                        model_mode="exact",
+                        model_id=exact_request.model_id,
+                        voice_mode=(
+                            "server_default"
+                            if exact_request.voice is None
+                            else "exact"
                         ),
-                        repository_generation=resolution.repository_generation,
-                        profile_revision=resolution.profile_revision,
+                        voice_id=exact_request.voice,
+                        response_format=exact_request.response_format,
+                        speed=exact_request.speed,
+                        provider_options=exact_request.options,
                     )
-                    response, effective_selection = await service.synthesize_effective(
-                        text=text,
-                        character_profile=character_profile,
-                        progress_sink=progress_sink,
-                    )
+                    if resolution.source == "assigned":
+                        response, effective_selection = (
+                            await service.synthesize_effective(
+                                text=text,
+                                character_profile=TTSCharacterProfileSelection(
+                                    selection=exact_selection,
+                                    repository_generation=(
+                                        resolution.repository_generation
+                                    ),
+                                    profile_revision=resolution.profile_revision,
+                                ),
+                                progress_sink=progress_sink,
+                            )
+                        )
+                    else:
+                        assert resolution.source == "default_profile"
+                        response, effective_selection = (
+                            await service.synthesize_effective(
+                                text=text,
+                                default_profile=TTSDefaultProfileSelection(
+                                    selection=exact_selection,
+                                    repository_generation=(
+                                        resolution.repository_generation
+                                    ),
+                                    profile_revision=resolution.profile_revision,
+                                ),
+                                progress_sink=progress_sink,
+                            )
+                        )
                     requested_selection = TTSRequestedSelectionSnapshot(
                         provider_id=effective_selection.provider_id,
                         model_id=effective_selection.model_id,
