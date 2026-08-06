@@ -90,15 +90,28 @@ class ConsoleCostModal(ModalScreen[None]):
 
     @staticmethod
     def _format_row(row: ConsoleCostRow) -> str:
-        """Pure ``str`` render for one breakdown row."""
+        """Pure ``str`` render for one breakdown row.
+
+        task-2390: ``row.cost_usd`` already folds in any audio/
+        transcription dollar contribution (see ``ConsoleCostRow``'s own
+        docstring), so a realtime row's audio-token and transcription-
+        duration usage is appended here as its own segment -- omitted
+        entirely for a non-realtime row (all three fields 0) -- rather
+        than left invisible inside that one total.
+        """
         cost_text = "unpriced" if row.cost_usd is None else f"${row.cost_usd:.4f}"
         if row.estimated:
             cost_text = f"~{cost_text}"
-        return (
+        text = (
             f"[{row.index}] {row.role} ({row.model or 'unknown'}) -- "
             f"in:{row.uncached_input} cache_r:{row.cache_read} "
-            f"cache_w:{row.cache_write} out:{row.output} -- {cost_text}"
+            f"cache_w:{row.cache_write} out:{row.output}"
         )
+        if row.audio_input or row.audio_output:
+            text += f" audio_in:{row.audio_input} audio_out:{row.audio_output}"
+        if row.transcription_seconds:
+            text += f" transcribe:{row.transcription_seconds:g}s"
+        return f"{text} -- {cost_text}"
 
     @staticmethod
     def _format_totals(totals: ConsoleCostRowTotals) -> str:
