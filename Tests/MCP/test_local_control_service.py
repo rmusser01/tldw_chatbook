@@ -19,6 +19,16 @@ from tldw_chatbook.MCP.server import (
 )
 
 
+# Fix Round H (PR-T3 review), Item 2c: not a fake-vs-real key-set pin
+# candidate -- every method below stores/returns REAL domain dataclasses
+# already imported from `local_store.py` (`LocalExternalMCPProfile`,
+# `LocalGovernanceRule`, ...), not independently-invented shapes, so a
+# signature or field drift in the real `LocalMCPStore` raises a loud
+# TypeError/AttributeError at the first call -- the opposite of the
+# silent-drift failure mode a pin exists to catch. See the POLICY comment
+# above `FakeLocalMCPControlService` in
+# Tests/MCP/test_unified_control_plane_service.py for the full policy and
+# contrast with `FakeLocalRuntimeDelegate` below, which IS pinned.
 class FakeLocalStore:
     def __init__(self) -> None:
         self.profiles = {

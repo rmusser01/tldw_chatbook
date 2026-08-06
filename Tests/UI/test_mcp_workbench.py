@@ -76,6 +76,12 @@ class FakeTargetStore:
         return [FakeTarget()]
 
 
+# Fix Round H (PR-T3 review), Item 2c: a genuine fake-vs-real key-set pin
+# candidate (`load_section()` below returns hand-rolled, UI-rendered dict
+# shapes per source/section) but NOT pinned this round -- see the POLICY
+# comment above `FakeLocalMCPControlService` in
+# Tests/MCP/test_unified_control_plane_service.py for the line drawn and
+# why this one is flagged rather than pinned or silently skipped.
 class FakeHubService:
     def __init__(self) -> None:
         self.target_store = FakeTargetStore()
@@ -7074,7 +7080,17 @@ class FakeExecutionLog:
     (a copy of) whatever record list the test seeded, newest-first is the
     CALLER's responsibility (the real log guarantees it; this fake just
     hands back records verbatim, same "render whatever it's given" contract
-    `MCPAuditMode` itself follows)."""
+    `MCPAuditMode` itself follows).
+
+    Fix Round H (PR-T3 review), Item 2c: not a fake-vs-real key-set pin
+    candidate itself -- it implements exactly ONE method with no real-side
+    computation to drift from. `_audit_record()` just below DOES hand-roll
+    a dict mirroring `ExecutionRecord`'s dataclass fields, a real but
+    orthogonal risk (dataclass-vs-dict, not fake-vs-real method) left as a
+    candidate for future work; see the POLICY comment above
+    `FakeLocalMCPControlService` in
+    Tests/MCP/test_unified_control_plane_service.py for the full policy.
+    """
 
     def __init__(self, records: list[dict] | None = None) -> None:
         self._records = list(records or [])

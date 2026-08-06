@@ -16,7 +16,10 @@ from tldw_chatbook.MCP.hub_tool_catalog import HubTool
 from tldw_chatbook.MCP.local_control_service import MCPGovernanceDenied
 from tldw_chatbook.MCP.local_runtime_delegate import RawToolCallRefusedError
 from tldw_chatbook.MCP.permission_store import EffectiveToolState
-from tldw_chatbook.MCP.unified_control_plane_service import MCPHubGateDeniedError
+from tldw_chatbook.MCP.unified_control_plane_service import (
+    MCPHubGateDeniedError,
+    _ADVANCED_EXECUTE_GATE_ERROR_MESSAGE,
+)
 from tldw_chatbook.MCP.readiness import (
     REASON_LABELS,
     STATE_CSS_CLASSES,
@@ -76,8 +79,16 @@ def _default_advanced_open(monkeypatch):
 
 
 class FakeAdvService:
-    def __init__(self) -> None:
+    def __init__(self, *, error: Exception | None = None) -> None:
         self.action_calls: list[tuple[str, dict]] = []
+        # Fix Round H (PR-T3 review), Item 2c: this fake used to return
+        # `{"ok": True}` unconditionally, so no test built on `InspectorApp`
+        # could ever drive `_run_advanced_action()`'s refusal-rendering
+        # branch (`except (MCPGovernanceDenied, MCPHubGateDeniedError,
+        # RawToolCallRefusedError)`) -- mirrors `ToolExecuteAdvService`'s
+        # own `error` constructor param below, the established pattern in
+        # this file for a raising service double.
+        self.error = error
 
     async def load_section(self, section=None):
         return {"source": "local", "section": section or "overview"}
@@ -94,13 +105,15 @@ class FakeAdvService:
 
     async def run_action(self, action_name, payload):
         self.action_calls.append((action_name, dict(payload or {})))
+        if self.error is not None:
+            raise self.error
         return {"ok": True}
 
 
 class InspectorApp(App):
-    def __init__(self) -> None:
+    def __init__(self, *, error: Exception | None = None) -> None:
         super().__init__()
-        self.service = FakeAdvService()
+        self.service = FakeAdvService(error=error)
         self.events: list[object] = []
 
     def compose(self) -> ComposeResult:
@@ -3919,6 +3932,55 @@ async def test_advanced_raw_tool_call_refusal_reads_as_blocked_not_failed():
         result = _adv_result(app)
         assert "Blocked · not run" in result
         assert "Execute Local Tool" in result
+
+
+@pytest.mark.asyncio
+async def test_advanced_gate_error_refusal_renders_the_unresolved_clause_end_to_end():
+    """Fix Round H (PR-T3 review), Item 2c. Two earlier rounds converged the
+    Advanced hatch's OWN copy for a resolver failure onto
+    `_ADVANCED_EXECUTE_GATE_ERROR_MESSAGE` ("Permission state could not be
+    resolved.", derived from `local_runtime_delegate.PERMISSION_STATE_
+    UNRESOLVED_CLAUSE`) -- but before this test, nothing drove that
+    sentence through `_run_advanced_action()`'s actual render path: the
+    ONLY fake capable of raising through `run_action()` (`ToolExecuteAdv
+    Service`) was always exercised with the GENUINE-deny message ("... is
+    set to Off in Permissions.") or an unrelated refusal type, never this
+    one. `execute_advanced_tool()` raises `MCPHubGateDeniedError` with
+    EITHER message depending on `state.origin` -- both are the SAME typed
+    exception, so this only needed a different message, not a different
+    type."""
+    app = ToolExecuteInspectorApp(
+        error=MCPHubGateDeniedError(_ADVANCED_EXECUTE_GATE_ERROR_MESSAGE)
+    )
+    async with app.run_test(size=(100, 60)) as pilot:
+        await pilot.click("#mcp-adv-run")
+        await pilot.pause()
+        await _press_run_again(pilot)
+        result = _adv_result(app)
+        assert "Blocked · not run" in result
+        assert "Permission state could not be resolved." in result
+        assert "is set to Off in Permissions" not in result
+        assert "Action failed" not in result
+
+
+@pytest.mark.asyncio
+async def test_fake_adv_service_run_action_raises_when_configured():
+    """Fix Round H (PR-T3 review), Item 2c. `FakeAdvService` -- the fake
+    `InspectorApp` wires by default, used far more broadly across this file
+    than `ToolExecuteAdvService` -- used to return `{"ok": True}`
+    unconditionally, so no test built on `InspectorApp` could exercise
+    `_run_advanced_action()`'s refusal-rendering branch at all. Proves the
+    new `error` constructor param actually reaches `run_action()`'s raise,
+    using the single-press `profile.connect` action already wired on this
+    fake (no `tool.execute` confirm-arm to press through first)."""
+    app = InspectorApp(error=MCPGovernanceDenied("Denied by local governance: profile.connect"))
+    async with app.run_test(size=(100, 60)) as pilot:
+        await pilot.click("#mcp-adv-run")
+        await pilot.pause()
+        result = _adv_result(app)
+        assert "Blocked · not run" in result
+        assert "Denied by local governance" in result
+        assert app.service.action_calls == [("profile.connect", {"profile_id": "demo"})]
         assert "Action failed" not in result
 
 
