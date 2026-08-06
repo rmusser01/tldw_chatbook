@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pytest
 
 from tldw_chatbook.Tools.local_tool_impls import (
@@ -313,3 +315,32 @@ def test_fs_glob_lists_symlinked_files_by_name(tmp_path):
     outside.write_text("x")
     os.symlink(outside, ws / "link.txt")
     assert "link.txt" in glob_files("*.txt", workspace_root=ws)
+
+
+def test_glob_and_grep_reject_nonpositive_max_results(tmp_path):
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    (ws / "a.py").write_text("hit\n")
+    for fn, pattern in ((glob_files, "*.py"), (grep_files, "hit")):
+        with pytest.raises(LocalToolError, match="max_results"):
+            fn(pattern, workspace_root=ws, max_results=0)
+        with pytest.raises(LocalToolError, match="max_results"):
+            fn(pattern, workspace_root=ws, max_results=-5)
+
+
+def test_grep_skips_racy_entries(tmp_path, monkeypatch):
+    """An OSError during per-file inspection skips that entry, not the search."""
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    (ws / "good.py").write_text("hit\n")
+    real_stat = Path.stat
+
+    def flaky_stat(self, *args, **kwargs):
+        if self.name == "gone.py":
+            raise FileNotFoundError("raced away")
+        return real_stat(self, *args, **kwargs)
+
+    (ws / "gone.py").write_text("hit\n")
+    monkeypatch.setattr(Path, "stat", flaky_stat)
+    out = grep_files("hit", workspace_root=ws)
+    assert "good.py:1:hit" in out

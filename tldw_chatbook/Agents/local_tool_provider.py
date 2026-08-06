@@ -642,7 +642,7 @@ def _default_specs(
                 "type": "object",
                 "properties": {
                     "pattern": {"type": "string", "description": "Glob pattern relative to the workspace root (e.g. \"**/*.py\"). Hidden dirs under the root are searched. \"**\" alone matches no files (directories only) — use \"**/*\" to match everything."},
-                    "max_results": {"type": "integer", "description": "Maximum number of paths to return (default 100)."},
+                    "max_results": {"type": "integer", "minimum": 1, "description": "Maximum number of paths to return (default 100)."},
                 },
                 "required": ["pattern"],
             },
@@ -661,7 +661,7 @@ def _default_specs(
                 "properties": {
                     "pattern": {"type": "string", "description": "Regular expression to search for."},
                     "mode": {"type": "string", "enum": ["content", "files", "count"], "default": "content", "description": "\"content\": relpath:lineno:line; \"files\": matching paths only; \"count\": relpath:match_count."},
-                    "max_results": {"type": "integer", "description": "Maximum number of result lines to return (default 100)."},
+                    "max_results": {"type": "integer", "minimum": 1, "description": "Maximum number of result lines to return (default 100)."},
                 },
                 "required": ["pattern"],
             },

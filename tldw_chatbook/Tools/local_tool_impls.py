@@ -10,6 +10,7 @@ provider boundary.
 from __future__ import annotations
 
 import os
+import heapq
 from pathlib import Path
 
 from tldw_chatbook.Utils.path_validation import validate_path
@@ -225,21 +226,38 @@ def glob_files(
     root ARE matched (workspace policy, ADR-032). Matches that escape the
     root via ``..`` pattern segments are excluded (lexical check only —
     symlinks are not resolved, per ADR-032 review).
+
+    Memory is bounded at ``max_results``: a min-heap keeps only the newest N
+    while the total is counted in one pass (no full-list materialization or
+    sort of a huge workspace).
+
+    Raises:
+        LocalToolError: If ``max_results`` is below 1.
     """
-    root = workspace_root.resolve()
-    matches = [
-        p for p in root.glob(pattern)
-        if p.is_file() and Path(os.path.normpath(p)).is_relative_to(root)
-    ]
-    matches.sort(key=lambda p: p.stat().st_mtime, reverse=True)
-    # Render from the normpath'd path so `..` re-entry patterns
-    # ("../<wsname>/*.py") stay workspace-relative instead of "../…".
-    lines = [
-        str(Path(os.path.normpath(p)).relative_to(root))
-        for p in matches[:max_results]
-    ]
-    if len(matches) > max_results:
-        lines.append(f"… ({len(matches) - max_results} more, truncated)")
+    if max_results < 1:
+        raise LocalToolError("max_results must be >= 1")
+    root = resolve_workspace_path(".", workspace_root)
+    heap: list[tuple[float, Path]] = []  # min-heap of (mtime, normpath)
+    total = 0
+    for p in root.glob(pattern):
+        try:
+            if not p.is_file():
+                continue
+            norm = Path(os.path.normpath(p))
+            if not norm.is_relative_to(root):
+                continue
+            mtime = p.stat().st_mtime
+        except OSError:
+            continue  # racy/unreadable entry — skip it, not the whole search
+        total += 1
+        if len(heap) < max_results:
+            heapq.heappush(heap, (mtime, norm))
+        elif mtime > heap[0][0]:
+            heapq.heapreplace(heap, (mtime, norm))
+    best = sorted(heap, key=lambda t: t[0], reverse=True)
+    lines = [str(norm.relative_to(root)) for _, norm in best]
+    if total > max_results:
+        lines.append(f"… ({total - max_results} more, truncated)")
     return "\n".join(lines) if lines else f"(no files matching {pattern!r})"
 
 
@@ -254,7 +272,12 @@ def grep_files(
 
     Modes: ``content`` -> ``relpath:lineno:line``; ``files`` -> one relpath
     per matching file; ``count`` -> ``relpath:N``. Binary and >2 MiB files
-    are skipped. Invalid regex raises LocalToolError.
+    are skipped. Invalid regex raises LocalToolError. File order is
+    filesystem order (no global sort — that would materialize the whole
+    tree); within a file, lines are in order.
+
+    Raises:
+        LocalToolError: If ``max_results`` is below 1.
     """
     import re
 
@@ -264,33 +287,39 @@ def grep_files(
         raise LocalToolError(f"invalid regex: {exc}") from exc
     if mode not in ("content", "files", "count"):
         raise LocalToolError(f"unknown mode: {mode}")
-    root = workspace_root.resolve()
-    content_hits: list[str] = []
-    file_hits: list[str] = []
-    count_hits: list[str] = []
-    for p in sorted(root.rglob("*")):
-        if not p.is_file() or p.stat().st_size > _MAX_GREP_FILE_BYTES:
-            continue
-        if not p.resolve().is_relative_to(root):
-            continue  # symlink escaping the root — never read outside content
+    if max_results < 1:
+        raise LocalToolError("max_results must be >= 1")
+    root = resolve_workspace_path(".", workspace_root)
+    # Memory-bounded: only the first max_results output lines are kept; the
+    # rest are counted, not stored. Per-entry fs errors (races, permissions)
+    # skip the entry rather than failing the whole search.
+    shown: list[str] = []
+    total = 0
+    for p in root.rglob("*"):
+        try:
+            if not p.is_file() or p.stat().st_size > _MAX_GREP_FILE_BYTES:
+                continue
+            if not p.resolve().is_relative_to(root):
+                continue  # symlink escaping the root — never read outside content
+        except OSError:
+            continue  # racy/unreadable entry — skip it, not the whole search
         try:
             text = p.read_text(encoding="utf-8")
         except (UnicodeDecodeError, OSError):
             continue  # binary/unreadable — skip
         rel = str(p.relative_to(root))
-        lines = [f"{i}:{line}" for i, line in enumerate(text.splitlines(), 1) if rx.search(line)]
-        if not lines:
+        hits = [f"{i}:{line}" for i, line in enumerate(text.splitlines(), 1) if rx.search(line)]
+        if not hits:
             continue
-        file_hits.append(rel)
-        count_hits.append(f"{rel}:{len(lines)}")
-        content_hits.extend(f"{rel}:{hit}" for hit in lines)
-    if mode == "files":
-        out, total = file_hits, len(file_hits)
-    elif mode == "count":
-        out, total = count_hits, len(count_hits)
-    else:
-        out, total = content_hits, len(content_hits)
-    shown = out[:max_results]
+        if mode == "content":
+            for hit in hits:
+                total += 1
+                if len(shown) < max_results:
+                    shown.append(f"{rel}:{hit}")
+        else:
+            total += 1
+            if len(shown) < max_results:
+                shown.append(rel if mode == "files" else f"{rel}:{len(hits)}")
     if total > max_results:
         shown.append(f"… ({total - max_results} more, truncated)")
     return "\n".join(shown) if shown else f"(no matches for {pattern!r})"
