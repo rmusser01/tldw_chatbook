@@ -40,6 +40,20 @@ from .unified_control_models import ServerAccessContext, UnifiedMCPContext
 # reads correctly under that same heading.
 _ADVANCED_EXECUTE_BLOCKED_MESSAGE = "{tool} is set to Off in Permissions."
 
+# Task 6 (PR-T3), Route B, second door: `runtime.request`/`runtime.batch` are
+# Advanced descriptors too, and the in-process runtime speaks the real
+# protocol -- `{"method": "tools/call"}` reaches the SAME
+# `runtime_delegate.execute_tool()` as the `tool.execute` action, with the
+# same two holes it had (no Hub permission gate, no execution-log row).
+# Gating only `tool.execute` would lock the front door and leave this open,
+# so tool execution keeps exactly one door here: the gated, logged one.
+# Every other protocol method (tools/list, prompts/list, status/get, ...)
+# is untouched -- this runner's diagnostic value is in those.
+_RAW_TOOL_CALL_REFUSED_MESSAGE = (
+    "Tool calls run through the Execute Local Tool action, which applies your "
+    "Permissions settings and records the run."
+)
+
 
 class UnifiedMCPControlPlaneService:
     """Destination-local orchestration for local/server Unified MCP browse flows."""
@@ -1112,9 +1126,11 @@ class UnifiedMCPControlPlaneService:
             if action_name == "runtime.status.get":
                 return await self._maybe_await(self.local_service.get_runtime_status())
             if action_name == "runtime.request":
+                method = self._require_field(payload, "method")
+                self._refuse_raw_tool_call(method)
                 return await self._maybe_await(
                     self.local_service.run_runtime_request(
-                        self._require_field(payload, "method"),
+                        method,
                         payload.get("params")
                         if isinstance(payload.get("params"), dict)
                         else {},
@@ -1124,6 +1140,13 @@ class UnifiedMCPControlPlaneService:
                 requests = payload.get("requests")
                 if not isinstance(requests, list):
                     raise ValueError("Unified MCP action requires 'requests'.")
+                # Checked BEFORE dispatching any of them: the batch runs
+                # serially, so a `tools/call` in the middle would already
+                # have executed by the time a per-item refusal could
+                # report it, and would report as an ordinary batch row.
+                for request in requests:
+                    if isinstance(request, dict):
+                        self._refuse_raw_tool_call(request.get("method"))
                 return await self._maybe_await(
                     self.local_service.run_runtime_batch(requests)
                 )
@@ -2339,6 +2362,28 @@ class UnifiedMCPControlPlaneService:
             timeout_seconds=self._lifecycle_timeout(),
             registered_argument_names=registered_argument_names,
         )
+
+    def _refuse_raw_tool_call(self, method: Any) -> None:
+        """Refuse a raw ``tools/call`` on the runtime request/batch runners.
+
+        Task 6 (PR-T3), Route B. Those runners hand a protocol method
+        straight to the in-process runtime, whose ``tools/call`` branch
+        (``LocalRuntimeDelegate.request``) calls the same
+        ``execute_tool()`` seam :meth:`execute_advanced_tool` gates -- so
+        without this they are a second, unlabelled way to run a tool the
+        user set to Off, leaving no execution-log row either. Executing a
+        tool keeps exactly one door here: ``tool.execute``, which gates
+        and records. Every other method is untouched.
+
+        Args:
+            method: The protocol method from the request payload; anything
+                that is not ``tools/call`` passes through.
+
+        Raises:
+            PermissionError: ``method`` is ``tools/call``.
+        """
+        if str(method or "").strip() == "tools/call":
+            raise PermissionError(_RAW_TOOL_CALL_REFUSED_MESSAGE)
 
     async def execute_advanced_tool(
         self, tool_name: str, arguments: dict[str, Any] | None = None

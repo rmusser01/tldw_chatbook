@@ -80,6 +80,41 @@ class FakeLocalService:
             raise self.builtin_error
         return self.builtin_result
 
+    async def run_runtime_request(self, method, params=None):
+        """Mirrors `LocalRuntimeDelegate.request()`'s own `tools/call` branch:
+        the raw protocol method reaches the SAME `execute_tool` seam the
+        `tool.execute` action does -- which is exactly why it needs the same
+        refusal at the control-plane boundary."""
+        normalized = dict(params or {})
+        result: dict = {}
+        if method == "tools/call":
+            arguments = normalized.get("arguments")
+            result = await self.execute_tool(
+                str(normalized.get("name") or normalized.get("tool_name") or ""),
+                arguments if isinstance(arguments, dict) else {},
+            )
+        return {
+            "source": "local",
+            "method": method,
+            "params": normalized,
+            "result": result,
+        }
+
+    async def run_runtime_batch(self, requests):
+        results = []
+        for index, request in enumerate(requests):
+            entry = request if isinstance(request, dict) else {}
+            method = str(entry.get("method") or "")
+            if method == "tools/call":
+                params = entry.get("params") if isinstance(entry.get("params"), dict) else {}
+                arguments = params.get("arguments")
+                await self.execute_tool(
+                    str(params.get("name") or params.get("tool_name") or ""),
+                    arguments if isinstance(arguments, dict) else {},
+                )
+            results.append({"index": index, "method": method, "ok": True})
+        return {"source": "local", "results": results}
+
 
 def _service(
     tmp_path: Path,
@@ -434,3 +469,58 @@ async def test_advanced_tool_execute_records_the_decision_it_ran_under(tmp_path)
 
     records = _log_records(store)
     assert records and records[0]["decision"] == "approved"
+
+
+# -- Task 6 (PR-T3), Route B, second door: `runtime.request` /`runtime.batch`
+# are Advanced descriptors too, and the in-process runtime speaks the real
+# protocol -- `{"method": "tools/call"}` reached the SAME
+# `runtime_delegate.execute_tool()` as the hatch above, with the same two
+# holes (no Hub permission gate, no execution-log row). Gating only
+# `tool.execute` would have locked the front door and left this one open.
+
+
+@pytest.mark.asyncio
+async def test_raw_tools_call_through_runtime_request_is_refused(tmp_path):
+    service, fake, client, store = _service(tmp_path)
+
+    with pytest.raises(PermissionError, match="Execute Local Tool"):
+        await service.run_action(
+            "runtime.request",
+            {"method": "tools/call", "params": {"name": "calculator"}},
+        )
+
+    assert fake.execute_tool_calls == []
+
+
+@pytest.mark.asyncio
+async def test_raw_tools_call_inside_a_runtime_batch_is_refused(tmp_path):
+    """One `tools/call` anywhere in the batch refuses the whole batch --
+    partial execution would run the ungated call and report it as a normal
+    batch row."""
+    service, fake, client, store = _service(tmp_path)
+
+    with pytest.raises(PermissionError, match="Execute Local Tool"):
+        await service.run_action(
+            "runtime.batch",
+            {
+                "requests": [
+                    {"method": "tools/list"},
+                    {"method": "tools/call", "params": {"name": "calculator"}},
+                ]
+            },
+        )
+
+    assert fake.execute_tool_calls == []
+
+
+@pytest.mark.asyncio
+async def test_other_runtime_request_methods_are_untouched(tmp_path):
+    """The diagnostic value of the raw request runner survives: only the
+    executing method is refused."""
+    service, fake, client, store = _service(tmp_path)
+
+    result = await service.run_action(
+        "runtime.request", {"method": "tools/list", "params": {}}
+    )
+
+    assert result["method"] == "tools/list"
