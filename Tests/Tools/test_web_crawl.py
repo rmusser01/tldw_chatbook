@@ -49,6 +49,13 @@ def test_normalize_folds_www_case_and_fragment():
     assert _normalize_crawl_url("http://example.com") == "http://example.com/"
 
 
+def test_normalize_survives_malformed_urls():
+    # Bad port should not raise; return the input unchanged for stable visited-set identity
+    assert _normalize_crawl_url("http://example.com:abc/") == "http://example.com:abc/"
+    # Malformed IPv6 should not raise; return the input unchanged
+    assert _normalize_crawl_url("http://[::1") == "http://[::1"
+
+
 def test_crawl_host_folds_www():
     assert _crawl_host("https://www.Example.com/x") == "example.com"
     assert _crawl_host("https://example.com/x") == "example.com"

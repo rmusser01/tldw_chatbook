@@ -605,15 +605,23 @@ def _crawl_host(url: str) -> str:
 
 
 def _normalize_crawl_url(url: str) -> str:
-    """Visited-set identity: scheme+folded host+path+query, no fragment."""
-    parts = urlsplit(url)
-    host = (parts.hostname or "").lower()
-    if host.startswith("www."):
-        host = host[4:]
-    port = f":{parts.port}" if parts.port else ""
-    path = parts.path or "/"
-    query = f"?{parts.query}" if parts.query else ""
-    return f"{parts.scheme.lower()}://{host}{port}{path}{query}"
+    """Visited-set identity: scheme+folded host+path+query, no fragment.
+
+    On malformed URLs (bad port, invalid IPv6, etc.), returns the input unchanged
+    for stable visited-set identity; downstream egress guard rejects them as invalid.
+    """
+    try:
+        parts = urlsplit(url)
+        host = (parts.hostname or "").lower()
+        if host.startswith("www."):
+            host = host[4:]
+        port = f":{parts.port}" if parts.port else ""
+        path = parts.path or "/"
+        query = f"?{parts.query}" if parts.query else ""
+        return f"{parts.scheme.lower()}://{host}{port}{path}{query}"
+    except ValueError:
+        # Malformed URL (e.g., bad port, invalid IPv6): return unchanged
+        return url
 
 
 def _coerce_budget(value, default: int, ceiling: int) -> int:
