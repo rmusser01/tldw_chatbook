@@ -1889,6 +1889,112 @@ def test_image_budget_excludes_failed_send_blocked_echo(monkeypatch):
     assert decoded == b"real"
 
 
+def test_is_empty_transcript_row_tolerates_a_metadata_object_without_the_attribute():
+    """Qodo Q5 (task-2391 review): the docstring promised duck-typed safety
+    via `getattr` on `.metadata`, but the INNER `.transcript_status` read
+    was a plain attribute access -- a metadata object that duck-types some
+    fields but not that one raised `AttributeError` there. This helper runs
+    on every row of three model-facing send paths (`_provider_message_
+    payloads`, `summarize_up_to`, `impersonate_user_reply`), so that crash
+    reached the main send path, not just a narrow test double."""
+    from tldw_chatbook.Chat.console_chat_controller import _is_empty_transcript_row
+
+    message = SimpleNamespace(
+        role=ConsoleMessageRole.USER,
+        content="hello",
+        status="complete",
+        metadata=SimpleNamespace(engine="realtime"),  # no transcript_status
+    )
+
+    assert _is_empty_transcript_row(message) is False
+
+
+def test_provider_payloads_exclude_an_empty_transcript_placeholder():
+    """task-2391 fix-now: a committed voice turn whose transcript came back
+    empty persists real placeholder CONTENT ("(no speech detected)") so the
+    row can survive a restart -- but that content is UI chrome written so
+    the row could exist at all, not something the user said, and must
+    never reach a provider as if it were a real turn. Before this fix,
+    `_provider_message_payloads` had no `transcript_status` awareness, so
+    the placeholder rode straight through `_emit` into `{"role": "user",
+    "content": "(no speech detected)"}` on every ordinary send/retry/edit/
+    fork built off this session (`_provider_messages_for_session` backs all
+    of them) -- a fabricated user turn, permanently, for the life of the
+    conversation. An ordinary user row in the same session must still ride
+    through untouched."""
+    from tldw_chatbook.Chat.message_metadata import MessageMetadata
+    from tldw_chatbook.UI.Screens.chat_screen import (
+        CONSOLE_REALTIME_EMPTY_TRANSCRIPT_PLACEHOLDER,
+    )
+
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(
+        store=store, provider_gateway=StreamingGateway(), model="test-model"
+    )
+    session = store.ensure_session()
+    store.append_message(
+        session.id,
+        role=ConsoleMessageRole.USER,
+        content=CONSOLE_REALTIME_EMPTY_TRANSCRIPT_PLACEHOLDER,
+        metadata=MessageMetadata(engine="realtime", transcript_status="empty"),
+    )
+    store.append_message(
+        session.id,
+        role=ConsoleMessageRole.USER,
+        content="a real question",
+    )
+
+    messages = store.messages_for_session(session.id)
+    payloads = controller._provider_message_payloads(messages, skip_failed=True)
+
+    contents = [payload["content"] for payload in payloads]
+    assert CONSOLE_REALTIME_EMPTY_TRANSCRIPT_PLACEHOLDER not in contents, (
+        "the empty-transcript placeholder must never be narrated to the "
+        "model as if the user said it"
+    )
+    assert "a real question" in contents
+
+
+@pytest.mark.asyncio
+async def test_impersonate_excludes_an_empty_transcript_placeholder():
+    """task-2391 fix-now (audit follow-up): `impersonate_user_reply` hand-
+    rolls its own transcript builder rather than reusing
+    `_provider_message_payloads` (its own comment says "mirror ... rules
+    exactly"), so the payload fix alone did not cover it. This prompt
+    explicitly asks the model to draft the user's NEXT message "in their
+    voice" from this exact transcript -- a fabricated empty-transcript
+    placeholder here is arguably worse than in the ordinary send path."""
+    from tldw_chatbook.Chat.message_metadata import MessageMetadata
+    from tldw_chatbook.UI.Screens.chat_screen import (
+        CONSOLE_REALTIME_EMPTY_TRANSCRIPT_PLACEHOLDER,
+    )
+
+    store = ConsoleChatStore()
+    gateway = RecordingStreamingGateway()
+    controller = ConsoleChatController(
+        store=store, provider_gateway=gateway, model="test-model"
+    )
+    session = store.ensure_session()
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="hello")
+    store.append_message(
+        session.id,
+        role=ConsoleMessageRole.USER,
+        content=CONSOLE_REALTIME_EMPTY_TRANSCRIPT_PLACEHOLDER,
+        metadata=MessageMetadata(engine="realtime", transcript_status="empty"),
+    )
+    store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content="hi there"
+    )
+
+    await controller.impersonate_user_reply(session.id)
+
+    assert gateway.messages_seen is not None, "the completion must still run"
+    blob = " ".join(str(m["content"]) for m in gateway.messages_seen)
+    assert CONSOLE_REALTIME_EMPTY_TRANSCRIPT_PLACEHOLDER not in blob
+    assert "hello" in blob
+    assert "hi there" in blob
+
+
 def test_image_budget_counts_images_newest_first(monkeypatch):
     monkeypatch.setattr(controller_module, "is_vision_capable", lambda p, m: True)
     monkeypatch.setattr(controller_module, "max_history_images", lambda p, m: 3)

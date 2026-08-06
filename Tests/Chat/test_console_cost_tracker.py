@@ -370,3 +370,45 @@ def test_build_cost_rows_totals_empty_is_unpriced_zero():
     assert totals.total_tokens == 0
     assert totals.total_cost_usd is None
     assert totals.row_count == 0
+
+
+# --- task-2390: realtime audio/transcription fields on ConsoleCostRow ------
+
+
+def test_build_cost_rows_carries_audio_and_transcription_fields():
+    usage = ProviderUsage(
+        uncached_input=33, output=118, audio_input=18, audio_output=90,
+        transcription_seconds=2.5, provider="openai", model="gpt-realtime",
+    )
+    rows = build_cost_rows(
+        [_msg(usage=usage)], provider="openai", model="gpt-realtime"
+    )
+    assert len(rows) == 1
+    row = rows[0]
+    assert row.audio_input == 18
+    assert row.audio_output == 90
+    assert row.transcription_seconds == 2.5
+    # cost_usd is the row's full total -- audio/transcription costs are
+    # already folded in (see console_cost_modal.py for the breakdown that
+    # keeps them visible rather than an undecomposable single figure).
+    assert row.cost_usd is not None and row.cost_usd > 0
+
+
+def test_build_cost_rows_estimated_row_has_zero_audio_fields():
+    rows = build_cost_rows(
+        [_msg(content="hi there", usage=None, role="user")],
+        provider="anthropic", model="claude-sonnet-4-6",
+    )
+    assert rows[0].audio_input == 0
+    assert rows[0].audio_output == 0
+    assert rows[0].transcription_seconds == 0.0
+
+
+def test_console_cost_row_existing_positional_construction_still_works():
+    # AC3-style pin for ConsoleCostRow's shape: the new fields must be
+    # trailing-optional so every EXISTING positional construction site in
+    # this file (the totals tests above) keeps working unmodified.
+    row = ConsoleCostRow(0, "user", "m", 100, 0, 0, 0, 0.10, False)
+    assert row.audio_input == 0
+    assert row.audio_output == 0
+    assert row.transcription_seconds == 0.0

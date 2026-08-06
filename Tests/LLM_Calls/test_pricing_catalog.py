@@ -313,3 +313,211 @@ def test_config_patterns_replace_a_providers_seeded_list():
     assert (replaced.input_per_mtok, replaced.output_per_mtok) == (1.0, 2.0)
     # Providers absent from config keep their seeded patterns.
     assert catalog.get_pricing("openai", "gpt-4o-2024-11-20") is not None
+
+
+#
+# task-2390: realtime audio-token + transcription-duration billing
+#
+# Rates verified 2026-08-06 against https://developers.openai.com/api/docs/pricing
+# (see task-2390's "## Research" section for the full source table). Realtime
+# bills per 1M TOKENS like every other model here -- ModelPricing extends
+# additively with optional audio/transcription fields rather than needing a
+# redesign; every field defaults to None/unused for non-realtime models.
+#
+
+
+def test_realtime_gpt_realtime_seeded_rates():
+    pricing = _catalog().get_pricing("openai", "gpt-realtime")
+    assert pricing is not None
+    assert pricing.input_per_mtok == 4.00
+    assert pricing.output_per_mtok == 16.00
+    assert pricing.cache_read_per_mtok == 0.40
+    assert pricing.cache_write_per_mtok is None
+    assert pricing.audio_in_per_mtok == 32.00
+    assert pricing.audio_out_per_mtok == 64.00
+    assert pricing.cached_audio_in_per_mtok == 0.40
+    assert pricing.transcription_per_minute == 0.006
+    assert pricing.as_of == "2026-08-06"
+
+
+def test_realtime_gpt_realtime_mini_diverges_cached_audio_from_cached_text():
+    # The headline trap this task's research flagged: cached AUDIO ($0.30)
+    # != cached TEXT ($0.06) for -mini, unlike gpt-realtime where the two
+    # happen to coincide at $0.40 -- a single shared cache field would be
+    # wrong here.
+    pricing = _catalog().get_pricing("openai", "gpt-realtime-mini")
+    assert pricing is not None
+    assert pricing.cache_read_per_mtok == 0.06
+    assert pricing.cached_audio_in_per_mtok == 0.30
+    assert pricing.cache_read_per_mtok != pricing.cached_audio_in_per_mtok
+    assert pricing.audio_in_per_mtok == 10.00
+    assert pricing.audio_out_per_mtok == 20.00
+
+
+def test_all_shipped_realtime_variants_resolve_with_audio_rates():
+    catalog = _catalog()
+    for model in (
+        "gpt-realtime",
+        "gpt-realtime-mini",
+        "gpt-realtime-2.1",
+        "gpt-realtime-2",
+        "gpt-realtime-1.5",
+    ):
+        pricing = catalog.get_pricing("openai", model)
+        assert pricing is not None, model
+        assert pricing.audio_in_per_mtok is not None, model
+        assert pricing.audio_out_per_mtok is not None, model
+        assert pricing.transcription_per_minute == 0.006, model
+
+
+def test_non_realtime_pricing_has_no_audio_rates():
+    # AC3: extend additively -- an ordinary text model must never inherit
+    # a stray audio/transcription rate.
+    pricing = _catalog().get_pricing("anthropic", "claude-sonnet-4-6")
+    assert pricing.audio_in_per_mtok is None
+    assert pricing.audio_out_per_mtok is None
+    assert pricing.cached_audio_in_per_mtok is None
+    assert pricing.transcription_per_minute is None
+
+
+def test_cost_for_usage_realtime_bills_audio_tokens_without_double_counting():
+    # Shape lifted from openai_session.py's live-confirmed ground truth:
+    # input_token_details.audio_tokens (18) is a SUBSET of uncached_input
+    # (33 = 15 text + 18 audio, no cache in this example) -- so pricing
+    # audio_input on top of the full uncached_input bucket would double
+    # bill those 18 tokens (Trap 2). output_token_details has no cache
+    # concept at all, so the output side is unambiguous.
+    usage = ProviderUsage(
+        uncached_input=33,
+        output=118,
+        audio_input=18,
+        audio_output=90,
+        provider="openai",
+        model="gpt-realtime",
+    )
+    cost = _catalog().cost_for_usage(usage)
+    assert isinstance(cost, CostBreakdown)
+    # Text-only remainder: (33 - 18) = 15 uncached text tokens @ $4/mtok.
+    assert cost.input_cost == round(15 * 4.00 / 1_000_000, 6)
+    # All 18 audio-input tokens @ the UNCACHED audio rate ($32/mtok) -- see
+    # cost_for_usage's own docstring: ProviderUsage cannot attribute cache
+    # hits between audio and text (Trap 1), so no cache discount is ever
+    # applied to the audio-input bucket.
+    assert cost.audio_input_cost == round(18 * 32.00 / 1_000_000, 6)
+    # Text-only output: (118 - 90) = 28 tokens @ $16/mtok; audio output is
+    # unambiguous (output is never cached) so it prices exactly.
+    assert cost.output_cost == round(28 * 16.00 / 1_000_000, 6)
+    assert cost.audio_output_cost == round(90 * 64.00 / 1_000_000, 6)
+    assert cost.total == 0.006844
+
+
+def test_cost_for_usage_realtime_transcription_seconds_billed_at_whisper_rate():
+    usage = ProviderUsage(
+        transcription_seconds=30.0,  # half a minute
+        provider="openai",
+        model="gpt-realtime",
+    )
+    cost = _catalog().cost_for_usage(usage)
+    assert cost.transcription_cost == round(30.0 / 60.0 * 0.006, 6)
+    assert cost.total == cost.transcription_cost
+
+
+def _alternative_realtime_total(usage: ProviderUsage, pricing, audio_from_cache: int) -> float:
+    """Independently re-derive ``cost_for_usage``'s realtime-input total for
+    ONE choice of how much of ``audio_input`` is attributed to
+    ``cache_read`` vs ``uncached_input``.
+
+    Used only by the property test below to prove the production method
+    picks the COST-MAXIMIZING split among the attribution-consistent
+    alternatives, by recomputing the alternatives HERE (independently) --
+    never by re-deriving the implementation's own formula, which would let
+    a bug in that formula pass unnoticed.
+    """
+    audio_from_uncached = usage.audio_input - audio_from_cache
+    text_uncached = usage.uncached_input - audio_from_uncached
+    text_cache_read = usage.cache_read - audio_from_cache
+    input_cost = text_uncached * pricing.input_per_mtok / 1_000_000
+    cache_read_cost = text_cache_read * (pricing.cache_read_per_mtok or 0.0) / 1_000_000
+    audio_input_cost = usage.audio_input * pricing.audio_in_per_mtok / 1_000_000
+    return input_cost + cache_read_cost + audio_input_cost
+
+
+def test_cost_for_usage_realtime_picks_the_cost_maximizing_audio_split():
+    # Trap 1's genuinely underdetermined case: audio_input (500) is smaller
+    # than EITHER bucket alone, so any split between "all from
+    # uncached_input" and "all from cache_read" is attribution-consistent
+    # -- ProviderUsage has no way to say which actually happened. The
+    # task's "price conservatively" mandate requires the MAXIMUM-cost split
+    # among these alternatives (never underbill). Every alternative is
+    # recomputed independently in-test (see _alternative_realtime_total)
+    # and the implementation's total must be >= all of them -- so a future
+    # re-flip of the drain order (which silently UNDER-bills; that was this
+    # test's own headline bug before this fix) fails on the property
+    # itself, not on a magic number that happens to mirror the bug.
+    usage = ProviderUsage(
+        uncached_input=2000, cache_read=8000, audio_input=500,
+        provider="openai", model="gpt-realtime",
+    )
+    catalog = _catalog()
+    pricing = catalog.get_pricing("openai", "gpt-realtime")
+    cost = catalog.cost_for_usage(usage)
+
+    lo = max(0, usage.audio_input - usage.uncached_input)  # 0
+    hi = min(usage.audio_input, usage.cache_read)  # 500
+    for audio_from_cache in (lo, (lo + hi) // 2, hi):
+        alt_total = _alternative_realtime_total(usage, pricing, audio_from_cache)
+        assert cost.total >= round(alt_total, 6) - 1e-9, audio_from_cache
+
+    # And it reaches the actual maximum (the hi boundary), not merely some
+    # value that happens to dominate the other samples above.
+    assert cost.total == round(_alternative_realtime_total(usage, pricing, hi), 6)
+
+
+def test_cost_for_usage_realtime_audio_spills_into_uncached_once_cache_exhausted():
+    # Concrete-numbers companion to the property test above: audio_input
+    # (50) EXCEEDS cache_read (40) alone, so after draining the CHEAP
+    # bucket first (cache_read -- see cost_for_usage's docstring for why
+    # that's the conservative direction), the remaining 10 audio tokens
+    # must spill into the expensive uncached_input bucket.
+    usage = ProviderUsage(
+        uncached_input=20,
+        cache_read=40,
+        audio_input=50,
+        provider="openai",
+        model="gpt-realtime",
+    )
+    cost = _catalog().cost_for_usage(usage)
+    # cache_read (40) fully consumed by audio -> 0 text-cache tokens.
+    assert cost.cache_read_cost == 0.0
+    # Overflow = 50 - 40 = 10 audio tokens spill into uncached_input's 20,
+    # leaving 10 text-uncached tokens priced at the ordinary (expensive)
+    # uncached rate.
+    assert cost.input_cost == round(10 * 4.00 / 1_000_000, 6)
+    # ALL 50 audio tokens priced at the uncached audio rate, regardless of
+    # which bucket they numerically came from -- never double counted
+    # against the (now-reduced) uncached_input/cache_read totals above.
+    assert cost.audio_input_cost == round(50 * 32.00 / 1_000_000, 6)
+
+
+def test_cost_for_usage_non_realtime_math_is_unaffected():
+    # AC3 pin: same fixture as test_cost_for_usage_multiplies_disjoint_buckets
+    # (a model with no published audio/transcription rate), plus explicit
+    # checks that every new field is inert rather than silently changing
+    # the pre-existing total.
+    usage = ProviderUsage(
+        uncached_input=1_000_000,
+        cache_read=1_000_000,
+        cache_write=1_000_000,
+        output=1_000_000,
+        provider="anthropic",
+        model="claude-sonnet-4-6",
+    )
+    cost = _catalog().cost_for_usage(usage)
+    assert cost.input_cost == 3.00
+    assert cost.cache_read_cost == 0.30
+    assert cost.cache_write_cost == 3.75
+    assert cost.output_cost == 15.00
+    assert cost.audio_input_cost == 0.0
+    assert cost.audio_output_cost == 0.0
+    assert cost.transcription_cost == 0.0
+    assert cost.total == 22.05

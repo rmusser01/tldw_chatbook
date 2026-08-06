@@ -139,9 +139,25 @@ class ConsoleCostRow:
         cache_write: Cache-write input tokens (always 0 for estimated rows).
         output: Output tokens (0 for a non-``assistant`` estimated row).
         cost_usd: Dollar cost for this row, or ``None`` when the row's
-            model has no known pricing.
+            model has no known pricing. Already INCLUDES
+            ``audio_input``/``audio_output``/``transcription_seconds``'
+            dollar contribution (task-2390) -- ``PricingCatalog.
+            cost_for_usage``'s ``total`` folds every bucket together; the
+            three fields below exist so the modal can still show audio and
+            transcription usage as their own line rather than leaving them
+            invisible inside this one figure.
         estimated: True when this row had no recorded ``ProviderUsage`` and
             its tokens/cost came from the local character-ratio estimator.
+        audio_input: Of ``uncached_input``+``cache_read``, how many were
+            audio tokens (task-2390, realtime only; 0 for every other
+            row -- see ``ProviderUsage.audio_input``'s own docstring for
+            the subset relationship). Always 0 for an estimated row.
+        audio_output: Of ``output``, how many were audio tokens
+            (task-2390, realtime only; 0 otherwise, always 0 when
+            estimated).
+        transcription_seconds: Duration of input audio transcribed for
+            this row (task-2390, realtime only; 0.0 otherwise, always 0.0
+            when estimated). Not a token count.
     """
 
     index: int
@@ -153,6 +169,9 @@ class ConsoleCostRow:
     output: int
     cost_usd: Optional[float]
     estimated: bool
+    audio_input: int = 0
+    audio_output: int = 0
+    transcription_seconds: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -723,6 +742,9 @@ def build_cost_rows(
                         output=usage.output,
                         cost_usd=breakdown.total if breakdown is not None else None,
                         estimated=False,
+                        audio_input=usage.audio_input,
+                        audio_output=usage.audio_output,
+                        transcription_seconds=usage.transcription_seconds,
                     )
                 )
                 continue

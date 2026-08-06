@@ -111,6 +111,69 @@ async def test_summarize_span_is_pre_boundary_user_assistant_only():
 
 
 @pytest.mark.asyncio
+async def test_summarize_span_excludes_an_empty_transcript_placeholder():
+    """task-2391 fix-now (audit follow-up): a committed voice turn whose
+    transcript came back empty persists a real placeholder as CONTENT
+    ("(no speech detected)") -- UI chrome written so the row could exist at
+    all, not something the user said. `summarize_up_to` sends the raw span
+    straight to a real provider call (`_collect_summary_completion`), so
+    leaving the placeholder in would fabricate a user turn in the
+    SUMMARIZER's context too -- the same defect `_provider_message_
+    payloads` had before its fix, one layer removed."""
+    from tldw_chatbook.Chat.message_metadata import MessageMetadata
+    from tldw_chatbook.UI.Screens.chat_screen import (
+        CONSOLE_REALTIME_EMPTY_TRANSCRIPT_PLACEHOLDER,
+    )
+
+    store = ConsoleChatStore()
+    gateway = SummaryGateway()
+    controller = ConsoleChatController(store=store, provider_gateway=gateway)
+    session = store.ensure_session()
+    store.append_message(
+        session.id,
+        role=ConsoleMessageRole.USER,
+        content=CONSOLE_REALTIME_EMPTY_TRANSCRIPT_PLACEHOLDER,
+        metadata=MessageMetadata(engine="realtime", transcript_status="empty"),
+    )
+    store.append_message(session.id, role=ConsoleMessageRole.ASSISTANT, content="a1")
+    u2 = store.append_message(session.id, role=ConsoleMessageRole.USER, content="q2")
+
+    await controller.summarize_up_to(u2.id)
+
+    span_text = gateway.captured_messages[1]["content"]
+    assert CONSOLE_REALTIME_EMPTY_TRANSCRIPT_PLACEHOLDER not in span_text
+    assert "Assistant: a1" in span_text
+
+
+@pytest.mark.asyncio
+async def test_summarize_nothing_before_target_when_only_prior_is_empty_transcript():
+    """The "nothing to summarize" gate must see the empty-transcript row as
+    absent too -- otherwise it would proceed to send an empty span to the
+    provider instead of the honest block."""
+    from tldw_chatbook.Chat.message_metadata import MessageMetadata
+    from tldw_chatbook.UI.Screens.chat_screen import (
+        CONSOLE_REALTIME_EMPTY_TRANSCRIPT_PLACEHOLDER,
+    )
+
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(store=store, provider_gateway=SummaryGateway())
+    session = store.ensure_session()
+    store.append_message(
+        session.id,
+        role=ConsoleMessageRole.USER,
+        content=CONSOLE_REALTIME_EMPTY_TRANSCRIPT_PLACEHOLDER,
+        metadata=MessageMetadata(engine="realtime", transcript_status="empty"),
+    )
+    u2 = store.append_message(session.id, role=ConsoleMessageRole.USER, content="q2")
+
+    result = await controller.summarize_up_to(u2.id)
+
+    assert result.accepted is False
+    assert "Nothing to summarize" in result.visible_copy
+    assert store.session_context_summary(session.id) == (None, None)
+
+
+@pytest.mark.asyncio
 async def test_summarize_provider_not_ready_blocks_and_stores_nothing():
     store = ConsoleChatStore()
     controller = ConsoleChatController(

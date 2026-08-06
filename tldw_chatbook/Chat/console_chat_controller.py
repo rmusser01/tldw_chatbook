@@ -849,6 +849,45 @@ def _render_skill_bundle_block(results: Iterable[Mapping[str, Any]]) -> str:
     return "Bundled files (readable via skill_file): " + ", ".join(rows)
 
 
+def _is_empty_transcript_row(message: ConsoleChatMessage) -> bool:
+    """Whether ``message`` is a committed voice turn whose transcript was empty.
+
+    task-2391: the realtime loop persists such a row with a real, non-blank
+    placeholder as its CONTENT ("(no speech detected)") -- durable rows need
+    real content, since the DB layer refuses one with neither text nor an
+    image. That placeholder is UI chrome the app wrote so the row could
+    exist at all, not something the user said, so every builder that walks
+    the transcript to construct a request TO A MODEL must treat it as
+    absent rather than as a real turn: ``_provider_message_payloads`` (the
+    ordinary send/retry/edit/fork/regenerate path), ``summarize_up_to``'s
+    span (feeds the summarizer), and ``impersonate_user_reply``'s
+    transcript (asks a model to draft text "in the user's voice" from this
+    exact history -- arguably the most dangerous place to leave it in) --
+    the same exclusion the realtime reseed builder already applies at
+    reconnect (``ChatScreen._console_realtime_seed_items``). A HUMAN-facing
+    read of the row (the transcript itself, a single-message "Save as
+    Note/Media/Prompt" export the user explicitly selected) is NOT a use of
+    this helper -- the placeholder is honest, readable text there, and
+    hiding it would defeat this task's own AC#1.
+
+    Args:
+        message: A transcript row to test. Both ``.metadata`` and
+            ``.metadata.transcript_status`` are read via ``getattr`` (never
+            a plain attribute access), so a narrow test double that duck-
+            types only some fields -- several already exist in this
+            codebase, and this helper runs on every row of three model-
+            facing send paths -- returns False rather than raising
+            ``AttributeError`` on an attribute it never declared.
+
+    Returns:
+        True when the row's ``metadata.transcript_status`` is ``"empty"``.
+        Every non-realtime row (the overwhelming majority) has no metadata
+        at all and returns False without inspecting content.
+    """
+    metadata = getattr(message, "metadata", None)
+    return getattr(metadata, "transcript_status", None) == "empty"
+
+
 class ConsoleProviderGatewayProtocol(Protocol):
     """Provider gateway surface required by the Console controller."""
 
@@ -4494,6 +4533,7 @@ class ConsoleChatController:
             m
             for m in messages[:target_index]
             if m.role in {ConsoleMessageRole.USER, ConsoleMessageRole.ASSISTANT}
+            and not _is_empty_transcript_row(m)
         ]
         if not before:
             return self._summarize_block(
@@ -4518,6 +4558,7 @@ class ConsoleChatController:
             m
             for m in messages[start_index:target_index]
             if m.role in {ConsoleMessageRole.USER, ConsoleMessageRole.ASSISTANT}
+            and not _is_empty_transcript_row(m)
         ]
 
         # "Summarizing..." run state, set the way regenerate sets VALIDATING.
@@ -4671,7 +4712,12 @@ class ConsoleChatController:
         # drop failed rows, and drop every ASSISTANT turn before the first
         # USER turn -- strict providers reject an assistant-first array
         # (task-427). A seeded character greeting therefore travels in the
-        # system row instead, via _seeded_greeting_text (task-1531).
+        # system row instead, via _seeded_greeting_text (task-1531). Also
+        # drop an empty-transcript row (task-2391) -- its content is a
+        # placeholder written so the row could persist, not real user
+        # words, and this prompt asks the model to write "in the user's
+        # voice" from exactly this transcript, so a fabricated turn here is
+        # if anything MORE dangerous than in the ordinary send path.
         transcript: list[dict[str, Any]] = []
         seen_user = False
         for message in session_messages:
@@ -4681,6 +4727,8 @@ class ConsoleChatController:
             if getattr(message, "status", None) == "failed":
                 continue
             if not seen_user and role is ConsoleMessageRole.ASSISTANT:
+                continue
+            if _is_empty_transcript_row(message):
                 continue
             content = str(getattr(message, "content", "") or "").strip()
             if not content:
@@ -8083,6 +8131,13 @@ class ConsoleChatController:
                 # reserve image budget a real message would then lose (TASK-457
                 # code-review finding 2).
                 continue
+            if _is_empty_transcript_row(message):
+                # task-2391: an empty-transcript row never carries real
+                # attachments (it is a bare text placeholder), but excluding
+                # it here too keeps this loop's skip set identical to the
+                # emit loop's below -- same reasoning as skip_failed just
+                # above.
+                continue
             usable = [
                 attachment
                 for attachment in message.attachments
@@ -8113,6 +8168,17 @@ class ConsoleChatController:
             }:
                 continue
             if skip_failed and message.status == "failed":
+                continue
+            if _is_empty_transcript_row(message):
+                # task-2391: this row's content is a placeholder
+                # ("(no speech detected)") written so a committed voice
+                # turn with no words could still be durably created -- it
+                # is UI chrome, not something the user said, and must never
+                # be narrated to the model as a real turn (mirrors the
+                # exclusion the realtime reseed builder already applies at
+                # reconnect, `_console_realtime_seed_items`). Skipped
+                # entirely rather than emitted as empty text, same as a
+                # failed row above.
                 continue
             # A seeded character greeting must not ride in the message array:
             # strict providers (Anthropic, Gemini) reject an assistant-first

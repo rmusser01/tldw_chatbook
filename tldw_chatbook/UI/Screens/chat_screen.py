@@ -889,6 +889,22 @@ CONSOLE_REALTIME_SEED_CHARS = 8000
 #: seeds/exports/summarizes the conversation.
 CONSOLE_REALTIME_INTERRUPTED_MARKER = " ⏹ interrupted"
 
+#: Written as a committed voice turn's row CONTENT when the provider's
+#: transcription resolves with no words (task-2391). The store defers
+#: persistence for a content-less row, and the DB layer refuses to create a
+#: message with neither text nor an image at all
+#: (`CharactersRAGDB.add_message`) -- so a blank row explained only through
+#: `MessageMetadata.transcript_status` could never durably exist; a restart
+#: would find nothing here. This placeholder is real, non-blank content
+#: (mirroring how the interrupted marker above is chrome baked into content,
+#: not just a metadata flag), so it renders through the ordinary
+#: message-body path with no new widget and persists through the same
+#: `update_message_content` flush the "final" transcript case already uses.
+#: The reseed builder (`_console_realtime_seed_items`) is the machine reader
+#: that keeps this text out of a reconnected session's context despite it
+#: now being non-blank -- it is UI chrome, not something the user said.
+CONSOLE_REALTIME_EMPTY_TRANSCRIPT_PLACEHOLDER = "(no speech detected)"
+
 #: `MessageMetadata.engine` value stamped on every row this loop writes
 #: (task-2364). The marker above stays as the reader's cue; machine
 #: consumers -- reseed, exports, summaries -- read the structured record.
@@ -7676,8 +7692,14 @@ class ChatScreen(BaseAppScreen):
         Console conversation is billed context on every reconnect.
 
         Only user/assistant rows with real text are replayed -- tool
-        markers and empty placeholder rows (a turn whose transcript never
-        landed) would seed noise the user never said.
+        markers would seed noise the user never said. A row whose
+        transcript came back empty (`transcript_status == "empty"`,
+        task-2391) is excluded the same way even though its content is no
+        longer blank: that content is now the empty-transcript placeholder
+        (`CONSOLE_REALTIME_EMPTY_TRANSCRIPT_PLACEHOLDER`), UI chrome written
+        so the row could persist at all, not something the user said --
+        replaying it would teach the model the user typed that literal
+        phrase.
 
         An over-budget message is SKIPPED, not treated as the end of the
         walk (fix round 1, F6): stopping there meant one long newest reply
@@ -7697,6 +7719,9 @@ class ChatScreen(BaseAppScreen):
                 ConsoleMessageRole.USER,
                 ConsoleMessageRole.ASSISTANT,
             ):
+                continue
+            metadata = message.metadata
+            if metadata is not None and metadata.transcript_status == "empty":
                 continue
             text = self._console_realtime_seed_text(message)
             if not text:
@@ -8272,13 +8297,14 @@ class ChatScreen(BaseAppScreen):
         failed marks it `failed`, and a filled row becomes `final`. Before
         the metadata field, the empty case simply returned here and left an
         empty user row stranded forever with nothing saying whether the
-        user had been silent or the pipeline had broken.
+        user had been silent or the pipeline had broken. The empty case is
+        now also durable (task-2391): see
+        `_mark_console_realtime_transcript_empty`.
         """
         spoken = str(text or "").strip()
         row_id = session.user_row_id
         if not spoken:
-            if row_id is not None and not self._console_realtime_row_has_text(row_id):
-                self._set_console_realtime_transcript_status(row_id, "empty")
+            self._mark_console_realtime_transcript_empty(session, row_id)
             return
         if row_id is None:
             session.user_row_id = self._append_console_realtime_row(
@@ -8321,27 +8347,84 @@ class ChatScreen(BaseAppScreen):
         self._set_console_realtime_transcript_status(row_id, "final")
         session.transcript_dirty = True
 
-    def _console_realtime_row_has_text(self, row_id: str) -> bool:
-        """Whether a transcript row already holds text; never raises.
+    def _mark_console_realtime_transcript_empty(
+        self, session: ConsoleRealtimeSession, row_id: str | None
+    ) -> None:
+        """Record a committed turn whose transcript came back with no words.
+
+        task-2391: `set_message_metadata` alone (the pre-fix behavior) only
+        ever reached a row that was ALREADY persisted -- an empty realtime
+        user row never is, because the store defers persistence for
+        content-less rows and the DB layer refuses to create a message with
+        neither text nor an image at all (`CharactersRAGDB.add_message`).
+        So the metadata write landed in memory only and vanished on
+        restart. `CONSOLE_REALTIME_EMPTY_TRANSCRIPT_PLACEHOLDER` is written
+        as the row's CONTENT instead, through the same
+        `update_message_content` call the "final" (real transcript) branch
+        above uses -- which flushes the deferred create exactly as a real
+        transcript would. The status write follows the content write, same
+        order and same reason as the "final" branch: a status of "empty" on
+        a row whose placeholder never landed would be a lie.
+
+        Race-safe against a REAL transcript (matching the late-final-
+        transcript guard above): a row already carrying different non-blank
+        text is left alone, never overwritten.
+
+        Retry-safe against a SWALLOWED status write (Qodo review, task-2391
+        follow-up): the content write and the status write are two separate
+        store calls, and `_set_console_realtime_transcript_status` (below)
+        deliberately never raises -- a metadata-write failure there is
+        logged and swallowed, not surfaced. An earlier version of this
+        method used "does the row already have text" as its sole retry
+        guard, which -- once the placeholder itself IS that text -- also
+        blocked every later retry from ever reaching the status write
+        again, permanently stranding a row whose content says "empty" but
+        whose `transcript_status` never does (invisible to
+        `_is_empty_transcript_row`, and so reachable by a provider as a
+        fabricated user turn: the exact leak the placeholder was written to
+        avoid, reopened by a different route). So content and status are
+        each retried independently: content is written only when the row
+        is genuinely still blank; status is (re-)written whenever the
+        content is blank OR already the placeholder, never when it holds
+        something else.
 
         Args:
-            row_id: Native store id of the row.
-
-        Returns:
-            True when the row exists and its content is non-blank. An
-            unreadable row reports True so a late empty payload is treated
-            as "leave it alone" rather than relabelling a row it cannot
-            see.
+            session: The live realtime loop state, for the repaint flag.
+            row_id: Native store id of the committed turn's user row, or
+                ``None`` when no row exists to mark (a commit this wiring
+                never saw).
         """
+        if row_id is None:
+            return
         store = self._ensure_console_chat_store()
         try:
-            return bool(str(store.get_message(row_id).content or "").strip())
+            existing = str(store.get_message(row_id).content or "").strip()
         except Exception:  # noqa: BLE001 - an unreadable row is left untouched
             logger.opt(exception=True).debug(
                 "Console realtime: could not read a transcript row's text: "
                 f"op=realtime_transcript_status row_id={row_id}"
             )
-            return True
+            return
+        if existing and existing != CONSOLE_REALTIME_EMPTY_TRANSCRIPT_PLACEHOLDER:
+            # A real transcript is already there -- never relabel it "empty".
+            return
+        if not existing:
+            try:
+                store.update_message_content(
+                    row_id, CONSOLE_REALTIME_EMPTY_TRANSCRIPT_PLACEHOLDER
+                )
+            except Exception:  # noqa: BLE001 - transcript upkeep is never fatal
+                logger.opt(exception=True).warning(
+                    "Console realtime: could not record the empty-transcript row"
+                )
+                return
+        # Reached with the placeholder now in place -- either just written
+        # above, or already there from an earlier call whose status write
+        # was swallowed. Either way, (re-)stamp the status: idempotent when
+        # it already succeeded, and the only way a stranded row recovers
+        # when it did not.
+        self._set_console_realtime_transcript_status(row_id, "empty")
+        session.transcript_dirty = True
 
     def _set_console_realtime_transcript_status(self, row_id: str, status: str) -> None:
         """Record what became of a user row's transcript (task-2364).

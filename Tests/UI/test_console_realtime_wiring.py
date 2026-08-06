@@ -2496,7 +2496,18 @@ async def test_turn_commit_records_a_pending_transcript_status(monkeypatch):
 async def test_an_empty_transcript_records_why_the_row_is_empty(monkeypatch):
     """The strand case: the provider transcribed the turn and it held no
     words. Before the field, the row sat empty forever with nothing saying
-    whether the user was silent or the pipeline broke."""
+    whether the user was silent or the pipeline broke.
+
+    task-2391: the row's CONTENT becomes the explanation, not just its
+    metadata -- the store defers persistence for a content-less row, and
+    the DB layer refuses to create a message with neither text nor an
+    image at all (`CharactersRAGDB.add_message`), so a metadata-only
+    "empty" row could never durably exist. Writing a short placeholder as
+    real content flushes the same deferred-create path a real transcript
+    already uses (`update_message_content`), so this row persists like
+    any other -- see `Tests/Chat/test_console_chat_store.py` and
+    `Tests/UI/test_console_resume_active_path.py` for the persistence and
+    restart-survival proofs (this harness has no durable DB backing)."""
     _patch_realtime_config(monkeypatch)
     app = _build_test_app()
     rig = _install_realtime_fakes(app)
@@ -2516,8 +2527,144 @@ async def test_an_empty_transcript_records_why_the_row_is_empty(monkeypatch):
         )
 
         user = _messages(console)[0]
-        assert user.content == ""
+        assert user.content == chat_screen_module.CONSOLE_REALTIME_EMPTY_TRANSCRIPT_PLACEHOLDER
         assert user.metadata.engine == "realtime"
+
+
+@pytest.mark.asyncio
+async def test_a_second_empty_transcript_does_not_double_mark_the_row(monkeypatch):
+    """An empty payload landing twice for the same commit (a duplicate
+    provider event, or a race) must not re-write the placeholder -- the
+    content is already the placeholder, so `_mark_console_realtime_
+    transcript_empty` skips the content write and only (harmlessly,
+    idempotently) re-stamps the status."""
+    _patch_realtime_config(monkeypatch)
+    app = _build_test_app()
+    rig = _install_realtime_fakes(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        session = await _enter_live_realtime(console, pilot, rig)
+
+        session.fire_turn_committed()
+        await _wait_for(lambda: len(_messages(console)) == 1, pilot)
+        session.fire_input_transcript("")
+        await _wait_for(
+            lambda: _messages(console)[0].content
+            == chat_screen_module.CONSOLE_REALTIME_EMPTY_TRANSCRIPT_PLACEHOLDER,
+            pilot,
+        )
+        session.fire_input_transcript("   ")
+        await pilot.pause()
+        await pilot.pause()
+
+        user = _messages(console)[0]
+        assert user.content == chat_screen_module.CONSOLE_REALTIME_EMPTY_TRANSCRIPT_PLACEHOLDER
+        assert user.metadata.transcript_status == "empty"
+
+
+@pytest.mark.asyncio
+async def test_an_empty_transcript_retries_the_status_after_a_swallowed_metadata_failure(
+    monkeypatch,
+):
+    """Qodo Q4 (task-2391 review): the has-text early return used to treat
+    the PLACEHOLDER itself as "already has text" and bail before ever
+    reaching the status write on retry. That is reachable because
+    `_set_console_realtime_transcript_status` deliberately swallows its own
+    exceptions -- so a content-write-succeeded/metadata-write-failed
+    partial state left a row whose content is the placeholder but whose
+    `transcript_status` never became "empty", permanently: every later
+    attempt hit the SAME early return. Such a row is invisible to
+    `_is_empty_transcript_row` and would reach a provider as a fabricated
+    user turn -- reopening the exact leak the prior fix closed, by a
+    different route."""
+    _patch_realtime_config(monkeypatch)
+    app = _build_test_app()
+    rig = _install_realtime_fakes(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        session = await _enter_live_realtime(console, pilot, rig)
+        store = console._ensure_console_chat_store()
+
+        session.fire_turn_committed()
+        await _wait_for(lambda: len(_messages(console)) == 1, pilot)
+
+        # Simulate the swallowed failure: the content write below succeeds
+        # normally, but the very next `set_message_metadata` call (the
+        # status write) raises once.
+        real_set_message_metadata = store.set_message_metadata
+        state = {"raised": False}
+
+        def _flaky_set_message_metadata(message_id, metadata):
+            if not state["raised"]:
+                state["raised"] = True
+                raise RuntimeError("simulated metadata-write failure")
+            return real_set_message_metadata(message_id, metadata)
+
+        monkeypatch.setattr(store, "set_message_metadata", _flaky_set_message_metadata)
+
+        session.fire_input_transcript("")
+        await _wait_for(
+            lambda: _messages(console)[0].content
+            == chat_screen_module.CONSOLE_REALTIME_EMPTY_TRANSCRIPT_PLACEHOLDER,
+            pilot,
+        )
+        # Partial state reached: content landed, status write was swallowed.
+        user = _messages(console)[0]
+        assert user.metadata.transcript_status != "empty"
+
+        # A retry (another empty payload for the same commit) must still
+        # reach the status write -- not bail because content is non-blank.
+        session.fire_input_transcript("")
+        await _wait_for(
+            lambda: _messages(console)[0].metadata.transcript_status == "empty",
+            pilot,
+        )
+
+        user = _messages(console)[0]
+        assert (
+            user.content == chat_screen_module.CONSOLE_REALTIME_EMPTY_TRANSCRIPT_PLACEHOLDER
+        )
+
+        from tldw_chatbook.Chat.console_chat_controller import _is_empty_transcript_row
+
+        assert _is_empty_transcript_row(store.get_message(user.id))
+
+
+@pytest.mark.asyncio
+async def test_seed_excludes_a_row_whose_transcript_came_back_empty(monkeypatch):
+    """task-2391 AC3: `transcript_status` needs a real consumer. The reseed
+    builder is it -- an "empty" row's content is now the placeholder text,
+    not something the user said, and must never be replayed into a
+    reconnected session's context as if it were."""
+    _patch_realtime_config(monkeypatch)
+    app = _build_test_app()
+    rig = _install_realtime_fakes(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        store = console._ensure_console_chat_store()
+        session_id = store.active_session_id
+        store.append_message(
+            session_id,
+            role=ConsoleMessageRole.USER,
+            content=chat_screen_module.CONSOLE_REALTIME_EMPTY_TRANSCRIPT_PLACEHOLDER,
+            metadata=MessageMetadata(engine="realtime", transcript_status="empty"),
+        )
+        store.append_message(
+            session_id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="a real reply",
+        )
+
+        await _enter_live_realtime(console, pilot, rig)
+
+        items, _instructions = rig.session.seeds[0]
+        assert items == [("assistant", "a real reply")]
 
 
 @pytest.mark.asyncio

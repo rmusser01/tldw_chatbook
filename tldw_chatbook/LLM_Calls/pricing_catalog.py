@@ -87,14 +87,26 @@ _ZERO = {
 }
 
 
-def _entry(inp: float, out: float, cr: Optional[float] = None, cw: Optional[float] = None,
-           as_of: str = _SEED_AS_OF) -> Dict[str, Any]:
+def _entry(
+    inp: float, out: float, cr: Optional[float] = None, cw: Optional[float] = None,
+    as_of: str = _SEED_AS_OF,
+    audio_in: Optional[float] = None, audio_out: Optional[float] = None,
+    cached_audio_in: Optional[float] = None,
+    transcription_per_minute: Optional[float] = None,
+) -> Dict[str, Any]:
     return {
         "input_per_mtok": inp,
         "output_per_mtok": out,
         "cache_read_per_mtok": cr,
         "cache_write_per_mtok": cw,
         "as_of": as_of,
+        # task-2390 (realtime): all four default to None/absent for every
+        # non-realtime entry above, so an ordinary text model's ModelPricing
+        # carries no audio/transcription rate at all.
+        "audio_in_per_mtok": audio_in,
+        "audio_out_per_mtok": audio_out,
+        "cached_audio_in_per_mtok": cached_audio_in,
+        "transcription_per_minute": transcription_per_minute,
     }
 
 
@@ -202,9 +214,68 @@ _OPENAI_MODEL_PRICING: Dict[str, Dict[str, Any]] = {
     # dollar figure -- a `[pricing].models` override is the escape hatch.
 }
 
+# OpenAI Realtime (voice) - verified 2026-08-06 via
+# https://developers.openai.com/api/docs/pricing (task-2390's "## Research"
+# section carries the full source table). Realtime bills per 1M TOKENS like
+# every chat model above, NOT per audio minute -- the task's own Description
+# premise was wrong on that point; only *transcription* (below) is
+# per-minute. "openai:gpt-realtime" is the app's default (see
+# Chat/console_voice_input.py's DEFAULT_REALTIME_MODEL).
+#
+# Cached AUDIO input is a SEPARATE rate from cached TEXT input
+# (cache_read_per_mtok) -- they coincide at $0.40 for gpt-realtime but
+# diverge for -mini ($0.30 audio vs $0.06 text). `cached_audio_in_per_mtok`
+# is seeded here for the record (AC2: catalog entries exist for every
+# published rate) but PricingCatalog.cost_for_usage() does not read it: see
+# that method's own docstring for why (ProviderUsage cannot attribute a
+# cache-read token to audio vs text -- ground truth in
+# LLM_Calls/realtime/openai_session.py's header shows the wire payload
+# splits `cached_tokens_details` this finely, but `ProviderUsage.
+# from_provider_payload` does not parse that sub-object).
+#
+# No published cache-WRITE rate for realtime (prompt caching is automatic,
+# server-managed) -- cache_write_per_mtok stays None like every OpenAI chat
+# model above.
+_REALTIME_AS_OF = "2026-08-06"
+# Whisper transcribes realtime's input audio (see openai_session.py's
+# `_TRANSCRIPTION_MODEL = "whisper-1"`) at a flat per-minute rate,
+# independent of which gpt-realtime variant is running the session --
+# duplicated across every entry below rather than looked up separately,
+# since ProviderUsage never records the transcription sub-model.
+_WHISPER_TRANSCRIPTION_PER_MINUTE = 0.006
+
+_OPENAI_REALTIME_MODEL_PRICING: Dict[str, Dict[str, Any]] = {
+    "openai:gpt-realtime": _entry(
+        4.00, 16.00, 0.40, None, as_of=_REALTIME_AS_OF,
+        audio_in=32.00, audio_out=64.00, cached_audio_in=0.40,
+        transcription_per_minute=_WHISPER_TRANSCRIPTION_PER_MINUTE,
+    ),
+    "openai:gpt-realtime-mini": _entry(
+        0.60, 2.40, 0.06, None, as_of=_REALTIME_AS_OF,
+        audio_in=10.00, audio_out=20.00, cached_audio_in=0.30,
+        transcription_per_minute=_WHISPER_TRANSCRIPTION_PER_MINUTE,
+    ),
+    "openai:gpt-realtime-2.1": _entry(
+        4.00, 24.00, 0.40, None, as_of=_REALTIME_AS_OF,
+        audio_in=32.00, audio_out=64.00, cached_audio_in=0.40,
+        transcription_per_minute=_WHISPER_TRANSCRIPTION_PER_MINUTE,
+    ),
+    "openai:gpt-realtime-2": _entry(
+        4.00, 24.00, 0.40, None, as_of=_REALTIME_AS_OF,
+        audio_in=32.00, audio_out=64.00, cached_audio_in=0.40,
+        transcription_per_minute=_WHISPER_TRANSCRIPTION_PER_MINUTE,
+    ),
+    "openai:gpt-realtime-1.5": _entry(
+        4.00, 16.00, 0.40, None, as_of=_REALTIME_AS_OF,
+        audio_in=32.00, audio_out=64.00, cached_audio_in=0.40,
+        transcription_per_minute=_WHISPER_TRANSCRIPTION_PER_MINUTE,
+    ),
+}
+
 DEFAULT_MODEL_PRICING: Dict[str, Dict[str, Any]] = {
     **_stamped(_RECHECKED_AS_OF, _ANTHROPIC_MODEL_PRICING),
     **_stamped(_RECHECKED_AS_OF, _OPENAI_MODEL_PRICING),
+    **_OPENAI_REALTIME_MODEL_PRICING,
 
     # Google Gemini - verified 2026-08-01 via https://ai.google.dev/gemini-api/docs/pricing
     # (standard, <=200k-token tier for models with a long-context surcharge).
@@ -370,6 +441,27 @@ class ModelPricing:
             verified against the provider's published pricing, surfaced to
             the user so a stale rate is visibly stale rather than silently
             trusted.
+        audio_in_per_mtok: USD cost per 1,000,000 UNCACHED audio input
+            tokens (task-2390, realtime only), or ``None`` when this
+            provider/model has no published audio rate -- i.e. every
+            non-realtime model. Realtime audio bills per TOKEN like text,
+            not per audio minute; see :meth:`PricingCatalog.cost_for_usage`
+            for why this is the only audio-input rate that method reads.
+        audio_out_per_mtok: USD cost per 1,000,000 audio output tokens
+            (task-2390, realtime only), or ``None``. Output is never
+            served from a cache, so this rate is unambiguous to apply.
+        cached_audio_in_per_mtok: USD cost per 1,000,000 CACHED audio
+            input tokens (task-2390), or ``None``. Seeded for the record
+            (a genuinely published, separate rate -- it diverges from
+            ``cache_read_per_mtok`` for at least one shipped model) but
+            :meth:`PricingCatalog.cost_for_usage` does NOT read it: see
+            that method's docstring for the attribution gap that makes it
+            currently unusable.
+        transcription_per_minute: USD cost per minute of input-audio
+            transcription (task-2390, realtime only -- OpenAI's Whisper
+            sub-model), or ``None``. The one PER-MINUTE (not per-token)
+            rate in this dataclass, feeding ``ProviderUsage.
+            transcription_seconds`` rather than any token bucket.
     """
 
     input_per_mtok: float
@@ -377,6 +469,10 @@ class ModelPricing:
     cache_read_per_mtok: Optional[float]
     cache_write_per_mtok: Optional[float]
     as_of: str
+    audio_in_per_mtok: Optional[float] = None
+    audio_out_per_mtok: Optional[float] = None
+    cached_audio_in_per_mtok: Optional[float] = None
+    transcription_per_minute: Optional[float] = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -392,14 +488,29 @@ class CostBreakdown:
     figure.
 
     Attributes:
-        input_cost: USD cost of the uncached input tokens.
-        cache_read_cost: USD cost of the cache-read input tokens.
+        input_cost: USD cost of the uncached (TEXT-only, once audio is
+            accounted for separately -- see ``audio_input_cost``) input
+            tokens.
+        cache_read_cost: USD cost of the cache-read (TEXT-only) input
+            tokens.
         cache_write_cost: USD cost of the cache-write input tokens.
-        output_cost: USD cost of the output tokens.
-        total: Sum of the four cost fields above.
+        output_cost: USD cost of the (TEXT-only) output tokens.
+        total: Sum of every cost field on this dataclass.
         as_of: The ``ModelPricing.as_of`` label the rates were resolved
             from, carried through so a displayed cost can show how current
             its pricing basis is.
+        audio_input_cost: USD cost of ``ProviderUsage.audio_input``
+            (task-2390, realtime only), ``0.0`` when the resolved
+            ``ModelPricing`` has no audio rate or the usage has no audio
+            tokens. Kept as its own field -- rather than folded into
+            ``input_cost`` -- so the breakdown modal can show it as a
+            distinct line instead of an undecomposable total.
+        audio_output_cost: USD cost of ``ProviderUsage.audio_output``
+            (task-2390), same "own field" rationale as ``audio_input_cost``.
+        transcription_cost: USD cost of ``ProviderUsage.
+            transcription_seconds`` at ``ModelPricing.
+            transcription_per_minute`` (task-2390), ``0.0`` when either is
+            unset.
     """
 
     input_cost: float
@@ -408,6 +519,9 @@ class CostBreakdown:
     output_cost: float
     total: float
     as_of: str
+    audio_input_cost: float = 0.0
+    audio_output_cost: float = 0.0
+    transcription_cost: float = 0.0
 
 
 #
@@ -517,6 +631,13 @@ class PricingCatalog:
             cache_read_per_mtok=entry.get("cache_read_per_mtok"),
             cache_write_per_mtok=entry.get("cache_write_per_mtok"),
             as_of=entry.get("as_of", _SEED_AS_OF),
+            # task-2390: absent on every non-realtime entry, so `.get()`
+            # leaves these None -- additive, never repurposes an existing
+            # key.
+            audio_in_per_mtok=entry.get("audio_in_per_mtok"),
+            audio_out_per_mtok=entry.get("audio_out_per_mtok"),
+            cached_audio_in_per_mtok=entry.get("cached_audio_in_per_mtok"),
+            transcription_per_minute=entry.get("transcription_per_minute"),
         )
 
     def get_pricing(self, provider: str, model: str) -> Optional[ModelPricing]:
@@ -565,6 +686,48 @@ class PricingCatalog:
         """
         Compute a dollar cost breakdown for a ProviderUsage's disjoint token buckets.
 
+        task-2390 (realtime audio/transcription billing): ``ProviderUsage.
+        audio_input``/``audio_output`` are documented SUBSETS of
+        ``uncached_input``+``cache_read`` and ``output`` respectively (see
+        that dataclass's own docstring) -- never additional tokens, so
+        pricing them on top of the plain buckets without adjustment would
+        double count. Two attribution gaps this method resolves
+        conservatively rather than guessing:
+
+        1. Cache attribution (input side only): ``ProviderUsage`` cannot
+           say how many of ``audio_input``'s tokens came from
+           ``uncached_input`` vs ``cache_read`` -- the wire payload splits
+           ``cached_tokens_details`` this finely (see
+           ``LLM_Calls/realtime/openai_session.py``'s ground-truth header)
+           but ``from_provider_payload`` does not parse that sub-object,
+           and this method does not invent a split. Every audio-input
+           token is therefore priced at the (higher) UNCACHED audio rate
+           -- ``ModelPricing.cached_audio_in_per_mtok`` is never read here
+           -- regardless of which bucket it is numerically attributed to
+           below; that attribution only decides how many TEXT tokens are
+           left over in each bucket, never audio's own rate.
+
+           To avoid double-counting those same audio tokens under
+           ``input_cost``/``cache_read_cost``, they must be subtracted
+           from ``uncached_input``/``cache_read`` before those buckets are
+           priced at their (much cheaper) TEXT rates. Which bucket a given
+           audio token is subtracted from therefore changes how many TEXT
+           tokens remain in the expensive ``uncached_input`` bucket vs the
+           cheap ``cache_read`` bucket -- and since ``input_per_mtok`` is
+           always higher than ``cache_read_per_mtok``, the conservative
+           (cost-MAXIMIZING, never-underbilling) choice is to remove audio
+           tokens from ``cache_read`` FIRST, leaving as many TEXT tokens
+           as possible stranded in the expensive ``uncached_input``
+           bucket -- and only "spill" the removal into ``uncached_input``
+           once ``cache_read`` itself is exhausted. (Removing from the
+           EXPENSIVE bucket first -- the intuitive-looking order -- is
+           backwards: it evacuates text OUT of the bucket that costs the
+           most, which minimizes the bill instead of bounding it from
+           above. Don't "fix" this back without re-deriving the sign.)
+        2. Output side: unambiguous. Output is never served from a cache
+           (only input can be), so ``audio_output`` is a clean subset of
+           ``output`` alone with no cache-attribution question at all.
+
         Args:
             usage: Normalized per-message token usage.
 
@@ -575,15 +738,49 @@ class PricingCatalog:
         if pricing is None:
             return None
 
-        input_cost = round(usage.uncached_input * pricing.input_per_mtok / 1_000_000, 6)
+        # Defensive clamp: a corrupted stored record (e.g. hand-edited JSON)
+        # could carry an audio count larger than its own parent bucket(s);
+        # without this, the subtractions below would go negative.
+        audio_input = min(usage.audio_input, usage.uncached_input + usage.cache_read)
+        audio_output = min(usage.audio_output, usage.output)
+
+        if pricing.audio_in_per_mtok is not None and audio_input:
+            # Drain the CHEAP bucket (cache_read) first -- see this
+            # method's docstring, point 1, for why that (not uncached_input
+            # first) is the conservative direction.
+            audio_from_cache = min(audio_input, usage.cache_read)
+            audio_from_uncached = audio_input - audio_from_cache
+            text_uncached = usage.uncached_input - audio_from_uncached
+            text_cache_read = usage.cache_read - audio_from_cache
+            audio_input_cost = round(audio_input * pricing.audio_in_per_mtok / 1_000_000, 6)
+        else:
+            text_uncached = usage.uncached_input
+            text_cache_read = usage.cache_read
+            audio_input_cost = 0.0
+
+        if pricing.audio_out_per_mtok is not None and audio_output:
+            text_output = usage.output - audio_output
+            audio_output_cost = round(audio_output * pricing.audio_out_per_mtok / 1_000_000, 6)
+        else:
+            text_output = usage.output
+            audio_output_cost = 0.0
+
+        input_cost = round(text_uncached * pricing.input_per_mtok / 1_000_000, 6)
         cache_read_cost = round(
-            usage.cache_read * (pricing.cache_read_per_mtok or 0.0) / 1_000_000, 6
+            text_cache_read * (pricing.cache_read_per_mtok or 0.0) / 1_000_000, 6
         )
         cache_write_cost = round(
             usage.cache_write * (pricing.cache_write_per_mtok or 0.0) / 1_000_000, 6
         )
-        output_cost = round(usage.output * pricing.output_per_mtok / 1_000_000, 6)
-        total = round(input_cost + cache_read_cost + cache_write_cost + output_cost, 6)
+        output_cost = round(text_output * pricing.output_per_mtok / 1_000_000, 6)
+        transcription_cost = round(
+            usage.transcription_seconds / 60.0 * (pricing.transcription_per_minute or 0.0), 6
+        )
+        total = round(
+            input_cost + cache_read_cost + cache_write_cost + output_cost
+            + audio_input_cost + audio_output_cost + transcription_cost,
+            6,
+        )
 
         return CostBreakdown(
             input_cost=input_cost,
@@ -592,6 +789,9 @@ class PricingCatalog:
             output_cost=output_cost,
             total=total,
             as_of=pricing.as_of,
+            audio_input_cost=audio_input_cost,
+            audio_output_cost=audio_output_cost,
+            transcription_cost=transcription_cost,
         )
 
 
