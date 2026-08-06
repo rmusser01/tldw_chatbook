@@ -5,6 +5,25 @@ MCP Server implementation for tldw_chatbook
 
 This module provides the main MCP server that exposes tldw_chatbook's functionality
 through the Model Context Protocol.
+
+## Exposed local agent tools (opt-in)
+
+When `[mcp] expose_local_tools = true` is set in config.toml, the server also
+exposes the workspace-local agent tools (`fs_*`, `fs_patch`, `git_*`,
+`web_fetch`, `web_search`) to external MCP clients. Invocation is routed
+through `Agents/local_tool_provider.LocalToolProvider`'s permission gate
+(`MCP/local_server_tools.py`) — never by wrapping the tool cores directly.
+
+Permission model for external callers: there is no approval card outside the
+Console, so tools in the `ask` state fail closed with an external-appropriate
+refusal. An operator grants a tool externally by approving it "Always allow"
+in a Console session (which persists `allow` + definition hash to the shared
+permission store under `local:__local__`) or by editing
+`<user_data_dir>/mcp_permissions.json` directly. `mutates`-tagged tools
+(writes, edits, patches) are therefore effectively denied to external clients
+by default. The kill switch and `deny` states are honored identically to the
+Console path. `todo_write` is Console-session-scoped and intentionally not
+exposed.
 """
 
 import asyncio  # noqa: E402
