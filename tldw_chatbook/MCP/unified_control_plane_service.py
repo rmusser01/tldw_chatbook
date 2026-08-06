@@ -23,9 +23,22 @@ from .permission_store import (
     resolve_effective_state,
     resolve_effective_state_by_key,
 )
+from .readiness import BUILTIN_SERVER_KEY
 from .server_target_store import ConfiguredServerTargetStore
 from .unified_context_store import UnifiedMCPContextStore
 from .unified_control_models import ServerAccessContext, UnifiedMCPContext
+
+# Task 6 (PR-T3), Route B: refusal copy for the Advanced runner's
+# `tool.execute` action when the Hub's per-tool permission gate resolves the
+# named built-in tool to "deny". Mirrors the Test Tool runner's own blocked
+# sentence (`_TOOL_TEST_BLOCKED_TEXT`, mcp_workbench.py) but names the tool,
+# since the Advanced panel has no tool detail beside it to say which one.
+# Deliberately does NOT lead with "Blocked": the inspector renders it under
+# `show_tool_result()`'s "Blocked · not run" heading, and every other
+# PermissionError this path can surface (the in-process runtime-governance
+# profile's own denials, raised by `local_control_service.execute_tool()`)
+# reads correctly under that same heading.
+_ADVANCED_EXECUTE_BLOCKED_MESSAGE = "{tool} is set to Off in Permissions."
 
 
 class UnifiedMCPControlPlaneService:
@@ -1001,13 +1014,16 @@ class UnifiedMCPControlPlaneService:
                     )
                 )
             if action_name == "tool.execute":
-                return await self._maybe_await(
-                    self.local_service.execute_tool(
-                        self._require_field(payload, "tool_name"),
-                        payload.get("arguments")
-                        if isinstance(payload.get("arguments"), dict)
-                        else {},
-                    )
+                # Task 6 (PR-T3), Route B: NOT a bare `local_service.
+                # execute_tool()` call anymore -- see
+                # `execute_advanced_tool()` for why that route was the one
+                # execution path in the Hub with neither a permission gate
+                # nor an execution-log record.
+                return await self.execute_advanced_tool(
+                    self._require_field(payload, "tool_name"),
+                    payload.get("arguments")
+                    if isinstance(payload.get("arguments"), dict)
+                    else {},
                 )
             if action_name == "resource.read":
                 return await self._maybe_await(
@@ -2322,6 +2338,93 @@ class UnifiedMCPControlPlaneService:
             decision=decision,
             timeout_seconds=self._lifecycle_timeout(),
             registered_argument_names=registered_argument_names,
+        )
+
+    async def execute_advanced_tool(
+        self, tool_name: str, arguments: dict[str, Any] | None = None
+    ) -> Any:
+        """Execute one built-in tool for the Advanced runner's ``tool.execute``.
+
+        Task 6 (PR-T3), Route B. The Advanced (legacy control plane) panel
+        offers a ``tool.execute`` descriptor whose Run Action button
+        reached ``local_service.execute_tool()`` straight through
+        :meth:`run_action` -- the ONLY execution path in the Hub that
+        touched neither the per-tool permission gate (a tool the user set
+        to Off ran anyway) nor :meth:`_record_tool_execution` (which lives
+        inside :meth:`execute_hub_tool`), so such a run left no row in the
+        audit trail at all. This routes it through the same shared seam as
+        the Test Tool runner and the agent bridge, so it is gated and
+        logged like every other run.
+
+        The gate is :meth:`gate_tool_test_by_key` -- the Advanced runner
+        names a tool in raw JSON and has no live ``HubTool`` to
+        fingerprint, which is exactly the case that seam exists for. It
+        resolves ``deny``/``ask`` at full fidelity and collapses any
+        ``allow`` to ``ask``; a ``deny`` is refused here (nothing runs, a
+        ``decision="denied"`` row is recorded), and anything else executes
+        under ``decision="approved"``, naming the Advanced runner's own
+        two-press confirm (``MCPInspector._run_advanced_action()``) as the
+        approval -- the same contract, and the same audit vocabulary, the
+        agent bridge's Ask-then-approved calls already use. A caller that
+        skips that confirm is the one lying to the log, not this method:
+        the gate's hard "Off" verdict is enforced here regardless.
+
+        A gate resolution that RAISES fails closed (a synthetic deny),
+        mirroring ``MCPWorkbench._resolve_test_gate()``: a runtime error
+        must never silently expose a tool permissions might forbid.
+
+        No ``registered_argument_names`` is supplied: the payload is
+        free-form JSON with no schema behind it, so this path honestly
+        records no argument provenance rather than inventing some.
+
+        Args:
+            tool_name: Name of the built-in tool to execute.
+            arguments: Tool arguments; defaults to an empty dict.
+
+        Returns:
+            The raw result payload from the built-in tool call.
+
+        Raises:
+            PermissionError: The tool is set to Off in Permissions (or the
+                in-process runtime-governance profile denies it, raised
+                further down by ``local_control_service.execute_tool()``).
+            RuntimeError: The tool call fails or exceeds the effective
+                timeout.
+        """
+        normalized_tool_name = str(tool_name or "").strip()
+        normalized_arguments = dict(arguments or {})
+        try:
+            state = self.gate_tool_test_by_key(
+                BUILTIN_SERVER_KEY, normalized_tool_name
+            )
+        except Exception as exc:
+            logger.warning(
+                "MCP advanced tool.execute gate check failed for {}; failing closed: {}",
+                normalized_tool_name,
+                type(exc).__name__,
+            )
+            state = EffectiveToolState(state="deny", origin="gate_error")
+
+        if state.state == "deny":
+            self.record_tool_decision(
+                BUILTIN_SERVER_KEY,
+                normalized_tool_name,
+                decision="denied",
+                initiator="test",
+            )
+            raise PermissionError(
+                _ADVANCED_EXECUTE_BLOCKED_MESSAGE.format(
+                    tool=normalized_tool_name or "This tool"
+                )
+            )
+
+        return await self.execute_hub_tool(
+            BUILTIN_SERVER_KEY,
+            normalized_tool_name,
+            normalized_arguments,
+            initiator="test",
+            decision="allowed" if state.state == "allow" else "approved",
+            timeout_seconds=self._lifecycle_timeout(),
         )
 
     # ---- Chat bridge seam (Phase 5) -------------------------------------

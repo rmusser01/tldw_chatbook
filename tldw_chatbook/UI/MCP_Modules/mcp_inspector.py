@@ -158,6 +158,24 @@ _REALLOW_TOOLTIP = "Store the new definition hash and allow again."
 # copy, so the two call sites can never drift.
 _GOTO_PERMISSION_TOOLTIP = "Switch to Permissions mode and select this tool's row."
 
+# Task 6 (PR-T3), Route B: every other Advanced action reads or mutates
+# control-plane config; `tool.execute` EXECUTES a tool -- and used to do it on
+# a single press with no permission gate and no execution-log record.
+# `UnifiedMCPControlPlaneService.execute_advanced_tool()` now enforces the
+# gate's hard "Off" verdict and records the run; this pane supplies the
+# per-run consent that gate's "ask" verdict requires (the same Ask mechanic
+# the Test Tool runner's `require_confirm()` arm implements, minus its
+# dedicated button -- here the Run Action button itself is the arm), keyed to
+# the exact payload it was shown for so an edited payload re-confirms.
+_ADVANCED_EXECUTE_ACTION = "tool.execute"
+_ADVANCED_EXECUTE_CONFIRM = (
+    "Runs {tool} now — press Run Action again to confirm. Editing anything cancels."
+)
+# The refusal heading `show_tool_result()` gives a blocked test run (":2254"),
+# reused verbatim so a refusal reads the same wherever it surfaces -- a
+# refusal is not a failure, and must never render as "Action failed:".
+_ADVANCED_BLOCKED_HEADING = "Blocked · not run"
+
 # F-054: the nothing-selected header copy, shared by compose() and
 # update_readiness(None) so the two can never drift. Contextual instead of
 # a bare "Select an item to inspect." -- it says what picking a row gets
@@ -911,6 +929,13 @@ class MCPInspector(Vertical):
         # `Collapsible(collapsed=False)` posts (see the handler); default
         # True matches Collapsible's own reactive default.
         self._advanced_last_collapsed: bool = True
+        # Task 6 (PR-T3): the `(action, payload)` the Advanced runner's Run
+        # Action button is currently armed to execute, or None when unarmed.
+        # Only the executing descriptor (`tool.execute`) ever sets it -- see
+        # `_run_advanced_action()`. Keyed on the payload, not just the
+        # action, so an edited payload re-arms instead of running under a
+        # confirm the user gave for different arguments.
+        self._advanced_confirm_key: tuple[str, str] | None = None
         # Task 4: serializes `update_readiness()`'s remove+mount cycle. Two
         # calls awaited concurrently (a worker-driven refresh interleaved
         # with a pump-driven one) previously could both be mid-flight at
@@ -2590,18 +2615,61 @@ class MCPInspector(Vertical):
             return
 
     async def _run_advanced_action(self) -> None:
+        """Run the selected Advanced action, confirming the executing one.
+
+        Task 6 (PR-T3), Route B: `tool.execute` is the only descriptor here
+        that runs a tool rather than reading or writing control-plane
+        config, and the Hub's permission gate resolves nearly every tool to
+        "ask" from this pane (`gate_tool_test_by_key()` cannot verify an
+        `allow` without a live definition to hash, so it collapses one to
+        "ask"). "Ask" needs a per-run approval, and this legacy panel has
+        no confirm control of its own -- so the Run Action button IS the
+        arm: the first press states what will run and arms; the second
+        runs it. The arm is keyed to `(action, payload)`, so switching
+        action or editing the payload re-arms rather than executing
+        something the user never read.
+
+        A `PermissionError` -- the gate's hard "Off" refusal from
+        `execute_advanced_tool()`, or the in-process runtime-governance
+        profile's own denial from `local_control_service` -- renders under
+        `show_tool_result()`'s "Blocked · not run" heading. Nothing ran, so
+        the generic "Action failed:" dump (which reads as an attempted,
+        crashed call) would misdescribe it.
+        """
         result_widget = self.query_one("#mcp-adv-result", Static)
         action_select = self.query_one("#mcp-adv-action-select", Select)
         if self._service is None or _is_blank(action_select.value):
             return
+        action_name = str(action_select.value)
         raw = self.query_one("#mcp-adv-payload", TextArea).text or "{}"
         try:
             payload = json.loads(raw)
         except json.JSONDecodeError as exc:
+            self._advanced_confirm_key = None
             result_widget.update(f"Invalid JSON payload: {exc}")
             return
+        if action_name == _ADVANCED_EXECUTE_ACTION:
+            # `default=str` for the same reason the result dump below uses
+            # it: this is arbitrary user JSON, and an un-dumpable payload
+            # must re-arm, not raise out of the Run button's worker.
+            confirm_key = (action_name, json.dumps(payload, sort_keys=True, default=str))
+            if self._advanced_confirm_key != confirm_key:
+                self._advanced_confirm_key = confirm_key
+                tool_label = (
+                    str(payload.get("tool_name") or "").strip()
+                    if isinstance(payload, Mapping)
+                    else ""
+                )
+                result_widget.update(
+                    _ADVANCED_EXECUTE_CONFIRM.format(tool=tool_label or "this tool")
+                )
+                return
+        self._advanced_confirm_key = None
         try:
-            result = await self._service.run_action(str(action_select.value), payload)
+            result = await self._service.run_action(action_name, payload)
+        except PermissionError as exc:  # a refusal is not a failure
+            result_widget.update(f"{_ADVANCED_BLOCKED_HEADING}\n{exc}")
+            return
         except Exception as exc:  # surface, never crash the inspector
             result_widget.update(f"Action failed: {exc}")
             return

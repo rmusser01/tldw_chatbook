@@ -358,3 +358,79 @@ async def test_hub_tool_omitted_registered_argument_names_keeps_pre_task4_behavi
     records = _log_records(store)
     assert records and records[0]["argument_names"] == []
     assert records[0]["unknown_argument_count"] == 1
+
+
+# -- Task 6 (PR-T3), Route B: the Advanced runner's `tool.execute` hatch.
+# `run_action("tool.execute", ...)` used to call `local_service.execute_tool()`
+# directly -- bypassing BOTH the Hub's per-tool permission gate (a tool set to
+# Off ran anyway) and `_record_tool_execution()` (which lives only inside
+# `execute_hub_tool()`), so the run left no trace in the audit trail at all.
+# It now resolves the same permission state the Test Tool gate resolves and
+# executes through the same shared seam as every other run.
+
+
+@pytest.mark.asyncio
+async def test_advanced_tool_execute_routes_through_execute_hub_tool_and_logs(tmp_path):
+    service, fake, client, store = _service(tmp_path)
+
+    result = await service.run_action(
+        "tool.execute", {"tool_name": "calculator", "arguments": {"x": 1}}
+    )
+
+    # Same underlying call and same returned envelope as before -- the
+    # built-in branch of `execute_hub_tool()` IS `local_service.execute_tool`.
+    assert fake.execute_tool_calls == [("calculator", {"x": 1})]
+    assert result == fake.builtin_result
+
+    records = _log_records(store)
+    assert records, "the Advanced execute hatch must leave an audit-trail row"
+    assert records[0]["server_key"] == "builtin:tldw_chatbook"
+    assert records[0]["tool_name"] == "calculator"
+    assert records[0]["ok"] is True
+    assert records[0]["initiator"] == "test"
+
+
+@pytest.mark.asyncio
+async def test_advanced_tool_execute_refuses_a_tool_set_to_off(tmp_path):
+    """The headline: an Off tool must not run from the Advanced hatch."""
+    service, fake, client, store = _service(tmp_path)
+    service.set_tool_state("builtin:tldw_chatbook", "calculator", "deny")
+
+    with pytest.raises(PermissionError, match="Off"):
+        await service.run_action(
+            "tool.execute", {"tool_name": "calculator", "arguments": {"x": 1}}
+        )
+
+    assert fake.execute_tool_calls == []
+
+
+@pytest.mark.asyncio
+async def test_advanced_tool_execute_refusal_is_recorded_as_denied(tmp_path):
+    """A refusal is part of the audit trail too -- a blocked row, not silence."""
+    service, fake, client, store = _service(tmp_path)
+    service.set_tool_state("builtin:tldw_chatbook", "calculator", "deny")
+
+    with pytest.raises(PermissionError):
+        await service.run_action("tool.execute", {"tool_name": "calculator"})
+
+    records = _log_records(store)
+    assert records and records[0]["decision"] == "denied"
+    assert records[0]["status"] == "blocked"
+    assert records[0]["ok"] is False
+    assert records[0]["server_key"] == "builtin:tldw_chatbook"
+    assert records[0]["tool_name"] == "calculator"
+
+
+@pytest.mark.asyncio
+async def test_advanced_tool_execute_records_the_decision_it_ran_under(tmp_path):
+    """An Ask-resolved tool (the default posture, and what
+    `resolve_effective_state_by_key()` collapses every non-deny verdict to)
+    records "approved" -- the Advanced runner's confirm press is the
+    approval, the same vocabulary the agent bridge's approved calls use."""
+    service, fake, client, store = _service(tmp_path)
+    service.set_tool_state("builtin:tldw_chatbook", "calculator", "ask")
+
+    await service.run_action("tool.execute", {"tool_name": "calculator"})
+
+    records = _log_records(store)
+    assert records and records[0]["decision"] == "approved"

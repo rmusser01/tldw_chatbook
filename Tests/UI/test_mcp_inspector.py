@@ -3630,3 +3630,143 @@ async def test_update_readiness_does_not_resurrect_badge_over_displayed_tool():
         await inspector.show_tool(None)
         await pilot.pause()
         assert badge.display is True
+
+
+# -- Task 6 (PR-T3), Route B: the Advanced runner's `tool.execute` hatch -----
+# Every OTHER Advanced action reads or mutates control-plane config; this one
+# EXECUTES a tool. It ran on a single press, ungated and unlogged. The service
+# now enforces the permission gate (`execute_advanced_tool()`); this pane
+# supplies the per-run consent that gate's "ask" verdict requires, and renders
+# a refusal as a refusal instead of an "Action failed:" dump.
+
+
+class ToolExecuteAdvService(FakeAdvService):
+    """Advanced service offering the real inventory-section `tool.execute`
+    descriptor (unified_control_plane_service.py's own payload template)."""
+
+    def __init__(self, *, error: Exception | None = None) -> None:
+        super().__init__()
+        self.error = error
+
+    def available_actions(self):
+        return [
+            {
+                "name": "tool.execute",
+                "label": "Execute Local Tool",
+                "action_id": "mcp.runtime.trigger.local",
+                "payload_template": '{"tool_name":"search_notes","arguments":{"query":"example"}}',
+            }
+        ]
+
+    async def run_action(self, action_name, payload):
+        self.action_calls.append((action_name, dict(payload or {})))
+        if self.error is not None:
+            raise self.error
+        return {"ok": True}
+
+
+class ToolExecuteInspectorApp(App):
+    def __init__(self, *, error: Exception | None = None) -> None:
+        super().__init__()
+        self.service = ToolExecuteAdvService(error=error)
+
+    def compose(self) -> ComposeResult:
+        yield MCPInspector(id="mcp-inspector")
+
+    def on_mount(self) -> None:
+        self.query_one(MCPInspector).set_service_context(
+            self.service, [("Inventory", "inventory")]
+        )
+
+
+def _adv_result(app) -> str:
+    return str(app.query_one("#mcp-adv-result", Static).renderable)
+
+
+async def _press_run_again(pilot) -> None:
+    """Press Run Action a second time, past Button's own active-effect window.
+
+    `Button._on_click()` ignores a click while the widget still carries the
+    0.2s `-active` press-animation class (textual/widgets/_button.py), so
+    back-to-back `pilot.click()` calls in one pump window silently drop every
+    other press -- nothing to do with the confirm arm under test here.
+    """
+    await pilot.pause(0.3)
+    await pilot.click("#mcp-adv-run")
+    await pilot.pause()
+
+
+@pytest.mark.asyncio
+async def test_advanced_tool_execute_first_press_confirms_instead_of_running():
+    app = ToolExecuteInspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        await pilot.click("#mcp-adv-run")
+        await pilot.pause()
+        assert app.service.action_calls == []
+        result = _adv_result(app)
+        assert "again" in result
+        assert "search_notes" in result
+
+
+@pytest.mark.asyncio
+async def test_advanced_tool_execute_second_press_runs_it():
+    app = ToolExecuteInspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        await pilot.click("#mcp-adv-run")
+        await pilot.pause()
+        await _press_run_again(pilot)
+        assert app.service.action_calls == [
+            ("tool.execute", {"tool_name": "search_notes", "arguments": {"query": "example"}})
+        ]
+        assert "ok" in _adv_result(app)
+
+
+@pytest.mark.asyncio
+async def test_advanced_tool_execute_payload_edit_rearms_the_confirm():
+    """The confirm covers the payload it was shown for: editing the tool name
+    between presses must re-confirm, never run the thing that was confirmed
+    a moment ago with different arguments."""
+    app = ToolExecuteInspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        await pilot.click("#mcp-adv-run")
+        await pilot.pause()
+        app.query_one("#mcp-adv-payload", TextArea).text = (
+            '{"tool_name":"delete_everything","arguments":{}}'
+        )
+        await _press_run_again(pilot)
+        assert app.service.action_calls == []
+        assert "delete_everything" in _adv_result(app)
+
+        await _press_run_again(pilot)
+        assert app.service.action_calls == [
+            ("tool.execute", {"tool_name": "delete_everything", "arguments": {}})
+        ]
+
+
+@pytest.mark.asyncio
+async def test_advanced_tool_execute_refusal_reads_as_blocked_not_failed():
+    """An Off tool's `PermissionError` is a refusal, not a crash: same
+    "Blocked · not run" heading `show_tool_result()` gives a blocked test
+    run, never the generic "Action failed:" dump."""
+    app = ToolExecuteInspectorApp(
+        error=PermissionError("search_notes is set to Off in Permissions.")
+    )
+    async with app.run_test(size=(100, 60)) as pilot:
+        await pilot.click("#mcp-adv-run")
+        await pilot.pause()
+        await _press_run_again(pilot)
+        result = _adv_result(app)
+        assert "Blocked · not run" in result
+        assert "set to Off in Permissions" in result
+        assert "Action failed" not in result
+
+
+@pytest.mark.asyncio
+async def test_advanced_non_execute_action_still_runs_on_the_first_press():
+    """The confirm is scoped to the one action that executes a tool -- the
+    read/config actions keep their single-press behavior."""
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        await pilot.click("#mcp-adv-run")
+        await pilot.pause()
+        assert app.service.action_calls == [("profile.connect", {"profile_id": "demo"})]
