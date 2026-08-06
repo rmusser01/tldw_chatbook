@@ -1407,6 +1407,20 @@ def _tool(**overrides: Any) -> HubTool:
     return HubTool(**base)
 
 
+def _capture_notifications(app: App) -> list[tuple[str, str]]:
+    """Shadow `app.notify` with a recorder; returns the (message, severity)
+    list it appends to. Mirrors `Tests/UI/test_mcp_workbench.py`'s own
+    helper of the same name -- kept as a separate copy since these are
+    independent test modules with no shared fixture file."""
+    notifications: list[tuple[str, str]] = []
+
+    def recording_notify(message, *, title="", severity="information", **kwargs):
+        notifications.append((str(message), severity))
+
+    app.notify = recording_notify
+    return notifications
+
+
 @pytest.mark.asyncio
 async def test_show_tool_renders_executable_tool_with_test_button():
     app = InspectorApp()
@@ -1550,6 +1564,28 @@ async def test_test_run_value_error_shows_message_and_does_not_post():
         assert events == []
         result = app.query_one("#mcp-inspector-test-result", Static)
         assert "required" in str(result.renderable)
+
+
+@pytest.mark.asyncio
+async def test_test_run_value_error_result_gets_failed_prefix():
+    """F4 (PR-T3 task 3): this was the ONE result write in this module
+    with no status prefix at all -- `_handle_test_run()`'s `except
+    ValueError` branch used to write the bare exception message
+    (`result_widget.update(str(exc))`), unlike every other write here
+    ("OK"/"Failed"/"Blocked · not run"). It now leads with "Failed"."""
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        await inspector.show_tool(_tool())
+        await pilot.pause()
+        await pilot.click("#mcp-inspector-test-tool")
+        await pilot.pause()
+        # required "query" field left empty
+        await pilot.click("#mcp-inspector-test-run")
+        await pilot.pause()
+        result = str(app.query_one("#mcp-inspector-test-result", Static).renderable)
+        assert result.startswith("Failed\n")
+        assert "required" in result
 
 
 @pytest.mark.asyncio
@@ -2195,6 +2231,149 @@ async def test_show_tool_result_same_tool_is_not_dropped():
 
         result = str(app.query_one("#mcp-inspector-test-result", Static).renderable)
         assert "matching payload" in result
+
+
+# -- Task 3 (PR-T3): "a run that ran always says something" -- the two
+# stale-drop guards above keep dropping the RENDER (protected -- the tests
+# above pin that silence, unmodified), but now also toast, so a completed
+# run is never truly silent. `_handle_test_run()`'s own two silent early
+# returns get the same treatment.
+
+
+@pytest.mark.asyncio
+async def test_show_tool_result_for_a_different_tool_still_toasts():
+    """The stale-drop guard's render stays dropped (see the protected
+    `test_show_tool_result_for_a_different_tool_is_dropped` above,
+    unmodified) but now also fires a toast naming the tool whose result
+    arrived late -- a toast is a different surface from the render."""
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        notifications = _capture_notifications(app)
+        tool_b = _tool(name="fetch", server_key="local:docs", input_schema=None)
+        await inspector.show_tool(tool_b)
+        await pilot.pause()
+        await pilot.click("#mcp-inspector-test-tool")
+        await pilot.pause()
+
+        inspector.show_tool_result(
+            server_key="local:docs", tool_name="search", ok=True,
+            text="A's payload", duration_ms=10,
+        )
+        await pilot.pause()
+
+        result = str(app.query_one("#mcp-inspector-test-result", Static).renderable)
+        assert result == ""  # render still dropped -- protected silence
+        assert any("search" in msg for msg, _severity in notifications), (
+            f"expected a toast naming the late-arriving tool, got: {notifications!r}"
+        )
+
+
+@pytest.mark.asyncio
+async def test_show_tool_result_panel_closed_still_toasts():
+    """The second silent drop (`NoMatches` on the result Static -- the SAME
+    tool is still selected, but its Test Tool panel was closed, e.g. via
+    Close, while the run was in flight) also toasts."""
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        tool = _tool(name="search", server_key="local:docs")
+        await inspector.show_tool(tool)
+        await pilot.pause()
+        await pilot.click("#mcp-inspector-test-tool")
+        await pilot.pause()
+        await pilot.click("#mcp-inspector-test-close")
+        await pilot.pause()
+        assert not list(app.query("#mcp-inspector-test-result"))
+
+        notifications = _capture_notifications(app)
+        inspector.show_tool_result(
+            server_key="local:docs", tool_name="search", ok=True,
+            text="late payload", duration_ms=12,
+        )
+        await pilot.pause()
+
+        assert not list(app.query("#mcp-inspector-test-result"))
+        assert any("search" in msg for msg, _severity in notifications), (
+            f"expected a toast naming the tool, got: {notifications!r}"
+        )
+
+
+@pytest.mark.asyncio
+async def test_handle_test_run_no_tool_selected_toasts():
+    """`_handle_test_run()`'s `tool is None` early return -- defensive
+    (the Run button only exists inside a panel `show_tool()` mounts for a
+    real tool), but silent isn't the same thing as safe."""
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        notifications = _capture_notifications(app)
+        assert inspector.current_tool is None
+        inspector._handle_test_run()
+        await pilot.pause()
+        assert notifications, "expected a toast for the no-tool-selected guard"
+
+
+@pytest.mark.asyncio
+async def test_handle_test_run_panel_not_mounted_toasts():
+    """`_handle_test_run()`'s `NoMatches` early return (the form/result/
+    run-button widgets aren't mounted -- a tool is selected, but its Test
+    Tool panel was never opened)."""
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        await inspector.show_tool(_tool())
+        await pilot.pause()
+        assert not list(app.query("#mcp-inspector-test-run"))
+
+        notifications = _capture_notifications(app)
+        inspector._handle_test_run()
+        await pilot.pause()
+        assert notifications, "expected a toast for the missing-panel guard"
+
+
+@pytest.mark.asyncio
+async def test_reenable_test_run_reenables_button_for_the_current_tool():
+    """`reenable_test_run()` (Task 3): undoes `_handle_test_run()`'s own
+    disable for a press whose dispatch was swallowed by the workbench's
+    in-flight-duplicate guard."""
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        tool = _tool()
+        await inspector.show_tool(tool)
+        await pilot.pause()
+        await pilot.click("#mcp-inspector-test-tool")
+        await pilot.pause()
+        run_button = app.query_one("#mcp-inspector-test-run", Button)
+        run_button.disabled = True
+
+        inspector.reenable_test_run(tool.server_key, tool.name)
+        await pilot.pause()
+
+        assert run_button.disabled is False
+
+
+@pytest.mark.asyncio
+async def test_reenable_test_run_is_a_noop_for_a_different_tool():
+    """I1-style tolerance: must never re-enable a DIFFERENT tool's Run
+    button on this one's behalf (mirrors `show_tool_result()`'s own
+    stale-drop guard)."""
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        tool = _tool(name="search", server_key="local:docs")
+        await inspector.show_tool(tool)
+        await pilot.pause()
+        await pilot.click("#mcp-inspector-test-tool")
+        await pilot.pause()
+        run_button = app.query_one("#mcp-inspector-test-run", Button)
+        run_button.disabled = True
+
+        inspector.reenable_test_run("local:docs", "some-other-tool")
+        await pilot.pause()
+
+        assert run_button.disabled is True
 
 
 @pytest.mark.asyncio

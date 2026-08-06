@@ -9,6 +9,7 @@ from functools import partial
 from typing import Any
 
 from loguru import logger
+from rich.markup import escape as escape_markup
 from textual import on
 from textual.app import ComposeResult
 from textual.binding import Binding
@@ -165,6 +166,35 @@ _GOTO_PERMISSION_TOOLTIP = "Switch to Permissions mode and select this tool's ro
 _EMPTY_STATE_COPY = (
     "Pick a server, tool, or entry to see what's wrong and what you can do."
 )
+
+# Task 3 (PR-T3): "a run that ran always says something" -- a completed
+# tool test that can't be RENDERED (its panel moved on, or was closed)
+# must still be heard about via a toast, even though `show_tool_result()`'s
+# render itself stays dropped (I1; the protected stale-drop tests pin that
+# silence -- a toast is a different surface).
+
+
+def _toast(text: str) -> str:
+    """Escape a `notify()`-bound message before Rich's markup interpreter
+    sees it.
+
+    A small, separate copy of `mcp_workbench.py`'s own `_toast()` --
+    `mcp_workbench.py` already imports FROM this module (`_ORIGIN_
+    SENTENCES`, `MCPInspector`); importing back the other way would create
+    the exact import cycle PR-T2 shipped a real regression from.
+    """
+    return escape_markup(text)
+
+
+def _stale_result_toast_text(tool_name: str) -> str:
+    """Toast copy for a Test Tool result that arrived but isn't shown --
+    covers BOTH `show_tool_result()` silent-drop guards (a different tool
+    now selected/nothing selected, or the same tool's panel was closed) --
+    deliberately reason-agnostic (this function only ever sees `tool_name`,
+    not WHY the render was dropped), so it never asserts a specific cause
+    it can't verify.
+    """
+    return f"{tool_name} finished running, but its result isn't shown here."
 
 
 def _cascade_rungs(
@@ -2031,20 +2061,71 @@ class MCPInspector(Vertical):
         else:
             goto_button.display = False
 
+    def reenable_test_run(self, server_key: str, tool_name: str) -> None:
+        """Re-enable the Run button for one tool whose Run press produced
+        no run of its own.
+
+        Task 3 (PR-T3): `MCPWorkbench`'s in-flight-duplicate guard
+        (`on_mcp_inspector_tool_test_requested()`) swallows a SECOND
+        `ToolTestRequested` for a tool that already has a run outstanding
+        with just a toast -- but `_handle_test_run()` already disabled the
+        Run button as a side effect of THAT press. Since this press's own
+        dispatch never reached the worker, that disable must be undone for
+        the panel it belongs to; the earlier, still-in-flight run is
+        unaffected and re-enables the button again itself, harmlessly, on
+        its own completion via `show_tool_result()`.
+
+        I1-style tolerance, mirroring `show_tool_result()`'s own stale-drop
+        guard: a no-op if the panel has since moved on to a different tool
+        (or nothing), or if the Run button isn't mounted at all (panel
+        closed) -- never re-enables a DIFFERENT tool's Run button on this
+        one's behalf.
+        """
+        current = self._current_tool
+        if current is None or current.server_key != server_key or current.name != tool_name:
+            return
+        try:
+            run_button = self.query_one("#mcp-inspector-test-run", Button)
+        except NoMatches:
+            return
+        run_button.disabled = False
+
     def _handle_test_run(self) -> None:
+        """Handle a Run press: collect arguments and dispatch a test run.
+
+        Task 3 (PR-T3): both early returns below used to be silent -- a
+        stray Run press reaching this method with no tool selected, or
+        with the panel's own widgets not (yet, or no longer) mounted,
+        produced no run AND no explanation. Both are defensive guards
+        (the Run button only exists inside the panel `show_tool()` mounts
+        for `self._current_tool`, so neither should be reachable via
+        normal UI interaction), but "defensive" and "silent" don't have to
+        mean the same thing -- a toast costs nothing and closes the last
+        gap between "Run pressed" and "nothing visible happened".
+        """
         tool = self._current_tool
         if tool is None:
+            self.app.notify(_toast("No tool is selected to run."), severity="warning")
             return
         try:
             form = self.query_one("#mcp-inspector-test-form", MCPSchemaForm)
             result_widget = self.query_one("#mcp-inspector-test-result", Static)
             run_button = self.query_one("#mcp-inspector-test-run", Button)
         except NoMatches:
+            self.app.notify(
+                _toast(f"{tool.name}: the test panel isn't ready — reopen it and try again."),
+                severity="warning",
+            )
             return
         try:
             arguments = form.collect_arguments()
         except ValueError as exc:
-            result_widget.update(str(exc))
+            # F4 (PR-T3 task 3): this used to be the one result write in
+            # this module with NO status prefix at all -- every other
+            # write here leads with "OK"/"Failed"/"Blocked · not run"; a
+            # bare exception message read as if the whole panel were
+            # broken rather than "fix your input and press Run again".
+            result_widget.update(f"Failed\n{exc}")
             return
         run_button.disabled = True
         self.post_message(self.ToolTestRequested(tool.server_key, tool.name, arguments))
@@ -2058,6 +2139,7 @@ class MCPInspector(Vertical):
         raw: str | None = None,
         blocked: bool = False,
         decision_note: str | None = None,
+        show_permission_jump: bool = True,
     ) -> None:
         """Render one Test Tool run's outcome, and re-enable Run.
 
@@ -2071,8 +2153,24 @@ class MCPInspector(Vertical):
         switched the inspector to tool B's panel must never render under B
         (and must never re-enable B's Run button, which has nothing to do
         with A's completion). A mismatched result is dropped silently
-        (debug-logged only); it belongs to a panel that is no longer
-        showing.
+        (debug-logged only) -- render-wise, it belongs to a panel that is no
+        longer showing, and the protected stale-drop tests
+        (`Tests/UI/test_mcp_inspector.py`) pin that silence deliberately.
+        Task 3 (PR-T3): the render drop is NOT the whole story though -- the
+        run itself really did complete, so this (and the sibling `NoMatches`
+        drop just below, the panel-closed-but-same-tool case) now ALSO
+        fires a toast naming the tool. A toast is a different surface from
+        the dropped render; it does not touch the protected pin.
+
+        `show_permission_jump` (Task 3, F4): the "Change in Permissions"
+        jump button is only meaningful for the ONE Hub Tool Permissions
+        matrix `blocked=True` already covers (the deny-gate short-circuit,
+        Task 5) -- a refusal from a DIFFERENT permission system entirely
+        (e.g. runtime governance's `PermissionError`, reclassified to
+        `blocked=True` by `MCPWorkbench._run_tool_test()`) has no matching
+        Hub Permissions row to jump to, so that call site passes `False`.
+        Defaults `True` to reproduce every pre-Task-3 `blocked=True` call
+        site's behavior unchanged.
 
         `blocked` (Task 5, UX batch item 5): True for the permissions
         deny-gate's synthetic result -- the call never reached the tool at
@@ -2123,10 +2221,20 @@ class MCPInspector(Vertical):
                 f"(current tool is "
                 f"{(current.server_key, current.name) if current else None!r})"
             )
+            # Task 3 (PR-T3): the RENDER stays dropped (protected pin --
+            # this belongs to a panel that is no longer showing, and
+            # showing it under a different tool's panel would be wrong,
+            # not just late) but the run genuinely completed, so the user
+            # hears about it via a toast instead of nothing at all.
+            self.app.notify(_toast(_stale_result_toast_text(tool_name)))
             return
         try:
             result_widget = self.query_one("#mcp-inspector-test-result", Static)
         except NoMatches:
+            # Same tool, but its Test Tool panel isn't mounted (e.g. Close
+            # was pressed while this run was still in flight) -- nothing to
+            # render into, but the run still completed.
+            self.app.notify(_toast(_stale_result_toast_text(tool_name)))
             return
 
         interpretation: str | None = None
@@ -2189,12 +2297,15 @@ class MCPInspector(Vertical):
         # covering the ask-then-confirmed-run case too (the Run press that
         # consumed the arm already disarmed it via `disarm_test_run()`, but
         # this keeps the button's state correct even if that ever changes).
+        # Task 3 (PR-T3): `show_permission_jump=False` further suppresses it
+        # for a `blocked=True` result that has nothing to do with the Hub
+        # Permissions matrix (see this method's own docstring).
         try:
             goto_button = self.query_one("#mcp-inspector-goto-permission-test", Button)
         except NoMatches:
             pass
         else:
-            goto_button.display = blocked
+            goto_button.display = blocked and show_permission_jump
 
     # -- advanced escape hatch -----------------------------------------------
 

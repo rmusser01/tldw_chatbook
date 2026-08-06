@@ -3190,6 +3190,85 @@ async def test_test_tool_run_error_renders_failed_with_message():
         assert "boom" in result
 
 
+# -- F4 (PR-T3 task 3): a refusal must never read as a failure -------------
+
+
+def test_is_permission_refusal_classifies_permission_error_and_display_only_value_error():
+    """Pure classification contract, independent of the UI: `PermissionError`
+    (governance denies `tool.execute`) and the EXACT `execute_hub_tool()`
+    display-only `ValueError` message both classify as a refusal; an
+    unrelated `ValueError`/`RuntimeError` does not (a genuine failure must
+    keep rendering as `Failed`, not get swept into `Blocked`)."""
+    assert mcp_workbench_module._is_permission_refusal(PermissionError("denied")) is True
+    assert (
+        mcp_workbench_module._is_permission_refusal(
+            ValueError("Server-source tools are display-only.")
+        )
+        is True
+    )
+    assert mcp_workbench_module._is_permission_refusal(ValueError("bad json")) is False
+    assert mcp_workbench_module._is_permission_refusal(RuntimeError("boom")) is False
+
+
+@pytest.mark.asyncio
+async def test_test_tool_run_permission_error_renders_blocked_not_failed():
+    """F4: `local_control_service.execute_tool()`'s `PermissionError`
+    (governance denies `tool.execute`) is a REFUSAL -- the call never
+    reached the tool -- not a run failure. It must read as `Blocked · not
+    run`, never `Failed · Nms`, and must NOT show the Hub Permissions
+    "Change in Permissions" jump (a different permission system --
+    jumping there would not fix a governance refusal)."""
+    app = ToolTestApp()
+    app.unified_mcp_service.raise_error = PermissionError(
+        "Governance profile denies tool.execute."
+    )
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("tools")
+        await pilot.pause()
+        await _select_tools_mode_row(app, pilot, 0)  # docs::fetch
+        await pilot.click("#mcp-inspector-test-tool")
+        await pilot.pause()
+        await pilot.click("#mcp-inspector-test-run")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        result = str(app.query_one("#mcp-inspector-test-result", Static).renderable)
+        assert result.startswith("Blocked · not run")
+        assert not result.startswith("Failed")
+        assert "Governance profile denies tool.execute." in result
+        goto = app.query_one("#mcp-inspector-goto-permission-test", Button)
+        assert goto.display is False
+
+
+@pytest.mark.asyncio
+async def test_test_tool_run_server_source_display_only_value_error_renders_blocked_not_failed():
+    """F4: `execute_hub_tool()`'s bare `ValueError("Server-source tools
+    are display-only.")` is likewise a refusal (a structural mismatch),
+    not a run failure."""
+    app = ToolTestApp()
+    app.unified_mcp_service.raise_error = ValueError(
+        "Server-source tools are display-only."
+    )
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("tools")
+        await pilot.pause()
+        await _select_tools_mode_row(app, pilot, 0)  # docs::fetch
+        await pilot.click("#mcp-inspector-test-tool")
+        await pilot.pause()
+        await pilot.click("#mcp-inspector-test-run")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        result = str(app.query_one("#mcp-inspector-test-result", Static).renderable)
+        assert result.startswith("Blocked · not run")
+        assert not result.startswith("Failed")
+        assert "Server-source tools are display-only." in result
+
+
 @pytest.mark.asyncio
 async def test_test_tool_run_redacts_secret_shaped_result():
     """RAG-49 deliberate contract change: the redacted envelope no longer
@@ -3330,6 +3409,54 @@ async def test_test_tool_double_run_dispatches_exactly_one_service_call():
 
 
 @pytest.mark.asyncio
+async def test_test_tool_double_run_reenables_run_button_for_the_swallowed_press():
+    """Task 3 (PR-T3): the in-flight-duplicate branch above swallows a
+    SECOND `ToolTestRequested` for the SAME tool with only a toast -- but
+    the REAL first press's `_handle_test_run()` already disabled the Run
+    button, via the real click path this time (not the direct
+    `on_mcp_inspector_tool_test_requested()` double-call the sibling test
+    above uses). Since the second press produces no run of its own, that
+    disable must be undone -- the first, still-in-flight run's own
+    eventual `show_tool_result()` re-enables it again itself, harmlessly,
+    on completion; the in-flight SET (not the button) remains the
+    authoritative dedupe, so this does not let a second `test_hub_tool()`
+    call through."""
+    app = ToolTestApp()
+    app.unified_mcp_service.test_gate = asyncio.Event()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("tools")
+        await pilot.pause()
+        await _select_tools_mode_row(app, pilot, 1)  # docs::search (form schema)
+        await pilot.click("#mcp-inspector-test-tool")
+        await pilot.pause()
+        app.query_one("#mcp-schema-field-0", Input).value = "hello"
+        run_button = app.query_one("#mcp-inspector-test-run", Button)
+        await pilot.click(run_button)
+        await pilot.pause()
+        assert run_button.disabled is True
+
+        # A second Pressed for the SAME tool, queued before the first
+        # handler's disable took visible effect in the real race --
+        # reproduced directly (mirrors
+        # test_test_tool_double_run_dispatches_exactly_one_service_call's
+        # own technique).
+        tools = workbench._last_hub_tools
+        tool = next(t for t in tools if t.name == "search")
+        event = MCPInspector.ToolTestRequested(tool.server_key, tool.name, {"query": "hello"})
+        workbench.on_mcp_inspector_tool_test_requested(event)
+        await pilot.pause()
+
+        assert run_button.disabled is False
+        assert len(app.unified_mcp_service.test_calls) == 1
+
+        app.unified_mcp_service.test_gate.set()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+
+@pytest.mark.asyncio
 async def test_slow_tool_result_does_not_render_under_a_different_selected_tool():
     """I1: tool A's ("docs::fetch") slow test run must not land in tool B's
     ("notes::list_notes") panel when the user switches selection before A
@@ -3449,6 +3576,46 @@ async def test_test_tool_run_non_mapping_result_str_raises_does_not_crash():
         assert first_line.startswith("Failed · ")
         assert app.query_one("#mcp-inspector-test-run", Button).disabled is False
         assert workbench._tool_test_in_flight == set()
+
+
+@pytest.mark.asyncio
+async def test_render_failure_in_show_tool_test_result_notifies_instead_of_only_logging(
+    monkeypatch,
+):
+    """Task 3 (PR-T3): `_show_tool_test_result()`'s try/except around
+    `MCPInspector.show_tool_result()` used to only `logger.warning()` a
+    render failure -- the run genuinely completed (this test's fake
+    service returns a normal OK result), but a render bug meant the user
+    saw literally nothing: no result, no re-enabled Run button (that write
+    lives inside the same failing call), not even a log line visible from
+    the UI. It must also toast."""
+    app = ToolTestApp()
+    app.unified_mcp_service.test_result = {"ok": True}
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        notifications = _capture_notifications(app)
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("tools")
+        await pilot.pause()
+        await _select_tools_mode_row(app, pilot, 1)  # docs::search
+        await pilot.click("#mcp-inspector-test-tool")
+        await pilot.pause()
+        app.query_one("#mcp-schema-field-0", Input).value = "hello"
+
+        def _raise(*args, **kwargs):
+            raise RuntimeError("render exploded")
+
+        monkeypatch.setattr(MCPInspector, "show_tool_result", _raise)
+
+        await pilot.click("#mcp-inspector-test-run")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert any(
+            "search" in msg and severity == "error"
+            for msg, severity in notifications
+        ), f"expected an error toast naming the tool, got: {notifications!r}"
 
 
 @pytest.mark.asyncio
@@ -3952,6 +4119,37 @@ async def test_gate_check_exception_fails_closed():
 
 
 @pytest.mark.asyncio
+async def test_gate_check_exception_decision_note_uses_honest_unresolved_sentence():
+    """task-2270's rider (PR-T3 task 3), end to end: the deny short-
+    circuit's decision note used to say "This tool is set to Off." for
+    `_resolve_test_gate()`'s synthetic fail-closed gate_error origin --
+    dishonest, since the tool is not necessarily off, the RESOLVER failed.
+    Mirrors `test_gate_check_exception_fails_closed`'s setup, checking the
+    NOTE widget instead of the status widget it already covers."""
+    app = ToolTestApp()
+
+    def _raise(tool: Any) -> Any:
+        raise RuntimeError("permission store corrupt")
+
+    app.unified_mcp_service.gate_tool_test = _raise
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("tools")
+        await pilot.pause()
+        await _select_tools_mode_row(app, pilot, 0)  # docs::fetch
+        await pilot.click("#mcp-inspector-test-tool")
+        await pilot.pause()
+        await pilot.click("#mcp-inspector-test-run")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        note = str(app.query_one("#mcp-inspector-test-result-note", Static).renderable)
+        assert note == "Permission state could not be resolved."
+
+
+@pytest.mark.asyncio
 async def test_gate_resolved_against_tool_from_tool_for_lookup():
     """The gate call resolves its `HubTool` via `self._tool_for()` (task-233
     precedent), not by parsing the event's server_key/tool_name some other
@@ -4021,13 +4219,15 @@ def test_decision_note_off_gate_appends_origin_sentence():
 
 def test_decision_note_unknown_origin_degrades_to_bare_sentence():
     """`_resolve_test_gate()`'s synthetic fail-closed origin ("gate_error")
-    isn't a key in `_ORIGIN_SENTENCES` -- the note must still read cleanly
-    (no trailing blank space, no raise), mirroring that dict's own
-    `.get(origin, "")` + `.strip()` tolerance elsewhere in this module."""
+    means the PERMISSION RESOLVER failed -- not that the tool is actually
+    set to Off. task-2270's rider (PR-T3 task 3, AUTHORIZED CONTRACT
+    CHANGE): the old "This tool is set to Off." rendering (falling through
+    the `ui_label == "Off"` branch like any other deny) was dishonest --
+    this pins the NEW, honest `_UNKNOWN_ORIGIN_SENTENCE` value instead."""
     gate = EffectiveToolState(state="deny", origin="gate_error")
     assert (
         mcp_workbench_module._decision_note(gate, ask_approved=False)
-        == "This tool is set to Off."
+        == "Permission state could not be resolved."
     )
 
 
