@@ -4405,6 +4405,130 @@ async def test_action_switch_disarms_a_pending_confirm():
         ]
 
 
+@pytest.mark.asyncio
+async def test_action_switch_clears_the_confirm_key_synchronously():
+    """Item 3 (PR-T3 fix round G, review of Fix Round E): isolates
+    `on_select_changed()`'s OWN clear (`self._advanced_confirm_key = None`
+    on the action-switch branch) from BOTH of the two things that can now
+    mask a dropped clear:
+
+    1. Its own blank (the `_was_armed`-gated `#mcp-adv-result.update("")`
+       a few lines below) -- `test_action_switch_disarms_a_pending_
+       confirm` (pre-existing, above) only checks that visible blank and
+       a later run of `resource.read` (which never confirms at all
+       regardless of the arm -- `_run_advanced_action()`'s confirm logic
+       only runs for `action_name == _ADVANCED_EXECUTE_ACTION`), so it
+       passes with this clear deleted.
+    2. Item 2's OWN new `TextArea.Changed` handler
+       (`_on_advanced_payload_changed()`), which independently clears the
+       SAME key -- `on_select_changed()`'s action-switch branch always
+       reassigns `#mcp-adv-payload.text` to the new action's template
+       (when `event.value` isn't blank, the only reachable case via real
+       UI), and `TextArea.load_text()` posts a `Changed` message
+       UNCONDITIONALLY, even when the new text is byte-identical to the
+       old. Discovered by mutation: dropping ONLY this clear (Item 2's
+       clear intact) and driving the switch through the real Select
+       (`action_select.value = ...` + `await pilot.pause()`, draining the
+       whole cascade including the queued `TextArea.Changed`) left this
+       test GREEN -- Item 2's cascade silently covers for Item 3's own
+       clear on every action switch reachable via the UI. That is a
+       genuine, additional belt-and-braces safety net (see Item 6 of this
+       same fix round's report), not a reason to leave THIS clear
+       unpinned -- a future change to either `TextArea`'s posting
+       behavior or this branch's unconditional reassignment would silently
+       remove that net.
+
+    Isolated by calling `on_select_changed()` DIRECTLY (bypassing the
+    message queue entirely) and checking immediately after, no
+    `await`/`pilot.pause()` in between -- `post_message()` queues the
+    payload's cascaded `TextArea.Changed` for LATER delivery, so at this
+    exact point only `on_select_changed()`'s own body has had a chance to
+    run. Mirrors `test_set_service_context_disarms_a_pending_confirm`'s
+    own no-intervening-await isolation technique.
+
+    See `test_action_switch_round_trip_does_not_execute_tool_execute_
+    unconfirmed` below for the genuine-UI reachable consequence -- which,
+    because of the same masking, now requires dropping Item 2's clear
+    TOO to reproduce via real interaction."""
+    app = ToolExecuteAndReadInspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        await pilot.click("#mcp-adv-run")  # arms tool.execute
+        await pilot.pause()
+        assert inspector._advanced_confirm_key is not None  # sanity: really armed
+
+        action_select = app.query_one("#mcp-adv-action-select", Select)
+        inspector.on_select_changed(Select.Changed(action_select, "resource.read"))
+
+        assert inspector._advanced_confirm_key is None, (
+            "on_select_changed() must clear the arm itself on an action "
+            "switch -- not merely blank the rendered confirm sentence, and "
+            "not merely rely on the cascaded TextArea.Changed its own "
+            "payload-template reassignment will eventually deliver"
+        )
+
+
+@pytest.mark.asyncio
+async def test_action_switch_round_trip_does_not_execute_tool_execute_unconfirmed():
+    """Item 3 (PR-T3 fix round G, review of Fix Round E): the genuine-UI
+    reachable safety consequence the original review demonstrated --
+    `tool.execute -> resource.read -> tool.execute`, one press, must never
+    execute unconfirmed.
+
+    Reality differed from the brief here: the brief's own mutation
+    ("drop `self._advanced_confirm_key = None` at 2603, keep the
+    `_was_armed` blank -> executes on one press") was proven against the
+    code as Fix Round E left it, BEFORE this same round's Item 2 added
+    `_on_advanced_payload_changed()`. With Item 2 also in place, dropping
+    ONLY `on_select_changed()`'s own clear no longer reproduces this via
+    real UI interaction -- switching to `resource.read` and back to
+    `tool.execute` reassigns `#mcp-adv-payload.text` each time, and that
+    reassignment's cascaded `TextArea.Changed` clears the arm independently
+    (see `test_action_switch_clears_the_confirm_key_synchronously`'s own
+    docstring for the mechanism). Reproducing the ORIGINAL finding via
+    genuine UI interaction now requires dropping BOTH clears together --
+    verified directly: with `on_select_changed()`'s clear (2684) AND
+    `_on_advanced_payload_changed()`'s clear (2721) both dropped, this
+    exact test goes RED, with `action_calls` showing `tool.execute` ran on
+    the single post-round-trip press. `on_select_changed()`'s own clear
+    remains correct and worth keeping regardless (defense in depth,
+    consistent with this class's established belt-and-braces philosophy --
+    see `test_action_switch_clears_the_confirm_key_synchronously` for its
+    OWN, still-vacuous-without-it isolation); this test instead pins the
+    OBSERVABLE safety property end to end, independent of which internal
+    mechanism is doing the disarming."""
+    app = ToolExecuteAndReadInspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        await pilot.click("#mcp-adv-run")  # arms tool.execute
+        await pilot.pause()
+        assert app.service.action_calls == []
+
+        action_select = app.query_one("#mcp-adv-action-select", Select)
+        action_select.value = "resource.read"
+        await pilot.pause()
+        action_select.value = "tool.execute"
+        await pilot.pause()
+
+        assert _adv_result(app) == "", (
+            "switching back to tool.execute must not resurrect a stale "
+            "confirm sentence"
+        )
+
+        await _press_run_again(pilot)
+        assert app.service.action_calls == [], (
+            "a single press after the round trip must re-arm, never "
+            "execute tool.execute unconfirmed"
+        )
+        assert "again" in _adv_result(app)
+
+        # A genuinely fresh confirm DOES run it -- proving this is a real
+        # re-arm, not a button stuck disabled some other way.
+        await _press_run_again(pilot)
+        assert app.service.action_calls == [
+            ("tool.execute", {"tool_name": "search_notes", "arguments": {"query": "example"}})
+        ]
+
+
 # -- Fix Round G, Item 1: collapsing the disclosure disarms a pending -------
 # confirm too -- `_ADVANCED_EXECUTE_CONFIRM`'s "anything else cancels" was
 # untrue for this one interaction: `_on_advanced_collapsible_toggled()` only

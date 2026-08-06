@@ -2651,13 +2651,41 @@ class MCPInspector(Vertical):
             # action switch, so a stale arm (and its rendered confirm
             # sentence) survived it: pressing Run then executed the NEWLY
             # selected action immediately, no confirm, under a sentence
-            # still promising one. Scoped honestly: `tool.execute` only
+            # still promising one. Section membership: `tool.execute` only
             # shares its `inventory` section with `resource.read` and
             # `prompt.get` (both reads) -- the destructive actions live in
             # other sections, which a section change already disarms (see
-            # `_load_advanced_section()`) -- so this is a truthfulness
-            # defect on the confirm text, not a path to an unconfirmed
-            # destructive action.
+            # `_load_advanced_section()`).
+            #
+            # Fix Round G, Item 3 (review of Fix Round E): the closing
+            # sentence here used to call this "a truthfulness defect on the
+            # confirm text, not a path to an unconfirmed destructive
+            # action." That is FALSE, and was verified false by mutation
+            # (drop this clear, keep the `_was_armed` blank below): arm
+            # `tool.execute`, switch to `resource.read`, switch BACK to
+            # `tool.execute` -- `_refresh_advanced_actions()`/this handler
+            # regenerate `tool.execute`'s payload template from the same
+            # fixed string every time, so the round trip reproduces
+            # BYTE-IDENTICAL JSON. Without this clear (and, as of Fix Round
+            # G, Item 2, ALSO without `_on_advanced_payload_changed()`'s
+            # independent clear below -- see that method's own docstring:
+            # its cascade now covers for a dropped clear here on every
+            # reachable action switch), the stale (never-cleared)
+            # `_advanced_confirm_key` from the FIRST arm still equals the
+            # confirm key `_run_advanced_action()` recomputes for the
+            # second `tool.execute` selection, so its `!=` comparison is
+            # False, the "arm and return" branch is skipped, and the very
+            # next press runs `tool.execute` -- which executes arbitrary
+            # built-in tools from raw JSON -- with NO confirm and a
+            # completely blank pane. This clear is a genuine, independently
+            # worth-keeping safety boundary (belt-and-braces with Item 2's
+            # cascade, not superseded by it -- a future change to either
+            # side could silently remove the OTHER'S coverage), not merely
+            # cosmetic; see `test_action_switch_clears_the_confirm_key_
+            # synchronously` (isolates THIS clear specifically) and
+            # `test_action_switch_round_trip_does_not_execute_tool_execute_
+            # unconfirmed` (the combined, genuine-UI-reachable consequence)
+            # in test_mcp_inspector.py.
             _was_armed = self._advanced_confirm_key is not None
             self._advanced_confirm_key = None
             if _was_armed:
