@@ -4212,3 +4212,103 @@ def test_advanced_execute_confirm_copy_names_every_cancel_trigger():
     assert "Editing" in rendered
     assert "switching object" in rendered
     assert "changing section" in rendered
+
+
+# -- Fix Round E, Item 1: the disarm blank must not eat real output ----------
+#
+# Fix Round C's blanking fix for the stale confirm sentence (`#mcp-adv-result`
+# above) ran UNCONDITIONALLY in both `set_service_context()` and
+# `_load_advanced_section()` -- but that widget is also where genuine RUN
+# OUTPUT and refusal text land. Reverting Fix Round E's conditional blank
+# (making it unconditional again) is what a reviewer demonstrated makes each
+# of the three tests below fail: real output/refusal text present while
+# UNARMED must survive a section change or a rebind; only a LIVE arm's
+# confirm sentence may be blanked away.
+
+
+@pytest.mark.asyncio
+async def test_section_change_preserves_real_run_output_when_not_armed():
+    """Run `tool.execute` to completion (arm, then confirm), THEN change
+    section -- the tool's real JSON result must still be on screen.
+    Re-reading it by re-running the tool is the exact loss this guards."""
+    app = ToolExecuteInspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        inspector.set_service_context(
+            app.service, [("Inventory", "inventory"), ("Overview", "overview")]
+        )
+        await pilot.pause()
+        await pilot.click("#mcp-adv-run")  # arms
+        await pilot.pause()
+        await _press_run_again(pilot)  # runs it -- real output now showing
+        assert app.service.action_calls == [
+            ("tool.execute", {"tool_name": "search_notes", "arguments": {"query": "example"}})
+        ]
+        result_before = _adv_result(app)
+        assert "ok" in result_before
+
+        section_select = app.query_one("#mcp-adv-section-select", Select)
+        section_select.value = "overview"
+        await pilot.pause()
+        await pilot.pause()
+
+        assert _adv_result(app) == result_before, (
+            "a section change while UNARMED must not blank real run output -- "
+            "the confirm-sentence blank is only correct while an arm is live"
+        )
+
+
+@pytest.mark.asyncio
+async def test_rebind_preserves_real_run_output_when_not_armed():
+    """Same defect via the OTHER blanking site: a workbench rebind
+    (`set_service_context()`, called unconditionally on every
+    reload/source-or-target switch, per that method's own docstring) must
+    not erase real run output either."""
+    app = ToolExecuteInspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        await pilot.click("#mcp-adv-run")  # arms
+        await pilot.pause()
+        await _press_run_again(pilot)  # runs it -- real output now showing
+        result_before = _adv_result(app)
+        assert "ok" in result_before
+
+        # Simulate a workbench rebind with the same service, same as the
+        # existing disarm tests above.
+        inspector.set_service_context(app.service, [("Inventory", "inventory")])
+        await pilot.pause()
+
+        assert _adv_result(app) == result_before, (
+            "a rebind while UNARMED must not blank real run output"
+        )
+
+
+@pytest.mark.asyncio
+async def test_section_change_preserves_blocked_refusal_when_not_armed():
+    """The third loss: a "Blocked · not run" refusal explaining WHY nothing
+    ran must not be erased by a section change exactly as the user
+    navigates to go act on it."""
+    app = ToolExecuteInspectorApp(
+        error=MCPHubGateDeniedError("search_notes is set to Off in Permissions.")
+    )
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        inspector.set_service_context(
+            app.service, [("Inventory", "inventory"), ("Overview", "overview")]
+        )
+        await pilot.pause()
+        await pilot.click("#mcp-adv-run")  # arms
+        await pilot.pause()
+        await _press_run_again(pilot)  # blocked
+        result_before = _adv_result(app)
+        assert "Blocked · not run" in result_before
+
+        section_select = app.query_one("#mcp-adv-section-select", Select)
+        section_select.value = "overview"
+        await pilot.pause()
+        await pilot.pause()
+
+        assert _adv_result(app) == result_before, (
+            "a section change while UNARMED must not erase a refusal "
+            "explaining why nothing ran"
+        )

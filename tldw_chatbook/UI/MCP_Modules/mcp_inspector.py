@@ -2404,6 +2404,11 @@ class MCPInspector(Vertical):
         # Cleared unconditionally, before the `_advanced_visible` early
         # return, since a rebind while hidden must not leave a stale arm
         # for the next reveal to (re-)inherit either.
+        #
+        # Fix Round E, Item 1: capture whether an arm existed BEFORE
+        # clearing it -- the result-pane blank a few lines down must be
+        # conditional on this (see that blank's own comment for why).
+        _was_armed = self._advanced_confirm_key is not None
         self._advanced_confirm_key = None
         if not self._advanced_visible:
             return
@@ -2416,7 +2421,19 @@ class MCPInspector(Vertical):
         # rebind that had just disarmed it, so the very next press silently
         # re-arms and re-renders the identical string: the button reads as
         # dead for one press. Blank both on disarm.
-        self.query_one("#mcp-adv-result", Static).update("")
+        #
+        # Fix Round E, Item 1 (review of Fix Round C): that blank used to
+        # run UNCONDITIONALLY, which also erases genuine RUN OUTPUT sitting
+        # in this same widget -- a completed `tool.execute` result, or a
+        # "Blocked · not run" refusal -- the instant the user switches
+        # section or object to go act on it (re-reading it then means
+        # running the tool again). The confirm sentence only ever occupies
+        # this pane while an arm is live, so only blank when one WAS live
+        # (`_was_armed`, captured above before the clear) -- output left
+        # behind while unarmed is never the stale confirm sentence, and
+        # must survive the rebind.
+        if _was_armed:
+            self.query_one("#mcp-adv-result", Static).update("")
         section_select = self.query_one("#mcp-adv-section-select", Select)
         with section_select.prevent(Select.Changed):
             section_select.set_options(self._sections)
@@ -2511,18 +2528,28 @@ class MCPInspector(Vertical):
         # `tool.execute` template can render byte-identical JSON to another
         # section's, and a stale arm from before the switch must not
         # silently satisfy this section's first press.
+        # Fix Round E, Item 1: capture whether an arm existed BEFORE
+        # clearing it, same as `set_service_context()`'s matching capture --
+        # the blank below must not fire for a section change that finds
+        # nothing armed.
+        _was_armed = self._advanced_confirm_key is not None
         self._advanced_confirm_key = None
         # Fix Round C, Item 4: same reasoning as `set_service_context()`'s
         # own blank -- the confirm sentence lives in `#mcp-adv-result`, not
         # `#mcp-adv-content`, so clearing the arm without blanking this too
         # would leave a stale "press Run Action again to confirm" on screen
-        # describing an arm that no longer exists. Unconditional (ahead of
-        # the `self._service is None` return below), mirroring the
-        # confirm-key clear it sits beside -- this method only ever runs
-        # while Advanced is visible (`set_service_context()`'s own guard,
-        # and `on_select_changed()`'s section-select can't fire unmounted),
-        # so `#mcp-adv-result` is always present to blank.
-        self.query_one("#mcp-adv-result", Static).update("")
+        # describing an arm that no longer exists. This method only ever
+        # runs while Advanced is visible (`set_service_context()`'s own
+        # guard, and `on_select_changed()`'s section-select can't fire
+        # unmounted), so `#mcp-adv-result` is always present to blank.
+        #
+        # Fix Round E, Item 1 (review of Fix Round C): that blank used to be
+        # unconditional, which erased genuine run output/refusal text on
+        # every section change, armed or not -- see the identical fix and
+        # fuller reasoning on `set_service_context()`'s own blank above.
+        # Conditional on `_was_armed` for the same reason.
+        if _was_armed:
+            self.query_one("#mcp-adv-result", Static).update("")
         if self._service is None:
             return
         payload = await self._service.load_section(section)
