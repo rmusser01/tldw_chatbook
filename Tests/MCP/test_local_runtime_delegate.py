@@ -26,9 +26,11 @@ from __future__ import annotations
 import pytest
 
 from tldw_chatbook.MCP.local_runtime_delegate import (
+    PERMISSION_STATE_UNRESOLVED_CLAUSE,
     RAW_TOOL_CALL_REFUSED_MESSAGE,
     LocalMCPRuntimeDelegate,
     RawToolCallRefusedError,
+    capitalize_first,
 )
 
 
@@ -174,3 +176,80 @@ def test_protocol_capabilities_flags_tools_call_as_unavailable():
         if method == "tools/call":
             continue
         assert method not in capabilities["unavailable_request_methods"]
+
+
+# -- Fix Round I, Item 3: `capitalize_first()` vs. `str.capitalize()` -------
+
+
+def test_capitalize_first_preserves_an_acronym_after_the_first_word():
+    """`str.capitalize()` lowercases every character after the first --
+    proven live at `unified_control_plane_service._ADVANCED_EXECUTE_GATE_
+    ERROR_MESSAGE`'s old `f"{PERMISSION_STATE_UNRESOLVED_CLAUSE.
+    capitalize()}."`: a clause reading "MUTATED permission state is
+    unknown" rendered as "Mutated permission state is unknown." --
+    silently downcasing the acronym. `capitalize_first()` must leave
+    everything but the first character untouched."""
+    assert (
+        capitalize_first("MUTATED permission state is unknown")
+        == "MUTATED permission state is unknown"
+    )
+    # Sanity check that this really is the bug `capitalize_first` replaces
+    # -- `str.capitalize()` mangles the same input.
+    assert (
+        "MUTATED permission state is unknown".capitalize()
+        == "Mutated permission state is unknown"
+    )
+
+
+def test_capitalize_first_uppercases_a_lowercase_first_character():
+    assert capitalize_first("permission state could not be resolved") == (
+        "Permission state could not be resolved"
+    )
+
+
+def test_capitalize_first_handles_the_empty_string():
+    assert capitalize_first("") == ""
+
+
+# -- Fix Round I, Item 4: recount -- every surface that states the
+# "permission state could not be resolved" claim must derive from
+# PERMISSION_STATE_UNRESOLVED_CLAUSE, so mutating the clause reddens every
+# one of them, not just some. ---------------------------------------------
+
+
+def test_all_three_gate_error_surfaces_derive_from_the_shared_clause():
+    """Recount at the start of this round (the previous round's own
+    "three copies" figure was stale -- `_decision_note()`'s `gate_error`
+    render site had just been proven dead and removed): exactly three live
+    surfaces state this claim --
+    `unified_control_plane_service._ADVANCED_EXECUTE_GATE_ERROR_MESSAGE`
+    (Advanced hatch), `mcp_workbench._TOOL_TEST_BLOCKED_UNKNOWN_TEXT` (Test
+    Tool loud blocked body), and `mcp_inspector._UNKNOWN_ORIGIN_SENTENCE`
+    (Permissions-explanation fallback, reachable via a Tools-mode
+    selection whose `gate_tool_test()` call raises) -- and this pins that
+    all three are DERIVED from `PERMISSION_STATE_UNRESOLVED_CLAUSE`, not
+    merely textually equal to it today. Each assertion recomputes the
+    expected value from the CURRENT clause, so editing
+    `PERMISSION_STATE_UNRESOLVED_CLAUSE` in `local_runtime_delegate.py`
+    and re-running this test (with `__pycache__` cleared / `python -B`,
+    per this repo's mutation-testing discipline) changes what every
+    assertion expects together -- a surface that reverted to an
+    independent literal would then read the OLD clause while this test
+    expects the NEW one, and go red."""
+    from tldw_chatbook.MCP.unified_control_plane_service import (
+        _ADVANCED_EXECUTE_GATE_ERROR_MESSAGE,
+    )
+    from tldw_chatbook.UI.MCP_Modules.mcp_inspector import _UNKNOWN_ORIGIN_SENTENCE
+    from tldw_chatbook.UI.MCP_Modules.mcp_workbench import (
+        _TOOL_TEST_BLOCKED_UNKNOWN_TEXT,
+    )
+
+    assert _ADVANCED_EXECUTE_GATE_ERROR_MESSAGE == (
+        f"{capitalize_first(PERMISSION_STATE_UNRESOLVED_CLAUSE)}."
+    )
+    assert _TOOL_TEST_BLOCKED_UNKNOWN_TEXT == (
+        f"Blocked — {PERMISSION_STATE_UNRESOLVED_CLAUSE}."
+    )
+    assert _UNKNOWN_ORIGIN_SENTENCE == (
+        f"{capitalize_first(PERMISSION_STATE_UNRESOLVED_CLAUSE)}."
+    )

@@ -20,6 +20,7 @@ from .local_runtime_delegate import (
     PERMISSION_STATE_UNRESOLVED_CLAUSE,
     RAW_TOOL_CALL_REFUSED_MESSAGE,
     RawToolCallRefusedError,
+    capitalize_first,
 )
 from .permission_store import (
     EffectiveToolState,
@@ -66,22 +67,38 @@ _ADVANCED_EXECUTE_BLOCKED_MESSAGE = "{tool} is set to Off in Permissions."
 #
 # Fix Round G, Item 7 (review of Fix Round F): the prior version of this
 # comment claimed the twin worth matching was `mcp_inspector._UNKNOWN_
-# ORIGIN_SENTENCE` -- wrong surface. `_UNKNOWN_ORIGIN_SENTENCE` is the
-# Permissions-detail-panel/quiet-decision-note sentence; the REAL twin is
-# `mcp_workbench._TOOL_TEST_BLOCKED_UNKNOWN_TEXT`, the Test Tool panel's
-# own LOUD blocked-run body for this identical `gate_error` condition. The
-# two now derive from one shared clause, `local_runtime_delegate.
-# PERMISSION_STATE_UNRESOLVED_CLAUSE` (see that module for the sharing
-# rationale -- same dependency-safe-common-ground precedent as `RAW_TOOL_
-# CALL_REFUSED_MESSAGE` just above), rather than being re-imported into
-# each other: this module is imported BY `mcp_workbench.py`/`mcp_
-# inspector.py` (see `_ADVANCED_EXECUTE_BLOCKED_MESSAGE`'s own mirrored-
-# not-shared precedent, and `_run_advanced_action()`'s docstring in
-# `mcp_inspector.py` for why the reverse import would be circular), so
-# deriving both from a THIRD, dependency-safe module lets a reword of the
-# underlying claim change both call sites, without either importing the
-# other.
-_ADVANCED_EXECUTE_GATE_ERROR_MESSAGE = f"{PERMISSION_STATE_UNRESOLVED_CLAUSE.capitalize()}."
+# ORIGIN_SENTENCE` -- wrong surface AT THE TIME. `_UNKNOWN_ORIGIN_
+# SENTENCE` was then the Permissions-detail-panel/quiet-decision-note
+# sentence, still an independently maintained literal; the twin THAT
+# round actually converged with was `mcp_workbench._TOOL_TEST_BLOCKED_
+# UNKNOWN_TEXT`, the Test Tool panel's own LOUD blocked-run body for this
+# identical `gate_error` condition.
+#
+# Fix Round I, Item 4 (review, recount): a later review found
+# `_UNKNOWN_ORIGIN_SENTENCE` was STILL a third, separately maintained
+# literal stating this same claim -- reachable whenever a Tools-mode tool
+# selection's own `gate_tool_test()` call raises
+# (`MCPWorkbench._effective_for_display()`'s single-tool fallback path;
+# `_decision_note()`'s OWN former `gate_error` branch, a fourth candidate,
+# was proven dead and removed one round earlier -- see that commit for why
+# it no longer counts). All three -- this constant, `_TOOL_TEST_BLOCKED_
+# UNKNOWN_TEXT`, and `_UNKNOWN_ORIGIN_SENTENCE` -- now derive from one
+# shared clause, `local_runtime_delegate.PERMISSION_STATE_UNRESOLVED_
+# CLAUSE` (see that module for the sharing rationale -- same
+# dependency-safe-common-ground precedent as `RAW_TOOL_CALL_REFUSED_
+# MESSAGE` just above), rather than being re-imported into each other:
+# this module is imported BY `mcp_workbench.py`/`mcp_inspector.py` (see
+# `_ADVANCED_EXECUTE_BLOCKED_MESSAGE`'s own mirrored-not-shared precedent,
+# and `_run_advanced_action()`'s docstring in `mcp_inspector.py` for why
+# the reverse import would be circular), so deriving all three from a
+# FOURTH, dependency-safe module lets a reword of the underlying claim
+# change every call site, without any of them importing each other.
+#
+# `capitalize_first()`, not `.capitalize()`: the latter also lowercases
+# everything AFTER the first character, silently mangling any acronym a
+# future clause might contain -- see that function's own docstring in
+# `local_runtime_delegate.py` for the proof.
+_ADVANCED_EXECUTE_GATE_ERROR_MESSAGE = f"{capitalize_first(PERMISSION_STATE_UNRESOLVED_CLAUSE)}."
 
 # task-2539 (PR-T3 fix round B, item 3): the exact message
 # `execute_hub_tool()` raises below for a server-source `server_key`. Its

@@ -380,15 +380,26 @@ _TOOL_TEST_BLOCKED_TEXT = "Blocked — this tool is set to Off in Permissions."
 # _ADVANCED_EXECUTE_GATE_ERROR_MESSAGE`, "Permission state could not be
 # RESOLVED"). Two independent sentences for one fact is exactly the
 # drifted-duplicate shape this whole PR exists to close. Converged on
-# "resolved" (the majority phrasing -- also used by `_decision_note()`'s
-# quiet note and the Permissions detail block's `_UNKNOWN_ORIGIN_
-# SENTENCE`), derived from the SAME shared clause the Advanced hatch now
-# also derives from (`local_runtime_delegate.PERMISSION_STATE_UNRESOLVED_
-# CLAUSE` -- see that module for the sharing rationale), so a reword
-# changes both surfaces or neither compiles/matches. The "Blocked —
-# <clause>." SHAPE is unchanged (still this surface's own, distinct from
-# the Advanced hatch's bare-sentence-under-a-heading shape); only the
-# clause's SOURCE and wording moved.
+# "resolved" (the majority phrasing at the time -- also the wording
+# `_decision_note()`'s own then-live quiet note and the Permissions detail
+# block's `_UNKNOWN_ORIGIN_SENTENCE` happened to use), derived from the
+# SAME shared clause the Advanced hatch now also derives from
+# (`local_runtime_delegate.PERMISSION_STATE_UNRESOLVED_CLAUSE` -- see that
+# module for the sharing rationale), so a reword changes both surfaces or
+# neither compiles/matches. The "Blocked — <clause>." SHAPE is unchanged
+# (still this surface's own, distinct from the Advanced hatch's
+# bare-sentence-under-a-heading shape); only the clause's SOURCE and
+# wording moved.
+#
+# Fix Round I, Item 4 (review of Fix Round G): "majority phrasing" above
+# was true of the TEXT but not of the COUPLING -- `_UNKNOWN_ORIGIN_
+# SENTENCE` matched this wording by coincidence, not by deriving from the
+# same clause, so a future reword here could still have silently left it
+# behind. It is now ALSO derived from `PERMISSION_STATE_UNRESOLVED_CLAUSE`
+# (see that constant's own definition, `mcp_inspector.py`); `_decision_
+# note()`'s quiet note is no longer part of this set at all -- its
+# `gate_error` branch was proven dead (no caller can reach it) and removed
+# the round before this one.
 _TOOL_TEST_BLOCKED_UNKNOWN_TEXT = f"Blocked — {PERMISSION_STATE_UNRESOLVED_CLAUSE}."
 # Arm notice shown under the Run button (Task 5) when an "ask" resolution
 # carries `config_changed` -- an explicit tool-level allow that the rug-pull

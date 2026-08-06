@@ -36,9 +36,9 @@ RAW_TOOL_CALL_REFUSED_MESSAGE = (
     "Permissions settings and records the run."
 )
 
-# Fix Round G, Item 7 (PR-T3 review of Fix Round F). Two independent
-# surfaces state the identical "the permission RESOLVER itself failed, not
-# a genuine verdict" condition (`EffectiveToolState(state="deny",
+# Fix Round G, Item 7 (PR-T3 review of Fix Round F). Independent surfaces
+# state the identical "the permission RESOLVER itself failed, not a
+# genuine verdict" condition (`EffectiveToolState(state="deny",
 # origin="gate_error")`) in their own sentence shape:
 #   - `unified_control_plane_service._ADVANCED_EXECUTE_GATE_ERROR_MESSAGE`:
 #     a bare, capitalized sentence -- the Advanced hatch already carries
@@ -49,24 +49,64 @@ RAW_TOOL_CALL_REFUSED_MESSAGE = (
 #     `_TOOL_TEST_BLOCKED_TEXT` ("Blocked — this tool is set to Off in
 #     Permissions.") -- the Test Tool panel has no separate "Blocked"
 #     heading of its own, so each of its blocked bodies carries the prefix.
+#   - `mcp_inspector._UNKNOWN_ORIGIN_SENTENCE` (Fix Round I, Item 4): a
+#     bare, capitalized sentence like the Advanced hatch's -- the
+#     Permissions-explanation block's fallback for an `EffectiveToolState.
+#     origin` this UI doesn't otherwise recognize (`_ORIGIN_SENTENCES.get
+#     (effective.origin, _UNKNOWN_ORIGIN_SENTENCE)`), reachable whenever a
+#     Tools-mode tool selection's own `gate_tool_test()` call raises
+#     (`MCPWorkbench._effective_for_display()`'s single-tool fallback
+#     path). A review found this one was STILL an independently-maintained
+#     literal after the first two converged -- brought in here rather than
+#     left as the "majority phrasing" a comment nearby used to justify the
+#     other two's convergence while not actually including it.
 #
-# Before this fix the two were independently maintained literals that
+# Before the first fix these were independently maintained literals that
 # happened to read close ("could not be resolved" vs. "could not be
 # determined") -- exactly the drifted-duplicate shape this whole PR exists
 # to close. One clause here, lowercase and without terminal punctuation so
-# either sentence SHAPE can compose around it (a leading capital for the
-# bare-sentence surface, a lowercase mid-sentence fragment after the
-# "Blocked — " em-dash for the other) -- this is what both
-# `_ADVANCED_EXECUTE_GATE_ERROR_MESSAGE` and `_TOOL_TEST_BLOCKED_UNKNOWN_
-# TEXT` are now DERIVED from, not merely equal to: a reword here changes
-# both, or the two go visibly out of sync at the assertion syntax level
-# (a `.capitalize()`/f-string call site left unedited), not just at the
-# reader's eye. Homed here rather than in either `unified_control_plane_
-# service.py` or `mcp_workbench.py`, mirroring `RAW_TOOL_CALL_REFUSED_
-# MESSAGE` just above: this module imports from neither of them, and
-# `unified_control_plane_service.py` already imports from this module, so
-# both surfaces can depend on this one without a cycle.
+# any sentence SHAPE can compose around it (a leading capital for a
+# bare-sentence surface, a lowercase mid-sentence fragment after a
+# "Blocked — " em-dash for another) -- this is what all three surfaces
+# above are now DERIVED from, not merely equal to: a reword here changes
+# all three, or they go visibly out of sync at the assertion syntax level
+# (a stale call site left unedited), not just at the reader's eye. Homed
+# here rather than in `unified_control_plane_service.py`/`mcp_workbench.
+# py`/`mcp_inspector.py`, mirroring `RAW_TOOL_CALL_REFUSED_MESSAGE` just
+# above: this module imports from none of them, and all three already
+# import from this module, so each can depend on this one without a cycle.
 PERMISSION_STATE_UNRESOLVED_CLAUSE = "permission state could not be resolved"
+
+
+def capitalize_first(text: str) -> str:
+    """Uppercase only the first character; every other character is left
+    exactly as given.
+
+    Fix Round I, Item 3. `str.capitalize()` does NOT do this -- it
+    additionally LOWERCASES every character after the first, silently
+    mangling any acronym, proper noun, or server name a future clause
+    might contain. Proven live at `unified_control_plane_service.
+    _ADVANCED_EXECUTE_GATE_ERROR_MESSAGE`'s old
+    `f"{PERMISSION_STATE_UNRESOLVED_CLAUSE.capitalize()}."`: a clause
+    reading "MUTATED permission state is unknown" rendered as "Mutated
+    permission state is unknown." -- silently downcasing MUTATED with no
+    signal that anything had changed. `PERMISSION_STATE_UNRESOLVED_CLAUSE`
+    itself has no acronym today, so the bug was latent, not yet visible in
+    the shipped copy; the fragility was in the FORMULA, reachable by any
+    future reword of the clause, and would have reintroduced a
+    cross-surface divergence through the very mechanism (`capitalize_
+    first`, replacing three separate `.capitalize()`/reimplementation call
+    sites) added to prevent one.
+
+    Every surface that turns `PERMISSION_STATE_UNRESOLVED_CLAUSE` (or any
+    future shared clause homed here) into a leading-capital sentence must
+    call this, not `str.capitalize()` and not its own hand-rolled
+    `text[0].upper() + text[1:]` -- one implementation, so a future
+    behavior change (e.g. Unicode titlecasing edge cases) updates every
+    caller identically instead of risking a fourth reimplementation
+    drifting from the other three.
+    """
+    return text[:1].upper() + text[1:]
 
 
 class RawToolCallRefusedError(PermissionError):
