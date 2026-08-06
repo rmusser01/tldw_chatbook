@@ -6,7 +6,7 @@ import time
 from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 from loguru import logger
 
@@ -15,6 +15,7 @@ from tldw_chatbook.runtime_policy.types import RuntimeSourceState
 
 from .execution_log import MCPExecutionLog, build_record
 from .hub_tool_catalog import HubTool
+from .local_runtime_delegate import RAW_TOOL_CALL_REFUSED_MESSAGE
 from .permission_store import (
     EffectiveToolState,
     HASH_FREE_SERVER_KEYS,
@@ -49,10 +50,18 @@ _ADVANCED_EXECUTE_BLOCKED_MESSAGE = "{tool} is set to Off in Permissions."
 # so tool execution keeps exactly one door here: the gated, logged one.
 # Every other protocol method (tools/list, prompts/list, status/get, ...)
 # is untouched -- this runner's diagnostic value is in those.
-_RAW_TOOL_CALL_REFUSED_MESSAGE = (
-    "Tool calls run through the Execute Local Tool action, which applies your "
-    "Permissions settings and records the run."
-)
+#
+# Fix Round A, Item 2: this refusal (the control-plane pre-dispatch scan,
+# below) is one of TWO independent enforcement points -- the other is
+# `LocalMCPRuntimeDelegate.request()` itself, the durable backstop for
+# callers that reach the delegate without going through this scan at all.
+# The message constant is imported from that module, not redefined here, so
+# the two can never show the user different copy for the same refusal. This
+# scan's own job (see the full rationale on the import site): preserve
+# `runtime.batch`'s all-or-nothing property, which a delegate-level refusal
+# alone cannot -- the batch runs serially, so a per-item refusal there would
+# only stop the offending item, not the ones dispatched before it.
+_RAW_TOOL_CALL_REFUSED_MESSAGE = RAW_TOOL_CALL_REFUSED_MESSAGE
 
 
 class UnifiedMCPControlPlaneService:
@@ -1144,8 +1153,17 @@ class UnifiedMCPControlPlaneService:
                 # serially, so a `tools/call` in the middle would already
                 # have executed by the time a per-item refusal could
                 # report it, and would report as an ordinary batch row.
+                # `Mapping`, not `dict` (Fix Round A, Minor #4): `local_
+                # service.run_runtime_batch()` accepts any `Mapping` per
+                # item, and this scan must recognize everything that
+                # runner will treat as a request or a non-dict `Mapping`
+                # item would skip the scan silently. Unreachable from the
+                # UI today -- the payload here is always `json.loads`
+                # output, which only ever produces `dict` -- but the
+                # delegate-level refusal (`LocalMCPRuntimeDelegate.
+                # request()`) is the real backstop for that gap either way.
                 for request in requests:
-                    if isinstance(request, dict):
+                    if isinstance(request, Mapping):
                         self._refuse_raw_tool_call(request.get("method"))
                 return await self._maybe_await(
                     self.local_service.run_runtime_batch(requests)

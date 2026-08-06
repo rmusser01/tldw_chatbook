@@ -7,6 +7,35 @@ from tldw_chatbook.config import get_chachanotes_db_lazy, get_media_db_lazy
 
 from .server import MCP_AVAILABLE, describe_local_mcp_capabilities
 
+# Fix Round A (PR-T3 whole-branch review), Item 2. Task 6 (PR-T3) refused a
+# raw `tools/call` in `UnifiedMCPControlPlaneService.run_action()`
+# (`_refuse_raw_tool_call`), one layer above this delegate -- but that
+# refusal sits one layer above the seam it protects: `request()`'s
+# `tools/call` branch below calls `self.execute_tool()` directly, so any
+# caller that reaches `request()`/`batch()` WITHOUT going through
+# `run_action()` (a direct call on this delegate, `batch()`'s own loop over
+# `request()`, or `LocalMCPControlService.run_runtime_request()`/
+# `run_runtime_batch()` -- both public methods reachable off
+# `app.local_mcp_control_service`) bypassed the gate and the audit-log row
+# entirely.
+#
+# This module-level constant is shared verbatim with
+# `unified_control_plane_service.py`'s own refusal so the two independent
+# enforcement points can never show the user different copy for the same
+# refusal. Each site carries a comment naming which job it does:
+#   - `run_action()`'s pre-dispatch scan (control-plane layer): preserves
+#     `runtime.batch`'s all-or-nothing property -- checked before ANY item
+#     dispatches, since the batch runs serially and a per-item refusal here
+#     alone would only stop the offending item, not the ones before it that
+#     had already executed.
+#   - This delegate's `request()` (this layer): the durable backstop that
+#     catches every caller, including ones that never went through that
+#     scan.
+RAW_TOOL_CALL_REFUSED_MESSAGE = (
+    "Tool calls run through the Execute Local Tool action, which applies your "
+    "Permissions settings and records the run."
+)
+
 
 class LocalMCPRuntimeDelegate:
     """Direct local MCP runtime adapter that avoids loopback FastMCP dependency."""
@@ -196,18 +225,15 @@ class LocalMCPRuntimeDelegate:
         if normalized_method == "prompts/list":
             return {"prompts": list(manifest.get("prompts", []))}
         if normalized_method == "tools/call":
-            arguments = payload.get("arguments")
-            return {
-                "tool_name": self._require_payload_field(
-                    payload, "name", aliases=("tool_name",)
-                ),
-                "result": await self.execute_tool(
-                    self._require_payload_field(
-                        payload, "name", aliases=("tool_name",)
-                    ),
-                    arguments if isinstance(arguments, Mapping) else {},
-                ),
-            }
+            # Fix Round A, Item 2: the durable backstop -- refuse here too,
+            # not just at the control-plane pre-dispatch scan (see the
+            # module-level `RAW_TOOL_CALL_REFUSED_MESSAGE` comment for why
+            # both layers are needed). Tool execution keeps exactly one
+            # door through this delegate: `execute_tool()`, called directly
+            # by `LocalMCPControlService.execute_tool()` for the gated,
+            # logged `tool.execute` action -- never through this raw
+            # protocol branch.
+            raise PermissionError(RAW_TOOL_CALL_REFUSED_MESSAGE)
         if normalized_method == "resources/read":
             return {
                 "resource_uri": self._require_payload_field(

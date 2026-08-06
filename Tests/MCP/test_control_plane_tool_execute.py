@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
+from types import MappingProxyType
 
 import pytest
 
@@ -542,6 +543,26 @@ async def test_raw_tools_call_inside_a_runtime_batch_is_refused(tmp_path):
                 ]
             },
         )
+
+    assert fake.execute_tool_calls == []
+
+
+@pytest.mark.asyncio
+async def test_raw_tools_call_inside_a_batch_as_non_dict_mapping_is_refused(tmp_path):
+    """Minor #4 (Fix Round A): the pre-dispatch scan used to check
+    `isinstance(request, dict)`, while `LocalMCPControlService.
+    run_runtime_batch()` accepts any `Mapping` -- a non-dict `Mapping` item
+    (unreachable from the UI today, since the payload is always
+    `json.loads` output, but worth closing so the scan and the batch runner
+    agree on what counts as a request) would silently skip the scan. Widened
+    to `Mapping` so it doesn't."""
+    service, fake, client, store = _service(tmp_path)
+    non_dict_request = MappingProxyType(
+        {"method": "tools/call", "params": {"name": "calculator"}}
+    )
+
+    with pytest.raises(PermissionError, match="Execute Local Tool"):
+        await service.run_action("runtime.batch", {"requests": [non_dict_request]})
 
     assert fake.execute_tool_calls == []
 
