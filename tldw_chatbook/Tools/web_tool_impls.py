@@ -912,9 +912,17 @@ def web_crawl(
             # content-type: a PDF mislabeled as text/html (or unlabeled)
             # must never fall through to HTML extraction below, or its raw
             # bytes become the excerpt and its "extracted text" warm-writes
-            # the shared web_fetch cache with binary garbage.
+            # the shared web_fetch cache with binary garbage. Matches the
+            # spec's own detection rule ("the sniff wins over the declared
+            # type" §1): when is_pdf is true the marker is always
+            # "[application/pdf]", regardless of what the server claimed;
+            # only a genuinely non-PDF, non-HTML response is labeled with
+            # its own declared type. `ctype` is guaranteed non-empty on the
+            # else side (the `or` branch below required it truthy to enter
+            # this block at all), so no `ctype or ...` fallback is needed.
             if is_pdf or (ctype and ctype not in _HTML_TYPES):
-                pages.append({"url": final_url, "title": "", "excerpt": "", "marker": f"[{ctype or 'application/pdf'}]"})
+                marker = "[application/pdf]" if is_pdf else f"[{ctype}]"
+                pages.append({"url": final_url, "title": "", "excerpt": "", "marker": marker})
                 continue
 
             html = _decode_body(body, headers.get("content-type", ""))

@@ -612,16 +612,37 @@ def test_crawl_pdf_sniff_not_poisoned_into_html_branch(crawl_env, ctype):
     through to the HTML branch: it was listed as a normal page (raw PDF
     bytes decoded into its 'excerpt' for the unlabeled case) and its
     garbage 'extracted text' warm-wrote the shared web_fetch cache under
-    (url, FETCH_MAX_BYTES) — the exact key a later web_fetch(url) reads."""
+    (url, FETCH_MAX_BYTES) — the exact key a later web_fetch(url) reads.
+
+    Marker contract (clarified post-review): the sniff wins over the
+    declared type for classification AND for the marker text — when
+    is_pdf is true the marker is always "[application/pdf]" regardless of
+    what the server claimed, matching spec §1's "the sniff wins over the
+    declared type." Only a genuinely non-PDF, non-HTML response is
+    labeled with its own declared content-type."""
     pdf_body = b"%PDF-1.7 pretend pdf body padding " + b"z" * 20
     headers = {"content-type": ctype} if ctype else {}
     _site(crawl_env, {"http://example.com/": ("root", ["/doc"])})
     crawl_env.routes["http://example.com/doc"] = httpx.Response(200, content=pdf_body, headers=headers)
     out = web_crawl("http://example.com/")
-    expected_marker = f"[{ctype or 'application/pdf'}]"
-    assert expected_marker in out
+    # All three parametrized content types wrap a %PDF- sniffed body, so
+    # is_pdf is true in every case: the marker is always [application/pdf].
+    assert "[application/pdf]" in out
     assert "%PDF-" not in out
     assert ("http://example.com/doc", web_tool_impls.FETCH_MAX_BYTES) not in web_tool_impls._fetch_cache
+
+
+def test_crawl_nonpdf_nonhtml_marker_uses_declared_type(crawl_env):
+    """The is_pdf branch must not swallow every non-HTML response into a
+    hardcoded '[application/pdf]' marker: a genuinely non-PDF, non-HTML
+    response (body does not sniff as %PDF-) is still labeled with its
+    actual declared content-type."""
+    _site(crawl_env, {"http://example.com/": ("root", ["/image.png"])})
+    crawl_env.routes["http://example.com/image.png"] = httpx.Response(
+        200, content=b"\x89PNG\r\n\x1a\n" + b"binarydata", headers={"content-type": "image/png"}
+    )
+    out = web_crawl("http://example.com/")
+    assert "[image/png]" in out
 
 
 def test_crawl_caps_links_enqueued_per_page(crawl_env, monkeypatch):
