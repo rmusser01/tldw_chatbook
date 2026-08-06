@@ -3485,11 +3485,24 @@ class MCPWorkbench(Container):
                 # `Failed · Nms`. `show_permission_jump=False`: neither
                 # refusal has a matching row in the Hub's OWN Permissions
                 # matrix to jump to (see `show_tool_result()`'s docstring).
+                #
+                # Review fix (Important #1): `decision_note` describes the
+                # HUB GATE's own dispatch decision (e.g. "Ran because this
+                # tool is set to Allow...") -- for a refusal from a
+                # DIFFERENT permission system entirely (governance, or the
+                # server-source structural mismatch), that sentence stands
+                # right next to "Blocked · not run" and contradicts it
+                # ("Ran because..." under "not run"). The Hub gate's
+                # decision is not what blocked this call, so it has nothing
+                # true to say here -- `None` (not a refusal-specific
+                # sentence: inventing one risks its own overreach about a
+                # governance seam this module doesn't own).
+                is_refusal = _is_permission_refusal(exc)
                 self._show_tool_test_result(
                     server_key=server_key, tool_name=tool_name, ok=False,
                     text=_safe_exception_text(exc), duration_ms=duration_ms,
-                    decision_note=decision_note,
-                    blocked=_is_permission_refusal(exc),
+                    decision_note=None if is_refusal else decision_note,
+                    blocked=is_refusal,
                     show_permission_jump=False,
                 )
                 return
@@ -3580,6 +3593,19 @@ class MCPWorkbench(Container):
                 ),
                 severity="error",
             )
+            # Review fix (Minor #5): the failing `show_tool_result()` call
+            # above is ALSO what re-enables the Run button on a normal
+            # path -- a render failure must not leave the user stuck with
+            # a permanently disabled Run button (closing and reopening the
+            # panel was the only way out before this). `reenable_test_run`
+            # is already tolerant of a stale/missing panel (I1-style), so
+            # no extra guard is needed here beyond containing whatever it
+            # might itself raise -- this is already inside a failure path,
+            # a second exception here must not escape it.
+            try:
+                self.query_one(MCPInspector).reenable_test_run(server_key, tool_name)
+            except Exception:
+                pass
 
     async def open_add_server_form(self) -> None:
         """Open the Add-server form/panel from outside the overview button.

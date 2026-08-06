@@ -2102,10 +2102,22 @@ class MCPInspector(Vertical):
         normal UI interaction), but "defensive" and "silent" don't have to
         mean the same thing -- a toast costs nothing and closes the last
         gap between "Run pressed" and "nothing visible happened".
+
+        Review fix (Minor #6): the `tool is None` toast reuses
+        `MCPWorkbench.open_test_for_selected_tool()`'s own house sentence
+        for the identical "nothing selected" situation
+        (`mcp_workbench.py`'s `"Select a tool in Tools mode first."`)
+        rather than inventing a weaker synonym -- verb-first, matching the
+        plan's register, and consistent copy for the same fact wherever it
+        surfaces. Not imported (would reach into `mcp_workbench.py`, the
+        wrong import direction -- see this module's own `_toast()`
+        docstring); a small literal duplicate instead, same as `_toast()`.
         """
         tool = self._current_tool
         if tool is None:
-            self.app.notify(_toast("No tool is selected to run."), severity="warning")
+            self.app.notify(
+                _toast("Select a tool in Tools mode first."), severity="warning"
+            )
             return
         try:
             form = self.query_one("#mcp-inspector-test-form", MCPSchemaForm)

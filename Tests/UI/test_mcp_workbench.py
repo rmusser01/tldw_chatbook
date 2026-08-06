@@ -3232,7 +3232,14 @@ async def test_test_tool_run_permission_error_renders_blocked_not_failed():
     reached the tool -- not a run failure. It must read as `Blocked · not
     run`, never `Failed · Nms`, and must NOT show the Hub Permissions
     "Change in Permissions" jump (a different permission system --
-    jumping there would not fix a governance refusal)."""
+    jumping there would not fix a governance refusal).
+
+    Review fix (Important #1): `ToolTestHubService.gate_state` defaults to
+    `"allow"`, so the Hub gate's own decision note would otherwise read
+    "Ran because this tool is set to Allow..." right next to "Blocked ·
+    not run" -- self-contradictory on the same run. The note must be
+    empty/hidden for a refusal, not the Hub gate's unrelated dispatch
+    reasoning."""
     app = ToolTestApp()
     app.unified_mcp_service.raise_error = PermissionError(
         "Governance profile denies tool.execute."
@@ -3255,13 +3262,22 @@ async def test_test_tool_run_permission_error_renders_blocked_not_failed():
         assert "Governance profile denies tool.execute." in result
         goto = app.query_one("#mcp-inspector-goto-permission-test", Button)
         assert goto.display is False
+        note_widget = app.query_one("#mcp-inspector-test-result-note", Static)
+        assert str(note_widget.renderable) == ""
+        assert note_widget.display is False
+        assert app.query_one("#mcp-inspector-test-run", Button).disabled is False
 
 
 @pytest.mark.asyncio
 async def test_test_tool_run_server_source_display_only_value_error_renders_blocked_not_failed():
     """F4: `execute_hub_tool()`'s bare `ValueError("Server-source tools
     are display-only.")` is likewise a refusal (a structural mismatch),
-    not a run failure."""
+    not a run failure.
+
+    Review fix (Important #1): same self-contradiction guard as the
+    `PermissionError` sibling test above -- the note must not carry the
+    Hub gate's own "Ran because..." reasoning next to "Blocked · not
+    run"."""
     app = ToolTestApp()
     app.unified_mcp_service.raise_error = ValueError(
         "Server-source tools are display-only."
@@ -3282,6 +3298,9 @@ async def test_test_tool_run_server_source_display_only_value_error_renders_bloc
         assert result.startswith("Blocked · not run")
         assert not result.startswith("Failed")
         assert "Server-source tools are display-only." in result
+        note_widget = app.query_one("#mcp-inspector-test-result-note", Static)
+        assert str(note_widget.renderable) == ""
+        assert note_widget.display is False
 
 
 @pytest.mark.asyncio
@@ -3650,7 +3669,11 @@ async def test_render_failure_in_show_tool_test_result_notifies_instead_of_only_
     service returns a normal OK result), but a render bug meant the user
     saw literally nothing: no result, no re-enabled Run button (that write
     lives inside the same failing call), not even a log line visible from
-    the UI. It must also toast."""
+    the UI. It must also toast.
+
+    Review fix (Minor #5): the Run button must also come back -- without
+    it, the user is stuck unable to press Run again until they close and
+    reopen the panel, even though they were just told the run finished."""
     app = ToolTestApp()
     app.unified_mcp_service.test_result = {"ok": True}
     async with app.run_test(size=(120, 40)) as pilot:
@@ -3663,13 +3686,14 @@ async def test_render_failure_in_show_tool_test_result_notifies_instead_of_only_
         await pilot.click("#mcp-inspector-test-tool")
         await pilot.pause()
         app.query_one("#mcp-schema-field-0", Input).value = "hello"
+        run_button = app.query_one("#mcp-inspector-test-run", Button)
 
         def _raise(*args, **kwargs):
             raise RuntimeError("render exploded")
 
         monkeypatch.setattr(MCPInspector, "show_tool_result", _raise)
 
-        await pilot.click("#mcp-inspector-test-run")
+        await pilot.click(run_button)
         await pilot.pause()
         await app.workers.wait_for_complete()
         await pilot.pause()
@@ -3678,6 +3702,7 @@ async def test_render_failure_in_show_tool_test_result_notifies_instead_of_only_
             "search" in msg and severity == "error"
             for msg, severity in notifications
         ), f"expected an error toast naming the tool, got: {notifications!r}"
+        assert run_button.disabled is False
 
 
 @pytest.mark.asyncio
