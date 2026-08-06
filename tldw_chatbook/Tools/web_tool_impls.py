@@ -843,7 +843,13 @@ def web_crawl(
                 raise LocalToolError(f"[crawl-failed] sitemap could not be fetched: {exc}") from exc
             queue = deque((u, 0) for u in seeded)
             visited = {_normalize_crawl_url(u) for u in seeded}
-            stop_reason = "sitemap exhausted"
+            # Two non-exceptional paths can leave `seeded` short/empty because
+            # the clock ran out, not because the sitemap was exhausted: the
+            # root fetch's _CrawlDeadline (caught above) and the child-sitemap
+            # loop's plain `break` on time.monotonic() >= deadline. Both leave
+            # the clock past the deadline, so read it back here rather than
+            # assuming "empty seed" always means "sitemap exhausted".
+            stop_reason = "deadline reached" if time.monotonic() >= deadline else "sitemap exhausted"
 
         while queue:
             if attempts >= max_pages:

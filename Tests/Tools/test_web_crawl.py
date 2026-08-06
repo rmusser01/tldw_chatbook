@@ -566,3 +566,32 @@ def test_sitemap_garbage_xml_raises_crawl_failed(crawl_env):
     crawl_env.routes["http://example.com/sitemap.xml"] = _sitemap_response(b"not xml")
     with pytest.raises(LocalToolError, match="crawl-failed"):
         web_crawl("http://example.com/", sitemap_url="http://example.com/sitemap.xml")
+
+
+def test_sitemap_deadline_during_child_fetch_reports_deadline_reached(crawl_env):
+    """The child-sitemap loop's bound check is a plain `break`, not an
+    exception: if the clock crosses the deadline while fetching a child
+    sitemap, the seed can come back short/empty for a reason that has
+    nothing to do with the sitemap being exhausted. The stop reason must
+    say so, not claim "sitemap exhausted" when the crawl actually ran out
+    of time."""
+    from tldw_chatbook.Tools.web_tool_impls import CRAWL_DEADLINE_SECONDS
+
+    index = (
+        b'<?xml version="1.0"?>'
+        b'<sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
+        b"<sitemap><loc>http://example.com/s1.xml</loc></sitemap>"
+        b"</sitemapindex>"
+    )
+    crawl_env.routes["http://example.com/sitemap.xml"] = _sitemap_response(index)
+
+    def slow_child(request):
+        crawl_env.clock.now += CRAWL_DEADLINE_SECONDS + 1
+        return _sitemap_response(
+            b'<?xml version="1.0"?>'
+            b'<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"></urlset>'
+        )
+
+    crawl_env.routes["http://example.com/s1.xml"] = slow_child
+    out = web_crawl("http://example.com/", sitemap_url="http://example.com/sitemap.xml")
+    assert out.endswith("Stopped: deadline reached.")
