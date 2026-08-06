@@ -166,6 +166,10 @@ class ItemsPane(RecomposeCaptureGuard, Vertical):
                 value=self.search_query,
                 compact=True,
             )
+            # TASK-2310: a visible "Status" label ahead of the filter Select
+            # -- see `sources_pane.compose()`'s identical fix for why this is
+            # a sibling `Static` rather than a border title.
+            yield Static("Status", classes="watchlists-inline-select-label")
             yield PruneSafeSelect(
                 self._STATUS_OPTIONS,
                 value=self.status_filter,

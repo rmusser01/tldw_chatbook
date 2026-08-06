@@ -411,6 +411,35 @@ async def test_artifacts_says_it_is_local_like_the_notifications_inbox():
         assert screen.query_one("#watchlists-backend-select").disabled is False
 
 
+@pytest.mark.asyncio
+async def test_picker_toolbar_selects_each_carry_a_visible_label():
+    """TASK-2310: UAT read this strip as "Auto + featured / App default /
+    Off" -- none of the three picker Selects named what they controlled.
+    A `Static` label must now sit immediately before each, in the same
+    toolbar row."""
+    app = _build_test_app()
+    watchlist_id = _seed_watchlist(app)
+    async with _open_artifacts(app, watchlist_id) as (screen, pilot, _host):
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        assert pane.can_generate, "the picker toolbar only renders when can_generate"
+        row = pane.query_one("#artifacts-picker-toolbar")
+        children = list(row.children)
+        ids = [child.id for child in children]
+
+        def label_immediately_before(select_id: str, expected_text: str) -> None:
+            index = next(i for i, cid in enumerate(ids) if cid == select_id)
+            label = children[index - 1]
+            assert isinstance(label, Static), (
+                f"expected a Static label immediately before #{select_id}, "
+                f"DOM order was: {ids}"
+            )
+            assert str(label.renderable) == expected_text
+
+        label_immediately_before("artifacts-mode-select", "Mode")
+        label_immediately_before("artifacts-preset-select", "Preset")
+        label_immediately_before("artifacts-cadence-select", "Cadence")
+
+
 # --- 2. Generate writes a briefing, and its body renders inert -------------
 
 
@@ -5282,13 +5311,15 @@ async def test_export_feed_directory_cancelled_error_propagates_uncaught(
 
 
 @pytest.mark.asyncio
-async def test_serve_and_stop_buttons_start_disabled_with_nothing_exported_or_running(
+async def test_serve_starts_disabled_and_stop_is_absent_with_nothing_exported_or_running(
     monkeypatch, tmp_path
 ):
     """Serve starts disabled with nothing exported yet (AC #2: nothing is
     ever served without an explicit export having already happened), and
-    Stop starts disabled with nothing running -- proven by the server's
-    own `is_running` being `False`, i.e. no socket has been opened at all.
+    Stop (task-2310: rendered only while something is actually running --
+    it has no useful disabled-but-visible state) is not mounted at all --
+    proven by the server's own `is_running` being `False`, i.e. no socket
+    has been opened at all.
     """
     _patch_audio_dir(monkeypatch, tmp_path)
     app = _build_test_app()
@@ -5301,11 +5332,12 @@ async def test_serve_and_stop_buttons_start_disabled_with_nothing_exported_or_ru
         )
         pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
         serve_button = pane.query_one("#artifacts-serve-feed-button", Button)
-        stop_button = pane.query_one("#artifacts-stop-feed-button", Button)
         assert serve_button.disabled is True, "nothing exported yet -> disabled"
-        assert stop_button.disabled is True, "nothing running -> disabled"
         assert serve_button.compact, "a bordered button costs 3 rows in a height:1 strip"
-        assert stop_button.compact
+        assert not pane.query("#artifacts-stop-feed-button"), (
+            "nothing running -> Stop Serving has nothing to explain by "
+            "staying visible, so it is not rendered at all"
+        )
 
 
 @pytest.mark.asyncio
@@ -5326,7 +5358,9 @@ async def test_serve_enables_once_a_feed_has_been_exported(monkeypatch, tmp_path
 
         pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
         assert pane.query_one("#artifacts-serve-feed-button", Button).disabled is False
-        assert pane.query_one("#artifacts-stop-feed-button", Button).disabled is True
+        # task-2310: an export exists, but nothing is SERVING yet -- Stop
+        # Serving still has nothing to act on, so it stays unmounted.
+        assert not pane.query("#artifacts-stop-feed-button")
 
 
 @pytest.mark.asyncio

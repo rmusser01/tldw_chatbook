@@ -1052,6 +1052,39 @@ WatchlistPickerDialog {
     margin: 0;
 }
 
+/* TASK-2310: a compact, one-row inline label placed immediately before a
+ * filter/picker Select inside a `.destination-filter-strip` row (height: 1)
+ * -- Sources' type/status/active filters, Items' status filter, Artifacts'
+ * mode/preset/cadence pickers, Rules' condition/severity. UAT: these Selects
+ * painted bare resting values ("All ▾", "Off ▾") with no clue what
+ * they filter. Unlike `.sources-create-field-label` above (a
+ * `#sources-create-form`-scoped, height: 3 idiom for a full field row), this
+ * is generic and height: 1 to fit inside an EXISTING one-row toolbar strip --
+ * no new row, no extra height budget (the same TASK-995 constraint every
+ * `.destination-filter-strip` row already lives under). `color: $text-muted`
+ * keeps it visually secondary to the Select's own value, which is what the
+ * user is actually scanning for.
+ */
+.watchlists-inline-select-label {
+    width: auto;
+    height: 1;
+    content-align: left middle;
+    padding: 0 1 0 0;
+    color: $text-muted;
+}
+
+/* TASK-2310: the Rule form's Threshold explanation line -- one row, muted,
+ * directly under the Threshold Input it describes. `#rules-create-form` is
+ * an unstyled single-column `Grid` (Textual's own default), so each child
+ * -- including this one -- is already its own row; no width/height fight
+ * to win here, just keep it visually secondary like the Select labels above.
+ */
+.rules-create-threshold-help {
+    width: 100%;
+    height: 1;
+    color: $text-muted;
+}
+
 /* `.dialog-buttons` (features/_media.tcss) supplies the side-by-side pair
  * itself -- `layout: horizontal`, and `margin: 0 1; min-width: 12` on each
  * Button -- so this form and `WatchlistNameDialog` pair their Create/Cancel

@@ -3,7 +3,7 @@
 import pytest
 from rich.style import Style
 from textual.app import App, ComposeResult
-from textual.widgets import Button, DataTable, Input, Select, Switch, TextArea
+from textual.widgets import Button, DataTable, Input, Select, Static, Switch, TextArea
 
 from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
 from tldw_chatbook.Subscriptions import LocalWatchlistsService
@@ -382,6 +382,34 @@ async def test_sources_pane_renders_table_and_toolbar():
         assert pane.query_one("#sources-type-select", Select)
         assert pane.query_one("#sources-new-button", Button)
         assert pane.query_one("#sources-table", DataTable)
+
+
+@pytest.mark.asyncio
+async def test_toolbar_filter_selects_each_carry_a_visible_label():
+    """TASK-2310: UAT read the toolbar as "All / All statuses / All",
+    two of three filter Selects unlabeled. A persistent sibling `Static`
+    (this screen's usual idiom) does not fit this toolbar's own tested
+    160x42 floor without pushing `Filters` off the pane's right edge (see
+    `test_watchlists_sources_toolbar_controls_are_actually_visible`), so
+    each Select instead carries a `tooltip` naming what it filters -- the
+    one mechanism here that costs no column."""
+    app = SourcesPaneHarness()
+    async with app.run_test(size=(120, 40)) as pilot:
+        pane = app.query_one(SourcesPane)
+
+        def tooltip_mentions(select_id: str, *keywords: str) -> None:
+            select = pane.query_one(f"#{select_id}", Select)
+            tooltip = (select.tooltip or "").lower()
+            assert tooltip, f"#{select_id} has no tooltip at all"
+            for keyword in keywords:
+                assert keyword in tooltip, (
+                    f"#{select_id}'s tooltip {tooltip!r} does not mention "
+                    f"{keyword!r}"
+                )
+
+        tooltip_mentions("sources-type-select", "type")
+        tooltip_mentions("sources-status-filter", "status")
+        tooltip_mentions("sources-active-filter", "active")
 
 
 @pytest.mark.asyncio

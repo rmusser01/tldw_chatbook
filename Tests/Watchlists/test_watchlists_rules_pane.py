@@ -2,7 +2,7 @@
 
 import pytest
 from textual.app import App, ComposeResult
-from textual.widgets import Button, DataTable, Input, Select, Switch
+from textual.widgets import Button, DataTable, Input, Select, Static, Switch
 
 from tldw_chatbook.UI.Watchlists_Modules.rules_pane import (
     RefreshRulesRequested,
@@ -144,6 +144,73 @@ async def test_rules_pane_new_rule_form_posts_request():
         assert payload["condition_value"] == {"threshold": 0.5}
         assert payload["severity"] == "critical"
         assert payload["enabled"] is True
+
+
+@pytest.mark.asyncio
+async def test_condition_and_severity_selects_each_carry_a_visible_label():
+    """TASK-2310: both Selects in the rule form were unlabeled -- a
+    `Static` label must sit immediately before each."""
+    app = RulesPaneHarness()
+    async with app.run_test(size=(120, 40)) as pilot:
+        pane = app.query_one(RulesPane)
+        pane.query_one("#rules-new-button", Button).press()
+        await pilot.pause()
+
+        form = pane.query_one("#rules-create-form")
+        children = list(form.children)
+        ids = [child.id for child in children]
+
+        def label_immediately_before(select_id: str, expected_text: str) -> None:
+            index = next(i for i, cid in enumerate(ids) if cid == select_id)
+            label = children[index - 1]
+            assert isinstance(label, Static), (
+                f"expected a Static label immediately before #{select_id}, "
+                f"DOM order was: {ids}"
+            )
+            assert str(label.renderable) == expected_text
+
+        label_immediately_before("rules-create-condition", "Condition")
+        label_immediately_before("rules-create-severity", "Severity")
+
+
+@pytest.mark.asyncio
+async def test_threshold_field_explains_its_unit_and_updates_with_condition():
+    """TASK-2310: Threshold had a bare "Threshold" placeholder and no unit
+    anywhere -- and its actual meaning (a 0-1 fraction for error rate, a
+    plain item count for items below/above, unused for no_items/run_failed)
+    depends entirely on the selected Condition. The placeholder and help
+    line must both track a live Condition change, in place (the form must
+    not recompose mid-edit -- that would discard whatever the user already
+    typed into Name)."""
+    app = RulesPaneHarness()
+    async with app.run_test(size=(120, 40)) as pilot:
+        pane = app.query_one(RulesPane)
+        pane.query_one("#rules-new-button", Button).press()
+        await pilot.pause()
+
+        name_input = pane.query_one("#rules-create-name", Input)
+        name_input.value = "In-progress edit"
+        threshold_input = pane.query_one("#rules-create-threshold", Input)
+        threshold_help = pane.query_one("#rules-create-threshold-help", Static)
+
+        # Default (no_items): not used.
+        assert threshold_input.placeholder == "Not used"
+        assert "zero items" in str(threshold_help.renderable)
+
+        condition_select = pane.query_one("#rules-create-condition", Select)
+        condition_select.value = "error_rate_above"
+        await pilot.pause()
+        assert threshold_input.placeholder == "0.5 = 50%"
+        assert "50%" in str(threshold_help.renderable)
+
+        condition_select.value = "items_below"
+        await pilot.pause()
+        assert threshold_input.placeholder == "e.g. 5"
+        assert "item count" in str(threshold_help.renderable).lower()
+
+        # The in-progress edit must have survived every condition change --
+        # this is proof the update was in-place, not a recompose.
+        assert pane.query_one("#rules-create-name", Input).value == "In-progress edit"
 
 
 # --- Fix round 2, Finding 4: `RuleFormVisibilityChanged` lets the owning
