@@ -451,7 +451,7 @@ async def test_console_dictation_insertion_is_undoable():
         composer.move_cursor_end()
         await pilot.pause(0.1)
 
-        console._insert_console_dictation(
+        console._dictation._insert_console_dictation(
             origin_session_id=session_id, transcript="there"
         )
         assert composer.draft_text() == "hello world there"
@@ -718,7 +718,7 @@ async def test_console_background_dictation_drops_stale_session_history():
         assert composer.draft_text() == ""
 
         # Dictation finishes for A while B is visible -- the store-only branch.
-        console._insert_console_dictation(
+        console._dictation._insert_console_dictation(
             origin_session_id=session_a.id, transcript="dictated words"
         )
         assert store.session_draft(session_a.id) == "hello dictated words"
