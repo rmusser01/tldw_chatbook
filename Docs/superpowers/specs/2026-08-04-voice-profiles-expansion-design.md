@@ -1,8 +1,10 @@
 # Voice profiles beyond audio.cpp + app-wide default voice profile — design
 
 Date: 2026-08-04
-Status: Draft — awaiting owner review
-Owner decisions recorded: 2026-08-04 (four rulings, §2)
+Status: Approved. **Slice 1 shipped 2026-08-06** (PR #1368 → dev `e4f7aa24e`, TASK-2450).
+Slices 2-4 remain unplanned by design — each is planned after the prior one lands, because
+slice 1 demonstrated how much implementation reshapes a plan (see the §3 correction).
+Owner decisions recorded: 2026-08-04 (five rulings, §2)
 Extends: ADR-023, ADR-028, ADR-037, ADR-039
 
 ## 1. Problem
@@ -37,7 +39,20 @@ Two user asks, grounded against dev `265dbd687`:
    time, **refuse + one-tap override** ("Speak with global defaults"), matching the
    existing character-voice failure pattern. Never silently substitute a voice.
 
-## 3. Current state — the four audio.cpp pins (verified)
+## 3. Current state — the audio.cpp pins
+
+> **Correction, recorded 2026-08-06 after slice 1 shipped.** This section named four pins,
+> derived by reading. Implementation found **eight-plus**: the four below, plus the
+> `TTSRequestedSelectionSnapshot` construction pin (playground provenance), the
+> `PortableTTSProfile` construction pin (portable/chatbook import), the
+> `commit_portable_profile_import` auto-assign gate, and the Roleplay assignment path's
+> *two* independent availability gates (widget handler + assignment worker). Two further
+> defects were emergent rather than pins: `observe_availability` coupled all-legacy pages
+> to audio.cpp health, and playground adoption forced legacy presets to "unavailable".
+>
+> The generalisable lesson, which cost three fix rounds: **a pin count derived from reading
+> is a lower bound, and a new state must be taught to every surface that reads it.** Only
+> driving the real TUI plus a classified grep of every availability comparison closed it.
 
 The profile **store is already provider-agnostic**: `TTS/profile_repository.py` has no
 provider pin, and `TTS/profile_types.py` applies the WAV / speed-1.0 / empty-options
