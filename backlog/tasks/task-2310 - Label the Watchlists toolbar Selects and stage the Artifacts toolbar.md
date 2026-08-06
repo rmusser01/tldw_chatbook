@@ -1,7 +1,7 @@
 ---
 id: TASK-2310
 title: Label the Watchlists toolbar Selects and stage the Artifacts toolbar
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-08-04'
 labels:

@@ -1,7 +1,7 @@
 ---
 id: TASK-2312
 title: Stable tab strip and status line across Watchlists sections
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-08-04'
 labels:

@@ -1,7 +1,7 @@
 ---
 id: TASK-2314
 title: First-run wizard honors early Escape
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-08-04'
 labels:
