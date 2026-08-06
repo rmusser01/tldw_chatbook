@@ -184,6 +184,7 @@ from ..Watchlists_Modules.sources_pane import (
     SourcesPane,
 )
 from ..Watchlists_Modules.watchlist_tree import (
+    ALL_SOURCES_BUCKET,
     AddSourceToWatchlistRequested,
     CreateWatchlistRequested,
     DeleteWatchlistRequested,
@@ -1110,6 +1111,16 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         self._breadcrumb_labels = self._resolve_breadcrumb_labels(self.selected_scope)
         self._apply_tree_data_to_live_surfaces()
 
+    def _rail_unread_suffix(self) -> str:
+        """The collapsed left rail's "N unread" suffix (task-2511 Task 9).
+
+        Empty when there is nothing unread — a permanent "0 unread" is
+        chrome, not information, and an expanded rail already shows the
+        per-node numbers.
+        """
+        unread = self._tree_counts.get(ALL_SOURCES_BUCKET, {}).get("unread", 0)
+        return f"{unread} unread" if unread else ""
+
     def _apply_tree_data_to_live_surfaces(self) -> None:
         """Publish freshly loaded tree data without recomposing the screen.
 
@@ -1185,6 +1196,17 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             # left `#artifacts-scope-note` on the old one. Same seed
             # `_build_detail_pane` applies on a rebuild.
             artifacts.scope_label = self._briefing_scope_label()
+        try:
+            workbench = self.query_one("#wl-workbench", WatchlistsWorkbench)
+        except NoMatches:
+            pass
+        else:
+            # task-2511 Task 9: the collapsed left rail's "N unread" header
+            # suffix tracks the counts this loader just refreshed. In place,
+            # never a recompose — same discipline as every other push here.
+            workbench.set_collapsed_suffixes(
+                {Region.LEFT_RAIL: self._rail_unread_suffix()}
+            )
         # TASK-2304 AC#2, found in live verification, not by the suite. Which
         # sources the current scope covers is WATCHLIST MEMBERSHIP, and this
         # loader runs after every write that changes it (`Add source`,
@@ -2472,6 +2494,10 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 # `_build_centre_status_header`. (They used to ride inside
                 # the FEEDS region's own body on Read; that region is gone.)
                 header=self._build_centre_status_header,
+                # task-2511 Task 9: the collapsed left rail keeps the total
+                # unread count visible; `_load_tree_data` refreshes it in
+                # place via `set_collapsed_suffixes`.
+                collapsed_suffixes={Region.LEFT_RAIL: self._rail_unread_suffix()},
                 id="wl-workbench",
             )
 

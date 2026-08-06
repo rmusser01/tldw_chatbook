@@ -92,6 +92,7 @@ class WatchlistsWorkbench(Horizontal):
         content: Mapping[Region, Callable[[], Widget]] | None = None,
         hidden: frozenset[Region] = frozenset(),
         header: Callable[[], Widget] | None = None,
+        collapsed_suffixes: Mapping[Region, str] | None = None,
         **kwargs: Any,
     ) -> None:
         """Build the workbench, seeding `region_layout` without triggering a recompose.
@@ -152,6 +153,10 @@ class WatchlistsWorkbench(Horizontal):
         self._content: dict[Region, Callable[[], Widget]] = dict(content or {})
         self._hidden = frozenset(hidden)
         self._header = header
+        # Extra text appended to a collapsed region's header (task-2511 Task
+        # 9): "▸ Watchlists  12 unread". Mutable via `set_collapsed_suffixes`
+        # because counts change while the region stays collapsed.
+        self._collapsed_suffixes: dict[Region, str] = dict(collapsed_suffixes or {})
         self.set_reactive(WatchlistsWorkbench.region_layout, layout)
 
     def compose(self) -> ComposeResult:
@@ -198,8 +203,9 @@ class WatchlistsWorkbench(Horizontal):
         if self.region_layout.is_collapsed(region):
             # A Button, not a Static: a collapsed region must stay focusable
             # and clickable, or collapsing it is one-way.
+            suffix = self._collapsed_suffixes.get(region, "")
             header = Button(
-                f"▸ {REGION_TITLES[region]}",
+                f"▸ {REGION_TITLES[region]}" + (f"  {suffix}" if suffix else ""),
                 id=f"wl-header-{region.value}",
                 compact=True,
             )
@@ -385,6 +391,27 @@ class WatchlistsWorkbench(Horizontal):
         if stale is not None:
             await stale.remove()
         await centre.mount(replacement, before=0)
+
+    def set_collapsed_suffixes(self, suffixes: Mapping[Region, str]) -> None:
+        """Update collapsed-header suffixes in place (no recompose).
+
+        Counts refresh while the rail stays collapsed; tearing the workbench
+        down for a number is exactly what `refresh_region_content` exists to
+        avoid for bodies. A no-op for regions not currently collapsed — they
+        have no header mounted to repaint.
+
+        Args:
+            suffixes: The new suffix per region, replacing the current map.
+        """
+        self._collapsed_suffixes = dict(suffixes)
+        for region, suffix in self._collapsed_suffixes.items():
+            if not self.region_layout.is_collapsed(region):
+                continue
+            try:
+                header = self.query_one(f"#wl-header-{region.value}", Button)
+            except NoMatches:
+                continue
+            header.label = f"▸ {REGION_TITLES[region]}" + (f"  {suffix}" if suffix else "")
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         """Turn a collapsed-region header click into a `RegionToggled` message.

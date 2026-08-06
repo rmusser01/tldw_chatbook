@@ -1,5 +1,6 @@
 import pytest
 from textual.app import App, ComposeResult
+from textual.widgets import Button
 
 from tldw_chatbook.UI.Watchlists_Modules.region_layout import Region, RegionLayout
 from tldw_chatbook.UI.Watchlists_Modules.watchlists_workbench import (
@@ -43,6 +44,56 @@ async def test_collapsed_region_renders_a_header_instead_of_a_body():
     async with app.run_test():
         assert app.query("#wl-header-content")
         assert not app.query("#wl-region-content")
+
+
+@pytest.mark.asyncio
+async def test_collapsed_header_shows_suffix():
+    """task-2511 Task 9: a collapsed rail advertises what it hides.
+
+    NNW's sidebar toggle keeps the unread total visible while collapsed;
+    here the collapsed left rail's header carries "N unread" so the user
+    never loses the number that drives daily triage.
+    """
+
+    class _App(App):
+        def compose(self) -> ComposeResult:
+            yield WatchlistsWorkbench(
+                RegionLayout(collapsed=frozenset({Region.LEFT_RAIL})),
+                collapsed_suffixes={Region.LEFT_RAIL: "12 unread"},
+                id="wl-workbench",
+            )
+
+    app = _App()
+    async with app.run_test():
+        header = app.query_one("#wl-header-left_rail", Button)
+        assert str(header.label) == "▸ Watchlists  12 unread"
+
+
+@pytest.mark.asyncio
+async def test_set_collapsed_suffixes_repaints_mounted_collapsed_header():
+    """Counts refresh while the rail stays collapsed: repaint in place.
+
+    A full recompose for a number is exactly what `refresh_region_content`
+    exists to avoid for bodies; expanded regions (no header mounted) are a
+    no-op.
+    """
+
+    class _App(App):
+        def compose(self) -> ComposeResult:
+            yield WatchlistsWorkbench(
+                RegionLayout(collapsed=frozenset({Region.LEFT_RAIL})),
+                id="wl-workbench",
+            )
+
+    app = _App()
+    async with app.run_test():
+        header = app.query_one("#wl-header-left_rail", Button)
+        assert str(header.label) == "▸ Watchlists"
+        workbench = app.query_one(WatchlistsWorkbench)
+        workbench.set_collapsed_suffixes({Region.LEFT_RAIL: "7 unread"})
+        assert str(header.label) == "▸ Watchlists  7 unread"
+        # Expanded region: nothing mounted to repaint, and no error.
+        workbench.set_collapsed_suffixes({Region.ITEMS: "ignored"})
 
 
 @pytest.mark.asyncio
