@@ -1645,6 +1645,78 @@ async def test_library_shell_search_rag_mode_blocks_run_without_a_ready_provider
 
 
 @pytest.mark.asyncio
+async def test_library_shell_search_rag_mode_blocks_run_when_endpoint_named_but_credential_missing(
+    monkeypatch,
+):
+    """(PR-T2 Task 7 fix round, I3) The branch that actually stops the
+    money, previously uncovered anywhere: a default endpoint NAME is
+    configured, but no credential resolves for it.
+
+    Distinct from `test_library_shell_search_rag_mode_blocks_run_without_a_
+    ready_provider` above, which blocks via the EMPTY-endpoint branch --
+    `resolve_library_rag_answer_provider` returns `(None, None)` there
+    before `library_rag_answer_provider_ready` ever reaches the credential
+    check. This is the harm PR-T2 is named for: a config that names a real
+    provider is not automatically a config that can pay for one. Not
+    covered by `test_product_maturity_gate16_library_search_rag.py`
+    either -- that file's `_ready_library_rag_provider` autouse fixture
+    makes it structurally unable to exercise the not-configured path.
+    """
+    monkeypatch.setattr(app_config, "default_api_endpoint", "openai", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    real_load_settings = app_config.load_settings
+
+    def _load_settings_with_no_openai_key(*args, **kwargs):
+        settings = dict(real_load_settings(*args, **kwargs))
+        api_settings = dict(settings.get("api_settings") or {})
+        openai_settings = dict(api_settings.get("openai") or {})
+        openai_settings.pop("api_key", None)
+        # A configured `api_key_env_var` would let `get_provider_readiness`
+        # resolve the env var this test just cleared -- drop it too, so
+        # the ONLY thing determining readiness is "no credential anywhere".
+        openai_settings.pop("api_key_env_var", None)
+        api_settings["openai"] = openai_settings
+        settings["api_settings"] = api_settings
+        return settings
+
+    monkeypatch.setattr(
+        app_config, "load_settings", _load_settings_with_no_openai_key
+    )
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one("#library-row-browse-search").press()
+        await _wait_for_selector(screen, pilot, "#library-rag-query-input")
+
+        screen.query_one("#library-rag-query-input", Input).value = "policy question"
+        await _wait_for_library_rag_query_ready(screen, pilot, "policy question")
+        # Still keyword (search) mode -- unaffected by the provider gate.
+        assert screen.query_one("#library-rag-run-query", Button).disabled is False
+
+        screen.query_one("#library-rag-mode-toggle", Button).press()
+        for _ in range(120):
+            toggles = list(screen.query("#library-rag-mode-toggle"))
+            if toggles and str(toggles[0].label) == "mode: RAG Answer ▸":
+                break
+            await pilot.pause(0.02)
+        else:
+            raise AssertionError("Mode toggle never switched to RAG Answer.")
+
+        await pilot.pause()
+        await pilot.pause()
+        # The endpoint NAME resolved ("openai") -- if the gate only checked
+        # that (the pre-Task-7 bug), Run would be enabled here. It must
+        # stay blocked because no credential resolves for that provider.
+        assert screen.query_one("#library-rag-run-query", Button).disabled is True
+        assert "Select a provider/model" in _visible_text(screen)
+
+
+@pytest.mark.asyncio
 async def test_library_shell_search_history_records_submitted_queries():
     """Running a query records it into the Recent searches collapsible and
     persists it into the in-memory ``app_config`` (most recent first).

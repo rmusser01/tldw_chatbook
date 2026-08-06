@@ -369,3 +369,101 @@ def test_no_legacy_or_modern_key_leaves_api_settings_api_key_unset(
         settings = config_mod.load_settings()
 
     assert not settings.get("api_settings", {}).get("anthropic", {}).get("api_key")
+
+
+# --- PR-T2 Task 7 fix round: reviewer findings I1, I2, I4 -----------------
+
+
+def test_modern_api_settings_key_outranks_the_env_var_for_the_spending_path(
+    tmp_path, monkeypatch
+):
+    """I1: named precedence for the case CLAUDE.md's general "env vars ->
+    config.toml -> defaults" ordering does NOT apply to.
+
+    Before PR-T2 Task 7, `chat_with_anthropic` read ONLY the legacy
+    `anthropic_api` dict, itself resolved env-before-TOML with no `api_
+    settings` input at all -- an explicit `api_settings.anthropic.api_key`
+    had zero effect on what was actually spent, even though `get_provider_
+    readiness` displayed it as the ready-making value. This is the
+    deliberate fix: an explicit, non-placeholder `api_settings.<provider>.
+    api_key` now wins over the environment variable for BOTH readers, so
+    the credential Console displays as "why you're ready" is the SAME one
+    the spend actually uses. `chat_with_openai` already did exactly this
+    overlay for its own dict before this task (`LLM_API_Calls.py:561-580`)
+    -- Task 7 makes the other 8 bridged providers consistent with it,
+    rather than the reverse (restoring env-first would leave `get_
+    provider_readiness`'s displayed source and the actually-spent key able
+    to diverge again, recreating a split this task exists to close).
+    """
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-stale-env-key")
+    toml_text = '[api_settings.anthropic]\napi_key = "sk-ant-current-modern-key"\n'
+    with _real_config(tmp_path, monkeypatch, toml_text):
+        settings = config_mod.load_settings()
+        readiness = get_provider_readiness("anthropic", settings)
+
+    assert readiness.api_key == "sk-ant-current-modern-key"
+    assert settings["anthropic_api"]["api_key"] == "sk-ant-current-modern-key"
+
+
+def test_a_placeholder_modern_key_falls_through_to_a_real_legacy_key_for_both_readers(
+    tmp_path, monkeypatch
+):
+    """I2: the bridge's placeholder detection must be the SAME check `get_
+    provider_readiness` uses -- not a locally re-declared one that
+    recognizes fewer placeholder spellings.
+
+    Concrete failure this pins: `api_settings.anthropic.api_key = "YOUR_KEY"`
+    (a placeholder `get_provider_readiness` already recognizes, but which
+    an earlier revision of `_normalize_legacy_provider_api_key` did NOT,
+    since it only special-cased the literal `"<API_KEY_HERE>"` string)
+    alongside a REAL `[API] anthropic_api_key`. Before this fix, the bridge
+    treated `"YOUR_KEY"` as "explicit modern config wins", writing the
+    placeholder itself into the legacy `anthropic_api` dict `chat_with_
+    anthropic` spends through -- while readiness correctly said not-ready.
+    That is the exact split this task exists to close, recreated inside
+    the function meant to end it. Now both readers fall through to the
+    real legacy key instead.
+    """
+    _clear_provider_env(monkeypatch)
+    toml_text = (
+        "[api_settings.anthropic]\n"
+        'api_key = "YOUR_KEY"\n'
+        "\n"
+        "[API]\n"
+        'anthropic_api_key = "sk-ant-real-legacy-key"\n'
+    )
+    with _real_config(tmp_path, monkeypatch, toml_text):
+        settings = config_mod.load_settings()
+        readiness = get_provider_readiness("anthropic", settings)
+
+    assert readiness.ready is True
+    assert readiness.api_key == "sk-ant-real-legacy-key"
+    assert settings["anthropic_api"]["api_key"] == "sk-ant-real-legacy-key"
+    # The placeholder must never land anywhere a spend could read it.
+    assert settings["api_settings"]["anthropic"]["api_key"] == "sk-ant-real-legacy-key"
+
+
+def test_legacy_API_section_only_mistral_key_satisfies_readiness_and_spend(
+    tmp_path, monkeypatch
+):
+    """I4: `mistral` IS bridged (a prior revision wrongly excluded it).
+
+    `chat_with_mistral` (`LLM_API_Calls.py:~4617-4621`) reads `api_settings.
+    mistral` -- not the shipped default's decorative `[api_settings.
+    mistralai]` table -- so `"mistral"` (what `provider_config_key
+    ("Mistral")` computes, and what this bridge writes into) IS the live
+    table the spend path already reads; bridging under it closes a real
+    gap rather than creating a disconnected table.
+    """
+    monkeypatch.delenv("MISTRAL_API_KEY", raising=False)
+    with _real_config(
+        tmp_path,
+        monkeypatch,
+        '[API]\nmistral_api_key = "sk-mistral-legacy-only-key"\n',
+    ):
+        settings = config_mod.load_settings()
+        readiness = get_provider_readiness("mistral", settings)
+
+    assert readiness.ready is True
+    assert readiness.api_key == "sk-mistral-legacy-only-key"
+    assert settings["mistral_api"]["api_key"] == "sk-mistral-legacy-only-key"

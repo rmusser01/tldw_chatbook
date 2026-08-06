@@ -782,8 +782,6 @@ def resolve_tldw_api_config(app_config) -> Dict:
 TLDW_API_PLACEHOLDER_BASE_URL = "http://127.0.0.1:8000"
 TLDW_API_PLACEHOLDER_AUTH_TOKEN = "default-secret-key-for-single-user"
 
-_API_KEY_PLACEHOLDER = "<API_KEY_HERE>"
-
 #: Providers whose legacy `[API] <provider>_api_key` TOML key and
 #: `<PROVIDER>_API_KEY` environment variable both follow the plain
 #: `_normalize_legacy_provider_api_key` convention, keyed by the SAME
@@ -792,12 +790,20 @@ _API_KEY_PLACEHOLDER = "<API_KEY_HERE>"
 #: lets the bridge below write into `api_settings.<provider_key>`, the
 #: table `get_provider_readiness` actually reads.
 #:
-#: `mistral` is deliberately excluded: the shipped default config keys its
-#: modern table `[api_settings.mistralai]` (matching `[providers]`), one
-#: normalized key away from what `provider_config_key("Mistral")` computes
-#: (`"mistral"`) -- bridging under `"mistral"` would create a second,
-#: disconnected table rather than closing a gap. That mismatch predates
-#: this task and is out of scope for it.
+#: `mistral` IS included, deliberately, even though the shipped default
+#: config's own decorative table is `[api_settings.mistralai]` (matching
+#: `[providers]`'s `MistralAI` listing): `LLM_Calls/LLM_API_Calls.py`'s
+#: `chat_with_mistral` (~4617-4621) reads `api_settings.mistral` -- NOT
+#: `api_settings.mistralai` -- so `"mistral"` (what `provider_config_key
+#: ("Mistral")` computes, and what this bridge writes into) IS the live
+#: table the spend path already reads. An earlier revision of this comment
+#: claimed bridging under `"mistral"` would create "a second, disconnected
+#: table" -- that was backwards: `[api_settings.mistralai]` is the
+#: disconnected one; `api_settings.mistral` was simply absent from the
+#: shipped defaults, not wrong to write into. (Whether `MistralAI`-display
+#: users should also read `[api_settings.mistralai]`, and whether that
+#: default table should be renamed, is a separate, pre-existing question
+#: out of scope for this task.)
 _LEGACY_PROVIDER_API_KEY_BRIDGE: tuple[tuple[str, str, str], ...] = (
     ("openai", "openai_api_key", "OPENAI_API_KEY"),
     ("anthropic", "anthropic_api_key", "ANTHROPIC_API_KEY"),
@@ -807,6 +813,7 @@ _LEGACY_PROVIDER_API_KEY_BRIDGE: tuple[tuple[str, str, str], ...] = (
     ("openrouter", "openrouter_api_key", "OPENROUTER_API_KEY"),
     ("deepseek", "deepseek_api_key", "DEEPSEEK_API_KEY"),
     ("google", "google_api_key", "GOOGLE_API_KEY"),
+    ("mistral", "mistral_api_key", "MISTRAL_API_KEY"),
 )
 
 
@@ -834,9 +841,26 @@ def _normalize_legacy_provider_api_key(
     Precedence: (1) an explicit, non-placeholder `api_settings.<provider_
     key>.api_key` always wins -- a value entered through the Settings
     screen (the modern location) was a deliberate choice; (2) the
-    environment variable, matching the existing legacy-resolution order
-    this replaces (env before TOML); (3) the legacy `[API] <toml_key>`
-    value.
+    environment variable; (3) the legacy `[API] <toml_key>` value.
+
+    **This precedence deliberately inverts the module docstring's general
+    "env vars -> config.toml -> defaults" priority for this one credential
+    lookup.** Before this task, `chat_with_openai` ALREADY overlaid a
+    canonical `api_settings.openai` value onto the legacy dict for `api_
+    key`/`api_base_url` (see its own call site, `LLM_API_Calls.py:561-580`)
+    while every OTHER provider's `<provider>_api` dict resolved env-before-
+    TOML with no `api_settings` input at all -- two silently different
+    rules per provider. Extending "modern config wins" to all 9 bridged
+    providers, rather than restoring env-first everywhere, is the choice
+    that makes `get_provider_readiness` (which always shows the config
+    value first) and the actual spend agree on which key was used -- the
+    entire point of this task. A user who explicitly set `api_settings.
+    <provider>.api_key` (e.g. via the Settings screen) now spends with that
+    value even if a stale environment variable is also set; this is a
+    real, user-visible behavior change and is intentional. See PR-T2 Task
+    7's test `test_modern_api_settings_key_outranks_the_env_var_for_the_
+    spending_path` (`Tests/Chat/test_provider_readiness.py`) and Task 8's
+    docs pass, which should call this out explicitly.
 
     Only the (3) TOML-sourced fallback is ever written back into
     `api_settings_section` -- never an (2) env-sourced one. Writing an
@@ -852,6 +876,22 @@ def _normalize_legacy_provider_api_key(
     A provider table that does not yet exist is created only when there is
     an actual TOML-sourced value to write into it -- never eagerly, since
     several tests pin an untouched config's `api_settings` as exactly `{}`.
+
+    "Non-placeholder" is delegated to `Chat/provider_readiness.is_valid_
+    provider_api_key` -- NOT a locally re-declared placeholder set. An
+    earlier revision of this function defined its own single-value
+    placeholder check (`value != "<API_KEY_HERE>"`), which missed `provider
+    _readiness`'s other four recognized placeholders (`""`, `"YOUR_KEY"`,
+    `"your_key"`, `"your-api-key"`). Concretely: `[api_settings.anthropic]
+    api_key = "YOUR_KEY"` alongside a REAL `[API] anthropic_api_key` used
+    to have the bridge treat `"YOUR_KEY"` as "explicit modern config wins"
+    and write it into the legacy `anthropic_api` dict `chat_with_anthropic`
+    spends through, while `get_provider_readiness` (which DOES recognize
+    `"YOUR_KEY"`) correctly reported not-ready -- recreating, inside the
+    very function meant to end it, the exact kind of two-readers-disagree
+    split this task exists to close. Importing the shared check instead of
+    hand-rolling a second one is what makes "modern config is valid" mean
+    the same thing everywhere.
 
     Args:
         api_settings_section: The (already TOML-loaded) `api_settings`
@@ -871,14 +911,25 @@ def _normalize_legacy_provider_api_key(
         built just below each call site), or `None` when no source
         resolves one.
     """
+    # Local import: `Chat/provider_readiness.py` itself has zero
+    # `tldw_chatbook`-internal imports (leaf module), but resolving
+    # `tldw_chatbook.Chat.provider_readiness` still initializes the
+    # `tldw_chatbook.Chat` PACKAGE first, which imports several sibling
+    # modules -- one of which (`server_chat_conversation_service.py`, via
+    # `runtime_policy.bootstrap`) imports back from `tldw_chatbook.config`.
+    # Deferring the import to here (called only from inside `load_settings
+    # ()`, itself only invoked once this module's own top-level names are
+    # already bound -- see the module-level `settings = load_settings()`
+    # call near the bottom of this file) avoids resolving that chain while
+    # THIS module is still mid-import.
+    from .Chat.provider_readiness import is_valid_provider_api_key
+
     provider_table = api_settings_section.get(provider_key)
     modern_value = (
         provider_table.get("api_key") if isinstance(provider_table, dict) else None
     )
-    if isinstance(modern_value, str):
-        stripped_modern = modern_value.strip()
-        if stripped_modern and stripped_modern != _API_KEY_PLACEHOLDER:
-            return modern_value  # explicit modern config always wins
+    if is_valid_provider_api_key(modern_value):
+        return modern_value  # explicit modern config always wins
 
     env_value = os.getenv(env_var)
     if env_value:
@@ -1099,16 +1150,15 @@ def load_settings(force_reload: bool = False) -> Dict:
     ) -> Optional[str]:
         return os.getenv(env_var, section.get(toml_key))
 
-    # PR-T2 Task 7: these 8 providers' legacy `[API] <provider>_api_key`
+    # PR-T2 Task 7: these 9 providers' legacy `[API] <provider>_api_key`
     # value and `api_settings.<provider>.api_key` are resolved together by
     # `_normalize_legacy_provider_api_key` -- ONE normalization -- so
     # `final_api_settings` (below, "api_settings" in config_dict, what
     # `get_provider_readiness` reads) and this same value (below, the
     # `<provider>_api` dicts `chat_with_<provider>` spends through) can
-    # never disagree about the same config. `mistral` is excluded -- see
-    # `_LEGACY_PROVIDER_API_KEY_BRIDGE`'s docstring comment. `elevenlabs`
-    # is untouched: it is a TTS credential, not a Chat provider
-    # `get_provider_readiness` resolves.
+    # never disagree about the same config. `elevenlabs` is untouched: it
+    # is a TTS credential, not a Chat provider `get_provider_readiness`
+    # resolves.
     _bridged_provider_api_keys = {
         provider_key: _normalize_legacy_provider_api_key(
             final_api_settings,
@@ -1127,7 +1177,7 @@ def load_settings(force_reload: bool = False) -> Dict:
     openrouter_api_key = _bridged_provider_api_keys["openrouter"]
     deepseek_api_key = _bridged_provider_api_keys["deepseek"]
     google_api_key = _bridged_provider_api_keys["google"]
-    mistral_api_key = get_api_key("mistral_api_key", "MISTRAL_API_KEY")
+    mistral_api_key = _bridged_provider_api_keys["mistral"]
     elevenlabs_api_key = get_api_key("elevenlabs_api_key", "ELEVENLABS_API_KEY")
 
     # Determine platform-specific default STT provider
