@@ -5858,6 +5858,38 @@ Button.mcp-callout {
     background: $ds-surface-panel;
 }
 
+/* task-2272 item 1 (PR-T3 Task 6): the Test Tool's typed form rendered every
+   boolean field as an empty ~2-row box -- no toggle glyph, no label, state
+   impossible to read (`search_rag`'s `use_semantic`, found in the PR-5 live
+   check).
+
+   Cause, measured in a test app with this bundle loaded: `css/features/
+   _conversations.tcss` ships an unscoped `Checkbox { width: 100%; height:
+   2; }` type selector that reaches every checkbox app-wide (the SAME rule
+   `.settings-imagegen-backend-row Checkbox`, `LibraryIngestCanvas .type-
+   group-contents Checkbox` and `#evals-bench-capture-continuations` each
+   already carry their own escape from). Checkbox's own border takes both of
+   those rows, leaving the widget's CONTENT height at literally 0 -- so the
+   glyph and label had nowhere to paint and the box was all the user saw.
+   `height: auto` gives the border its two rows AND the content its one back.
+
+   The glyph paints "X" in BOTH states, distinguished by colour alone
+   (task-1624's finding for `ImageGenSettingsPanel`) -- reuse that fix's
+   idiom so OFF hides the glyph against the panel and ON shows it: with no
+   On/Off word beside it here, the glyph IS the state carrier, and a boolean
+   the user cannot read is a lie about what was sent to the tool. */
+MCPSchemaForm Checkbox {
+    width: auto;
+    height: auto;
+    min-height: 1;
+}
+MCPSchemaForm Checkbox > .toggle--button {
+    color: $ds-surface-panel;
+}
+MCPSchemaForm Checkbox.-on > .toggle--button {
+    color: $success;
+}
+
 /* --- MCP Hub Phase 5 (T9: Audit mode + Console batch approvals) ------ */
 
 /* Kept in lockstep with the baseline copy in MCPAuditMode.DEFAULT_CSS
