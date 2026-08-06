@@ -6,7 +6,7 @@ import time
 from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any
 
 from loguru import logger
 
@@ -1238,20 +1238,30 @@ class UnifiedMCPControlPlaneService:
                 # serially, so a `tools/call` in the middle would already
                 # have executed by the time a per-item refusal could
                 # report it, and would report as an ordinary batch row.
-                # `Mapping`, not `dict` (Fix Round A, Minor #4): `local_
-                # service.run_runtime_batch()` accepts any `Mapping` per
-                # item, and this scan must recognize everything that
-                # runner will treat as a request or a non-dict `Mapping`
-                # item would skip the scan silently. Unreachable from the
-                # UI today -- the payload here is always `json.loads`
-                # output, which only ever produces `dict` -- but the
-                # delegate-level refusal (`LocalMCPRuntimeDelegate.
-                # request()`) is the real backstop for that gap either way.
-                for request in requests:
-                    if isinstance(request, Mapping):
-                        self._refuse_raw_tool_call(request.get("method"))
+                #
+                # Item 2 (PR-T3 fix round F): normalized ONCE via
+                # `_normalize_batch_requests()` -- the same `dict(request)`
+                # coercion `local_service.run_runtime_batch()` applies
+                # (`local_control_service.py:500`) -- and that SAME
+                # normalized list is what both this scan and the dispatch
+                # below consume. Before this, the scan checked
+                # `isinstance(request, Mapping)` against the RAW items
+                # (widened from `dict` to `Mapping` in Fix Round A, Minor
+                # #4) while the real dispatcher's `dict(request)` also
+                # accepts a list of `(key, value)` pairs -- a `list` is
+                # neither, so that shape skipped the scan silently and
+                # still ran for real. See `_normalize_batch_requests()`'s
+                # own docstring for the full mechanism. The delegate-level
+                # refusal (`LocalMCPRuntimeDelegate.request()`) remains the
+                # durable backstop for callers that reach it without going
+                # through this scan at all -- this fix does not replace
+                # that, it closes the gap that let this scan disagree with
+                # the dispatcher it is supposed to pre-empt.
+                normalized_requests = self._normalize_batch_requests(requests)
+                for request in normalized_requests:
+                    self._refuse_raw_tool_call(request.get("method"))
                 return await self._maybe_await(
-                    self.local_service.run_runtime_batch(requests)
+                    self.local_service.run_runtime_batch(normalized_requests)
                 )
             raise ValueError(f"Unsupported Unified MCP local action: {action_name}")
 
@@ -2523,6 +2533,44 @@ class UnifiedMCPControlPlaneService:
             timeout_seconds=self._lifecycle_timeout(),
             registered_argument_names=registered_argument_names,
         )
+
+    @staticmethod
+    def _normalize_batch_requests(requests: list[Any]) -> list[dict[str, Any]]:
+        """Coerce a ``runtime.batch`` ``requests`` list exactly the way
+        :meth:`LocalMCPControlService.run_runtime_batch` does.
+
+        Item 2 (PR-T3 fix round F). The pre-dispatch scan used to check
+        ``isinstance(request, Mapping)`` directly against the RAW items --
+        but ``local_control_service.run_runtime_batch()``
+        (``local_control_service.py:500``) normalizes every item with
+        ``dict(request)``, which also accepts a list of ``(key, value)``
+        pairs (``dict([["method", "tools/call"]])`` succeeds). A JSON array
+        nested inside ``requests`` is exactly that shape -- ``json.loads``
+        produces a bare ``list`` for a JSON array, and the Advanced pane's
+        raw-JSON textarea is reachable with one -- so it is a ``list``, not
+        a ``Mapping``, and the OLD scan skipped it silently while the real
+        dispatcher still ran it.
+
+        Called ONCE here and the result is reused for both the scan
+        (:meth:`_refuse_raw_tool_call` below) and the actual dispatch, so
+        the two can never again disagree about what counts as a request --
+        a duplicated coercion rule in two places is how they drifted apart
+        the first time. Any item that is not ``dict``-coercible (neither a
+        ``Mapping`` nor an iterable of pairs) raises the SAME
+        ``TypeError``/``ValueError`` ``run_runtime_batch()`` would have
+        raised for it -- this only moves the moment that error surfaces
+        earlier, before any item has dispatched, which is a strict
+        improvement for the same "check everything before running
+        anything" reason the scan exists at all.
+
+        Args:
+            requests: The raw ``requests`` list from the ``runtime.batch``
+                payload.
+
+        Returns:
+            One ``dict`` per item, in order.
+        """
+        return [dict(request) for request in requests]
 
     def _refuse_raw_tool_call(self, method: Any) -> None:
         """Refuse a raw ``tools/call`` on the runtime request/batch runners.

@@ -756,6 +756,86 @@ async def test_raw_tools_call_inside_a_batch_as_non_dict_mapping_is_refused(tmp_
 
 
 @pytest.mark.asyncio
+async def test_raw_tools_call_as_a_list_of_pairs_inside_a_batch_is_refused_before_anything_runs(
+    tmp_path,
+):
+    """Item 2 (PR-T3 fix round F). The pre-dispatch scan only ever inspected
+    items where `isinstance(request, Mapping)` -- but `LocalMCPControlService.
+    run_runtime_batch()` (`local_control_service.py:500`) normalizes every
+    item with `dict(request)`, which ALSO accepts a list of `(key, value)`
+    pairs. `json.loads` produces exactly a bare `list` for a JSON array, so
+    a payload like
+
+        {"requests": [{"method": "tools/list"}, [["method", "tools/call"]]]}
+
+    -- reachable from the Advanced pane's raw-JSON textarea -- has its
+    second item skip the scan entirely (it is a `list`, not a `Mapping`)
+    while the real dispatcher still normalizes and runs it.
+
+    This falsifies `RawToolCallRefusedError`'s own docstring promise ("a
+    refusal ... that never reached the tool") in a subtler way than an
+    outright miss: the scan DOES eventually refuse this batch -- but only
+    after item 0 has already dispatched for real through the delegate and
+    been recorded, because the durable backstop
+    (`LocalMCPRuntimeDelegate.request()`) is what actually catches item 1,
+    one item late. "It raised" alone is not evidence of the fix -- the
+    pre-fix code raises too. The activity log staying non-empty is the
+    tell; this test's post-fix assertion is that it stays EMPTY.
+
+    Wired with a REAL `LocalMCPControlService` (default, real
+    `LocalMCPRuntimeDelegate`) instead of this file's `FakeLocalService` --
+    that fake's own `run_runtime_batch()` neither coerces a list of pairs
+    nor reproduces the delegate's `tools/call` backstop, so it cannot
+    exercise this bug either way.
+    """
+    store = LocalMCPStore(tmp_path / "store.json")
+    local_service = LocalMCPControlService(
+        store=store, client=None, manifest_provider=lambda: {}
+    )
+    service = UnifiedMCPControlPlaneService(
+        local_service=local_service,
+        server_service=None,
+        target_store=None,
+        context_store=None,
+    )
+
+    with pytest.raises(PermissionError, match="Execute Local Tool"):
+        await service.run_action(
+            "runtime.batch",
+            {
+                "requests": [
+                    {"method": "tools/list"},
+                    [["method", "tools/call"]],
+                ]
+            },
+        )
+
+    activity = local_service.get_runtime_activity()
+    assert activity["entries"] == [], (
+        "the pre-dispatch scan must refuse the WHOLE batch before any item "
+        "dispatches -- a non-empty activity log means an earlier item "
+        "(here: the 'tools/list' request) already ran for real"
+    )
+
+
+@pytest.mark.asyncio
+async def test_raw_tools_call_as_a_list_of_pairs_alone_in_a_batch_is_refused(tmp_path):
+    """Companion control to the test above, isolating the SAME normalization
+    gap without the "does item 0 leak first" timing question -- a batch
+    whose ONLY item is a list-of-pairs `tools/call` must still be refused
+    (not silently treated as an unrecognized, harmless item)."""
+    service, fake, client, store = _service(tmp_path)
+
+    with pytest.raises(PermissionError, match="Execute Local Tool"):
+        await service.run_action(
+            "runtime.batch",
+            {"requests": [[["method", "tools/call"], ["params", {"name": "calculator"}]]]},
+        )
+
+    assert fake.execute_tool_calls == []
+
+
+@pytest.mark.asyncio
 async def test_other_runtime_request_methods_are_untouched(tmp_path):
     """The diagnostic value of the raw request runner survives: only the
     executing method is refused."""
