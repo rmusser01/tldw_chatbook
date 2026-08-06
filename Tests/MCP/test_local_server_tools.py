@@ -232,3 +232,65 @@ def test_flag_off_registers_nothing(bare_server, monkeypatch, tmp_path):
 
     # Default flag (False) -> no-op; pre-existing tools untouched.
     assert _fastmcp_tool_names(bare_server.mcp) == {"existing_tool"}
+
+
+def test_parameter_summary_renders_required_and_types():
+    from tldw_chatbook.MCP.local_server_tools import _parameter_summary
+
+    schema = {
+        "type": "object",
+        "properties": {
+            "path": {"type": "string"},
+            "limit": {"type": "integer"},
+        },
+        "required": ["path"],
+    }
+    out = _parameter_summary(schema)
+    assert "path (required): string" in out
+    assert "limit: integer" in out
+    assert _parameter_summary({"type": "object"}) == ""
+
+
+def test_registration_failure_does_not_sink_server_init(monkeypatch, tmp_path):
+    """An exception in the flag-on body logs and continues (no local tools)."""
+    import tldw_chatbook.MCP.server as server_mod
+
+    monkeypatch.setattr(
+        server_mod, "MCP_AVAILABLE", True, raising=False
+    )
+    called = []
+
+    class _FakeFastMCP:
+        def tool(self, **_kwargs):
+            def deco(fn):
+                called.append(fn)
+                return fn
+
+            return deco
+
+    server = server_mod.TldwMCPServer.__new__(server_mod.TldwMCPServer)
+    server.mcp = _FakeFastMCP()
+
+    import tldw_chatbook.MCP.local_server_tools as lst
+
+    monkeypatch.setattr(
+        "tldw_chatbook.MCP.server.get_cli_setting"
+        if hasattr(server_mod, "get_cli_setting")
+        else "tldw_chatbook.config.get_cli_setting",
+        lambda section, key, default=None: True
+        if (section, key) == ("mcp", "expose_local_tools")
+        else default,
+    )
+
+    def boom(*_a, **_k):
+        raise RuntimeError("store exploded")
+
+    monkeypatch.setattr(lst, "build_server_local_provider", boom)
+    monkeypatch.setattr(
+        "tldw_chatbook.MCP.server.build_server_local_provider",
+        boom,
+        raising=False,
+    )
+    # Must not raise — server init survives without local tools.
+    server._register_local_agent_tools()
+    assert called == []

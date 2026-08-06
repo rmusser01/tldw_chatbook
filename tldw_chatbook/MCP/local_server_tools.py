@@ -129,6 +129,25 @@ def _make_registration_handler(
     return handler
 
 
+def _parameter_summary(parameters: dict) -> str:
+    """Render a compact parameter summary for appending to a tool description.
+
+    FastMCP derives schemas from type annotations, so the generic
+    ``arguments: dict`` binding leaves external clients with no parameter
+    documentation; this carries the essentials (names, required, types) in
+    the description instead. Returns "" when there are no properties.
+    """
+    properties = parameters.get("properties") or {}
+    if not properties:
+        return ""
+    required = set(parameters.get("required") or ())
+    parts = [
+        f"{name}{' (required)' if name in required else ''}: {spec.get('type', 'any')}"
+        for name, spec in properties.items()
+    ]
+    return " Parameters: " + "; ".join(parts) + "."
+
+
 def _local_agent_tool_registrations(
     provider: LocalToolProvider,
 ) -> list[LocalToolRegistration]:
