@@ -804,7 +804,21 @@ def resolve_effective_state_by_key(
       to hash-compare, so it resolves to ``ask`` instead
       (``config_changed=True``, reusing the rug-pull marker's "review
       before trusting this" UI treatment): safer than silently trusting a
-      stale ``allow``.
+      stale ``allow``. **Except** for ``server_key in HASH_FREE_SERVER_KEYS``
+      (in-process built-in tools / the built-in MCP server): those keys are
+      already exempt from the hash comparison in
+      ``resolve_effective_state()`` for the reason documented on that
+      constant -- they're app code, not a remote server, so there is no
+      staleness to guard against -- and the rationale for THIS collapse
+      ("cannot be confirmed fresh without a hash to compare") is void when
+      there was never going to be a hash comparison in the first place. An
+      explicit or inherited ``allow`` for one of those keys resolves at
+      full fidelity, same as ``resolve_effective_state()`` would with a
+      live ``HubTool``. Without this exemption, the SAME hash-free tool set
+      to Allow would record ``decision="approved"`` (asked-and-approved)
+      when resolved here and ``decision="allowed"`` when resolved via
+      ``resolve_effective_state()`` -- a cross-surface split in the audit
+      trail.
 
     High-risk-tag flooring is skipped too (no ``HubTool.tags`` to check);
     that's covered by the "any allow downgrades to ask" rule above, which
@@ -848,7 +862,7 @@ def resolve_effective_state_by_key(
             if state not in STORE_STATES:
                 state = DEFAULT_GLOBAL
 
-    if state == "allow":
+    if state == "allow" and server_key not in HASH_FREE_SERVER_KEYS:
         return EffectiveToolState(state="ask", origin=origin, config_changed=True)
     return EffectiveToolState(state=state, origin=origin)
 

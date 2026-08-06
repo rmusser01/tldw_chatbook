@@ -2401,18 +2401,26 @@ class UnifiedMCPControlPlaneService:
         the Test Tool runner and the agent bridge, so it is gated and
         logged like every other run.
 
-        The gate is :meth:`gate_tool_test_by_key` -- the Advanced runner
-        names a tool in raw JSON and has no live ``HubTool`` to
-        fingerprint, which is exactly the case that seam exists for. It
-        resolves ``deny``/``ask`` at full fidelity and collapses any
-        ``allow`` to ``ask``; a ``deny`` is refused here (nothing runs, a
-        ``decision="denied"`` row is recorded), and anything else executes
-        under ``decision="approved"``, naming the Advanced runner's own
-        two-press confirm (``MCPInspector._run_advanced_action()``) as the
-        approval -- the same contract, and the same audit vocabulary, the
-        agent bridge's Ask-then-approved calls already use. A caller that
-        skips that confirm is the one lying to the log, not this method:
-        the gate's hard "Off" verdict is enforced here regardless.
+        The gate is :meth:`gate_tool_test_by_key`, always called with
+        ``BUILTIN_SERVER_KEY`` -- the Advanced runner names a tool in raw
+        JSON and has no live ``HubTool`` to fingerprint, which is exactly
+        the case that seam exists for. It resolves ``deny``/``ask`` at full
+        fidelity; an ``allow`` collapses to ``ask`` UNLESS the server key is
+        in ``HASH_FREE_SERVER_KEYS`` (Fix Round A, Item 1) -- and
+        ``BUILTIN_SERVER_KEY`` always is, so a tool explicitly (or by
+        inherited default) set to Allow resolves as ``allow`` here, same as
+        :meth:`gate_tool_test` would with a live ``HubTool``. A ``deny`` is
+        refused here (nothing runs, a ``decision="denied"`` row is
+        recorded); an ``allow`` executes under ``decision="allowed"``; and
+        an ``ask`` executes under ``decision="approved"``, naming the
+        Advanced runner's own two-press confirm
+        (``MCPInspector._run_advanced_action()``) as the approval -- the
+        same contract, and the same audit vocabulary, the agent bridge's
+        Ask-then-approved calls already use. That confirm is a UI-level
+        mis-click guard independent of the gate state, not a substitute for
+        it: a caller that skips it is the one lying to the log, not this
+        method, and the gate's hard "Off" verdict is enforced here
+        regardless of whether a confirm ever happened.
 
         A gate resolution that RAISES fails closed (a synthetic deny),
         mirroring ``MCPWorkbench._resolve_test_gate()``: a runtime error

@@ -14,6 +14,7 @@ import json
 
 from tldw_chatbook.MCP.hub_tool_catalog import HubTool
 from tldw_chatbook.MCP.permission_store import (
+    HASH_FREE_SERVER_KEYS,
     HIGH_RISK_TAGS,
     EffectiveToolState,
     cycle_global,
@@ -454,6 +455,74 @@ def test_resolve_by_key_invalid_global_default_falls_back_to_ask():
 
     assert result.state == "ask"
     assert result.origin == "global_default"
+
+
+# -- HASH_FREE_SERVER_KEYS exemption at the by-key collapse -------------------
+#
+# `resolve_effective_state()` (the live-`HubTool` resolver) never downgrades
+# an explicit `allow` for a server in `HASH_FREE_SERVER_KEYS` -- those keys
+# are in-process code (the agent-runtime built-in tools, and the built-in MCP
+# server) that changes only via an app update, so the hash-staleness guard
+# protects nothing for them and would only produce rug-pull false positives.
+# `resolve_effective_state_by_key()`'s unconditional "any allow collapses to
+# ask" final step used to ignore that exemption entirely, so the SAME tool
+# set to Allow recorded `decision="approved"` (asked-and-approved) when
+# resolved by key (the Advanced pane's `tool.execute` route) and
+# `decision="allowed"` (no ask needed) when resolved with a live `HubTool`
+# (the Test Tool panel) -- a cross-surface split in the audit trail this
+# programme exists to close. These three pin the fix: the two HASH_FREE
+# fixtures below assert `state == "allow"` was verified to be `"ask"` before
+# the fix (see the coordinator's RED run), and the control case pins that the
+# exemption is narrow, not a general relaxation of the collapse.
+
+
+def test_resolve_by_key_hash_free_server_explicit_allow_is_not_downgraded():
+    for hash_free_key in HASH_FREE_SERVER_KEYS:
+        payload = _payload(
+            servers={hash_free_key: {"tools": {"calculator": {"state": "allow"}}}}
+        )
+
+        result = resolve_effective_state_by_key(payload, hash_free_key, "calculator")
+
+        assert result.state == "allow", hash_free_key
+        assert result.origin == "tool_override"
+        assert result.config_changed is False
+
+
+def test_resolve_by_key_hash_free_server_inherited_allow_is_not_downgraded():
+    for hash_free_key in HASH_FREE_SERVER_KEYS:
+        payload = _payload(global_default="allow", servers={hash_free_key: {}})
+
+        result = resolve_effective_state_by_key(payload, hash_free_key, "calculator")
+
+        assert result.state == "allow", hash_free_key
+        assert result.origin == "global_default"
+        assert result.config_changed is False
+
+
+def test_resolve_by_key_hash_free_server_default_allow_is_not_downgraded():
+    for hash_free_key in HASH_FREE_SERVER_KEYS:
+        payload = _payload(servers={hash_free_key: {"default": "allow"}})
+
+        result = resolve_effective_state_by_key(payload, hash_free_key, "calculator")
+
+        assert result.state == "allow", hash_free_key
+        assert result.origin == "server_default"
+        assert result.config_changed is False
+
+
+def test_resolve_by_key_non_hash_free_server_allow_still_downgrades():
+    """Control: a server key NOT in ``HASH_FREE_SERVER_KEYS`` keeps the
+    existing "can't verify without a live tool, so ask" collapse -- the
+    exemption above must be narrow, scoped to the pinned in-process keys,
+    not a general relaxation of the by-key rug-pull-safety collapse."""
+    payload = _payload(servers={"local:demo": {"tools": {"search": {"state": "allow"}}}})
+
+    result = resolve_effective_state_by_key(payload, "local:demo", "search")
+
+    assert result.state == "ask"
+    assert result.origin == "tool_override"
+    assert result.config_changed is True
 
 
 # -- hand-edited store: null/malformed intermediates never crash --------------

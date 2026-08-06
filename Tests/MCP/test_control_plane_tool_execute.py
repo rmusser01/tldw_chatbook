@@ -458,10 +458,15 @@ async def test_advanced_tool_execute_refusal_is_recorded_as_denied(tmp_path):
 
 @pytest.mark.asyncio
 async def test_advanced_tool_execute_records_the_decision_it_ran_under(tmp_path):
-    """An Ask-resolved tool (the default posture, and what
-    `resolve_effective_state_by_key()` collapses every non-deny verdict to)
-    records "approved" -- the Advanced runner's confirm press is the
-    approval, the same vocabulary the agent bridge's approved calls use."""
+    """An Ask-resolved tool (the default posture for a NON-hash-free server
+    key, and what `resolve_effective_state_by_key()` collapses every
+    non-deny verdict to for those) records "approved" -- the Advanced
+    runner's confirm press is the approval, the same vocabulary the agent
+    bridge's approved calls use. `builtin:tldw_chatbook` is itself in
+    `HASH_FREE_SERVER_KEYS`, so an explicit "ask" override (set here) still
+    resolves to "ask"/"approved" same as always -- only an explicit/
+    inherited "allow" for a hash-free key is exempt from the collapse (see
+    `test_advanced_tool_execute_allow_records_allowed_not_approved` below)."""
     service, fake, client, store = _service(tmp_path)
     service.set_tool_state("builtin:tldw_chatbook", "calculator", "ask")
 
@@ -469,6 +474,34 @@ async def test_advanced_tool_execute_records_the_decision_it_ran_under(tmp_path)
 
     records = _log_records(store)
     assert records and records[0]["decision"] == "approved"
+
+
+@pytest.mark.asyncio
+async def test_advanced_tool_execute_allow_records_allowed_not_approved(tmp_path):
+    """Fix Round A, Item 1: `builtin:tldw_chatbook` (the Advanced hatch's
+    fixed gate key, `BUILTIN_SERVER_KEY`) is in `HASH_FREE_SERVER_KEYS` --
+    in-process code the rug-pull hash guard was never meant to cover (see
+    that constant's docstring). Before this fix,
+    `resolve_effective_state_by_key()` collapsed EVERY "allow" to "ask"
+    unconditionally, so a calculator explicitly set to Allow still recorded
+    `decision="approved"` (asked-and-approved) from this Advanced hatch,
+    while the SAME tool resolved via a live `HubTool` (the Test Tool panel,
+    `resolve_effective_state()`, which already honors the exemption) would
+    record `decision="allowed"` (no ask needed) for the identical
+    permission state -- a cross-surface split in the audit trail. This also
+    exercises the `decision="allowed" if state.state == "allow" else
+    "approved"` branch in `execute_advanced_tool()`, which was unreachable
+    before this fix since by-key resolution never returned "allow"."""
+    service, fake, client, store = _service(tmp_path)
+    service.set_tool_state("builtin:tldw_chatbook", "calculator", "allow")
+
+    await service.run_action(
+        "tool.execute", {"tool_name": "calculator", "arguments": {"x": 1}}
+    )
+
+    records = _log_records(store)
+    assert records and records[0]["decision"] == "allowed"
+    assert records[0]["ok"] is True
 
 
 # -- Task 6 (PR-T3), Route B, second door: `runtime.request` /`runtime.batch`
