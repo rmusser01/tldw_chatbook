@@ -13,7 +13,10 @@ from textual.widgets import Button, Collapsible, Input, Select, Static, TextArea
 import tldw_chatbook
 import tldw_chatbook.UI.MCP_Modules.mcp_inspector as mcp_inspector_module
 from tldw_chatbook.MCP.hub_tool_catalog import HubTool
+from tldw_chatbook.MCP.local_control_service import MCPGovernanceDenied
+from tldw_chatbook.MCP.local_runtime_delegate import RawToolCallRefusedError
 from tldw_chatbook.MCP.permission_store import EffectiveToolState
+from tldw_chatbook.MCP.unified_control_plane_service import MCPHubGateDeniedError
 from tldw_chatbook.MCP.readiness import (
     REASON_LABELS,
     STATE_CSS_CLASSES,
@@ -3771,11 +3774,22 @@ async def test_advanced_tool_execute_payload_edit_rearms_the_confirm():
 
 @pytest.mark.asyncio
 async def test_advanced_tool_execute_refusal_reads_as_blocked_not_failed():
-    """An Off tool's `PermissionError` is a refusal, not a crash: same
-    "Blocked · not run" heading `show_tool_result()` gives a blocked test
-    run, never the generic "Action failed:" dump."""
+    """An Off tool's `MCPHubGateDeniedError` (the Hub's own gate refusal --
+    what `execute_advanced_tool()` really raises for this case, item 2, PR-T3
+    fix round D) is a refusal, not a crash: same "Blocked · not run" heading
+    `show_tool_result()` gives a blocked test run, never the generic "Action
+    failed:" dump.
+
+    Item 2: before fix round D, `_run_advanced_action()`'s `except
+    PermissionError` matched the BASE class, so this fake's error object
+    only needed to BE a `PermissionError` to prove the rendering -- it used
+    a bare one. Now that the handler is narrowed to typed refusals only, the
+    fake must raise the SAME type production code raises, or this test would
+    no longer describe a reachable scenario (see the sibling `test_advanced_
+    tool_execute_tool_body_permission_error_reads_as_failed_not_blocked`
+    just below for the case a bare `PermissionError` now falls through to)."""
     app = ToolExecuteInspectorApp(
-        error=PermissionError("search_notes is set to Off in Permissions.")
+        error=MCPHubGateDeniedError("search_notes is set to Off in Permissions.")
     )
     async with app.run_test(size=(100, 60)) as pilot:
         await pilot.click("#mcp-adv-run")
@@ -3784,6 +3798,75 @@ async def test_advanced_tool_execute_refusal_reads_as_blocked_not_failed():
         result = _adv_result(app)
         assert "Blocked · not run" in result
         assert "set to Off in Permissions" in result
+        assert "Action failed" not in result
+
+
+@pytest.mark.asyncio
+async def test_advanced_tool_execute_tool_body_permission_error_reads_as_failed_not_blocked():
+    """Item 2 (PR-T3 fix round D) regression guard: a bare `PermissionError`
+    -- what a BUILT-IN TOOL'S OWN body raises for an unrelated reason (e.g. a
+    genuine OS EACCES reading a permission-denied path), NOT one of the
+    three typed refusals -- must fall through to the generic "Action
+    failed:" dump, not misrender as "Blocked · not run" (which would falsely
+    claim the call never reached the tool, when it reached the tool and the
+    tool is what failed). Mirrors `mcp_workbench.py`'s own
+    `test_is_permission_refusal_bare_permission_error_from_tool_body_is_not_
+    a_refusal` for the Test Tool surface -- this is the Advanced surface's
+    twin of that same guard."""
+    app = ToolExecuteInspectorApp(
+        error=PermissionError("EACCES: permission denied reading /etc/shadow")
+    )
+    async with app.run_test(size=(100, 60)) as pilot:
+        await pilot.click("#mcp-adv-run")
+        await pilot.pause()
+        await _press_run_again(pilot)
+        result = _adv_result(app)
+        assert "Action failed" in result
+        assert "EACCES" in result
+        assert "Blocked · not run" not in result
+
+
+@pytest.mark.asyncio
+async def test_advanced_tool_execute_governance_denial_reads_as_blocked_not_failed():
+    """Item 2 (PR-T3 fix round D): `MCPGovernanceDenied` -- the in-process
+    runtime-governance profile's own denial, raised further down inside
+    `execute_hub_tool()`'s `coro` -- is a genuine refusal on the Advanced
+    surface too, not just the Test Tool panel `_is_permission_refusal()`
+    already covers."""
+    app = ToolExecuteInspectorApp(
+        error=MCPGovernanceDenied("Denied by local governance: tool.execute")
+    )
+    async with app.run_test(size=(100, 60)) as pilot:
+        await pilot.click("#mcp-adv-run")
+        await pilot.pause()
+        await _press_run_again(pilot)
+        result = _adv_result(app)
+        assert "Blocked · not run" in result
+        assert "Denied by local governance" in result
+        assert "Action failed" not in result
+
+
+@pytest.mark.asyncio
+async def test_advanced_raw_tool_call_refusal_reads_as_blocked_not_failed():
+    """Item 2 (PR-T3 fix round D): a raw `tools/call` refused by the
+    `runtime.request`/`runtime.batch` pre-dispatch scan
+    (`RawToolCallRefusedError`) is a genuine refusal on the Advanced
+    surface -- both of those are Advanced action descriptors too (Task 6,
+    Route B, second door), reachable through this same `run_action()` call
+    and this same except clause."""
+    app = ToolExecuteInspectorApp(
+        error=RawToolCallRefusedError(
+            "Tool calls run through the Execute Local Tool action, which "
+            "applies your Permissions settings and records the run."
+        )
+    )
+    async with app.run_test(size=(100, 60)) as pilot:
+        await pilot.click("#mcp-adv-run")
+        await pilot.pause()
+        await _press_run_again(pilot)
+        result = _adv_result(app)
+        assert "Blocked · not run" in result
+        assert "Execute Local Tool" in result
         assert "Action failed" not in result
 
 

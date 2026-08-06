@@ -37,6 +37,34 @@ RAW_TOOL_CALL_REFUSED_MESSAGE = (
 )
 
 
+class RawToolCallRefusedError(PermissionError):
+    """A raw ``tools/call`` was refused -- run it through Execute Local Tool.
+
+    Item 2 (PR-T3 fix round D). Raised at BOTH enforcement points that
+    share :data:`RAW_TOOL_CALL_REFUSED_MESSAGE` above -- this delegate's
+    own ``request()`` (the durable backstop, below) and
+    ``unified_control_plane_service.UnifiedMCPControlPlaneService.
+    _refuse_raw_tool_call()`` (the control-plane pre-dispatch scan, one
+    layer up) -- so the two independent refusals of the identical event
+    share one type the same way they already share one message. Defined
+    here, not in ``unified_control_plane_service.py``, because this
+    module is the dependency-safe common ground: ``local_control_
+    service.py`` (home of the sibling ``MCPGovernanceDenied``) and
+    ``unified_control_plane_service.py`` both already import from this
+    module, and this module imports from neither of them.
+
+    Subclasses ``PermissionError`` so any existing ``except
+    PermissionError`` handler upstream keeps working unchanged.
+    `UI/MCP_Modules/mcp_inspector.py`'s Advanced runner narrows its own
+    handler to this type (among others) instead of the bare base class,
+    so a tool's own body raising an unrelated ``PermissionError`` renders
+    as a failure, not a refusal that never reached the tool.
+    """
+
+    def __init__(self, message: str = RAW_TOOL_CALL_REFUSED_MESSAGE) -> None:
+        super().__init__(message)
+
+
 class LocalMCPRuntimeDelegate:
     """Direct local MCP runtime adapter that avoids loopback FastMCP dependency."""
 
@@ -270,7 +298,9 @@ class LocalMCPRuntimeDelegate:
             # (`_UNAVAILABLE_DIRECT_METHODS`), so an agent inspecting the
             # protocol before planning a call sees the same "no" this raise
             # produces, instead of discovering it by trying.
-            raise PermissionError(RAW_TOOL_CALL_REFUSED_MESSAGE)
+            # Item 2 (PR-T3 fix round D): typed, not a bare `PermissionError`
+            # -- see `RawToolCallRefusedError`'s own docstring for why.
+            raise RawToolCallRefusedError(RAW_TOOL_CALL_REFUSED_MESSAGE)
         if normalized_method == "resources/read":
             return {
                 "resource_uri": self._require_payload_field(

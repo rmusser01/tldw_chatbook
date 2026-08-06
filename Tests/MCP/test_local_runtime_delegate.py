@@ -28,6 +28,7 @@ import pytest
 from tldw_chatbook.MCP.local_runtime_delegate import (
     RAW_TOOL_CALL_REFUSED_MESSAGE,
     LocalMCPRuntimeDelegate,
+    RawToolCallRefusedError,
 )
 
 
@@ -73,6 +74,22 @@ async def test_request_tools_call_refusal_message_matches_shared_constant():
         await delegate.request("tools/call", {"name": "calculator"})
 
     assert str(exc_info.value) == RAW_TOOL_CALL_REFUSED_MESSAGE
+
+
+@pytest.mark.asyncio
+async def test_request_tools_call_raises_the_typed_error():
+    """Item 2 (PR-T3 fix round D): drift-proofing at the RAISE SITE, same
+    precedent as `test_protocol_diagnostics_reports_tools_call_as_
+    unsupported` just below. `UI/MCP_Modules/mcp_inspector.py`'s Advanced
+    runner narrows its own classifier to this TYPE -- if this raise site
+    ever reverted to a bare `PermissionError`, that narrowed handler would
+    silently stop recognizing this refusal, and nothing else in this suite
+    would fail to say so."""
+    delegate = _delegate()
+    _stub_execute_tool(delegate)
+
+    with pytest.raises(RawToolCallRefusedError):
+        await delegate.request("tools/call", {"name": "calculator"})
 
 
 @pytest.mark.asyncio

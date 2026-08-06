@@ -24,6 +24,8 @@ from tldw_chatbook.Library.library_rag_state import (
     library_rag_all_matches_weak,
 )
 from tldw_chatbook.MCP.hub_tool_catalog import HubTool
+from tldw_chatbook.MCP.local_control_service import MCPGovernanceDenied
+from tldw_chatbook.MCP.local_runtime_delegate import RawToolCallRefusedError
 from tldw_chatbook.MCP.permission_store import EffectiveToolState
 from tldw_chatbook.MCP.readiness import (
     REASON_LABELS,
@@ -34,6 +36,7 @@ from tldw_chatbook.MCP.readiness import (
     is_off_opt_in,
 )
 from tldw_chatbook.MCP.redaction import redact_mapping
+from tldw_chatbook.MCP.unified_control_plane_service import MCPHubGateDeniedError
 from tldw_chatbook.UI.MCP_Modules.mcp_permissions_mode import tool_state_kind
 from tldw_chatbook.UI.MCP_Modules.mcp_schema_form import MCPSchemaForm, parse_schema
 
@@ -2682,12 +2685,32 @@ class MCPInspector(Vertical):
         action or editing the payload re-arms rather than executing
         something the user never read.
 
-        A `PermissionError` -- the gate's hard "Off" refusal from
-        `execute_advanced_tool()`, or the in-process runtime-governance
-        profile's own denial from `local_control_service` -- renders under
-        `show_tool_result()`'s "Blocked · not run" heading. Nothing ran, so
-        the generic "Action failed:" dump (which reads as an attempted,
-        crashed call) would misdescribe it.
+        A REFUSAL -- the gate's hard "Off" refusal from
+        `execute_advanced_tool()` (`MCPHubGateDeniedError`), the in-process
+        runtime-governance profile's own denial (`local_control_service.
+        MCPGovernanceDenied`), or a raw `tools/call` refused by the
+        `runtime.request`/`runtime.batch` pre-dispatch scan
+        (`RawToolCallRefusedError`) -- renders under `show_tool_result()`'s
+        "Blocked · not run" heading. Nothing ran, so the generic "Action
+        failed:" dump (which reads as an attempted, crashed call) would
+        misdescribe it.
+
+        Item 2 (PR-T3 fix round D): this used to match the bare
+        `PermissionError` base class, which is too broad the same way Fix
+        Round B narrowed the Test Tool runner's OWN classifier
+        (`mcp_workbench._is_permission_refusal()`) -- a `PermissionError` a
+        BUILT-IN TOOL'S OWN body raises (this pane can execute arbitrary
+        built-in tools via raw JSON) would misrender as a refusal that
+        never reached the tool, when the tool ran and that IS its failure.
+        Narrowed to the three TYPED refusals above instead (matching
+        `_is_permission_refusal()`'s own type-based precedent); an
+        untyped/tool-body `PermissionError` now falls through to the
+        generic `except Exception` branch below, same as any other crash.
+        The three typed exceptions are each imported from where they are
+        DEFINED (`local_control_service`, `unified_control_plane_service`,
+        `local_runtime_delegate`), not reused from `mcp_workbench.py`'s own
+        classifier -- `mcp_workbench.py` imports FROM this module, so the
+        reverse import would be circular.
         """
         result_widget = self.query_one("#mcp-adv-result", Static)
         action_select = self.query_one("#mcp-adv-action-select", Select)
@@ -2720,10 +2743,16 @@ class MCPInspector(Vertical):
         self._advanced_confirm_key = None
         try:
             result = await self._service.run_action(action_name, payload)
-        except PermissionError as exc:  # a refusal is not a failure
+        except (
+            MCPGovernanceDenied,
+            MCPHubGateDeniedError,
+            RawToolCallRefusedError,
+        ) as exc:  # a refusal is not a failure
             result_widget.update(f"{_ADVANCED_BLOCKED_HEADING}\n{exc}")
             return
-        except Exception as exc:  # surface, never crash the inspector
+        except Exception as exc:  # surface, never crash the inspector -- a
+            # tool-body `PermissionError` (not one of the three typed
+            # refusals above) lands here too, same as any other crash.
             result_widget.update(f"Action failed: {exc}")
             return
         if isinstance(result, dict):

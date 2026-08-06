@@ -16,7 +16,10 @@ from tldw_chatbook.runtime_policy.types import RuntimeSourceState
 from .execution_log import MCPExecutionLog, build_record
 from .hub_tool_catalog import HubTool
 from .local_control_service import MCPGovernanceDenied
-from .local_runtime_delegate import RAW_TOOL_CALL_REFUSED_MESSAGE
+from .local_runtime_delegate import (
+    RAW_TOOL_CALL_REFUSED_MESSAGE,
+    RawToolCallRefusedError,
+)
 from .permission_store import (
     EffectiveToolState,
     HASH_FREE_SERVER_KEYS,
@@ -72,6 +75,28 @@ class MCPServerSourceDisplayOnlyError(ValueError):
 
     def __init__(self, message: str = _SERVER_SOURCE_DISPLAY_ONLY_MESSAGE) -> None:
         super().__init__(message)
+
+
+class MCPHubGateDeniedError(PermissionError):
+    """`execute_advanced_tool()`'s refusal when the Hub's OWN per-tool
+    permission gate (Allow/Ask/Off) resolves to "Off".
+
+    Item 2 (PR-T3 fix round D). Deliberately a DIFFERENT type from
+    ``local_control_service.MCPGovernanceDenied`` -- that exception names a
+    denial from the in-process runtime-governance profile, a separate
+    permission system checked one layer further in (inside
+    :meth:`UnifiedMCPControlPlaneService.execute_hub_tool`'s ``coro``, via
+    ``local_control_service._require_runtime_governance_allowed()``).
+    Conflating the two into one type would make it impossible to tell, from
+    the exception alone, WHICH gate refused a given call -- exactly the
+    distinction Fix Round D, Item 1's `error_category` tokens
+    (``"gate_denied"`` here vs. ``"governance_denied"`` there) preserve on
+    the execution-log side; this type preserves the same distinction on the
+    raise side.
+
+    Subclasses ``PermissionError`` so any existing ``except
+    PermissionError`` handler upstream keeps working unchanged.
+    """
 
 
 # Task 6 (PR-T3), Route B, second door: `runtime.request`/`runtime.batch` are
@@ -2489,10 +2514,16 @@ class UnifiedMCPControlPlaneService:
                 that is not ``tools/call`` passes through.
 
         Raises:
-            PermissionError: ``method`` is ``tools/call``.
+            RawToolCallRefusedError: ``method`` is ``tools/call``. A
+                ``PermissionError`` subclass -- any existing ``except
+                PermissionError`` handler upstream still catches it.
         """
         if str(method or "").strip() == "tools/call":
-            raise PermissionError(_RAW_TOOL_CALL_REFUSED_MESSAGE)
+            # Item 2 (PR-T3 fix round D): typed, not a bare
+            # `PermissionError` -- see `RawToolCallRefusedError`'s own
+            # docstring for why this and the delegate's own raise site
+            # share one type the same way they already share one message.
+            raise RawToolCallRefusedError(_RAW_TOOL_CALL_REFUSED_MESSAGE)
 
     async def execute_advanced_tool(
         self, tool_name: str, arguments: dict[str, Any] | None = None
@@ -2549,9 +2580,13 @@ class UnifiedMCPControlPlaneService:
             The raw result payload from the built-in tool call.
 
         Raises:
-            PermissionError: The tool is set to Off in Permissions (or the
-                in-process runtime-governance profile denies it, raised
-                further down by ``local_control_service.execute_tool()``).
+            MCPHubGateDeniedError: The tool is set to Off in Permissions
+                (the Hub's own gate). A ``PermissionError`` subclass.
+            MCPGovernanceDenied: The in-process runtime-governance profile
+                denies it, raised further down by ``local_control_
+                service.execute_tool()``. A ``PermissionError`` subclass,
+                and a DIFFERENT type from ``MCPHubGateDeniedError`` above
+                -- see that type's own docstring for why.
             RuntimeError: The tool call fails or exceeds the effective
                 timeout.
         """
@@ -2599,7 +2634,10 @@ class UnifiedMCPControlPlaneService:
                 initiator="test",
                 error_category="gate_denied",
             )
-            raise PermissionError(blocked_message)
+            # Item 2 (PR-T3 fix round D): typed, not a bare `PermissionError`
+            # -- see `MCPHubGateDeniedError`'s own docstring for why this is
+            # a DIFFERENT type from `MCPGovernanceDenied` below.
+            raise MCPHubGateDeniedError(blocked_message)
 
         return await self.execute_hub_tool(
             BUILTIN_SERVER_KEY,

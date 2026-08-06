@@ -495,6 +495,27 @@ async def test_advanced_tool_execute_refuses_a_tool_set_to_off(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_advanced_tool_execute_refuses_a_tool_set_to_off_with_the_typed_error(
+    tmp_path,
+):
+    """Item 2 (PR-T3 fix round D): drift-proofing at the RAISE SITE, same
+    precedent as `test_hub_tool_unknown_prefix_raises_the_typed_display_
+    only_error`. `UI/MCP_Modules/mcp_inspector.py`'s Advanced runner
+    narrows its own classifier to this TYPE -- if this raise site ever
+    reverted to a bare `PermissionError`, that narrowed handler would stop
+    recognizing this genuine refusal (falling through to "Action failed:"),
+    with nothing in this suite failing to say so were it not for this test
+    pinning the type here, at the source."""
+    service, fake, client, store = _service(tmp_path)
+    service.set_tool_state("builtin:tldw_chatbook", "calculator", "deny")
+
+    with pytest.raises(control_plane_module.MCPHubGateDeniedError):
+        await service.run_action(
+            "tool.execute", {"tool_name": "calculator", "arguments": {"x": 1}}
+        )
+
+
+@pytest.mark.asyncio
 async def test_advanced_tool_execute_refusal_is_recorded_as_denied(tmp_path):
     """A refusal is part of the audit trail too -- a blocked row, not silence.
 
@@ -606,6 +627,24 @@ async def test_raw_tools_call_through_runtime_request_is_refused(tmp_path):
         )
 
     assert fake.execute_tool_calls == []
+
+
+@pytest.mark.asyncio
+async def test_raw_tools_call_through_runtime_request_raises_the_typed_error(tmp_path):
+    """Item 2 (PR-T3 fix round D): same drift-proofing precedent as
+    `test_advanced_tool_execute_refuses_a_tool_set_to_off_with_the_typed_
+    error` -- pin the TYPE at the raise site, not just the message, since
+    `UI/MCP_Modules/mcp_inspector.py`'s Advanced runner now classifies
+    refusals by type. `RawToolCallRefusedError` is shared verbatim with
+    `local_runtime_delegate.LocalMCPRuntimeDelegate.request()`'s own raise
+    site for the identical refusal (see that type's own docstring)."""
+    service, fake, client, store = _service(tmp_path)
+
+    with pytest.raises(control_plane_module.RawToolCallRefusedError):
+        await service.run_action(
+            "runtime.request",
+            {"method": "tools/call", "params": {"name": "calculator"}},
+        )
 
 
 @pytest.mark.asyncio
