@@ -15,9 +15,9 @@ can sync with a tldw server you configure).
 1. Install and launch — see the [README](../../README.md#installation). On
    first launch, a "Get started" onboarding card appears and the composer
    stays locked; sending unlocks once you've set up a provider in step 2.
-2. Open **Settings** (not yet written) — click **Settings** in the nav bar
+2. Open **[Settings](settings.md)** — click **Settings** in the nav bar
    (or **Ctrl+P** → "Switch to Settings") — and set a provider + model (or
-   point at a local server).
+   point at a local server) under **Providers & Models**.
 3. Open **[Console](console.md)** — press **Ctrl+2**, click "Console"
    in the nav bar, or use **Ctrl+P** → "Switch to Console"; then send your
    first message.
@@ -38,12 +38,14 @@ can sync with a tldw server you configure).
 | Ctrl+8 | [Workflows](workflows.md) 🚧 | Reusable procedures, recipes, dry-runs, and outputs. |
 | Ctrl+9 | [MCP](mcp.md) 🚧 | MCP servers, tools, permissions, auth, and audit. |
 | Ctrl+0 | [ACP](acp.md) 🚧 | Agent Client Protocol agents, sessions, runtimes, diffs, and terminals. |
-| — | [Lab](lab.md) 🚧 | Models, speech, and evaluation runs. |
-| — | [Logs](logs.md) 🚧 | Application logs and diagnostics. |
-| — | Settings (not yet written) | Global app preferences, appearance, accounts, and storage. |
+| F7 | [Lab](lab.md) 🚧 | Models, speech, and evaluation runs. |
+| F8 | [Logs](logs.md) 🚧 | Application logs and diagnostics. |
+| F9 | [Settings](settings.md) | Global app preferences, appearance, accounts, and storage. |
 
-Lab, Logs, and Settings have no hotkey — reach them by clicking the nav
-label or via the command palette (**Ctrl+P**).
+Lab, Logs, and Settings sit past the ten digits, so they get function keys
+instead: **F7**, **F8**, **F9** — the nav labels say so ("F7 Lab", "F8 Logs",
+"F9 Settings"). The nav bar and the command palette (**Ctrl+P**) reach them
+too.
 
 ## How-to guides
 
@@ -51,11 +53,12 @@ label or via the command palette (**Ctrl+P**).
 |-------|----------------|
 | [Using OpenAI-compatible TTS servers](openai-compatible-tts.md) | Pointing text-to-speech at your own server (e.g. a local, keyless engine like pocket-tts) via Settings ▸ Speech & TTS; also covers the app-wide default voice profile. |
 
-**Note:** The digit shown before each nav label is that screen's hotkey
-digit: press **Ctrl+digit** (Ctrl+1 … Ctrl+9, Ctrl+0) to switch to it from
-anywhere — the chord works even while a text field has focus. Bare digit
-keys are not navigation shortcuts (typing `2` in the composer just types
-"2"). Clicking the nav label and **Ctrl+P** work everywhere too.
+**Note:** The "⌃\<digit\>" (or "F\<n\>") shown before each nav label is
+that screen's hotkey: press **Ctrl+digit** (Ctrl+1 … Ctrl+9, Ctrl+0) — or
+**F7** / **F8** / **F9** for the last three — to switch to it from anywhere;
+the keys work even while a text field has focus. Bare digit keys are not
+navigation shortcuts (typing `2` in the composer just types "2"). Clicking
+the nav label and **Ctrl+P** work everywhere too.
 
 One screen claims some of these digits for itself: on
 [Roleplay & Chat Dictionaries](roleplay-chat-dictionaries.md), **Ctrl+1 –
@@ -71,6 +74,7 @@ Ctrl+5 … Ctrl+0 still navigate from there, as do the nav bar and
 | Ctrl+P | Open the command palette — search and jump to any screen or command from anywhere |
 | Ctrl+Q | Quit the app |
 | Ctrl+1 … Ctrl+9, Ctrl+0 | Switch to the screen with that hotkey digit (see the nav map above). Exception: on [Roleplay & Chat Dictionaries](roleplay-chat-dictionaries.md), Ctrl+1 – Ctrl+4 switch that screen's modes instead |
+| F7 / F8 / F9 | Switch to Lab / Logs / Settings — the three destinations past the digit row; they work while a text field has focus, like the Ctrl+digit chords |
 | F6 / Shift+F6 | Cycle forward/backward through the current screen's panes (on screens without multiple panes it only shows a notice) |
 
 Everything else (Enter/Ctrl+K/Ctrl+T in Console, and the single-letter
@@ -116,7 +120,7 @@ Full detail on runs, approvals, and tools:
 | CCP (Conversations, Characters & Prompts) | [Roleplay & Chat Dictionaries](roleplay-chat-dictionaries.md) for characters and personas; prompts moved to [Library ▸ Prompts](library/prompts.md) |
 | LLM management | [Lab](lab.md) 🚧 |
 | Research | [Library](library.md) |
-| Customize | Settings (not yet written) |
+| Customize | [Settings](settings.md) |
 
 ## Conventions
 
