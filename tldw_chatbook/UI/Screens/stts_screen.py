@@ -149,13 +149,16 @@ class STTSScreen(LabScreen):
         ) = None
         self._restored_playground_axes: dict[str, str] = {}
 
-    def on_mount(self) -> None:
-        """Register the Speech playground hints after the Lab frame's."""
-        super().on_mount()
-        self.register_footer_shortcuts(
-            source="stts",
-            shortcuts=self.STTS_SHORTCUTS + self.LAB_FOOTER_SHORTCUTS,
-        )
+    def _lab_footer_registration(self) -> tuple[str, tuple]:
+        """Register the Speech hints in place of the frame's plain set.
+
+        This screen must NOT define ``on_mount``: Textual dispatches every
+        ``on_mount`` in the MRO for one Mount event, so the previous
+        ``super().on_mount()`` here ran the Lab frame's handler twice --
+        double-mounting the rail rows and crashing the app with
+        ``DuplicateIds`` on every visit to Lab > Speech (TASK-2610).
+        """
+        return ("stts", self.STTS_SHORTCUTS + self.LAB_FOOTER_SHORTCUTS)
 
     def _playground(self):
         """Return the playground widget, if mounted."""
