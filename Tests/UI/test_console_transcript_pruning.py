@@ -21,7 +21,6 @@ from tldw_chatbook.Widgets.Console.console_transcript import (
     DEFAULT_PRUNE_HIGH_WATERMARK,
     DEFAULT_PRUNE_LOW_WATERMARK,
     ConsoleTranscript,
-    ConsoleTranscriptMessage,
     get_console_prune_watermarks,
 )
 
@@ -66,9 +65,11 @@ def _messages(n: int) -> list[ConsoleChatMessage]:
 
 
 def _mounted_message_ids(transcript: ConsoleTranscript) -> list[str]:
+    # Class query, not a type query: assistant rows may render as
+    # ConsoleMarkdownMessage (TASK-1990) while other roles stay plain.
     return [
         widget.message_id
-        for widget in transcript.query(ConsoleTranscriptMessage)
+        for widget in transcript.query(".console-transcript-message")
     ]
 
 
@@ -185,7 +186,7 @@ async def test_pruning_preserves_scroll_position_when_scrolled_up():
             region = transcript.content_region
             viewport_top = region.y
             viewport_bottom = region.y + region.height
-            for widget in transcript.query(ConsoleTranscriptMessage):
+            for widget in transcript.query(".console-transcript-message"):
                 row = widget.region
                 if row.y + row.height > viewport_top and row.y < viewport_bottom:
                     return widget.message_id
