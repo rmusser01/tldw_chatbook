@@ -18,6 +18,10 @@ from textual.message import Message
 from textual.widgets import Button, Collapsible, Label, Select, Static, TextArea
 
 from tldw_chatbook.config import get_cli_setting, save_setting_to_cli_config
+from tldw_chatbook.Library.library_rag_state import (
+    LIBRARY_RAG_ALL_WEAK_COVERAGE_PREFIX,
+    library_rag_all_matches_weak,
+)
 from tldw_chatbook.MCP.hub_tool_catalog import HubTool
 from tldw_chatbook.MCP.permission_store import EffectiveToolState
 from tldw_chatbook.MCP.readiness import (
@@ -353,6 +357,61 @@ def _is_tool_error_shape(result: object) -> bool:
     return list(item.keys()) == ["error"]
 
 
+class _ScoredRow:
+    """Minimal `.score`-bearing shim, nothing more.
+
+    `library_rag_all_matches_weak()` is typed for `LibraryRagResultRow`
+    but at runtime only ever reads `.score` off each row -- duck typing,
+    not a hard dependency on the Library dataclass. This lets MCP tool
+    result rows (plain `Mapping`s) feed the same, one, canonical
+    all-weak check the Library evidence list uses, without copying its
+    logic (PR-T3 task 2 / Global Constraints: "reuse the vocabulary,
+    don't reinvent it").
+    """
+
+    __slots__ = ("score",)
+
+    def __init__(self, score: object) -> None:
+        # Defensive coercion: anything that isn't a real number (or is a
+        # bool -- `isinstance(True, int)` is True in Python) is treated
+        # as unscored rather than risking a `<` comparison against a
+        # non-numeric value inside `library_rag_all_matches_weak()`.
+        self.score = (
+            score
+            if isinstance(score, (int, float)) and not isinstance(score, bool)
+            else None
+        )
+
+
+def _extract_scored_rows(rows: list) -> list[_ScoredRow] | None:
+    """Whether `rows` is shaped like a scored result list (RAG-search's
+    row shape), and if so, the `.score`-bearing shim rows for
+    `library_rag_all_matches_weak()`.
+
+    Global Constraints: "Band vocabulary is gated on result shape." --
+    `_summarize_tool_result()` is generic across every MCP tool (a
+    `list_characters` result must never grow match-band vocabulary), so
+    this only recognizes a result as scored when EVERY row is a mapping
+    carrying a `"score"` key (value may legitimately be `None` --
+    keyword-mode rows post PR-T3 task 1). One row missing the key at all
+    (a different tool's row shape) means "not a scored result" -- no
+    signal is fabricated from a shape this wasn't designed for.
+
+    Returns:
+        `None` when `rows` isn't uniformly scored-shaped (including the
+        empty-list case, handled separately by the caller); otherwise
+        the `.score` shim list.
+    """
+    if not rows:
+        return None
+    scored_rows: list[_ScoredRow] = []
+    for row in rows:
+        if not isinstance(row, Mapping) or "score" not in row:
+            return None
+        scored_rows.append(_ScoredRow(row.get("score")))
+    return scored_rows
+
+
 def _summarize_tool_result(
     *, ok: bool, duration_ms: float | None, source: str | None, result: object
 ) -> tuple[str, str | None]:
@@ -363,8 +422,9 @@ def _summarize_tool_result(
     Returns:
         `(status_line, interpretation)` -- `interpretation` is `None` when
         there is nothing further to say (a non-list result, or a
-        non-empty, non-error-shaped list -- the count segment alone is
-        the whole story there).
+        non-empty, non-error-shaped list whose rows aren't uniformly
+        scored, or whose scores aren't all weak -- the count segment
+        alone is the whole story there).
     """
     segments = ["OK" if ok else "Failed"]
     if source:
@@ -382,6 +442,14 @@ def _summarize_tool_result(
         else:
             count = len(result)
             segments.append(f"{count} result" + ("s" if count != 1 else ""))
+            # F1: a result that "found" nothing useful must say so instead
+            # of reporting a bare `OK · N results` that implies success.
+            # Only rows carrying a numeric score participate -- an
+            # unrelated tool's rows (no "score" key at all) are left
+            # exactly as they render today.
+            scored_rows = _extract_scored_rows(result)
+            if scored_rows is not None and library_rag_all_matches_weak(scored_rows):
+                interpretation = LIBRARY_RAG_ALL_WEAK_COVERAGE_PREFIX
     return " · ".join(segments), interpretation
 
 

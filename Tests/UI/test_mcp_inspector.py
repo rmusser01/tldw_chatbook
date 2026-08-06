@@ -1752,6 +1752,134 @@ async def test_show_tool_result_raw_body_truncated_over_20000_chars():
         assert len(raw_body) < 25_000
 
 
+# PR-T3 task 2 (F1): the MCP result says what it found. `_summarize_tool_
+# result()` is generic across every MCP tool -- only a result whose rows
+# ALL carry a "score" key (the RAG-search row shape) may grow the honest
+# all-weak notice; every other tool's rows (e.g. `list_characters`) must
+# render byte-identical to today. These four cover the task's own test
+# list verbatim: (a) all-weak -> notice; (b) mixed incl. a strong/moderate
+# score -> no notice; (c) no "score" key at all -> byte-identical; (d)
+# empty list -> today's quiet line, unchanged.
+class TestSummarizeToolResultAllWeakNotice:
+    """Pure, UI-harness-free coverage of `_summarize_tool_result()` --
+    mirrors `test_error_shape_detection()`'s pattern below."""
+
+    def test_all_rows_scoring_below_moderate_threshold_adds_all_weak_notice(self):
+        from tldw_chatbook.Library.library_rag_state import (
+            LIBRARY_RAG_ALL_WEAK_COVERAGE_PREFIX,
+        )
+        from tldw_chatbook.UI.MCP_Modules.mcp_inspector import (
+            _summarize_tool_result,
+        )
+
+        rows = [{"id": i, "score": 0.19 - i * 0.01} for i in range(10)]
+        status_line, interpretation = _summarize_tool_result(
+            ok=True, duration_ms=50, source="local", result=rows,
+        )
+        assert status_line == "OK · local · 50ms · 10 results"
+        assert interpretation == LIBRARY_RAG_ALL_WEAK_COVERAGE_PREFIX
+
+    def test_mixed_scores_including_a_strong_match_adds_no_notice(self):
+        from tldw_chatbook.UI.MCP_Modules.mcp_inspector import (
+            _summarize_tool_result,
+        )
+
+        rows = [{"id": 1, "score": 0.05}, {"id": 2, "score": 0.5}]
+        status_line, interpretation = _summarize_tool_result(
+            ok=True, duration_ms=50, source="local", result=rows,
+        )
+        assert status_line == "OK · local · 50ms · 2 results"
+        assert interpretation is None
+
+    def test_rows_without_a_score_key_are_byte_identical_to_today(self):
+        """`list_characters`-shaped rows -- must never grow banding."""
+        from tldw_chatbook.UI.MCP_Modules.mcp_inspector import (
+            _summarize_tool_result,
+        )
+
+        rows = [
+            {"id": "1", "name": "Alice", "description": "", "message_count": 0},
+            {"id": "2", "name": "Bob", "description": "", "message_count": 3},
+        ]
+        status_line, interpretation = _summarize_tool_result(
+            ok=True, duration_ms=50, source="local", result=rows,
+        )
+        assert status_line == "OK · local · 50ms · 2 results"
+        assert interpretation is None
+
+    def test_empty_list_keeps_its_existing_quiet_line(self):
+        from tldw_chatbook.UI.MCP_Modules.mcp_inspector import (
+            _summarize_tool_result,
+        )
+
+        status_line, interpretation = _summarize_tool_result(
+            ok=True, duration_ms=50, source="local", result=[],
+        )
+        assert status_line == "OK · local · 50ms · 0 results"
+        assert interpretation == "The tool ran and returned no results."
+
+
+@pytest.mark.asyncio
+async def test_show_tool_result_ok_all_weak_rows_renders_all_weak_notice():
+    """End-to-end (not just the pure function): a real `show_tool_result()`
+    call with all-weak scored rows renders the notice in the note Static,
+    markup=False, alongside the unchanged raw Collapsible evidence."""
+    from tldw_chatbook.Library.library_rag_state import (
+        LIBRARY_RAG_ALL_WEAK_COVERAGE_PREFIX,
+    )
+
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        tool = _tool()
+        await inspector.show_tool(tool)
+        await pilot.pause()
+        await pilot.click("#mcp-inspector-test-tool")
+        await pilot.pause()
+        inspector.show_tool_result(
+            server_key=tool.server_key, tool_name=tool.name, ok=True,
+            duration_ms=50, source="local",
+            result=[{"id": 1, "score": 0.1}, {"id": 2, "score": 0.05}],
+            raw='[{"id": 1, "score": 0.1}, {"id": 2, "score": 0.05}]',
+        )
+        await pilot.pause()
+        result = str(app.query_one("#mcp-inspector-test-result", Static).renderable)
+        assert result == "OK · local · 50ms · 2 results"
+        note_widget = app.query_one("#mcp-inspector-test-result-note", Static)
+        assert str(note_widget.renderable) == LIBRARY_RAG_ALL_WEAK_COVERAGE_PREFIX
+        assert note_widget.display is True
+        raw_body = str(
+            app.query_one("#mcp-inspector-test-result-raw-body", Static).renderable
+        )
+        assert '"score": 0.1' in raw_body
+
+
+@pytest.mark.asyncio
+async def test_show_tool_result_ok_rows_without_score_key_unaffected():
+    """End-to-end guard for the `list_characters` case: no "score" key on
+    any row must render exactly as it did before this task -- no note
+    widget content, nothing new."""
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        tool = _tool()
+        await inspector.show_tool(tool)
+        await pilot.pause()
+        await pilot.click("#mcp-inspector-test-tool")
+        await pilot.pause()
+        inspector.show_tool_result(
+            server_key=tool.server_key, tool_name=tool.name, ok=True,
+            duration_ms=50, source="local",
+            result=[{"id": "1", "name": "Alice"}, {"id": "2", "name": "Bob"}],
+        )
+        await pilot.pause()
+        result = str(app.query_one("#mcp-inspector-test-result", Static).renderable)
+        assert result == "OK · local · 50ms · 2 results"
+        note_widget = app.query_one("#mcp-inspector-test-result-note", Static)
+        assert str(note_widget.renderable) == ""
+        assert note_widget.display is False
+
+
 def test_error_shape_detection():
     """Unit test for the pure MCP/tools.py:326 tool-error-contract detector
     (a length-1 list whose single element is a mapping with exactly one
