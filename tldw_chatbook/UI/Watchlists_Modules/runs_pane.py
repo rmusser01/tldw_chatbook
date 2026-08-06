@@ -13,7 +13,9 @@ from textual.reactive import reactive
 from textual.widgets import Button, DataTable, Static
 from textual.worker import get_current_worker
 
+from ...Subscriptions.html_text import strip_control_characters
 from ...Widgets.recompose_capture_guard import RecomposeCaptureGuard
+from .humane_time import humane_timestamp
 from .table_selection import highlight_is_user_driven
 
 
@@ -149,9 +151,13 @@ class RunsPane(RecomposeCaptureGuard, Vertical):
         `DataTable`'s `default_cell_formatter` runs `Text.from_markup` over any
         plain `str` cell, and an item title is remote content (a feed entry's
         own `<title>`), so these must arrive as `Text` already.
+
+        Batch-4 review, I1: `Text(...)` protects against Rich markup, not a
+        raw control byte -- the title is stripped for the same reason
+        `sources_pane._source_row_cells` strips a source's name.
         """
         return (
-            Text(str(item.get("title") or "Untitled")),
+            Text(strip_control_characters(item.get("title") or "Untitled")),
             Text(str(item.get("status") or "-")),
             Text(str(item.get("alert_count") or "0")),
         )
@@ -167,7 +173,10 @@ class RunsPane(RecomposeCaptureGuard, Vertical):
         return (
             Text(RunsPane._run_identity(run), style=style),
             Text(str(run.get("status") or "-"), style=style),
-            Text(str(run.get("started_at") or "-"), style=style),
+            # TASK-2308: local, human-scale. The stored value is a UTC ISO
+            # string with microseconds, and it was the widest column in a
+            # table with eight of them.
+            Text(humane_timestamp(run.get("started_at")), style=style),
             Text(str(run.get("duration") or "-"), style=style),
             Text(str(run.get("found_count") or "0"), style=style),
             Text(str(run.get("processed_count") or "0"), style=style),
@@ -197,10 +206,20 @@ class RunsPane(RecomposeCaptureGuard, Vertical):
         # No `job_name` fallback: no normalizer emits that key (review wave,
         # Minor 4), and an unreachable fallback reads as "some backend
         # supplies this" to the next person here.
-        source = str(run.get("source_title") or "").strip()
+        #
+        # Batch-4 review, I1: `source_title`/`watchlist_names` are stripped
+        # of control characters -- `_run_row_cells` wraps this string in a
+        # `Text(...)`, which stops Rich markup but not a raw control byte,
+        # and `source_title` is remote-derived the same way an item's title
+        # is (see `_run_item_row_cells`).
+        source = strip_control_characters(run.get("source_title") or "").strip()
         if not source:
             source = "Untitled"
-        names = [str(name).strip() for name in (run.get("watchlist_names") or []) if str(name).strip()]
+        names = [
+            strip_control_characters(name).strip()
+            for name in (run.get("watchlist_names") or [])
+            if str(name).strip()
+        ]
         if not names:
             return source
         suffix = names[0] if len(names) == 1 else f"{names[0]} +{len(names) - 1}"
@@ -225,7 +244,7 @@ class RunsPane(RecomposeCaptureGuard, Vertical):
         base = (
             identity
             + f"Status: {run.get('status', '-')}\n"
-            f"Started: {run.get('started_at', '-')}\n"
+            f"Started: {humane_timestamp(run.get('started_at'))}\n"
             f"Duration: {run.get('duration', '-')}\n"
             f"Found: {run.get('found_count', 0)} | "
             f"Processed: {run.get('processed_count', 0)} | "

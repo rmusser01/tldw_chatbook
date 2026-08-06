@@ -522,3 +522,103 @@ async def test_scope_service_routes_alert_rule_crud_with_watchlists_alert_rule_a
         ("update_alert_rule", "12", {"enabled": False}),
         ("delete_alert_rule", "12"),
     ]
+
+
+# --- Batch-4 review round 2, N1: one notification per cancelled check -----
+#
+# `WatchlistScopeService.launch_run`'s two-layer defense-in-depth
+# (`LocalWatchlistsService.execute_run` catches `asyncio.CancelledError` and
+# records the run's terminal state, `launch_run` catches it too as a
+# fallback for whatever might escape that inner handler) is real
+# `LocalWatchlistsService`, not `FakeLocalWatchlists` above: the bug lives in
+# the INTERACTION between the two real `except asyncio.CancelledError`
+# branches, and a fake single-method mock cannot reproduce a second write
+# happening at all.
+
+
+@pytest.mark.asyncio
+async def test_a_cancelled_check_produces_exactly_one_notification_not_two(tmp_path):
+    """N1 (Important, introduced by the C1 fix). Before the fix, a
+    cancelled check with a status-agnostic alert rule present (here,
+    "no_items", which fires whenever `items_ingested == 0` regardless of
+    whether the run succeeded or failed) produced TWO identical
+    `client_notifications` rows: one written by `execute_run`'s own
+    `except asyncio.CancelledError` handler, a second written by
+    `launch_run`'s outer one re-recording the SAME cancellation after the
+    re-raise propagated up to it. The run row itself was never doubled
+    (`record_run_result`'s UPDATE is idempotent by id) -- only the
+    notification INSERT, which has no deduplicating check despite
+    `dedupe_key` existing in the payload.
+
+    The executor is gated on two events rather than the single-event/poll
+    pattern used elsewhere in this suite: `entered` is set the instant the
+    executor is actually invoked (i.e. AFTER `_mark_run_started` has
+    already run, inside `execute_run`'s own `try` block) so the test can
+    `task.cancel()` at exactly that suspension point deterministically,
+    with no timing race and no reliance on a fixed sleep matching real
+    fetch latency.
+    """
+    import asyncio
+
+    from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
+    from tldw_chatbook.Notifications import (
+        ClientNotificationsDB,
+        NotificationDispatchService,
+    )
+    from tldw_chatbook.Subscriptions import LocalWatchlistsService
+
+    db = SubscriptionsDB(tmp_path / "subscriptions.db", "test")
+    notification_store = ClientNotificationsDB(tmp_path / "notifications.db")
+    dispatcher = NotificationDispatchService(store=notification_store)
+    local_service = LocalWatchlistsService(
+        db_factory=lambda: db, notification_dispatcher=dispatcher
+    )
+    scope = WatchlistScopeService(local_service=local_service, server_service=None)
+
+    source = await local_service.create_source(
+        {
+            "name": "Feed",
+            "url": "https://example.com/feed.xml",
+            "source_type": "rss",
+        }
+    )
+    # Status-agnostic: fires on `items_ingested == 0` whatever the run's
+    # final status is -- exactly the rule shape the review named.
+    await local_service.create_alert_rule(
+        name="No items",
+        condition_type="no_items",
+        job_id=source["source_id"],
+    )
+
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def _gated_executor(subscription):
+        entered.set()
+        await release.wait()
+        return {"items": []}
+
+    local_service.run_executor = _gated_executor
+
+    task = asyncio.create_task(
+        scope.launch_run(runtime_backend="local", source_id=source["source_id"])
+    )
+    await asyncio.wait_for(entered.wait(), timeout=5)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    notifications = notification_store.list_notifications(limit=10)
+    assert len(notifications) == 1, (
+        f"a single cancelled check must produce exactly one notification, "
+        f"got {len(notifications)}: {notifications!r}"
+    )
+    # The "no_items" rule's own message, naming the condition it matched --
+    # confirms the ONE row that does exist is the real alert, not an empty
+    # placeholder.
+    assert "0 items" in notifications[0]["message"]
+    runs = await local_service.list_runs(source_id=source["source_id"])
+    assert runs[0]["status"] == "failed", (
+        "the run itself must still reach a terminal state (this is C1's "
+        "own guarantee, re-checked here as the test's precondition)"
+    )

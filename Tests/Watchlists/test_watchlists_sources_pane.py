@@ -784,3 +784,17 @@ async def test_every_select_in_the_pane_is_prune_safe():
             if not isinstance(select, PruneSafeSelect)
         ]
         assert not offenders, f"stock Select still used for: {offenders}"
+
+
+def test_source_row_name_strips_control_characters():
+    """Batch-4 review, I1. `name` is remote-derived (OPML import hands an
+    `<outline text=...>` attribute straight through with zero sanitization
+    -- see `Tests/Subscriptions/test_watchlist_opml_service.py` for the full
+    delivery-path proof), and `Text(...)` protects only against Rich markup,
+    not a raw control byte.
+    """
+    cells = SourcesPane._source_row_cells(
+        {"name": "Evil\x9b31mFeed", "source_type": "rss"}, False
+    )
+    assert "\x9b" not in cells[0].plain
+    assert "Evil" in cells[0].plain and "31mFeed" in cells[0].plain

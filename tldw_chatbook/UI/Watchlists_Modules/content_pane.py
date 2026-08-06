@@ -11,13 +11,15 @@ from typing import Any
 from rich.console import Group, RenderableType
 from rich.markdown import Markdown
 from rich.text import Text
-from textual.containers import Vertical
+from textual.containers import Horizontal, Vertical
 from textual.message import Message
 from textual.reactive import reactive
 from textual.widgets import Button, Static
 
+from ...Subscriptions.html_text import readable_body_text, strip_control_characters
 from ...Subscriptions.item_persist import CONTENT_KIND_CHANGE
 from ...Widgets.recompose_capture_guard import RecomposeCaptureGuard
+from .humane_time import humane_timestamp
 
 # Every item persisted before Phase A carries `content = NULL`, and it cannot
 # be recovered without re-fetching the source. Say so rather than rendering an
@@ -106,6 +108,15 @@ def render_article(item: dict[str, Any]) -> RenderableType:
     genuinely is, and it is defended there rather than upstream -- see
     `_MARKDOWN_HYPERLINKS`.
 
+    TASK-2307: the body additionally goes through `readable_body_text`, which
+    turns a feed's HTML into prose. That is a RENDER step, deliberately the
+    last one before `Text.append`, and it does not weaken anything above:
+    its output is a plain `str` with the markup thrown away and every control
+    character removed, so the "appended, never parsed" property still carries
+    the whole defence. Every other remote-derived field on this path
+    (`title`, `source_name`) is control-stripped for the same reason -- Rich
+    protects against markup, not against a raw ESC.
+
     Args:
         item: A normalized watchlist item. `title`, `source_name`,
             `published_date`, `content` and `content_format` are read; all
@@ -115,15 +126,26 @@ def render_article(item: dict[str, Any]) -> RenderableType:
         A `Text` for a plain-text body, or a `Group` whose body half is a
         `rich.markdown.Markdown` when `content_format` says markdown.
     """
-    body = item.get("content")
+    raw_body = item.get("content")
+    # Markdown bodies keep their source (the `Markdown` renderable is the
+    # parser for them); everything else is made readable here.
+    body = (
+        strip_control_characters(raw_body)
+        if _is_markdown(item)
+        else readable_body_text(raw_body)
+    )
     out = Text()
-    out.append(str(item.get("title") or "Untitled"), style="bold")
+    out.append(strip_control_characters(item.get("title") or "Untitled"), style="bold")
     out.append("\n")
-    meta = [str(item.get("source_name") or "unknown source")]
+    meta = [strip_control_characters(item.get("source_name") or "unknown source")]
     if item.get("published_date"):
-        meta.append(str(item["published_date"]))
+        # TASK-2308: local, human-scale, and the same formatter the Items
+        # table uses -- the byline and the row must not disagree about when
+        # something was published, which is how the UAT noticed the table was
+        # showing ingest time at all.
+        meta.append(humane_timestamp(item["published_date"]))
     if body:
-        meta.append(f"{len(str(body).split())} words")
+        meta.append(f"{len(body.split())} words")
     out.append(" · ".join(meta), style="dim")
     out.append("\n")
     if body and _is_markdown(item):
@@ -131,9 +153,9 @@ def render_article(item: dict[str, Any]) -> RenderableType:
         # `Text` above -- group the two instead. `Markdown` does not evaluate
         # Rich markup either; it parses CommonMark, and `[bold red]x[/]` is
         # just link-shaped text to it.
-        return Group(out, Markdown(str(body), hyperlinks=_MARKDOWN_HYPERLINKS))
+        return Group(out, Markdown(body, hyperlinks=_MARKDOWN_HYPERLINKS))
     out.append("\n")
-    out.append(str(body) if body else _NO_BODY)
+    out.append(body if body else _NO_BODY)
     return out
 
 
@@ -152,7 +174,7 @@ def render_change(item: dict[str, Any]) -> Text:
         item carries no content.
     """
     out = Text()
-    out.append(str(item.get("title") or "Untitled"), style="bold")
+    out.append(strip_control_characters(item.get("title") or "Untitled"), style="bold")
     out.append("\n")
 
     headline: list[str] = []
@@ -172,13 +194,13 @@ def render_change(item: dict[str, Any]) -> Text:
         except (TypeError, ValueError):
             pass
     if item.get("change_type"):
-        headline.append(str(item["change_type"]))
+        headline.append(strip_control_characters(item["change_type"]))
     if item.get("diff_summary"):
         # Whole-branch review (Minor): `diff_summary` was carried through
         # normalization with no consumer at all. It is the monitoring
         # engine's own one-line account of the change ("2 lines changed"),
         # which is exactly what this headline is for.
-        headline.append(str(item["diff_summary"]))
+        headline.append(strip_control_characters(item["diff_summary"]))
     out.append(" · ".join(headline) or "changed", style="dim")
     out.append("\n\n")
 
@@ -189,8 +211,13 @@ def render_change(item: dict[str, Any]) -> Text:
 
     # Colour the diff. These lines are remote content appended to a `Text`,
     # which never parses markup -- see `render_article` on why the former
-    # `escape_markup` call here was corruption without protection.
-    for line in str(body).splitlines():
+    # `escape_markup` call here was corruption without protection. NOT run
+    # through `readable_body_text` (TASK-2307): a diff of an HTML page is
+    # *about* the markup, and converting it to prose would delete the very
+    # characters the diff exists to show. Control characters are still
+    # stripped -- those are never the subject of a diff a person reads, and
+    # they are the one class `Text.append` does not neutralize.
+    for line in strip_control_characters(body).splitlines():
         style = "green" if line.startswith("+") else "red" if line.startswith("-") else None
         out.append(line, style=style)
         out.append("\n")
@@ -245,6 +272,20 @@ class ViewSnapshotRequested(Message):
         super().__init__()
 
 
+class ExpandReaderRequested(Message):
+    """Posted when the reader asks for (or gives back) the whole centre stack.
+
+    TASK-2307 AC#2 (UAT F27). CONTENT is about nine rows on a 52-row terminal
+    and the only ways to enlarge it -- `z` on the sibling regions, `Z` on this
+    one -- are keyboard gestures that require focus to already be inside the
+    region and are advertised nowhere on screen. A reader that cannot say how
+    to make itself readable is the defect; this is the visible affordance.
+
+    Carries no payload: the screen owns `region_layout` and this pane must not
+    hold a second opinion about it (see `ContentPane.expanded`).
+    """
+
+
 class ContentPane(RecomposeCaptureGuard, Vertical):
     """Hosts the reader for the currently selected item.
 
@@ -260,15 +301,29 @@ class ContentPane(RecomposeCaptureGuard, Vertical):
 
     item: reactive[dict[str, Any] | None] = reactive(None, recompose=True)
 
+    #: Whether CONTENT is currently the only expanded centre region, i.e.
+    #: whether the expand button should offer to give the room BACK.
+    #:
+    #: Seeded by `WatchlistsCollectionsScreen._build_content_pane` from the
+    #: live `RegionLayout` and never written here: the layout has exactly one
+    #: owner, and a pane that guessed would show `Restore` over a nine-row
+    #: reader the moment the two drifted. A plain reactive, not
+    #: `recompose=True` -- every layout change rebuilds the whole workbench
+    #: (and therefore this pane) through the region factories anyway, so a
+    #: second recompose would be pure churn.
+    expanded: reactive[bool] = reactive(False)
+
     def compose(self):
         """Build the reader for `item`, or the empty-state placeholder.
 
         Yields:
             A single `#content-empty` `Static` when no item is selected;
-            otherwise the `#content-mark-unread-button`, the `#content-
-            full-page-button`/`#content-previous-snapshot-button` pair on a
-            `change`-kind item only (TASK-1494), and a `#content-body`
-            `Static` holding `render_for(self.item)`.
+            otherwise a one-row `#content-actions` strip holding
+            `#content-mark-unread-button`, `#content-expand-button`
+            (TASK-2307) and, on a `change`-kind item only, the
+            `#content-full-page-button`/`#content-previous-snapshot-button`
+            pair (TASK-1494) -- followed by a `#content-body` `Static`
+            holding `render_for(self.item)`.
         """
         if self.item is None:
             yield Static("Select an item to read it.", id="content-empty")
@@ -285,38 +340,52 @@ class ContentPane(RecomposeCaptureGuard, Vertical):
         # three rows tall (top border, label, bottom border) and CONTENT has
         # only about nine usable ones -- the same third of the pane the
         # tooltip fix above just reclaimed, spent again on a button's chrome.
-        yield Button(
-            "Mark unread",
-            id="content-mark-unread-button",
-            tooltip=_GLOBAL_STATUS_NOTE,
-            compact=True,
-        )
-        if str(self.item.get("content_kind") or "") == CONTENT_KIND_CHANGE:
-            # TASK-1494: the two affordances the design spec promised for a
-            # site change and Phase D never wired up. Article items never
-            # get these -- only `URLMonitor.check_url` (a `change`-kind
-            # producer) ever writes `url_snapshots`, so an article item has
-            # no rows there to show and the buttons would open a modal with
-            # nothing in it. `compact=True`, same footprint as "Mark
-            # unread" above: CONTENT's row budget is genuinely tight (see
-            # that button's own comment), but this is the one place the
-            # stored page these numbers were measured against becomes
-            # reachable at all, and a `change` item's diff body is the
-            # shorter of this pane's two bodies -- the trade favours making
-            # it reachable over a couple of extra lines of diff visible
-            # without scrolling.
+        #
+        # TASK-2307: the buttons share ONE `.destination-filter-strip` row
+        # (`height: 1`, the same chrome every toolbar on this screen uses)
+        # rather than stacking. A `change` item previously spent three of the
+        # pane's nine rows on three stacked buttons; it now spends one, which
+        # is a straight win for the row budget F27 is about -- and it is what
+        # makes room for the expand affordance to be free.
+        with Horizontal(id="content-actions", classes="destination-filter-strip"):
             yield Button(
-                "Full page",
-                id="content-full-page-button",
+                "Mark unread",
+                id="content-mark-unread-button",
+                tooltip=_GLOBAL_STATUS_NOTE,
                 compact=True,
-                tooltip="Open the page this change was measured against.",
             )
+            # AC#2. `Z` does the same thing from the keyboard, and the tooltip
+            # says so -- but only once the user knows the region has to be
+            # focused first, which is exactly the knowledge F27 says nothing
+            # on screen conveys. The button needs no focus at all.
             yield Button(
-                "Previous snapshot",
-                id="content-previous-snapshot-button",
+                "Restore" if self.expanded else "Expand",
+                id="content-expand-button",
                 compact=True,
-                tooltip="Open the page as it was before this change.",
+                tooltip=(
+                    "Give the reader the whole centre pane, and press again "
+                    "to put Feeds and Items back (keyboard: Z)."
+                ),
             )
+            if str(self.item.get("content_kind") or "") == CONTENT_KIND_CHANGE:
+                # TASK-1494: the two affordances the design spec promised for
+                # a site change and Phase D never wired up. Article items
+                # never get these -- only `URLMonitor.check_url` (a
+                # `change`-kind producer) ever writes `url_snapshots`, so an
+                # article item has no rows there to show and the buttons would
+                # open a modal with nothing in it.
+                yield Button(
+                    "Full page",
+                    id="content-full-page-button",
+                    compact=True,
+                    tooltip="Open the page this change was measured against.",
+                )
+                yield Button(
+                    "Previous snapshot",
+                    id="content-previous-snapshot-button",
+                    compact=True,
+                    tooltip="Open the page as it was before this change.",
+                )
         yield Static(render_for(self.item), id="content-body")
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
@@ -329,3 +398,6 @@ class ContentPane(RecomposeCaptureGuard, Vertical):
         elif event.button.id == "content-previous-snapshot-button":
             event.stop()
             self.post_message(ViewSnapshotRequested(self.item, "previous"))
+        elif event.button.id == "content-expand-button":
+            event.stop()
+            self.post_message(ExpandReaderRequested())

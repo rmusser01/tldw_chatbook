@@ -128,6 +128,7 @@ from ..Watchlists_Modules.artifacts_pane import (
 from ..Watchlists_Modules.briefing_preset_modal import BriefingPresetModal
 from ..Watchlists_Modules.content_pane import (
     ContentPane,
+    ExpandReaderRequested,
     UnreadToggleRequested,
     ViewSnapshotRequested,
 )
@@ -599,6 +600,19 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         # `_briefing_in_flight_watchlist_id` sibling, so a refusal can name
         # the briefing actually being cast.
         self._cast_in_flight_briefing_id: int | None = None
+        # TASK-2309. The source ids ("id" field -- the namespaced form
+        # `selected_source`/`selected_entity` carry) with a "Check now"
+        # currently running, from EITHER activation site (the Sources pane's
+        # own button and the Inspector's copy of it both post the same
+        # `CheckNowRequested`). This is the debounce state
+        # `handle_check_now_requested` consults to refuse a second press
+        # rather than silently starting a second run, and it is mirrored
+        # onto `SourcesPane.busy_source_ids`/`InspectorPane.busy_source_ids`
+        # (`_set_check_now_busy`) so both buttons show it -- including a
+        # freshly-rebuilt pane (`_build_detail_pane`/`_build_inspector_pane`
+        # re-seed it, the same rebuild-survival reason every other mirror in
+        # this method exists).
+        self._checks_in_flight: set[str] = set()
         # Task 6: the SELECTED briefing's citations -- the rebuild-survival
         # mirror of `pane.citations`, resolved alongside `_selected_briefing`
         # inside `_load_briefings` (see that method). `_citation_item_lookup`
@@ -1946,6 +1960,14 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             # watchlist.
             sources_pane.sources = self.scoped_loaded_sources()
             sources_pane.selected_source = self.selected_source
+            # TASK-2309: re-seed from screen state for the identical
+            # rebuild-survival reason as `selected_source` on the line
+            # above -- a region rebuild (collapse/solo/rail toggle, a tab
+            # switch) constructs a brand new `SourcesPane`, and without this
+            # a check still running would render its Check-now button back
+            # to enabled/"Check now" until the run's own completion repaint
+            # reached this new instance.
+            sources_pane.busy_source_ids = frozenset(self._checks_in_flight)
             # TASK-2302: the destination Select's options and its default,
             # seeded BEFORE `show_create_form` so a form that opens as part
             # of this very rebuild has them. The pane holds no service of its
@@ -2073,9 +2095,18 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         `ContentPane` does not draw its own heading (see `SELF_HEADED_REGIONS`
         in `watchlists_workbench.py`), so `WatchlistsWorkbench` prepends the
         generic "Content" title above whatever this returns.
+
+        Batch-4 review, Qodo Q4. `pane.expanded` is seeded from the live
+        `region_layout` (matching `_build_inspector_pane`'s `selected_entity`
+        seeding note above): this factory reruns on every region rebuild,
+        including the one `handle_expand_reader_requested` itself triggers
+        by calling `_apply_layout`, so the freshly-built pane must be told
+        whether CONTENT is the soloed region or its "Expand"/"Restore" label
+        would go stale the instant the layout that produced it changes.
         """
         pane = ContentPane(id="watchlists-content-pane")
         pane.item = self._selected_content_item
+        pane.expanded = self.region_layout.solo_region == Region.CONTENT
         return pane
 
     def _watchlists_are_empty(self) -> bool:
@@ -2318,6 +2349,11 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         # `Add existing` is the watchlist-side twin of the rail's, so the two
         # must be enabled and disabled by one condition, not two.
         inspector.write_disabled_reason = self._tree_write_disabled_reason()
+        # TASK-2309: same rebuild-survival seeding as `SourcesPane.busy_
+        # source_ids` in `_build_detail_pane`, and for the identical reason
+        # -- this factory builds a brand new `InspectorPane` on every region
+        # rebuild.
+        inspector.busy_source_ids = frozenset(self._checks_in_flight)
         children.append(inspector)
         return Vertical(
             *children,
@@ -4476,13 +4512,103 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             if callable(notify):
                 notify("Failed to preview source.", severity="error")
 
+    @staticmethod
+    def _check_now_entity_name(entity: dict[str, Any]) -> str:
+        """The name a Check now toast should use for `entity`.
+
+        Matches the title fallback chain `_build_inspector_pane`'s
+        `Selected: {title}` line and `_resume_source`'s `name` already use,
+        so a source is never referred to by three different fallbacks across
+        three toasts.
+        """
+        return str(
+            entity.get("name")
+            or entity.get("source_title")
+            or entity.get("title")
+            or "that source"
+        )
+
+    def _set_check_now_busy(self) -> None:
+        """Paint `_checks_in_flight` onto whichever Check-now buttons exist.
+
+        TASK-2309. `_checks_in_flight` is the source of truth; this only
+        pushes it onto panes that happen to be mounted right now -- Sources
+        and the Inspector each host their own copy of this button, and
+        either, both, or neither may be on screen for a given source at a
+        given moment (the active section may not be Sources, or the
+        Inspector's deepest selection may be a different source or none at
+        all). A pane that is not currently mounted needs nothing done to it
+        here: `_build_detail_pane`/`_build_inspector_pane` re-seed
+        `busy_source_ids` from this same set on every rebuild, so a freshly
+        constructed pane never has to be told separately.
+
+        `_dom_is_live`, not `is_mounted` (TASK-2200's mount-window lesson,
+        applied throughout this screen): a check can complete inside the
+        same `on_mount`-adjacent window that lesson documents.
+        """
+        if not self._dom_is_live:
+            return
+        busy_ids = frozenset(self._checks_in_flight)
+        try:
+            sources_pane = self.query_one("#watchlists-sources-pane", SourcesPane)
+        except Exception:
+            pass
+        else:
+            sources_pane.busy_source_ids = busy_ids
+        try:
+            inspector = self.query_one("#watchlists-entity-inspector", InspectorPane)
+        except Exception:
+            pass
+        else:
+            inspector.busy_source_ids = busy_ids
+
     @on(CheckNowRequested)
     def handle_check_now_requested(self, event: CheckNowRequested) -> None:
+        """Start a check, unless this exact source already has one running.
+
+        TASK-2309 (UAT F19). Three things a bare `run_worker(..., exclusive=
+        True)` did not give: an immediate acknowledgment (the toast below,
+        posted before the worker even starts, so the ~5s of dead air the UAT
+        measured has SOMETHING on screen from the first frame), a busy state
+        that outlives the toast (`_set_check_now_busy`, cleared only in
+        `_check_now_source`'s `finally`), and a stated refusal of a second
+        press instead of silently queuing (or, under the old
+        `exclusive=True`, silently CANCELLING the first run mid-write --
+        exactly the unsound cancellation-supersede shape TASK-1541
+        documents: a cancelled `execute_run` leaves its row at `running`
+        forever). `run_worker` below uses a named group instead, so a second,
+        DIFFERENT source's check is unaffected by this one either way.
+
+        Args:
+            event: Carries the source entity to check (`event.entity`), or
+                `None` if the pane posting it had nothing selected -- see
+                `SourcesPane`/`InspectorPane`'s own `CheckNowRequested`
+                call sites.
+        """
         event.stop()
         entity = event.entity
         if entity is None:
             return
-        self.run_worker(self._check_now_source(entity), exclusive=True)
+        source_key = str(entity.get("id") or "")
+        name = self._check_now_entity_name(entity)
+        if source_key and source_key in self._checks_in_flight:
+            # Stated, not silent (AC#2): a second press while this exact
+            # source is mid-check does not queue a duplicate run.
+            self._notify_watchlists(
+                f"Already checking {name}.", severity="warning", markup=False
+            )
+            return
+        if source_key:
+            self._checks_in_flight.add(source_key)
+            self._set_check_now_busy()
+        # Immediate acknowledgment (AC#1), posted before the worker starts.
+        # `markup=False`: `name` is user-entered (the source's Name field).
+        self._notify_watchlists(
+            f"Checking {name}...", severity="information", markup=False
+        )
+        self.run_worker(
+            self._check_now_source(entity, source_key, name), group="wc_check_now"
+        )
 
     #: Run statuses that mean the check did not succeed. `execute_run` catches
     #: the fetch error itself and RETURNS a run in one of these states rather
@@ -4515,8 +4641,23 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             error_msg = stats.get("error_msg")
         return str(error_msg or "the source reported a failed run")
 
-    async def _check_now_source(self, source: dict[str, Any]) -> None:
+    async def _check_now_source(
+        self,
+        source: dict[str, Any],
+        source_key: str | None = None,
+        name: str | None = None,
+    ) -> None:
         """Run a check for one source and report what actually happened.
+
+        `source_key`/`name` default to `None` and are derived from `source`
+        when omitted (the same derivation `handle_check_now_requested` uses)
+        so a caller that drives this worker directly -- bypassing the
+        message handler entirely, an established pattern in this test suite
+        (`Tests/UI/test_watchlists_rail_counts_and_scope.py`) -- keeps
+        working without knowing about TASK-2309's debounce bookkeeping.
+        `handle_check_now_requested` itself always passes both explicitly,
+        since it already computed them for the immediate-ack toast and the
+        pre-registration in `_checks_in_flight`.
 
         TASK-1090. This wrapped the whole call in `except Exception`, logged at
         **debug** and showed a transient toast, which is the swallow that hid
@@ -4536,7 +4677,23 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         service (see `LocalWatchlistsService.record_run_failure`) -- and the
         source list is reloaded here so the Sources table's Status column
         shows it once the toast is gone.
+
+        TASK-2309: every toast below now names `name` (so a running check is
+        identifiable when more than one source exists) and is `markup=False`
+        (a source's Name field is user-entered free text, and a bracket in it
+        must reach the user verbatim rather than being interpreted -- or
+        swallowed -- as Rich markup, same reasoning as `_resume_source`'s
+        toast). The whole body is now wrapped in `try`/`finally`:
+        `source_key` is cleared from `_checks_in_flight` and the busy state
+        is repainted off unconditionally, on EVERY exit path including an
+        exception this method itself does not expect -- a raise that skipped
+        that cleanup would strand both Check-now buttons permanently
+        disabled for a source no worker is actually still checking.
         """
+        if source_key is None:
+            source_key = str(source.get("id") or "")
+        if name is None:
+            name = self._check_now_entity_name(source)
         notify = getattr(self.app_instance, "notify", None)
         source_id = source.get("id")
         #: Whether this check actually finished and therefore actually produced
@@ -4544,73 +4701,116 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         #: refresh at the end of this method.
         reached_terminal = False
         try:
-            result = await self._controller.check_now(
-                runtime_backend=self.runtime_backend,
-                source_id=source_id,
-            )
-        except Exception as exc:
-            logger.opt(exception=True).warning(
-                f"Check now failed for watchlist source {source_id!r}: {exc}"
-            )
-            if callable(notify):
-                notify(f"Check failed: {exc}", severity="error", timeout=10)
-        else:
-            failure = self._check_failure_message(result)
-            if failure is not None:
-                logger.warning(
-                    f"Check now for watchlist source {source_id!r} finished "
-                    f"failed: {failure}"
+            try:
+                result = await self._controller.check_now(
+                    runtime_backend=self.runtime_backend,
+                    source_id=source_id,
+                )
+            except Exception as exc:
+                logger.opt(exception=True).warning(
+                    f"Check now failed for watchlist source {source_id!r}: {exc}"
                 )
                 if callable(notify):
-                    notify(f"Check failed: {failure}", severity="error", timeout=10)
+                    notify(
+                        f"Check failed: {name} — {exc}",
+                        severity="error",
+                        timeout=10,
+                        markup=False,
+                    )
             else:
-                # Only claim completion for a terminal status. `check_now` on
-                # the server backend delegates to `launch_run`, which triggers
-                # execution asynchronously and returns `queued`/`running` — so
-                # a fixed "Check complete." would tell the user the fetch had
-                # finished while it was still in flight (Qodo #4 on PR #1047).
-                status = str((result or {}).get("status") or "").lower()
-                reached_terminal = status in self._TERMINAL_RUN_STATUSES
-                if callable(notify):
-                    if reached_terminal:
-                        notify("Check complete.", severity="information")
-                    else:
-                        notify("Check started.", severity="information")
-        self._refresh_local_wc_snapshot()
-        self._refresh_overview_data()
-        # Reload the source list so the Status and Last scraped columns carry
-        # the outcome after the toast has gone (AC#2). Same reload
-        # `_delete_source` performs for the same reason.
-        # Preserve the user's selection across the reload. Rebuilding the
-        # table emits a row-0 highlight, which `SourcesPane` treats as a real
-        # selection — so without this the reload silently retargets Preview /
-        # Check now / Delete at the first source (Qodo #3 on PR #1047, and
-        # the defect filed as task-1161).
-        self.run_worker(
-            self._load_sources_preserving_selection(), exclusive=True, group="wc_sources"
-        )
-        # TASK-2304 AC#1. A check is the ONE gesture that manufactures items,
-        # and the rail's numbers are unread item counts -- so this was the
-        # single most visible place they went stale. Measured in the
-        # 2026-08-04 UAT: create a watchlist, assign a source, press Check
-        # now, watch a feed's worth of items arrive in the centre while every
-        # rail count stayed on 0 until the screen was left and re-entered.
-        # `_load_tree_data` publishes through TASK-2200's surface-refresh
-        # drain, so this is a rail rebuild, not a screen recompose.
-        #
-        # Review wave, Minor 4: only once the run has actually FINISHED. The
-        # local backend runs `check_now` to completion and returns
-        # `completed`, so this fires exactly as before there. The server
-        # backend delegates to `launch_run` and returns `queued`/`running`
-        # (the toast three lines up is careful about the same distinction),
-        # so re-reading the counts here would read them before the items it
-        # is meant to be reporting exist -- an authoritative-looking query
-        # against a state the user's own action has not reached yet. A run
-        # that finishes later is picked up by the next refresh, which is the
-        # same guarantee every other server-backend surface on this screen
-        # gives.
-        if reached_terminal:
-            self._load_tree_data()
+                failure = self._check_failure_message(result)
+                if failure is not None:
+                    logger.warning(
+                        f"Check now for watchlist source {source_id!r} finished "
+                        f"failed: {failure}"
+                    )
+                    if callable(notify):
+                        notify(
+                            f"Check failed: {name} — {failure}",
+                            severity="error",
+                            timeout=10,
+                            markup=False,
+                        )
+                else:
+                    # Only claim completion for a terminal status. `check_now`
+                    # on the server backend delegates to `launch_run`, which
+                    # triggers execution asynchronously and returns
+                    # `queued`/`running` — so a fixed "Check complete." would
+                    # tell the user the fetch had finished while it was still
+                    # in flight (Qodo #4 on PR #1047).
+                    status = str((result or {}).get("status") or "").lower()
+                    reached_terminal = status in self._TERMINAL_RUN_STATUSES
+                    if callable(notify):
+                        if reached_terminal:
+                            # The run's own counters (TASK-2309), when the
+                            # result actually carries them -- the local
+                            # backend's `execute_run` always returns a
+                            # normalized run row with both; a completed
+                            # result missing them degrades to the bare
+                            # completion line rather than printing "None".
+                            found = (result or {}).get("found_count")
+                            processed = (result or {}).get("processed_count")
+                            if found is not None or processed is not None:
+                                notify(
+                                    f"Check complete: {name} — "
+                                    f"{found or 0} found, {processed or 0} new.",
+                                    severity="information",
+                                    markup=False,
+                                )
+                            else:
+                                notify(
+                                    f"Check complete: {name}.",
+                                    severity="information",
+                                    markup=False,
+                                )
+                        else:
+                            notify(
+                                f"Check started: {name}.",
+                                severity="information",
+                                markup=False,
+                            )
+            self._refresh_local_wc_snapshot()
+            self._refresh_overview_data()
+            # Reload the source list so the Status and Last scraped columns carry
+            # the outcome after the toast has gone (AC#2). Same reload
+            # `_delete_source` performs for the same reason.
+            # Preserve the user's selection across the reload. Rebuilding the
+            # table emits a row-0 highlight, which `SourcesPane` treats as a real
+            # selection — so without this the reload silently retargets Preview /
+            # Check now / Delete at the first source (Qodo #3 on PR #1047, and
+            # the defect filed as task-1161).
+            self.run_worker(
+                self._load_sources_preserving_selection(), exclusive=True, group="wc_sources"
+            )
+            # TASK-2304 AC#1. A check is the ONE gesture that manufactures items,
+            # and the rail's numbers are unread item counts -- so this was the
+            # single most visible place they went stale. Measured in the
+            # 2026-08-04 UAT: create a watchlist, assign a source, press Check
+            # now, watch a feed's worth of items arrive in the centre while every
+            # rail count stayed on 0 until the screen was left and re-entered.
+            # `_load_tree_data` publishes through TASK-2200's surface-refresh
+            # drain, so this is a rail rebuild, not a screen recompose.
+            #
+            # Review wave, Minor 4: only once the run has actually FINISHED. The
+            # local backend runs `check_now` to completion and returns
+            # `completed`, so this fires exactly as before there. The server
+            # backend delegates to `launch_run` and returns `queued`/`running`
+            # (the toast three lines up is careful about the same distinction),
+            # so re-reading the counts here would read them before the items it
+            # is meant to be reporting exist -- an authoritative-looking query
+            # against a state the user's own action has not reached yet. A run
+            # that finishes later is picked up by the next refresh, which is the
+            # same guarantee every other server-backend surface on this screen
+            # gives.
+            if reached_terminal:
+                self._load_tree_data()
+        finally:
+            # TASK-2309 AC#1 (the failure case): reached whether the `try`
+            # above returned normally, notified a failure, or raised
+            # something neither branch anticipated.
+            if source_key:
+                self._checks_in_flight.discard(source_key)
+            self._set_check_now_busy()
 
     async def _load_sources_preserving_selection(self) -> None:
         """Reload the source list without discarding the current selection."""
@@ -8292,6 +8492,37 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         if item_id is None:
             return
         self._dispatch_item_status(item_id, _ItemStatusIntent(status="new", gate=True))
+
+    @on(ExpandReaderRequested)
+    def handle_expand_reader_requested(self, event: ExpandReaderRequested) -> None:
+        """Give the reader the whole centre stack, or give it back (AC#2).
+
+        Batch-4 review, Qodo Q4: this was task-2307's own disclosed gap --
+        `ContentPane` posted `ExpandReaderRequested` and nothing handled it,
+        a dead button. Task-1344 already built the mechanism this needs
+        (`action_solo_region`, bound to `Z`): isolate one centre pane,
+        collapsing the other two around it, and calling `solo` again on the
+        same region restores them (`RegionLayout.solo`'s own docstring).
+        Routed through THAT mechanism rather than a second one -- same
+        `_apply_layout` call `action_solo_region` makes, just with
+        `Region.CONTENT` as the target instead of reading it off
+        `self.focused_region`, since a button press already names its
+        target unambiguously and does not need the focus-tracking
+        indirection a keyboard shortcut does.
+
+        `_refuse_region_gesture_off_read_tab` is consulted anyway, for the
+        same "one source of truth for is a region-layout gesture allowed"
+        reason `action_toggle_region`/`action_solo_region`/`_on_region_
+        toggled` all do (see that method's own docstring) -- in practice
+        this button cannot be pressed off the Read tab at all (CONTENT is
+        unmounted everywhere else), so the refusal is defensive rather than
+        reachable, not a second, independent gate someone could drift out
+        of sync with the other three.
+        """
+        event.stop()
+        if self._refuse_region_gesture_off_read_tab(Region.CONTENT):
+            return
+        self._apply_layout(self.region_layout.solo(Region.CONTENT))
 
     @on(ViewSnapshotRequested)
     def handle_view_snapshot_requested(self, event: ViewSnapshotRequested) -> None:

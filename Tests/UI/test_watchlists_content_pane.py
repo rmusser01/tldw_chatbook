@@ -1553,6 +1553,192 @@ async def test_the_mark_unread_button_is_compact():
         assert button.compact, "the reader's button must not cost three rows"
 
 
+@pytest.mark.asyncio
+async def test_the_expand_button_posts_the_request():
+    """Batch-4 review, I5 (half 1/2). task-2307's own Implementation Notes
+    honestly disclose that `ExpandReaderRequested` has no SCREEN-level
+    handler yet (AC#2 stays unchecked for exactly that reason -- not tested
+    here, on purpose). But the PANE-level half -- the button existing and
+    posting the message on press -- had zero test coverage at all:
+    mutation-verified by the review, gutting the `content-expand-button`
+    branch of `on_button_pressed` left all 52 tests in this file green.
+    """
+    from textual.app import App
+    from textual.widgets import Button
+
+    from tldw_chatbook.UI.Watchlists_Modules.content_pane import (
+        ContentPane,
+        ExpandReaderRequested,
+    )
+
+    class _PaneHost(App):
+        def __init__(self) -> None:
+            super().__init__()
+            self.captured: list[str] = []
+
+        def compose(self):
+            pane = ContentPane()
+            pane.item = {"title": "x", "content": "y", "content_kind": "article"}
+            yield pane
+
+        def on_expand_reader_requested(self, message: ExpandReaderRequested) -> None:
+            self.captured.append("expand_reader_requested")
+
+    app = _PaneHost()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        button = app.query_one("#content-expand-button", Button)
+        assert str(button.label) == "Expand", (
+            "the button must read Expand while the pane is not expanded"
+        )
+
+        button.press()
+        await pilot.pause()
+
+        assert app.captured == ["expand_reader_requested"], (
+            "pressing the button must post ExpandReaderRequested exactly once"
+        )
+
+
+@pytest.mark.asyncio
+async def test_the_expand_button_label_reflects_expanded_when_seeded():
+    """Batch-4 review, I5 (half 2/2). `expanded` is a plain reactive, not
+    `recompose=True` -- by design (see its own docstring): in production the
+    screen's region-solo toggle rebuilds the whole workbench through the
+    region factories, which constructs a brand new `ContentPane` and seeds
+    `expanded` on it BEFORE it mounts, so a second, pane-local recompose
+    would be pure churn. This mirrors that exact seeding shape -- set before
+    the pane is yielded -- rather than mutating the reactive on an
+    already-mounted pane, which would not be a fair test of how this
+    reactive is actually meant to be driven.
+    """
+    from textual.app import App
+    from textual.widgets import Button
+
+    from tldw_chatbook.UI.Watchlists_Modules.content_pane import ContentPane
+
+    class _PaneHost(App):
+        def compose(self):
+            pane = ContentPane()
+            pane.item = {"title": "x", "content": "y", "content_kind": "article"}
+            pane.expanded = True
+            yield pane
+
+    app = _PaneHost()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        button = app.query_one("#content-expand-button", Button)
+        assert str(button.label) == "Restore", (
+            "a pane seeded with expanded=True must offer to give the room "
+            "back, not offer to expand again"
+        )
+
+
+@pytest.mark.asyncio
+async def test_pressing_expand_actually_solos_content_and_restores_on_a_second_press():
+    """Batch-4 review round 3, Qodo Q4. Closes the gap I5 deliberately left
+    open (AC#2's screen-level handler, "honestly unwired" at the time):
+    `ExpandReaderRequested` now routes to the SAME `RegionLayout.solo`
+    mechanism `Z`/`action_solo_region` already uses (task-1344), so pressing
+    the button must produce the identical, real effect a `Z` keypress does
+    -- not a second, parallel maximize implementation.
+    """
+    from textual.widgets import Button
+
+    from Tests.UI.test_destination_shells import DestinationHarness
+    from Tests.UI.app_factory import _build_test_app
+    from tldw_chatbook.UI.Watchlists_Modules.content_pane import ContentPane
+    from tldw_chatbook.UI.Watchlists_Modules.items_pane import ItemsPane
+    from tldw_chatbook.UI.Watchlists_Modules.region_layout import Region
+
+    item = {
+        "id": 11,
+        "title": "Expand me",
+        "source_name": "Feed",
+        "content": "body",
+        "content_kind": "article",
+        "content_format": "text",
+    }
+
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.2)
+        screen = host.screen_stack[-1]
+        screen.active_section = "items"
+        await pilot.pause(0.2)
+
+        items_pane = screen.query_one("#watchlists-items-pane", ItemsPane)
+        items_pane.items = [item]
+        await pilot.pause(0.2)
+        items_pane.select_item_by_id("11")
+        await pilot.pause(0.3)
+
+        assert screen.query("#wl-region-feeds"), "precondition: FEEDS starts visible"
+        content_pane = screen.query_one("#watchlists-content-pane", ContentPane)
+        expand_button = content_pane.query_one("#content-expand-button", Button)
+        assert str(expand_button.label) == "Expand"
+
+        expand_button.press()
+        await pilot.pause(0.3)
+
+        assert screen.region_layout.solo_region is Region.CONTENT, (
+            "the SAME solo mechanism Z uses must actually have run"
+        )
+        assert screen.query("#wl-region-content")
+        assert not screen.query("#wl-region-feeds"), (
+            "soloing CONTENT must actually collapse FEEDS around it -- the "
+            "real, visible effect, not just a state flag"
+        )
+        assert not screen.query("#wl-region-items")
+
+        content_pane = screen.query_one("#watchlists-content-pane", ContentPane)
+        restore_button = content_pane.query_one("#content-expand-button", Button)
+        assert str(restore_button.label) == "Restore", (
+            "the freshly-rebuilt pane must be seeded from the live layout, "
+            "not silently reset to Expand"
+        )
+
+        restore_button.press()
+        await pilot.pause(0.3)
+
+        assert screen.region_layout.solo_region is None, "a second press must restore"
+        assert screen.query("#wl-region-feeds")
+        assert screen.query("#wl-region-items")
+        content_pane = screen.query_one("#watchlists-content-pane", ContentPane)
+        assert str(
+            content_pane.query_one("#content-expand-button", Button).label
+        ) == "Expand"
+
+
+@pytest.mark.asyncio
+async def test_expand_reader_requested_off_the_read_tab_is_refused_defensively():
+    """The button cannot actually be pressed off Read (CONTENT is unmounted
+    everywhere else), so this drives the message directly -- the same
+    defensive-gate shape `test_solo_on_content_off_the_read_tab_is_refused`
+    already pins for `Z`, now pinned for this second entry point into the
+    identical gate.
+    """
+    from Tests.UI.test_destination_shells import DestinationHarness
+    from Tests.UI.app_factory import _build_test_app
+    from tldw_chatbook.UI.Watchlists_Modules.content_pane import ExpandReaderRequested
+
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.2)
+        screen = host.screen_stack[-1]
+        screen.active_section = "sources"
+        await pilot.pause(0.3)
+        before = screen.region_layout
+
+        screen.post_message(ExpandReaderRequested())
+        await pilot.pause(0.3)
+
+        assert screen.region_layout == before
+        assert screen.region_layout.solo_region is None
+
+
 # --- PR #1091 review ---------------------------------------------------------
 
 
@@ -1860,6 +2046,43 @@ def test_a_hostile_markdown_body_never_emits_a_terminal_hyperlink():
     # And the destination is disclosed rather than hidden behind the label.
     assert "https://evil.test/steal" in plain
     assert "https://evil.test/autolink" in plain
+
+
+def test_a_raw_control_byte_in_a_markdown_body_is_stripped_before_rendering():
+    """Batch-4 review, I4. Every existing hostile-markdown test (including
+    the one directly above) attacks the `Markdown(hyperlinks=False)` OSC-8
+    suppression through `[label](url)` LINK SYNTAX -- none embeds a raw
+    control byte directly in the markdown source, so nothing had proven the
+    `strip_control_characters(raw_body)` call in `render_article`'s markdown
+    branch (`_is_markdown(item)` true) does anything at all. Mutation-
+    verified by the review: replacing that branch with unstripped
+    `str(raw_body or "")` left the whole content-pane suite green.
+
+    A raw OSC-8 sequence has no CommonMark significance -- to the parser it
+    is ordinary inline text, so `Markdown` would hand it straight through to
+    the terminal exactly as written unless stripped first.
+    """
+    from tldw_chatbook.UI.Watchlists_Modules.content_pane import render_article
+
+    payload = "before \x1b]8;;http://evil.test\x07label\x1b]8;;\x07 after"
+    plain, ansi = _render_to_console(
+        render_article(
+            {
+                "title": "Raw control byte in markdown",
+                "source_name": "Hostile Feed",
+                "content": payload,
+                "content_kind": "article",
+                "content_format": "markdown",
+            }
+        ),
+        width=200,
+    )
+    assert "\x1b" not in plain, "the raw ESC byte must not reach the rendered text"
+    assert "\x1b]8;;" not in ansi, (
+        "no OSC-8 hyperlink may be manufactured from a raw byte sequence "
+        "embedded directly in the markdown source"
+    )
+    assert "before" in plain and "label" in plain and "after" in plain
 
 
 # --- TASK-1494: the reader's `[full page]`/`[previous snapshot]` affordances -
@@ -2284,3 +2507,129 @@ async def test_snapshot_modal_renders_remote_markup_as_literal_text():
 
         modal.query_one("#svm-close", Button).press()
         await pilot.pause(0.3)
+
+
+# --- TASK-2307: HTML feed bodies render as readable text -------------------
+
+
+def test_an_html_body_renders_as_readable_prose_with_the_link_visible_as_text():
+    """The UAT finding, at the unit level: a feed's `<p>`/`<a href>` body
+    used to show up on screen exactly as written, one long unreadable line.
+    `readable_body_text` converts it before `render_article` ever appends it,
+    so the tags themselves must be gone and the link's destination must
+    still be legible -- as ordinary visible text, not a hidden hyperlink.
+    """
+    from tldw_chatbook.UI.Watchlists_Modules.content_pane import render_article
+
+    out = str(render_article({
+        "title": "Claude Opus 4.5 is now available",
+        "source_name": "Anthropic News",
+        "content": (
+            "<p>Article URL: <a href=\"https://example.test/opus\">"
+            "read more</a></p><p>It is <strong>fast</strong>.</p>"
+        ),
+        "content_kind": "article",
+        "content_format": "text",
+    }))
+
+    assert "<p>" not in out and "</p>" not in out, "block tags must be gone"
+    assert "<a href" not in out, "the raw anchor tag must be gone"
+    assert "<strong>" not in out
+    assert "read more" in out, "the link's label must survive"
+    assert "https://example.test/opus" in out, (
+        "the destination must be legible as text -- a terminal reader who "
+        "cannot see the address cannot judge it"
+    )
+    assert "It is fast." in out
+
+
+def test_html_derived_prose_is_still_inert_when_actually_rendered():
+    """The escaping-terminal rule holds at the NEW final render step too
+    (AC#1): the HTML converter must not turn a feed body into something a
+    real Rich console would interpret, and a raw control byte the HTML
+    parser passes through untouched must not reach the terminal either.
+    """
+    from tldw_chatbook.UI.Watchlists_Modules.content_pane import render_article
+
+    hostile = (
+        "<p>[bold red]not a style[/] and "
+        "<a href=\"javascript:alert(1)\">click</a></p>"
+        "<p>\x1b]8;;http://evil.test\x07label\x1b]8;;\x07 tail</p>"
+    )
+    plain, ansi = _render_to_console(render_article({
+        "title": "Hostile",
+        "source_name": "Hostile Feed",
+        "content": hostile,
+        "content_kind": "article",
+        "content_format": "text",
+    }))
+
+    assert "[bold red]not a style[/]" in plain, "bracket text must survive as characters"
+    assert "\x1b[31m" not in ansi, "the [bold red] tag must not have styled anything"
+    assert "\x1b]8;;" not in ansi, "no OSC-8 hyperlink may reach the terminal"
+    assert "\x1b" not in plain, "the raw ESC byte must not have survived at all"
+    assert "label" in plain and "tail" in plain, "the surrounding text must still render"
+
+
+def test_a_non_html_body_is_left_alone_apart_from_control_bytes():
+    """The other half of `readable_body_text`'s dispatch: a plain-text feed
+    body (most of them) must not be run through the HTML converter at all,
+    and must survive byte-for-byte apart from characters that cannot
+    legally reach the terminal.
+    """
+    from tldw_chatbook.UI.Watchlists_Modules.content_pane import render_article
+
+    out = str(render_article({
+        "title": "Plain text feed",
+        "source_name": "Feed",
+        "content": "1 < 2 and 2 < 3, plainly written, no markup at all.",
+        "content_kind": "article",
+        "content_format": "text",
+    }))
+
+    assert "1 < 2 and 2 < 3, plainly written, no markup at all." in out
+
+
+@pytest.mark.asyncio
+async def test_selecting_an_html_item_shows_readable_prose_in_the_mounted_reader():
+    """End to end through the real screen wiring (not a direct renderer
+    call): the same `<p>`/`<a href>` shape the UAT found, opened the way a
+    user actually opens it, must not show a single literal tag on screen.
+    """
+    from textual.widgets import Static
+
+    from Tests.UI.test_destination_shells import DestinationHarness
+    from Tests.UI.app_factory import _build_test_app
+    from tldw_chatbook.UI.Watchlists_Modules.content_pane import ContentPane
+    from tldw_chatbook.UI.Watchlists_Modules.items_pane import ItemsPane
+
+    item = {
+        "id": 9,
+        "title": "Site update",
+        "source_name": "Some Blog",
+        "content": '<p>Article URL: <a href="https://example.test/post">here</a></p>',
+        "content_kind": "article",
+        "content_format": "text",
+    }
+
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.2)
+        screen = host.screen_stack[-1]
+        screen.active_section = "items"
+        await pilot.pause(0.2)
+
+        items_pane = screen.query_one("#watchlists-items-pane", ItemsPane)
+        items_pane.items = [item]
+        await pilot.pause(0.2)
+        items_pane.select_item_by_id("9")
+        await pilot.pause(0.3)
+
+        content_pane = screen.query_one("#watchlists-content-pane", ContentPane)
+        body = content_pane.query_one("#content-body", Static)
+        rendered = str(body.renderable)
+
+        assert "<p>" not in rendered and "<a href=" not in rendered
+        assert "here" in rendered
+        assert "https://example.test/post" in rendered

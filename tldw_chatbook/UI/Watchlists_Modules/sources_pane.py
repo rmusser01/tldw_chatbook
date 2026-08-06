@@ -12,6 +12,7 @@ from textual.reactive import reactive
 from textual.css.query import NoMatches
 from textual.widgets import Button, DataTable, Input, Select, Static, Switch, TextArea
 
+from ...Subscriptions.html_text import strip_control_characters
 from ...Subscriptions.noise_defaults import (
     default_ignore_selectors_text,
     first_invalid_selector,
@@ -20,6 +21,7 @@ from ...Subscriptions.noise_defaults import (
 from ...Utils.input_validation import sanitize_string, validate_text_input, validate_url
 from ...Widgets.prune_safe_select import PruneSafeSelect
 from ...Widgets.recompose_capture_guard import RecomposeCaptureGuard
+from .humane_time import humane_timestamp
 from .inspector_pane import CheckNowRequested, PreviewRequested
 
 
@@ -115,6 +117,17 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
 
     sources = reactive[list[dict[str, Any]]]([], recompose=True)
     selected_source = reactive[dict[str, Any] | None](None)
+    #: TASK-2309. The source ids ("id" field, the same namespaced form
+    #: `selected_source` carries) with a check currently in flight anywhere
+    #: on the screen -- not just the one selected here, since the Inspector
+    #: can trigger a check for a source that is not this pane's current
+    #: selection. `WatchlistsCollectionsScreen._checks_in_flight` is the
+    #: source of truth; this mirrors it in, the same way `sources` mirrors
+    #: `_loaded_sources`. Deliberately NOT `recompose=True`: a check starting
+    #: or finishing must not rebuild the table under the user (the same
+    #: reason `selected_source` above is not), so `watch_busy_source_ids`
+    #: repaints the one button that can show it, surgically.
+    busy_source_ids = reactive[frozenset[str]](frozenset())
     search_query = reactive("", recompose=True)
     source_type_filter = reactive("all", recompose=True)
     status_filter = reactive("all", recompose=True)
@@ -363,10 +376,19 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
                     id="sources-preview-button",
                     disabled=self.selected_source is None,
                 )
+                # TASK-2309: busy state read at compose time too, not only via
+                # the surgical `_update_action_buttons` repaint below -- this
+                # pane is reconstructed from scratch on every workbench
+                # rebuild (`_build_detail_pane`), and the screen seeds
+                # `busy_source_ids` onto the fresh instance BEFORE it mounts,
+                # so the very first paint has to already reflect an
+                # in-flight check rather than waiting for a watcher that
+                # cannot repaint a widget that does not exist yet.
+                check_now_busy = self._is_check_now_busy(self.selected_source)
                 yield Button(
-                    "Check now",
+                    "Checking..." if check_now_busy else "Check now",
                     id="sources-check-now-button",
-                    disabled=self.selected_source is None,
+                    disabled=self.selected_source is None or check_now_busy,
                 )
                 yield Button("Import OPML", id="sources-import-opml-button")
                 yield Button("Export OPML", id="sources-export-opml-button")
@@ -618,11 +640,25 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
     def source_last_scraped_text(source: dict[str, Any]) -> str:
         """What the Last scraped column says. Same defect as `status` above:
         the normalizers publish `last_checked_or_scraped_at`, so this column
-        read `-` even immediately after a successful check."""
-        return str(
-            source.get("last_checked_or_scraped_at")
-            or source.get("last_scraped")
-            or "-"
+        read `-` even immediately after a successful check.
+
+        TASK-2308: rendered through `humane_timestamp`, in the viewer's local
+        zone. The stored value is a full UTC ISO-8601 string with
+        microseconds -- 32 characters, in a table whose Name column is the
+        one people actually read.
+
+        Args:
+            source: A normalized source dict; `last_checked_or_scraped_at`
+                (the current normalizer field) is preferred, falling back to
+                the older `last_scraped` for any hand-built row that still
+                uses it.
+
+        Returns:
+            `humane_timestamp` of whichever of the two fields is present, or
+            `"-"` when neither is.
+        """
+        return humane_timestamp(
+            source.get("last_checked_or_scraped_at") or source.get("last_scraped")
         )
 
     @staticmethod
@@ -634,8 +670,23 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
         which must not rebuild the table) so both draw an identical row.
         """
         style = SourcesPane._SELECTED_ROW_STYLE if highlighted else ""
+        # Batch-4 review, I1. `name` is remote-derived: OPML import
+        # (`WatchlistOpmlService.parse`) hands an `<outline text=...>`
+        # attribute straight to this field with zero sanitization, and a C1
+        # control byte (0x80-0x9F, e.g. a single-byte CSI introducer) is
+        # valid in XML 1.0's character range -- it survives the OPML parse
+        # untouched and would otherwise reach this `Text` cell (and Rich's
+        # real render) verbatim. `Text.append`/`Text(...)` only protects
+        # against Rich MARKUP, not raw control bytes -- see
+        # `html_text.strip_control_characters`'s own docstring, which closed
+        # this exact hole for the reader; it did not extend to this pane.
         return (
-            Text(str(source.get("name") or source.get("title") or "Untitled"), style=style),
+            Text(
+                strip_control_characters(
+                    source.get("name") or source.get("title") or "Untitled"
+                ),
+                style=style,
+            ),
             Text(str(source.get("source_type") or "-"), style=style),
             Text(SourcesPane.source_status_text(source), style=style),
             Text(SourcesPane.source_last_scraped_text(source), style=style),
@@ -1210,6 +1261,29 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
         self._update_action_buttons()
         self._update_selection_highlight(source)
 
+    def watch_busy_source_ids(self, _busy_source_ids: frozenset[str]) -> None:
+        """Repaint Check now, without a recompose, when a check starts or ends.
+
+        TASK-2309. Mirrors `watch_selected_source`'s repaint-not-rebuild
+        choice above, for the identical reason.
+
+        Args:
+            _busy_source_ids: The reactive's new value (Textual's watcher
+                convention passes it), unused directly -- `_update_action_
+                buttons`/`_is_check_now_busy` re-read the current value off
+                `self.busy_source_ids` instead, the same indirection
+                `watch_selected_source` already uses for its own reactive.
+        """
+        self._update_action_buttons()
+
+    def _is_check_now_busy(self, source: dict[str, Any] | None) -> bool:
+        """Whether `source` (typically `self.selected_source`) has a check
+        in flight right now, per the screen's `busy_source_ids` mirror."""
+        if source is None:
+            return False
+        source_key = str(source.get("id") or "")
+        return bool(source_key) and source_key in self.busy_source_ids
+
     def _update_selection_highlight(self, source: dict[str, Any] | None) -> None:
         """Move the table's selected-row highlight without rebuilding it.
 
@@ -1272,4 +1346,11 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
             return
         disabled = self.selected_source is None
         preview_button.disabled = disabled
-        check_now_button.disabled = disabled
+        # TASK-2309: Check now additionally disables, and relabels, while the
+        # selected source has a check in flight -- the busy state a second,
+        # confused click must see rather than silently queuing a duplicate
+        # run. `Preview` is unaffected: it makes no write and a check running
+        # is no reason to block reading the same feed.
+        check_now_busy = self._is_check_now_busy(self.selected_source)
+        check_now_button.disabled = disabled or check_now_busy
+        check_now_button.label = "Checking..." if check_now_busy else "Check now"

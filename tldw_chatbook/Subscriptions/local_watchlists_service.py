@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import inspect
 import hashlib
@@ -700,6 +701,47 @@ class LocalWatchlistsService:
                 error_msg=result.get("error_msg") or all_error_message,
                 log_text=result.get("log_text"),
             )
+        except asyncio.CancelledError:
+            # Batch-4 review, C1 (CRITICAL). This worker is cancelled whenever
+            # the widget it is registered on is unmounted -- Textual's
+            # `Widget._on_unmount` calls `self.workers.cancel_node(self)`,
+            # which cancels every worker on that widget regardless of group
+            # name (the named "wc_check_now" group only protects against a
+            # SECOND `run_worker` call in the same group; it does nothing
+            # about the screen itself being torn down). This app's screens are
+            # never cached (`app.py`'s `_create_navigation_screen`), so
+            # switching tabs while a check is running is an entirely ordinary
+            # action that reaches exactly this path.
+            #
+            # `asyncio.CancelledError` is `BaseException`, not `Exception`
+            # (Python >=3.8), so the sibling `except Exception` below never
+            # saw it -- the run row `_mark_run_started` set to `running`
+            # moments ago was never transitioned to anything else. Recorded
+            # here, as an honest terminal state, before the cancellation is
+            # allowed to keep propagating: a single `Task.cancel()` delivers
+            # exactly one `CancelledError` at the next suspension point and
+            # does not re-arm on the next `await`, so awaiting
+            # `record_run_failure` here is safe and will not itself be cut
+            # off. Re-raised afterward (not swallowed) so the coroutine still
+            # finishes looking cancelled to asyncio/Textual, matching what a
+            # caller further up the stack (there is none in the check-now
+            # path today, but `execute_run` is not a private implementation
+            # detail of it) would correctly expect.
+            try:
+                await self.record_run_failure(
+                    run_id,
+                    source_id=source_id,
+                    error=(
+                        "Check cancelled: navigated away before it finished."
+                    ),
+                    elapsed_ms=int((time.time() - start_time) * 1000),
+                )
+            except Exception:
+                logger.opt(exception=True).warning(
+                    f"Watchlists: could not record the cancellation of run "
+                    f"{run_id!r}; it may still read 'running'."
+                )
+            raise
         except Exception as exc:
             return await self.record_run_failure(
                 run_id,

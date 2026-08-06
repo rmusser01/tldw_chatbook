@@ -130,6 +130,44 @@ async def test_selecting_source_updates_inspector_actions():
 
 
 @pytest.mark.asyncio
+async def test_entity_title_strips_control_characters():
+    """Batch-4 review, I1. `title` is remote-derived (the same source name
+    OPML import hands through with zero sanitization -- see
+    `Tests/Subscriptions/test_watchlist_opml_service.py`), and
+    `Text(f"Selected: {title}")` protects only against Rich markup, not a
+    raw control byte.
+    """
+    sources = [
+        {
+            "id": "source-1",
+            "name": "Evil\x9b31mFeed",
+            "source_type": "rss",
+            "url": "http://example.com/feed",
+            "active": True,
+        },
+    ]
+    app = _app_with_watchlists(sources)
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.2)
+        screen = host.screen_stack[-1]
+        screen.active_section = "sources"
+        await pilot.pause()
+
+        sources_pane = screen.query_one("#watchlists-sources-pane", SourcesPane)
+        sources_pane.sources = sources
+        await pilot.pause()
+        sources_pane.select_source_by_id("source-1")
+        await pilot.pause()
+
+        inspector = screen.query_one("#watchlists-entity-inspector", InspectorPane)
+        title = inspector.query_one("#inspector-entity-title", Static)
+        rendered = title.renderable.plain
+        assert "\x9b" not in rendered
+        assert "Evil" in rendered and "31mFeed" in rendered
+
+
+@pytest.mark.asyncio
 async def test_selecting_run_updates_inspector_actions():
     runs = [
         {

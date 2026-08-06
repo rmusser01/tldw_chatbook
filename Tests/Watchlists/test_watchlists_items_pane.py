@@ -231,3 +231,75 @@ async def test_update_item_queued_cell_repaints_in_place_without_recompose(sampl
         pane.update_item_queued_cell(row_key, False)
         await pilot.pause()
         assert table.get_row(row_key)[4] == "", "toggling back must clear the glyph"
+
+
+# --- TASK-2308: the Items table shows PUBLISH date, not ingest time -------
+
+
+def test_item_published_text_prefers_the_real_publish_date():
+    """AC#2: the column reads `published_date`, not `created_at` -- the
+    UAT's exact defect (every row from one check carrying the same
+    microsecond-identical ingest time under a "Published" heading)."""
+    text = ItemsPane.item_published_text({
+        "published_date": "2026-08-04T17:55:00+00:00",
+        "created_at": "2026-08-04T18:15:22.123456+00:00",
+    })
+    from tldw_chatbook.UI.Watchlists_Modules.humane_time import humane_timestamp
+
+    assert text == humane_timestamp("2026-08-04T17:55:00+00:00")
+    # And it must actually differ from what the ingest time would render as
+    # -- pinning the UAT's own repro (17:55 reader byline vs. 18:15 table).
+    assert text != humane_timestamp("2026-08-04T18:15:22.123456+00:00")
+
+
+def test_item_published_text_falls_back_honestly_when_the_feed_omits_one():
+    """When a feed supplies no publish date (`_parse_date` returns `None`
+    rather than defaulting to "now" -- see `monitoring_engine.py`), the cell
+    must say it is showing ingest time, never present it silently as a
+    publish date under a "Published" heading."""
+    from tldw_chatbook.UI.Watchlists_Modules.humane_time import humane_timestamp
+
+    text = ItemsPane.item_published_text({
+        "published_date": None,
+        "created_at": "2026-08-04T18:15:22+00:00",
+    })
+    assert text == f"added {humane_timestamp('2026-08-04T18:15:22+00:00')}"
+    assert "Published" not in text  # no false claim of being a publish date
+
+
+def test_item_published_text_with_neither_field_shows_the_dash():
+    assert ItemsPane.item_published_text({}) == "-"
+    assert ItemsPane.item_published_text(
+        {"published_date": None, "created_at": None}
+    ) == "-"
+
+
+@pytest.mark.asyncio
+async def test_the_published_column_header_and_cells_are_wired_end_to_end():
+    """The column mapping at the pane level: header says "Published", and
+    the cell for a real item comes from `published_date` through
+    `item_published_text`/`humane_timestamp`, not the raw ingest column."""
+    from tldw_chatbook.UI.Watchlists_Modules.humane_time import humane_timestamp
+
+    items = [
+        {
+            "id": "local:watchlist_item:9",
+            "item_id": 9,
+            "title": "Published item",
+            "source_name": "Feed",
+            "status": "new",
+            "published_date": "2026-08-04T17:55:00+00:00",
+            "created_at": "2026-08-04T18:15:22.123456+00:00",
+        }
+    ]
+    app = ItemsPaneHarness()
+    async with app.run_test(size=(120, 40)) as pilot:
+        pane = app.query_one(ItemsPane)
+        pane.items = items
+        await pilot.pause()
+
+        table = pane.query_one("#items-table", DataTable)
+        assert [str(col.label) for col in table.columns.values()][3] == "Published"
+        cell = table.get_row(str(items[0]["id"]))[3]
+        assert cell == escape_markup(humane_timestamp("2026-08-04T17:55:00+00:00"))
+        assert cell != escape_markup("2026-08-04T18:15:22.123456+00:00")

@@ -331,7 +331,17 @@ def test_stats_text_omits_the_withheld_percentage_when_nothing_was_withheld():
 def test_stats_text_without_dispositions_key_is_unchanged():
     """A feed run (no `dispositions` key at all) must render exactly the
     pre-Task-7 text -- no empty `Checks:` line tacked on.
+
+    TASK-2308: `Started:` used to interpolate `run.get('started_at')`
+    verbatim; it now goes through `humane_timestamp`, so this asserts via
+    that formatter rather than pinning one of its outputs -- see the
+    identical note on `test_source_row_cells_render_the_normalizer_status_
+    summary` in `Tests/UI/test_watchlists_check_now_failure.py`, and
+    `Tests/Watchlists/test_humane_time.py` for that formatter's own,
+    clock-controlled coverage.
     """
+    from tldw_chatbook.UI.Watchlists_Modules.humane_time import humane_timestamp
+
     run = {
         "id": "run-2",
         "source_title": "AI News RSS",
@@ -350,7 +360,7 @@ def test_stats_text_without_dispositions_key_is_unchanged():
     assert RunsPane._stats_text(run) == (
         "Source: AI News RSS\n"
         "Status: completed\n"
-        "Started: 2026-07-18 10:00\n"
+        f"Started: {humane_timestamp('2026-07-18 10:00')}\n"
         "Duration: 5m\n"
         "Found: 12 | Processed: 10 | Filtered: 2 | Errors: 0"
     )
@@ -560,3 +570,34 @@ async def test_a_run_identity_reaches_the_table_inert():
         cell = pane.query_one("#runs-table", DataTable).get_cell_at((0, 0))
         assert cell.plain == hostile
         assert cell.spans == []
+
+
+def test_run_identity_strips_control_characters_from_source_and_watchlist_names():
+    """Batch-4 review, I1. `_run_identity` wraps its result in a `Text(...)`,
+    which stops Rich markup but not a raw control byte -- `source_title` is
+    remote-derived (an imported source's name) the same way an item's title
+    is, and `watchlist_names` is user-typed free text with the same gap.
+    """
+    from tldw_chatbook.UI.Watchlists_Modules.runs_pane import RunsPane
+
+    cell = RunsPane._run_identity(
+        {
+            "source_title": "Evil\x9b31mFeed",
+            "watchlist_names": ["Morning\x1bread"],
+        }
+    )
+    assert "\x9b" not in cell and "\x1b" not in cell
+    assert "Evil" in cell and "31mFeed" in cell
+    assert "Morning" in cell and "read" in cell
+
+
+def test_run_item_row_title_strips_control_characters():
+    """Batch-4 review, I1. An item title is remote content (a feed entry's
+    own `<title>`); the same stripping the reader applies must reach this
+    cell too.
+    """
+    from tldw_chatbook.UI.Watchlists_Modules.runs_pane import RunsPane
+
+    cells = RunsPane._run_item_row_cells({"title": "Evil\x9b31mTitle"})
+    assert "\x9b" not in cells[0].plain
+    assert "Evil" in cells[0].plain and "31mTitle" in cells[0].plain
