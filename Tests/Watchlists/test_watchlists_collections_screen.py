@@ -18,7 +18,7 @@ from tldw_chatbook.UI.Watchlists_Modules.inspector_pane import (
     InspectorPane,
     PreviewRequested,
 )
-from tldw_chatbook.UI.Watchlists_Modules.items_pane import ItemSelected
+from tldw_chatbook.UI.Watchlists_Modules.items_pane import ItemSelected, ItemsPane
 from tldw_chatbook.UI.Watchlists_Modules.opml_dialogs import (
     OpmlExportDialog,
     OpmlImportDialog,
@@ -312,19 +312,45 @@ async def test_the_header_summary_names_the_scope_with_a_live_count():
 # `_build_test_app()`'s isolated temp-dir SQLite file.
 
 
-def _seed_item(db, subscription_id: int, title: str) -> int:
-    """Insert one `subscription_items` row for `subscription_id`."""
+def _seed_item(db, subscription_id: int, title: str, created_at: str | None = None) -> int:
+    """Insert one `subscription_items` row for `subscription_id`.
+
+    `created_at` (ISO text) pins the display order when a test seeds several
+    items: the items query sorts newest-first, and same-second ties from a
+    fast seed loop would make row order (and thus `j`/`k`/`space`
+    expectations) nondeterministic.
+    """
     with db.transaction() as conn:
-        cursor = conn.execute(
-            "INSERT INTO subscription_items (subscription_id, url, title) "
-            "VALUES (?, ?, ?)",
-            (
-                subscription_id,
-                f"https://item.example/{subscription_id}/{title}",
-                title,
-            ),
-        )
+        if created_at is None:
+            cursor = conn.execute(
+                "INSERT INTO subscription_items (subscription_id, url, title) "
+                "VALUES (?, ?, ?)",
+                (
+                    subscription_id,
+                    f"https://item.example/{subscription_id}/{title}",
+                    title,
+                ),
+            )
+        else:
+            cursor = conn.execute(
+                "INSERT INTO subscription_items (subscription_id, url, title, created_at) "
+                "VALUES (?, ?, ?, ?)",
+                (
+                    subscription_id,
+                    f"https://item.example/{subscription_id}/{title}",
+                    title,
+                    created_at,
+                ),
+            )
         return cursor.lastrowid
+
+
+async def _wait_for_items(pilot, pane, attempts: int = 60) -> None:
+    """Pause until the items pane holds rows (or give up and let assert fail)."""
+    for _ in range(attempts):
+        await pilot.pause()
+        if pane.items:
+            return
 
 
 @pytest.mark.asyncio
@@ -455,6 +481,358 @@ async def test_tree_move_triggers_items_reload_on_read_tab():
             )
         finally:
             screen._load_items = original_load_items
+
+
+# --- task-2511 Task 10: reader verbs (m / space / a / u) --------------------
+#
+# The keyboard half of the reading loop: `m` toggles read on the open item,
+# `space` opens the next unread, `a` catches the scope up (undo with `u`).
+# Driven end to end through the real screen, the real key pipeline and
+# `_build_test_app()`'s isolated SQLite file. `space` is pane-bound — the
+# rail-focus and typing-guard facts have their own regression tests below.
+
+
+@pytest.mark.asyncio
+async def test_m_toggles_read_state_on_open_item():
+    """`m` flips the open item new -> reviewed -> new (and the open itself
+    already marked it read, so the observed cycle starts at reviewed)."""
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+        db = app.watchlist_bundle_service._db
+        source_id = db.add_subscription(
+            name="ArXiv", type="rss", source="https://a.example/f"
+        )
+        item_id = _seed_item(db, source_id, "Toggle me")
+        await screen._load_items()
+        pane = screen.query_one("#watchlists-items-pane", ItemsPane)
+        await _wait_for_items(pilot, pane)
+        assert pane.items, "precondition: the seeded item reaches the pane"
+
+        pane.select_item_by_id(str(pane.items[0]["id"]))
+        for _ in range(60):
+            await pilot.pause()
+            if db.get_new_items(status="reviewed", limit=10):
+                break
+        assert [r["id"] for r in db.get_new_items(status="reviewed", limit=10)] == [
+            item_id
+        ], "precondition: opening marked the item read"
+
+        await pilot.press("m")
+        for _ in range(60):
+            await pilot.pause()
+            if db.get_new_items(status="new", limit=10):
+                break
+        assert [r["id"] for r in db.get_new_items(status="new", limit=10)] == [
+            item_id
+        ], "`m` on a read item must restore it to unread"
+
+        await pilot.press("m")
+        for _ in range(60):
+            await pilot.pause()
+            if db.get_new_items(status="reviewed", limit=10):
+                break
+        assert [r["id"] for r in db.get_new_items(status="reviewed", limit=10)] == [
+            item_id
+        ], "`m` on an unread item must mark it read"
+
+
+@pytest.mark.asyncio
+async def test_m_refuses_on_ingested_item():
+    """`m` is a read/unread verb only: an ingested item is a deliberate
+    record, never flipped back to `new` — the user gets a warning instead."""
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+        db = app.watchlist_bundle_service._db
+        source_id = db.add_subscription(
+            name="ArXiv", type="rss", source="https://a.example/f"
+        )
+        item_id = _seed_item(db, source_id, "Ingested one")
+        db.mark_item_status(item_id, "ingested")
+        await screen._load_items()
+        pane = screen.query_one("#watchlists-items-pane", ItemsPane)
+        await _wait_for_items(pilot, pane)
+        assert pane.items, "precondition: the ingested item is listed (filter: all)"
+
+        pane.select_item_by_id(str(pane.items[0]["id"]))
+        await pilot.pause(0.3)
+        app.notify = Mock()
+        await pilot.press("m")
+        for _ in range(20):
+            await pilot.pause()
+            if app.notify.called:
+                break
+
+        assert app.notify.called, "refusing to toggle must say so"
+        _args, kwargs = app.notify.call_args
+        assert kwargs.get("severity") == "warning"
+        rows = db.get_new_items(status="ingested", limit=10)
+        assert [r["id"] for r in rows] == [item_id], (
+            "an ingested item must never be flipped by `m`"
+        )
+
+
+@pytest.mark.asyncio
+async def test_space_opens_next_unread():
+    """`space` walks to the next UNREAD item, skipping reviewed rows."""
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+        db = app.watchlist_bundle_service._db
+        source_id = db.add_subscription(
+            name="ArXiv", type="rss", source="https://a.example/f"
+        )
+        # Newest-first display: [c (09:02), b (09:01), a (09:00)].
+        _seed_item(db, source_id, "a", created_at="2026-08-06 09:00:00")
+        b_id = _seed_item(db, source_id, "b", created_at="2026-08-06 09:01:00")
+        _seed_item(db, source_id, "c", created_at="2026-08-06 09:02:00")
+        db.mark_item_status(b_id, "reviewed")
+        await screen._load_items()
+        pane = screen.query_one("#watchlists-items-pane", ItemsPane)
+        await _wait_for_items(pilot, pane)
+        assert len(pane.displayed_items()) == 3, "precondition: all three listed"
+        displayed = pane.displayed_items()
+        assert [d["title"] for d in displayed] == ["c", "b", "a"], (
+            "precondition: newest-first order is what the user sees"
+        )
+
+        # Open the top row (new -> reviewed on open), then space past the
+        # already-reviewed middle row to "a", the only remaining unread one.
+        pane.select_item_by_id(str(displayed[0]["id"]))
+        await pilot.pause(0.3)
+        assert screen._selected_content_item is not None
+        pane.query_one("#items-table").focus()
+        await pilot.press("space")
+        for _ in range(60):
+            await pilot.pause()
+            current = screen._selected_content_item
+            if current is not None and current.get("title") == "a":
+                break
+
+        assert screen._selected_content_item.get("title") == "a", (
+            "`space` must skip the reviewed row and open the next unread one"
+        )
+
+
+@pytest.mark.asyncio
+async def test_space_at_end_notifies_all_caught_up():
+    """No unread row below the current one: `space` says so, moves nothing."""
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+        db = app.watchlist_bundle_service._db
+        source_id = db.add_subscription(
+            name="ArXiv", type="rss", source="https://a.example/f"
+        )
+        _seed_item(db, source_id, "only one")
+        await screen._load_items()
+        pane = screen.query_one("#watchlists-items-pane", ItemsPane)
+        await _wait_for_items(pilot, pane)
+        pane.select_item_by_id(str(pane.items[0]["id"]))
+        await pilot.pause(0.3)
+        app.notify = Mock()
+        pane.query_one("#items-table").focus()
+        await pilot.press("space")
+        for _ in range(20):
+            await pilot.pause()
+            if app.notify.called:
+                break
+
+        assert app.notify.called, "running out of unread items must say so"
+        message = str(app.notify.call_args[0][0]).lower()
+        assert "caught up" in message
+        assert screen._selected_content_item.get("title") == "only one", (
+            "the reader must stay on the current item"
+        )
+
+
+@pytest.mark.asyncio
+async def test_space_with_rail_focused_does_not_navigate():
+    """Regression: `space` is pane-bound, so the rail never triggers it.
+
+    Assert the OUTCOME (no selection change) rather than whether a binding
+    fired — the pane binding is simply unreachable from the rail.
+    """
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+        db = app.watchlist_bundle_service._db
+        source_id = db.add_subscription(
+            name="ArXiv", type="rss", source="https://a.example/f"
+        )
+        _seed_item(db, source_id, "unread one")
+        await screen._load_items()
+        pane = screen.query_one("#watchlists-items-pane", ItemsPane)
+        await _wait_for_items(pilot, pane)
+        screen.query_one("#wl-tree-node-all", Button).focus()
+        await pilot.press("space")
+        await pilot.pause(0.3)
+
+        assert screen._selected_content_item is None, (
+            "space with the rail focused must not open anything"
+        )
+
+
+@pytest.mark.asyncio
+async def test_space_in_items_search_input_still_types():
+    """Typing spaces in the items search box is typing, not navigation.
+
+    Also pins the fix for a real pre-existing bug this test exposed:
+    `ItemsPane.search_query` is `reactive(..., recompose=True)`, so every
+    keystroke recomposed the pane and destroyed the focused input — only the
+    first character of any search ever landed. `ItemsPane.recompose()` now
+    restores focus to the fresh input, so the whole query lands in the box.
+    """
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+        db = app.watchlist_bundle_service._db
+        source_id = db.add_subscription(
+            name="ArXiv", type="rss", source="https://a.example/f"
+        )
+        _seed_item(db, source_id, "f o matcher")
+        await screen._load_items()
+        pane = screen.query_one("#watchlists-items-pane", ItemsPane)
+        await _wait_for_items(pilot, pane)
+        pane.query_one("#items-search-input", Input).focus()
+        await pilot.press("f", "space", "o")
+        await pilot.pause(0.2)
+
+        # Re-query: each keystroke recomposes the pane, so the input that was
+        # focused at the start was destroyed; this is the live replacement.
+        search = pane.query_one("#items-search-input", Input)
+        assert search.value == "f o"
+        assert search.has_focus, "typing must not lose the search box"
+        assert screen._selected_content_item is None
+
+
+@pytest.mark.asyncio
+async def test_mark_all_read_then_undo_roundtrip():
+    """`a` catches the scope up and `u` restores it — the two-key loop."""
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+        db = app.watchlist_bundle_service._db
+        source_id = db.add_subscription(
+            name="ArXiv", type="rss", source="https://a.example/f"
+        )
+        for minute in range(3):
+            _seed_item(
+                db, source_id, f"item {minute}",
+                created_at=f"2026-08-06 09:0{minute}:00",
+            )
+        await screen._load_items()
+        pane = screen.query_one("#watchlists-items-pane", ItemsPane)
+        await _wait_for_items(pilot, pane)
+        assert len(pane.displayed_items()) == 3, "precondition"
+
+        app.notify = Mock()
+        await pilot.press("a")
+        for _ in range(60):
+            await pilot.pause()
+            if len(db.get_new_items(status="reviewed", limit=10)) == 3:
+                break
+        assert len(db.get_new_items(status="reviewed", limit=10)) == 3, (
+            "`a` must mark every unread item in scope read"
+        )
+        assert db.get_new_items(status="new", limit=10) == []
+
+        await pilot.press("u")
+        for _ in range(60):
+            await pilot.pause()
+            if len(db.get_new_items(status="new", limit=10)) == 3:
+                break
+        assert len(db.get_new_items(status="new", limit=10)) == 3, (
+            "`u` must restore the whole mark-all-read batch to unread"
+        )
+
+
+@pytest.mark.asyncio
+async def test_mark_all_read_scoped_to_watchlist():
+    """`a` catches up the rail's current scope only — sources outside the
+    scoped watchlist keep their unread items."""
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+        service = app.watchlist_bundle_service
+        db = service._db
+        watchlist = service.create("Morning AI Brief")
+        member = db.add_subscription(
+            name="ArXiv", type="rss", source="https://a.example/f"
+        )
+        outsider = db.add_subscription(
+            name="Krebs", type="rss", source="https://b.example/f"
+        )
+        service.add_source(watchlist["id"], member)
+        _seed_item(db, member, "member 1", created_at="2026-08-06 09:00:00")
+        _seed_item(db, member, "member 2", created_at="2026-08-06 09:01:00")
+        _seed_item(db, outsider, "outsider", created_at="2026-08-06 09:02:00")
+
+        screen._apply_tree_scope(TreeScope(kind="watchlist", watchlist_id=watchlist["id"]))
+        pane = screen.query_one("#watchlists-items-pane", ItemsPane)
+        for _ in range(60):
+            await pilot.pause()
+            if len(pane.displayed_items()) == 2:
+                break
+        assert len(pane.displayed_items()) == 2, (
+            "precondition: the scope shows only the member's items (task-2511 Task 7)"
+        )
+
+        await pilot.press("a")
+        for _ in range(60):
+            await pilot.pause()
+            if len(db.get_new_items(status="reviewed", limit=10)) == 2:
+                break
+
+        reviewed = db.get_new_items(status="reviewed", limit=10)
+        assert {r["subscription_id"] for r in reviewed} == {member}
+        remaining = db.get_new_items(status="new", limit=10)
+        assert [r["subscription_id"] for r in remaining] == [outsider], (
+            "the outsider's unread item must survive a scoped catch-up"
+        )
+
+
+@pytest.mark.asyncio
+async def test_verbs_noop_off_read_tab():
+    """m/a/u are Read-tab verbs: on any other tab they change nothing."""
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+        db = app.watchlist_bundle_service._db
+        source_id = db.add_subscription(
+            name="ArXiv", type="rss", source="https://a.example/f"
+        )
+        _seed_item(db, source_id, "untouched")
+        await screen._load_items()
+        screen.active_section = "sources"
+        await pilot.pause(0.3)
+
+        for key in ("m", "a", "u"):
+            await pilot.press(key)
+        await pilot.pause(0.3)
+
+        assert len(db.get_new_items(status="new", limit=10)) == 1, (
+            "no read-state writes may happen off the Read tab"
+        )
 
 
 # --- Fix round 1, Finding 2: a pane-row click must not discard the tree scope

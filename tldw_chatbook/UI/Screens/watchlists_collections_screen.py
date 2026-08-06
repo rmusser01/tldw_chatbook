@@ -138,6 +138,7 @@ from ..Watchlists_Modules.items_pane import (
     ItemSelected,
     ItemsFilterChanged,
     ItemsPane,
+    NextUnreadRequested,
     RefreshItemsRequested,
 )
 from ..Watchlists_Modules.kept_briefings_modal import KeptBriefingsModal
@@ -308,9 +309,11 @@ class _ItemStatusIntent:
         patch_item: The live dict object (already held by `ItemsPane.items`/
             `_selected_content_item`/`ContentPane.item`) to mutate in place
             on a successful write, or `None` when the caller relies on
-            `refresh` instead. Passed by exactly one caller in the whole
-            app, `_mark_item_read_on_open` -- see `handle_unread_toggle_
-            requested`'s docstring for why that matters.
+            `refresh` instead. Passed by exactly two callers in the whole
+            app, `_mark_item_read_on_open` and `action_toggle_read_selected`
+            -- see `handle_unread_toggle_requested`'s docstring for why
+            that matters (guards must not read the dispatched item dict,
+            since the non-patching callers leave it stale).
         gate: Whether the drainer must re-ask the backend
             (`_blocking_status_for`) immediately before writing and refuse
             if the item already holds a terminal status
@@ -408,6 +411,12 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         ("p", "preview_selected", "Preview"),
         ("j", "next_item", "Next item"),
         ("k", "previous_item", "Previous item"),
+        # task-2511 Task 10, the reading-loop verbs. `space` (next unread) is
+        # deliberately NOT here — it is bound on ItemsPane so it cannot fire
+        # from the rail (see `NextUnreadRequested`).
+        ("m", "toggle_read_selected", "Read/Unread"),
+        ("a", "mark_all_read", "Mark all read"),
+        ("u", "undo_mark_all_read", "Undo mark-all-read"),
         ("z", "toggle_region", "Collapse"),
         ("Z", "solo_region", "Solo"),
         ("left_square_bracket", "toggle_left_rail", "Left rail"),
@@ -526,6 +535,11 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         # unrelated navigation happened to trigger a reload.
         self._loaded_sources: list[dict[str, Any]] = []
         self._loaded_items: list[dict[str, Any]] = []
+        # The undo batch for `action_mark_all_read` (task-2511 Task 10): the
+        # raw DB ids the last catch-up touched, cleared on undo. Raw ids —
+        # `mark_all_read` returns database ids, which the loaded item dicts
+        # carry as `item_id` (their `id` is the normalized table row key).
+        self._last_mark_all_read_batch: list[int] = []
         # The single debounce timer behind `_request_tree_counts_refresh`
         # (review wave, Minor 6). Declared here so the attribute always
         # exists, rather than springing into being on the first item opened.
@@ -9501,15 +9515,19 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             # stale the instant this returns.
             #
             # Deliberately inside `if refresh`, which is a real trade-off and
-            # not an oversight. The `refresh=False` caller is the silent
+            # not an oversight. The `refresh=False` callers are the silent
             # mark-read-on-open (`_mark_item_read_on_open`), which fires on
-            # EVERY item selection including each `j`/`k` keystroke, and it
-            # carries no reload of any kind -- that is the whole reason the
+            # EVERY item selection including each `j`/`k` keystroke, and
+            # `action_toggle_read_selected` (task-2511's `m` verb) -- neither
+            # carries a reload of any kind, which is the whole reason the
             # flag exists (a full refresh per selection was proven live to
             # detach the mounted `ItemsPane` and drop keyboard focus). So the
             # rail's unread count does lag by however many items were opened
             # since the last deliberate action, and is corrected by the next
             # one, by a tab switch, or by any other `_load_tree_data` caller.
+            # (`m` compensates directly: `action_toggle_read_selected` calls
+            # `_request_tree_counts_refresh()` right after dispatching, so
+            # only the open-on-selection path leaves the rail one out.)
             # Two SQLite queries and a rail rebuild per arrow key is the
             # wrong price for a number that is one out.
             self._load_tree_data()
@@ -9924,3 +9942,178 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         if new_index < 0 or new_index >= len(items):
             return
         pane.select_and_reveal(items[new_index])
+
+    def _reader_verb_blocked(self) -> bool:
+        """Whether a Read-tab verb key (`m`/`a`/`u`) must do nothing.
+
+        The same two guards `_navigate_item` applies — see its docstring for
+        the full rationale: typing in an `Input` or editable `TextArea` is
+        typing, not a verb (defensive against a future `priority=True` edit);
+        and read-state writes are scoped to the Read tab, where the affected
+        items are actually visible (off-tab writes would silently rewrite
+        rows the user cannot see).
+        """
+        focused = self.focused
+        if isinstance(focused, Input) or (
+            isinstance(focused, TextArea) and not focused.read_only
+        ):
+            return True
+        return self.active_section != "items"
+
+    def action_toggle_read_selected(self) -> None:
+        """`m`: flip the open item between new and reviewed (task-2511 Task 10).
+
+        Only the read/unread pair is togglable: `ingested`/`ignored`/`error`
+        record deliberate user actions and are never rewritten by a verb key
+        (the same rule `_mark_item_read_on_open` and the unread toggle
+        follow). Dispatches through `_dispatch_item_status`, so the gating,
+        in-place patch and cell repaint come along unchanged.
+        `refresh=False` + `patch_item=item` is mark-read-on-open's contract:
+        the live dict is patched in place instead of a full reload, so
+        `_selected_content_item` stays current and a second `m` flips the
+        item back to unread rather than re-deriving from a stale status.
+        """
+        if self._reader_verb_blocked():
+            return
+        item = self._selected_content_item
+        if item is None:
+            return
+        item_id = item.get("id")
+        if item_id is None:
+            return
+        current = str(item.get("status") or "").strip().lower()
+        if current == "new":
+            target = "reviewed"
+        elif current == "reviewed":
+            target = "new"
+        else:
+            notify = getattr(self.app_instance, "notify", None)
+            if callable(notify):
+                notify("Only read/unread items can be toggled.", severity="warning")
+            return
+        self._dispatch_item_status(
+            item_id,
+            _ItemStatusIntent(status=target, gate=True, refresh=False, patch_item=item),
+        )
+        self._request_tree_counts_refresh()
+
+    @on(NextUnreadRequested)
+    def handle_next_unread_requested(self, event: NextUnreadRequested) -> None:
+        """`space` (the ItemsPane binding): open the next unread item.
+
+        No Input/rail focus guards are needed here, unlike `_navigate_item`:
+        `Input` consumes printable keys before the pane binding can fire, and
+        rail widgets are not ItemsPane descendants, so this message can only
+        originate from the items region. Walks the same displayed sequence
+        `j`/`k` use, and hands the choice to `select_and_reveal` for the
+        same reason (selection, cursor, scroll and reader stay in step).
+        """
+        event.stop()
+        if self.active_section != "items":
+            return
+        try:
+            pane = self.query_one("#watchlists-items-pane", ItemsPane)
+        except NoMatches:
+            return
+        items = pane.displayed_items()
+        if not items:
+            return
+        current = self._selected_content_item
+        current_id = current.get("id") if current else None
+        start = -1
+        if current_id is not None:
+            for position, candidate in enumerate(items):
+                if candidate.get("id") == current_id:
+                    start = position
+                    break
+        for candidate in items[start + 1:]:
+            if str(candidate.get("status") or "").strip().lower() == "new":
+                pane.select_and_reveal(candidate)
+                return
+        notify = getattr(self.app_instance, "notify", None)
+        if callable(notify):
+            notify("All caught up.", severity="information")
+
+    def action_mark_all_read(self) -> None:
+        """`a`: catch the current scope up. Undoable with `u` (task-2511 Task 10)."""
+        if self._reader_verb_blocked():
+            return
+        self.run_worker(
+            self._mark_all_read_worker(), exclusive=True, group="wl-mark-all-read"
+        )
+
+    async def _mark_all_read_worker(self) -> None:
+        """The write half of `a`: one scoped bulk UPDATE, then a repaint.
+
+        Runs in a worker (DB write plus a badge refresh), mirroring every
+        other write handler on this screen. The in-place patch follows the
+        same contract as `_mark_item_read_on_open`'s `patch_item`: mutate
+        the cached dicts, repaint the visible cells, never recompose the
+        live table.
+        """
+        notify = getattr(self.app_instance, "notify", None)
+        ids = await self._controller.mark_all_read(
+            runtime_backend=self.runtime_backend, **self._items_scope_query()
+        )
+        if not ids:
+            if callable(notify):
+                notify("Nothing unread in this scope.")
+            return
+        self._last_mark_all_read_batch = [int(i) for i in ids]
+        id_set = set(self._last_mark_all_read_batch)
+        for item in self._loaded_items:
+            if item.get("item_id") in id_set:
+                item["status"] = "reviewed"
+        self._repaint_visible_status_cells()
+        self._request_tree_counts_refresh()
+        if callable(notify):
+            notify(f"Marked {len(ids)} read — press u to undo.")
+
+    def action_undo_mark_all_read(self) -> None:
+        """`u`: restore the most recent mark-all-read batch (task-2511 Task 10)."""
+        if self._reader_verb_blocked():
+            return
+        if not self._last_mark_all_read_batch:
+            notify = getattr(self.app_instance, "notify", None)
+            if callable(notify):
+                notify("Nothing to undo.")
+            return
+        self.run_worker(
+            self._undo_mark_all_read_worker(), exclusive=True, group="wl-mark-all-read"
+        )
+
+    async def _undo_mark_all_read_worker(self) -> None:
+        """The write half of `u`: put the batch back to new — except rows
+        the user has since moved on (ingested/ignored), which
+        `restore_items_new`'s `status = 'reviewed'` guard leaves alone."""
+        notify = getattr(self.app_instance, "notify", None)
+        batch, self._last_mark_all_read_batch = self._last_mark_all_read_batch, []
+        restored = await self._controller.restore_items_new(
+            runtime_backend=self.runtime_backend, item_ids=batch
+        )
+        id_set = {int(i) for i in batch}
+        for item in self._loaded_items:
+            if item.get("item_id") in id_set and item.get("status") == "reviewed":
+                item["status"] = "new"
+        self._repaint_visible_status_cells()
+        self._request_tree_counts_refresh()
+        if callable(notify):
+            notify(f"Restored {restored} to unread.")
+
+    def _repaint_visible_status_cells(self) -> None:
+        """Repaint the Status column from the cached item dicts, in place.
+
+        Bulk verbs (`a`/`u`) patch `_loaded_items` without a recompose for
+        the same reason mark-read-on-open does (a recompose destroys the
+        live table); the visible cells then need the same single-cell
+        repaint path `_dispatch_item_status` uses per item. Rows not
+        currently rendered are skipped inside `update_item_status_cell`.
+        """
+        try:
+            pane = self.query_one("#watchlists-items-pane", ItemsPane)
+        except NoMatches:
+            return
+        for item in pane.displayed_items():
+            if item.get("id") is None or item.get("status") is None:
+                continue
+            pane.update_item_status_cell(item["id"], str(item["status"]))

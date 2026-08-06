@@ -8,6 +8,7 @@ from textual.widgets import Button, DataTable, Input, Select, Static
 from tldw_chatbook.UI.Watchlists_Modules.items_pane import (
     ItemSelected,
     ItemsPane,
+    NextUnreadRequested,
     RefreshItemsRequested,
 )
 
@@ -32,6 +33,9 @@ class ItemsPaneHarness(App):
 
     def on_refresh_items_requested(self, message: RefreshItemsRequested) -> None:
         self.captured_messages.append(("refresh_items_requested", None))
+
+    def on_next_unread_requested(self, message: NextUnreadRequested) -> None:
+        self.captured_messages.append(("next_unread_requested", None))
 
 
 @pytest.fixture
@@ -334,3 +338,25 @@ async def test_the_published_column_header_and_cells_are_wired_end_to_end():
         cell = table.get_row(str(items[0]["id"]))[3]
         assert cell == escape_markup(humane_timestamp("2026-08-04T17:55:00+00:00"))
         assert cell != escape_markup("2026-08-04T18:15:22.123456+00:00")
+
+
+# --- task-2511 Task 10: `space` = next unread, pane-bound -------------------
+#
+# `space` is bound on the PANE, not the screen: the rail's tree is made of
+# Buttons and a screen-level space binding would fire while the rail has
+# focus; Input consumes printable keys before any binding; DataTable has no
+# space binding, so space with the table focused bubbles up to here.
+
+
+@pytest.mark.asyncio
+async def test_space_on_the_items_table_posts_next_unread_requested(sample_items):
+    app = ItemsPaneHarness()
+    async with app.run_test(size=(120, 40)) as pilot:
+        pane = app.query_one(ItemsPane)
+        pane.items = sample_items
+        await pilot.pause()
+        pane.query_one("#items-table", DataTable).focus()
+        await pilot.press("space")
+        await pilot.pause()
+
+        assert ("next_unread_requested", None) in app.captured_messages
