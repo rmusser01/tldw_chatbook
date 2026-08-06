@@ -19,6 +19,9 @@ import ipaddress
 import re
 import socket
 import time
+import xml.etree.ElementTree as xET
+from collections import deque
+from html.parser import HTMLParser
 from urllib.parse import urljoin, urlsplit
 
 import httpx
@@ -539,3 +542,121 @@ def web_search(
         blocks.append(block)
         total_bytes += block_bytes
     return "\n\n".join(blocks)
+
+
+# ---------------------------------------------------------------------------
+# web_crawl (spec 2026-08-06 §2)
+# ---------------------------------------------------------------------------
+
+CRAWL_DEFAULT_MAX_PAGES = 20
+CRAWL_MAX_PAGES_CEILING = 40
+CRAWL_DEFAULT_MAX_DEPTH = 2
+CRAWL_MAX_DEPTH_CEILING = 5
+CRAWL_DEADLINE_SECONDS = 120.0
+CRAWL_PAGE_TIMEOUT_SECONDS = 10.0   # per page; a hung page must not eat the crawl
+CRAWL_EXCERPT_MAX_CHARS = 200
+CRAWL_RESULT_MAX_BYTES = 24 * 1024
+CRAWL_BLOCK_MAX_BYTES = 1024
+SITEMAP_MAX_BYTES = 5 * 1024 * 1024
+
+_CRAWL_USER_AGENT = "tldw-chatbook-web-crawl/1.0"
+
+_SITEMAP_NS = "{http://www.sitemaps.org/schemas/sitemap/0.9}"
+
+
+class _CrawlLinkParser(HTMLParser):
+    """Collect <a href>, <base href>, and <title> text from one page."""
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.links: list[str] = []
+        self.base_href: "str | None" = None
+        self.title: str = ""
+        self._in_title = False
+
+    def handle_starttag(self, tag: str, attrs) -> None:
+        if tag == "a":
+            href = dict(attrs).get("href")
+            if href:
+                self.links.append(href)
+        elif tag == "base" and self.base_href is None:
+            href = dict(attrs).get("href")
+            if href:
+                self.base_href = href
+        elif tag == "title":
+            self._in_title = True
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag == "title":
+            self._in_title = False
+
+    def handle_data(self, data: str) -> None:
+        if self._in_title:
+            self.title += data
+
+
+def _crawl_host(url: str) -> str:
+    """Lowercased host with a leading ``www.`` folded; '' when absent/bad."""
+    try:
+        host = (urlsplit(url).hostname or "").lower()
+    except ValueError:
+        return ""
+    return host[4:] if host.startswith("www.") else host
+
+
+def _normalize_crawl_url(url: str) -> str:
+    """Visited-set identity: scheme+folded host+path+query, no fragment."""
+    parts = urlsplit(url)
+    host = (parts.hostname or "").lower()
+    if host.startswith("www."):
+        host = host[4:]
+    port = f":{parts.port}" if parts.port else ""
+    path = parts.path or "/"
+    query = f"?{parts.query}" if parts.query else ""
+    return f"{parts.scheme.lower()}://{host}{port}{path}{query}"
+
+
+def _coerce_budget(value, default: int, ceiling: int) -> int:
+    """v1 argument style: garbage degrades to the default, range clamps."""
+    try:
+        result = int(value)
+    except (TypeError, ValueError):
+        return default
+    return max(1, min(result, ceiling))
+
+
+def _parse_sitemap(xml_bytes: bytes) -> tuple[list[str], list[str]]:
+    """Return (page_urls, child_sitemap_urls) from a urlset/sitemapindex."""
+    try:
+        root = xET.fromstring(xml_bytes)
+    except xET.ParseError as exc:
+        raise LocalToolError(f"[crawl-failed] sitemap could not be parsed: {exc}") from exc
+    locs = [
+        loc.text.strip()
+        for loc in root.findall(f".//{_SITEMAP_NS}loc")
+        if loc.text and loc.text.strip()
+    ]
+    if root.tag == f"{_SITEMAP_NS}sitemapindex":
+        return [], locs
+    return locs, []
+
+
+def _format_crawl_result(pages: list[dict], failed: int, blocked: int, stop_reason: str) -> str:
+    blocks: list[str] = []
+    total = 0
+    for i, page in enumerate(pages, 1):
+        if page["marker"]:
+            block = f"{i}. {page['marker']}\n   URL: {page['url']}"
+        else:
+            block = f"{i}. {page['title'] or 'No title'}\n   URL: {page['url']}"
+            if page["excerpt"]:
+                block += f"\n   {page['excerpt']}"
+        block = _truncate_to_bytes(block, CRAWL_BLOCK_MAX_BYTES)
+        block_bytes = len(block.encode("utf-8"))
+        if total + block_bytes > CRAWL_RESULT_MAX_BYTES:
+            blocks.append("… [further pages omitted: total size cap reached]")
+            break
+        blocks.append(block)
+        total += block_bytes
+    footer = f"Crawled {len(pages)} pages ({failed} failed, {blocked} blocked). Stopped: {stop_reason}."
+    return "\n\n".join(blocks + [footer]) if blocks else footer
