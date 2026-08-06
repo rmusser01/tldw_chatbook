@@ -308,7 +308,17 @@ class BaseAppScreen(Screen):
         self.state_data = state
 
     def on_mount(self) -> None:
-        """Called when the screen is mounted."""
+        """Called when the screen is mounted.
+
+        MRO contract: Textual's dispatcher invokes EVERY ``on_mount`` defined
+        along the MRO for one Mount event, so a subclass handler must NOT
+        call ``super().on_mount()`` -- that runs the parent handler a second
+        time. A parent whose ``on_mount`` mounts widgets crashes with
+        ``DuplicateIds`` when duplicated (TASK-2610: Lab > Speech). This base
+        handler must therefore also stay idempotent: today it only logs, and
+        anything heavier added here will run once per subclass that still
+        carries a legacy ``super().on_mount()`` call.
+        """
         logger.info(f"Screen {self.screen_name} mounted")
 
     def on_unmount(self) -> None:

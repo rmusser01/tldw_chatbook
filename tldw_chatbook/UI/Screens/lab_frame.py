@@ -272,18 +272,32 @@ class LabScreen(BaseAppScreen):
         )
         yield workbench
 
+    def _lab_footer_registration(self) -> tuple[str, tuple]:
+        """Return the (source, shortcuts) this frame registers on mount.
+
+        A mode screen that needs its own hints alongside the frame's
+        overrides THIS method instead of defining ``on_mount``: Textual's
+        dispatcher invokes every ``on_mount`` in the MRO independently, so a
+        subclass handler that calls ``super().on_mount()`` runs this frame's
+        handler twice -- which double-mounts the rail rows and crashes with
+        ``DuplicateIds`` (TASK-2610, the Speech screen's exact failure).
+        """
+        return ("lab", self.LAB_FOOTER_SHORTCUTS)
+
     def on_mount(self) -> None:
         """Populate the rail and inspector, then defer the body mount.
 
         The body is mounted from ``call_after_refresh`` so first paint is not
         blocked by composing it -- Models' body costs 488-787 ms.
+
+        Deliberately no ``super().on_mount()``: the dispatcher already
+        invokes ``BaseAppScreen.on_mount`` for the same Mount event, so a
+        super call would run it twice (see ``_lab_footer_registration``).
         """
-        super().on_mount()
         self._populate_regions()
         self.call_after_refresh(self._mount_lab_body)
-        self.register_footer_shortcuts(
-            source="lab", shortcuts=self.LAB_FOOTER_SHORTCUTS
-        )
+        source, shortcuts = self._lab_footer_registration()
+        self.register_footer_shortcuts(source=source, shortcuts=shortcuts)
 
     async def recompose(self) -> None:
         """Re-populate the rail/inspector and re-schedule the body mount.
