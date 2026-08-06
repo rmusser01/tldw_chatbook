@@ -4188,7 +4188,16 @@ async def test_switching_selected_tool_while_armed_does_not_leak_arm_to_new_tool
 async def test_gate_check_exception_fails_closed():
     """`_resolve_test_gate()`'s fail-closed half of the seams-absent-vs-
     raises precedent: a `gate_tool_test()` that IS callable but raises must
-    never fall through to running the tool."""
+    never fall through to running the tool.
+
+    task-2536 (PR-T3 fix round B, item 2, PRE-AUTHORIZED CONTRACT CHANGE):
+    this used to assert the GENUINE-deny body text
+    (`_TOOL_TEST_BLOCKED_TEXT`, "this tool is set to Off in Permissions")
+    for the synthesized `gate_error` gate too -- a confident, false claim
+    about the tool's configured state, directly above `_decision_note()`'s
+    own honest admission (checked by the sibling test below) that no state
+    could be resolved at all. The blocked body is now origin-aware: a
+    `gate_error` renders `_TOOL_TEST_BLOCKED_UNKNOWN_TEXT` instead."""
     app = ToolTestApp()
 
     def _raise(tool: Any) -> Any:
@@ -4210,17 +4219,33 @@ async def test_gate_check_exception_fails_closed():
 
         assert app.unified_mcp_service.test_calls == []
         result = str(app.query_one("#mcp-inspector-test-result", Static).renderable)
-        assert "Blocked — this tool is set to Off in Permissions." in result
+        assert "Blocked — this tool is set to Off in Permissions." not in result
+        assert (
+            "Blocked — permission state could not be determined; the tool did not run."
+            in result
+        )
 
 
 @pytest.mark.asyncio
 async def test_gate_check_exception_decision_note_uses_honest_unresolved_sentence():
-    """task-2270's rider (PR-T3 task 3), end to end: the deny short-
-    circuit's decision note used to say "This tool is set to Off." for
-    `_resolve_test_gate()`'s synthetic fail-closed gate_error origin --
-    dishonest, since the tool is not necessarily off, the RESOLVER failed.
-    Mirrors `test_gate_check_exception_fails_closed`'s setup, checking the
-    NOTE widget instead of the status widget it already covers."""
+    """task-2270's rider (PR-T3 task 3) plus task-2536's follow-up (fix
+    round B, item 2), end to end: the deny short-circuit's decision note
+    used to say "This tool is set to Off." for `_resolve_test_gate()`'s
+    synthetic fail-closed gate_error origin -- dishonest, since the tool is
+    not necessarily off, the RESOLVER failed. Task 3 fixed the note alone
+    (to the honest `_UNKNOWN_ORIGIN_SENTENCE`); item 2 then made the BODY
+    honest too (see `test_gate_check_exception_fails_closed`), which made
+    the note's sentence a near-verbatim repeat sitting right underneath it.
+    Following this module's own no-double-say precedent (`_run_tool_test()`
+    passes `decision_note=None` when a refusal's body already explains
+    itself), the note is now suppressed for this specific `gate_error`
+    short-circuit -- `_decision_note()` itself is UNCHANGED and still
+    returns the honest sentence for a direct/unit-level call
+    (`test_decision_note_unknown_origin_degrades_to_bare_sentence`
+    pins that); only this one call site no longer surfaces it, because the
+    body above already said it. Mirrors `test_gate_check_exception_fails_
+    closed`'s setup, checking the NOTE widget instead of the status widget
+    it already covers."""
     app = ToolTestApp()
 
     def _raise(tool: Any) -> Any:
@@ -4240,8 +4265,9 @@ async def test_gate_check_exception_decision_note_uses_honest_unresolved_sentenc
         await app.workers.wait_for_complete()
         await pilot.pause()
 
-        note = str(app.query_one("#mcp-inspector-test-result-note", Static).renderable)
-        assert note == "Permission state could not be resolved."
+        note_widget = app.query_one("#mcp-inspector-test-result-note", Static)
+        assert str(note_widget.renderable) == ""
+        assert note_widget.display is False
 
 
 @pytest.mark.asyncio

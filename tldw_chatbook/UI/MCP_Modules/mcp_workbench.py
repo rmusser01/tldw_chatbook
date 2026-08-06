@@ -299,9 +299,25 @@ _SERVER_MUTATION_MESSAGES: dict[str, str] = {
 }
 
 # Task 5: Test Tool result copy for a tool the permissions gate resolved to
-# "deny" -- shown via `MCPInspector.show_tool_result()` exactly like any
-# other failed run, but with no service call ever made.
+# a GENUINE "deny" -- shown via `MCPInspector.show_tool_result()` exactly
+# like any other failed run, but with no service call ever made. Only for
+# `gate.origin != "gate_error"`: see `_TOOL_TEST_BLOCKED_UNKNOWN_TEXT` just
+# below for the synthesized fail-closed case, where this claim would be
+# false (the tool's actual state was never determined).
 _TOOL_TEST_BLOCKED_TEXT = "Blocked — this tool is set to Off in Permissions."
+# task-2536 (PR-T3 fix round B, item 2): honest counterpart to
+# `_TOOL_TEST_BLOCKED_TEXT` for `_resolve_test_gate()`'s synthetic
+# fail-closed `gate_error` origin (the permission RESOLVER raised -- not a
+# genuine "Off" verdict). Before this, `on_mcp_inspector_tool_test_
+# requested()`'s deny short-circuit rendered `_TOOL_TEST_BLOCKED_TEXT` for
+# this case too: a confident, false claim about the tool's configured
+# state, directly above `_decision_note()`'s own honest admission
+# (`_UNKNOWN_ORIGIN_SENTENCE`) that no state could be resolved at all --
+# two contradictory lines stacked on top of each other. task-2270's rider
+# fixed the quiet note; this fixes the loud body it sits under.
+_TOOL_TEST_BLOCKED_UNKNOWN_TEXT = (
+    "Blocked — permission state could not be determined; the tool did not run."
+)
 # Arm notice shown under the Run button (Task 5) when an "ask" resolution
 # carries `config_changed` -- an explicit tool-level allow that the rug-pull
 # guard downgraded because the tool's live definition no longer matches what
@@ -3324,11 +3340,32 @@ class MCPWorkbench(Container):
 
         if gate is not None and gate.state == "deny":
             inspector.disarm_test_run()
+            # task-2536 (fix round B, item 2): `gate_error` is
+            # `_resolve_test_gate()`'s synthetic fail-closed gate -- the
+            # RESOLVER raised, so the tool's actual state is unknown, not
+            # necessarily "Off". The body picks the honest copy for that
+            # case; `decision_note` is then `None` rather than `_decision_
+            # note(gate, ...)` -- that call would just return the near-
+            # identical `_UNKNOWN_ORIGIN_SENTENCE`, repeating what the body
+            # above already said. Mirrors `_run_tool_test()`'s own
+            # refusal-branch precedent (`decision_note=None if is_refusal
+            # else decision_note`) of not double-saying a reason the body
+            # already carries. A genuine deny is unchanged: body and note
+            # keep their pre-existing text.
+            is_gate_error = gate.origin == "gate_error"
             inspector.show_tool_result(
                 server_key=server_key, tool_name=tool_name,
-                ok=False, text=_TOOL_TEST_BLOCKED_TEXT, duration_ms=0,
+                ok=False,
+                text=(
+                    _TOOL_TEST_BLOCKED_UNKNOWN_TEXT
+                    if is_gate_error else _TOOL_TEST_BLOCKED_TEXT
+                ),
+                duration_ms=0,
                 blocked=True,
-                decision_note=_decision_note(gate, ask_approved=False),
+                decision_note=(
+                    None if is_gate_error
+                    else _decision_note(gate, ask_approved=False)
+                ),
             )
             return
         if gate is not None and gate.state == "ask" and not inspector.test_run_armed:
