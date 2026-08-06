@@ -479,3 +479,130 @@ def test_legacy_API_section_only_mistral_key_satisfies_readiness_and_spend(
         settings["api_settings"]["mistral"]["api_key"]
         == "sk-mistral-legacy-only-key"
     )
+
+
+# --- PR-T2 review round 3 -------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "provider",
+    ("custom-openai-api", "custom-openai-api-2", "mlx_lm"),
+)
+def test_dispatchable_hyphenated_provider_spellings_stay_ready(provider):
+    """I2: the three dispatch-table spellings whose normalized key is NOT
+    the `[api_settings.*]` table name must not be blocked.
+
+    `Chat/Chat_Functions.API_CALL_HANDLERS` dispatches on the exact keys
+    `"custom-openai-api"`, `"custom-openai-api-2"` and `"mlx_lm"`, and a
+    self-hoster's `default_api_endpoint` carries one of those verbatim
+    spellings -- they DISPATCH, and they need no credential. But
+    `provider_config_key` normalizes them to `custom_openai_api`,
+    `custom_openai_api_2` and `mlx_lm`, none of which matched the
+    `custom`/`custom_2`/`local_mlx_lm` entries the keyless set had, so
+    Task 7's stricter gate reported "Unknown provider" and permanently
+    disabled a Run button that worked at the branch base -- with copy
+    naming no remedy, since there is no key to add.
+    """
+    readiness = get_provider_readiness(provider, {"api_settings": {}}, environ={})
+
+    assert readiness.ready is True
+    assert readiness.requires_api_key is False
+    assert readiness.reason == "Ready"
+
+
+def test_widening_the_keyless_set_did_not_weaken_credential_rejection():
+    """I2 guard: the fix must widen the KEYLESS set only.
+
+    A provider that genuinely needs a key, and a genuinely unknown one,
+    must both still be reported not-ready -- otherwise "no credential
+    needed" would have become the default answer and the money-stopping
+    gate would open for everything.
+    """
+    keyed = get_provider_readiness("anthropic", {"api_settings": {}}, environ={})
+    assert keyed.ready is False
+    assert keyed.reason == "Missing API key"
+
+    unknown = get_provider_readiness("totally-made-up", {"api_settings": {}}, environ={})
+    assert unknown.ready is False
+    assert unknown.reason == "Unknown provider"
+
+
+def test_placeholder_environment_key_never_reaches_the_spend_path(
+    tmp_path, monkeypatch
+):
+    """I5: the env branch of the credential bridge must run through the
+    SAME validity check every other source does.
+
+    `_normalize_legacy_provider_api_key`'s env branch was a bare
+    `os.getenv(env_var)` truth test, so `ANTHROPIC_API_KEY="YOUR_KEY"` was
+    returned verbatim into the legacy `anthropic_api` dict `chat_with_
+    anthropic` spends through, while `get_provider_readiness` (which runs
+    every source through `resolve_provider_api_key`) reported not-ready.
+    Gated surfaces failed safe; an ungated `chat_api_call` caller (Evals,
+    briefings, agent runs) would have sent the placeholder as a
+    credential. Same bug class as the placeholder-in-modern-config split
+    pinned above, one branch below it in the same function.
+    """
+    _clear_provider_env(monkeypatch)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "YOUR_KEY")
+    with _real_config(tmp_path, monkeypatch, "[API]\n"):
+        settings = config_mod.load_settings()
+        readiness = get_provider_readiness("anthropic", settings)
+
+    assert readiness.ready is False
+    assert settings["anthropic_api"]["api_key"] is None
+
+
+def test_surrounding_whitespace_is_stripped_for_readiness_and_spend_alike(
+    tmp_path, monkeypatch
+):
+    """Minor 2: the bridge validated the STRIPPED form but returned the raw
+    one, so `api_key = " sk-xyz "` showed `sk-xyz` in readiness while the
+    spend path sent `" sk-xyz "` -- a 401 whose cause is invisible from
+    every surface that reports the key as fine.
+    """
+    _clear_provider_env(monkeypatch)
+    with _real_config(
+        tmp_path,
+        monkeypatch,
+        '[api_settings.anthropic]\napi_key = "  sk-ant-padded-key  "\n',
+    ):
+        settings = config_mod.load_settings()
+        readiness = get_provider_readiness("anthropic", settings)
+
+    assert readiness.api_key == "sk-ant-padded-key"
+    assert settings["anthropic_api"]["api_key"] == "sk-ant-padded-key"
+
+
+def test_legacy_only_google_key_lands_in_the_table_chat_with_google_reads(
+    tmp_path, monkeypatch
+):
+    """I4: `chat_with_google` reads `api_settings.google` -- the table the
+    bridge writes -- so the "one credential truth" claim holds for Google.
+
+    It used to read `api_settings.google_api`, a table nothing in this app
+    produces (the shipped default is `[api_settings.google]`, the bridge
+    writes `api_settings["google"]`, and the legacy dict is the top-level
+    `google_generative_api`). So a bridged `[API] google_api_key` could
+    not reach the spend path even while readiness reported ready and the
+    Library RAG gate opened -- the one provider for which three claim
+    sites (`CLAUDE.md`, `config.py`'s bridge docstring, `Docs/User_Guide/
+    library/search-and-rag.md`) stated something false. This pins the
+    config half; `Tests/Chat/test_google_native_tools.py::test_google_
+    api_key_comes_from_the_api_settings_google_table` pins the handler
+    half.
+    """
+    _clear_provider_env(monkeypatch)
+    monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
+    with _real_config(
+        tmp_path,
+        monkeypatch,
+        '[API]\ngoogle_api_key = "google-legacy-only-key"\n',
+    ):
+        settings = config_mod.load_settings()
+        readiness = get_provider_readiness("google", settings)
+
+    assert readiness.ready is True
+    assert settings["api_settings"]["google"]["api_key"] == "google-legacy-only-key"
+    # The table the handler used to read is still produced by nobody.
+    assert "google_api" not in settings["api_settings"]

@@ -980,3 +980,43 @@ def test_normal_200_response_unaffected_by_redirect_guard(mock_post):
     assert mock_post.call_args[1]["allow_redirects"] is False
     assert sent["contents"][0]["parts"][0]["text"] == "2+2?"
     mock_post.return_value.raise_for_status.assert_called_once()
+
+
+@patch("requests.Session.post")
+def test_google_api_key_comes_from_the_api_settings_google_table(mock_post):
+    """PR-T2 review round 3, finding I4: with no explicit `api_key`
+    argument, `chat_with_google` must find the credential in
+    `api_settings.google` -- the table `config.py`'s credential bridge
+    writes and the shipped default config declares.
+
+    It read `api_settings.google_api` instead, a table nothing in this app
+    produces, so this call raised "Google API Key required." for a config
+    that Console's readiness check and the Library RAG gate both reported
+    ready -- the single provider for which this branch's "one credential
+    truth" claim was false.
+    """
+    mock_response = Mock()
+    mock_response.json.return_value = _gemini_text_response()
+    mock_response.status_code = 200
+    mock_response.raise_for_status = Mock()
+    mock_post.return_value = mock_response
+
+    snapshot = Mock()
+    snapshot.values = {
+        "api_settings": {"google": {"api_key": "google-config-table-key"}}
+    }
+    with patch(
+        "tldw_chatbook.LLM_Calls.LLM_API_Calls.get_runtime_config_snapshot",
+        return_value=snapshot,
+    ):
+        chat_api_call(
+            "google",
+            messages_payload=[{"role": "user", "content": "hi"}],
+            model="gemini-1.5-flash-latest",
+            streaming=False,
+        )
+
+    assert (
+        mock_post.call_args[1]["headers"]["x-goog-api-key"]
+        == "google-config-table-key"
+    )

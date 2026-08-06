@@ -46,12 +46,32 @@ PROVIDERS_REQUIRING_API_KEY_KEYS = frozenset(
         "zai",
     }
 )
+#: Providers that dispatch without a credential. Membership is what makes a
+#: provider dispatchable at all through the readiness gate (`KNOWN_PROVIDER_
+#: KEYS` below), so it must be kept in terms of what `Chat/Chat_Functions.
+#: py`'s `API_CALL_HANDLERS` can actually dispatch -- normalized through
+#: `provider_config_key`, since that is the only form this module ever sees.
+#:
+#: `custom_openai_api`, `custom_openai_api_2` and `mlx_lm` are here for
+#: exactly that reason (PR-T2 review round 3, finding I2): the dispatch
+#: table's own keys are `"custom-openai-api"`, `"custom-openai-api-2"` and
+#: `"mlx_lm"` -- verbatim spellings a self-hoster puts in `default_api_
+#: endpoint` and which DO dispatch -- but `provider_config_key` normalizes
+#: the hyphens to `custom_openai_api`/`custom_openai_api_2`, neither of
+#: which is the same key as the `custom`/`custom_2` entries above (those
+#: are the `[api_settings.custom]` tables, a different provider row). Left
+#: out, all three fell to the "Unknown provider" branch below and a
+#: previously-working Run button went permanently disabled with copy that
+#: named no remedy.
 KEYLESS_PROVIDER_KEYS = frozenset(
     {
         "aphrodite",
         "custom",
         "custom_2",
+        "custom_openai_api",
+        "custom_openai_api_2",
         "koboldcpp",
+        "mlx_lm",
         "llama_cpp",
         "local_llm",
         "local_llamacpp",

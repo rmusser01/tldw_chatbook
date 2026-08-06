@@ -1,7 +1,7 @@
 ---
 id: task-2521
 title: Unknown-but-dispatchable providers are blocked from Library RAG Answer
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-08-06 02:17'
 labels:
@@ -36,11 +36,30 @@ the provider is genuinely keyless/unknown-to-the-readiness-table, not missing a 
 
 ## Acceptance Criteria
 
-- [ ] `custom-openai-api`, `custom-openai-api-2`, and `mlx_lm` (and any other key present in `API_CALL_HANDLERS`
+- [x] `custom-openai-api`, `custom-openai-api-2`, and `mlx_lm` (and any other key present in `API_CALL_HANDLERS`
       but absent from `KNOWN_PROVIDER_KEYS` once normalized) resolve as ready in `get_provider_readiness` (or
       `library_rag_answer_provider_ready()` specifically) when no credential is required for them, instead of
       being reported as an unknown/blocked provider
-- [ ] A regression test pins that a user with one of these endpoints configured as `default_api_endpoint` sees
+- [x] A regression test pins that a user with one of these endpoints configured as `default_api_endpoint` sees
       Library RAG Answer's Run button enabled
-- [ ] Providers that genuinely require a credential and are simply unrecognized still report not-ready (this
+- [x] Providers that genuinely require a credential and are simply unrecognized still report not-ready (this
       fix does not weaken the "unknown provider" rejection for providers that actually need a key)
+
+## Implementation Notes
+
+Closed in-branch by PR-T2's post-review fix wave (review round 3, finding I2) rather than as a follow-up: the
+whole-branch review ruled this a user-facing regression of this branch, not a pre-existing gap.
+
+`custom_openai_api`, `custom_openai_api_2` and `mlx_lm` were added to `KEYLESS_PROVIDER_KEYS`
+(`tldw_chatbook/Chat/provider_readiness.py`) -- the normalized forms of the `API_CALL_HANDLERS` keys
+`"custom-openai-api"`, `"custom-openai-api-2"` and `"mlx_lm"`. This widens the keyless set only; nothing about
+the "unknown provider" rejection for credential-requiring providers changed.
+
+Pins (`Tests/Chat/test_provider_readiness.py`): `test_dispatchable_hyphenated_provider_spellings_stay_ready`
+(all three spellings, parametrized) and `test_widening_the_keyless_set_did_not_weaken_credential_rejection`
+(AC 3 -- anthropic still "Missing API key", an invented provider still "Unknown provider").
+`Tests/Library/test_library_rag_answer_service.py::test_provider_gate_accepts_a_keyless_dispatchable_endpoint_
+spelling` covers AC 2 at the seam the Library run gate consumes: the gate returns the endpoint NAME, which is
+exactly the value `provider_name=` derives the Run button's enabled state from (that derivation is itself
+pinned in `Tests/Library/test_library_rag_state.py`). A mounted-UI variant was judged redundant against that
+chain rather than added.

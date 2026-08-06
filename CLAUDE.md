@@ -160,9 +160,14 @@ matching environment variable (`chat_with_openai` did this first;
 PR-T2/task 7 made it uniform across the ~9 bridged chat providers). Legacy
 `[API] <provider>_api_key` values are the lowest-precedence fallback,
 normalized once at load time into both `api_settings.<provider>.api_key`
-and the legacy `<provider>_api` dict the provider call reads, so Console's
-readiness check and the actual spend can no longer disagree (`config.py`'s
-`_normalize_legacy_provider_api_key`). This is scoped to that one
+and the legacy `<provider>_api` dict — the two places a `chat_with_
+<provider>` handler may read — so Console's readiness check and the actual
+spend can no longer disagree (`config.py`'s
+`_normalize_legacy_provider_api_key`). Every source (modern table, env
+var, legacy `[API]`) is run through the same `resolve_provider_api_key`
+validity check, so a placeholder or a whitespace-padded value can never be
+what readiness reports on one surface and what the spend path sends on
+another. This is scoped to that one
 credential lookup — the general env-vars-first ordering is unaffected
 everywhere else in the config loader.
 

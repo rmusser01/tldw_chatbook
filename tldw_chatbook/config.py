@@ -884,6 +884,20 @@ def _normalize_legacy_provider_api_key(
     dict must be built from the SAME resolved value -- never two
     independent reads of `[API]` -- or the split just moves.
 
+    Which of the two a handler reads varies by provider, and the bridge is
+    only as true as the table the handler actually opens: `chat_with_
+    anthropic` reads the legacy dict, `chat_with_mistral` reads
+    `api_settings.mistral`, and `chat_with_google` reads `api_settings.
+    google` -- the last only since PR-T2 review round 3 (finding I4), which
+    found it reading `api_settings.google_api`, a table nothing in this app
+    has ever produced. Google was therefore the one provider for which
+    this docstring's claim was FALSE: a bridged `[API] google_api_key`
+    could not reach the spend path at all while readiness reported ready.
+    Pinned by `Tests/Chat/test_google_native_tools.py::test_google_api_key_
+    comes_from_the_api_settings_google_table` (handler half) and
+    `Tests/Chat/test_provider_readiness.py::test_legacy_only_google_key_
+    lands_in_the_table_chat_with_google_reads` (config half).
+
     Precedence: (1) an explicit, non-placeholder `api_settings.<provider_
     key>.api_key` always wins -- a value entered through the Settings
     screen (the modern location) was a deliberate choice; (2) the
@@ -923,10 +937,13 @@ def _normalize_legacy_provider_api_key(
     an actual TOML-sourced value to write into it -- never eagerly, since
     several tests pin an untouched config's `api_settings` as exactly `{}`.
 
-    "Non-placeholder" is delegated to THIS module's own `is_valid_provider_
+    "Non-placeholder" is delegated to THIS module's own `resolve_provider_
     api_key` (see its definition above, near `PROVIDER_API_KEY_
     PLACEHOLDERS`) -- the SAME function `Chat/provider_readiness.get_
-    provider_readiness` uses (it imports the name from here). An earlier
+    provider_readiness` runs each of ITS candidate sources through (it
+    imports the name from here, aliased `_valid_api_key`), applied here to
+    all three sources rather than per-branch, so neither reader can see a
+    value the other rejects or a differently-trimmed form of it. An earlier
     revision of this function defined its own single-value placeholder
     check (`value != "<API_KEY_HERE>"`), which missed four of the five
     placeholders that function recognizes (`""`, `"YOUR_KEY"`, `"your_
@@ -968,18 +985,33 @@ def _normalize_legacy_provider_api_key(
         resolves one.
     """
     provider_table = api_settings_section.get(provider_key)
-    modern_value = (
+    # EVERY source goes through `resolve_provider_api_key` -- the same
+    # function `get_provider_readiness` runs each of its own candidates
+    # through -- and what this function returns is that resolved (stripped,
+    # non-placeholder) value, never the raw one (PR-T2 review round 3,
+    # findings I5 + minor 2). Two ways the earlier per-branch handling
+    # split the two readers back apart:
+    #   * The env branch was a bare `os.getenv(env_var)` truth test, so
+    #     `ANTHROPIC_API_KEY="YOUR_KEY"` landed verbatim in the legacy
+    #     `anthropic_api` dict while readiness (which validates every
+    #     source) said not-ready -- gated surfaces failed safe, but an
+    #     ungated `chat_api_call` caller (Evals, briefings, agent runs)
+    #     would send the placeholder as a credential.
+    #   * The modern/legacy branches validated the STRIPPED form but
+    #     returned the raw one, so `api_key = " sk-xyz "` showed
+    #     `sk-xyz` in readiness and spent ` sk-xyz ` (a 401).
+    modern_value = resolve_provider_api_key(
         provider_table.get("api_key") if isinstance(provider_table, dict) else None
     )
-    if is_valid_provider_api_key(modern_value):
+    if modern_value:
         return modern_value  # explicit modern config always wins
 
-    env_value = os.getenv(env_var)
+    env_value = resolve_provider_api_key(os.getenv(env_var))
     if env_value:
         return env_value
 
-    legacy_value = raw_api_section.get(toml_key)
-    if isinstance(legacy_value, str) and legacy_value.strip():
+    legacy_value = resolve_provider_api_key(raw_api_section.get(toml_key))
+    if legacy_value:
         if not isinstance(provider_table, dict):
             provider_table = {}
             api_settings_section[provider_key] = provider_table
