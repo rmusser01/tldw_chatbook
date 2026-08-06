@@ -171,3 +171,58 @@ async def test_overview_counts_paused_sources_as_in_error(monkeypatch):
         "threshold and is the most broken state there is"
     )
     assert data["total_sources"] == 3
+
+
+@pytest.mark.asyncio
+async def test_latest_run_status_is_none_not_the_string_unavailable_with_no_runs(
+    monkeypatch,
+):
+    """TASK-2313, AC#2: UAT -- "Latest run status: unavailable" read as a
+    fault, not a state, for a watchlist that has simply never run. The
+    controller must hand back `None` (the same "nothing recorded" sentinel
+    every OTHER missing value in this dict uses), not the string
+    "unavailable" -- both `OverviewPane._card_value`'s "-" default and
+    `WatchlistsCollectionsScreen._latest_run_status_text`'s "no runs yet"
+    copy key off `None`/falsy, not off a specific magic string.
+    """
+    ctrl = WatchlistsBackendController(
+        app_instance=None, scope_service=FakeScopeService(), server_service=None
+    )
+
+    async def fake_list_sources(**kwargs):
+        return []
+
+    async def fake_safe_list(*args, **kwargs):
+        return []
+
+    monkeypatch.setattr(ctrl, "list_sources", fake_list_sources)
+    monkeypatch.setattr(ctrl, "_safe_list", fake_safe_list)
+
+    data = await ctrl.get_overview_data(runtime_backend="local")
+
+    assert data["latest_run_status"] is None, (
+        f"expected None with no runs, got {data['latest_run_status']!r}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_an_unwired_scope_service_reports_its_own_status_not_no_runs_yet():
+    """UAT batch-5 review, finding I1: the degraded-state dict (no
+    `scope_service` at all) must NOT hand back the same `None` a healthy,
+    simply-unrun watchlist gets -- "the feature isn't wired up" is a
+    different condition from "this watchlist is fine and hasn't checked
+    yet," and collapsing them (an earlier version of the TASK-2313 fix did
+    exactly this) reintroduces the dishonesty this UAT programme removes,
+    just one level down. Reverting `NOT_CONFIGURED_STATUS` back to `None`
+    is the mutation this test pins: with the sentinel gone, this assertion
+    fails identically to the healthy-zero-runs case, which is the bug.
+    """
+    ctrl = WatchlistsBackendController(app_instance=None, scope_service=None, server_service=None)
+
+    data = await ctrl.get_overview_data(runtime_backend="local")
+
+    assert data["latest_run_status"] == WatchlistsBackendController.NOT_CONFIGURED_STATUS
+    assert data["latest_run_status"] is not None, (
+        "an unwired scope_service must not read identically to a healthy "
+        "watchlist that simply has zero runs"
+    )

@@ -1107,9 +1107,12 @@ async def test_watchlists_collections_uses_compact_title_and_clear_sections():
         await pilot.pause(0.1)
         screen = _active_destination_screen(host)
 
+        # TASK-2313, AC#6: "Mixed | Local/Server" dropped -- a hardcoded
+        # constant that never reflected the actual backend and duplicated
+        # the labeled Backend Select one row below.
         assert (
             _static_text(screen.query_one("#watchlists-collections-title", Static))
-            == "Watchlists | Monitored sources, runs, alerts, recovery | Mixed | Local/Server"
+            == "Watchlists | Monitored sources, runs, alerts, recovery"
         )
         visible_text = _visible_text(screen)
         assert "Watchlists" in visible_text
@@ -1178,7 +1181,10 @@ async def test_watchlists_collections_empty_state_disables_console_attach():
         await _wait_for_wc_snapshot(screen, pilot)
         button = screen.query_one("#wc-attach-to-console", Button)
 
-        assert "No sources yet." in _visible_text(screen)
+        # TASK-2312: reworded to read as global status (this marker renders
+        # in the shared header on every section) rather than Sources-tab
+        # copy leaking elsewhere.
+        assert "No Watchlists sources yet." in _visible_text(screen)
         assert button.disabled is True
         assert "Stage local Watchlists context" in str(button.tooltip)
 

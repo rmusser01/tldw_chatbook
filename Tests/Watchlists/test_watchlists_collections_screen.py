@@ -422,7 +422,14 @@ async def test_feeds_lists_each_source_once_under_the_all_scope():
         )
         assert pane_text.count("ArXiv") == 1, pane_text
         assert pane_text.count("Krebs") == 1, pane_text
-        assert "Local Watchlists snapshot: All sources (2 sources)" in pane_text
+        # TASK-2312: the snapshot summary line no longer lives inside
+        # `#watchlists-list-pane` -- it moved to the shared `#wl-centre-
+        # status` header (`_build_centre_status_header`), the ONE place the
+        # tab strip and this marker are ever built now, on every section
+        # including Read. `#wc-watchlists-summary` is its own stable id
+        # regardless of which container hosts it.
+        summary_text = _static_text(screen.query_one("#wc-watchlists-summary"))
+        assert "Local Watchlists snapshot: All sources (2 sources)" in summary_text
 
 
 @pytest.mark.asyncio
@@ -519,6 +526,66 @@ async def test_centre_header_summary_follows_the_tree_scope_off_the_read_tab():
         assert summary_after == "Local Watchlists snapshot: Morning AI Brief (1 source)", (
             f"the header must reflect the NEW scope's counts, not the old: "
             f"{summary_after!r}"
+        )
+
+
+@pytest.mark.asyncio
+async def test_centre_header_summary_follows_the_tree_scope_on_the_read_tab_too():
+    """TASK-2312: before this task, `watch_tree_scope` refreshed the centre
+    header ONLY off the Read tab (`if self.active_section != "items"`) --
+    the header simply did not exist on Read, which carried its own inline
+    copy of the summary INSIDE FEEDS's own body instead (refreshed by
+    `_refresh_feeds_region_for_scope`, unconditionally). Now that the
+    header exists on every section, its refresh must be unconditional too,
+    or a scope change on the Read tab would leave `#wl-centre-status`
+    showing the PREVIOUS scope's summary -- silently, since nothing else
+    on that tab would ever touch it."""
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+        service = app.watchlist_bundle_service
+        db = service._db
+
+        morning = service.create("Morning AI Brief")
+        arxiv = db.add_subscription(
+            name="ArXiv", type="rss", source="https://a.example/f"
+        )
+        db.add_subscription(name="Krebs", type="rss", source="https://b.example/f")
+        service.add_source(morning["id"], arxiv)
+        screen._tree_watchlists = [{"id": morning["id"], "name": "Morning AI Brief"}]
+
+        screen.active_section = "items"
+        await pilot.pause(0.2)
+        assert screen.query_one("#wl-region-feeds"), (
+            "precondition: FEEDS is mounted on the Read tab"
+        )
+        assert screen.query_one("#wl-centre-status"), (
+            "precondition: the header exists on the Read tab too "
+            "(TASK-2312)"
+        )
+
+        summary_before = _static_text(
+            screen.query_one("#wc-watchlists-summary", Static)
+        )
+        assert summary_before == "Local Watchlists snapshot: All sources (2 sources)"
+
+        screen.post_message(
+            TreeScopeChanged(TreeScope(kind="watchlist", watchlist_id=morning["id"]))
+        )
+        summary_after = summary_before
+        for _ in range(20):
+            await pilot.pause()
+            summary_after = _static_text(
+                screen.query_one("#wc-watchlists-summary", Static)
+            )
+            if "Morning AI Brief" in summary_after:
+                break
+
+        assert summary_after == "Local Watchlists snapshot: Morning AI Brief (1 source)", (
+            f"the header must reflect the NEW scope's counts on the Read "
+            f"tab too, not just every other section: {summary_after!r}"
         )
 
 

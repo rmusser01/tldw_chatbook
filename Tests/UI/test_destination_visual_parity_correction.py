@@ -1087,19 +1087,25 @@ async def test_watchlists_screen_matches_approved_control_plane_columns():
         screen = _active_destination_screen(host)
         await _wait_for_selector(screen, pilot, "#wc-empty-state")
 
+        # TASK-2313, AC#6: "Mixed | Local/Server" dropped from the title.
         assert (
             _visible_static_text(screen).find(
-                "Watchlists | Monitored sources, runs, alerts, recovery | Mixed | Local/Server"
+                "Watchlists | Monitored sources, runs, alerts, recovery"
             )
             >= 0
         )
         visible_text = _visible_static_text(screen)
         assert screen.query_one("#watchlists-header-bar").region.height == 3
-        assert "Backend: local" in visible_text
+        # TASK-2313, AC#3: on Overview (not a `_LOCAL_ONLY_SECTIONS`
+        # member), the Select's own value is the only place "Local"
+        # appears now -- the old trailing "Backend: local" restated it.
+        assert "Backend" in visible_text
+        assert "Local" in visible_text
+        assert "Backend: local" not in visible_text
         assert "Sources" in visible_text
         assert "Overview" in visible_text
         assert "Inspector" in visible_text
-        assert "State: ready" in visible_text
+        assert "Watchlists: loaded" in visible_text
         assert "Alert rules active:" in visible_text
         assert "Latest run status:" in visible_text
         assert "Collections" not in visible_text
@@ -1123,7 +1129,7 @@ async def test_watchlists_screen_matches_approved_control_plane_columns():
         # header -- see `WatchlistsCollectionsScreen._hidden_centre_regions`
         # and `_rendered_region_layout`). ITEMS is the one centre region
         # that is always present; the tab strip and snapshot markers this
-        # test already asserted above ("Sources"/"State: ready"/... in
+        # test already asserted above ("Sources"/"Watchlists: loaded"/... in
         # `visible_text`) now come from `#wl-centre-status`
         # (`_build_centre_status_header`) rather than from FEEDS's own body.
         assert screen.query_one("#wl-workbench")
@@ -1285,15 +1291,19 @@ async def test_watchlists_items_region_is_taller_than_feeds_region_when_expanded
 @pytest.mark.asyncio
 async def test_watchlists_feeds_empty_state_fits_without_scrolling(size):
     """Fix round 2, regression pin: round 1 shipped `max-height: 10`, one row
-    BELOW the real empty state's measured 11-row need (tab strip, "Sources"
-    title, "No sources yet.", Create/Import button row, inside the pane's
-    own border) -- so a watchlist with zero sources rendered a scrollbar.
-    That was a ceiling below its own minimum content, not the intended
-    "grows to fit, caps, then scrolls" behaviour.
+    BELOW the real empty state's measured content need at the time (a
+    scope heading, "No Watchlists sources yet.", the Create/Import button
+    row, inside the pane's own border -- TASK-2312 later moved the section
+    tab strip that used to also live in this list, out to the shared
+    `#wl-centre-status` header, so this pane's own content is shorter than
+    the row count that originally motivated the cap) -- so a watchlist
+    with zero sources rendered a scrollbar. That was a ceiling below its
+    own minimum content, not the intended "grows to fit, caps, then
+    scrolls" behaviour.
 
-    `max-height` is now 12 (see `.watchlists-region-feeds` in
-    `_watchlists.tcss` for the full derivation), which clears the 11-row
-    need with headroom: the pane's real content must sit entirely inside
+    `max-height` is 12 (see `.watchlists-region-feeds` in `_watchlists.tcss`
+    for the full derivation), comfortable headroom over the pane's real
+    content either way: the pane's real content must sit entirely inside
     FEEDS -- the cap never engages, nothing is clipped -- and there must be
     nothing left to scroll, at both the guard suite's 160x42 and the app's
     real 235x52.
@@ -1562,17 +1572,31 @@ async def test_watchlists_soloed_feeds_fills_the_centre(size):
             # reactive is `recompose=True`, so the previous iteration's
             # references are unmounted and report a zero-sized region.
             centre = screen.query_one("#wl-centre")
+            # TASK-2312: `#wl-centre` now ALSO contains the shared header
+            # (tab strip + snapshot summary) on the Read tab, exactly like
+            # every other section -- it did not before, since Read used to
+            # carry its own inline copy of both INSIDE FEEDS's own body.
+            # Its rows are real content of `#wl-centre` and must count
+            # toward "covered", or this assertion would demand the three
+            # region widgets alone fill space the header is legitimately
+            # occupying.
+            centre_header = screen.query_one("#wl-centre-status")
             body = screen.query_one(f"#wl-region-{soloed.value}")
             headers = [
                 screen.query_one(f"#wl-header-{other.value}")
                 for other in (Region.FEEDS, Region.ITEMS, Region.CONTENT)
                 if other is not soloed
             ]
-            covered = body.region.height + sum(h.region.height for h in headers)
+            covered = (
+                centre_header.region.height
+                + body.region.height
+                + sum(h.region.height for h in headers)
+            )
             assert covered == centre.region.height, (
                 f"solo({soloed.value}) leaves "
                 f"{centre.region.height - covered} of the centre's "
-                f"{centre.region.height} rows blank: body={body.region} "
+                f"{centre.region.height} rows blank: "
+                f"centre_header={centre_header.region} body={body.region} "
                 f"headers={[h.region for h in headers]}"
             )
 
@@ -1599,13 +1623,21 @@ async def test_watchlists_feeds_cap_keeps_items_taller_when_it_actually_binds(
     its structural floor (border 2 + the generic "Content" heading 1 + the
     placeholder line 1 = 4 rows) regardless of terminal height. ITEMS is
     therefore the `.watchlists-centre` Vertical's ONLY real `fr` sibling
-    again (as it was before CONTENT held any real content), and simply takes
-    what FEEDS and CONTENT leave: `items = budget - feeds_cap - content_floor
-    = budget - 12 - 4`. At budget 34 that is 18; at budget 33, 17 -- both
-    comfortably above FEEDS's 12, so this split has real margin rather than
-    the pre-Phase-D derivation's razor-thin one-cap-value-wide window (that
-    fragility was a direct consequence of `fr`-splitting a shrinking pool
-    two ways; a fixed content floor does not have that problem).
+    among the three CENTRE REGIONS, and takes what FEEDS, CONTENT, and (as
+    of TASK-2312) the shared header above all three leave:
+    `items = budget - feeds_cap - content_floor - header_rows
+    = budget - 12 - 4 - 2`. The header is 2 rows in this scenario -- the
+    tab strip plus the one-line snapshot summary
+    (`_watchlists_status_marker_widgets`'s "loaded, has data" branch) -- now
+    mounted on the Read tab too, exactly like every other section (before
+    that task, Read alone had NO separate header row: its own inline copy
+    of the tab strip/summary lived INSIDE FEEDS's own bordered pane, so
+    `budget` was never shared with anything above the three regions). At
+    budget 34 `items` is 16; at budget 33, 15 -- both comfortably above
+    FEEDS's 12, so this split has real margin rather than the pre-Phase-D
+    derivation's razor-thin one-cap-value-wide window (that fragility was a
+    direct consequence of `fr`-splitting a shrinking pool two ways; a fixed
+    content floor does not have that problem).
     """
     app = _build_test_app()
     # Setup change only (Task 7 fix round 1, Finding 1) -- see
@@ -1645,22 +1677,34 @@ async def test_watchlists_feeds_cap_keeps_items_taller_when_it_actually_binds(
             f"CONTENT's idle floor (border 2 + heading 1 + placeholder 1) "
             f"should not depend on terminal height: content={content.region}"
         )
-        expected_items = {34: 18, 33: 17}[budget]
+        expected_items = {34: 16, 33: 15}[budget]
         assert items.region.height == expected_items, (
             f"ITEMS should take exactly what FEEDS (pinned at its 12-row "
-            f"cap) and CONTENT (idle at its 4-row floor) leave of the "
-            f"{budget}-row budget -- {budget} - 12 - 4 = {expected_items}: "
-            f"feeds={feeds.region} items={items.region} content={content.region}"
+            f"cap), CONTENT (idle at its 4-row floor), and the shared "
+            f"2-row header (tab strip + snapshot summary, TASK-2312) leave "
+            f"of the {budget}-row budget -- {budget} - 12 - 4 - 2 = "
+            f"{expected_items}: feeds={feeds.region} items={items.region} "
+            f"content={content.region}"
         )
         assert items.region.height > feeds.region.height, (
             f"ITEMS must stay the taller reading area even when FEEDS is "
             f"pinned at its cap: feeds={feeds.region} items={items.region}"
         )
+        # TASK-2312: `budget` is `#wl-centre`'s total height, which now also
+        # has to cover the shared header (tab strip + snapshot summary) --
+        # not just the three centre regions -- since Read no longer carries
+        # an inline copy of either inside FEEDS's own body.
+        centre_header = screen.query_one("#wl-centre-status")
         assert (
-            feeds.region.height + items.region.height + content.region.height == budget
+            centre_header.region.height
+            + feeds.region.height
+            + items.region.height
+            + content.region.height
+            == budget
         ), (
             f"the centre budget moved; the cap's derivation needs redoing: "
-            f"feeds={feeds.region} items={items.region} content={content.region}"
+            f"centre_header={centre_header.region} feeds={feeds.region} "
+            f"items={items.region} content={content.region}"
         )
 
 
@@ -1687,7 +1731,11 @@ async def test_watchlists_right_rail_does_not_clip_action_labels(size):
         for label in (
             "Stage Watchlists Context in Console",
             "Open current Watchlists",
-            "Console follow unavailable",
+            # TASK-2313, AC#6: reworded from "Console follow unavailable"
+            # to match the enabled state's own "Follow ... in Console"
+            # phrasing, removing the adjacent "Console follow"/"Console
+            # follow" duplication the UAT flagged.
+            "Follow in Console",
         ):
             _assert_label_intact_on_screen(right_rail, label, context=context)
 
@@ -3591,17 +3639,18 @@ async def test_watchlists_tab_strip_hit_regions_match_its_painted_labels(size):
         await pilot.pause(0.2)
 
         for section_id, label in SECTIONS:
-            # Recomputed every iteration, not captured once up front: the
-            # tab strip's own row can legitimately differ between the Read
-            # tab -- where it still lives inside FEEDS's bordered body,
-            # unchanged since before this task -- and every OTHER tab, where
-            # it now lives in the borderless `#wl-centre-status` header
-            # (TASK-1344 AC#1 gates FEEDS to Read; AC#4 unmounts it rather
-            # than leaving a one-row header elsewhere). A stale row/painted
-            # pair captured on one tab and reused after switching to a
-            # structurally different one is exactly the kind of harness
-            # coordinate error this test exists to catch in the *app* --
-            # it must not reintroduce the same class of bug in the *test*.
+            # Recomputed every iteration, not captured once up front: even
+            # though the tab strip now lives in the same borderless
+            # `#wl-centre-status` header on every section (TASK-2312 --
+            # before it, Read alone mounted an inline copy inside FEEDS's
+            # own bordered body, which is exactly the positioning bug that
+            # task fixed), OTHER content above it (e.g. a scope-dependent
+            # summary line whose text length can wrap) could still shift
+            # its row between sections. A stale row/painted pair captured
+            # on one tab and reused after switching to another is exactly
+            # the kind of harness coordinate error this test exists to
+            # catch in the *app* -- it must not reintroduce the same class
+            # of bug in the *test*.
             strip = screen.query_one("#wl-tabs")
             row = strip.region.y
             painted = "".join(

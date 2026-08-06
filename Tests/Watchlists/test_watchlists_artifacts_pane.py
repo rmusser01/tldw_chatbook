@@ -411,6 +411,35 @@ async def test_artifacts_says_it_is_local_like_the_notifications_inbox():
         assert screen.query_one("#watchlists-backend-select").disabled is False
 
 
+@pytest.mark.asyncio
+async def test_picker_toolbar_selects_each_carry_a_visible_label():
+    """TASK-2310: UAT read this strip as "Auto + featured / App default /
+    Off" -- none of the three picker Selects named what they controlled.
+    A `Static` label must now sit immediately before each, in the same
+    toolbar row."""
+    app = _build_test_app()
+    watchlist_id = _seed_watchlist(app)
+    async with _open_artifacts(app, watchlist_id) as (screen, pilot, _host):
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        assert pane.can_generate, "the picker toolbar only renders when can_generate"
+        row = pane.query_one("#artifacts-picker-toolbar")
+        children = list(row.children)
+        ids = [child.id for child in children]
+
+        def label_immediately_before(select_id: str, expected_text: str) -> None:
+            index = next(i for i, cid in enumerate(ids) if cid == select_id)
+            label = children[index - 1]
+            assert isinstance(label, Static), (
+                f"expected a Static label immediately before #{select_id}, "
+                f"DOM order was: {ids}"
+            )
+            assert str(label.renderable) == expected_text
+
+        label_immediately_before("artifacts-mode-select", "Mode")
+        label_immediately_before("artifacts-preset-select", "Preset")
+        label_immediately_before("artifacts-cadence-select", "Cadence")
+
+
 # --- 2. Generate writes a briefing, and its body renders inert -------------
 
 
@@ -966,6 +995,164 @@ async def test_a_database_error_during_generation_does_not_exit_the_app(monkeypa
         assert any(
             row["status"] == "complete" for row in _briefing_rows(app, watchlist_id)
         ), "and must have left a finished briefing behind"
+
+
+# --- TASK-2311: a failed generation surfaces its reason proactively --------
+
+
+@pytest.mark.asyncio
+async def test_a_failed_generation_toasts_its_reason_without_row_selection(monkeypatch):
+    """UAT: Generate with no provider configured produced a bare "failed"
+    row -- no toast, no reason. The actual cause ("OpenAI API Key is
+    required but not found") only appeared after clicking the row, and the
+    provider had silently defaulted to openai. This reproduces exactly
+    that provider exception and asserts the toast fires at failure time,
+    names the provider actually attempted, and points at Settings --
+    without the test ever selecting the row."""
+    app = _build_test_app()
+    app.notify = Mock()
+    watchlist_id = _seed_watchlist(app)
+
+    class _ExplodingChat:
+        """A provider call that always raises -- `generate_briefing`'s own
+        `_invoke_chat` try/except turns this into a `failed` row rather
+        than letting it propagate (see that method's docstring)."""
+
+        def __call__(self, **kwargs):
+            # Trailing period deliberate -- matches the real message live
+            # verification hit, and is what makes the double-punctuation
+            # trap (below) reproducible.
+            raise RuntimeError("OpenAI API Key is required but not found.")
+
+    _use_fake_chat(monkeypatch, _ExplodingChat())
+
+    async with _open_artifacts(app, watchlist_id) as (screen, pilot, _host):
+        await _press_generate(screen, pilot, app, watchlist_id)
+
+        rows = _briefing_rows(app, watchlist_id)
+        assert any(row["status"] == "failed" for row in rows), (
+            "the generation must actually have failed for this test to mean "
+            "anything"
+        )
+
+        assert app.notify.called, (
+            "a failed generation must toast its reason at failure time, "
+            "without requiring the row to be clicked"
+        )
+        args, kwargs = app.notify.call_args
+        message = args[0]
+        assert kwargs.get("severity") == "error"
+        assert kwargs.get("markup") is False, (
+            "a provider's own error text is untrusted"
+        )
+        assert "OpenAI" in message, "must name the provider actually attempted"
+        assert "API Key is required but not found" in message, (
+            "must carry the provider's own reason"
+        )
+        assert "Settings" in message, (
+            "a configuration-class failure must point at where to fix it"
+        )
+        # Live-verified trap: the provider's own message ("...not found.")
+        # already ends in a period; naively appending another produced a
+        # visible ".." in the toast.
+        assert ".." not in message, (
+            f"double punctuation from concatenating the provider's own "
+            f"already-terminated sentence with this toast's own: {message!r}"
+        )
+
+
+@pytest.mark.asyncio
+async def test_a_failed_generation_toast_bounds_a_long_or_multiline_provider_reason(
+    monkeypatch,
+):
+    """UAT batch-5 review, m3: TASK-2311 made a failed generation's reason
+    fire in an UNCONDITIONAL toast rather than requiring a click into the
+    row's detail region -- a wider default exposure for whatever text a
+    provider handler's exception carries. `_error_text` (`briefing_
+    service.py`) already caps at 1000 chars server-side and never a
+    traceback, but 1000 chars -- or anything with embedded newlines, the
+    shape a raw HTTP response body or header dump takes, unlike a curated
+    one-line provider message -- is still far more than a one-line toast
+    should ever carry. This reproduces exactly that shape (a multi-line,
+    >1000-char exception message) and asserts the toast collapses it to a
+    single line and bounds its length, rather than dumping it verbatim.
+    """
+    app = _build_test_app()
+    app.notify = Mock()
+    watchlist_id = _seed_watchlist(app)
+
+    huge_multiline_body = "\n".join(
+        [f"HTTP/1.1 500 Internal Server Error line {i}" for i in range(60)]
+    )
+
+    class _PayloadDumpingChat:
+        def __call__(self, **kwargs):
+            raise RuntimeError(huge_multiline_body)
+
+    _use_fake_chat(monkeypatch, _PayloadDumpingChat())
+
+    async with _open_artifacts(app, watchlist_id) as (screen, pilot, _host):
+        await _press_generate(screen, pilot, app, watchlist_id)
+
+        rows = _briefing_rows(app, watchlist_id)
+        assert any(row["status"] == "failed" for row in rows), (
+            "the generation must actually have failed for this test to mean "
+            "anything"
+        )
+        # The row itself keeps the server-side-capped-but-still-long text --
+        # only the unconditional TOAST is bounded further. Confirms the
+        # fixture is exercising the real >1000-char/multiline shape this
+        # test is about, not accidentally a short message.
+        failed_row = next(row for row in rows if row["status"] == "failed")
+        assert "\n" in str(failed_row.get("error") or ""), (
+            "precondition: the stored error is genuinely multi-line"
+        )
+
+        assert app.notify.called
+        args, kwargs = app.notify.call_args
+        message = args[0]
+        assert kwargs.get("markup") is False
+
+        assert "\n" not in message, (
+            "a multi-line provider dump must never reach the toast as "
+            "multiple lines"
+        )
+        assert len(message) < 400, (
+            f"the toast must stay a short, bounded line, not echo the "
+            f"provider's full (capped-at-1000-chars) text verbatim: "
+            f"{len(message)} chars"
+        )
+        # The bound is on SIZE/SHAPE (one short line), not content-pattern
+        # redaction -- text near the START of a long reason can still
+        # appear (this fixture's repeating phrase is no exception). What
+        # must NOT happen is the tail surviving: the 60-line fixture's last
+        # line is only reachable past the 160-char cap, so its presence
+        # would mean truncation did not actually happen.
+        assert "line 59" not in message, (
+            f"the full multi-line payload must not survive into the toast "
+            f"verbatim -- the tail line only fits if truncation failed: "
+            f"{message!r}"
+        )
+        assert "…" in message, "a truncated reason must carry its own marker"
+
+
+@pytest.mark.asyncio
+async def test_the_provider_is_visible_before_generating():
+    """TASK-2311, AC#3: the provider Generate will use must be visible
+    BEFORE the user presses it, not only afterward in a finished row."""
+    app = _build_test_app()
+    watchlist_id = _seed_watchlist(app)
+    async with _open_artifacts(app, watchlist_id) as (screen, pilot, _host):
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        assert pane.default_provider_display, (
+            "the pane must know which provider Generate will use"
+        )
+        scope_note = screen.query_one("#artifacts-scope-note", Static)
+        painted = str(scope_note.renderable)
+        assert pane.default_provider_display in painted, (
+            f"the always-visible scope line must name the provider -- got "
+            f"{painted!r}"
+        )
 
 
 # --- Every status has a body of its own ------------------------------------
@@ -5282,13 +5469,15 @@ async def test_export_feed_directory_cancelled_error_propagates_uncaught(
 
 
 @pytest.mark.asyncio
-async def test_serve_and_stop_buttons_start_disabled_with_nothing_exported_or_running(
+async def test_serve_starts_disabled_and_stop_is_absent_with_nothing_exported_or_running(
     monkeypatch, tmp_path
 ):
     """Serve starts disabled with nothing exported yet (AC #2: nothing is
     ever served without an explicit export having already happened), and
-    Stop starts disabled with nothing running -- proven by the server's
-    own `is_running` being `False`, i.e. no socket has been opened at all.
+    Stop (task-2310: rendered only while something is actually running --
+    it has no useful disabled-but-visible state) is not mounted at all --
+    proven by the server's own `is_running` being `False`, i.e. no socket
+    has been opened at all.
     """
     _patch_audio_dir(monkeypatch, tmp_path)
     app = _build_test_app()
@@ -5301,11 +5490,12 @@ async def test_serve_and_stop_buttons_start_disabled_with_nothing_exported_or_ru
         )
         pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
         serve_button = pane.query_one("#artifacts-serve-feed-button", Button)
-        stop_button = pane.query_one("#artifacts-stop-feed-button", Button)
         assert serve_button.disabled is True, "nothing exported yet -> disabled"
-        assert stop_button.disabled is True, "nothing running -> disabled"
         assert serve_button.compact, "a bordered button costs 3 rows in a height:1 strip"
-        assert stop_button.compact
+        assert not pane.query("#artifacts-stop-feed-button"), (
+            "nothing running -> Stop Serving has nothing to explain by "
+            "staying visible, so it is not rendered at all"
+        )
 
 
 @pytest.mark.asyncio
@@ -5326,7 +5516,9 @@ async def test_serve_enables_once_a_feed_has_been_exported(monkeypatch, tmp_path
 
         pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
         assert pane.query_one("#artifacts-serve-feed-button", Button).disabled is False
-        assert pane.query_one("#artifacts-stop-feed-button", Button).disabled is True
+        # task-2310: an export exists, but nothing is SERVING yet -- Stop
+        # Serving still has nothing to act on, so it stays unmounted.
+        assert not pane.query("#artifacts-stop-feed-button")
 
 
 @pytest.mark.asyncio

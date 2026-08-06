@@ -21,6 +21,9 @@ from tldw_chatbook.UI.Watchlists_Modules.region_layout import Region, RegionLayo
 from tldw_chatbook.UI.Watchlists_Modules.rules_pane import RulesPane
 from tldw_chatbook.UI.Watchlists_Modules.runs_pane import RunsPane
 from tldw_chatbook.UI.Watchlists_Modules.sources_pane import SourcesPane
+from tldw_chatbook.UI.Watchlists_Modules.watchlists_backend_controller import (
+    WatchlistsBackendController,
+)
 
 
 def _settings_without_splash(section, key=None, default=None):
@@ -125,8 +128,186 @@ async def test_watchlists_shell_has_tab_strip_and_panes():
 
         screen.active_section = "items"
         await pilot.pause(0.2)
-        assert screen.query_one("#watchlists-list-pane"), (
-            "FEEDS's own pane must still exist on the Read tab"
+        list_pane = screen.query_one("#watchlists-list-pane")
+        assert list_pane, "FEEDS's own pane must still exist on the Read tab"
+        # TASK-2312: the tab strip and the snapshot status marker now come
+        # from `#wl-centre-status` on EVERY section, including Read -- the
+        # bug this task fixed was that Read alone mounted an independent
+        # SECOND copy of both, nested INSIDE this bordered FEEDS pane, so
+        # the tab strip visibly changed screen position depending on which
+        # tab was active. `#wl-centre-status` must exist here too now, and
+        # FEEDS's own pane must carry neither the tab strip nor a status
+        # marker id -- both now have exactly one home.
+        assert screen.query_one("#wl-centre-status"), (
+            "the shared header must exist on the Read tab too, not just "
+            "every other section"
+        )
+        assert not list_pane.query("WatchlistsTabStrip"), (
+            "FEEDS's own pane must not carry a second copy of the tab strip"
+        )
+        for marker_id in (
+            "wc-loading-state",
+            "wc-service-error",
+            "wc-empty-state",
+            "wc-watchlists-summary",
+        ):
+            assert not list_pane.query(f"#{marker_id}"), (
+                f"FEEDS's own pane must not carry the status marker "
+                f"#{marker_id} -- that now lives only in #wl-centre-status"
+            )
+
+
+@pytest.mark.asyncio
+async def test_the_backend_value_is_stated_exactly_once_on_a_normal_section():
+    """TASK-2313, AC#3: on a section where the Select is a live choice
+    (Sources, not a `_LOCAL_ONLY_SECTIONS` member), the Select's own
+    current value ("Local"/"Server") is the ONLY place that fact appears
+    -- the old always-present `#watchlists-backend-label` restated it a
+    second time as "Backend: local". A `Static("Backend", ...)` label
+    ahead of the Select (the 2310 idiom) still names the axis."""
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+        screen.active_section = "sources"
+        await pilot.pause(0.2)
+
+        select = screen.query_one("#watchlists-backend-select", Select)
+        assert select.disabled is False, "precondition: a real, live choice"
+        assert not screen.query("#watchlists-backend-label"), (
+            "the value-restating label must not exist when the Select "
+            "already states it"
+        )
+        header_bar = screen.query_one("#watchlists-header-bar")
+        children = list(header_bar.children)
+        select_index = children.index(select)
+        label = children[select_index - 1]
+        assert isinstance(label, Static)
+        assert str(label.renderable) == "Backend"
+
+
+@pytest.mark.asyncio
+async def test_the_backend_reason_still_shows_on_a_local_only_section():
+    """The counterpart: `#watchlists-backend-label` is NOT pure duplication
+    on a `_LOCAL_ONLY_SECTIONS` member -- it explains WHY the (disabled)
+    Select's value does not matter, which the Select cannot say on its
+    own. That copy must survive TASK-2313's dedup."""
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+        screen.active_section = "artifacts"
+        await pilot.pause(0.2)
+
+        assert screen.query_one("#watchlists-backend-select", Select).disabled is True
+        label = screen.query_one("#watchlists-backend-label", Static)
+        assert str(label.renderable) == "Artifacts: local"
+
+
+@pytest.mark.asyncio
+async def test_the_inspector_first_run_hint_does_not_repeat_overviews_own_walkthrough():
+    """TASK-2313, AC#1: UAT -- three stacked "nothing yet" messages on one
+    screen (header + Overview pane + Inspector), the Inspector's own hint
+    fully re-teaching the SAME two-step walkthrough ("New" in the rail,
+    then "New source" under Sources) Overview's numbered first-run body
+    already gives in full. The Inspector's hint is now shorter and
+    Inspector-specific (what appears HERE), and must not re-teach the
+    watchlist-creation step that is Overview's job."""
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = host.screen_stack[-1]
+        for _ in range(60):
+            await pilot.pause(0.02)
+            if screen.query("#inspector-first-run-hint"):
+                break
+        hint = str(
+            screen.query_one("#inspector-first-run-hint", Static).renderable
+        )
+        assert "New source" in hint, (
+            "must still name the one action relevant to this pane"
+        )
+        assert "New in the rail" not in hint, (
+            "must not re-teach Overview's own watchlist-creation step -- "
+            f"the whole walkthrough duplicated there: {hint!r}"
+        )
+        overview_body = str(
+            screen.query_one("#overview-first-run-body", Static).renderable
+        )
+        assert "New" in overview_body, (
+            "precondition: Overview is still the one place that teaches "
+            "the rail step"
+        )
+
+
+@pytest.mark.asyncio
+async def test_the_selected_object_block_sits_above_console_actions():
+    """TASK-2313, AC#5: UAT -- the Inspector's Console block permanently
+    outranked the selected object's own actions. `#watchlists-entity-
+    inspector` (the selected-object block: title/type/action buttons) must
+    now come BEFORE the "Console actions" heading in the right rail's DOM
+    order, not after."""
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+
+        rail = screen.query_one("#watchlists-inspector-pane")
+        children = list(rail.children)
+        inspector_index = next(
+            i for i, child in enumerate(children) if child.id == "watchlists-entity-inspector"
+        )
+        console_heading_index = next(
+            i
+            for i, child in enumerate(children)
+            if isinstance(child, Static) and str(child.renderable) == "Console actions"
+        )
+        assert inspector_index < console_heading_index, (
+            f"the selected-object block (index {inspector_index}) must sit "
+            f"above Console actions (index {console_heading_index})"
+        )
+
+
+@pytest.mark.asyncio
+async def test_import_opml_appears_once_on_the_sources_tab():
+    """TASK-2313, AC#3: UAT -- "Import OPML" twice on one screen. The
+    header's bootstrap actions (New source/Import OPML) are the only
+    entry point from every OTHER section, but on Sources itself its own
+    toolbar already offers the identical pair one row below -- so the
+    header's copy is omitted there specifically, while every other
+    section keeps its one bootstrap path."""
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+
+        assert screen.query_one("#wc-empty-import-opml"), (
+            "precondition: Overview (the default section) keeps the "
+            "header's bootstrap actions"
+        )
+
+        screen.active_section = "sources"
+        await pilot.pause(0.2)
+        assert not screen.query("#wc-empty-import-opml"), (
+            "the header's Import OPML must not duplicate the Sources "
+            "toolbar's own copy"
+        )
+        assert not screen.query("#wc-empty-create-source")
+        assert screen.query_one("#sources-import-opml-button"), (
+            "the Sources toolbar's own Import OPML must still be there"
+        )
+        # The header's STATUS text is not an "action" and stays -- only
+        # the duplicate buttons are gone.
+        assert screen.query_one("#wc-empty-state")
+
+        screen.active_section = "runs"
+        await pilot.pause(0.2)
+        assert screen.query_one("#wc-empty-import-opml"), (
+            "every OTHER section keeps its one bootstrap path"
         )
 
 
@@ -2303,6 +2484,48 @@ async def test_z_with_focus_in_the_centre_header_does_not_toggle_a_stale_region(
 
 
 @pytest.mark.asyncio
+async def test_the_tab_strip_is_recognized_as_the_centre_header_on_the_read_tab_too():
+    """TASK-2312: before this task, the Read ("items") tab was the ONE
+    section where the tab strip did NOT live in `#wl-centre-status` -- it
+    was mounted INSIDE FEEDS's own bordered body instead, so focusing it
+    there matched `on_descendant_focus`'s `wl-region-`/`wl-header-` prefix
+    check first and set `focused_region = FEEDS`, never reaching the
+    header-tracking branch at all. No prior test exercised that
+    combination (focus in the Items-tab tab strip) in either direction, so
+    this pins the corrected, now-uniform behaviour: focusing the tab strip
+    on Read sets `_focus_in_centre_header`, exactly like every other
+    section, and leaves `focused_region` at whatever it was before (a
+    stale FEEDS reference must not be manufactured by this focus move)."""
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.2)
+        screen = host.screen_stack[-1]
+        screen.active_section = "items"
+        await pilot.pause(0.2)
+
+        screen.query_one("#wl-region-left_rail").focus()
+        await pilot.pause()
+        assert screen.focused_region == Region.LEFT_RAIL, (
+            "precondition: focused_region names a REAL prior focus"
+        )
+        assert not screen._focus_in_centre_header
+
+        screen.query_one("#wl-tab-runs").focus()
+        await pilot.pause()
+
+        assert screen._focus_in_centre_header, (
+            "the tab strip must be recognized as the centre header on the "
+            "Read tab too, not just every other section"
+        )
+        assert screen.focused_region == Region.LEFT_RAIL, (
+            "focus moving into the header must not silently reassign "
+            "focused_region to FEEDS (the region the tab strip used to "
+            "live inside, pre-TASK-2312)"
+        )
+
+
+@pytest.mark.asyncio
 async def test_capital_z_with_focus_in_the_centre_header_does_not_solo_a_stale_region():
     """The solo half of the test above.
 
@@ -2445,7 +2668,7 @@ async def test_a_background_snapshot_lands_in_place_without_rebuilding_the_pane(
             "without a screen recompose"
         )
         assert str(screen.query_one("#watchlists-state-summary").renderable) == (
-            "State: unavailable"
+            "Watchlists: error"
         ), "the Inspector's State line must follow the snapshot"
         attach = screen.query_one("#wc-attach-to-console", Button)
         assert attach.disabled is True, (
@@ -2485,6 +2708,90 @@ async def test_a_background_tree_reload_lands_in_the_rail_without_rebuilding_the
         assert screen.query_one("#watchlists-sources-pane", SourcesPane) is pane, (
             "a background tree reload must not replace the mounted detail pane"
         )
+
+
+def test_watchlists_state_summary_text_loading_branch():
+    """UAT batch-5 review, m2: `_watchlists_state_summary_text()`'s three
+    branches (loading/error/loaded) had only the LAST two under test
+    anywhere in the suite -- "Watchlists: loading…", the transient before
+    the first snapshot resolves, was real, shipped, untested behaviour.
+
+    A bare, unmounted screen instance is enough: both inputs
+    (`_wc_loaded`/`_wc_lookup_error`) are plain instance attributes, not
+    Textual reactives, and the method touches no DOM -- no need to race an
+    async snapshot load to exercise this branch deterministically.
+    """
+    screen = object.__new__(WatchlistsCollectionsScreen)
+    screen._wc_loaded = False
+    screen._wc_lookup_error = None
+
+    assert screen._watchlists_state_summary_text() == "Watchlists: loading…"
+
+
+def test_watchlists_state_summary_text_error_and_loaded_branches_still_agree():
+    """Companion to the loading-branch test above: pins the other two
+    branches at the same unmounted-instance granularity so all three read
+    from one place."""
+    screen = object.__new__(WatchlistsCollectionsScreen)
+    screen._wc_loaded = True
+    screen._wc_lookup_error = "boom"
+    assert screen._watchlists_state_summary_text() == "Watchlists: error"
+
+    screen._wc_lookup_error = None
+    assert screen._watchlists_state_summary_text() == "Watchlists: loaded"
+
+
+def test_latest_run_status_text_distinguishes_not_configured_from_no_runs_yet():
+    """UAT batch-5 review, finding I1: `scope_service` being entirely
+    unwired (`WatchlistsBackendController.NOT_CONFIGURED_STATUS`) must
+    render distinctly from a healthy watchlist that genuinely has zero
+    runs (`None` -> "no runs yet") -- collapsing the two back into the
+    same text is the exact regression this test pins. Reverting either
+    sentinel check in `_latest_run_status_text` back to a bare `if not
+    status` turns this red.
+    """
+    # `overview_data` is `reactive({}, recompose=True)`; a bare, unmounted
+    # instance has no `_id` (Textual's `DOMNode.id` property, which the
+    # reactive descriptor's own `__get__`/`__set__` both gate on), so
+    # writing/reading it through the normal `self.overview_data = ...`
+    # attribute path raises `ReactiveError`. `_latest_run_status_text`
+    # only ever reads through a plain `.get()`, so a stand-in `_id` plus
+    # writing straight to the reactive's internal storage slot
+    # (`_reactive_<name>`, Textual's own convention) is enough and avoids
+    # mounting a whole screen for what is otherwise a pure-function test.
+    screen = object.__new__(WatchlistsCollectionsScreen)
+    screen._id = 1
+
+    screen._reactive_overview_data = {"latest_run_status": WatchlistsBackendController.NOT_CONFIGURED_STATUS}
+    not_configured_text = screen._latest_run_status_text()
+
+    screen._reactive_overview_data = {"latest_run_status": None}
+    no_runs_text = screen._latest_run_status_text()
+
+    assert not_configured_text != no_runs_text, (
+        "an unwired scope_service must not read identically to a healthy, "
+        "simply-unrun watchlist"
+    )
+    assert not_configured_text == "Latest run status: not connected"
+    assert no_runs_text == "Latest run status: no runs yet"
+
+
+def test_latest_run_status_text_reports_a_real_lookup_failure_distinctly():
+    """UAT batch-5 review, finding I1: the screen's own except-handler
+    fallback (`_refresh_overview_data`, a REAL exception fetching the
+    profile) must read as a fault, distinct from both "no runs yet" and
+    "not connected" -- and distinct from the old bare "unavailable"
+    literal, which this test also guards against reappearing verbatim.
+    """
+    screen = object.__new__(WatchlistsCollectionsScreen)
+    screen._id = 1
+    screen._reactive_overview_data = {"latest_run_status": WatchlistsBackendController.LOOKUP_FAILED_STATUS}
+
+    text = screen._latest_run_status_text()
+
+    assert text == "Latest run status: couldn't check"
+    assert text != "Latest run status: unavailable"
+    assert text != "Latest run status: no runs yet"
 
 
 @pytest.mark.asyncio
@@ -2956,7 +3263,7 @@ async def test_loader_results_landing_before_textual_flips_is_mounted_still_pain
                 "the loaded (empty-profile) Overview state must paint"
             )
             assert str(screen.query_one("#watchlists-state-summary").renderable) == (
-                "State: ready"
+                "Watchlists: loaded"
             ), "the Inspector's State line must follow the snapshot here too"
 
             # The tree loader lands in the same window (`on_mount` starts it

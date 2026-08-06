@@ -58,7 +58,7 @@ from loguru import logger
 
 from ..Chat.Chat_Functions import chat_api_call, extract_response_content
 from .briefing_service import STATUS_COMPLETE as _BRIEFING_STATUS_COMPLETE
-from .briefing_service import GenerationInFlightError, _default_provider
+from .briefing_service import GenerationInFlightError, default_briefing_provider
 
 #: Statuses a `briefing_scripts` row can hold. Unlike `briefings`, a script
 #: has no `empty` status -- there is no "empty roster" outcome, since
@@ -814,7 +814,7 @@ async def generate_script(
         # `exclude=active_cast_claim_row_ids()`.
         _ACTIVE_CAST_CLAIM_ROW_IDS[briefing_id] = script_id
 
-        endpoint = provider or preset.get("provider") or _default_provider()
+        endpoint = provider or preset.get("provider") or default_briefing_provider()
         resolved_model = model or preset.get("model")
         model_used = f"{endpoint}/{resolved_model}" if resolved_model else endpoint
 
@@ -1268,7 +1268,7 @@ async def generate_script_from_text(
             _start_cast_from_text, chacha_db, subs_db, kept_briefing_id, preset_id
         )
 
-        endpoint = provider or _default_provider()
+        endpoint = provider or default_briefing_provider()
         model_used = f"{endpoint}/{model}" if model else endpoint
 
         try:

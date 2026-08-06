@@ -9,6 +9,24 @@ from loguru import logger
 class WatchlistsBackendController:
     """Route watchlist operations to the active local/server authority."""
 
+    #: `get_overview_data()`'s `latest_run_status` sentinels (UAT batch-5
+    #: review, finding I1). Kept apart from both a real DB-sourced status
+    #: string ("completed"/"failed"/"running"/"unknown") and `None` ("no
+    #: runs yet" -- the healthy, simply-unrun case TASK-2313, AC#2 fixed).
+    #: `scope_service` being entirely unwired is a DIFFERENT condition from
+    #: a healthy watchlist that has never run, and collapsing the two into
+    #: the same `None` (as an earlier version of this fix did) silently
+    #: reads "the feature is not wired up" as "this watchlist is fine and
+    #: just hasn't checked yet" -- the exact class of dishonesty this UAT
+    #: programme exists to remove. `LOOKUP_FAILED_STATUS` is the sibling
+    #: for `WatchlistsCollectionsScreen._refresh_overview_data`'s own
+    #: except-handler fallback (a REAL exception calling this method, not a
+    #: missing service) -- kept distinct from both other states rather than
+    #: reusing the old bare "unavailable" literal, so a real fault can never
+    #: render identically to "not wired up" or "no runs yet" either.
+    NOT_CONFIGURED_STATUS = "not_configured"
+    LOOKUP_FAILED_STATUS = "lookup_failed"
+
     def __init__(
         self,
         *,
@@ -314,7 +332,12 @@ class WatchlistsBackendController:
                 "sources_in_error": 0,
                 "total_items": 0,
                 "new_items": 0,
-                "latest_run_status": "unavailable",
+                # Review finding I1: NOT `None` -- `scope_service` missing
+                # is "the feature isn't wired up," a different condition
+                # from a healthy watchlist that simply has zero runs (the
+                # genuine `None`/"no runs yet" case below, TASK-2313 AC#2).
+                # See `NOT_CONFIGURED_STATUS`'s class-level docstring.
+                "latest_run_status": self.NOT_CONFIGURED_STATUS,
                 "failed_runs": [],
                 "active_alert_rules": 0,
             }
@@ -353,7 +376,9 @@ class WatchlistsBackendController:
         total_items = len(items)
         new_items = sum(1 for item in items if str(item.get("status") or "").lower() == "new")
 
-        latest_run_status = "unavailable"
+        # TASK-2313, AC#2: `None`, not "unavailable" -- see the identical
+        # note on the degraded-state dict above.
+        latest_run_status = None
         if runs:
             latest = runs[0]
             latest_run_status = str(latest.get("status") or "unknown")

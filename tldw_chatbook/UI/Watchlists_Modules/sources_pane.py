@@ -326,12 +326,29 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
                     value=self.search_query,
                     compact=True,
                 )
+                # TASK-2310: UAT read this row as "All / All statuses /
+                # All" -- two of the three unlabeled. A persistent sibling
+                # `Static` (this screen's established idiom, TASK-2302) was
+                # tried first and measured against the production
+                # stylesheet: at this toolbar's *tested floor*, 160x42, the
+                # row already spends every column it has -- the search
+                # box's placeholder ("Search sources...") only reaches full
+                # width today because the three Selects claim exactly zero
+                # spare columns, and adding even one label pushes `Filters`
+                # off the pane's right edge (measured: `#sources-filter-
+                # toggle` at x=118..134 against a 93-column pane -- see
+                # `test_watchlists_sources_toolbar_controls_are_actually_
+                # visible`). A `tooltip` costs no column at all, so it is
+                # what fits: every Select below states what it filters on
+                # hover. A compact Select has no border for a border-title
+                # to sit on either way (TASK-2300).
                 yield PruneSafeSelect(
                     self._TYPE_OPTIONS,
                     value=self.source_type_filter,
                     id="sources-type-select",
                     allow_blank=False,
                     compact=True,
+                    tooltip="Filter by source type.",
                 )
                 yield PruneSafeSelect(
                     self._STATUS_OPTIONS,
@@ -339,6 +356,7 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
                     id="sources-status-filter",
                     allow_blank=False,
                     compact=True,
+                    tooltip="Filter by source status.",
                 )
                 yield PruneSafeSelect(
                     self._ACTIVE_OPTIONS,
@@ -346,6 +364,7 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
                     id="sources-active-filter",
                     allow_blank=False,
                     compact=True,
+                    tooltip="Filter by whether a source is active.",
                 )
                 # TASK-2303 AC#1: `New source`, not `New Source`, and never
                 # `Add`. NEW is the create verb across this screen; ADD is
@@ -527,7 +546,12 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
             str(self.selected_source.get("id")) if self.selected_source else None
         )
         table = DataTable(id="sources-table")
-        table.add_columns("Name", "Type", "Status", "Last scraped", "Active")
+        # TASK-2313, AC#2: "checked"/"Check now" is the vocabulary this
+        # screen uses everywhere else for the same fetch action (the
+        # button here and on the Inspector, toasts like "It will be
+        # checked on its normal schedule."); this column was the one
+        # holdout still saying "scraped".
+        table.add_columns("Name", "Type", "Status", "Last checked", "Active")
         filtered = self._filtered_sources()
         for source in filtered:
             row_key = str(source.get("id") or id(source))

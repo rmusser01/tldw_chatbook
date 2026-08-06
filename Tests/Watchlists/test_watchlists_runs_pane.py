@@ -73,6 +73,28 @@ async def test_runs_pane_renders_table_and_toolbar():
 
 
 @pytest.mark.asyncio
+async def test_runs_pane_carries_one_line_of_guidance_when_empty():
+    """TASK-2313, AC#4: a bare empty table read as broken next to
+    Overview's rich first-run guidance."""
+    app = RunsPaneHarness()
+    async with app.run_test(size=(120, 40)) as pilot:
+        pane = app.query_one(RunsPane)
+        assert pane.runs == [], "precondition: nothing seeded"
+        hint = pane.query_one("#runs-empty-state", Static)
+        assert "No runs yet" in str(hint.renderable)
+
+
+@pytest.mark.asyncio
+async def test_runs_pane_hides_the_guidance_once_rows_exist(sample_runs):
+    app = RunsPaneHarness()
+    async with app.run_test(size=(120, 40)) as pilot:
+        pane = app.query_one(RunsPane)
+        pane.runs = sample_runs
+        await pilot.pause()
+        assert not pane.query("#runs-empty-state")
+
+
+@pytest.mark.asyncio
 async def test_runs_pane_populates_table(sample_runs):
     app = RunsPaneHarness()
     async with app.run_test(size=(120, 40)) as pilot:

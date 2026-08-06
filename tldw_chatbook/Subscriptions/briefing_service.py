@@ -312,8 +312,13 @@ def _selection_mode(db: "SubscriptionsDB", watchlist_id: int) -> str:
     return MODE_AUTO_FEATURED
 
 
-def _default_provider() -> str:
+def default_briefing_provider() -> str:
     """The app's configured default chat endpoint.
+
+    TASK-2311: public (no longer `_default_provider`) so the UI can show
+    the provider a generation will use BEFORE the user presses Generate --
+    see `WatchlistsCollectionsScreen._briefing_provider_display`. The
+    resolution logic and its two existing callers below are unchanged.
 
     Read from `config.default_api_endpoint` (config.py:5410-5422), the same
     value the rest of the app treats as "the default provider". That module
@@ -337,6 +342,12 @@ def _default_provider() -> str:
     then the preset's own provider, then this app default -- so both
     generation paths agree on what "the default" means without duplicating
     the config read.
+
+    Returns:
+        The provider name a generation will use when no explicit provider
+        and no preset provider apply -- `config.default_api_endpoint`, or
+        config.py's own fallback when that is unset. Never empty, so a
+        caller may display it without a None-check.
     """
     from .. import config as app_config
 
@@ -862,7 +873,7 @@ async def generate_briefing(
             # guidance is a property of THIS call's cast, not of prompt assembly
             # itself.
             system = f"{system}\n\n## Style notes\n\n{style_notes}"
-        endpoint = provider or preset_provider or _default_provider()
+        endpoint = provider or preset_provider or default_briefing_provider()
         resolved_model = model or preset_model
         model_used = f"{endpoint}/{resolved_model}" if resolved_model else endpoint
 

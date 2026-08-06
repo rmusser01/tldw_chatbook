@@ -660,6 +660,12 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
     #: False when no single watchlist is in scope -- briefings are per
     #: watchlist by schema, so there is nothing for Generate to act on.
     can_generate = reactive(False, recompose=True)
+    #: TASK-2311, AC#3: the display name of the provider Generate will
+    #: actually use (the watchlist's default preset's provider, else the
+    #: app default) -- screen-supplied via `WatchlistsCollectionsScreen.
+    #: _briefing_provider_display`, so it stays visible BEFORE the user
+    #: presses Generate, not just after in the finished row's `model_used`.
+    default_provider_display = reactive("", recompose=True)
     #: The watchlist's stored `briefing_selection_mode` (spec #2 phase 2a,
     #: Task 4). Defaults to the same fallback `briefing_service.
     #: _selection_mode` uses for a NULL/unrecognized column, so a pane that
@@ -904,14 +910,24 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
         # `Text` -- which is never re-parsed -- is the whole fix, and it also
         # avoids `escape_markup`, whose backslashes would corrupt every
         # ordinary bracket a real name contains.
-        yield Static(
-            Text(
-                self.scope_label
-                or "Briefings are written on this device from the local "
-                "watchlist store."
-            ),
-            id="artifacts-scope-note",
+        #
+        # TASK-2311, AC#3: the provider Generate will use is appended to
+        # this SAME always-visible line rather than a new row (this pane's
+        # toolbars are already at their `.destination-filter-strip` height
+        # budget) -- `default_provider_display` is screen-computed, app-
+        # controlled text, safe to concatenate before the one `Text(...)`
+        # wrap that protects `scope_label` (user-authored) above.
+        scope_text = (
+            self.scope_label
+            or "Briefings are written on this device from the local "
+            "watchlist store."
         )
+        if self.can_generate and self.default_provider_display:
+            scope_text = (
+                f"{scope_text} Generate will use "
+                f"{self.default_provider_display}."
+            )
+        yield Static(Text(scope_text), id="artifacts-scope-note")
         with Horizontal(id="artifacts-toolbar", classes="destination-filter-strip"):
             # `compact=True` for the reason TASK-995 records for the Sources
             # toolbar: `.destination-filter-strip` is `height: 1`, and a
@@ -1044,8 +1060,10 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
             # script selection. Two buttons, not one toggling label,
             # mirroring `#artifacts-audio-toolbar`'s own Play/Stop pair
             # below: Serve disabled while already running OR with nothing
-            # exported yet; Stop disabled while nothing is running. This
-            # also means a SECOND `ServeFeedRequested` while one is
+            # exported yet; Stop (TASK-2310) rendered only while running --
+            # see its own comment below for why it has no useful
+            # disabled-but-visible state. This also means a SECOND
+            # `ServeFeedRequested` while one is
             # already running is unreachable through the button itself --
             # the screen's handler still re-checks (see that message's own
             # docstring), since the button's disabled state and the
@@ -1074,17 +1092,27 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
                 disabled=self.feed_server_running or not self.can_serve_feed,
                 tooltip=serve_tooltip,
             )
-            yield Button(
-                "Stop Serving",
-                id="artifacts-stop-feed-button",
-                compact=True,
-                disabled=not self.feed_server_running,
-                tooltip=(
-                    f"Stop serving {self.feed_server_url}."
-                    if self.feed_server_running and self.feed_server_url
-                    else "Nothing is being served."
-                ),
-            )
+            # TASK-2310: unlike every sibling button in this toolbar, "Stop
+            # Serving" has no useful disabled-but-visible state -- it can
+            # only ever act on a server THIS pane just started, so a user
+            # who has never pressed Serve has nothing it could explain by
+            # staying visible (contrast Export/Keep/Serve, which stay
+            # visible-but-disabled specifically so a first-time user can
+            # discover them before they apply). UAT: the toolbar showed
+            # "Stop Serving" before any briefing existed, one of 12 controls
+            # crowding a brand-new watchlist's empty state. Rendered only
+            # once there is something it could act on.
+            if self.feed_server_running:
+                yield Button(
+                    "Stop Serving",
+                    id="artifacts-stop-feed-button",
+                    compact=True,
+                    tooltip=(
+                        f"Stop serving {self.feed_server_url}."
+                        if self.feed_server_url
+                        else "Stop serving."
+                    ),
+                )
 
         if self.can_generate:
             # Task 4 (phase 2a): the selection-mode and default-preset
@@ -1101,6 +1129,12 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
             with Horizontal(
                 id="artifacts-picker-toolbar", classes="destination-filter-strip"
             ):
+                # TASK-2310: UAT read this strip as "Auto + featured ▾ / App
+                # default ▾ / Off ▾" -- the third value in particular ("Off")
+                # names nothing about what it is off FOR. A sibling `Static`
+                # before each Select, same idiom as the Sources/Items filter
+                # strips above.
+                yield Static("Mode", classes="watchlists-inline-select-label")
                 yield PruneSafeSelect(
                     _MODE_OPTIONS,
                     value=self.selection_mode,
@@ -1109,6 +1143,7 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
                     compact=True,
                     tooltip="Which items go into this watchlist's next briefing.",
                 )
+                yield Static("Preset", classes="watchlists-inline-select-label")
                 yield PruneSafeSelect(
                     self._preset_select_options(),
                     value=self.default_preset_id,
@@ -1136,6 +1171,10 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
                 # cadence is not merely inert here, it SURVIVES and will
                 # resume firing the moment the flag is turned back on.
                 schedules_disabled = not self.briefing_schedules_enabled
+                # TASK-2310: this is the Select the UAT flagged specifically
+                # -- "Off ▾" with no clue what is off. "Cadence" names the
+                # axis; the tooltip above already explains what "Off" means.
+                yield Static("Cadence", classes="watchlists-inline-select-label")
                 yield PruneSafeSelect(
                     self._cadence_select_options(),
                     value=self.briefing_cadence_seconds,

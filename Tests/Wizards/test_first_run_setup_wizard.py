@@ -119,6 +119,98 @@ async def test_escape_asks_for_confirmation_instead_of_dismissing():
 
 
 @pytest.mark.asyncio
+async def test_escape_pressed_with_no_settle_pause_still_opens_confirmation():
+    """TASK-2314: a single Escape pressed the instant the wizard appears --
+    with NO settling pause first, unlike every other test in this file --
+    must still reach the finish-later confirmation. Live UAT reproduction
+    showed this single-press path always worked; this test pins it so a
+    future fix for the double-press race (below) cannot regress it by
+    swallowing early Escapes wholesale."""
+    wizard = _make_wizard()
+    app = _HostApp(wizard)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.press("escape")
+        await pilot.pause()
+        from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
+            _SettlingGuardedConfirmationDialog,
+        )
+
+        assert isinstance(app.screen, _SettlingGuardedConfirmationDialog)
+        assert app.wizard_result == "UNSET"
+
+
+@pytest.mark.asyncio
+async def test_rapid_double_escape_during_first_render_reaches_finish_later_flow():
+    """TASK-2314 regression, from a live reproduction: the wizard is pushed
+    while several heavy steps are still settling (10 composed steps, the
+    full provider catalog). A user who presses Escape once, perceives no
+    immediate feedback because of that render lag, and reflexively presses
+    it again lands the SECOND press on the confirmation dialog's own
+    Escape-cancels binding -- which silently snapped the wizard back open
+    with no visible sign anything happened (live-confirmed via tmux: two
+    Escape presses sent within 5ms of the wizard's first paint left the
+    dialog closed and the wizard showing, before this fix). The
+    confirmation flow must stay up through a reflexive double-press, not
+    revert."""
+    wizard = _make_wizard()
+    app = _HostApp(wizard)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.press("escape", "escape")
+        await pilot.pause()
+        from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
+            _SettlingGuardedConfirmationDialog,
+        )
+
+        assert isinstance(app.screen, _SettlingGuardedConfirmationDialog)
+        assert app.wizard_result == "UNSET"
+
+
+@pytest.mark.asyncio
+async def test_escape_still_cancels_the_dialog_once_it_has_actually_settled():
+    """The grace window must not make Escape inert forever -- once the
+    dialog has genuinely been up longer than the grace period, a second
+    Escape (a deliberate one, this time) must still dismiss it back to
+    "Keep going", exactly like before this fix."""
+    wizard = _make_wizard()
+    app = _HostApp(wizard)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.press("escape")
+        await pilot.pause()
+        from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
+            _SettlingGuardedConfirmationDialog,
+        )
+
+        dialog = app.screen
+        assert isinstance(dialog, _SettlingGuardedConfirmationDialog)
+        dialog._escape_grace_seconds = 0.0  # simulate the window having elapsed
+        await pilot.press("escape")
+        await pilot.pause()
+        assert not isinstance(app.screen, _SettlingGuardedConfirmationDialog)
+        # Dismissed via "Keep going" (False) -- the wizard itself stays open.
+        assert app.wizard_result == "UNSET"
+
+
+@pytest.mark.asyncio
+async def test_clicking_keep_going_immediately_is_never_swallowed():
+    """The grace window is scoped to the Escape BINDING only -- a deliberate
+    mouse click on "Keep going" must stay instant regardless of timing,
+    even in the same instant the dialog appeared."""
+    wizard = _make_wizard()
+    app = _HostApp(wizard)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.press("escape")
+        await pilot.pause()
+        await pilot.click("#cancel-button")
+        await pilot.pause()
+        from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
+            _SettlingGuardedConfirmationDialog,
+        )
+
+        assert not isinstance(app.screen, _SettlingGuardedConfirmationDialog)
+        assert app.wizard_result == "UNSET"
+
+
+@pytest.mark.asyncio
 async def test_next_button_click_drives_quick_track_to_completion():
     """Regression test for a real Textual double-dispatch trap.
 

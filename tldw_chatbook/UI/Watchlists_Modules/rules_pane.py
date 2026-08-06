@@ -86,6 +86,42 @@ class RulesPane(RecomposeCaptureGuard, Vertical):
         ("Critical", "critical"),
     ]
 
+    #: TASK-2310: the Threshold field's unit/meaning depends entirely on the
+    #: selected condition -- `LocalWatchlistsService._evaluate_condition`
+    #: (`Subscriptions/local_watchlists_service.py`) reads it as a FRACTION
+    #: for `error_rate_above` (compared directly against an 0-1 error rate,
+    #: formatted as a percentage in the resulting alert) and as an item
+    #: COUNT for `items_below`/`items_above`; `no_items`/`run_failed` never
+    #: read it at all. UAT: the field had a bare "Threshold" placeholder and
+    #: no unit anywhere, so "50" (a very reasonable guess for "50%") would
+    #: silently mean "an error rate of 5000%" -- i.e. never fires.
+    _THRESHOLD_GUIDANCE: dict[str, tuple[str, str]] = {
+        "no_items": (
+            "Not used",
+            "Not used for this condition -- it fires whenever a run yields "
+            "zero items.",
+        ),
+        "error_rate_above": (
+            "0.5 = 50%",
+            "Fraction of failed items, 0-1 (e.g. 0.5 for a 50% error rate).",
+        ),
+        "items_below": ("e.g. 5", "Item count for the run (whole number)."),
+        "items_above": ("e.g. 1000", "Item count for the run (whole number)."),
+        "run_failed": (
+            "Not used",
+            "Not used for this condition -- it fires whenever a run's "
+            "status is failed.",
+        ),
+    }
+    _DEFAULT_THRESHOLD_GUIDANCE = ("Threshold", "")
+
+    @classmethod
+    def _threshold_guidance(cls, condition_type: str) -> tuple[str, str]:
+        """The (placeholder, help line) pair for a condition's Threshold field."""
+        return cls._THRESHOLD_GUIDANCE.get(
+            condition_type, cls._DEFAULT_THRESHOLD_GUIDANCE
+        )
+
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         self._editing_rule_id: str | None = None
@@ -97,15 +133,19 @@ class RulesPane(RecomposeCaptureGuard, Vertical):
 
         if self.show_rule_form:
             rule = self.selected_rule if self._editing_rule_id else None
+            condition_type = (
+                str(rule.get("condition_type") or "no_items") if rule else "no_items"
+            )
             with Grid(id="rules-create-form"):
                 yield Input(
                     placeholder="Name",
                     id="rules-create-name",
                     value=str(rule.get("name") or "") if rule else "",
                 )
+                yield Static("Condition", classes="watchlists-inline-select-label")
                 yield PruneSafeSelect(
                     self._CONDITION_OPTIONS,
-                    value=str(rule.get("condition_type") or "no_items") if rule else "no_items",
+                    value=condition_type,
                     id="rules-create-condition",
                     allow_blank=False,
                 )
@@ -114,11 +154,20 @@ class RulesPane(RecomposeCaptureGuard, Vertical):
                     condition_value = rule.get("condition_value") or {}
                     if isinstance(condition_value, dict):
                         threshold_value = str(condition_value.get("threshold", ""))
+                threshold_placeholder, threshold_help = self._threshold_guidance(
+                    condition_type
+                )
                 yield Input(
-                    placeholder="Threshold",
+                    placeholder=threshold_placeholder,
                     id="rules-create-threshold",
                     value=threshold_value,
                 )
+                yield Static(
+                    threshold_help,
+                    id="rules-create-threshold-help",
+                    classes="rules-create-threshold-help",
+                )
+                yield Static("Severity", classes="watchlists-inline-select-label")
                 yield PruneSafeSelect(
                     self._SEVERITY_OPTIONS,
                     value=str(rule.get("severity") or "warning") if rule else "warning",
@@ -147,6 +196,34 @@ class RulesPane(RecomposeCaptureGuard, Vertical):
                 key=str(rule.get("id") or id(rule)),
             )
         yield table
+        # TASK-2313, AC#4: one line of guidance for the bare-table state,
+        # matching Runs/Notifications' identical fix.
+        if not self.rules:
+            yield Static(
+                "No alert rules yet. Press New Rule to watch for a "
+                "condition like a run failing or items dropping off.",
+                id="rules-empty-state",
+                classes="watchlists-hint-line",
+            )
+
+    def on_select_changed(self, event: Select.Changed) -> None:
+        """TASK-2310: repaint the Threshold guidance when Condition changes.
+
+        In place, not a recompose -- the form is mid-edit (the Name Input
+        may already carry typed text) and a recompose would rebuild every
+        field from scratch, discarding it.
+        """
+        if event.select.id != "rules-create-condition":
+            return
+        event.stop()
+        try:
+            threshold_input = self.query_one("#rules-create-threshold", Input)
+            threshold_help = self.query_one("#rules-create-threshold-help", Static)
+        except Exception:
+            return
+        placeholder, help_text = self._threshold_guidance(str(event.value))
+        threshold_input.placeholder = placeholder
+        threshold_help.update(help_text)
 
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
         event.stop()

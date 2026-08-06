@@ -60,8 +60,10 @@ from ...Subscriptions.briefing_selection import MODE_AUTO_FEATURED, VALID_MODES
 from ...Subscriptions.briefing_service import (
     GenerationInFlightError,
     STATUS_COMPLETE,
+    STATUS_FAILED,
     STATUS_GENERATING,
     active_briefing_claim_row_ids,
+    default_briefing_provider,
     extract_citation_ids,
     fail_interrupted_briefings,
     generate_briefing,
@@ -987,7 +989,17 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 "sources_in_error": 0,
                 "total_items": 0,
                 "new_items": 0,
-                "latest_run_status": "unavailable",
+                # Review finding I1: was the bare literal "unavailable" --
+                # inconsistent with the "states, not faults" vocabulary
+                # TASK-2313 AC#2 established everywhere else on this
+                # screen, and (worse) indistinguishable from a plain
+                # missing value if some future caller ever compared it
+                # loosely. This IS a real fault (an exception was just
+                # raised fetching the profile), so it stays distinct from
+                # both `WatchlistsBackendController.NOT_CONFIGURED_STATUS`
+                # (feature not wired up) and `None`/"no runs yet" (healthy,
+                # simply-unrun) -- see `_latest_run_status_text`.
+                "latest_run_status": WatchlistsBackendController.LOOKUP_FAILED_STATUS,
                 "failed_runs": [],
                 "active_alert_rules": 0,
             }
@@ -1035,7 +1047,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             ),
             (
                 "#watchlists-latest-run-summary",
-                f"Latest run status: {self.overview_data.get('latest_run_status', 'unavailable')}",
+                self._latest_run_status_text(),
             ),
         ):
             try:
@@ -1259,10 +1271,13 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         replaces was the destroyer behind TASK-1960.
 
         The snapshot's loading/error/empty/summary marker
-        (`_watchlists_status_marker_widgets`) is rendered in exactly two
-        places, and this rebuilds both: inline in FEEDS on the Read tab, and
-        in the centre header on every other tab. Each call is a no-op where
-        that surface is not mounted, so no tab test is needed here.
+        (`_watchlists_status_marker_widgets`) is rendered in exactly one
+        place as of TASK-2312 (the centre header, on every section
+        including Read) -- this still requests both the FEEDS and HEADER
+        surfaces, since Read's FEEDS pane still has its own scope-derived
+        heading/rows that need a refresh independent of the header. Each
+        call is a no-op where that surface is not mounted, so no tab test
+        is needed here.
 
         The Inspector's two snapshot-derived widgets are patched rather than
         rebuilt, following `_repaint_item_status_cell`'s discipline: the
@@ -1280,11 +1295,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         except NoMatches:
             pass
         else:
-            summary.update(
-                "State: ready"
-                if self._wc_loaded and not self._wc_lookup_error
-                else "State: unavailable"
-            )
+            summary.update(self._watchlists_state_summary_text())
         attach_disabled, attach_tooltip = self._wc_attach_state()
         try:
             attach = self.query_one("#wc-attach-to-console", Button)
@@ -1724,18 +1735,22 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     ) -> list[Widget]:
         """The snapshot's own loading/error/empty/summary marker.
 
-        Extracted (TASK-1344) so the SAME service-state readout can appear
-        in two places: inline in `_build_list_pane`'s FEEDS body on the Read
-        tab (unchanged from before this task -- Read-tab geometry and every
-        test pinned to it stays byte-identical), and in
-        `_build_centre_status_header` on every OTHER tab, now that FEEDS
-        itself is hidden there (`_hidden_centre_regions`). Before this task
-        FEEDS was unconditionally mounted, so this state was already visible
-        on every tab; keeping it that way through the new header avoids a
-        real regression (Sources/Runs/... silently losing all visibility
-        into "snapshot still loading" / "service unavailable" / "no sources
-        yet", not merely a cosmetic gap) rather than introducing new
-        behaviour.
+        Extracted (TASK-1344) so the same service-state readout could
+        appear on every tab once FEEDS itself started being hidden on all
+        but the Read tab (`_hidden_centre_regions`) -- before that, FEEDS
+        was unconditionally mounted, so this state was already visible
+        everywhere; the extraction avoided a real regression (Sources/
+        Runs/... silently losing all visibility into "snapshot still
+        loading" / "service unavailable" / "no sources yet") rather than
+        introducing new behaviour.
+
+        TASK-2312: called from exactly one place now,
+        `_build_centre_status_header`, on every section including Read.
+        `_build_list_pane` (FEEDS's own content) used to carry an inline
+        second copy of this same call specifically for the Read tab -- that
+        duplication, and the different DOM position it produced, is what
+        this task removed; see `_build_centre_status_header`'s own
+        docstring for the full history.
 
         Keyed on the async snapshot, NOT on `scoped_source_rows()`: the
         snapshot is the only service-health probe on this screen -- it is
@@ -1782,32 +1797,52 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 )
             ]
         if not self._has_local_wc_context():
-            return [
+            # TASK-2312, AC#3: this marker renders in the shared header on
+            # EVERY section (it is genuinely global -- "is there any local
+            # Watchlists data at all" -- not a Sources-tab fact), so its
+            # copy must read that way rather than as borrowed Sources-tab
+            # content. "No Watchlists sources yet." names the app-level
+            # noun instead of a bare "No sources", which on, say, the
+            # Overview or Runs tab previously read like Sources-tab copy
+            # had leaked in (UAT finding).
+            widgets: list[Widget] = [
                 Static(
-                    "No sources yet.",
+                    "No Watchlists sources yet.",
                     id="wc-empty-state",
                 ),
-                Horizontal(
-                    # TASK-2303 AC#1: the same create verb the Sources pane
-                    # uses. This button and that one open the same form, so
-                    # they carry the same label; "Create source" beside the
-                    # rail's old "Add source" was two verbs for two
-                    # operations that read as one.
-                    Button(
-                        "New source",
-                        id="wc-empty-create-source",
-                        variant="primary",
-                        tooltip="Create a Watchlists source that does not exist yet.",
-                    ),
-                    Button(
-                        "Import OPML",
-                        id="wc-empty-import-opml",
-                        tooltip="Import sources from an OPML file.",
-                    ),
-                    id="wc-empty-actions",
-                    classes="destination-filter-strip",
-                ),
             ]
+            # TASK-2313, AC#3 (duplicate affordances): the New source/
+            # Import OPML pair here is the only bootstrap path from a
+            # section that has no create form of its own -- genuinely
+            # needed everywhere else. On Sources itself, its own toolbar
+            # (`sources_pane.py`) already offers the identical pair one
+            # row below this header, so repeating them here was the "Import
+            # OPML twice on one screen" UAT finding. Omitted on Sources
+            # only; every other section still gets the one bootstrap path.
+            if self.active_section != "sources":
+                widgets.append(
+                    Horizontal(
+                        # TASK-2303 AC#1: the same create verb the Sources
+                        # pane uses. This button and that one open the same
+                        # form, so they carry the same label; "Create
+                        # source" beside the rail's old "Add source" was
+                        # two verbs for two operations that read as one.
+                        Button(
+                            "New source",
+                            id="wc-empty-create-source",
+                            variant="primary",
+                            tooltip="Create a Watchlists source that does not exist yet.",
+                        ),
+                        Button(
+                            "Import OPML",
+                            id="wc-empty-import-opml",
+                            tooltip="Import sources from an OPML file.",
+                        ),
+                        id="wc-empty-actions",
+                        classes="destination-filter-strip",
+                    )
+                )
+            return widgets
         # One line, not a second source list (fix round 1, Finding 1).
         # `#wc-watchlists-summary` keeps its id -- it is the "snapshot
         # finished loading" terminal selector the guard suites wait on --
@@ -1831,12 +1866,15 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         TASK-1344 AC#1 hides FEEDS on every tab except Read
         (`_hidden_centre_regions`), but the tab strip and the snapshot
         markers are cross-cutting chrome, not FEEDS-specific "feed content"
-        — before this task FEEDS was unconditionally mounted, so both were
+        — before that task FEEDS was unconditionally mounted, so both were
         already visible on every tab. This is what carries that forward:
-        `WatchlistsWorkbench`'s `header=` factory, wired only when
-        `active_section != "items"` (`compose_content`) so it never
-        coexists with `_build_list_pane`'s own, identical-looking inline
-        copy on the Read tab — mounting both would duplicate `#wl-tabs`.
+        `WatchlistsWorkbench`'s `header=` factory (`compose_content`), wired
+        UNCONDITIONALLY as of TASK-2312 — it used to be skipped on the Read
+        tab in favour of an inline copy `_build_list_pane` mounted INSIDE
+        the bordered FEEDS box, which visibly moved the tab strip and the
+        status line between sections (UAT F2/F22/F23). `_build_list_pane`
+        no longer builds that copy, so this factory is now the ONE place
+        either widget is ever constructed, on every section including Read.
 
         Called fresh on every workbench rebuild, so it must stay
         side-effect-free, like every other factory here.
@@ -1858,9 +1896,8 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         )
 
     def _build_list_pane(self) -> Vertical:
-        """Build the FEEDS-region content: the section tab strip, a heading
-        naming the current tree scope, that scope's source rows, and the
-        snapshot's own loading/error/empty/summary marker.
+        """Build the FEEDS-region content: a heading naming the current tree
+        scope, and that scope's source rows.
 
         Read-tab-only (`_hidden_centre_regions` hides FEEDS everywhere
         else), and unchanged in shape from before TASK-1344 widened FEEDS's
@@ -1878,21 +1915,24 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         Staging now follows the tree scope (see `_snapshot_body`), so that
         block collapses to a single line.
 
-        The tab strip is unchanged -- `Tests/UI/test_destination_shells.py`
-        and `Tests/UI/test_destination_visual_parity_correction.py` both
-        drive its stable selectors.
+        TASK-2312: this pane no longer builds its own copy of the section
+        tab strip or the snapshot's loading/error/empty/summary marker.
+        Before this task it did -- an inline copy, mounted INSIDE this
+        bordered FEEDS box -- while `_build_centre_status_header` built an
+        independent SECOND copy, mounted OUTSIDE every region box, for
+        every OTHER section. Both widgets therefore visibly changed
+        position depending on which tab was active (UAT F2/F22/F23): the
+        tab strip sat inside a bordered region on Read and outside every
+        region everywhere else, and the snapshot line moved with it.
+        `_build_centre_status_header` is now the ONE place either is ever
+        built, unconditionally (`compose_content`'s `header=`) -- this pane
+        keeps only the content that is genuinely FEEDS-specific.
 
         Byte-identical logic to the pre-rehost inline composition for the
         snapshot itself; only the `yield` calls became list appends and a
         `Vertical(...)` return so the result can be handed to
         `WatchlistsWorkbench` as a content factory instead of being mounted
-        directly by `compose_content`. The tab strip is prepended here
-        (rather than left unwired) so section-switching by click is not lost
-        now that the navigator is retired — `Region.LEFT_RAIL` hosts the
-        watchlist tree (`_build_tree_pane`), and this is the strip's
-        permanent home per the design (a one-row strip at the top of the
-        centre). `_build_centre_status_header` is FEEDS's twin for every
-        OTHER tab, where this factory is never called at all.
+        directly by `compose_content`.
 
         This is called fresh on every region rebuild (see
         `WatchlistsWorkbench.__init__`'s docstring on why `content` holds
@@ -1900,7 +1940,6 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         """
         scoped_rows = self.scoped_source_rows()
         children: list[Widget] = [
-            WatchlistsTabStrip(active_section=self.active_section, id="wl-tabs"),
             Static(
                 self._scoped_feeds_heading(scoped_rows),
                 classes="destination-section watchlists-column-title",
@@ -1920,7 +1959,6 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                     classes="watchlist-feed-source-row",
                 )
             )
-        children.extend(self._watchlists_status_marker_widgets(scoped_rows))
         return Vertical(
             *children,
             id="watchlists-list-pane",
@@ -2051,6 +2089,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             artifacts_pane.selected_briefing = self._selected_briefing
             artifacts_pane.scope_label = self._briefing_scope_label()
             artifacts_pane.can_generate = self._can_generate_briefing()
+            artifacts_pane.default_provider_display = self._briefing_provider_display()
             artifacts_pane.selection_mode = self._briefing_selection_mode
             artifacts_pane.presets = self._loaded_briefing_presets
             artifacts_pane.default_preset_id = self._briefing_default_preset_id
@@ -2159,10 +2198,17 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             (they are the section's own available/unavailable signal).
         """
         if latest_console_item is None:
+            # TASK-2313, AC#6: "Console follow" appeared twice in two
+            # adjacent lines (the status text, then the button label) --
+            # UAT read it as jargon duplicated. The button's label now
+            # matches the ENABLED state's own verb phrasing ("Follow ... in
+            # Console") instead of restating the noun phrase a second
+            # time; `disabled=True` (below) already conveys unavailability
+            # visually, and the tooltip still spells out why.
             return (
                 "watchlists-console-unavailable",
                 "No active Watchlists run is available for Console follow.",
-                "Console follow unavailable",
+                "Follow in Console",
                 True,
                 "Unavailable until Watchlists has an active run with Console context.",
             )
@@ -2268,58 +2314,24 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         attach_disabled: bool,
         attach_tooltip: str,
     ) -> Vertical:
-        """Build the RIGHT_RAIL-region content: state summaries, Console
-        actions, and the entity Inspector.
+        """Build the RIGHT_RAIL-region content: state summaries, the
+        entity Inspector, and Console actions -- in that order.
 
         `latest_console_item`/`attach_disabled`/`attach_tooltip` are captured
         once per `compose_content` call and passed in rather than
         recomputed, since a factory wrapping this method (see
         `compose_content`) is called on every region rebuild.
+
+        TASK-2313, AC#5: Console actions used to sit BETWEEN the state
+        summaries and the entity Inspector, so the thing the user actually
+        selected -- and the actions that act on it -- were permanently
+        below a block of global chrome unrelated to that selection (UAT
+        finding). The entity Inspector (built first, below, so its own
+        selection-derived state exists before it is placed) now comes
+        right after the brief state summaries; Console actions -- a
+        cross-cutting action unrelated to whatever is currently selected --
+        moves to the bottom.
         """
-        children: list[Widget] = [
-            Static(
-                "Inspector",
-                classes="destination-section watchlists-column-title",
-            ),
-            Static(
-                "State: ready"
-                if self._wc_loaded and not self._wc_lookup_error
-                else "State: unavailable",
-                id="watchlists-state-summary",
-            ),
-            Static(
-                f"Alert rules active: {self.overview_data.get('active_alert_rules', 0)}",
-                id="watchlists-alerts-summary",
-            ),
-            Static(
-                f"Latest run status: {self.overview_data.get('latest_run_status', 'unavailable')}",
-                id="watchlists-latest-run-summary",
-            ),
-            Static("Console actions", classes="destination-section"),
-            Button(
-                "Stage Watchlists Context in Console",
-                id="wc-attach-to-console",
-                disabled=attach_disabled,
-                tooltip=attach_tooltip,
-            ),
-            Button(
-                "Open current Watchlists",
-                id="wc-open-watchlists",
-                tooltip="Open the current watchlist/subscription surface.",
-            ),
-        ]
-        status_id, status_copy, button_label, button_disabled, button_tooltip = (
-            self._console_follow_copy(latest_console_item)
-        )
-        children.append(Static(status_copy, id=status_id))
-        children.append(
-            Button(
-                button_label,
-                id="watchlists-follow-in-console",
-                disabled=button_disabled,
-                tooltip=button_tooltip,
-            )
-        )
         # Seed from screen state (Finding 3, fix round 2): `region_layout` is
         # `recompose=True`, so any collapse/solo/rail toggle constructs a
         # brand new InspectorPane. Without this, the screen keeps
@@ -2354,7 +2366,50 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         # -- this factory builds a brand new `InspectorPane` on every region
         # rebuild.
         inspector.busy_source_ids = frozenset(self._checks_in_flight)
-        children.append(inspector)
+
+        children: list[Widget] = [
+            Static(
+                "Inspector",
+                classes="destination-section watchlists-column-title",
+            ),
+            Static(
+                self._watchlists_state_summary_text(),
+                id="watchlists-state-summary",
+            ),
+            Static(
+                f"Alert rules active: {self.overview_data.get('active_alert_rules', 0)}",
+                id="watchlists-alerts-summary",
+            ),
+            Static(
+                self._latest_run_status_text(),
+                id="watchlists-latest-run-summary",
+            ),
+            inspector,
+            Static("Console actions", classes="destination-section"),
+            Button(
+                "Stage Watchlists Context in Console",
+                id="wc-attach-to-console",
+                disabled=attach_disabled,
+                tooltip=attach_tooltip,
+            ),
+            Button(
+                "Open current Watchlists",
+                id="wc-open-watchlists",
+                tooltip="Open the current watchlist/subscription surface.",
+            ),
+        ]
+        status_id, status_copy, button_label, button_disabled, button_tooltip = (
+            self._console_follow_copy(latest_console_item)
+        )
+        children.append(Static(status_copy, id=status_id))
+        children.append(
+            Button(
+                button_label,
+                id="watchlists-follow-in-console",
+                disabled=button_disabled,
+                tooltip=button_tooltip,
+            )
+        )
         return Vertical(
             *children,
             id="watchlists-inspector-pane",
@@ -2381,16 +2436,69 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         },
     }
 
+    def _watchlists_state_summary_text(self) -> str:
+        """TASK-2313, AC#2: state vocabulary, not fault vocabulary.
+
+        UAT: "State: ready" read as "ready for what?" -- an unexplained
+        state name with no referent. "State: unavailable" was worse: it
+        conflated two genuinely different conditions (the snapshot is
+        still LOADING, versus a real lookup ERROR) under one word that
+        reads as a fault either way, so a normal, brief loading flicker on
+        startup looked identical to a real problem. Three real states now.
+        """
+        if not self._wc_loaded:
+            return "Watchlists: loading…"
+        if self._wc_lookup_error:
+            return "Watchlists: error"
+        return "Watchlists: loaded"
+
+    def _latest_run_status_text(self) -> str:
+        """TASK-2313, AC#2: "no runs yet" is a state; a bare "unavailable"
+        reads as a fault for the same reason `_watchlists_state_summary_
+        text` was corrected -- there is nothing unavailable about a
+        watchlist that has simply never been checked yet.
+
+        Review finding I1: that fix originally collapsed a THIRD, distinct
+        condition -- `scope_service` itself not being wired up -- into the
+        same `None`/"no runs yet" text, so "the feature isn't connected"
+        silently read as "this watchlist is healthy and hasn't run." Both
+        of the honest-but-degraded sentinels
+        (`WatchlistsBackendController.NOT_CONFIGURED_STATUS` and
+        `.LOOKUP_FAILED_STATUS`) get their own text here, checked before
+        the generic `not status` fallback so neither is ever mistaken for
+        "no runs yet" or folded into the free-text branch below (which
+        exists for real DB-sourced run statuses like "completed"/"failed").
+        """
+        status = self.overview_data.get("latest_run_status")
+        if status == WatchlistsBackendController.NOT_CONFIGURED_STATUS:
+            return "Latest run status: not connected"
+        if status == WatchlistsBackendController.LOOKUP_FAILED_STATUS:
+            return "Latest run status: couldn't check"
+        if not status:
+            return "Latest run status: no runs yet"
+        return f"Latest run status: {status}"
+
     def _local_only_section(self) -> dict[str, str] | None:
         """Header copy for the active section if it has no server half."""
         return self._LOCAL_ONLY_SECTIONS.get(self.active_section)
 
-    def _backend_label_text(self) -> str:
-        """What the header bar says about where this section's rows live."""
+    def _backend_label_text(self) -> str | None:
+        """What the header bar says about where this section's rows live.
+
+        TASK-2313, AC#3 (duplicate affordances): the Select's own current
+        value already reads "Local"/"Server" -- a trailing "Backend:
+        local" Static right beside it restated the identical fact a
+        SECOND time for the one case where the Select is actually a live
+        choice. `None` here (compose_content renders the inline "Backend"
+        label -- the 2310 idiom -- ahead of the Select instead, naming the
+        axis without repeating its value) drops that redundant copy. The
+        LOCAL-ONLY sections keep their own reason text: "Artifacts: local"
+        is not a restatement of the Select's value, it explains why the
+        Select is DISABLED regardless of what it shows -- genuinely new
+        information the Select cannot carry on its own.
+        """
         local_only = self._local_only_section()
-        if local_only is not None:
-            return local_only["label"]
-        return f"Backend: {self.runtime_backend}"
+        return local_only["label"] if local_only is not None else None
 
     def compose_content(self) -> ComposeResult:
         # Resolved once per compose pass, as it was before TASK-2200 -- but
@@ -2400,8 +2508,15 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         # `_build_inspector_region`.
         self._console_follow_item = self._console_handoff.resolve_latest_follow_item()
         with Vertical(id="watchlists-collections-shell"):
+            # TASK-2313, AC#6: "Mixed | Local/Server" was a hardcoded
+            # constant -- it never reflected `self.runtime_backend` and
+            # read as cryptic, undiscoverable jargon in the UAT (what is
+            # "Mixed"? mixed with what?). The row directly below already
+            # names the backend precisely, live, via the labeled Select
+            # (task-2310/2313's own "Backend" label fix) -- dropped rather
+            # than duplicated.
             yield Static(
-                "Watchlists | Monitored sources, runs, alerts, recovery | Mixed | Local/Server",
+                "Watchlists | Monitored sources, runs, alerts, recovery",
                 id="watchlists-collections-title",
                 classes="ds-destination-header",
             )
@@ -2411,6 +2526,12 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 # `height: 1` and a bordered Select is three rows, so this
                 # backend picker was painting its top border and nothing
                 # else. See `sources_pane.compose()`.
+                #
+                # TASK-2313, AC#3: a "Backend" label (the 2310 idiom) names
+                # the axis ahead of the Select instead of a trailing
+                # "Backend: local" Static restating the Select's own
+                # current value -- see `_backend_label_text`'s docstring.
+                yield Static("Backend", classes="watchlists-inline-select-label")
                 yield PruneSafeSelect(
                     [("Local", "local"), ("Server", "server")],
                     value=self.runtime_backend,
@@ -2423,10 +2544,12 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                     ).get("tooltip")
                     or "Choose the Watchlists data backend.",
                 )
-                yield Static(
-                    self._backend_label_text(),
-                    id="watchlists-backend-label",
-                )
+                backend_label_text = self._backend_label_text()
+                if backend_label_text is not None:
+                    yield Static(
+                        backend_label_text,
+                        id="watchlists-backend-label",
+                    )
             yield WatchlistsWorkbench(
                 self._rendered_region_layout(),
                 content={
@@ -2444,16 +2567,10 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                     Region.RIGHT_RAIL: self._build_inspector_region,
                 },
                 hidden=self._hidden_centre_regions(),
-                # `None` on the Read tab: `_build_list_pane` (FEEDS's own
-                # factory, above) already supplies the tab strip and the
-                # snapshot markers inline there, exactly as it always has.
-                # Off Read, FEEDS is hidden, so this is what carries both
-                # forward -- see `_build_centre_status_header`.
-                header=(
-                    None
-                    if self.active_section == "items"
-                    else self._build_centre_status_header
-                ),
+                # TASK-2312: unconditional on every section, including Read
+                # -- see `_build_centre_status_header`'s own docstring for
+                # why this used to be `None` on Read and what that cost.
+                header=self._build_centre_status_header,
                 id="wl-workbench",
             )
 
@@ -3444,9 +3561,10 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         fix the header was left showing the PREVIOUS scope's summary until
         some unrelated recompose came along and rebuilt it for a different
         reason. `_refresh_centre_header_for_scope` is the header's
-        equivalent, called only when the header actually exists
-        (`active_section != "items"`, mirroring `compose_content`'s own
-        `header=` condition).
+        equivalent -- called UNCONDITIONALLY as of TASK-2312, since the
+        header now exists on every section including Read (see
+        `_build_centre_status_header`'s own docstring); both refreshes run
+        on Read too, one per surface, exactly like everywhere else.
 
         Also pushes the new scope into the still-mounted `WatchlistTree`
         (task-876): since this watcher is the single reconciliation point
@@ -3460,8 +3578,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         if not self.is_mounted:
             return
         self._refresh_feeds_region_for_scope()
-        if self.active_section != "items":
-            self._refresh_centre_header_for_scope()
+        self._refresh_centre_header_for_scope()
         # TASK-2304 AC#2. The Sources table follows the same scope the FEEDS
         # heading and the centre header just took, so the two counts of "how
         # many sources are in view" cannot disagree. An in-place push on the
@@ -3680,8 +3797,12 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         correctness): the centre header/tab strip (`#wl-centre-status`,
         mounted directly under `#wl-centre` by `_build_centre_status_header`
         -- see `compose_content`) sits OUTSIDE every `wl-region-*`/
-        `wl-header-*` wrapper, so neither prefix above ever matches while
-        focus is in it. Without this branch `focused_region` would keep
+        `wl-header-*` wrapper on every section including Read (TASK-2312;
+        Read used to mount its own copy of the tab strip INSIDE FEEDS's own
+        `wl-region-feeds` wrapper, so this branch never fired there and
+        focusing the tab strip on Read instead matched the `wl-region-`
+        prefix and set `focused_region = FEEDS`), so neither prefix above
+        ever matches while focus is in it. Without this branch `focused_region` would keep
         naming whatever region the user last actually visited, silently
         indistinguishable here from a live selection: a user who tabs into
         the tab strip and presses `z`/`Z` would act on that stale reference
@@ -3716,8 +3837,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     def watch_active_section(self) -> None:
         # A tab switch always fully recomposes the centre (below): whatever
         # `_focus_in_centre_header` was tracking about the OLD DOM is moot
-        # the instant that DOM is torn down, and the header itself may not
-        # even exist on the new tab at all (`header=None` on Read). Reset
+        # the instant that DOM is torn down. Reset
         # to "not in the header" rather than leave a stale `True` standing
         # -- `on_descendant_focus` will set it again the moment a fresh
         # focus event actually lands there, but nothing guarantees one
@@ -3787,7 +3907,9 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             return
         try:
             label = self.query_one("#watchlists-backend-label", Static)
-            label.update(self._backend_label_text())
+            label_text = self._backend_label_text()
+            if label_text is not None:
+                label.update(label_text)
         except Exception:
             pass
         # task-895: push the new write-availability into the still-mounted
@@ -5314,6 +5436,101 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             self._briefing_watchlist_id() is not None
         )
 
+    def _briefing_provider_display(self) -> str:
+        """TASK-2311, AC#3: the provider Generate will actually use, for
+        display BEFORE the user presses it.
+
+        UAT: Generate silently used whatever `default_briefing_provider()`
+        resolved to (openai, in that run) with no indication anywhere in
+        the UI of what provider was about to be charged/attempted. Mirrors
+        `generate_briefing`'s own resolution order exactly (explicit
+        `provider` arg is never used by this screen's call site, so it is
+        skipped here): the watchlist's stored default preset's provider,
+        else the app's configured default endpoint.
+        """
+        from ...Chat.provider_catalog import provider_display_name
+
+        preset_id = self._briefing_default_preset_id
+        provider_key = ""
+        if preset_id is not None:
+            for preset in self._loaded_briefing_presets:
+                if preset.get("id") == preset_id:
+                    provider_key = str(preset.get("provider") or "")
+                    break
+        if not provider_key:
+            provider_key = default_briefing_provider()
+        return provider_display_name(provider_key)
+
+    #: UAT batch-5 review, m3. `briefing_service._error_text` already caps
+    #: at 1000 chars server-side and never a traceback, but this task made
+    #: that text fire in an UNCONDITIONAL toast at failure time rather than
+    #: requiring a click into the row's detail region -- a wider default
+    #: exposure than before, even though nothing here is a NEW leak. A
+    #: toast is a one-line surface; 1000 chars (or any embedded newline,
+    #: the shape a raw HTTP response body or header dump takes, unlike a
+    #: curated one-line provider message such as "OpenAI API Key is
+    #: required but not found.") is far more than it should ever carry.
+    _MAX_BRIEFING_FAILURE_REASON_CHARS = 160
+
+    @classmethod
+    def _bounded_briefing_failure_reason(cls, raw_reason: str) -> str:
+        """Bound/shape a provider's own failure text before an unconditional
+        toast (review finding m3): collapse embedded newlines/whitespace
+        first -- a multi-line dump must not survive as a single
+        deceptively-long "clean" line -- then cap the result to a toast-
+        appropriate length. Every sampled curated provider message (e.g.
+        "OpenAI API Key is required but not found.") is short and single-
+        line and passes through unchanged; anything shaped like a raw
+        payload or header dump is truncated or, for pathological input,
+        replaced entirely, so a bug elsewhere in the ~9 bridged provider
+        handlers cannot turn this into a payload sink.
+        """
+        collapsed = " ".join(raw_reason.split())
+        if not collapsed:
+            return "no reason was recorded"
+        if len(collapsed) > cls._MAX_BRIEFING_FAILURE_REASON_CHARS:
+            collapsed = collapsed[: cls._MAX_BRIEFING_FAILURE_REASON_CHARS].rstrip() + "…"
+        return collapsed
+
+    def _notify_briefing_failure(self, row: Mapping[str, Any]) -> None:
+        """TASK-2311: surface a failed generation's reason at failure time,
+        without requiring the user to click the row.
+
+        `row`'s `model_used`/`error` are `briefing_service._finish_failure`'s
+        own record of what actually happened -- read directly rather than
+        recomputed, so this always names the provider that was ACTUALLY
+        attempted (which can differ from `_briefing_provider_display()`'s
+        prospective answer if the default preset changed mid-flight), and
+        the provider's own failure text. `markup=False`: a provider's error
+        message is untrusted, remote-influenced text. The reason itself is
+        bound/shaped by `_bounded_briefing_failure_reason` (review finding
+        m3) before it ever reaches the toast -- the full, uncapped text
+        (still capped at 1000 chars server-side, never a traceback) remains
+        available by clicking into the row's own detail region, unchanged
+        from before this task.
+        """
+        from ...Chat.provider_catalog import provider_display_name
+
+        model_used = str(row.get("model_used") or "")
+        provider_key = model_used.split("/", 1)[0] if model_used else ""
+        provider = (
+            provider_display_name(provider_key)
+            if provider_key
+            else self._briefing_provider_display()
+        )
+        reason = self._bounded_briefing_failure_reason(str(row.get("error") or ""))
+        # Live-verified trap: the provider's own message is very often
+        # already a full sentence with its own trailing period (e.g.
+        # "OpenAI API Key is required but not found.") -- appending another
+        # unconditionally produced a visible ".." in the toast. One strip.
+        reason = reason.rstrip(".")
+        self._notify_watchlists(
+            f"Briefing generation failed using {provider}: {reason}. Check "
+            "Settings ▸ Providers & Models, then press Generate again.",
+            severity="error",
+            markup=False,
+        )
+
     def _chachanotes_db(self) -> Any:
         """The live ChaChaNotes handle, or `None` (task-1780, Task 5).
 
@@ -5760,6 +5977,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         pane.selected_briefing = self._selected_briefing
         pane.scope_label = self._briefing_scope_label()
         pane.can_generate = self._can_generate_briefing()
+        pane.default_provider_display = self._briefing_provider_display()
         pane.selection_mode = self._briefing_selection_mode
         pane.presets = self._loaded_briefing_presets
         pane.default_preset_id = self._briefing_default_preset_id
@@ -7015,6 +7233,11 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         except NoMatches:
             return
         pane.default_preset_id = preset_id
+        # TASK-2311, AC#3: a preset's own provider can differ from the app
+        # default (or from the PREVIOUS preset's provider) -- without this,
+        # picking a new default preset would leave the scope note naming
+        # whatever provider was displayed before this write.
+        pane.default_provider_display = self._briefing_provider_display()
 
     @on(BriefingCadenceChanged)
     def handle_briefing_cadence_changed(self, event: BriefingCadenceChanged) -> None:
@@ -7495,6 +7718,17 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             try:
                 row = await generate_briefing(db, watchlist_id, preset_id=preset_id)
                 generated_id = (row or {}).get("id")
+                # TASK-2311: `generate_briefing` never raises for a PROVIDER
+                # failure -- it turns it into a `failed` row instead (see
+                # this method's own docstring) -- so this is the one place
+                # that outcome is actually observable. UAT: Generate with no
+                # provider configured produced a bare "failed" row with no
+                # toast; the reason ("OpenAI API Key is required but not
+                # found") only appeared after clicking the row, and the
+                # provider had silently defaulted to openai. `markup=False`:
+                # a provider's own error text is untrusted.
+                if str((row or {}).get("status") or "").strip().lower() == STATUS_FAILED:
+                    self._notify_briefing_failure(row or {})
             except GenerationInFlightError as exc:
                 # The race `_sweep_and_guard` cannot close: another
                 # in-process caller claimed this watchlist AFTER the sweep

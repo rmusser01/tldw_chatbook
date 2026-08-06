@@ -116,6 +116,18 @@ class RunsPane(RecomposeCaptureGuard, Vertical):
         # authoritative going forward.
         self._highlighted_run_key = selected_key
         yield table
+        # TASK-2313, AC#4: a bare empty table with zero guidance, next to
+        # Overview's own multi-paragraph first-run walkthrough, read as
+        # broken rather than merely empty. One line, not Overview's full
+        # guidance -- this pane is reached only once a watchlist already
+        # exists, so it only has to explain the ONE remaining step.
+        if not self.runs:
+            yield Static(
+                "No runs yet. Press Check now under Sources, or wait for "
+                "the next scheduled check.",
+                id="runs-empty-state",
+                classes="watchlists-hint-line",
+            )
 
         selected_run = self.selected_run
         with Vertical(id="runs-detail-pane"):

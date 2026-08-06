@@ -3,7 +3,7 @@
 import pytest
 from rich.markup import escape as escape_markup
 from textual.app import App, ComposeResult
-from textual.widgets import Button, DataTable, Input, Select
+from textual.widgets import Button, DataTable, Input, Select, Static
 
 from tldw_chatbook.UI.Watchlists_Modules.items_pane import (
     ItemSelected,
@@ -65,6 +65,37 @@ async def test_items_pane_renders_table_and_toolbar():
         assert pane.query_one("#items-search-input", Input)
         assert pane.query_one("#items-status-select", Select)
         assert pane.query_one("#items-table", DataTable)
+
+
+@pytest.mark.asyncio
+async def test_the_queued_column_carries_a_discoverable_legend():
+    """TASK-2313, AC#6: the Queued column was a bare glyph or blank cell
+    with no discoverable meaning anywhere on screen."""
+    app = ItemsPaneHarness()
+    async with app.run_test(size=(120, 40)) as pilot:
+        pane = app.query_one(ItemsPane)
+        legend = pane.query_one("#items-queued-legend", Static)
+        text = str(legend.renderable)
+        assert pane._QUEUED_GLYPH in text
+        assert "queued for the next briefing" in text
+
+
+@pytest.mark.asyncio
+async def test_status_select_carries_a_visible_label():
+    """TASK-2310: the status filter must not paint as a bare "All statuses"
+    with nothing naming what it filters."""
+    app = ItemsPaneHarness()
+    async with app.run_test(size=(120, 40)) as pilot:
+        pane = app.query_one(ItemsPane)
+        row = pane.query_one("#items-toolbar")
+        children = list(row.children)
+        index = next(
+            i for i, child in enumerate(children)
+            if child.id == "items-status-select"
+        )
+        label = children[index - 1]
+        assert isinstance(label, Static)
+        assert str(label.renderable) == "Status"
 
 
 @pytest.mark.asyncio
