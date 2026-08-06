@@ -175,9 +175,19 @@ _ADVANCED_EXECUTE_ACTION = "tool.execute"
 # cancels the arm -- switching the object Advanced is showing
 # (`set_service_context()`) or the section (`_load_advanced_section()`)
 # disarms too, invisibly, same as an edit. Named all three, still short.
+#
+# Fix Round E, Item 2 (review of Fix Round C): that enumeration was STILL
+# incomplete -- switching the ACTION (`on_select_changed()`) disarms too
+# (`_run_advanced_action()`'s own docstring already named it: "switching
+# action or editing the payload re-arms"), and hiding the panel
+# (`_hide_advanced()`) disarms as well; neither was named. An enumeration
+# that omits a real trigger reads as complete and is not, and a fourth or
+# fifth one can always surface later. The house already has the correct
+# formulation 46 lines above (`_TEST_RUN_ARMED_HINT`: "anything else
+# cancels") -- adopted here instead of maintaining a list that cannot stay
+# complete.
 _ADVANCED_EXECUTE_CONFIRM = (
-    "Runs {tool} now — press Run Action again to confirm. "
-    "Editing, switching object, or changing section cancels."
+    "Runs {tool} now — press Run Action again to confirm; anything else cancels."
 )
 # The refusal heading `show_tool_result()` gives a blocked test run (":2254"),
 # reused verbatim so a refusal reads the same wherever it surfaces -- a
@@ -2574,6 +2584,25 @@ class MCPInspector(Vertical):
                             group="mcp-adv-section", exclusive=True)
         elif select_id == "mcp-adv-action-select":
             event.stop()
+            # Fix Round E, Item 2: switching the action is a FOURTH trigger
+            # that disarms a pending `tool.execute` confirm --
+            # `_run_advanced_action()`'s own docstring already named it
+            # ("switching action or editing the payload re-arms"), but this
+            # handler never actually cleared `_advanced_confirm_key` on an
+            # action switch, so a stale arm (and its rendered confirm
+            # sentence) survived it: pressing Run then executed the NEWLY
+            # selected action immediately, no confirm, under a sentence
+            # still promising one. Scoped honestly: `tool.execute` only
+            # shares its `inventory` section with `resource.read` and
+            # `prompt.get` (both reads) -- the destructive actions live in
+            # other sections, which a section change already disarms (see
+            # `_load_advanced_section()`) -- so this is a truthfulness
+            # defect on the confirm text, not a path to an unconfirmed
+            # destructive action.
+            _was_armed = self._advanced_confirm_key is not None
+            self._advanced_confirm_key = None
+            if _was_armed:
+                self.query_one("#mcp-adv-result", Static).update("")
             if not _is_blank(event.value):
                 self.query_one("#mcp-adv-payload", TextArea).text = (
                     self._action_templates.get(str(event.value), "{}")

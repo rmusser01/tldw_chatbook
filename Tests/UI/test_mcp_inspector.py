@@ -3720,6 +3720,46 @@ class ToolExecuteInspectorApp(App):
         )
 
 
+class ToolExecuteAndReadAdvService(ToolExecuteAdvService):
+    """Fix Round E, Item 2: adds a second, SAME-SECTION action
+    (`resource.read`) alongside `tool.execute` -- mirrors the real
+    inventory section's actual membership (`tool.execute` shares
+    `inventory` only with `resource.read` and `prompt.get`, both reads)
+    so a test can switch the action Select WITHOUT also switching
+    section, isolating Item 2's action-switch fix from Item 1's
+    section-change fix."""
+
+    def available_actions(self):
+        return super().available_actions() + [
+            {
+                "name": "resource.read",
+                "label": "Read Resource",
+                "action_id": "mcp.runtime.resource.read.local",
+                "payload_template": '{"uri":"note://example"}',
+            }
+        ]
+
+    async def run_action(self, action_name, payload):
+        self.action_calls.append((action_name, dict(payload or {})))
+        if self.error is not None:
+            raise self.error
+        return {"ok": True, "action": action_name}
+
+
+class ToolExecuteAndReadInspectorApp(App):
+    def __init__(self, *, error: Exception | None = None) -> None:
+        super().__init__()
+        self.service = ToolExecuteAndReadAdvService(error=error)
+
+    def compose(self) -> ComposeResult:
+        yield MCPInspector(id="mcp-inspector")
+
+    def on_mount(self) -> None:
+        self.query_one(MCPInspector).set_service_context(
+            self.service, [("Inventory", "inventory")]
+        )
+
+
 def _adv_result(app) -> str:
     return str(app.query_one("#mcp-adv-result", Static).renderable)
 
@@ -4201,17 +4241,23 @@ async def test_section_change_blanks_the_stale_confirm_sentence():
         )
 
 
-def test_advanced_execute_confirm_copy_names_every_cancel_trigger():
-    """The confirm sentence's old copy ("Editing anything cancels") named
-    only one of the ways the arm can be lost -- switching the object
-    Advanced is showing, or its section, cancels too, invisibly (Item 3).
-    Pins the corrected copy names all three, still in the house's short,
-    plain register (no "Owner:"/"Recovery:" verbosity)."""
+def test_advanced_execute_confirm_copy_does_not_enumerate_cancel_triggers():
+    """Fix Round E, Item 2 (review of Fix Round C): the confirm sentence
+    used to enumerate cancel triggers ("Editing, switching object, or
+    changing section cancels") -- an incomplete list even after Fix Round
+    C's own pass (it omitted switching the action, and hiding the panel),
+    and any enumeration here is one more trigger away from being wrong
+    again. The corrected copy adopts the house's existing complete
+    formulation (`_TEST_RUN_ARMED_HINT`: "anything else cancels") instead,
+    which stays true regardless of how many triggers exist or are added."""
     rendered = mcp_inspector_module._ADVANCED_EXECUTE_CONFIRM.format(tool="search_notes")
     assert "press Run Action again to confirm" in rendered
-    assert "Editing" in rendered
-    assert "switching object" in rendered
-    assert "changing section" in rendered
+    assert "anything else cancels" in rendered
+    # Regression guard: no version of this copy should go back to naming
+    # triggers by enumeration -- if it does, it is incomplete again.
+    assert "Editing" not in rendered
+    assert "switching object" not in rendered
+    assert "changing section" not in rendered
 
 
 # -- Fix Round E, Item 1: the disarm blank must not eat real output ----------
@@ -4312,3 +4358,48 @@ async def test_section_change_preserves_blocked_refusal_when_not_armed():
             "a section change while UNARMED must not erase a refusal "
             "explaining why nothing ran"
         )
+
+
+# -- Fix Round E, Item 2: switching the action is a fourth disarm trigger ----
+
+
+@pytest.mark.asyncio
+async def test_action_switch_disarms_a_pending_confirm():
+    """Switching the Advanced action Select must disarm a pending
+    `tool.execute` confirm -- `_run_advanced_action()`'s own docstring
+    already promised it ("switching action ... re-arms"), but
+    `on_select_changed()` never actually cleared `_advanced_confirm_key` on
+    an action switch. Live-verified defect: arm `tool.execute`, switch to
+    `resource.read` (its own same-section sibling -- both reads, see the
+    item's honest scoping), and the FIRST press after the switch used to
+    run `resource.read` immediately with no confirm, while the pane still
+    read the `tool.execute` confirm sentence. Scoped deliberately to a
+    same-section READ action, never a destructive one: this is a
+    truthfulness defect on the confirm text, not a path to an unconfirmed
+    destructive call (the destructive actions live in other sections, which
+    a section change already disarms)."""
+    app = ToolExecuteAndReadInspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        await pilot.click("#mcp-adv-run")  # arms tool.execute
+        await pilot.pause()
+        assert app.service.action_calls == []
+        assert "again" in _adv_result(app)
+
+        action_select = app.query_one("#mcp-adv-action-select", Select)
+        action_select.value = "resource.read"
+        await pilot.pause()
+
+        assert _adv_result(app) == "", (
+            "switching the action must blank the stale confirm sentence, "
+            "not just clear the internal arm -- otherwise the pane still "
+            "promises a confirm the next press will not give"
+        )
+
+        await _press_run_again(pilot)
+        # A disarmed action switch means the first press on the NEW action
+        # runs it directly -- resource.read never required a confirm of its
+        # own (only tool.execute does), so this is the ordinary
+        # single-press behavior, not a second confirm cycle.
+        assert app.service.action_calls == [
+            ("resource.read", {"uri": "note://example"})
+        ]
