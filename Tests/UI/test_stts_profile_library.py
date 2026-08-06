@@ -2286,6 +2286,101 @@ async def test_assigned_profile_delete_is_blocked_before_repository_mutation(
         assert _status_copy(app) == profile_library_module.PROFILE_DELETE_PROTECTED_COPY
 
 
+@pytest.mark.parametrize(
+    ("configured_default", "expected_is_app_default"),
+    [
+        ("self", True),
+        ("other", False),
+        (None, False),
+    ],
+)
+@pytest.mark.asyncio
+async def test_delete_confirmation_flags_the_configured_app_default_profile(
+    monkeypatch: pytest.MonkeyPatch,
+    configured_default: str | None,
+    expected_is_app_default: bool,
+) -> None:
+    """The delete confirmation must know a profile is `[app_tts]
+    default_profile_id` -- a fact `assignment_count` structurally cannot
+    see, since it lives in config, not the profile store. Deleting an
+    unrelated profile (or with nothing configured) must not claim it.
+    """
+
+    profile = _profile(0)
+    service = _ActionProfileService(profile)
+    service.assignment_total = 0
+    app = _ActionHost(service)
+
+    if configured_default == "self":
+        configured_value: str | None = str(profile.profile_id)
+    elif configured_default == "other":
+        configured_value = str(uuid4())
+    else:
+        configured_value = None
+
+    monkeypatch.setattr(
+        stts_window_module,
+        "get_cli_setting",
+        lambda section, key, default=None: (
+            configured_value
+            if (section, key) == ("app_tts", "default_profile_id")
+            else default
+        ),
+    )
+
+    async with app.run_test(size=(150, 55)) as pilot:
+        library, selected = await _select_action_profile(app, pilot)
+
+        captured: dict[str, object] = {}
+
+        async def _confirm(screen: object) -> bool:
+            assert isinstance(
+                screen,
+                profile_library_module.TTSProfileDeleteModal,
+            )
+            assert screen.display_name == selected.profile.display_name
+            captured["is_app_default"] = screen.is_app_default
+            return False
+
+        monkeypatch.setattr(app, "push_screen_wait", _confirm)
+        await library.delete_selected_profile()
+
+        assert captured["is_app_default"] is expected_is_app_default
+
+
+@pytest.mark.parametrize(
+    ("assignment_count", "is_app_default", "should_mention_default"),
+    [
+        (0, True, True),
+        (0, False, False),
+        (3, True, True),
+    ],
+)
+@pytest.mark.asyncio
+async def test_delete_modal_copy_names_the_app_default_voice(
+    assignment_count: int,
+    is_app_default: bool,
+    should_mention_default: bool,
+) -> None:
+    modal = profile_library_module.TTSProfileDeleteModal(
+        display_name="Narrator voice",
+        assignment_count=assignment_count,
+        is_app_default=is_app_default,
+    )
+
+    class _ModalHost(App[None]):
+        def compose(self) -> ComposeResult:
+            yield Static("host")
+
+    app = _ModalHost()
+    async with app.run_test(size=(80, 24)) as pilot:
+        app.push_screen(modal)
+        await pilot.pause()
+
+        copy = str(modal.query_one("#stts-profile-delete-copy", Static).render())
+        assert ("app-wide default voice" in copy) is should_mention_default
+
+
 @pytest.mark.asyncio
 async def test_refresh_and_editor_repair_keep_unavailable_persisted_values(
     monkeypatch: pytest.MonkeyPatch,

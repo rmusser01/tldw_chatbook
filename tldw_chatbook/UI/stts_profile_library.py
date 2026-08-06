@@ -67,6 +67,19 @@ PROFILE_DELETE_PROTECTED_COPY = (
     "This profile is assigned and cannot be deleted. Remove its assignments "
     "before retrying."
 )
+# Task 5 (slice 3): the app-wide default lives in config (`[app_tts]
+# default_profile_id`), never in the profile store, so it cannot ride the
+# `assignment_count` machinery above -- `STTSProfileLibrary` supplies it
+# separately (see `_is_configured_default_profile`). Deletion itself stays
+# unblocked here: Task 4 already made speech refuse honestly, with a
+# one-tap "global voice" override, once the configured default no longer
+# resolves -- this copy only WARNS before the destructive act, never
+# fabricates an automatic silent fallback.
+PROFILE_DELETE_APP_DEFAULT_COPY = (
+    "This is the app-wide default voice. Deleting it leaves no default "
+    "voice configured — future default-voice speech will ask to use the "
+    "global voice instead."
+)
 _STORE_UNAVAILABLE_CODES = frozenset(
     {
         "closed",
@@ -552,10 +565,12 @@ class TTSProfileDeleteModal(ModalScreen[bool]):
         *,
         display_name: str,
         assignment_count: int,
+        is_app_default: bool = False,
     ) -> None:
         super().__init__()
         self.display_name = display_name
         self.assignment_count = assignment_count
+        self.is_app_default = is_app_default
 
     def compose(self) -> ComposeResult:
         protected = self.assignment_count > 0
@@ -575,6 +590,8 @@ class TTSProfileDeleteModal(ModalScreen[bool]):
                     "No assignments were observed. This advisory count may "
                     "change; profile storage remains the final authority."
                 )
+            if self.is_app_default:
+                copy = f"{copy}\n\n{PROFILE_DELETE_APP_DEFAULT_COPY}"
             yield Static(Text(copy), id="stts-profile-delete-copy")
             with Horizontal(id="stts-profile-delete-actions"):
                 yield Button(
@@ -727,10 +744,21 @@ class STTSProfileLibrary(Widget):
     def __init__(
         self,
         service_loader: ProfileServiceLoader,
+        *,
+        default_profile_id_reader: Callable[[], object | None] | None = None,
         **kwargs: object,
     ) -> None:
         super().__init__(**kwargs)
         self._service_loader = service_loader
+        # Task 5 (slice 3): reads the persisted `[app_tts] default_profile_id`
+        # setting -- injected exactly like `TTSEventHandler`'s own reader
+        # (`Event_Handlers/TTS_Events/tts_events.py`, wired the same way from
+        # `app.py`) so tests never touch real config and `None` means "no
+        # app-default voice is wired up here." The profile *store* has no way
+        # to know this fact (it lives in config, not a repository row), so it
+        # is supplied here, one layer up, rather than bent into
+        # `assignment_count`.
+        self._default_profile_id_reader = default_profile_id_reader
         self._service: _ProfileService | None = None
         self._live = False
         self._mount_token = 0
@@ -1393,6 +1421,35 @@ class STTSProfileLibrary(Widget):
             return None
         return count
 
+    def _is_configured_default_profile(self, loaded: LoadedTTSProfile) -> bool:
+        """Return whether `loaded` is the current `[app_tts]
+        default_profile_id` -- read fresh at call time, never cached, since
+        the setting can change between this widget mounting and a delete
+        attempt.
+
+        Normalizes exactly like `tts_events.py::_read_default_profile_id`:
+        an absent reader, a non-string value, or a blank one all mean "no
+        app-default configured." A malformed non-UUID string (Task 2's
+        defined dangling state) can never equal a real profile's UUID, so
+        it naturally resolves to `False` here too, with no separate case
+        needed -- it can never be describing `loaded`.
+        """
+
+        reader = self._default_profile_id_reader
+        if reader is None:
+            return False
+        raw_value = reader()
+        if not isinstance(raw_value, str):
+            return False
+        stripped = raw_value.strip()
+        if not stripped:
+            return False
+        try:
+            configured_id = UUID(stripped)
+        except (ValueError, AttributeError, TypeError):
+            return False
+        return configured_id == loaded.profile.profile_id
+
     async def create_from_artifact(
         self,
         display_name: str,
@@ -1532,6 +1589,7 @@ class STTSProfileLibrary(Widget):
                 TTSProfileDeleteModal(
                     display_name=loaded.profile.display_name,
                     assignment_count=count,
+                    is_app_default=self._is_configured_default_profile(loaded),
                 )
             )
         except asyncio.CancelledError:
