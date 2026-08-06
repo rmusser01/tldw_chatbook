@@ -41,6 +41,38 @@ from .unified_control_models import ServerAccessContext, UnifiedMCPContext
 # reads correctly under that same heading.
 _ADVANCED_EXECUTE_BLOCKED_MESSAGE = "{tool} is set to Off in Permissions."
 
+# task-2539 (PR-T3 fix round B, item 3): the exact message
+# `execute_hub_tool()` raises below for a server-source `server_key`. Its
+# own constant so the raise site and `MCPServerSourceDisplayOnlyError`'s
+# default message can never drift apart from each other.
+_SERVER_SOURCE_DISPLAY_ONLY_MESSAGE = "Server-source tools are display-only."
+
+
+class MCPServerSourceDisplayOnlyError(ValueError):
+    """`execute_hub_tool()`'s refusal for a server-source ``server_key``.
+
+    Raised ONLY when ``server_key`` is neither ``local:`` nor
+    ``builtin:`` -- a server-source tool has no in-process execution path
+    through this seam at all (see the Hub's Governance mode for how a
+    server-source tool's definition is shown instead). Subclasses
+    ``ValueError`` so any existing ``except ValueError`` handler upstream
+    keeps working unchanged.
+
+    task-2539: before this, `mcp_workbench._is_permission_refusal()` told
+    this refusal apart from an unrelated ``ValueError`` by comparing
+    ``str(exc)`` against this exact sentence -- fragile, since nothing
+    pinned that string AT THIS RAISE SITE, so an unrelated reword here
+    would have silently reverted that classifier's fix with a fully green
+    suite. Matching THIS TYPE instead makes the message text purely
+    cosmetic for classification; it stays byte-identical to what the bare
+    ``ValueError`` this replaces carried, purely so the rendered text is
+    unchanged for anyone reading the result.
+    """
+
+    def __init__(self, message: str = _SERVER_SOURCE_DISPLAY_ONLY_MESSAGE) -> None:
+        super().__init__(message)
+
+
 # Task 6 (PR-T3), Route B, second door: `runtime.request`/`runtime.batch` are
 # Advanced descriptors too, and the in-process runtime speaks the real
 # protocol -- `{"method": "tools/call"}` reaches the SAME
@@ -2232,7 +2264,9 @@ class UnifiedMCPControlPlaneService:
             The raw result payload from the underlying service call.
 
         Raises:
-            ValueError: If ``server_key`` is not a local/builtin key.
+            MCPServerSourceDisplayOnlyError: If ``server_key`` is not a
+                local/builtin key. A ``ValueError`` subclass -- any
+                existing ``except ValueError`` handler still catches it.
             RuntimeError: If the tool call fails or exceeds the
                 effective timeout.
         """
@@ -2250,7 +2284,9 @@ class UnifiedMCPControlPlaneService:
                 normalized_tool_name, normalized_arguments
             )
         else:
-            raise ValueError("Server-source tools are display-only.")
+            # task-2539: typed, not a bare `ValueError` -- see
+            # `MCPServerSourceDisplayOnlyError`'s own docstring for why.
+            raise MCPServerSourceDisplayOnlyError()
 
         timeout = (
             timeout_seconds
@@ -2367,7 +2403,9 @@ class UnifiedMCPControlPlaneService:
             The raw result payload from the underlying service call.
 
         Raises:
-            ValueError: If ``server_key`` is not a local/builtin key.
+            MCPServerSourceDisplayOnlyError: If ``server_key`` is not a
+                local/builtin key. A ``ValueError`` subclass -- any
+                existing ``except ValueError`` handler still catches it.
             RuntimeError: If the tool call fails or exceeds the
                 configured lifecycle timeout.
         """

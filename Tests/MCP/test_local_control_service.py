@@ -1233,6 +1233,40 @@ def test_local_runtime_delegate_reports_runtime_health_from_lifecycle():
 
 
 @pytest.mark.asyncio
+async def test_governance_denial_raises_the_typed_mcp_governance_denied_error():
+    """task-2537 (PR-T3 fix round B, item 3): `_require_runtime_
+    governance_allowed()`'s deny branch raises the dedicated
+    `MCPGovernanceDenied` subclass, not a bare `PermissionError` -- so
+    `mcp_workbench._is_permission_refusal()` can tell "governance refused
+    this call" apart from an unrelated `PermissionError` a tool's own body
+    might raise. Also proves the existing `except PermissionError`
+    contract still holds (the type IS a `PermissionError`)."""
+    runtime_delegate = FakeLocalRuntimeDelegate()
+    service = LocalMCPControlService(
+        store=FakeLocalStore(),
+        client=FakeMCPClient(),
+        manifest_provider=lambda: {},
+        runtime_delegate=runtime_delegate,
+    )
+    service.save_governance_rule(
+        {
+            "rule_id": "rule-deny-notes-list",
+            "capability_id": "notes.list.local",
+            "decision": "deny",
+            "notes": "Local note listing is blocked.",
+        }
+    )
+
+    from tldw_chatbook.MCP.local_control_service import MCPGovernanceDenied
+
+    with pytest.raises(MCPGovernanceDenied) as exc_info:
+        await service.execute_tool("search_notes", {"query": "roadmap"})
+
+    assert isinstance(exc_info.value, PermissionError)
+    assert str(exc_info.value) == "Denied by local governance: notes.list.local"
+
+
+@pytest.mark.asyncio
 async def test_local_control_service_previews_and_enforces_runtime_governance():
     runtime_delegate = FakeLocalRuntimeDelegate()
     service = LocalMCPControlService(

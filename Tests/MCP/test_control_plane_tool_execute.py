@@ -196,6 +196,24 @@ async def test_hub_tool_unknown_prefix_raises_value_error_display_only(tmp_path)
 
 
 @pytest.mark.asyncio
+async def test_hub_tool_unknown_prefix_raises_the_typed_display_only_error(tmp_path):
+    """task-2539 (PR-T3 fix round B, item 3): drift-proofing at the RAISE
+    SITE itself, not just where the message is rendered. Before this item,
+    nothing in this suite pinned the exact type/message `execute_hub_tool()`
+    raises for a server-source key -- only the UI-side classifier
+    (`mcp_workbench._is_permission_refusal()`) pinned its OWN copy of the
+    string, so a reword here would have silently reverted that classifier's
+    fix (it no longer even LOOKS at the message, but this test exists so a
+    future accidental reword is caught at the source, not inferred)."""
+    service, fake, client, store = _service(tmp_path)
+
+    with pytest.raises(control_plane_module.MCPServerSourceDisplayOnlyError) as exc_info:
+        await service.test_hub_tool("server:remote-1", "search", {})
+
+    assert str(exc_info.value) == "Server-source tools are display-only."
+
+
+@pytest.mark.asyncio
 async def test_hub_tool_timeout_raises_and_records(tmp_path, monkeypatch):
     monkeypatch.setattr(
         control_plane_module,

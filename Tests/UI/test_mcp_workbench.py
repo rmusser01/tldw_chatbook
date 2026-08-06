@@ -16,6 +16,7 @@ from textual.widgets import Button, Checkbox, ContentSwitcher, DataTable, Input,
 import tldw_chatbook
 import tldw_chatbook.UI.MCP_Modules.mcp_inspector as mcp_inspector_module
 import tldw_chatbook.UI.MCP_Modules.mcp_workbench as mcp_workbench_module
+from tldw_chatbook.MCP.local_control_service import MCPGovernanceDenied
 from tldw_chatbook.MCP.permission_store import (
     BUILTIN_TOOL_SERVER_KEY,
     HASH_FREE_SERVER_KEYS,
@@ -26,6 +27,9 @@ from tldw_chatbook.MCP.permission_store import (
 )
 from tldw_chatbook.MCP.readiness import HubAction
 from tldw_chatbook.MCP.unified_control_models import UnifiedMCPContext
+from tldw_chatbook.MCP.unified_control_plane_service import (
+    MCPServerSourceDisplayOnlyError,
+)
 from tldw_chatbook.UI.MCP_Modules.mcp_audit_mode import MCPAuditMode
 from tldw_chatbook.UI.MCP_Modules.mcp_inspector import (
     MCPInspector,
@@ -3206,33 +3210,93 @@ async def test_test_tool_run_error_renders_failed_with_message():
 
 
 # -- F4 (PR-T3 task 3): a refusal must never read as a failure -------------
+#
+# task-2537 + task-2539 (PR-T3 fix round B, item 3): `_is_permission_
+# refusal()`'s classification contract changed from "any `PermissionError`,
+# or a `ValueError` matching an exact string" to "one of two DEDICATED
+# exception types" (`MCPGovernanceDenied`, `MCPServerSourceDisplayOnlyError`
+# -- see their own docstrings). NOTE: the old contract test this replaces
+# (`test_is_permission_refusal_classifies_permission_error_and_display_
+# only_value_error`) is not on fix round B's list of two pre-authorized
+# assertion changes -- flagged for review in the round's report. It had to
+# change because it directly pinned the over-broad/prose-dependent
+# behavior this item's own brief identifies as the bug: a bare
+# `PermissionError` (not `MCPGovernanceDenied`) must now classify `False`,
+# the exact inverse of what it asserted before.
 
 
-def test_is_permission_refusal_classifies_permission_error_and_display_only_value_error():
-    """Pure classification contract, independent of the UI: `PermissionError`
-    (governance denies `tool.execute`) and the EXACT `execute_hub_tool()`
-    display-only `ValueError` message both classify as a refusal; an
-    unrelated `ValueError`/`RuntimeError` does not (a genuine failure must
-    keep rendering as `Failed`, not get swept into `Blocked`)."""
-    assert mcp_workbench_module._is_permission_refusal(PermissionError("denied")) is True
+def test_is_permission_refusal_classifies_typed_refusals_only():
+    """Pure classification contract, independent of the UI:
+    `MCPGovernanceDenied` (the governance seam's typed refusal) and
+    `MCPServerSourceDisplayOnlyError` (`execute_hub_tool()`'s typed
+    display-only refusal) both classify as a refusal; an unrelated
+    `ValueError`/`RuntimeError` does not (a genuine failure must keep
+    rendering as `Failed`, not get swept into `Blocked`)."""
     assert (
         mcp_workbench_module._is_permission_refusal(
-            ValueError("Server-source tools are display-only.")
+            MCPGovernanceDenied("Denied by local governance: tool.execute")
         )
+        is True
+    )
+    assert (
+        mcp_workbench_module._is_permission_refusal(MCPServerSourceDisplayOnlyError())
         is True
     )
     assert mcp_workbench_module._is_permission_refusal(ValueError("bad json")) is False
     assert mcp_workbench_module._is_permission_refusal(RuntimeError("boom")) is False
 
 
+def test_is_permission_refusal_bare_permission_error_from_tool_body_is_not_a_refusal():
+    """task-2537: a `PermissionError` that is NOT `MCPGovernanceDenied` --
+    e.g. a real OS EACCES a tool's own `execute()` body raises reading a
+    permission-denied path -- must NOT classify as a refusal. The call DID
+    reach the tool; the tool itself is what failed. Before this item, ANY
+    `PermissionError` (the bare base class) classified as a refusal, which
+    would have misrendered a genuine per-tool failure as `Blocked · not
+    run`, falsely claiming the call never reached the tool. Latent today
+    only because the one file-shaped built-in (`ingest_media`) is
+    currently a stub that never raises from its own body -- a latent lie
+    is still a lie."""
+    assert (
+        mcp_workbench_module._is_permission_refusal(
+            PermissionError("EACCES: permission denied")
+        )
+        is False
+    )
+
+
+def test_is_permission_refusal_display_only_classification_is_type_based_not_message_based():
+    """task-2539: classification no longer depends on the exact wording of
+    the display-only message -- only on `MCPServerSourceDisplayOnlyError`'s
+    TYPE. Before this item, the message was pinned only where it's
+    RENDERED, never at its raise site, so an unrelated reword of
+    `execute_hub_tool()`'s raise-site string would have silently reverted
+    the F4 fix with a fully green suite; this proves that drift is now
+    closed."""
+    assert (
+        mcp_workbench_module._is_permission_refusal(
+            MCPServerSourceDisplayOnlyError("A totally different wording.")
+        )
+        is True
+    )
+
+
 @pytest.mark.asyncio
 async def test_test_tool_run_permission_error_renders_blocked_not_failed():
-    """F4: `local_control_service.execute_tool()`'s `PermissionError`
+    """F4: `local_control_service.execute_tool()`'s `MCPGovernanceDenied`
     (governance denies `tool.execute`) is a REFUSAL -- the call never
     reached the tool -- not a run failure. It must read as `Blocked · not
     run`, never `Failed · Nms`, and must NOT show the Hub Permissions
     "Change in Permissions" jump (a different permission system --
     jumping there would not fix a governance refusal).
+
+    task-2537 (fix round B, item 3): the fake service now raises
+    `MCPGovernanceDenied` (what the real governance seam raises after this
+    item), not a bare `PermissionError` -- `_is_permission_refusal()` is
+    now type-based and would no longer classify a bare `PermissionError`
+    as a refusal (see `test_is_permission_refusal_bare_permission_error_
+    from_tool_body_is_not_a_refusal`). The message text is unchanged
+    (byte-identical), so every assertion below is untouched.
 
     Review fix (Important #1): `ToolTestHubService.gate_state` defaults to
     `"allow"`, so the Hub gate's own decision note would otherwise read
@@ -3241,7 +3305,7 @@ async def test_test_tool_run_permission_error_renders_blocked_not_failed():
     empty/hidden for a refusal, not the Hub gate's unrelated dispatch
     reasoning."""
     app = ToolTestApp()
-    app.unified_mcp_service.raise_error = PermissionError(
+    app.unified_mcp_service.raise_error = MCPGovernanceDenied(
         "Governance profile denies tool.execute."
     )
     async with app.run_test(size=(120, 40)) as pilot:
@@ -3270,18 +3334,22 @@ async def test_test_tool_run_permission_error_renders_blocked_not_failed():
 
 @pytest.mark.asyncio
 async def test_test_tool_run_server_source_display_only_value_error_renders_blocked_not_failed():
-    """F4: `execute_hub_tool()`'s bare `ValueError("Server-source tools
-    are display-only.")` is likewise a refusal (a structural mismatch),
-    not a run failure.
+    """F4: `execute_hub_tool()`'s `MCPServerSourceDisplayOnlyError`
+    ("Server-source tools are display-only.") is likewise a refusal (a
+    structural mismatch), not a run failure.
+
+    task-2539 (fix round B, item 3): the fake service now raises the typed
+    `MCPServerSourceDisplayOnlyError`, not a bare `ValueError` --
+    `_is_permission_refusal()` is now type-based. The message text is
+    unchanged (byte-identical, it's this type's own default), so every
+    assertion below is untouched.
 
     Review fix (Important #1): same self-contradiction guard as the
     `PermissionError` sibling test above -- the note must not carry the
     Hub gate's own "Ran because..." reasoning next to "Blocked · not
     run"."""
     app = ToolTestApp()
-    app.unified_mcp_service.raise_error = ValueError(
-        "Server-source tools are display-only."
-    )
+    app.unified_mcp_service.raise_error = MCPServerSourceDisplayOnlyError()
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
         workbench = app.query_one(MCPWorkbench)
@@ -3301,6 +3369,39 @@ async def test_test_tool_run_server_source_display_only_value_error_renders_bloc
         note_widget = app.query_one("#mcp-inspector-test-result-note", Static)
         assert str(note_widget.renderable) == ""
         assert note_widget.display is False
+
+
+@pytest.mark.asyncio
+async def test_test_tool_run_bare_permission_error_from_tool_body_renders_failed_not_blocked():
+    """task-2537 (fix round B, item 3), end to end -- the whole point of
+    item 3(a): a genuine `PermissionError` a TOOL'S OWN body raises (e.g. a
+    real OS EACCES reading a permission-denied path) is a run FAILURE, not
+    a refusal -- the call DID reach the tool. It must render `Failed ·
+    Nms`, never `Blocked · not run`, which would falsely claim the call
+    never reached the tool. Before this item, `_is_permission_refusal()`
+    matched any bare `PermissionError` regardless of where it was raised,
+    so this exact scenario misrendered as a refusal."""
+    app = ToolTestApp()
+    app.unified_mcp_service.raise_error = PermissionError(
+        "EACCES: permission denied reading /etc/shadow"
+    )
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("tools")
+        await pilot.pause()
+        await _select_tools_mode_row(app, pilot, 0)  # docs::fetch
+        await pilot.click("#mcp-inspector-test-tool")
+        await pilot.pause()
+        await pilot.click("#mcp-inspector-test-run")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        result = str(app.query_one("#mcp-inspector-test-result", Static).renderable)
+        first_line = result.split("\n", 1)[0]
+        assert first_line.startswith("Failed · ")
+        assert not result.startswith("Blocked")
+        assert "EACCES: permission denied reading /etc/shadow" in result
 
 
 @pytest.mark.asyncio

@@ -70,6 +70,27 @@ def _default_manifest_provider() -> dict[str, Any]:
     return describe_local_mcp_capabilities()
 
 
+class MCPGovernanceDenied(PermissionError):
+    """The in-process runtime-governance profile refused this call outright.
+
+    Raised ONLY by :meth:`LocalMCPControlService._require_runtime_
+    governance_allowed` -- the ONE seam where a governance RULE (a
+    different permission system from the Hub's own Allow/Ask/Off gate,
+    ``unified_control_plane_service.py``'s ``gate_tool_test()``) denies an
+    action before it ever reaches the tool. Subclasses ``PermissionError``
+    so any existing ``except PermissionError`` handler upstream keeps
+    working unchanged.
+
+    task-2537 (PR-T3 fix round B, item 3): exists so a caller
+    (``mcp_workbench._is_permission_refusal()``) can tell "governance
+    refused this call" apart from an unrelated ``PermissionError`` a
+    TOOL'S OWN body might raise (e.g. a genuine OS EACCES reading a
+    permission-denied path) -- both used to be plain ``PermissionError``,
+    indistinguishable by type, so a real per-tool failure risked
+    misrendering as a refusal that never reached the tool.
+    """
+
+
 class LocalMCPControlService:
     def __init__(
         self,
@@ -879,9 +900,15 @@ class LocalMCPControlService:
         action_name: str,
         payload: Mapping[str, Any],
     ) -> dict[str, Any]:
+        # task-2537 (fix round B, item 3): every raise below is
+        # `MCPGovernanceDenied`, not bare `PermissionError` -- this is the
+        # ONE seam that decides "governance refused this call outright",
+        # and callers (`mcp_workbench._is_permission_refusal()`) need to
+        # tell it apart from an unrelated `PermissionError` a tool's own
+        # body might raise.
         governance = self._governance_preview_for_runtime_action(action_name, payload)
         if governance["decision"] == "deny":
-            raise PermissionError(
+            raise MCPGovernanceDenied(
                 f"Denied by local governance: {governance['resolved_action_id']}"
             )
         if governance["decision"] == "ask":
@@ -889,10 +916,10 @@ class LocalMCPControlService:
                 return governance
             if governance.get("approval_request_id") is None:
                 governance = self._create_pending_runtime_approval(action_name, payload)
-                raise PermissionError(
+                raise MCPGovernanceDenied(
                     f"Approval required: {governance.get('approval_request_id')}"
                 )
-            raise PermissionError(self._approval_error_message(governance))
+            raise MCPGovernanceDenied(self._approval_error_message(governance))
         return governance
 
     @staticmethod

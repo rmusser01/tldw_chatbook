@@ -30,6 +30,7 @@ from tldw_chatbook.MCP.hub_tool_catalog import (
     schema_argument_names,
     server_tools_from_inventory,
 )
+from tldw_chatbook.MCP.local_control_service import MCPGovernanceDenied
 from tldw_chatbook.MCP.mcp_import import ImportCandidate
 from tldw_chatbook.MCP.permission_store import (
     BUILTIN_DEFAULT_STATE,
@@ -50,6 +51,9 @@ from tldw_chatbook.MCP.readiness import (
     server_target_readiness,
 )
 from tldw_chatbook.MCP.redaction import redact_args, redact_mapping
+from tldw_chatbook.MCP.unified_control_plane_service import (
+    MCPServerSourceDisplayOnlyError,
+)
 from tldw_chatbook.UI.MCP_Modules.mcp_audit_mode import MCPAuditMode
 from tldw_chatbook.UI.MCP_Modules.mcp_inspector import (
     _ORIGIN_SENTENCES,
@@ -188,15 +192,6 @@ def _safe_exception_text(exc: BaseException) -> str:
         return "<error redacted>"
 
 
-# F4 (PR-T3 task 3): the exact display-only refusal message
-# `UnifiedMCPControlPlaneService.execute_hub_tool()` raises for a
-# server-source key (`unified_control_plane_service.py`) -- matched
-# EXACTLY (not merely `isinstance(exc, ValueError)`) so an unrelated
-# `ValueError` from a genuine tool/formatting failure is never
-# misclassified as a refusal.
-_SERVER_SOURCE_DISPLAY_ONLY_MESSAGE = "Server-source tools are display-only."
-
-
 def _is_permission_refusal(exc: BaseException) -> bool:
     """Whether `exc` is a REFUSAL to run the tool -- the call never
     reached the tool at all -- rather than an actual run failure.
@@ -205,23 +200,46 @@ def _is_permission_refusal(exc: BaseException) -> bool:
     `_run_tool_test()`'s generic `except Exception` and render as `Failed
     · Nms`, indistinguishable from a genuine tool crash or timeout:
 
-      - `PermissionError`, raised by `local_control_service.execute_tool()`
-        (and its sibling methods) when the in-process runtime-governance
+      - `MCPGovernanceDenied`, raised by
+        `local_control_service.LocalMCPControlService._require_runtime_
+        governance_allowed()` when the in-process runtime-governance
         profile denies the action -- a DIFFERENT permission system from
         the Hub's own Allow/Ask/Off gate (`_resolve_test_gate()`), checked
         earlier in `on_mcp_inspector_tool_test_requested()` and already
         handled there.
-      - the bare `ValueError` `execute_hub_tool()` raises for a
-        server-source key (`_SERVER_SOURCE_DISPLAY_ONLY_MESSAGE`) --
-        structurally can't run from this path at all.
+      - `MCPServerSourceDisplayOnlyError`, raised by
+        `unified_control_plane_service.UnifiedMCPControlPlaneService.
+        execute_hub_tool()` for a server-source key -- structurally can't
+        run from this path at all.
 
     A refusal is not a failure: it must read as `Blocked · not run`
     (`MCPInspector.show_tool_result(blocked=True, ...)`), not `Failed`,
     which would misleadingly imply an attempted, timed run.
+
+    task-2537 + task-2539 (PR-T3 fix round B, item 3): this used to match
+    `isinstance(exc, PermissionError)` (the bare base class) OR an EXACT
+    string match against a `ValueError`'s text -- two independent
+    defects:
+
+      - too broad: ANY `PermissionError`, including one a tool's own
+        `execute()` body raises for an unrelated reason (e.g. a genuine
+        OS EACCES), would misrender as `Blocked · not run` -- claiming
+        the call never reached the tool when it actually did, and the
+        tool itself is what failed.
+      - prose-dependent: the matched `ValueError` string was pinned only
+        where it's RENDERED, never at its raise site -- an unrelated
+        reword there would have silently reverted this classifier's own
+        fix with a fully green suite.
+
+    Both call sites now raise a DEDICATED subclass instead of the bare
+    base class (`MCPGovernanceDenied(PermissionError)`,
+    `MCPServerSourceDisplayOnlyError(ValueError)`) and this matches those
+    TYPES, not the base classes and not the message text -- a tool-body
+    `PermissionError` (not `MCPGovernanceDenied`) now falls through to the
+    ordinary `Failed` path, and a reword of the display-only message no
+    longer has any bearing on classification.
     """
-    if isinstance(exc, PermissionError):
-        return True
-    return isinstance(exc, ValueError) and str(exc) == _SERVER_SOURCE_DISPLAY_ONLY_MESSAGE
+    return isinstance(exc, (MCPGovernanceDenied, MCPServerSourceDisplayOnlyError))
 
 
 MCP_HUB_MODES: dict[str, dict[str, str]] = {
