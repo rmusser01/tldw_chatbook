@@ -2480,25 +2480,31 @@ class UnifiedMCPControlPlaneService:
             blocked_message = _ADVANCED_EXECUTE_BLOCKED_MESSAGE.format(
                 tool=normalized_tool_name or "This tool"
             )
-            # Fix Round A, Item 5: `error=` is what makes this row
-            # distinguishable from a bare, unexplained "denied" --
-            # `record_tool_decision()` maps `decision="denied"` plus a
-            # truthy `error` to `error_category="approval_cancelled"`
-            # instead of the generic "denied" fallback, the SAME existing
-            # vocabulary its other callers already rely on for a "denied,
-            # and we have a reason" row (see
-            # `test_record_tool_decision_writes_denied_record` and
-            # `console_chat_controller.py`'s shutdown-mid-approval
-            # recorder). The message text itself is never persisted --
-            # `error` only selects the category; the row's `error_category`
-            # is a sanitized token, never free text, by the execution log's
-            # metadata-only design.
+            # Fix Round B, Item 1: Fix Round A had this row reuse the
+            # `error=` mechanism to reach `error_category="approval_
+            # cancelled"` -- but that category means a user cancelled an
+            # approval that was genuinely OFFERED, and that never happened
+            # here: the permission GATE denied this outright, before any
+            # approval could be offered. Reusing the vocabulary made the
+            # row specific and FALSE instead of generic and true. This now
+            # passes the honest, explicit `error_category="gate_denied"`
+            # token instead -- chosen over "policy_denied" to stay
+            # consistent with this exact code path's own vocabulary
+            # (`gate_tool_test_by_key()`, `_resolve_test_gate()`,
+            # `EffectiveToolState.origin="gate_error"` -- all "gate", never
+            # "policy") and to avoid a false cross-reference to the
+            # separate runtime-policy engine (`runtime_policy/types.py`'s
+            # `PolicyDeniedError`), which is a different subsystem denying
+            # for a different reason. The message text itself is still
+            # never persisted -- `error_category` is a sanitized token,
+            # never free text, by the execution log's metadata-only
+            # design.
             self.record_tool_decision(
                 BUILTIN_SERVER_KEY,
                 normalized_tool_name,
                 decision="denied",
                 initiator="test",
-                error=blocked_message,
+                error_category="gate_denied",
             )
             raise PermissionError(blocked_message)
 
@@ -2590,6 +2596,7 @@ class UnifiedMCPControlPlaneService:
         decision: str,
         initiator: str = "agent",
         error: str | None = None,
+        error_category: str | None = None,
     ) -> None:
         """Best-effort log a tool-call decision that never executed.
 
@@ -2601,6 +2608,22 @@ class UnifiedMCPControlPlaneService:
         lesson, the ``self.execution_log`` property access happens
         *inside* the try, since the property itself can raise.
 
+        Fix Round B, Item 1: ``error_category`` was added because the
+        pre-existing ``decision``/``error`` derivation below has exactly
+        one vocabulary slot for "denied, and we have a reason" --
+        ``"approval_cancelled"`` -- and that term has a real, narrower
+        meaning: a user actively dismissing/cancelling an approval that
+        was genuinely OFFERED (see ``test_record_tool_decision_writes_
+        denied_record`` and ``console_chat_controller.py``'s shutdown-
+        mid-approval recorder, both of which keep using the derivation
+        below unchanged). A permission GATE denying a call outright --
+        no approval was ever offered, nobody cancelled anything -- is a
+        different fact and needs its own token; forcing it through
+        ``error=`` to hit the same branch produced a row that was
+        specific and FALSE rather than generic and true (the bug this
+        parameter exists to close -- see ``execute_advanced_tool()``'s
+        deny branch).
+
         Args:
             server_key: Prefixed server key the tool belongs to.
             tool_name: Name of the tool the decision applies to.
@@ -2608,7 +2631,18 @@ class UnifiedMCPControlPlaneService:
                 ``"timeout"``).
             initiator: Who/what produced the decision; defaults to
                 ``"agent"``.
-            error: Optional human-readable detail for the record.
+            error: Optional human-readable detail for the record. Only
+                used, together with ``decision``, to *derive*
+                ``error_category`` when ``error_category`` itself is not
+                supplied -- the text is never persisted.
+            error_category: Optional explicit category token, used
+                verbatim (through ``safe_metadata_token()``) instead of
+                the ``decision``/``error`` derivation below. Because
+                ``safe_metadata_token()`` rejects any value containing
+                whitespace, this can only ever carry a single bare token
+                (e.g. ``"gate_denied"``), never a sentence -- do not
+                retry passing prose here, it will just come back as
+                ``"invalid"``.
         """
         try:
             log = self.execution_log
@@ -2623,15 +2657,19 @@ class UnifiedMCPControlPlaneService:
                 status="blocked",
                 duration_ms=0,
                 error_category=(
-                    "approval_timeout"
-                    if "timeout" in decision
-                    else "approval_cancelled"
-                    if decision == "denied" and error
-                    else "denied"
-                    if decision == "denied"
-                    else "execution_bridge_failed"
-                    if error
-                    else "blocked"
+                    error_category
+                    if error_category is not None
+                    else (
+                        "approval_timeout"
+                        if "timeout" in decision
+                        else "approval_cancelled"
+                        if decision == "denied" and error
+                        else "denied"
+                        if decision == "denied"
+                        else "execution_bridge_failed"
+                        if error
+                        else "blocked"
+                    )
                 ),
             )
             log.append(record)
