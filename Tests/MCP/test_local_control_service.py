@@ -278,7 +278,19 @@ def test_fake_local_runtime_delegate_protocol_shapes_match_the_real_delegate():
     test does not compare them. What must never drift is WHICH FIELDS
     exist: a future change to either real method (a renamed or added key)
     that this fake does not also get would otherwise stay invisible to
-    every test written against the fake, exactly as it did before."""
+    every test written against the fake, exactly as it did before.
+
+    Fix Round H (PR-T3 review), Item 2a: `get_runtime_health()` is a THIRD
+    hand-mirrored method of this same fake/real pair, previously pinned by
+    nothing at all -- not even the comment-only "must not drift" discipline
+    the other two had. Verified before adding this line: temporarily adding
+    a bogus key to the real delegate's `get_runtime_health()` left all 43
+    OTHER tests across this file and `test_unified_control_plane_service.py`
+    green (44 collected total; only this NEW assertion caught it) -- the
+    raw-JSON Advanced dump renders whatever this method returns verbatim to
+    the user, so a silently-diverged fake would certify a rendering
+    scenario a real run could never produce. Same policy as the two lines
+    above: key SETS only."""
     real_delegate = LocalMCPRuntimeDelegate(manifest_provider=lambda: {})
     fake_delegate = FakeLocalRuntimeDelegate()
 
@@ -287,6 +299,9 @@ def test_fake_local_runtime_delegate_protocol_shapes_match_the_real_delegate():
     )
     assert set(fake_delegate.get_protocol_diagnostics().keys()) == set(
         real_delegate.get_protocol_diagnostics().keys()
+    )
+    assert set(fake_delegate.get_runtime_health().keys()) == set(
+        real_delegate.get_runtime_health().keys()
     )
 
 
