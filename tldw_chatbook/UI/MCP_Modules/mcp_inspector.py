@@ -2276,7 +2276,7 @@ class MCPInspector(Vertical):
 
         interpretation: str | None = None
         if blocked:
-            result_widget.update(f"Blocked · not run\n{text or ''}")
+            result_widget.update(f"{_ADVANCED_BLOCKED_HEADING}\n{text or ''}")
         elif not ok:
             status_line = f"Failed{_duration_segment(duration_ms)}"
             result_widget.update(f"{status_line}\n{text or ''}")

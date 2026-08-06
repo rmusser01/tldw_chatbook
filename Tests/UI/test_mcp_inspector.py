@@ -2060,6 +2060,32 @@ async def test_show_tool_result_decision_note_on_blocked_path():
 
 
 @pytest.mark.asyncio
+async def test_show_tool_result_blocked_heading_uses_the_shared_constant(monkeypatch):
+    """Fix Round A, Minor #4: `_ADVANCED_BLOCKED_HEADING` is documented as
+    "reused verbatim" by `show_tool_result()`'s blocked path -- this pins
+    that it is actually SOURCED from the constant, not a second hand-typed
+    copy of the same string that could silently drift from it."""
+    monkeypatch.setattr(
+        mcp_inspector_module, "_ADVANCED_BLOCKED_HEADING", "Blocked · patched"
+    )
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        tool = _tool()
+        await inspector.show_tool(tool)
+        await pilot.pause()
+        await pilot.click("#mcp-inspector-test-tool")
+        await pilot.pause()
+        inspector.show_tool_result(
+            server_key=tool.server_key, tool_name=tool.name, ok=False,
+            text="boom", duration_ms=0, blocked=True,
+        )
+        await pilot.pause()
+        result = str(app.query_one("#mcp-inspector-test-result", Static).renderable)
+        assert result.startswith("Blocked · patched")
+
+
+@pytest.mark.asyncio
 async def test_show_tool_result_decision_note_on_failed_path():
     app = InspectorApp()
     async with app.run_test(size=(100, 60)) as pilot:
