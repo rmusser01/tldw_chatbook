@@ -989,7 +989,17 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 "sources_in_error": 0,
                 "total_items": 0,
                 "new_items": 0,
-                "latest_run_status": "unavailable",
+                # Review finding I1: was the bare literal "unavailable" --
+                # inconsistent with the "states, not faults" vocabulary
+                # TASK-2313 AC#2 established everywhere else on this
+                # screen, and (worse) indistinguishable from a plain
+                # missing value if some future caller ever compared it
+                # loosely. This IS a real fault (an exception was just
+                # raised fetching the profile), so it stays distinct from
+                # both `WatchlistsBackendController.NOT_CONFIGURED_STATUS`
+                # (feature not wired up) and `None`/"no runs yet" (healthy,
+                # simply-unrun) -- see `_latest_run_status_text`.
+                "latest_run_status": WatchlistsBackendController.LOOKUP_FAILED_STATUS,
                 "failed_runs": [],
                 "active_alert_rules": 0,
             }
@@ -2446,8 +2456,24 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         """TASK-2313, AC#2: "no runs yet" is a state; a bare "unavailable"
         reads as a fault for the same reason `_watchlists_state_summary_
         text` was corrected -- there is nothing unavailable about a
-        watchlist that has simply never been checked yet."""
+        watchlist that has simply never been checked yet.
+
+        Review finding I1: that fix originally collapsed a THIRD, distinct
+        condition -- `scope_service` itself not being wired up -- into the
+        same `None`/"no runs yet" text, so "the feature isn't connected"
+        silently read as "this watchlist is healthy and hasn't run." Both
+        of the honest-but-degraded sentinels
+        (`WatchlistsBackendController.NOT_CONFIGURED_STATUS` and
+        `.LOOKUP_FAILED_STATUS`) get their own text here, checked before
+        the generic `not status` fallback so neither is ever mistaken for
+        "no runs yet" or folded into the free-text branch below (which
+        exists for real DB-sourced run statuses like "completed"/"failed").
+        """
         status = self.overview_data.get("latest_run_status")
+        if status == WatchlistsBackendController.NOT_CONFIGURED_STATUS:
+            return "Latest run status: not connected"
+        if status == WatchlistsBackendController.LOOKUP_FAILED_STATUS:
+            return "Latest run status: couldn't check"
         if not status:
             return "Latest run status: no runs yet"
         return f"Latest run status: {status}"
@@ -5435,6 +5461,37 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             provider_key = default_briefing_provider()
         return provider_display_name(provider_key)
 
+    #: UAT batch-5 review, m3. `briefing_service._error_text` already caps
+    #: at 1000 chars server-side and never a traceback, but this task made
+    #: that text fire in an UNCONDITIONAL toast at failure time rather than
+    #: requiring a click into the row's detail region -- a wider default
+    #: exposure than before, even though nothing here is a NEW leak. A
+    #: toast is a one-line surface; 1000 chars (or any embedded newline,
+    #: the shape a raw HTTP response body or header dump takes, unlike a
+    #: curated one-line provider message such as "OpenAI API Key is
+    #: required but not found.") is far more than it should ever carry.
+    _MAX_BRIEFING_FAILURE_REASON_CHARS = 160
+
+    @classmethod
+    def _bounded_briefing_failure_reason(cls, raw_reason: str) -> str:
+        """Bound/shape a provider's own failure text before an unconditional
+        toast (review finding m3): collapse embedded newlines/whitespace
+        first -- a multi-line dump must not survive as a single
+        deceptively-long "clean" line -- then cap the result to a toast-
+        appropriate length. Every sampled curated provider message (e.g.
+        "OpenAI API Key is required but not found.") is short and single-
+        line and passes through unchanged; anything shaped like a raw
+        payload or header dump is truncated or, for pathological input,
+        replaced entirely, so a bug elsewhere in the ~9 bridged provider
+        handlers cannot turn this into a payload sink.
+        """
+        collapsed = " ".join(raw_reason.split())
+        if not collapsed:
+            return "no reason was recorded"
+        if len(collapsed) > cls._MAX_BRIEFING_FAILURE_REASON_CHARS:
+            collapsed = collapsed[: cls._MAX_BRIEFING_FAILURE_REASON_CHARS].rstrip() + "…"
+        return collapsed
+
     def _notify_briefing_failure(self, row: Mapping[str, Any]) -> None:
         """TASK-2311: surface a failed generation's reason at failure time,
         without requiring the user to click the row.
@@ -5445,7 +5502,12 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         attempted (which can differ from `_briefing_provider_display()`'s
         prospective answer if the default preset changed mid-flight), and
         the provider's own failure text. `markup=False`: a provider's error
-        message is untrusted, remote-influenced text.
+        message is untrusted, remote-influenced text. The reason itself is
+        bound/shaped by `_bounded_briefing_failure_reason` (review finding
+        m3) before it ever reaches the toast -- the full, uncapped text
+        (still capped at 1000 chars server-side, never a traceback) remains
+        available by clicking into the row's own detail region, unchanged
+        from before this task.
         """
         from ...Chat.provider_catalog import provider_display_name
 
@@ -5456,7 +5518,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             if provider_key
             else self._briefing_provider_display()
         )
-        reason = str(row.get("error") or "").strip() or "no reason was recorded"
+        reason = self._bounded_briefing_failure_reason(str(row.get("error") or ""))
         # Live-verified trap: the provider's own message is very often
         # already a full sentence with its own trailing period (e.g.
         # "OpenAI API Key is required but not found.") -- appending another

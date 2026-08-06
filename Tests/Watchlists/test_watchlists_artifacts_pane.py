@@ -1062,6 +1062,81 @@ async def test_a_failed_generation_toasts_its_reason_without_row_selection(monke
 
 
 @pytest.mark.asyncio
+async def test_a_failed_generation_toast_bounds_a_long_or_multiline_provider_reason(
+    monkeypatch,
+):
+    """UAT batch-5 review, m3: TASK-2311 made a failed generation's reason
+    fire in an UNCONDITIONAL toast rather than requiring a click into the
+    row's detail region -- a wider default exposure for whatever text a
+    provider handler's exception carries. `_error_text` (`briefing_
+    service.py`) already caps at 1000 chars server-side and never a
+    traceback, but 1000 chars -- or anything with embedded newlines, the
+    shape a raw HTTP response body or header dump takes, unlike a curated
+    one-line provider message -- is still far more than a one-line toast
+    should ever carry. This reproduces exactly that shape (a multi-line,
+    >1000-char exception message) and asserts the toast collapses it to a
+    single line and bounds its length, rather than dumping it verbatim.
+    """
+    app = _build_test_app()
+    app.notify = Mock()
+    watchlist_id = _seed_watchlist(app)
+
+    huge_multiline_body = "\n".join(
+        [f"HTTP/1.1 500 Internal Server Error line {i}" for i in range(60)]
+    )
+
+    class _PayloadDumpingChat:
+        def __call__(self, **kwargs):
+            raise RuntimeError(huge_multiline_body)
+
+    _use_fake_chat(monkeypatch, _PayloadDumpingChat())
+
+    async with _open_artifacts(app, watchlist_id) as (screen, pilot, _host):
+        await _press_generate(screen, pilot, app, watchlist_id)
+
+        rows = _briefing_rows(app, watchlist_id)
+        assert any(row["status"] == "failed" for row in rows), (
+            "the generation must actually have failed for this test to mean "
+            "anything"
+        )
+        # The row itself keeps the server-side-capped-but-still-long text --
+        # only the unconditional TOAST is bounded further. Confirms the
+        # fixture is exercising the real >1000-char/multiline shape this
+        # test is about, not accidentally a short message.
+        failed_row = next(row for row in rows if row["status"] == "failed")
+        assert "\n" in str(failed_row.get("error") or ""), (
+            "precondition: the stored error is genuinely multi-line"
+        )
+
+        assert app.notify.called
+        args, kwargs = app.notify.call_args
+        message = args[0]
+        assert kwargs.get("markup") is False
+
+        assert "\n" not in message, (
+            "a multi-line provider dump must never reach the toast as "
+            "multiple lines"
+        )
+        assert len(message) < 400, (
+            f"the toast must stay a short, bounded line, not echo the "
+            f"provider's full (capped-at-1000-chars) text verbatim: "
+            f"{len(message)} chars"
+        )
+        # The bound is on SIZE/SHAPE (one short line), not content-pattern
+        # redaction -- text near the START of a long reason can still
+        # appear (this fixture's repeating phrase is no exception). What
+        # must NOT happen is the tail surviving: the 60-line fixture's last
+        # line is only reachable past the 160-char cap, so its presence
+        # would mean truncation did not actually happen.
+        assert "line 59" not in message, (
+            f"the full multi-line payload must not survive into the toast "
+            f"verbatim -- the tail line only fits if truncation failed: "
+            f"{message!r}"
+        )
+        assert "…" in message, "a truncated reason must carry its own marker"
+
+
+@pytest.mark.asyncio
 async def test_the_provider_is_visible_before_generating():
     """TASK-2311, AC#3: the provider Generate will use must be visible
     BEFORE the user presses it, not only afterward in a finished row."""

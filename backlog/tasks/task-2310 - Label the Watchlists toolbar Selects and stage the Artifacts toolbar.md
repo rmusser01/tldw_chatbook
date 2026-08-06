@@ -122,6 +122,25 @@ already first, `variant="primary"`.
   minimum`, reproduced RED in the full-file run and GREEN standalone --
   order-dependent, pre-existing, confirmed unrelated).
 
+### Follow-up (UAT batch-5 whole-branch review, finding m1)
+
+AC#1's literal text ("every Select on the Watchlists screen") was broader
+than this task's own scoped survey (Implementation Plan step 1: "Sources/
+Items toolbar filters, Artifacts mode/preset/cadence pickers, Rules
+condition/severity") actually reached. Two pre-existing, tooltip-only
+Selects on modals launched FROM the Artifacts pane —
+`briefing_preset_modal.py`'s per-speaker Character/Voice `PruneSafeSelect`s
+and `kept_briefings_modal.py`'s `#kbm-preset-select` (structurally
+identical to `#artifacts-preset-select`, which DID get a label in this
+task) — were missed, since neither file is touched by this task's original
+diff. Labeled both rather than narrowing the AC, per the review's stated
+preference: `briefing_preset_modal.py` gained a column-header row (`Name /
+Role prompt / Character / Voice`, reusing the existing per-row width
+classes for alignment) above the repeated speaker rows; `kept_briefings_
+modal.py`'s preset picker gained the same `watchlists-inline-select-label`
+"Preset" `Static` `#artifacts-preset-select` already has. Both
+mutation-verified (Edit-tool revert -> RED -> restored byte-exact, md5).
+
 ### Files
 
 * `tldw_chatbook/UI/Watchlists_Modules/sources_pane.py`,
@@ -130,3 +149,6 @@ already first, `variant="primary"`.
 * `Tests/Watchlists/test_watchlists_sources_pane.py`, `test_watchlists_
   items_pane.py`, `test_watchlists_artifacts_pane.py`, `test_watchlists_
   rules_pane.py`.
+* Follow-up (m1): `tldw_chatbook/UI/Watchlists_Modules/briefing_preset_
+  modal.py`, `kept_briefings_modal.py`; `Tests/Watchlists/test_watchlists_
+  briefing_presets_ui.py`, `test_kept_briefings_modal.py`.

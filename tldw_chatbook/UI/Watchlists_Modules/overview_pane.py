@@ -7,6 +7,7 @@ from textual.reactive import reactive
 from textual.widgets import DataTable, Static
 
 from ...Widgets.recompose_capture_guard import RecomposeCaptureGuard
+from .watchlists_backend_controller import WatchlistsBackendController
 
 
 class OverviewPane(RecomposeCaptureGuard, Vertical):
@@ -29,6 +30,16 @@ class OverviewPane(RecomposeCaptureGuard, Vertical):
         "active_alert_rules": "overview-active-alert-rules",
     }
 
+    #: Review finding I1's honest-rendering fix, mirrored here so the two
+    #: `latest_run_status` sentinels (`scope_service` not wired up; a real
+    #: exception fetching the profile) never leak into this card as their
+    #: raw machine-readable literal -- matches
+    #: `WatchlistsCollectionsScreen._latest_run_status_text`'s mapping.
+    _LATEST_RUN_STATUS_CARD_TEXT = {
+        WatchlistsBackendController.NOT_CONFIGURED_STATUS: "not connected",
+        WatchlistsBackendController.LOOKUP_FAILED_STATUS: "couldn't check",
+    }
+
     def _card_value(self, key: str, label: str) -> str:
         # TASK-2313, AC#2: `None` (as `latest_run_status` now legitimately
         # is when nothing has run yet -- see `WatchlistsBackendController.
@@ -40,6 +51,8 @@ class OverviewPane(RecomposeCaptureGuard, Vertical):
         value = self.data.get(key, "-")
         if value is None:
             value = "-"
+        elif key == "latest_run_status" and value in self._LATEST_RUN_STATUS_CARD_TEXT:
+            value = self._LATEST_RUN_STATUS_CARD_TEXT[value]
         return f"{label}\n{value}"
 
     #: The three answers this region can give about a profile (TASK-1020).

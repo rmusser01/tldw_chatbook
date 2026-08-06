@@ -21,11 +21,40 @@ seconds are dropped, making the wizard feel frozen.
 UAT finding F0a. (Positive to preserve: the explicit "Skip — explore on my
 own" one-click path, and the Escape→confirm asymmetry.)
 
+**Investigation correction (review finding I2, post-implementation):** the
+UAT's own literal hypothesis above — Escape silently dropped/queued during
+an early mount window — was investigated live (tmux, fresh profile,
+Python-driven poll-then-press harness) and **was not reproduced**. A single
+Escape sent within ~5ms of the wizard's first paint reliably opened the
+finish-later confirmation every time; no mount-window drop exists for the
+literal first render, so there was never anything to "queue." The real,
+adjacent defect that produces the same "feels frozen, Escape did nothing"
+symptom is different and is described in AC#1 below and in the
+Implementation Notes: a reflexive SECOND Escape (pressed because the first
+press gave no immediate visual feedback while several heavy wizard steps
+were still settling) lands on the confirmation dialog's own Escape-cancels
+binding and silently dismisses it back to "Keep going." That is the
+mechanism this task actually fixes.
+
 ## Acceptance Criteria (the what)
 
-- [x] Escape pressed at any point after the wizard becomes visible reaches
-      the finish-later flow (queued if mid-mount, not dropped).
-- [x] A regression test covers Escape during the wizard's first render.
+- [x] A single Escape pressed at any point after the wizard becomes visible
+      — including immediately on first paint — reaches the finish-later
+      confirmation dialog. (The originally-reported "early Escape is
+      silently dropped / queued if mid-mount" mechanism was investigated
+      live and NOT reproduced: no mount-window gap exists between the
+      wizard's first paint and its Escape binding being active.)
+- [x] A reflexive second Escape, pressed within a brief settling window of
+      the confirmation dialog's own appearance, does not silently dismiss
+      it back to "Keep going" — this is the actual mechanism behind the
+      UAT's "frozen" symptom. A genuine, later Escape (after the window
+      elapses) still cancels the dialog normally; Escape is never made
+      permanently inert.
+- [x] Regression tests cover: a single Escape with no settle pause still
+      opens the confirmation; a rapid back-to-back double-Escape at first
+      render still reaches and holds the confirmation open; the settling
+      window expires so a later, deliberate Escape still cancels; a
+      Cancel-button click is never swallowed regardless of timing.
 
 ## Implementation Plan (the how)
 

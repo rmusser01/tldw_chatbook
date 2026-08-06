@@ -99,11 +99,36 @@ preset can carry a different provider than the one just displayed).
   test, confirmed unrelated). `Tests/Watchlists/test_watchlists_
   artifacts_pane.py` **130 passed**.
 
+### Follow-up (UAT batch-5 whole-branch review, finding m3)
+
+Making the failure reason fire in an UNCONDITIONAL toast (rather than
+requiring a click into the row's own detail region, its behavior before
+this task) widened the DEFAULT exposure of whatever text a provider
+handler's exception carries -- not a new leak (the row already stored and
+displayed this same, already-1000-char-capped, never-a-traceback text
+before this task; `briefing_service._error_text` is unmodified), but a
+toast is a one-line surface and firing automatically is a lower bar than
+requiring a deliberate click. Added `_bounded_briefing_failure_reason`
+(`watchlists_collections_screen.py`): collapses embedded newlines/
+whitespace to one line first (a raw HTTP response body or header dump
+takes that shape; a curated one-line provider message like "OpenAI API
+Key is required but not found." does not and passes through unchanged),
+then caps the result at 160 chars with a truncation marker. The bound is
+on SIZE and SHAPE, not content-pattern redaction -- it does not attempt to
+detect or strip specific "looks like a payload" substrings, which would
+be fragile pattern-matching; it guarantees a multi-line or very long
+reason can never reach the toast as anything but one short, bounded line.
+The full (server-side-capped, still not a traceback) text remains
+reachable by clicking into the row's own detail region, exactly as
+before this task. Mutation-verified (Edit-tool revert -> RED -> restored
+byte-exact, md5).
+
 ### Files
 
 * `tldw_chatbook/UI/Screens/watchlists_collections_screen.py` --
   `_briefing_provider_display`, `_notify_briefing_failure`, the status
-  check in `_generate_briefing`, seeding at all reseed points.
+  check in `_generate_briefing`, seeding at all reseed points. Follow-up
+  (m3): `_bounded_briefing_failure_reason`.
 * `tldw_chatbook/UI/Watchlists_Modules/artifacts_pane.py` --
   `default_provider_display` reactive, the scope-note text.
 * `tldw_chatbook/Subscriptions/briefing_service.py` (public rename),

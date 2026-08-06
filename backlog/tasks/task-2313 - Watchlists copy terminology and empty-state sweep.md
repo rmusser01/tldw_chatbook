@@ -144,3 +144,31 @@ above Console actions, with the disabled follow button reading "Follow in
 Console"; and, after the backend-controller fix, a populated-but-unrun
 profile reads "Watchlists: loaded" / "Latest run status: no runs yet"
 instead of "unavailable".
+
+### Follow-up (UAT batch-5 whole-branch review, finding I1)
+
+The `None`-not-"unavailable" fix above (AC#2) itself introduced a NEW,
+narrower honesty gap: `WatchlistsBackendController.get_overview_data`'s
+`scope_service is None` branch (the feature genuinely not wired up) also
+returned `None`, which renders identically to a healthy watchlist that
+has simply never run -- exactly the class of dishonesty this whole UAT
+programme exists to remove, one level down. Reviewer confirmed unguarded
+by mutation (reverted to a sentinel; existing suites stayed green -- no
+test anywhere constructs the controller with `scope_service=None` to
+exercise this branch).
+
+Fixed with two new sentinels on `WatchlistsBackendController`
+(`NOT_CONFIGURED_STATUS`, `LOOKUP_FAILED_STATUS`), kept apart from both a
+real DB-sourced run-status string and `None`/"no runs yet": the former for
+`scope_service is None`, the latter for `WatchlistsCollectionsScreen.
+_refresh_overview_data`'s own except-handler fallback (a REAL exception
+calling the controller -- previously the literal "unavailable", now
+consistent with the rest of this task's vocabulary instead of a bare
+fault-reading string). `_latest_run_status_text` and `OverviewPane.
+_card_value` both map the two sentinels to honest prose ("not connected",
+"couldn't check") before either ever reaches a widget, so the raw,
+machine-readable literal never leaks into UI text. Three new discriminating
+tests (controller-level, screen-method-level via a bare `object.__new__`
+instance -- no mount needed, since both inputs are plain reads/attributes
+-- and pane-level); all mutation-verified (Edit-tool revert -> RED ->
+restored byte-exact, md5).

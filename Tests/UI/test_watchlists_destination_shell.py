@@ -21,6 +21,9 @@ from tldw_chatbook.UI.Watchlists_Modules.region_layout import Region, RegionLayo
 from tldw_chatbook.UI.Watchlists_Modules.rules_pane import RulesPane
 from tldw_chatbook.UI.Watchlists_Modules.runs_pane import RunsPane
 from tldw_chatbook.UI.Watchlists_Modules.sources_pane import SourcesPane
+from tldw_chatbook.UI.Watchlists_Modules.watchlists_backend_controller import (
+    WatchlistsBackendController,
+)
 
 
 def _settings_without_splash(section, key=None, default=None):
@@ -2705,6 +2708,90 @@ async def test_a_background_tree_reload_lands_in_the_rail_without_rebuilding_the
         assert screen.query_one("#watchlists-sources-pane", SourcesPane) is pane, (
             "a background tree reload must not replace the mounted detail pane"
         )
+
+
+def test_watchlists_state_summary_text_loading_branch():
+    """UAT batch-5 review, m2: `_watchlists_state_summary_text()`'s three
+    branches (loading/error/loaded) had only the LAST two under test
+    anywhere in the suite -- "Watchlists: loading…", the transient before
+    the first snapshot resolves, was real, shipped, untested behaviour.
+
+    A bare, unmounted screen instance is enough: both inputs
+    (`_wc_loaded`/`_wc_lookup_error`) are plain instance attributes, not
+    Textual reactives, and the method touches no DOM -- no need to race an
+    async snapshot load to exercise this branch deterministically.
+    """
+    screen = object.__new__(WatchlistsCollectionsScreen)
+    screen._wc_loaded = False
+    screen._wc_lookup_error = None
+
+    assert screen._watchlists_state_summary_text() == "Watchlists: loading…"
+
+
+def test_watchlists_state_summary_text_error_and_loaded_branches_still_agree():
+    """Companion to the loading-branch test above: pins the other two
+    branches at the same unmounted-instance granularity so all three read
+    from one place."""
+    screen = object.__new__(WatchlistsCollectionsScreen)
+    screen._wc_loaded = True
+    screen._wc_lookup_error = "boom"
+    assert screen._watchlists_state_summary_text() == "Watchlists: error"
+
+    screen._wc_lookup_error = None
+    assert screen._watchlists_state_summary_text() == "Watchlists: loaded"
+
+
+def test_latest_run_status_text_distinguishes_not_configured_from_no_runs_yet():
+    """UAT batch-5 review, finding I1: `scope_service` being entirely
+    unwired (`WatchlistsBackendController.NOT_CONFIGURED_STATUS`) must
+    render distinctly from a healthy watchlist that genuinely has zero
+    runs (`None` -> "no runs yet") -- collapsing the two back into the
+    same text is the exact regression this test pins. Reverting either
+    sentinel check in `_latest_run_status_text` back to a bare `if not
+    status` turns this red.
+    """
+    # `overview_data` is `reactive({}, recompose=True)`; a bare, unmounted
+    # instance has no `_id` (Textual's `DOMNode.id` property, which the
+    # reactive descriptor's own `__get__`/`__set__` both gate on), so
+    # writing/reading it through the normal `self.overview_data = ...`
+    # attribute path raises `ReactiveError`. `_latest_run_status_text`
+    # only ever reads through a plain `.get()`, so a stand-in `_id` plus
+    # writing straight to the reactive's internal storage slot
+    # (`_reactive_<name>`, Textual's own convention) is enough and avoids
+    # mounting a whole screen for what is otherwise a pure-function test.
+    screen = object.__new__(WatchlistsCollectionsScreen)
+    screen._id = 1
+
+    screen._reactive_overview_data = {"latest_run_status": WatchlistsBackendController.NOT_CONFIGURED_STATUS}
+    not_configured_text = screen._latest_run_status_text()
+
+    screen._reactive_overview_data = {"latest_run_status": None}
+    no_runs_text = screen._latest_run_status_text()
+
+    assert not_configured_text != no_runs_text, (
+        "an unwired scope_service must not read identically to a healthy, "
+        "simply-unrun watchlist"
+    )
+    assert not_configured_text == "Latest run status: not connected"
+    assert no_runs_text == "Latest run status: no runs yet"
+
+
+def test_latest_run_status_text_reports_a_real_lookup_failure_distinctly():
+    """UAT batch-5 review, finding I1: the screen's own except-handler
+    fallback (`_refresh_overview_data`, a REAL exception fetching the
+    profile) must read as a fault, distinct from both "no runs yet" and
+    "not connected" -- and distinct from the old bare "unavailable"
+    literal, which this test also guards against reappearing verbatim.
+    """
+    screen = object.__new__(WatchlistsCollectionsScreen)
+    screen._id = 1
+    screen._reactive_overview_data = {"latest_run_status": WatchlistsBackendController.LOOKUP_FAILED_STATUS}
+
+    text = screen._latest_run_status_text()
+
+    assert text == "Latest run status: couldn't check"
+    assert text != "Latest run status: unavailable"
+    assert text != "Latest run status: no runs yet"
 
 
 @pytest.mark.asyncio

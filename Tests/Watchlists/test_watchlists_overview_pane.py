@@ -4,6 +4,9 @@ import pytest
 from textual.app import App, ComposeResult
 
 from tldw_chatbook.UI.Watchlists_Modules.overview_pane import OverviewPane
+from tldw_chatbook.UI.Watchlists_Modules.watchlists_backend_controller import (
+    WatchlistsBackendController,
+)
 
 
 class OverviewPaneHarness(App):
@@ -75,6 +78,45 @@ async def test_a_none_card_value_falls_back_to_the_dash_not_the_literal_word_non
         # A real, present `0` must still render as "0", not fall through
         # to "-" as if it were also missing.
         assert "New items\n0" in str(pane.query_one("#overview-new-items").renderable)
+
+
+@pytest.mark.asyncio
+async def test_latest_run_status_sentinels_render_as_prose_not_raw_literals():
+    """UAT batch-5 review, finding I1: the two `latest_run_status`
+    sentinels (`scope_service` unwired; a real lookup exception) must not
+    leak into this card as their raw, machine-readable literal
+    ("not_configured"/"lookup_failed") -- they get the same honest,
+    human-readable treatment `WatchlistsCollectionsScreen.
+    _latest_run_status_text` gives the Inspector's line, and the two must
+    stay distinguishable from EACH OTHER as well as from "-" (no runs) and
+    from a real DB-sourced status string.
+    """
+    app = OverviewPaneHarness()
+    async with app.run_test(size=(120, 40)) as pilot:
+        pane = app.query_one(OverviewPane)
+        base = {
+            "total_sources": 1,
+            "active_sources": 1,
+            "sources_in_error": 0,
+            "total_items": 0,
+            "new_items": 0,
+            "active_alert_rules": 0,
+            "failed_runs": [],
+        }
+
+        pane.data = {**base, "latest_run_status": WatchlistsBackendController.NOT_CONFIGURED_STATUS}
+        await pilot.pause()
+        not_configured_text = str(pane.query_one("#overview-latest-run-status").renderable)
+        assert "Latest run status\nnot connected" in not_configured_text
+        assert WatchlistsBackendController.NOT_CONFIGURED_STATUS not in not_configured_text
+
+        pane.data = {**base, "latest_run_status": WatchlistsBackendController.LOOKUP_FAILED_STATUS}
+        await pilot.pause()
+        lookup_failed_text = str(pane.query_one("#overview-latest-run-status").renderable)
+        assert "Latest run status\ncouldn't check" in lookup_failed_text
+        assert WatchlistsBackendController.LOOKUP_FAILED_STATUS not in lookup_failed_text
+
+        assert not_configured_text != lookup_failed_text
 
 
 @pytest.mark.asyncio

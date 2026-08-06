@@ -1018,3 +1018,56 @@ async def test_modal_dialog_and_columns_fit_on_screen_with_production_css(tmp_pa
                 assert app.screen.region.contains_region(widget.region), widget_id
     finally:
         chacha_db.close_connection()
+
+
+@pytest.mark.asyncio
+async def test_preset_select_carries_a_visible_preset_label(tmp_path):
+    """UAT batch-5 review, m1: `#kbm-preset-select` was tooltip-only, with
+    no persistent label -- the same "bare value, hover-only meaning"
+    pattern task-2310 removed from the Artifacts pane's own, structurally
+    identical `#artifacts-preset-select` (same `.destination-filter-strip`
+    row shape: a Select next to an action button). Geometry checked
+    against the REAL generated stylesheet, per this file's own
+    three-way-vacuity note -- a `> 0` region on an unstyled row would not
+    distinguish "labeled" from "present but invisible."
+    """
+    chacha_db = _chacha_db(tmp_path)
+    try:
+        kept_id = _kept_briefing(chacha_db, source_briefing_id=1)
+        chacha_db.create_kept_script(
+            kept_id,
+            source_script_id=None,
+            preset_name="Duo",
+            roster_snapshot_json='[{"name": "Host"}]',
+            turns_json='[{"speaker": "Host", "text": "Hi."}]',
+        )
+        modal = KeptBriefingsModal(chacha_db)
+
+        app = _ModalHost()
+        async with app.run_test(size=(160, 42)) as pilot:
+            app.push_screen(modal)
+            assert await _wait_until(
+                pilot, lambda: bool(modal.query("#kbm-kept-list Button"))
+            )
+            await pilot.click(f"#kbm-kept-btn-{kept_id}")
+            assert await _wait_until(pilot, lambda: bool(modal.query(".kbm-script")))
+
+            labels = [
+                widget
+                for widget in modal.query("#kbm-cast-toolbar Static")
+                if str(widget.renderable) == "Preset"
+            ]
+            assert len(labels) == 1, (
+                "expected exactly one visible 'Preset' label in the cast "
+                "toolbar"
+            )
+            label = labels[0]
+            assert label.region.width > 0
+            assert label.region.height > 0
+
+            preset_select = modal.query_one("#kbm-preset-select")
+            # The label must precede the Select it names, not merely exist
+            # somewhere in the toolbar.
+            assert label.region.x < preset_select.region.x
+    finally:
+        chacha_db.close_connection()

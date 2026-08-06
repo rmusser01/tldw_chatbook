@@ -552,6 +552,60 @@ async def test_add_speaker_appends_a_row_and_remove_deletes_it(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_speaker_column_labels_are_visible_above_the_character_and_voice_selects(
+    tmp_path,
+):
+    """UAT batch-5 review, m1: the per-speaker Character/Voice
+    `PruneSafeSelect`s were tooltip-only, with no persistent label -- the
+    same "bare value, hover-only meaning" pattern task-2310 removed from
+    every OTHER Select on this screen (the Artifacts pane's own,
+    structurally identical `#artifacts-preset-select` got a "Preset"
+    label in that same task). One header row now labels all four fields;
+    it must be visible with production CSS (not a bare `> 0` region check
+    -- an unstyled `height: 0` row would still be "present," which is the
+    exact three-way-vacuity failure mode this suite's other geometry
+    tests already guard against).
+    """
+    db = _db(tmp_path)
+    modal = BriefingPresetModal(db, character_options=[], voice_options=[])
+
+    app = _ModalHost()
+    async with app.run_test(size=(160, 42)) as pilot:
+        app.push_screen(modal)
+        assert await _wait_until(pilot, lambda: modal.is_mounted)
+
+        header_row = modal.query_one(".bpm-speaker-header-row")
+        assert header_row.region.height > 0
+        assert header_row.region.width > 0
+
+        labels = modal.query(".bpm-speaker-column-label")
+        assert [str(label.renderable) for label in labels] == [
+            "Name",
+            "Role prompt",
+            "Character",
+            "Voice",
+        ]
+        for label in labels:
+            assert label.region.height > 0
+            assert label.region.width > 0
+
+        # The Character/Voice labels must sit close to the columns the
+        # Selects they name occupy -- reusing `bpm-speaker-character`/
+        # `-voice` for width alignment is the actual fix; this pins that
+        # it worked, not just that four Statics with the right text exist
+        # somewhere. Exact-pixel equality is NOT asserted: `1fr` widths on
+        # the header row's `Static`s vs the data rows' `Input`s round
+        # independently (observed off-by-one), so a tolerance of a couple
+        # columns is the honest check -- "labeled and in the right
+        # neighbourhood," not "bit-identical layout math."
+        character_label, voice_label = labels[2], labels[3]
+        character_select = modal.query_one("#bpm-speaker-character-0")
+        voice_select = modal.query_one("#bpm-speaker-voice-0")
+        assert abs(character_label.region.x - character_select.region.x) <= 2
+        assert abs(voice_label.region.x - voice_select.region.x) <= 2
+
+
+@pytest.mark.asyncio
 async def test_remove_speaker_enforces_a_one_row_minimum(tmp_path):
     db = _db(tmp_path)
     modal = BriefingPresetModal(db, character_options=[], voice_options=[])

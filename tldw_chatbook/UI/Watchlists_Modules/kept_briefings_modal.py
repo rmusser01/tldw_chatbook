@@ -390,6 +390,12 @@ class KeptBriefingsModal(ModalScreen[None]):
                             id="kbm-cast-toolbar",
                             classes="destination-filter-strip",
                         ):
+                            # UAT batch-5 review, m1: was tooltip-only --
+                            # the same "bare value, hover-only meaning"
+                            # pattern task-2310 removed from the Artifacts
+                            # pane's own, structurally identical
+                            # `#artifacts-preset-select`. Same label idiom.
+                            yield Static("Preset", classes="watchlists-inline-select-label")
                             yield PruneSafeSelect(
                                 self._preset_select_options(),
                                 value=self._cast_preset_id,

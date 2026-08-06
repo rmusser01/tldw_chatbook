@@ -267,6 +267,19 @@ class BriefingPresetModal(ModalScreen[bool]):
                             id="bpm-model-input",
                         )
                     yield Static("Speakers", classes="bpm-column-heading")
+                    # UAT batch-5 review, m1: the per-speaker Character/Voice
+                    # `PruneSafeSelect`s below were tooltip-only, with no
+                    # persistent label -- the same "bare value, hover-only
+                    # meaning" pattern task-2310 removed everywhere else on
+                    # this screen. One header row, reusing the SAME width
+                    # classes as the data rows below it (`bpm-speaker-name`/
+                    # `-role`/`-character`/`-voice`) so each label lands in
+                    # the same column as the field it names.
+                    with Horizontal(classes="bpm-speaker-header-row"):
+                        yield Static("Name", classes="bpm-speaker-name bpm-speaker-column-label")
+                        yield Static("Role prompt", classes="bpm-speaker-role bpm-speaker-column-label")
+                        yield Static("Character", classes="bpm-speaker-character bpm-speaker-column-label")
+                        yield Static("Voice", classes="bpm-speaker-voice bpm-speaker-column-label")
                     for index, speaker in enumerate(self._speakers):
                         with Horizontal(
                             classes="bpm-speaker-row",

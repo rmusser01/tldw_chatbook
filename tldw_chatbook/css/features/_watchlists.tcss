@@ -1461,6 +1461,22 @@ BriefingPresetModal {
     height: 3;
 }
 
+/* UAT batch-5 review, m1: column labels for the row above, reusing the
+ * SAME `bpm-speaker-name`/`-role`/`-character`/`-voice` width classes so
+ * they land in the same columns as the fields they name. `height: auto`
+ * (not the data rows' `height: 3`, sized for bordered Input/Select) --
+ * a bare `Static` needs none of that.
+ */
+.bpm-speaker-header-row {
+    width: 100%;
+    height: auto;
+    margin-top: 1;
+}
+
+.bpm-speaker-column-label {
+    color: $text-muted;
+}
+
 .bpm-speaker-name,
 .bpm-speaker-role {
     width: 1fr;
