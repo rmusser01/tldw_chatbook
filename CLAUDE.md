@@ -154,7 +154,17 @@ def _heavy_task(self):
 
 ### Configuration
 
-Priority: env vars → config.toml → defaults
+Priority: env vars → config.toml → defaults — **except provider API keys**,
+where an explicit `api_settings.<provider>.api_key` now outranks the
+matching environment variable (`chat_with_openai` did this first;
+PR-T2/task 7 made it uniform across the ~9 bridged chat providers). Legacy
+`[API] <provider>_api_key` values are the lowest-precedence fallback,
+normalized once at load time into both `api_settings.<provider>.api_key`
+and the legacy `<provider>_api` dict the provider call reads, so Console's
+readiness check and the actual spend can no longer disagree (`config.py`'s
+`_normalize_legacy_provider_api_key`). This is scoped to that one
+credential lookup — the general env-vars-first ordering is unaffected
+everywhere else in the config loader.
 
 Key sections:
 - `[API]` - Provider keys

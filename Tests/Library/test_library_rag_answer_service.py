@@ -1005,16 +1005,28 @@ def test_the_system_prompt_pins_the_honesty_contract():
 
 # --- Provider resolution (PR-3 task 2) --------------------------------------
 #
-# `LibraryRagQueryState.from_values`'s `provider_ready` gate
-# (`Library/library_rag_state.py:893-897`) has existed since before this
-# feature but was always fed a hardcoded `True` by the screen
-# (`UI/Screens/library_screen.py`, under task-249's "the runtime initializes
-# lazily" contract) -- these two functions are what task 2 uses to feed it
-# honestly. Precedent for the resolution shape (read `config.default_
-# api_endpoint` THROUGH the module, so a test can monkeypatch it) is
-# `Subscriptions/briefing_service.py:315 _default_provider()`; unlike that
-# function this one also reports "not ready" for an empty/missing endpoint
-# rather than assuming config.py's own "openai" fallback always holds.
+# `LibraryRagQueryState.from_values`'s provider-readiness gate has existed
+# since before this feature but was always fed a hardcoded `True` by the
+# screen (`UI/Screens/library_screen.py`, under task-249's "the runtime
+# initializes lazily" contract) -- these two functions are what task 2 uses
+# to feed it honestly. Precedent for the resolution shape (read `config.
+# default_api_endpoint` THROUGH the module, so a test can monkeypatch it)
+# is `Subscriptions/briefing_service.py:315 _default_provider()`; unlike
+# that function this one also reports "not ready" for an empty/missing
+# endpoint rather than assuming config.py's own "openai" fallback always
+# holds.
+#
+# Note on the gate's shape today (PR-T2): what was once a separately-
+# settable `provider_ready: bool` parameter on `LibraryRagQueryState.
+# from_values` is gone -- PR-T2 Task 4 collapsed it into one
+# `provider_name: str | None` parameter, with readiness DERIVED as
+# `bool((provider_name or "").strip())` (`Library/library_rag_state.py`,
+# `from_values`), so the two can no longer disagree. `library_rag_answer_
+# provider_ready()` below (this module's actual subject) stayed dead code
+# in production -- zero real callers -- until PR-T2 Task 7 wired it into
+# both of `UI/Screens/library_screen.py`'s run gates, asking the same
+# `Chat/provider_readiness.get_provider_readiness` question Console's own
+# gate asks instead of merely "was an endpoint name configured".
 
 
 def test_resolve_provider_reads_the_configured_default_endpoint(monkeypatch):

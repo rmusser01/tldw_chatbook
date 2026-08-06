@@ -200,9 +200,14 @@ are covered on the child pages, chiefly [Context & RAG](console/context-and-rag.
 - **Settings ▸ Console Behavior** — parallel-run limit, paste collapse, and
   other Console preferences.
 - `config.toml`: `[chat_defaults]` (default provider/model/sampling),
-  `[api_settings.*]` (per-provider keys, endpoints, streaming), `[console]`
-  and `[console.background_effects]` (paste collapse, ambience),
-  `[chat.images]` (attachments), `[general]` `default_tab` (start here).
+  `[api_settings.*]` (per-provider keys, endpoints, streaming — the modern
+  form; an explicit key here now outranks that provider's environment
+  variable), `[API]` (legacy `<provider>_api_key` values — still honored,
+  lowest precedence of the three, normalized once at load into the same
+  credential both this screen's readiness check and Library's RAG Answer
+  gate use), `[console]` and `[console.background_effects]` (paste
+  collapse, ambience), `[chat.images]` (attachments), `[general]`
+  `default_tab` (start here).
 - Child pages: [Chat basics](console/chat-basics.md) · [Sessions, tabs & workspaces](console/sessions-tabs-workspaces.md) · [Branching & rewind](console/branching-and-rewind.md) · [Attachments, images & voice](console/attachments-images-voice.md) · [Agent runs & tools](console/agent-runs-and-tools.md) · [Context & RAG](console/context-and-rag.md)
 - Deep dives: [Speech services](../Features/Speech-Services-Guide.md) (Mic dictation backends) · [Chat dictionaries](../Features/ChatDictionaries-Documented.md).
 
@@ -225,4 +230,8 @@ are covered on the child pages, chiefly [Context & RAG](console/context-and-rag.
 
 —
 *Verified against 4646922ed — 2026-08-04 (PR-4 Task 6 live check, including
-a real-provider send round trip)*
+a real-provider send round trip). Verified against e2c706303 — 2026-08-06
+(PR-T2, docs pass against shipped code/tests, live check pending Task 9):
+a legacy `[API] <provider>_api_key` now satisfies this screen's own
+readiness check too, and a modern `api_settings.<provider>.api_key` now
+outranks that provider's environment variable.*

@@ -61,7 +61,13 @@ source." Those are quiet nudges, not errors. Real failures are louder — a
 Next / Recovery / Owner.
 
 The **"mode: … ▸"** button cycles between the two modes; switching resets
-the current results.
+the current results. Its tooltip names which mode a press switches *to*
+and, for RAG Answer, that it's the paid one: "Next: RAG Answer — calls a
+paid provider." / "Next: Search — stays local." Once you're in RAG Answer
+mode with a provider configured, the query row's status line (silent in
+Search mode) states the same fact before you press Run: "RAG Answer sends
+your question and the evidence to \<provider>. Search stays local." — a
+statement, not a confirmation gate; nothing blocks Run because of it.
 
 - **Search** — keyword matching over your sources; works with nothing extra
   installed.
@@ -97,8 +103,10 @@ either way.
 
 RAG Answer mode doesn't stop at retrieval. Once results land, a second
 step asks your configured LLM provider to answer the question from those
-results, showing "Generating answer…" under a new **"Answer"** heading
-while it works — a step Search mode never triggers.
+results, under a new **"Answer"** heading — a step Search mode never
+triggers. While it works, the status line names the provider about to be
+billed, e.g. "Asking anthropic…", rather than a generic "Generating
+answer…".
 
 The call is one shot, not streamed: the full answer lands in a single
 update, not a token flow. It's grounded strictly in what was just
@@ -127,6 +135,16 @@ Four outcomes:
   again to retry."; there's no separate retry button, since **Run**
   already re-triggers both retrieval and the answer step.
 
+**What it cost.** Every outcome above gets a quiet footer line naming what
+the call actually cost, except the abstention reached without ever calling
+the provider (the "nothing retrieved is even eligible to cite" case above
+— genuinely free). The footer reads `provider · model · $0.0031 (1,240
+tok)` when pricing for that model is known, or `provider · model · 1,240
+tok · pricing unknown` when it isn't — it never prints a dollar figure it
+can't source. A call that spent money but then failed outright still shows
+this line: a call that cost money says so even when it didn't produce a
+usable answer.
+
 The same retrieval-coverage line shown above the evidence rows below
 (e.g. "Semantic search found nothing from: Notes.", "No strong semantic
 matches — results below are weak.") is also handed to the model as part
@@ -134,11 +152,17 @@ of its prompt, so it can tell "your notes say nothing about this" apart
 from "your notes were never searched."
 
 **Needs its own provider.** Separately from the embeddings support
-retrieval itself needs, RAG Answer mode needs an LLM provider/model
-configured. With none, Run blocks: **"Blocked | Select a provider/model
-before asking for a RAG answer."**, recovery pointer "Console controls".
-Search mode has no such requirement, so — like the embeddings-support
-block above — it stays the zero-cost escape while you configure one.
+retrieval itself needs, RAG Answer mode needs an LLM provider *with a
+working credential* configured — an endpoint name alone is no longer
+enough to unblock Run. With neither, Run blocks: **"Blocked | Select a
+provider/model before asking for a RAG answer."**, recovery pointer
+"Console controls". A key set either the modern way
+(`[api_settings.<provider>] api_key = …`) or the legacy way (`[API]
+<provider>_api_key = …`) satisfies it — the same credential check
+Console's own readiness display uses, so a provider that works in Console
+now works here too. Search mode has no such requirement, so — like the
+embeddings-support block above — it stays the zero-cost escape while you
+configure one.
 
 Only the retrieved evidence, not the generated answer text, currently
 travels to Console — see [Sending evidence to
@@ -253,6 +277,10 @@ indexes — if RAG Answer mode reports an empty index, go there to backfill.
     processing settings; `[rag_search]` — legacy, kept for compatibility.
   - `[embedding_config]` — embedding models and cache. (There is no
     `[embeddings]` section — the table is named `embedding_config`.)
+  - `[api_settings.<provider>]` / legacy `[API] <provider>_api_key` —
+    the credential RAG Answer's provider gate checks; either satisfies
+    it, and it's the exact same check Console's own readiness display
+    uses — see [Console orientation](../console.md).
 - [Library](../library.md) — the rail, the other Browse canvases, and
   getting around.
 - [Import & export](import-and-export.md) — ingesting content so there is
@@ -302,4 +330,11 @@ live; match bands, coverage notes, scope summary, quiet no-match, and the
 mode-aware heading all confirmed on an earlier pass. PR-T1 adds: a source
 toggle hides/restores rows in the current snapshot with no re-run,
 refuses staging a hidden row, and restored rows survive a Console round
-trip even while source counts are still loading).*
+trip even while source counts are still loading). Verified against
+e2c706303 — 2026-08-06 (PR-T2, docs pass against shipped code/tests, live
+check pending Task 9): the in-flight line names the provider about to be
+billed, a footer states what the call actually cost or says plainly when
+pricing is unknown, the query row and the mode-toggle tooltip both name
+the paid provider before you run, and RAG Answer's provider gate now
+requires a working credential — the same one Console's own readiness
+check uses — not just an endpoint name.*
