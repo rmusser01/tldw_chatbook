@@ -255,26 +255,40 @@ live-verification discipline this amendment is itself an instance of —
 `observe_availability` no longer forcing every legacy-only profile page through
 an audio.cpp native-capability probe, and playground preset adoption reporting
 `unverified` instead of a false `unavailable` — this slice closed **six**
-distinct gates, not the design's four. P3 (availability/library-UI honesty
-beyond the interim `unverified` state) and P4 (remaining "audio.cpp" UI copy)
-remain, by the approved design's own scoping, later-slice work.
+distinct gates during its base implementation (tasks 1-5), not the design's
+four, rising to **eight-plus** once the live-verification gates below are
+counted. P3 (availability/library-UI honesty beyond the interim `unverified`
+state) and P4 (remaining "audio.cpp" UI copy) remain, by the approved design's
+own scoping, later-slice work.
 
-**A seventh and eighth gate found live, still open.** Task 6's live-network
-verification of this slice (real TUI, real OpenAI API key, no mocks) found two
-further defects the unit suite could not see, both **pre-existing UI wiring
-this slice's backend changes did not reach**, not regressions in the six gates
-above: the TTS Playground's only real Generate path (`_generate_studio_effective`)
-still hard-codes provenance attachment to `provider_id == "audio_cpp"`, so
-"Save result as profile" is unreachable for any of the six legacy providers
-through the live UI even though the backend eligibility gate (P2) is correctly
-lifted; and the Roleplay Voice & Speech assignment `Select` refuses any profile
-whose availability is not exactly `"available"`, so no `unverified` legacy
-profile can be assigned to a character through the live UI even though
-`TTSProfileService.set_assignment` and the character resolver accept it
-correctly when called directly. Both are filed as TASK-2452 and TASK-2453;
-full traces are in TASK-2450's Task 6 report. Neither was fixed as part of this
-amendment — Task 6's scope was verification, documentation, and backlog
-hygiene, not further implementation.
+**A seventh, eighth, and ninth gate found live, closed in-slice.** Task 6's
+live-network verification of this slice (real TUI, real OpenAI API key, no
+mocks) found two further defects the unit suite could not see, both
+**pre-existing UI wiring this slice's backend changes did not reach**, not
+regressions in the six gates above: the TTS Playground's only real Generate
+path (`_generate_studio_effective`) hard-coded provenance attachment to
+`provider_id == "audio_cpp"`, so "Save result as profile" was unreachable for
+any of the six legacy providers through the live UI even though the backend
+eligibility gate (P2) was correctly lifted; and the Roleplay Voice & Speech
+assignment `Select` refused any profile whose availability was not exactly
+`"available"`, so no `unverified` legacy profile could be assigned to a
+character through the live UI even though `TTSProfileService.set_assignment`
+and the character resolver accepted it correctly when called directly. Both
+were filed as TASK-2452 and TASK-2453 and closed in-slice by Task 6b, which
+also found a second, independent stale gate on the Roleplay path alone: a
+worker-level check in `personas_screen.py` guarding the same
+`"available"`-only assumption the widget's own `Select` gate shared, live-
+reachable even after the widget fix (reverting to a stale layout on remount
+with no error). A further sweep by Task 6c found the identical stale-gate
+pattern a third time, pre-existing and independent of TASK-2452/2453:
+`commit_portable_profile_import` (character-card import auto-assignment,
+`profile_service.py`) still auto-applied only `available` profiles, and three
+toast strings still called an unverified imported profile "not currently
+available." Both were fixed the same way, under TASK-2450's AC#8/#9. Counting
+all of this, the slice closed **eight-plus** distinct gates in total — the
+exact figure depends on whether the Roleplay path's two gates and the import
+path's three toast strings are counted individually or by shared root cause.
+Full traces are in TASK-2450's Task 6, 6b, and 6c reports.
 
 ## Links
 
