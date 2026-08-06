@@ -4381,11 +4381,21 @@ async def test_gate_check_exception_decision_note_suppressed_after_real_run():
         await app.workers.wait_for_complete()
         await pilot.pause()
 
+        # Item 4 (PR-T3 fix round F): this is an ABSENCE assertion, not the
+        # positive anchor -- `test_calls == []` is equally true at mount,
+        # before the click ever fires, so it cannot by itself distinguish
+        # "the deny short-circuit ran and correctly skipped the service"
+        # from "nothing happened yet". Kept because it is still a true and
+        # useful fact (the service was never called), but see the RESULT
+        # WIDGET assertion just below for the actual positive anchor: that
+        # widget starts empty at mount and can only contain the honest
+        # blocked text if `show_tool_result()` actually executed, so IT is
+        # what proves the short-circuit ran, not this line.
+        assert app.unified_mcp_service.test_calls == []
+        result_widget = app.query_one("#mcp-inspector-test-result", Static)
         # Positive anchor: proves the deny short-circuit actually ran
         # (`show_tool_result()` was called) -- not just that the note is
         # absent, which is equally true before anything has happened.
-        assert app.unified_mcp_service.test_calls == []
-        result_widget = app.query_one("#mcp-inspector-test-result", Static)
         assert (
             "Blocked — permission state could not be determined."
             in str(result_widget.renderable)
