@@ -1713,7 +1713,18 @@ async def test_library_shell_search_rag_mode_blocks_run_when_endpoint_named_but_
         # that (the pre-Task-7 bug), Run would be enabled here. It must
         # stay blocked because no credential resolves for that provider.
         assert screen.query_one("#library-rag-run-query", Button).disabled is True
-        assert "Select a provider/model" in _visible_text(screen)
+        # ...and the copy must name the CREDENTIAL, not the provider (PR-T2
+        # review round 3, finding I1). This assertion previously read
+        # `"Select a provider/model" in ...` -- which was the regression:
+        # Task 7 widened this branch to cover "endpoint named, credential
+        # missing", making it the only way a user with a configured
+        # provider reaches the block, and the inherited copy then told them
+        # to select the provider they had already selected and pointed at
+        # Console controls instead of at a key.
+        visible = _visible_text(screen)
+        assert "Select a provider/model" not in visible
+        assert "OPENAI_API_KEY" in visible
+        assert "api_settings.openai" in visible
 
 
 @pytest.mark.asyncio

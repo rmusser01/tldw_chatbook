@@ -1,7 +1,7 @@
 ---
 id: task-2522
 title: Library RAG Answer's blocked copy names the wrong remedy
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-08-06 02:18'
 labels:
@@ -32,11 +32,36 @@ For a PR whose whole point is honesty at paid moments, telling the user to do th
 
 ## Acceptance Criteria
 
-- [ ] When Library RAG Answer is blocked specifically because the resolved provider's credential doesn't
+- [x] When Library RAG Answer is blocked specifically because the resolved provider's credential doesn't
       resolve (endpoint named, `get_provider_readiness(...).ready is False`), the blocked message's recovery
       text is derived from `ProviderReadiness.recovery` (or equivalent real remedy) instead of the generic
       "Select a provider/model before asking for a RAG answer."
-- [ ] The empty/missing-endpoint case (no provider selected at all) keeps its existing "Select a provider/model"
+- [x] The empty/missing-endpoint case (no provider selected at all) keeps its existing "Select a provider/model"
       copy — this task only fixes the case where a provider *is* selected but its credential is missing
-- [ ] A regression test pins the credential-missing blocked message naming the actual missing key/config path,
+- [x] A regression test pins the credential-missing blocked message naming the actual missing key/config path,
       not a generic "select a provider" instruction
+
+## Implementation Notes
+
+Closed in-branch by PR-T2's post-review fix wave (review round 3, finding I1) rather than as a follow-up: the
+whole-branch review ruled this a user-facing regression of this branch.
+
+`library_rag_answer_provider_gate()` (`tldw_chatbook/Library/library_rag_answer_service.py`) is a new single
+`resolve -> readiness -> name` pass returning a `LibraryRagProviderGate` that keeps `ProviderReadiness.recovery`
+alongside the name; `library_rag_answer_provider_ready()` is now a boolean view of it. The remedy is threaded to
+`LibraryRagQueryState.from_values` as a DISTINCT optional `provider_credential_recovery` argument -- a message,
+never a second readiness flag, so Task 4's invariant (readiness derived solely from `provider_name`) is intact
+and a remedy can never make a blocked state look ready. The RAG-mode blocked branch now forks: a named-but-
+uncredentialed provider gets the real remedy (owner "LLM provider credential"), and the genuinely-unselected
+case keeps the original copy verbatim. The remedy is markup-escaped, since it embeds `[api_settings.<provider>]`
+and both sinks (run-button tooltip, blocked callout/recovery `Static`s) render Rich markup.
+
+Also removed the double resolution at both `UI/Screens/library_screen.py` call sites (one gate call each).
+
+Pins: `Tests/Library/test_library_rag_state.py` (`test_unselected_provider_keeps_the_select_a_provider_copy`,
+`test_named_but_uncredentialed_provider_shows_the_real_remedy`, `test_credential_remedy_is_markup_escaped_for_
+its_rendering_sinks`, `test_credential_remedy_cannot_make_a_blocked_state_look_ready`, `test_panel_state_
+threads_the_credential_remedy_into_query_state`), `Tests/Library/test_library_rag_answer_service.py` (three gate
+tests), and the mounted-UI pin `Tests/UI/test_library_shell.py::test_library_shell_search_rag_mode_blocks_run_
+when_endpoint_named_but_credential_missing`, whose assertion was inverted from the old copy to the new remedy.
+`Docs/User_Guide/library/search-and-rag.md` now documents both blocked cases.

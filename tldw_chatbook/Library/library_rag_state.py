@@ -1036,6 +1036,7 @@ class LibraryRagQueryState:
         dependencies_ready: bool = True,
         index_ready: bool = True,
         provider_name: str | None = None,
+        provider_credential_recovery: str = "",
     ) -> "LibraryRagQueryState":
         """Build query-control display state from UI or service values.
 
@@ -1059,6 +1060,23 @@ class LibraryRagQueryState:
                 impossible to construct: readiness is derived here as
                 `bool((provider_name or "").strip())`, so "ready" and "has
                 a name to show" can no longer disagree.
+            provider_credential_recovery: The remedy for a provider that IS
+                named in config but cannot authenticate (`Library/library_
+                rag_answer_service.LibraryRagProviderGate.credential_
+                recovery`, ultimately `ProviderReadiness.recovery`, e.g.
+                "Set ANTHROPIC_API_KEY or add api_key under [api_settings.
+                anthropic]."). `""` for the genuinely-unselected case, and
+                `""` whenever `provider_name` is set. It is a MESSAGE, not
+                a second readiness input: readiness stays derived solely
+                from `provider_name` above, so passing this can never make
+                a blocked state look ready -- it only decides WHICH blocked
+                copy the RAG-mode branch shows. Without it the collapse to
+                one `provider_name` erased the distinction between "no
+                provider selected" and "selected, no credential", and the
+                only surviving copy told the second user to select the
+                provider they had already selected, pointing at Console
+                controls instead of at the credential (PR-T2 review round
+                3, finding I1).
 
         Returns:
             Display state for query controls and the run action.
@@ -1066,6 +1084,18 @@ class LibraryRagQueryState:
 
         normalized_provider_name = (provider_name or "").strip()
         provider_ready = bool(normalized_provider_name)
+        # Escaped like every other config-sourced display string in this
+        # module: the remedy text embeds a TOML table name in brackets
+        # ("... add api_key under [api_settings.anthropic].") and both of
+        # its sinks -- the run button's tooltip and the blocked callout /
+        # recovery `Static`s -- render Rich markup, which would eat the
+        # bracketed half of the instruction. Never shown when a provider
+        # IS ready: the ladder below only reads it in the blocked branch.
+        credential_recovery = (
+            ""
+            if provider_ready
+            else _sanitize_display_text(provider_credential_recovery, "")
+        )
         normalized_query, unsafe_query = _sanitize_query(query)
         normalized_mode = _normalize_mode(mode)
         mode_label = "Search" if normalized_mode == "search" else "RAG Answer"
@@ -1100,10 +1130,26 @@ class LibraryRagQueryState:
             next_action = "Build or refresh the Library index"
             recovery_action = "Library indexing"
         elif normalized_mode == "rag" and not provider_ready:
-            disabled_reason = "Select a provider/model before asking for a RAG answer."
-            owner = "LLM provider"
-            next_action = "Select a provider and model before running a RAG answer"
-            recovery_action = "Console controls"
+            # Two different blockers wear this one branch (finding I1). A
+            # provider that is NAMED but cannot authenticate gets the
+            # readiness object's own remedy -- naming the env var and the
+            # config table -- because telling that user to "select a
+            # provider/model" names a step they already completed.
+            if credential_recovery:
+                disabled_reason = (
+                    f"The configured provider has no usable API key. "
+                    f"{credential_recovery}"
+                )
+                owner = "LLM provider credential"
+                next_action = "Add the provider credential, then run again"
+                recovery_action = credential_recovery
+            else:
+                disabled_reason = (
+                    "Select a provider/model before asking for a RAG answer."
+                )
+                owner = "LLM provider"
+                next_action = "Select a provider and model before running a RAG answer"
+                recovery_action = "Console controls"
 
         enabled = not disabled_reason
         recovery_copy = ""
@@ -1634,6 +1680,7 @@ class LibraryRagPanelState:
         dependencies_ready: bool = True,
         index_ready: bool = True,
         provider_name: str | None = None,
+        provider_credential_recovery: str = "",
         selected_source_types: Sequence[str] | None = None,
         history: Sequence[str] = (),
         history_collapsed: bool = False,
@@ -1686,6 +1733,11 @@ class LibraryRagPanelState:
                 ready `rag`-mode state must now name a provider
                 explicitly, which is the whole point: readiness can no
                 longer be asserted without a name to back it up.
+            provider_credential_recovery: Forwarded unchanged to
+                `LibraryRagQueryState.from_values` -- the remedy shown when
+                a provider IS named in config but cannot authenticate. See
+                that method's docstring; it is display copy only and never
+                affects readiness.
             selected_source_types: Selected source type IDs. `None` selects all available
                 source types; an empty sequence represents no selected sources.
             history: Prior submitted queries, most recent first.
@@ -1727,6 +1779,7 @@ class LibraryRagPanelState:
             dependencies_ready=dependencies_ready,
             index_ready=index_ready,
             provider_name=provider_name,
+            provider_credential_recovery=provider_credential_recovery,
         )
         normalized_searched_query, _ = _sanitize_query(
             query if searched_query is None else searched_query

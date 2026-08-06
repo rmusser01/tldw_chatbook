@@ -1630,3 +1630,121 @@ def test_scope_source_type_map_matches_open_source_type_map_except_prompt() -> N
         )
     assert open_map["prompt"] == "prompt"  # _open_library_item_by_id's dispatch key
     assert scope_map["prompt"] == "prompts"  # the plural scope-toggle key
+
+
+# --- PR-T2 review round 3, finding I1 -------------------------------------
+
+_ANTHROPIC_CREDENTIAL_REMEDY = (
+    "Set ANTHROPIC_API_KEY or add api_key under [api_settings.anthropic]."
+)
+
+
+def test_unselected_provider_keeps_the_select_a_provider_copy() -> None:
+    """Half one of I1: the genuinely-unselected case is UNCHANGED.
+
+    No provider named and no credential remedy to offer -- "select a
+    provider/model", owner "LLM provider", recovery pointer "Console
+    controls" is the right copy here and must survive the fix that gave
+    the other half its own.
+    """
+    state = LibraryRagQueryState.from_values(
+        query="summarize the policy",
+        mode="rag",
+        provider_name=None,
+        provider_credential_recovery="",
+    )
+
+    assert state.run_action.enabled is False
+    assert state.run_action.disabled_reason == (
+        "Select a provider/model before asking for a RAG answer."
+    )
+    assert "Owner: LLM provider." in state.recovery_copy
+    assert "Recovery: Console controls." in state.recovery_copy
+
+
+def test_named_but_uncredentialed_provider_shows_the_real_remedy() -> None:
+    """Half two of I1: the case Task 7 newly routed into this branch.
+
+    Task 7 widened the blocked branch to include "endpoint named,
+    credential missing" -- which is now the ONLY way a user with a
+    configured provider reaches it -- while Task 4's collapse to a single
+    `provider_name` destroyed the reason at the call site. The result told
+    a user to select the provider they had already selected and pointed at
+    Console controls instead of at a credential. The remedy that
+    `ProviderReadiness` already carried must reach the tooltip (`disabled_
+    reason`), the Why line and the Recovery pointer, and the owner must
+    name the credential rather than the provider.
+    """
+    state = LibraryRagQueryState.from_values(
+        query="summarize the policy",
+        mode="rag",
+        provider_name=None,
+        provider_credential_recovery=_ANTHROPIC_CREDENTIAL_REMEDY,
+    )
+
+    assert state.run_action.enabled is False
+    assert "Select a provider/model" not in state.run_action.disabled_reason
+    assert "ANTHROPIC_API_KEY" in state.run_action.disabled_reason
+    assert "api_settings.anthropic" in state.run_action.disabled_reason
+    assert "Console controls" not in state.recovery_copy
+    assert "Owner: LLM provider credential." in state.recovery_copy
+    assert "ANTHROPIC_API_KEY" in state.recovery_copy
+
+
+def test_credential_remedy_is_markup_escaped_for_its_rendering_sinks() -> None:
+    """The remedy embeds a TOML table name in brackets, and both sinks --
+    the run button's tooltip and the blocked callout / recovery `Static`s
+    -- render Rich markup, which would swallow `[api_settings.anthropic]`
+    and leave a sentence pointing at nothing.
+    """
+    state = LibraryRagQueryState.from_values(
+        query="summarize the policy",
+        mode="rag",
+        provider_name=None,
+        provider_credential_recovery=_ANTHROPIC_CREDENTIAL_REMEDY,
+    )
+
+    assert r"\[api_settings.anthropic]" in state.run_action.disabled_reason
+
+
+def test_credential_remedy_cannot_make_a_blocked_state_look_ready() -> None:
+    """The new field is a MESSAGE, never a second readiness input (the
+    invariant PR-T2 Task 4's review established): readiness stays derived
+    from `provider_name` alone, so a remedy passed alongside a name is
+    simply never read, and a remedy passed without one never unblocks.
+    """
+    blocked = LibraryRagQueryState.from_values(
+        query="summarize the policy",
+        mode="rag",
+        provider_name=None,
+        provider_credential_recovery=_ANTHROPIC_CREDENTIAL_REMEDY,
+    )
+    assert blocked.status == "blocked"
+    assert blocked.ready_answer_provider == ""
+
+    ready = LibraryRagQueryState.from_values(
+        query="summarize the policy",
+        mode="rag",
+        provider_name="anthropic",
+        provider_credential_recovery=_ANTHROPIC_CREDENTIAL_REMEDY,
+    )
+    assert ready.status == "ready"
+    assert ready.run_action.enabled is True
+    assert ready.ready_answer_provider == "anthropic"
+    assert "ANTHROPIC_API_KEY" not in ready.run_action.disabled_reason
+
+
+def test_panel_state_threads_the_credential_remedy_into_query_state() -> None:
+    """The screen builds the panel state, not the query state directly --
+    so the remedy has to survive that layer too, or the fix never reaches
+    a rendered surface.
+    """
+    panel = LibraryRagPanelState.from_values(
+        source_counts={"notes": 1},
+        query="summarize the policy",
+        mode="rag",
+        provider_name=None,
+        provider_credential_recovery=_ANTHROPIC_CREDENTIAL_REMEDY,
+    )
+
+    assert "ANTHROPIC_API_KEY" in panel.query_state.run_action.disabled_reason

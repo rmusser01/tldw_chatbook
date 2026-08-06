@@ -908,6 +908,11 @@ def test_answer_region_asking_indicator_names_the_billed_provider_while_answerin
         if child.id == "library-rag-answer-status"
     )
     assert str(status_static.renderable) == "Asking anthropic…"
+    # PR-T2 review round 3, minor 1: the interpolated value is config-
+    # sourced (`default_api_endpoint`), so this line must render literally
+    # -- a provider name containing brackets would otherwise be eaten as
+    # Rich markup and the user would be told the app is "Asking …" nobody.
+    assert status_static._render_markup is False
 
 
 class _StubPricingCatalog:

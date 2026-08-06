@@ -177,6 +177,77 @@ def resolve_library_rag_answer_provider() -> tuple[str | None, str | None]:
     return endpoint, None
 
 
+@dataclass(frozen=True)
+class LibraryRagProviderGate:
+    """One resolution of "can Library RAG Answer spend right now, and if
+    not, what does the user actually have to do?" (PR-T2 review round 3,
+    finding I1).
+
+    Built by `library_rag_answer_provider_gate` -- the single `resolve ->
+    readiness -> name` pass every Library RAG caller shares, replacing the
+    two-and-three-times-per-render re-resolution the panel-state builder
+    and the invocation guard each did on their own.
+
+    Attributes:
+        provider: The endpoint name callers may bill, or `None` when
+            nothing is configured OR the configured one cannot
+            authenticate. Deliberately `None` in BOTH not-ready cases:
+            this is the value the run gate takes as `provider_name`, whose
+            readiness is derived from it (`LibraryRagQueryState.from_
+            values`), so a name here always means "ready to spend".
+        credential_recovery: The readiness object's own remedy text (e.g.
+            "Set ANTHROPIC_API_KEY or add api_key under [api_settings.
+            anthropic].") -- non-empty ONLY in the named-but-uncredentialed
+            case, and `""` both when the provider is ready and when no
+            provider is configured at all. This is the REASON the collapse
+            to a single `provider_name` would otherwise destroy: without
+            it, a user whose provider IS selected and only lacks a key was
+            told to "select a provider/model" and pointed at Console
+            controls. Carrying it as a separate field keeps the readiness
+            invariant intact -- it is a message, never a second readiness
+            flag, and cannot make a blocked state look ready.
+        model: The model half of `resolve_library_rag_answer_provider`'s
+            pair, carried so the answer path does not have to resolve the
+            endpoint a second time just to read it. Always `None` today
+            (that function resolves no model by design -- the provider
+            handler picks its own default); meaningless, and unread, when
+            `provider` is `None`.
+    """
+
+    provider: str | None
+    credential_recovery: str = ""
+    model: str | None = None
+
+
+def library_rag_answer_provider_gate() -> LibraryRagProviderGate:
+    """Resolve the Library RAG provider and its credential readiness once.
+
+    Returns:
+        A `LibraryRagProviderGate`; see its attribute docs. Never raises --
+        an unconfigured or unreadable config is a blocked gate, not an
+        error.
+    """
+    provider, model = resolve_library_rag_answer_provider()
+    if provider is None:
+        return LibraryRagProviderGate(provider=None)
+
+    from .. import config as app_config
+    from ..Chat.provider_readiness import get_provider_readiness
+
+    readiness = get_provider_readiness(provider, app_config.load_settings())
+    if readiness.ready:
+        return LibraryRagProviderGate(provider=provider, model=model)
+    return LibraryRagProviderGate(
+        provider=None,
+        model=model,
+        # `recovery` is the actionable half ("Set ANTHROPIC_API_KEY or
+        # add api_key under [api_settings.anthropic]."); `reason` is the
+        # fallback for readiness states that carry no remedy, so the copy
+        # is never empty when a provider IS named.
+        credential_recovery=(readiness.recovery or readiness.reason or "").strip(),
+    )
+
+
 def library_rag_answer_provider_ready() -> bool:
     """Whether a provider is configured AND able to authenticate for a
     Library RAG query (PR-T2 Task 7).
@@ -201,19 +272,17 @@ def library_rag_answer_provider_ready() -> bool:
     `Chat/provider_readiness.get_provider_readiness`, the exact function
     Console's run gate calls -- so the two can no longer disagree.
 
+    Thin boolean view of `library_rag_answer_provider_gate` (which also
+    carries the remedy text for the named-but-uncredentialed case) -- kept
+    as the single-question form callers that only need a yes/no already
+    use.
+
     Returns:
         `True` when `resolve_library_rag_answer_provider` resolves a
         provider AND `get_provider_readiness` reports that provider ready
         to authenticate; `False` otherwise.
     """
-    provider, _ = resolve_library_rag_answer_provider()
-    if provider is None:
-        return False
-
-    from .. import config as app_config
-    from ..Chat.provider_readiness import get_provider_readiness
-
-    return get_provider_readiness(provider, app_config.load_settings()).ready
+    return library_rag_answer_provider_gate().provider is not None
 
 
 @dataclass(frozen=True)

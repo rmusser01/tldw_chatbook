@@ -154,13 +154,21 @@ from "your notes were never searched."
 **Needs its own provider.** Separately from the embeddings support
 retrieval itself needs, RAG Answer mode needs an LLM provider *with a
 working credential* configured — an endpoint name alone is no longer
-enough to unblock Run. With neither, Run blocks: **"Blocked | Select a
-provider/model before asking for a RAG answer."**, recovery pointer
-"Console controls". A key set either the modern way
-(`[api_settings.<provider>] api_key = …`) or the legacy way (`[API]
-<provider>_api_key = …`) satisfies it — the same credential check
-Console's own readiness display uses, so a provider that works in Console
-now works here too. Search mode has no such requirement, so — like the
+enough to unblock Run. The block names whichever of the two is actually
+missing:
+
+- **No provider chosen at all** — **"Blocked | Select a provider/model
+  before asking for a RAG answer."**, recovery pointer "Console controls".
+- **A provider chosen, but no credential for it** — the block names the
+  key instead, e.g. **"Blocked | The configured provider has no usable API
+  key. Set ANTHROPIC_API_KEY or add api_key under
+  [api_settings.anthropic]."**, owner "LLM provider credential". Telling
+  you to pick a provider here would name a step you already finished.
+
+A key set either the modern way (`[api_settings.<provider>] api_key = …`)
+or the legacy way (`[API] <provider>_api_key = …`) satisfies it — the same
+credential check Console's own readiness display uses, so a provider that
+works in Console now works here too. Search mode has no such requirement, so — like the
 embeddings-support block above — it stays the zero-cost escape while you
 configure one.
 

@@ -335,6 +335,11 @@ def library_rag_answer_children(state: LibraryRagPanelState) -> list[Widget]:
                     in_flight_text,
                     id="library-rag-answer-status",
                     classes="library-rag-quiet-line",
+                    # The provider name is config-sourced (`default_api_
+                    # endpoint`), so this line interpolates a value the
+                    # user controls -- render it literally rather than as
+                    # Rich markup (PR-T2 review round 3, minor 1).
+                    markup=False,
                 ),
                 id="library-rag-answer",
                 classes="library-rag-region",

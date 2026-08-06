@@ -48,6 +48,7 @@ from tldw_chatbook.Library.library_rag_answer_service import (
     LIBRARY_RAG_NO_EVIDENCE_TEXT,
     _is_abstention,
     generate_library_rag_answer,
+    library_rag_answer_provider_gate,
     library_rag_answer_provider_ready,
     resolve_library_rag_answer_provider,
 )
@@ -1147,3 +1148,87 @@ def test_provider_ready_rereads_settings_on_every_call_like_the_endpoint_does(
     settings["api_settings"]["anthropic"] = {"api_key": "sk-ant-test-key"}
 
     assert library_rag_answer_provider_ready() is True
+
+
+# --- PR-T2 review round 3, finding I1 -------------------------------------
+#
+# `library_rag_answer_provider_ready`'s boolean threw away the
+# `ProviderReadiness` object that already carried the exact remedy, so the
+# run gate could only ever say "select a provider/model" -- to a user whose
+# provider WAS selected and whose only problem was a missing credential.
+# `library_rag_answer_provider_gate` is the single `resolve -> readiness ->
+# name` pass that keeps the reason.
+
+
+def test_provider_gate_carries_the_credential_remedy_when_a_name_resolves(
+    monkeypatch,
+):
+    """A named provider that cannot authenticate: no name to spend with,
+    but the readiness object's own remedy -- naming the env var AND the
+    config table -- comes back for the blocked copy to use."""
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.setattr(app_config, "default_api_endpoint", "anthropic", raising=False)
+    monkeypatch.setattr(
+        app_config, "load_settings", lambda *a, **k: {"api_settings": {}}
+    )
+
+    gate = library_rag_answer_provider_gate()
+
+    assert gate.provider is None
+    assert "ANTHROPIC_API_KEY" in gate.credential_recovery
+    assert "api_settings.anthropic" in gate.credential_recovery
+
+
+def test_provider_gate_offers_no_remedy_when_nothing_is_configured(monkeypatch):
+    """The genuinely-unselected case must stay distinguishable: an empty
+    remedy is what tells the state layer to keep the "select a
+    provider/model" copy."""
+    monkeypatch.setattr(app_config, "default_api_endpoint", "", raising=False)
+
+    gate = library_rag_answer_provider_gate()
+
+    assert gate.provider is None
+    assert gate.credential_recovery == ""
+
+
+def test_provider_gate_names_the_provider_and_stays_silent_when_ready(monkeypatch):
+    """A ready provider yields a name and NO remedy -- the state layer
+    reads the remedy only in the blocked branch, and a stale one here
+    would be copy about a problem that does not exist."""
+    monkeypatch.setattr(app_config, "default_api_endpoint", "anthropic", raising=False)
+    monkeypatch.setattr(
+        app_config,
+        "load_settings",
+        lambda *a, **k: {
+            "api_settings": {"anthropic": {"api_key": "sk-ant-test-key"}}
+        },
+    )
+
+    gate = library_rag_answer_provider_gate()
+
+    assert gate.provider == "anthropic"
+    assert gate.credential_recovery == ""
+    assert gate.model is None
+    # The boolean helper is now a view of this same pass -- they cannot
+    # answer differently.
+    assert library_rag_answer_provider_ready() is True
+
+
+def test_provider_gate_accepts_a_keyless_dispatchable_endpoint_spelling(monkeypatch):
+    """Finding I2 at the seam the Library run gate actually consumes: a
+    self-hoster's `default_api_endpoint = "custom-openai-api"` must come
+    back as a NAME (which is what `provider_name=` makes the Run button
+    enabled from -- see `Tests/Library/test_library_rag_state.py`), not as
+    a blocked gate with no credential to add.
+    """
+    monkeypatch.setattr(
+        app_config, "default_api_endpoint", "custom-openai-api", raising=False
+    )
+    monkeypatch.setattr(
+        app_config, "load_settings", lambda *a, **k: {"api_settings": {}}
+    )
+
+    gate = library_rag_answer_provider_gate()
+
+    assert gate.provider == "custom-openai-api"
+    assert gate.credential_recovery == ""

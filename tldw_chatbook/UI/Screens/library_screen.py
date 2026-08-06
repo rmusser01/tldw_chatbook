@@ -162,8 +162,7 @@ from ...Widgets.Prompts.prompt_block_editor_state import (
 from ...Library.library_rag_answer_service import (
     LibraryRagAnswer,
     generate_library_rag_answer,
-    library_rag_answer_provider_ready,
-    resolve_library_rag_answer_provider,
+    library_rag_answer_provider_gate,
 )
 from ...Library.library_rag_service import (
     LibraryRagSearchOutcome,
@@ -3800,6 +3799,12 @@ class LibraryScreen(BaseAppScreen):
         )
         if not (self._library_loaded and not self._library_lookup_error):
             selected_source_types = None
+        # ONE `resolve -> readiness -> name` pass per render (finding I1):
+        # the same call used to be made twice inline below, and the second
+        # of them threw away the `ProviderReadiness` object carrying the
+        # only text that can tell a user with a selected-but-uncredentialed
+        # provider what to actually do.
+        provider_gate = library_rag_answer_provider_gate()
         return LibraryRagPanelState.from_values(
             source_counts={
                 "notes": self._local_source_counts.get("notes", 0),
@@ -3867,9 +3872,11 @@ class LibraryScreen(BaseAppScreen):
             # its docstring. A Library with no default LLM endpoint
             # configured (`resolve_library_rag_answer_provider()` returns
             # `(None, None)`) sees the pre-existing "Select a provider/model
-            # before asking for a RAG answer." copy, and once one IS
-            # configured AND `library_rag_answer_provider_ready()` confirms
-            # its credentials actually resolve (PR-T2 Task 7 -- an endpoint
+            # before asking for a RAG answer." copy -- while a provider that
+            # IS configured but cannot authenticate gets the credential
+            # remedy instead, carried by `provider_credential_recovery`
+            # below (finding I1). Once one is configured AND the gate
+            # confirms its credentials actually resolve (PR-T2 Task 7 -- an endpoint
             # NAME alone used to be treated as ready, which is how the
             # Library path spent money while Console's own readiness check
             # showed a blocking wall for the same config), this same value
@@ -3883,11 +3890,8 @@ class LibraryScreen(BaseAppScreen):
             # from_values`'s `normalized_mode == "rag"` check) -- keyword
             # Search mode never calls a provider and stays unaffected
             # regardless of this value.
-            provider_name=(
-                resolve_library_rag_answer_provider()[0]
-                if library_rag_answer_provider_ready()
-                else None
-            ),
+            provider_name=provider_gate.provider,
+            provider_credential_recovery=provider_gate.credential_recovery,
             selected_source_types=selected_source_types,
             history=self._library_search_history,
             history_collapsed=self._library_rag_history_collapsed,
@@ -17440,12 +17444,15 @@ class LibraryScreen(BaseAppScreen):
         if chat_kwargs is None:
             return
         # The run gate (`_library_rag_panel_state`'s `provider_name=`) and
-        # this call both gate on `library_rag_answer_provider_ready()`
+        # this call both go through `library_rag_answer_provider_gate()`
         # (PR-T2 Task 7 -- endpoint name AND resolvable credentials, the
-        # same question Console's readiness check asks); `not ready` below
-        # means the gate would already have blocked `rag` mode.
-        provider, model = resolve_library_rag_answer_provider()
-        if provider is None or not library_rag_answer_provider_ready():
+        # same question Console's readiness check asks); a `None` provider
+        # below means the gate would already have blocked `rag` mode. One
+        # gate call resolves both halves, where this used to resolve the
+        # endpoint twice (finding I1).
+        answer_gate = library_rag_answer_provider_gate()
+        provider, model = answer_gate.provider, answer_gate.model
+        if provider is None:
             # The run gate blocks rag mode without a ready provider, so
             # this is unreachable through the UI; if it ever is reached,
             # saying nothing is honest -- that gate's copy already explains
