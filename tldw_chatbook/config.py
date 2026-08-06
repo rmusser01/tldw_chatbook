@@ -3172,6 +3172,11 @@ strip_thinking_tags = true
 prune_high_watermark = 20000
 prune_low_watermark = 12000
 
+# Render assistant replies as full markdown (code blocks, tables, lists,
+# links) in the Console transcript. Set false to restore the lightweight
+# span renderer, which keeps roleplay speech/action flavor colors.
+assistant_markdown = true
+
 # Image attachment settings for chat
 [chat.images]
 enabled = true

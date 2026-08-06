@@ -1728,6 +1728,26 @@ def _static_plain_text(widget: Static) -> str:
     return getattr(renderable, "plain", str(renderable))
 
 
+def _message_row_plain_text(console, message_id: str) -> str:
+    """Renderer-agnostic plain text of one transcript message row (TASK-1990).
+
+    Plain rows carry one Content renderable; markdown rows expose header and
+    footer Statics plus the Markdown source.
+    """
+    from textual.widgets import Markdown
+
+    from tldw_chatbook.Widgets.Console.console_transcript import (
+        ConsoleMarkdownMessage,
+    )
+
+    row = console.query_one(f"#console-message-{message_id}")
+    if isinstance(row, ConsoleMarkdownMessage):
+        parts = [_static_plain_text(static) for static in row.query(Static)]
+        parts.append(row.query_one(Markdown).source)
+        return "\n".join(parts)
+    return _static_plain_text(row)
+
+
 def _widget_text(widget) -> str:
     if hasattr(widget, "renderable"):
         renderable = widget.renderable
@@ -2875,7 +2895,17 @@ async def test_console_native_send_clears_composer_after_acceptance_and_updates_
         composer.load_draft("hello")
 
         console.query_one("#console-send-message", Button).press()
-        await _wait_for_text(console, pilot, "Assistant  hello")
+        # Renderer-agnostic reply wait: the plain row renders "Assistant  hello"
+        # (two-space separator); the markdown row renders label and body as
+        # separate lines — collapse whitespace before matching (TASK-1990).
+        for _ in range(80):
+            if "Assistant hello" in " ".join(_visible_text(console).split()):
+                break
+            await pilot.pause(0.05)
+        else:
+            raise AssertionError(
+                f"Assistant reply never rendered. Visible: {_visible_text(console)!r}"
+            )
 
         assert composer.draft_text() == ""
         store = console._ensure_console_chat_store()
@@ -3348,7 +3378,7 @@ async def test_console_transcript_wraps_long_message_content_without_horizontal_
         await console._sync_native_console_chat_ui()
         await _wait_for_selector(console, pilot, f"#console-message-{message.id}")
 
-        row = console.query_one(f"#console-message-{message.id}", Static)
+        row = console.query_one(f"#console-message-{message.id}")
 
         assert row.region.width <= transcript.region.width
         assert transcript.virtual_size.width <= transcript.region.width
@@ -3530,22 +3560,35 @@ async def test_transcript_role_label_renders_dim_body_full_contrast():
         await console._sync_native_console_chat_ui()
         await _wait_for_selector(console, pilot, f"#console-message-{message.id}")
 
-        row = console.query_one(f"#console-message-{message.id}", Static)
-        rendered = row.renderable
+        from tldw_chatbook.Widgets.Console.console_transcript import (
+            ConsoleMarkdownMessage,
+        )
+
+        row = console.query_one(f"#console-message-{message.id}")
+        if isinstance(row, ConsoleMarkdownMessage):
+            # TASK-1990 markdown row: the dim role label lives in the header
+            # Static; the body is a separate Markdown widget, which never
+            # inherits the header's dim style (full contrast by construction).
+            rendered = row.query_one(".console-markdown-header", Static).renderable
+            body_text = _message_row_plain_text(console, message.id)
+        else:
+            rendered = row.renderable
+            body_text = rendered.plain
 
     assert isinstance(rendered, Content)
     # Content with spans: the role prefix span carries "dim"; the body stays
     # unstyled (full contrast) even though the combined plain text is unchanged.
     assert rendered.plain.startswith("Assistant")
-    assert "answer" in rendered.plain
+    assert "answer" in body_text
     assert any("dim" in str(span.style) for span in rendered.spans), rendered.spans
-    body_start = rendered.plain.index("answer")
-    body_styles = [
-        str(span.style)
-        for span in rendered.spans
-        if span.start <= body_start < span.end
-    ]
-    assert not any("dim" in style for style in body_styles), body_styles
+    if "answer" in rendered.plain:
+        body_start = rendered.plain.index("answer")
+        body_styles = [
+            str(span.style)
+            for span in rendered.spans
+            if span.start <= body_start < span.end
+        ]
+        assert not any("dim" in style for style in body_styles), body_styles
 
 
 @pytest.mark.asyncio
@@ -6070,17 +6113,13 @@ async def test_console_sibling_swipe_buttons_navigate_between_regenerated_siblin
         )
         assert previous_button.disabled is False
         assert next_button.disabled is True
-        row_text = _static_plain_text(
-            console.query_one(f"#console-message-{a2.id}", Static)
-        )
+        row_text = _message_row_plain_text(console, a2.id)
         assert "updated answer" in row_text
         assert "(2/2)" in row_text
 
         await pilot.click(f"#console-message-action-variant-previous-{a2.id}")
         await _wait_for_text(console, pilot, "seed")
-        row_text = _static_plain_text(
-            console.query_one(f"#console-message-{a1.id}", Static)
-        )
+        row_text = _message_row_plain_text(console, a1.id)
         assert "(1/2)" in row_text
         # task-501: the selection FOLLOWS the swipe onto the landed sibling
         # (a2 dropped off the active path, which would have cleared the old
@@ -6130,9 +6169,7 @@ async def test_console_sibling_swipe_buttons_navigate_between_regenerated_siblin
 
         await pilot.click(f"#console-message-action-variant-next-{a1.id}")
         await _wait_for_text(console, pilot, "updated answer")
-        row_text = _static_plain_text(
-            console.query_one(f"#console-message-{a2.id}", Static)
-        )
+        row_text = _message_row_plain_text(console, a2.id)
         assert "(2/2)" in row_text
         # task-501: the swipe keeps the selection on the landed sibling (the
         # pre-task-501 rule cleared it, forcing a re-click between swipes).

@@ -1,6 +1,6 @@
 import pytest
 from textual.app import App, ComposeResult
-from textual.widgets import Button, Static
+from textual.widgets import Button, Markdown, Static
 
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
@@ -24,9 +24,24 @@ from tldw_chatbook.Chat.console_message_actions import (
 from tldw_chatbook.Chat.console_onboarding_state import ConsoleSetupCardState
 from tldw_chatbook.Widgets.Console.console_save_as_modal import ConsoleSaveAsModal
 from tldw_chatbook.Widgets.Console.console_transcript import (
+    ConsoleMarkdownMessage,
     ConsoleTranscript,
     ConsoleTranscriptMessage,
 )
+
+
+def _message_row_text(transcript: ConsoleTranscript, message_id: str) -> str:
+    """Renderer-agnostic visible text of one message row (TASK-1990).
+
+    Plain rows expose a single Content renderable; markdown rows expose
+    header/footer Statics plus the Markdown source.
+    """
+    row = transcript.query_one(f"#console-message-{message_id}")
+    if isinstance(row, ConsoleMarkdownMessage):
+        parts = [str(static.renderable) for static in row.query(Static)]
+        parts.append(row.query_one(Markdown).source)
+        return "\n".join(parts)
+    return str(row.renderable)
 
 
 class TranscriptHarness(App):
@@ -276,12 +291,12 @@ async def test_console_transcript_streaming_update_preserves_unrelated_message_r
         transcript.set_messages([user, assistant, trailing])
         await transcript.refresh_messages()
         after_counts = transcript.row_build_counts()
-        rendered = transcript.query_one("#console-message-m-assistant", Static)
+        rendered_text = _message_row_text(transcript, "m-assistant")
 
     assert after_counts["message:m-user"] == before_counts["message:m-user"]
     assert after_counts["message:m-next"] == before_counts["message:m-next"]
     assert after_counts["message:m-assistant"] == before_counts["message:m-assistant"]
-    assert "partial response" in str(rendered.renderable)
+    assert "partial response" in rendered_text
 
 
 @pytest.mark.asyncio
@@ -1722,7 +1737,8 @@ async def test_transcript_signature_cache_survives_reorder():
 
         assert transcript.message_signature_compute_counts() == baseline
         rendered_ids = [
-            widget.message_id for widget in transcript.query(ConsoleTranscriptMessage)
+            widget.message_id
+            for widget in transcript.query(".console-transcript-message")
         ]
 
     assert rendered_ids == ["m2", "m0", "m3", "m1"]
@@ -1748,16 +1764,14 @@ async def test_transcript_signature_cache_survives_variant_switch():
         transcript.set_messages([plain, varied])
         await transcript.refresh_messages()
         baseline = transcript.message_signature_compute_counts()
-        rendered = transcript.query_one("#console-message-m-varied", Static)
-        assert "first answer" in str(rendered.renderable)
+        assert "first answer" in _message_row_text(transcript, "m-varied")
 
         varied.variants.selected_index = 1
         transcript.set_messages([plain, varied])
         await transcript.refresh_messages()
         after = transcript.message_signature_compute_counts()
-        rendered = transcript.query_one("#console-message-m-varied", Static)
 
-        assert "second answer" in str(rendered.renderable)
+        assert "second answer" in _message_row_text(transcript, "m-varied")
         assert after["m-varied"] == baseline["m-varied"] + 1
         assert after["m-plain"] == baseline["m-plain"]
 
@@ -1777,15 +1791,13 @@ async def test_transcript_signature_cache_miss_on_status_change():
         transcript = app.query_one("#console-native-transcript", ConsoleTranscript)
         transcript.set_messages([message])
         await transcript.refresh_messages()
-        rendered = transcript.query_one("#console-message-m-stream", Static)
-        assert "[streaming]" in str(rendered.renderable)
+        assert "[streaming]" in _message_row_text(transcript, "m-stream")
 
         message.status = "complete"
         transcript.set_messages([message])
         await transcript.refresh_messages()
-        rendered = transcript.query_one("#console-message-m-stream", Static)
 
-        assert "[streaming]" not in str(rendered.renderable)
+        assert "[streaming]" not in _message_row_text(transcript, "m-stream")
         assert transcript.message_signature_compute_counts()["m-stream"] == 2
 
 

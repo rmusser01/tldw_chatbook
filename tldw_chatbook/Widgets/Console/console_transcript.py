@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import os
 import re
 from dataclasses import dataclass, replace
 from time import monotonic
@@ -417,28 +416,42 @@ class _TranscriptRow:
     generation_card_spec: "ConsoleGenerationCardSpec | None" = None
 
 
-#: SPIKE (frogmouth-comparison follow-up): opt-in full-markdown rendering for
-#: ASSISTANT transcript rows via Textual's Markdown widget, streamed with
-#: Markdown.append() on prefix-diffed deltas. Env-gated so the shipped
-#: span-subset renderer (TASK-372) is untouched by default. Read once at
-#: import; the gate exists only for A/B live capture, not runtime toggling.
-_MD_SPIKE_ENABLED = bool(os.environ.get("TLDW_CONSOLE_MD_SPIKE"))
+def get_console_assistant_markdown(app_config: Mapping[str, object] | None) -> bool:
+    """Resolve the ``[chat_defaults] assistant_markdown`` toggle.
+
+    TASK-1990: assistant replies render through Textual's ``Markdown`` widget
+    by default. This config switch restores the span-subset renderer
+    (TASK-372) for sessions that prefer its roleplay flavor styling (speech /
+    action colors), which plain markdown does not reproduce.
+
+    Args:
+        app_config: The loaded application config dict (``app.app_config``).
+
+    Returns:
+        True when assistant rows should render full markdown (the default);
+        non-bool or missing values resolve to True.
+    """
+    chat_defaults = (app_config or {}).get("chat_defaults", {})
+    if not isinstance(chat_defaults, Mapping):
+        return True
+    value = chat_defaults.get("assistant_markdown", True)
+    return value if isinstance(value, bool) else True
 
 
-def _markdown_spike_body(message: ConsoleChatMessage) -> str:
-    """Return the raw markdown body for the spike row (no status suffix).
+def _assistant_markdown_body(message: ConsoleChatMessage) -> str:
+    """Return the raw markdown body for a markdown row (no status suffix).
 
     The plain-text renderer appends ``" [streaming]"`` to the body; a suffix
-    would defeat prefix-diffed appends, so the spike keeps status in the
-    header line and feeds the Markdown widget content only.
+    would defeat prefix-diffed appends, so the markdown row keeps status in
+    its header line and feeds the Markdown widget content only.
     """
     if message.variants is not None:
         return message.variants.current.content
     return message.content
 
 
-def _markdown_spike_header(message: ConsoleChatMessage) -> Content:
-    """Return the dim one-line role/status header for the spike row."""
+def _assistant_markdown_header(message: ConsoleChatMessage) -> Content:
+    """Return the dim one-line role/status header for a markdown row."""
     role_label = _message_role_label(message)
     if message.sibling_count > 1:
         role_label = (
@@ -446,7 +459,7 @@ def _markdown_spike_header(message: ConsoleChatMessage) -> Content:
         )
     suffix = ""
     if message.status == "streaming":
-        body = _markdown_spike_body(message)
+        body = _assistant_markdown_body(message)
         suffix = (
             f"  {CONSOLE_GENERATING_PLACEHOLDER}" if not body.strip() else "  [streaming]"
         )
@@ -455,14 +468,33 @@ def _markdown_spike_header(message: ConsoleChatMessage) -> Content:
     return Content.assemble((f"{role_label}{suffix}", "dim"))
 
 
-class ConsoleMarkdownMessage(Vertical):
-    """SPIKE: assistant transcript row rendered with Textual's Markdown widget.
+def _assistant_markdown_footer(message: ConsoleChatMessage) -> Content | None:
+    """Return the dim chips/citation footer for a markdown row, or None.
 
-    Streaming deltas are applied with ``Markdown.append()`` (prefix-diffed
-    against the last applied body) so per-tick cost is O(delta), not
-    O(message) — the incremental machinery ``MarkdownStream`` uses under
-    higher-frequency writes. Attachment chips and citation notices are out of
-    spike scope.
+    Attachment chips and the citation transition notice render below the
+    markdown body (the plain renderer folds them into its single Content).
+    Both are emitted as literal text segments — never markup-parsed.
+    """
+    lines = list(_message_attachment_chips(message))
+    citation_notice = _citation_notice(message)
+    if citation_notice:
+        lines.append(citation_notice)
+    if not lines:
+        return None
+    return Content.assemble(("\n".join(lines), "dim"))
+
+
+class ConsoleMarkdownMessage(Vertical):
+    """Assistant transcript row rendered with Textual's Markdown widget.
+
+    TASK-1990 (frogmouth-comparison follow-up). Streaming deltas are applied
+    with ``Markdown.append()`` (prefix-diffed against the last applied body)
+    so per-tick cost is O(delta), not O(message). Non-prefix changes (variant
+    switch, edit) fall back to a full ``Markdown.update()``.
+
+    Link policy (task AC#6): links never auto-open (``open_links=False``). A
+    click on an http(s) link opens the system browser and notifies; any other
+    scheme notifies with the href and does nothing else.
     """
 
     can_focus = False
@@ -489,19 +521,26 @@ class ConsoleMarkdownMessage(Vertical):
             classes = f"{classes} console-transcript-message-selected"
         super().__init__(id=f"console-message-{message.id}", classes=classes)
         self._message = message
-        self._body_text = _markdown_spike_body(message)
+        self._body_text = _assistant_markdown_body(message)
 
     def compose(self) -> ComposeResult:
         yield Static(
-            _markdown_spike_header(self._message),
-            classes="console-md-spike-header",
+            _assistant_markdown_header(self._message),
+            classes="console-markdown-header",
         )
-        yield Markdown(self._body_text)
+        yield Markdown(self._body_text, open_links=False)
+        footer_content = _assistant_markdown_footer(self._message)
+        footer = Static(
+            footer_content or "",
+            classes="console-markdown-footer",
+        )
+        footer.display = footer_content is not None
+        yield footer
 
     def sync_message(
         self, message: ConsoleChatMessage, *, selected: bool = False
     ) -> None:
-        """Update header/body in place; append-only body growth avoids re-parse."""
+        """Update header/body/footer in place; append-only growth avoids re-parse."""
         self.message_id = message.id
         self._message = message
         if selected:
@@ -509,12 +548,16 @@ class ConsoleMarkdownMessage(Vertical):
         else:
             self.remove_class("console-transcript-message-selected")
         try:
-            header = self.query_one(".console-md-spike-header", Static)
+            header = self.query_one(".console-markdown-header", Static)
             markdown = self.query_one(Markdown)
+            footer = self.query_one(".console-markdown-footer", Static)
         except NoMatches:
             return
-        header.update(_markdown_spike_header(message))
-        new_body = _markdown_spike_body(message)
+        header.update(_assistant_markdown_header(message))
+        footer_content = _assistant_markdown_footer(message)
+        footer.update(footer_content or "")
+        footer.display = footer_content is not None
+        new_body = _assistant_markdown_body(message)
         if new_body == self._body_text:
             return
         if new_body.startswith(self._body_text):
@@ -522,6 +565,23 @@ class ConsoleMarkdownMessage(Vertical):
         else:
             markdown.update(new_body)
         self._body_text = new_body
+
+    @on(Markdown.LinkClicked)
+    def _open_link(self, event: Markdown.LinkClicked) -> None:
+        """Apply the explicit link policy: http(s) to the browser, else notify."""
+        event.stop()
+        href = event.href or ""
+        if href.startswith(("http://", "https://")):
+            import webbrowser
+
+            webbrowser.open(href)
+            self.notify(f"Opened in browser: {href}", timeout=4)
+        else:
+            self.notify(
+                f"Link not opened (unsupported scheme): {href}",
+                severity="warning",
+                timeout=6,
+            )
 
     def on_click(self, event: Click) -> None:
         event.stop()
@@ -1172,6 +1232,14 @@ class ConsoleTranscript(VerticalScroll):
         except NoActiveAppError:
             app_config = None
         return get_console_prune_watermarks(app_config)
+
+    def _assistant_markdown_enabled(self) -> bool:
+        """Return the ``[chat_defaults] assistant_markdown`` toggle (TASK-1990)."""
+        try:
+            app_config = getattr(self.app, "app_config", None)
+        except NoActiveAppError:
+            app_config = None
+        return get_console_assistant_markdown(app_config)
 
     async def _run_prune_check(self) -> None:
         """Drop the oldest message rows when virtual height exceeds the marks.
@@ -1878,8 +1946,8 @@ class ConsoleTranscript(VerticalScroll):
             )
         if row.kind == "message" and row.message is not None:
             if (
-                _MD_SPIKE_ENABLED
-                and row.message.role is ConsoleMessageRole.ASSISTANT
+                row.message.role is ConsoleMessageRole.ASSISTANT
+                and self._assistant_markdown_enabled()
             ):
                 return ConsoleMarkdownMessage(row.message, selected=row.selected)
             return ConsoleTranscriptMessage(row.message, selected=row.selected)
