@@ -703,15 +703,27 @@ class PricingCatalog:
            and this method does not invent a split. Every audio-input
            token is therefore priced at the (higher) UNCACHED audio rate
            -- ``ModelPricing.cached_audio_in_per_mtok`` is never read here
-           -- which is cost-MAXIMIZING (never underbills) for every seeded
-           realtime model, since audio's cached rate is always cheaper
-           than its uncached rate. To avoid double-counting those same
-           tokens under ``input_cost``/``cache_read_cost``, audio tokens
-           are subtracted from ``uncached_input`` first and only "spill"
-           into ``cache_read`` once ``uncached_input`` is exhausted -- the
-           unique split-choice that minimizes the (cheaper) cached-audio
-           attribution, i.e. the conservative bound of the otherwise
-           underdetermined true split.
+           -- regardless of which bucket it is numerically attributed to
+           below; that attribution only decides how many TEXT tokens are
+           left over in each bucket, never audio's own rate.
+
+           To avoid double-counting those same audio tokens under
+           ``input_cost``/``cache_read_cost``, they must be subtracted
+           from ``uncached_input``/``cache_read`` before those buckets are
+           priced at their (much cheaper) TEXT rates. Which bucket a given
+           audio token is subtracted from therefore changes how many TEXT
+           tokens remain in the expensive ``uncached_input`` bucket vs the
+           cheap ``cache_read`` bucket -- and since ``input_per_mtok`` is
+           always higher than ``cache_read_per_mtok``, the conservative
+           (cost-MAXIMIZING, never-underbilling) choice is to remove audio
+           tokens from ``cache_read`` FIRST, leaving as many TEXT tokens
+           as possible stranded in the expensive ``uncached_input``
+           bucket -- and only "spill" the removal into ``uncached_input``
+           once ``cache_read`` itself is exhausted. (Removing from the
+           EXPENSIVE bucket first -- the intuitive-looking order -- is
+           backwards: it evacuates text OUT of the bucket that costs the
+           most, which minimizes the bill instead of bounding it from
+           above. Don't "fix" this back without re-deriving the sign.)
         2. Output side: unambiguous. Output is never served from a cache
            (only input can be), so ``audio_output`` is a clean subset of
            ``output`` alone with no cache-attribution question at all.
@@ -733,8 +745,11 @@ class PricingCatalog:
         audio_output = min(usage.audio_output, usage.output)
 
         if pricing.audio_in_per_mtok is not None and audio_input:
-            audio_from_uncached = min(audio_input, usage.uncached_input)
-            audio_from_cache = audio_input - audio_from_uncached
+            # Drain the CHEAP bucket (cache_read) first -- see this
+            # method's docstring, point 1, for why that (not uncached_input
+            # first) is the conservative direction.
+            audio_from_cache = min(audio_input, usage.cache_read)
+            audio_from_uncached = audio_input - audio_from_cache
             text_uncached = usage.uncached_input - audio_from_uncached
             text_cache_read = usage.cache_read - audio_from_cache
             audio_input_cost = round(audio_input * pricing.audio_in_per_mtok / 1_000_000, 6)

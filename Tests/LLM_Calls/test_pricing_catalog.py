@@ -422,15 +422,63 @@ def test_cost_for_usage_realtime_transcription_seconds_billed_at_whisper_rate():
     assert cost.total == cost.transcription_cost
 
 
-def test_cost_for_usage_realtime_audio_spilling_into_cache_never_underbills():
-    # audio_input (50) EXCEEDS uncached_input (20) alone, so some audio
-    # tokens must have come from the cache_read bucket -- the genuinely
-    # underdetermined case Trap 1 describes (ProviderUsage cannot say how
-    # many). The conservative (cost-maximizing, never-underbilling)
-    # resolution attributes as much audio as possible to the pricier
-    # uncached bucket first and only removes the unavoidable overflow from
-    # cache_read's own count -- all of it still priced at the uncached
-    # audio rate, never the (unknowable) cached-audio rate.
+def _alternative_realtime_total(usage: ProviderUsage, pricing, audio_from_cache: int) -> float:
+    """Independently re-derive ``cost_for_usage``'s realtime-input total for
+    ONE choice of how much of ``audio_input`` is attributed to
+    ``cache_read`` vs ``uncached_input``.
+
+    Used only by the property test below to prove the production method
+    picks the COST-MAXIMIZING split among the attribution-consistent
+    alternatives, by recomputing the alternatives HERE (independently) --
+    never by re-deriving the implementation's own formula, which would let
+    a bug in that formula pass unnoticed.
+    """
+    audio_from_uncached = usage.audio_input - audio_from_cache
+    text_uncached = usage.uncached_input - audio_from_uncached
+    text_cache_read = usage.cache_read - audio_from_cache
+    input_cost = text_uncached * pricing.input_per_mtok / 1_000_000
+    cache_read_cost = text_cache_read * (pricing.cache_read_per_mtok or 0.0) / 1_000_000
+    audio_input_cost = usage.audio_input * pricing.audio_in_per_mtok / 1_000_000
+    return input_cost + cache_read_cost + audio_input_cost
+
+
+def test_cost_for_usage_realtime_picks_the_cost_maximizing_audio_split():
+    # Trap 1's genuinely underdetermined case: audio_input (500) is smaller
+    # than EITHER bucket alone, so any split between "all from
+    # uncached_input" and "all from cache_read" is attribution-consistent
+    # -- ProviderUsage has no way to say which actually happened. The
+    # task's "price conservatively" mandate requires the MAXIMUM-cost split
+    # among these alternatives (never underbill). Every alternative is
+    # recomputed independently in-test (see _alternative_realtime_total)
+    # and the implementation's total must be >= all of them -- so a future
+    # re-flip of the drain order (which silently UNDER-bills; that was this
+    # test's own headline bug before this fix) fails on the property
+    # itself, not on a magic number that happens to mirror the bug.
+    usage = ProviderUsage(
+        uncached_input=2000, cache_read=8000, audio_input=500,
+        provider="openai", model="gpt-realtime",
+    )
+    catalog = _catalog()
+    pricing = catalog.get_pricing("openai", "gpt-realtime")
+    cost = catalog.cost_for_usage(usage)
+
+    lo = max(0, usage.audio_input - usage.uncached_input)  # 0
+    hi = min(usage.audio_input, usage.cache_read)  # 500
+    for audio_from_cache in (lo, (lo + hi) // 2, hi):
+        alt_total = _alternative_realtime_total(usage, pricing, audio_from_cache)
+        assert cost.total >= round(alt_total, 6) - 1e-9, audio_from_cache
+
+    # And it reaches the actual maximum (the hi boundary), not merely some
+    # value that happens to dominate the other samples above.
+    assert cost.total == round(_alternative_realtime_total(usage, pricing, hi), 6)
+
+
+def test_cost_for_usage_realtime_audio_spills_into_uncached_once_cache_exhausted():
+    # Concrete-numbers companion to the property test above: audio_input
+    # (50) EXCEEDS cache_read (40) alone, so after draining the CHEAP
+    # bucket first (cache_read -- see cost_for_usage's docstring for why
+    # that's the conservative direction), the remaining 10 audio tokens
+    # must spill into the expensive uncached_input bucket.
     usage = ProviderUsage(
         uncached_input=20,
         cache_read=40,
@@ -439,11 +487,12 @@ def test_cost_for_usage_realtime_audio_spilling_into_cache_never_underbills():
         model="gpt-realtime",
     )
     cost = _catalog().cost_for_usage(usage)
-    # uncached_input (20) fully consumed by audio -> 0 text-uncached tokens.
-    assert cost.input_cost == 0.0
-    # Overflow = 50 - 20 = 30 audio tokens "spill" out of cache_read's 40,
-    # leaving 10 text-cache tokens priced at the ordinary cache rate.
-    assert cost.cache_read_cost == round(10 * 0.40 / 1_000_000, 6)
+    # cache_read (40) fully consumed by audio -> 0 text-cache tokens.
+    assert cost.cache_read_cost == 0.0
+    # Overflow = 50 - 40 = 10 audio tokens spill into uncached_input's 20,
+    # leaving 10 text-uncached tokens priced at the ordinary (expensive)
+    # uncached rate.
+    assert cost.input_cost == round(10 * 4.00 / 1_000_000, 6)
     # ALL 50 audio tokens priced at the uncached audio rate, regardless of
     # which bucket they numerically came from -- never double counted
     # against the (now-reduced) uncached_input/cache_read totals above.
