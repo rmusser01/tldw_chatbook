@@ -45,6 +45,7 @@ from tldw_chatbook.TTS.profile_portability import (
     PortableTTSProfile,
     portable_profile_json,
 )
+from tldw_chatbook.TTS.profile_types import PROFILE_PROVIDER_REQUIRES_EXACT_VOICE
 from tldw_chatbook.Utils.input_validation import validate_text_input
 
 PROFILE_PAGE_SIZE = 50
@@ -428,7 +429,18 @@ class TTSProfileEditorModal(ModalScreen[TTSProfileDraft | None]):
                 yield Label("Exact voice")
                 yield Input(
                     value=self.initial_voice_id or "",
-                    placeholder="Server default",
+                    # Only audio.cpp genuinely supports a server-default voice
+                    # (`PROFILE_PROVIDER_REQUIRES_EXACT_VOICE`); promising one
+                    # for a legacy provider would invite a save the domain
+                    # then refuses.
+                    placeholder=(
+                        "Required"
+                        if PROFILE_PROVIDER_REQUIRES_EXACT_VOICE.get(
+                            profile.provider_id,
+                            True,
+                        )
+                        else "Server default"
+                    ),
                     id="stts-profile-editor-voice",
                     disabled=duplicate,
                 )
@@ -1299,7 +1311,15 @@ class STTSProfileLibrary(Widget):
         if availability is not None and availability.state == "unavailable":
             status_line = "Unavailable — Refresh, then Edit."
         elif availability is not None and availability.state == "unverified":
-            status_line = "Unverified — Refresh and retry."
+            # Follow the availability's own recovery action rather than the
+            # state alone: a legacy provider's "unverified" is permanent
+            # (no catalog to preflight), so instructing a refresh would name
+            # a control that can never change it (ADR-031).
+            status_line = (
+                "Unverified — Refresh and retry."
+                if availability.recovery_action == "refresh"
+                else "Unverified — this provider has no catalog check."
+            )
         else:
             status_line = f"{state}."
         status = self.query_one("#stts-profile-status-copy", Static)

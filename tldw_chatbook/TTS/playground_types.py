@@ -1,16 +1,32 @@
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping
 from copy import deepcopy
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any
+from typing import Any, Literal, TypeAlias
 
 from tldw_chatbook.TTS.effective_settings import TTSStudioDraftSelection
+from tldw_chatbook.TTS.profile_types import (
+    AUDIO_CPP_PROFILE_SPEED,
+    PROFILE_PROVIDER_FORMATS,
+    PROFILE_PROVIDER_IDS,
+    PROFILE_PROVIDER_REQUIRES_EXACT_VOICE,
+)
 from tldw_chatbook.TTS.studio_preferences import StudioTTSPreferencesSnapshot
 
 AudioMetadataValue = str | int | float | bool | None
+
+#: The one reason a successful generation is refused profile provenance that
+#: the user can act on: slice 1 profiles hold empty options by design, so a
+#: generation that used provider-specific options cannot be reproduced by one.
+PROFILE_SAVE_BLOCK_PROVIDER_OPTIONS = "provider_options"
+ProfileSaveBlockCode: TypeAlias = Literal["provider_options"]
+PROFILE_SAVE_BLOCK_CODES: frozenset[str] = frozenset(
+    {PROFILE_SAVE_BLOCK_PROVIDER_OPTIONS}
+)
 
 
 def _freeze_option(value: Any) -> Any:
@@ -52,7 +68,17 @@ def _require_exact_identifier(
 
 @dataclass(frozen=True, slots=True)
 class TTSRequestedSelectionSnapshot:
-    """Immutable text-free provenance for one exact admitted native request."""
+    """Immutable text-free provenance for one exact admitted request.
+
+    Covers all seven providers the profile system recognizes (`audio_cpp`
+    plus the six legacy-bridge providers), not native-only: `audio_cpp`
+    keeps its exact WAV / speed-1.0 contract and its server-default voice;
+    legacy providers accept any format in their catalog set and any speed in
+    [0.25, 4.0] but must name an exact voice, matching
+    `profile_types.PROFILE_PROVIDER_FORMATS`,
+    `profile_types.PROFILE_PROVIDER_REQUIRES_EXACT_VOICE`, and
+    `profile_service._selection_is_profile_safe`.
+    """
 
     provider_id: str
     model_id: str
@@ -64,15 +90,27 @@ class TTSRequestedSelectionSnapshot:
 
     def __post_init__(self) -> None:
         _require_exact_identifier("provider_id", self.provider_id)
-        if self.provider_id != "audio_cpp":
-            raise ValueError("Requested selection requires exact audio_cpp provider")
+        if self.provider_id not in PROFILE_PROVIDER_IDS:
+            raise ValueError("Requested selection requires a recognized provider")
         _require_exact_identifier("model_id", self.model_id)
         _require_exact_identifier("voice_id", self.voice_id, nullable=True)
+        if (
+            self.voice_id is None
+            and PROFILE_PROVIDER_REQUIRES_EXACT_VOICE[self.provider_id]
+        ):
+            raise ValueError("Requested selection requires an exact voice")
         _require_exact_identifier("response_format", self.response_format)
-        if self.response_format != "wav":
-            raise ValueError("Requested selection requires WAV format")
-        if type(self.speed) is not float or self.speed != 1.0:
-            raise ValueError("Requested selection requires speed 1.0")
+        if self.response_format not in PROFILE_PROVIDER_FORMATS[self.provider_id]:
+            raise ValueError(
+                "Requested selection format is not valid for this provider"
+            )
+        if type(self.speed) is not float or not math.isfinite(self.speed):
+            raise ValueError("Requested selection requires a finite speed")
+        if self.provider_id == "audio_cpp":
+            if self.speed != AUDIO_CPP_PROFILE_SPEED:
+                raise ValueError("Requested selection requires speed 1.0")
+        elif not 0.25 <= self.speed <= 4.0:
+            raise ValueError("Requested selection speed is out of range")
         if not isinstance(self.options, Mapping):
             raise TypeError("options must be a mapping")
         try:
@@ -140,6 +178,13 @@ class STTSGeneratedAudio:
     content_type: str
     metadata: Mapping[str, AudioMetadataValue] = field(default_factory=dict)
     requested_selection: TTSRequestedSelectionSnapshot | None = None
+    #: Why provenance was refused, when the reason is actionable to explain.
+    #:
+    #: `None` covers both "provenance attached" and "dropped for a reason the
+    #: user cannot act on" (a momentarily unreadable registry revision). The
+    #: one bounded code says the generation used provider-specific options,
+    #: which a slice-1 profile fixes empty and therefore cannot reproduce.
+    profile_save_block_code: ProfileSaveBlockCode | None = None
 
     def __post_init__(self) -> None:
         for name in (
@@ -163,6 +208,13 @@ class STTSGeneratedAudio:
             raise TypeError(
                 "requested_selection must be a requested selection snapshot"
             )
+        if self.profile_save_block_code is not None:
+            if self.profile_save_block_code not in PROFILE_SAVE_BLOCK_CODES:
+                raise ValueError("profile_save_block_code is not a known code")
+            if self.requested_selection is not None:
+                raise ValueError(
+                    "profile_save_block_code cannot accompany attached provenance"
+                )
 
     @property
     def file_suffix(self) -> str:

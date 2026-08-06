@@ -166,6 +166,41 @@ def test_requested_selection_is_text_free_and_owns_empty_options() -> None:
         selection.model_id = "replacement"  # type: ignore[misc]
 
 
+@pytest.mark.parametrize(
+    "provider_id",
+    sorted(("openai", "elevenlabs", "kokoro", "chatterbox", "higgs", "alltalk")),
+)
+def test_requested_selection_requires_an_exact_legacy_voice(
+    provider_id: str,
+) -> None:
+    """Provenance must not carry a shape a profile can never hold."""
+
+    with pytest.raises(ValueError):
+        TTSRequestedSelectionSnapshot(
+            provider_id=provider_id,
+            model_id="tts-1",
+            voice_id=None,
+            response_format="mp3",
+            speed=1.0,
+            options={},
+            configuration_revision=1,
+        )
+
+
+def test_requested_selection_keeps_audio_cpp_server_default_voice() -> None:
+    selection = TTSRequestedSelectionSnapshot(
+        provider_id="audio_cpp",
+        model_id="model",
+        voice_id=None,
+        response_format="wav",
+        speed=1.0,
+        options={},
+        configuration_revision=1,
+    )
+
+    assert selection.voice_id is None
+
+
 def test_generated_audio_requested_selection_is_optional_and_immutable(
     tmp_path: Path,
 ) -> None:

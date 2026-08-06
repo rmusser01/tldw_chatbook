@@ -248,9 +248,11 @@ class _ActionProfileService:
         profile: TTSGenerationProfile,
         *,
         availability_state: str = "available",
+        availability_recovery: str | None = None,
     ) -> None:
         self.page = _page(profile, generation=11)
         self.availability_state = availability_state
+        self.availability_recovery = availability_recovery
         self.list_calls: list[tuple[str | None, int]] = []
         self.availability_calls: list[TTSProfilePageSnapshot] = []
         self.create_calls: list[tuple[str, STTSGeneratedAudio]] = []
@@ -292,7 +294,11 @@ class _ActionProfileService:
         page: TTSProfilePageSnapshot,
     ) -> TTSProfileAvailabilitySnapshot:
         self.availability_calls.append(page)
-        return _availability(page, state=self.availability_state)
+        return _availability(
+            page,
+            state=self.availability_state,
+            recovery_action=self.availability_recovery,
+        )
 
     async def create_from_artifact(
         self,
@@ -392,12 +398,16 @@ def _availability(
     state: str = "available",
     configuration_revision: int = 1,
     catalog_revision: int | None = 1,
+    recovery_action: str | None = None,
 ) -> TTSProfileAvailabilitySnapshot:
-    recovery = {
-        "available": "none",
-        "unavailable": "edit",
-        "unverified": "refresh",
-    }[state]
+    recovery = (
+        recovery_action
+        or {
+            "available": "none",
+            "unavailable": "edit",
+            "unverified": "refresh",
+        }[state]
+    )
     return TTSProfileAvailabilitySnapshot(
         repository_generation=page.repository_generation,
         configuration_revision=configuration_revision,
@@ -776,6 +786,42 @@ async def test_profile_recovery_copy_is_visible_at_80x24(
             "Selected: Voice 00",
             "audio_cpp / model/0 / voice/0",
         )
+
+
+@pytest.mark.asyncio
+async def test_unverified_legacy_profile_never_offers_a_refresh_it_cannot_perform() -> (
+    None
+):
+    """Legacy providers skip capability preflight, so Refresh cannot change
+    "unverified" -- ADR-031 forbids a control that claims a recovery it can
+    never perform. The row must say why instead of instructing a retry."""
+
+    legacy = replace(
+        _profile(0),
+        provider_id="openai",
+        model_id="tts-1",
+        voice_id="alloy",
+        response_format="mp3",
+    )
+    service = _ActionProfileService(
+        legacy,
+        availability_state="unverified",
+        availability_recovery="none",
+    )
+    app = _ActionHost(service)
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        await _select_action_profile(app, pilot)
+        status = app.query_one("#stts-profile-status")
+
+        rows = _visible_content_rows(status)
+        assert rows == (
+            "Unverified — this provider has no catalog check.",
+            "Selected: Voice 00",
+            "openai / tts-1 / alloy",
+        )
+        assert "refresh" not in rows[0].casefold()
+        assert "retry" not in rows[0].casefold()
 
 
 @pytest.mark.asyncio
@@ -1537,6 +1583,81 @@ async def test_save_result_blank_name_uses_name_specific_not_saved_copy() -> Non
             str(modal.query_one("#stts-profile-name-error", Static).render())
             == "Enter a profile name. The result was not saved."
         )
+
+
+@pytest.mark.asyncio
+async def test_profile_editor_refuses_a_cleared_voice_for_a_legacy_provider() -> None:
+    """Clearing "Exact voice" on a legacy profile must not save silently.
+
+    Legacy providers cannot speak without an exact voice, so the profile
+    domain refuses the shape; the modal must surface its existing validation
+    copy and keep the dialog open rather than dismissing with a draft.
+    """
+
+    legacy = replace(
+        _profile(0),
+        provider_id="openai",
+        model_id="tts-1",
+        voice_id="alloy",
+        response_format="mp3",
+    )
+    loaded = LoadedTTSProfile(repository_generation=11, profile=legacy)
+    modal = profile_library_module.TTSProfileEditorModal(
+        loaded,
+        assignment_count=1,
+        mode="edit",
+    )
+    results: list[TTSProfileDraft | None] = []
+
+    class _ModalHost(App[None]):
+        def compose(self) -> ComposeResult:
+            yield Static("host")
+
+    app = _ModalHost()
+    async with app.run_test(size=(100, 36)) as pilot:
+        app.push_screen(modal, results.append)
+        await pilot.pause()
+
+        voice_input = modal.query_one("#stts-profile-editor-voice", Input)
+        assert voice_input.placeholder == "Required"
+        voice_input.value = ""
+        await pilot.click("#stts-profile-editor-save")
+        await pilot.pause()
+
+        assert results == []
+        assert modal.is_running
+        assert str(modal.query_one("#stts-profile-editor-error", Static).render()) == (
+            "Review the profile name, model, and voice. Exact values were not saved."
+        )
+
+
+@pytest.mark.asyncio
+async def test_profile_editor_still_accepts_a_cleared_voice_for_audio_cpp() -> None:
+    loaded = LoadedTTSProfile(repository_generation=11, profile=_profile(0))
+    modal = profile_library_module.TTSProfileEditorModal(
+        loaded,
+        assignment_count=1,
+        mode="edit",
+    )
+    results: list[TTSProfileDraft | None] = []
+
+    class _ModalHost(App[None]):
+        def compose(self) -> ComposeResult:
+            yield Static("host")
+
+    app = _ModalHost()
+    async with app.run_test(size=(100, 36)) as pilot:
+        app.push_screen(modal, results.append)
+        await pilot.pause()
+
+        voice_input = modal.query_one("#stts-profile-editor-voice", Input)
+        assert voice_input.placeholder == "Server default"
+        voice_input.value = ""
+        await pilot.click("#stts-profile-editor-save")
+        await _wait_until(pilot, lambda: len(results) == 1)
+
+    assert results[0] is not None
+    assert results[0].voice_id is None
 
 
 @pytest.mark.parametrize("mode", ["edit", "duplicate"])

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import inspect
 import sqlite3
+import tempfile
 from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
 from pathlib import Path
@@ -12,6 +13,7 @@ from uuid import UUID
 import pytest
 
 import tldw_chatbook.TTS.profile_schema as profile_schema
+from tldw_chatbook.TTS.migrations.v0_to_v1 import migrate as _raw_migrate_v0_to_v1
 from tldw_chatbook.TTS.profile_errors import ProfileRepositoryError
 from tldw_chatbook.TTS.profile_schema import (
     ASSIGNMENT_PROFILE_INDEX,
@@ -49,12 +51,12 @@ def _profile(**overrides: object) -> TTSGenerationProfile:
         "profile_id": PROFILE_ID,
         "display_name": "Straße 音声",
         "normalized_name": "strasse 音声",
-        "provider_id": "openai",
-        "model_id": "tts-1-hd",
+        "provider_id": "audio_cpp",
+        "model_id": "model",
         "voice_id": None,
-        "response_format": "mp3",
-        "speed": 1.25,
-        "options": {"nested": {"items": [True, 2, 3.5, None]}, "é": "声"},
+        "response_format": "wav",
+        "speed": 1.0,
+        "options": {},
         "revision": 7,
         "created_at": NOW,
         "updated_at": NOW,
@@ -173,6 +175,25 @@ def _create_custom_v1(
     connection.close()
 
 
+def _build_populated_v1_store(db_path: Path) -> None:
+    """Build an honest, populated v1 store by running the real v0->v1 migration.
+
+    This deliberately does not fabricate a v1 store by monkeypatching
+    ``CURRENT_PROFILE_SCHEMA_VERSION`` back to 1 -- it runs the module's own
+    v0->v1 migration function on a raw connection, then inserts one profile
+    row through the file's existing ``_insert_profile`` helper, so the
+    resulting store is byte-for-byte what a pre-slice user's store would be.
+    """
+
+    connection = sqlite3.connect(db_path)
+    try:
+        _raw_migrate_v0_to_v1(connection)
+        _insert_profile(connection, _profile())
+        connection.commit()
+    finally:
+        connection.close()
+
+
 def test_empty_store_migrates_transactionally_and_is_configured(tmp_path: Path) -> None:
     path = tmp_path / "profiles.sqlite3"
 
@@ -182,14 +203,14 @@ def test_empty_store_migrates_transactionally_and_is_configured(tmp_path: Path) 
         assert (
             connection.execute("PRAGMA user_version").fetchone()[0]
             == CURRENT_PROFILE_SCHEMA_VERSION
-            == 1
+            == 2
         )
         assert connection.execute("PRAGMA foreign_keys").fetchone()[0] == 1
         assert connection.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
         assert (
             connection.execute("PRAGMA busy_timeout").fetchone()[0] == BUSY_TIMEOUT_MS
         )
-        assert set(MIGRATIONS) == {0}
+        assert set(MIGRATIONS) == {0, 1}
         tables = {
             row[0]
             for row in connection.execute(
@@ -209,10 +230,12 @@ def test_profile_schema_ddl_lives_in_versioned_migration_module() -> None:
 
     assert "CREATE TABLE tts_generation_profiles" not in schema_source
 
-    from tldw_chatbook.TTS.migrations import v0_to_v1
+    from tldw_chatbook.TTS.migrations import v0_to_v1, v1_to_v2
 
-    assert v0_to_v1.TARGET_VERSION == CURRENT_PROFILE_SCHEMA_VERSION == 1
+    assert v0_to_v1.TARGET_VERSION == 1
+    assert v1_to_v2.TARGET_VERSION == CURRENT_PROFILE_SCHEMA_VERSION == 2
     assert MIGRATIONS[0] is v0_to_v1.migrate
+    assert MIGRATIONS[1] is v1_to_v2.migrate
 
 
 @pytest.mark.parametrize(
@@ -310,7 +333,7 @@ def test_live_store_no_create_mode_rejects_existing_empty_file_without_migration
     assert caught.value.__context__ is None
 
 
-def test_live_store_no_create_mode_uses_quoted_rw_uri_and_validates_v1(
+def test_live_store_no_create_mode_uses_quoted_rw_uri_and_validates_current(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -332,7 +355,10 @@ def test_live_store_no_create_mode_uses_quoted_rw_uri_and_validates_v1(
 
     connection = open_profile_store(path, must_exist=True)
     try:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 1
+        assert (
+            connection.execute("PRAGMA user_version").fetchone()[0]
+            == CURRENT_PROFILE_SCHEMA_VERSION
+        )
         assert connection.execute("PRAGMA foreign_keys").fetchone()[0] == 1
         assert connection.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
     finally:
@@ -459,7 +485,7 @@ def test_version_zero_nonempty_store_is_rejected_without_replacement(
 def test_newer_schema_is_rejected_without_mutation(tmp_path: Path) -> None:
     path = tmp_path / "profiles.sqlite3"
     connection = sqlite3.connect(path)
-    connection.execute("PRAGMA user_version = 2")
+    connection.execute(f"PRAGMA user_version = {CURRENT_PROFILE_SCHEMA_VERSION + 1}")
     connection.close()
     before = path.read_bytes()
 
@@ -467,6 +493,42 @@ def test_newer_schema_is_rejected_without_mutation(tmp_path: Path) -> None:
         open_profile_store(path)
 
     assert path.read_bytes() == before
+
+
+def test_populated_v1_store_upgrades_in_place_to_v2(tmp_path: Path) -> None:
+    db_path = tmp_path / "profiles.sqlite3"
+    _build_populated_v1_store(db_path)
+
+    connection = open_profile_store(db_path)
+    try:
+        version = connection.execute("PRAGMA user_version").fetchone()[0]
+        assert version == CURRENT_PROFILE_SCHEMA_VERSION == 2
+        rows = connection.execute(
+            "SELECT COUNT(*) FROM tts_generation_profiles"
+        ).fetchone()[0]
+        assert rows == 1
+        assert (
+            decode_profile(
+                connection.execute("SELECT * FROM tts_generation_profiles").fetchone()
+            )
+            == _profile()
+        )
+    finally:
+        connection.close()
+
+
+def test_future_version_store_still_fails_closed(tmp_path: Path) -> None:
+    db_path = tmp_path / "profiles.sqlite3"
+    _build_populated_v1_store(db_path)
+    raw = sqlite3.connect(db_path)
+    raw.execute("PRAGMA user_version = 3")
+    raw.close()
+    before = db_path.read_bytes()
+
+    with _safe_error("schema_unsupported"):
+        open_profile_store(db_path)
+
+    assert db_path.read_bytes() == before
 
 
 @pytest.mark.parametrize(
@@ -1124,8 +1186,30 @@ def test_profile_and_assignment_codecs_round_trip_exact_values(tmp_path: Path) -
         assert decode_assigned_snapshot(joined_row) == AssignedTTSProfileSnapshot(
             assignment=assignment, profile=profile
         )
+    finally:
+        connection.close()
+
+
+@pytest.mark.skip(
+    reason="options re-enabled in a later slice — no valid draft can carry options in slice 1"
+)
+def test_profile_options_round_trip_through_codec() -> None:
+    """Verify frozen options round-trip through schema codec.
+
+    When options support is re-enabled for non-audio_cpp providers, this test
+    documents the expected round-trip behavior for complex nested JSON options.
+    """
+    profile = _profile(options={"nested": {"items": [True, 2, 3.5, None]}, "é": "声"})
+    connection = open_profile_store(Path(tempfile.mkdtemp()) / "profiles.sqlite3")
+    try:
+        _insert_profile(connection, profile)
+        connection.commit()
+        profile_row = connection.execute(
+            "SELECT * FROM tts_generation_profiles"
+        ).fetchone()
+        # Verify options are frozen and canonicalized through the round-trip
         assert canonical_json_options(decode_profile(profile_row).options) == (
-            '{"nested":{"items":[true,2,3.5,null]},"é":"声"}'
+            '{"é":"声","nested":{"items":[true,2,3.5,null]}}'
         )
     finally:
         connection.close()
@@ -1382,6 +1466,99 @@ def test_candidate_v0_is_rejected_without_migration(tmp_path: Path) -> None:
         assert check.execute("PRAGMA user_version").fetchone()[0] == 0
     finally:
         check.close()
+
+
+def test_populated_v1_candidate_upgrades_disposable_snapshot_and_preserves_original(
+    tmp_path: Path,
+) -> None:
+    """A pre-slice v1 backup must validate, without ever mutating the original.
+
+    The disposable private snapshot copy is upgraded in place (mirroring
+    the live open flow's fence) so a v1 candidate validates successfully;
+    the caller-supplied candidate file itself is a completely different
+    file on disk and must stay byte-for-byte untouched throughout.
+    """
+
+    path = tmp_path / "candidate.sqlite3"
+    _build_populated_v1_store(path)
+    before = path.read_bytes()
+
+    validate_profile_candidate(path)
+
+    assert path.read_bytes() == before
+    check = sqlite3.connect(path)
+    try:
+        assert check.execute("PRAGMA user_version").fetchone()[0] == 1
+    finally:
+        check.close()
+
+
+def test_corrupt_but_v1_candidate_fails_closed_before_any_version_stamp(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A structurally corrupt v1 candidate must fail before any migration write.
+
+    The upgrade step validates the pre-upgrade schema before running any
+    migration, exactly like the live open flow -- so a candidate that
+    merely claims ``user_version = 1`` but is missing a required column
+    must fail with ``schema_corrupt``. Because v1->v2 is a version-fence-only
+    migration (no DDL change), running the migration on this same corrupt
+    structure would *also* eventually surface ``schema_corrupt`` further
+    downstream -- so the error code alone cannot prove the ordering. This
+    directly tracks every ``_run_migrations`` call and asserts it is never
+    invoked, which is what actually proves no version-stamping write was
+    ever attempted.
+    """
+
+    migration_calls: list[int] = []
+    real_run_migrations = profile_schema._run_migrations
+
+    def tracked_run_migrations(
+        connection: sqlite3.Connection, from_version: int
+    ) -> None:
+        migration_calls.append(from_version)
+        real_run_migrations(connection, from_version)
+
+    monkeypatch.setattr(profile_schema, "_run_migrations", tracked_run_migrations)
+
+    path = tmp_path / "candidate.sqlite3"
+    connection = sqlite3.connect(path)
+    connection.execute(
+        """
+        CREATE TABLE tts_generation_profiles (
+            profile_id TEXT PRIMARY KEY, display_name TEXT NOT NULL,
+            normalized_name TEXT NOT NULL UNIQUE, provider_id TEXT NOT NULL,
+            model_id TEXT NOT NULL, voice_id TEXT, response_format TEXT NOT NULL,
+            speed REAL NOT NULL, options_json TEXT NOT NULL, revision INTEGER NOT NULL,
+            created_at TEXT NOT NULL
+        )
+        """
+    )
+    connection.execute(
+        """
+        CREATE TABLE character_tts_assignments (
+            source TEXT NOT NULL, authority_id TEXT NOT NULL, character_id TEXT NOT NULL,
+            profile_id TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+            PRIMARY KEY(source, authority_id, character_id),
+            FOREIGN KEY(profile_id) REFERENCES tts_generation_profiles(profile_id)
+                ON DELETE RESTRICT
+        )
+        """
+    )
+    connection.execute(
+        "CREATE INDEX idx_character_tts_assignments_profile_id "
+        "ON character_tts_assignments(profile_id)"
+    )
+    connection.execute("PRAGMA user_version = 1")
+    connection.close()
+    before = path.read_bytes()
+
+    with _safe_error("schema_corrupt"):
+        validate_profile_candidate(path)
+
+    assert migration_calls == []
+    assert path.read_bytes() == before
 
 
 def test_missing_candidate_is_not_created(tmp_path: Path) -> None:
@@ -1658,13 +1835,19 @@ def test_candidate_control_flow_exception_closes_and_removes_private_snapshot(
         validate_profile_candidate(path)
 
     assert caught.value is signal
-    assert len(snapshot_paths) == len(source_fds) == len(snapshot_connections) == 1
+    assert len(snapshot_paths) == len(source_fds) == 1
+    # Two SQLite connections open against the disposable snapshot: the
+    # brief read-write reopen that checks/upgrades its schema version, and
+    # the immutable read-only handle used for the actual row decode that
+    # `interrupt_decode` raises inside.
+    assert len(snapshot_connections) == 2
     assert not snapshot_paths[0].exists()
     assert list(private_directory.iterdir()) == []
     with pytest.raises(OSError):
         profile_schema.os.fstat(source_fds[0])
-    with pytest.raises(sqlite3.ProgrammingError):
-        snapshot_connections[0].execute("SELECT 1")
+    for snapshot_connection in snapshot_connections:
+        with pytest.raises(sqlite3.ProgrammingError):
+            snapshot_connection.execute("SELECT 1")
     assert path.read_bytes() == original
 
 
@@ -1814,9 +1997,15 @@ def test_candidate_connection_cleanup_control_flow_signal_wins_ordinary_body_err
         validate_profile_candidate(path)
 
     assert caught.value is signal
-    assert len(close_attempts) == len(snapshot_paths) == 1
-    with pytest.raises(sqlite3.ProgrammingError):
-        close_attempts[0].execute("SELECT 1")
+    assert len(snapshot_paths) == 1
+    # Two SQLite connections open against the disposable snapshot: the
+    # brief read-write reopen (already current here, so it never migrates)
+    # closes first, then the immutable read-only handle whose
+    # `_validate_schema` call is the ordinary failure `fail_schema` raises.
+    assert len(close_attempts) == 2
+    for closed_connection in close_attempts:
+        with pytest.raises(sqlite3.ProgrammingError):
+            closed_connection.execute("SELECT 1")
     assert not snapshot_paths[0].exists()
     assert list(private_directory.iterdir()) == []
 

@@ -431,3 +431,53 @@ finding. When it moves, say why in the same breath, and cite the comparable sign
 Keep a mechanical arm in every round precisely so there is something to compare when the
 judgement number swings, and never report a delta without stating whether coverage
 changed underneath it.
+
+---
+
+## A backend fix proven by a unit test can still be dead code from the only real UI entry point (2026-08-04)
+
+**What happened (TASK-2450, voice-profiles slice 1).** Two review-and-test-passed fixes
+turned out to be unreachable from the app they shipped in, and only driving the real TUI
+against a real OpenAI account found either one.
+
+1. A slice fixed `_generate_legacy`'s provenance construction so a legacy-provider TTS
+   generation would carry a `TTSRequestedSelectionSnapshot`, making "Save result as
+   profile" eligible — reviewed, unit-tested, green. Live-clicking Generate in the real
+   Playground never made the Save button appear. The Playground pane is *always*
+   constructed with a non-`None` `studio_preferences` snapshot (`UI/STTS_Window.py`), so
+   every real click's request carries `studio_preferences != None` and the dispatcher
+   (`_generate_tts_worker`) always routes to `_generate_studio_effective`, never to
+   `_generate_legacy` — which is only reachable when `studio_preferences is None`, a state
+   the live UI can never produce. `_generate_studio_effective` had its own, separate,
+   untouched provenance construction that only fires for `provider_id == "audio_cpp"`.
+   The fixed function was correct and completely unreachable.
+2. In the same slice, the backend's assignment path (`TTSProfileService.set_assignment`,
+   the character resolver) was correctly extended to accept the new provider set, and a
+   profile classified `"unverified"` accordingly. The **client-side** Select widget that
+   is the only way to create an assignment (`personas_character_tts_widget.py`,
+   `_profile_changed`) still read `if option.availability != "available":
+   self._restore_selected_value()` — written when `"available"`/`"unavailable"` was the
+   whole vocabulary, never taught the new third state. Every attempt to assign a legacy
+   profile silently reverted with no error. The backend was correct; the one widget that
+   calls it was stale.
+
+Both were found by clicking the real button in a real running app, not by reading either
+function in isolation — a code reviewer reading `_generate_legacy`'s diff has no reason
+to go looking for a sibling function with the same job, and a reviewer of the assignment
+service has no reason to open an unrelated, untouched widget file three directories away.
+
+**What to do.** When a fix changes what one function accepts, ask a second question
+before calling it shippable: **is this the function the real UI actually calls on the
+path a user takes?** `grep` for the dispatcher/conditional that chooses between it and
+any sibling implementing the "same" behavior, and check what determines the choice at
+the actual call site — not what the test harness passes. Separately, `grep` for every
+manual string comparison against a status/enum field the change touches
+(`!= "available"`, `== "unavailable"`, etc.) outside the files the diff itself modified;
+a new state must be taught to every comparison, not just the ones in the changed files.
+Live-clicking the real affordance is the cheapest thing that reliably catches both
+shapes — a unit test that constructs the request/selection by hand cannot, because it
+never asks who else was supposed to construct it that way.
+
+**Addendum (2026-08-05, TASK-2453 fix): the same stale check can exist at two layers, and fixing the one you found does not prove you found all of them.** Shape (2) above (the Roleplay assignment Select silently refusing anything not exactly `"available"`) turned out to have a **second, independent copy** one layer deeper: `personas_screen.py`'s `_character_tts_assignment_worker` had its own `if tokens[1].state != "available": return`, entirely separate from the widget's own gate, with no log line and no error on the silent early return. Fixing only the widget (its own `Select.Changed` handler correctly stopped reverting the value) produced a **convincing false positive**: the Select's displayed value updated immediately, matching what a successful assignment should look like — but navigating away and back showed it had reverted, because the message posted correctly and then hit the second gate on the way to the database. The paragraph above already prescribed the right process (grep every manual comparison against the touched enum, everywhere, before calling a fix complete) — and it was not followed mechanically the first time around; the second gate was found only because live re-verification checked **persistence across a remount**, not just the widget's own immediate-post-click state. The generalizable rule, sharpened: after fixing a UI-level stale-enum-comparison bug, grep the *whole codebase* for the same literal comparison pattern (`!= "available"` was one string away from the actual second occurrence) before declaring the feature reachable, and verify any "it looks assigned now" result survives a full remount/reload — an optimistic local render and a persisted round trip look identical for exactly as long as you don't check.
+
+**Second addendum (2026-08-05, TASK-2450 AC#8/#9, found by review not live verification): there was a third instance, one layer further out.** `TTSProfileService.commit_portable_profile_import` — the character-*import* path, not the Roleplay assignment path either of the first two instances lived in — had the identical `current.availability == "available"` gate blocking auto-apply of an imported legacy voice, plus three toast strings inheriting the same "not currently available" mislabel. This one was **not** caught by the live-verification sessions that found and fixed the first two; it was caught by a reviewer explicitly re-running the "grep for every occurrence of this comparison" step this same entry already prescribes, against the full diff, as its own dedicated pass — confirming the remedy works when actually performed as a full-codebase sweep rather than scoped to the one feature just fixed. Three independent occurrences of one enum being taught in exactly two of its three call sites is not a coincidence of this feature; it is what happens whenever a state gains a new value after several call sites already hard-coded the old two. **The actionable form going forward:** when a value's vocabulary grows (two states becoming three, in this repo's case), grep is cheap enough to run as its own numbered step *before* any live verification, not as a thing live verification occasionally happens to surface — treat "how many places compare against the old vocabulary" as a question with a countable, checkable answer, not a hunch.

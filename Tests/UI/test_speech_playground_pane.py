@@ -262,6 +262,64 @@ async def test_native_profile_save_action_tracks_generation_lifecycle(
 
 
 @pytest.mark.asyncio
+async def test_options_bearing_result_states_why_it_cannot_be_saved(
+    faked_service: FakeTTSService,
+    tmp_path,
+) -> None:
+    """A missing Save with no explanation is the chrome-honesty defect.
+
+    Slice 1 profiles hold empty options, so a generation that used
+    provider-specific options cannot be reproduced exactly and is refused
+    provenance. The result region must say that in user language rather than
+    silently dropping the affordance.
+    """
+
+    del faked_service
+    app = _AxisHarness()
+    async with app.run_test(size=(160, 60)) as pilot:
+        await pilot.pause()
+        pane = app.query_one(SpeechPlaygroundPane)
+        blocked_path = tmp_path / "blocked.mp3"
+        blocked_path.write_bytes(b"ID3")
+
+        pane._store_delivered_artifact(
+            STTSGeneratedAudio(
+                path=blocked_path,
+                provider_id="higgs",
+                model_id="higgs-v2",
+                voice_id="narrator",
+                source_text="private text",
+                operation_id="blocked-operation",
+                audio_format="mp3",
+                content_type="audio/mpeg",
+                profile_save_block_code="provider_options",
+            ),
+            announce=False,
+        )
+        await pilot.pause()
+
+        button = app.query_one("#audio-save-profile-btn", Button)
+        lifecycle = str(app.query_one("#audio-result-lifecycle", Static).renderable)
+        assert button.has_class("hidden")
+        assert "provider-specific options" in lifecycle
+        assert "voice profile" in lifecycle.casefold()
+
+        clean_path = tmp_path / "clean.wav"
+        clean_path.write_bytes(b"RIFF")
+        pane._store_delivered_artifact(
+            _native_profile_artifact(clean_path),
+            announce=False,
+        )
+        await pilot.pause()
+
+        clean_lifecycle = str(
+            app.query_one("#audio-result-lifecycle", Static).renderable
+        )
+        assert "provider-specific options" not in clean_lifecycle
+        assert "temporary" in clean_lifecycle.casefold()
+
+
+@pytest.mark.asyncio
 async def test_save_profile_button_opens_the_name_dialog(
     faked_service: FakeTTSService,
     tmp_path,

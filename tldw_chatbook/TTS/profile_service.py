@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from itertools import islice
@@ -28,8 +29,8 @@ from tldw_chatbook.TTS.profile_errors import (
     ProfileValidationError,
 )
 from tldw_chatbook.TTS.profile_types import (
-    AUDIO_CPP_PROFILE_RESPONSE_FORMAT,
     AUDIO_CPP_PROFILE_SPEED,
+    PROFILE_PROVIDER_FORMATS,
     AssignedTTSProfileSnapshot,
     CharacterRef,
     CharacterTTSAssignment,
@@ -73,6 +74,24 @@ _AVAILABILITY_RECOVERY: Mapping[
         "available": "none",
         "unavailable": "edit",
         "unverified": "refresh",
+    }
+)
+#: The recovery actions each state may honestly carry.
+#:
+#: "unverified" admits two, one per provider class: audio.cpp is unverified
+#: only until its next capability preflight, so "refresh" is a real recovery;
+#: the legacy providers have no catalog to preflight (`observe_availability`
+#: skips them by design), so their "unverified" is permanent and the only
+#: honest action is the inert one -- ADR-031 forbids a control that claims a
+#: recovery it can never perform.
+_ALLOWED_RECOVERY_ACTIONS: Mapping[
+    ProfileAvailabilityState,
+    frozenset[ProfileRecoveryAction],
+] = MappingProxyType(
+    {
+        "available": frozenset({"none"}),
+        "unavailable": frozenset({"edit"}),
+        "unverified": frozenset({"refresh", "none"}),
     }
 )
 
@@ -235,7 +254,7 @@ def _validate_recovery_action(
     if type(value) is not str or value not in {"none", "refresh", "edit"}:
         raise ProfileValidationError("recovery_action")
     action = cast(ProfileRecoveryAction, value)
-    if action != _AVAILABILITY_RECOVERY[state]:
+    if action not in _ALLOWED_RECOVERY_ACTIONS[state]:
         raise ProfileValidationError("recovery_action")
     return action
 
@@ -255,15 +274,18 @@ def _selection_is_profile_safe(
     speed: object,
     options: object,
 ) -> bool:
-    return (
-        type(provider_id) is str
-        and provider_id == _PROFILE_PROVIDER_ID
-        and type(response_format) is str
-        and response_format == AUDIO_CPP_PROFILE_RESPONSE_FORMAT
-        and type(speed) is float
-        and speed == AUDIO_CPP_PROFILE_SPEED
-        and _mapping_is_empty(options)
-    )
+    if type(provider_id) is not str or type(response_format) is not str:
+        return False
+    formats = PROFILE_PROVIDER_FORMATS.get(provider_id)
+    if formats is None or response_format not in formats:
+        return False
+    if type(speed) is not float or not math.isfinite(speed) or not 0.25 <= speed <= 4.0:
+        return False
+    if not _mapping_is_empty(options):
+        return False
+    if provider_id == _PROFILE_PROVIDER_ID:
+        return speed == AUDIO_CPP_PROFILE_SPEED
+    return True
 
 
 def _matches_exact_canonical_value(value: object, canonical: object) -> bool:
@@ -685,14 +707,26 @@ def _profile_is_structurally_supported(profile: TTSGenerationProfile) -> bool:
     )
 
 
+def _recovery_action(
+    provider_id: str,
+    state: ProfileAvailabilityState,
+) -> ProfileRecoveryAction:
+    """Return the only recovery this provider can actually perform."""
+
+    if state == "unverified" and provider_id != _PROFILE_PROVIDER_ID:
+        return "none"
+    return _AVAILABILITY_RECOVERY[state]
+
+
 def _availability(
     profile_id: UUID,
     state: ProfileAvailabilityState,
+    provider_id: str,
 ) -> TTSProfileAvailability:
     return TTSProfileAvailability(
         profile_id=profile_id,
         state=state,
-        recovery_action=_AVAILABILITY_RECOVERY[state],
+        recovery_action=_recovery_action(provider_id, state),
     )
 
 
@@ -1227,14 +1261,44 @@ class TTSProfileService:
                 configuration_revision=revision,
                 catalog_revision=None,
                 profiles=tuple(
-                    _availability(profile.profile_id, "unavailable")
+                    _availability(
+                        profile.profile_id,
+                        "unavailable",
+                        profile.provider_id,
+                    )
+                    for profile in page.profiles
+                ),
+            )
+
+        audio_cpp_supported = tuple(
+            profile
+            for profile in supported_profiles
+            if profile.provider_id == _PROFILE_PROVIDER_ID
+        )
+        if not audio_cpp_supported:
+            revision = self._current_configuration_revision()
+            self._require_repository_generation(page.repository_generation)
+            return TTSProfileAvailabilitySnapshot(
+                repository_generation=page.repository_generation,
+                configuration_revision=revision,
+                catalog_revision=None,
+                profiles=tuple(
+                    _availability(
+                        profile.profile_id,
+                        (
+                            "unverified"
+                            if _profile_is_structurally_supported(profile)
+                            else "unavailable"
+                        ),
+                        profile.provider_id,
+                    )
                     for profile in page.profiles
                 ),
             )
 
         relevant_models: dict[str, None] = {}
         exact_voice_models: dict[str, None] = {}
-        for profile in supported_profiles:
+        for profile in audio_cpp_supported:
             relevant_models.setdefault(profile.model_id, None)
             if profile.voice_id is not None:
                 exact_voice_models.setdefault(profile.model_id, None)
@@ -1291,6 +1355,15 @@ class TTSProfileService:
             raise ProfileServiceError("unsupported_profile")
 
         repository_generation = self._current_repository_generation()
+        if draft.provider_id != _PROFILE_PROVIDER_ID:
+            revision = self._current_configuration_revision()
+            self._require_repository_generation(repository_generation)
+            return PortableProfileAvailabilityObservation(
+                repository_generation=repository_generation,
+                configuration_revision=revision,
+                profile=portable,
+                availability="unverified",
+            )
         exact_voice_models = () if draft.voice_id is None else (draft.model_id,)
         failed = False
         snapshot = None
@@ -1388,9 +1461,7 @@ class TTSProfileService:
             choices: tuple[PortableProfileImportChoice, ...] = ("create",)
             copy_candidate = portable
         else:
-            choices = (
-                ("reuse", "copy") if reuse_profile is not None else ("copy",)
-            )
+            choices = ("reuse", "copy") if reuse_profile is not None else ("copy",)
             copy_candidate = await self._collision_free_copy_candidate(
                 portable,
                 replace_profile_id=id_match is not None,
@@ -1454,7 +1525,7 @@ class TTSProfileService:
             if profile is None:
                 raise ProfileValidationError("choice")
             loaded = LoadedTTSProfile(expected_generation, profile)
-            if current.availability != "available":
+            if current.availability == "unavailable":
                 return PortableProfileImportResult(
                     created=False,
                     availability=current.availability,
@@ -1483,7 +1554,7 @@ class TTSProfileService:
                 expected_generation=expected_generation,
                 verify=True,
             )
-        if current.availability == "available":
+        if current.availability != "unavailable":
             snapshot = await self._create_profile_with_assignment(
                 candidate,
                 canonical_ref,
@@ -2264,6 +2335,8 @@ class TTSProfileService:
         self,
         draft: TTSProfileDraft,
     ) -> None:
+        if draft.provider_id != _PROFILE_PROVIDER_ID:
+            return
         exact_voice_models = () if draft.voice_id is None else (draft.model_id,)
         failed = False
         snapshot = None
@@ -2352,7 +2425,7 @@ class TTSProfileService:
             options=profile.options,
             snapshot=snapshot,
         )
-        return _availability(profile.profile_id, state)
+        return _availability(profile.profile_id, state, profile.provider_id)
 
     @staticmethod
     def _classify_selection(
@@ -2372,6 +2445,8 @@ class TTSProfileService:
             options,
         ):
             return "unavailable"
+        if provider_id != _PROFILE_PROVIDER_ID:
+            return "unverified"
         catalog = snapshot.catalog
         if (
             type(catalog) is not TTSProviderCatalog

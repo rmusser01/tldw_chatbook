@@ -21,8 +21,11 @@ from uuid import UUID
 
 import pytest
 
+from tldw_chatbook.TTS.migrations.v0_to_v1 import migrate as _raw_migrate_v0_to_v1
 from tldw_chatbook.TTS.profile_errors import ProfileRepositoryError
 from tldw_chatbook.TTS.profile_schema import (
+    CURRENT_PROFILE_SCHEMA_VERSION,
+    encode_profile,
     open_profile_store,
     validate_profile_candidate,
 )
@@ -35,6 +38,7 @@ from tldw_chatbook.TTS.profile_types import (
     ProfileRepositoryState,
     ProfileRestoreReceipt,
     ProfileStoreResult,
+    TTSGenerationProfile,
     TTSProfileDraft,
 )
 
@@ -255,6 +259,148 @@ async def _create_profile_store(path: Path, *names: str) -> None:
             )
     finally:
         await repository.close()
+
+
+def _build_populated_v1_store_at(path: Path) -> None:
+    """Build an honest, populated v1 store the repository has never opened.
+
+    Runs the module's own v0->v1 migration directly on a raw connection --
+    never by monkeypatching ``CURRENT_PROFILE_SCHEMA_VERSION`` back to 1 --
+    then inserts one profile row through the real ``encode_profile`` codec,
+    so the resulting file is exactly what a pre-slice user's store would be.
+    """
+
+    connection = sqlite3.connect(path)
+    try:
+        _raw_migrate_v0_to_v1(connection)
+        now = datetime(2026, 7, 26, 12, 34, 56, 123456, tzinfo=UTC)
+        profile = TTSGenerationProfile(
+            profile_id=UUID("00000000-0000-4000-8000-000000000099"),
+            display_name="Legacy",
+            normalized_name="legacy",
+            provider_id="audio_cpp",
+            model_id="supertonic",
+            voice_id=None,
+            response_format="wav",
+            speed=1.0,
+            options={},
+            revision=1,
+            created_at=now,
+            updated_at=now,
+        )
+        connection.execute(
+            """
+            INSERT INTO tts_generation_profiles (
+                profile_id, display_name, normalized_name, provider_id, model_id,
+                voice_id, response_format, speed, options_json, revision,
+                created_at, updated_at
+            ) VALUES (
+                :profile_id, :display_name, :normalized_name, :provider_id,
+                :model_id, :voice_id, :response_format, :speed, :options_json,
+                :revision, :created_at, :updated_at
+            )
+            """,
+            encode_profile(profile),
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+
+@pytest.mark.asyncio
+async def test_populated_v1_store_upgrades_under_exclusive_lease_through_repository(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A pre-slice v1 store must upgrade via the exclusive-guarded path.
+
+    ``open_profile_store`` transparently upgrades a populated v1 store in
+    place, but that write must never happen while only the repository's
+    ordinary shared lease is held (:meth:`_worker_open_existing`'s
+    contract). Opening through the real lease-guarded repository layer --
+    not the schema module's unit-test seam -- must route the upgrade
+    through :meth:`_worker_initialize_store`'s exclusive lease first, and
+    only then hand back a shared-leased connection for ordinary use.
+    """
+
+    module = _repository_module()
+    database_path = tmp_path / "profiles.sqlite3"
+    _build_populated_v1_store_at(database_path)
+
+    recorded_modes: list[ProfileStoreLockMode] = []
+    real_lease_cls = module.ProfileStoreLease
+
+    def recording_lease_factory(
+        lease_path: Path,
+        mode: ProfileStoreLockMode,
+        **kwargs: object,
+    ) -> ProfileStoreLease:
+        recorded_modes.append(mode)
+        return real_lease_cls(lease_path, mode, **kwargs)
+
+    monkeypatch.setattr(module, "ProfileStoreLease", recording_lease_factory)
+
+    repository = module.TTSProfileRepository(database_path)
+    opened = await repository.open()
+    try:
+        assert opened == ProfileStoreResult(generation=1, value=None)
+        page = await repository.list_profiles()
+        assert [profile.display_name for profile in page.value.profiles] == ["Legacy"]
+    finally:
+        await repository.close()
+
+    assert recorded_modes == [
+        ProfileStoreLockMode.EXCLUSIVE,
+        ProfileStoreLockMode.SHARED,
+    ]
+
+    check = sqlite3.connect(database_path)
+    try:
+        assert (
+            check.execute("PRAGMA user_version").fetchone()[0]
+            == CURRENT_PROFILE_SCHEMA_VERSION
+        )
+        assert (
+            check.execute("SELECT COUNT(*) FROM tts_generation_profiles").fetchone()[0]
+            == 1
+        )
+    finally:
+        check.close()
+
+
+@pytest.mark.asyncio
+async def test_already_current_store_open_never_takes_exclusive_lease(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The version peek must not force an exclusive round trip when unneeded."""
+
+    module = _repository_module()
+    database_path = tmp_path / "profiles.sqlite3"
+    await _create_profile_store(database_path, "Current")
+
+    recorded_modes: list[ProfileStoreLockMode] = []
+    real_lease_cls = module.ProfileStoreLease
+
+    def recording_lease_factory(
+        lease_path: Path,
+        mode: ProfileStoreLockMode,
+        **kwargs: object,
+    ) -> ProfileStoreLease:
+        recorded_modes.append(mode)
+        return real_lease_cls(lease_path, mode, **kwargs)
+
+    monkeypatch.setattr(module, "ProfileStoreLease", recording_lease_factory)
+
+    repository = module.TTSProfileRepository(database_path)
+    await repository.open()
+    try:
+        page = await repository.list_profiles()
+        assert [profile.display_name for profile in page.value.profiles] == ["Current"]
+    finally:
+        await repository.close()
+
+    assert recorded_modes == [ProfileStoreLockMode.SHARED]
 
 
 def _assert_safe_error(
@@ -2900,13 +3046,15 @@ async def test_invalid_restore_candidates_preserve_original_and_rebind_open(
     if variant == "partial":
         partial = sqlite3.connect(candidate)
         partial.execute("CREATE TABLE unexpected(value TEXT)")
-        partial.execute("PRAGMA user_version = 1")
+        partial.execute(f"PRAGMA user_version = {CURRENT_PROFILE_SCHEMA_VERSION}")
         partial.close()
     else:
         await _create_profile_store(candidate, "Candidate")
         hostile = sqlite3.connect(candidate)
         if variant == "unsupported":
-            hostile.execute("PRAGMA user_version = 2")
+            hostile.execute(
+                f"PRAGMA user_version = {CURRENT_PROFILE_SCHEMA_VERSION + 1}"
+            )
         elif variant == "domain":
             hostile.execute("UPDATE tts_generation_profiles SET revision = 0")
         else:

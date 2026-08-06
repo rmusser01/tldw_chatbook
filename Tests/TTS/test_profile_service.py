@@ -102,18 +102,21 @@ def _portable_profile(
     *,
     profile_id: UUID = _PROFILE_ID,
     display_name: str = "Imported voice",
+    provider_id: str = "audio_cpp",
     model_id: str = "model-a",
     voice_id: str | None = None,
+    response_format: str = "wav",
+    speed: float = 1.0,
 ) -> PortableTTSProfile:
     return PortableTTSProfile(
         profile_id=profile_id,
         draft=TTSProfileDraft(
             display_name=display_name,
-            provider_id="audio_cpp",
+            provider_id=provider_id,
             model_id=model_id,
             voice_id=voice_id,
-            response_format="wav",
-            speed=1.0,
+            response_format=response_format,
+            speed=speed,
             options={},
         ),
     )
@@ -435,16 +438,19 @@ def _artifact(
 
 def _selection(
     *,
+    provider_id: str = "audio_cpp",
     model_id: str = "selected-model",
     voice_id: str | None = "selected-voice",
+    response_format: str = "wav",
+    speed: float = 1.0,
     configuration_revision: int = 3,
 ) -> TTSRequestedSelectionSnapshot:
     return TTSRequestedSelectionSnapshot(
-        provider_id="audio_cpp",
+        provider_id=provider_id,
         model_id=model_id,
         voice_id=voice_id,
-        response_format="wav",
-        speed=1.0,
+        response_format=response_format,
+        speed=speed,
         options={},
         configuration_revision=configuration_revision,
     )
@@ -1033,24 +1039,21 @@ def test_service_values_are_immutable_and_defensively_freeze_containers() -> Non
         profiles=source_availability,
     )
     source_availability.clear()
-    source_options: dict[str, Any] = {"nested": ["value"]}
     preset = TTSPlaygroundSelectionPreset(
-        provider_id="future_native",
+        provider_id="audio_cpp",
         model_id="model",
         voice_id=None,
         response_format="wav",
         speed=1.0,
-        options=source_options,
         availability="unavailable",
     )
-    source_options["nested"].append("changed")
 
     assert page.profiles == (profile,)
     assert page.profiles[0] is not profile
     assert loaded.profile == profile
     assert loaded.profile is not profile
     assert snapshot.profiles == (availability,)
-    assert preset.options == {"nested": ("value",)}
+    assert preset.options == {}
     assert isinstance(preset.options, MappingProxyType)
     with pytest.raises(FrozenInstanceError):
         page.total = 2  # type: ignore[misc]
@@ -1142,7 +1145,8 @@ def test_profile_wrappers_reject_forged_mutable_options_safely(
     secret = "https://user:credential@example.test/private/path"
     forged = _forged_profile(
         _profile(
-            provider_id="future_native",
+            provider_id="openai",
+            voice_id="alloy",
             response_format="flac",
             speed=1.5,
         ),
@@ -1292,7 +1296,8 @@ async def test_list_profiles_rejects_forged_mutable_profile_safely() -> None:
         profiles=(
             _forged_profile(
                 _profile(
-                    provider_id="future_native",
+                    provider_id="openai",
+                    voice_id="alloy",
                     response_format="flac",
                     speed=1.5,
                 ),
@@ -1431,6 +1436,13 @@ async def test_availability_rechecks_generation_after_page_canonicalization() ->
 
 @pytest.mark.asyncio
 async def test_availability_applies_exact_allowlist_before_capability_lookup() -> None:
+    """audio.cpp profiles still gate on native catalog data; legacy-provider
+    profiles are now structurally in the allowlist too, but classify as the
+    interim honest "unverified" state without ever being probed against the
+    native (audio.cpp) catalog, since legacy providers have no catalog
+    authority -- their model ids are excluded from the capability batch
+    entirely (task 2b), not merely left unclassified."""
+
     supported = _profile(
         profile_id=UUID(int=1),
         display_name="Supported",
@@ -1442,33 +1454,28 @@ async def test_availability_applies_exact_allowlist_before_capability_lookup() -
         display_name="Default",
         model_id="model-b",
     )
-    future_native = _profile(
+    legacy_with_voice = _profile(
         profile_id=UUID(int=3),
-        display_name="Future native",
-        provider_id="future_native",
-        model_id="future-model",
-        voice_id="future-voice",
+        display_name="Legacy voice",
+        provider_id="openai",
+        model_id="legacy-model",
+        voice_id="legacy-voice",
     )
-    invalid_format = _profile(
+    legacy_other_format = _profile(
         profile_id=UUID(int=4),
-        display_name="Invalid format",
-        provider_id="future_native",
-        model_id="future-format",
+        display_name="Legacy format",
+        provider_id="openai",
+        model_id="legacy-format",
+        voice_id="legacy-voice",
         response_format="mp3",
     )
-    invalid_speed = _profile(
+    legacy_custom_speed = _profile(
         profile_id=UUID(int=5),
-        display_name="Invalid speed",
-        provider_id="future_native",
-        model_id="future-speed",
+        display_name="Legacy speed",
+        provider_id="openai",
+        model_id="legacy-speed",
+        voice_id="legacy-voice",
         speed=1.25,
-    )
-    invalid_options = _profile(
-        profile_id=UUID(int=6),
-        display_name="Invalid options",
-        provider_id="future_native",
-        model_id="future-options",
-        options={"quality": "high"},
     )
     voice_result = TTSVoiceDiscoveryResult(
         provider_id="audio_cpp",
@@ -1489,12 +1496,11 @@ async def test_availability_applies_exact_allowlist_before_capability_lookup() -
         profiles=(
             supported,
             default_voice,
-            future_native,
-            invalid_format,
-            invalid_speed,
-            invalid_options,
+            legacy_with_voice,
+            legacy_other_format,
+            legacy_custom_speed,
         ),
-        total=6,
+        total=5,
     )
 
     observed = await service.observe_availability(page)
@@ -1503,18 +1509,16 @@ async def test_availability_applies_exact_allowlist_before_capability_lookup() -
     assert tuple(item.state for item in observed.profiles) == (
         "available",
         "available",
-        "unavailable",
-        "unavailable",
-        "unavailable",
-        "unavailable",
+        "unverified",
+        "unverified",
+        "unverified",
     )
     assert tuple(item.recovery_action for item in observed.profiles) == (
         "none",
         "none",
-        "edit",
-        "edit",
-        "edit",
-        "edit",
+        "none",
+        "none",
+        "none",
     )
     assert observed.repository_generation == repository.generation
     assert observed.configuration_revision == 3
@@ -1528,7 +1532,7 @@ async def test_availability_rejects_wrong_provider_snapshot_before_classificatio
 ) -> None:
     tts_service = _FakeTTSService(
         _capability_snapshot(
-            provider_id="future_native",
+            provider_id="openai",
             state=snapshot_state,
             models=(_model("model-a"),),
         )
@@ -1593,29 +1597,30 @@ async def test_availability_sanitizes_malformed_exact_capability_snapshot(
 
 @pytest.mark.asyncio
 async def test_all_unsupported_profiles_do_not_observe_capabilities() -> None:
-    unsupported = _profile(
-        provider_id="future_native",
-        model_id="model",
-        voice_id="voice",
+    # Every recognized provider is now structurally valid at construction
+    # (Task 1's per-provider contract table), so the only profile that can
+    # still fail the allowlist is one referencing a provider outside the
+    # closed seven-provider set -- and since `TTSGenerationProfile`
+    # construction itself enforces that same contract, such a profile can
+    # only exist as forged (pre-expansion or otherwise hostile) data.
+    # `observe_availability` fails closed on it before any capability
+    # lookup, matching the file's other hostile-page tests.
+    unsupported = _forged_profile(
+        _profile(model_id="model", voice_id="voice"),
+        provider_id="unrecognized_future_provider",
     )
     service, repository, tts_service = _service()
-
-    observed = await service.observe_availability(
-        TTSProfilePageSnapshot(
-            repository_generation=repository.generation,
-            profiles=(unsupported,),
-            total=1,
-        )
+    page = _forged_page_snapshot(
+        repository_generation=repository.generation,
+        profiles=(unsupported,),
+        total=1,
     )
 
+    with pytest.raises(ProfileValidationError) as caught:
+        await service.observe_availability(page)
+
+    assert caught.value.code == "profiles"
     assert tts_service.capability_calls == []
-    assert observed.profiles == (
-        TTSProfileAvailability(
-            profile_id=unsupported.profile_id,
-            state="unavailable",
-            recovery_action="edit",
-        ),
-    )
 
 
 @pytest.mark.asyncio
@@ -1657,13 +1662,6 @@ async def test_availability_deduplicates_only_exact_voice_supported_models() -> 
         display_name="Default",
         model_id="default-model",
     )
-    unsupported = _profile(
-        profile_id=UUID(int=13),
-        display_name="Unsupported",
-        provider_id="future_native",
-        model_id="other",
-        voice_id="other-voice",
-    )
     voice_result = TTSVoiceDiscoveryResult(
         provider_id="audio_cpp",
         model_id="shared",
@@ -1682,8 +1680,8 @@ async def test_availability_deduplicates_only_exact_voice_supported_models() -> 
     observed = await service.observe_availability(
         TTSProfilePageSnapshot(
             repository_generation=repository.generation,
-            profiles=(first, second, server_default, unsupported),
-            total=4,
+            profiles=(first, second, server_default),
+            total=3,
         )
     )
 
@@ -1692,7 +1690,132 @@ async def test_availability_deduplicates_only_exact_voice_supported_models() -> 
         "available",
         "unavailable",
         "available",
-        "unavailable",
+    )
+
+
+@pytest.mark.asyncio
+async def test_availability_all_legacy_page_skips_native_capability_call() -> None:
+    def _raise() -> None:
+        raise RuntimeError("get_native_capability_snapshot must not be called")
+
+    openai_profile = _profile(
+        profile_id=UUID(int=20),
+        display_name="OpenAI voice",
+        provider_id="openai",
+        model_id="tts-1",
+        voice_id="alloy",
+    )
+    elevenlabs_profile = _profile(
+        profile_id=UUID(int=21),
+        display_name="ElevenLabs voice",
+        provider_id="elevenlabs",
+        model_id="eleven_multilingual_v2",
+        voice_id="rachel",
+        response_format="mp3",
+    )
+    tts_service = _FakeTTSService()
+    tts_service.capability_hook = _raise
+    service, repository, tts_service = _service(tts_service=tts_service)
+
+    observed = await service.observe_availability(
+        TTSProfilePageSnapshot(
+            repository_generation=repository.generation,
+            profiles=(openai_profile, elevenlabs_profile),
+            total=2,
+        )
+    )
+
+    assert tts_service.capability_calls == []
+    assert tts_service.revision_decisions == []
+    assert tts_service.revision_reads == ["audio_cpp"]
+    assert tuple(item.state for item in observed.profiles) == (
+        "unverified",
+        "unverified",
+    )
+    assert tuple(item.recovery_action for item in observed.profiles) == (
+        "none",
+        "none",
+    )
+    assert observed.catalog_revision is None
+    assert observed.repository_generation == repository.generation
+    assert observed.configuration_revision == tts_service.revision
+
+
+def test_availability_value_admits_an_inert_recovery_for_unverified() -> None:
+    """ "unverified" now has two honest recoveries, one per provider class."""
+
+    profile_id = _PROFILE_ID
+    refreshable = TTSProfileAvailability(
+        profile_id=profile_id,
+        state="unverified",
+        recovery_action="refresh",
+    )
+    inert = TTSProfileAvailability(
+        profile_id=profile_id,
+        state="unverified",
+        recovery_action="none",
+    )
+
+    assert refreshable.recovery_action == "refresh"
+    assert inert.recovery_action == "none"
+    with pytest.raises(ProfileValidationError) as caught:
+        TTSProfileAvailability(
+            profile_id=profile_id,
+            state="unverified",
+            recovery_action="edit",
+        )
+    assert caught.value.code == "recovery_action"
+
+
+@pytest.mark.asyncio
+async def test_availability_mixed_page_probes_only_audio_cpp_models() -> None:
+    audio_cpp_profile = _profile(
+        profile_id=UUID(int=30),
+        display_name="Native",
+        model_id="model-a",
+        voice_id="voice-a",
+    )
+    openai_profile = _profile(
+        profile_id=UUID(int=31),
+        display_name="OpenAI voice",
+        provider_id="openai",
+        model_id="tts-1",
+        voice_id="alloy",
+    )
+    voice_result = TTSVoiceDiscoveryResult(
+        provider_id="audio_cpp",
+        model_id="model-a",
+        catalog_revision=9,
+        voices=("voice-a",),
+        state="complete",
+    )
+    tts_service = _FakeTTSService(
+        _capability_snapshot(
+            models=(_model("model-a"),),
+            voice_results={"model-a": voice_result},
+        )
+    )
+    service, repository, tts_service = _service(tts_service=tts_service)
+
+    observed = await service.observe_availability(
+        TTSProfilePageSnapshot(
+            repository_generation=repository.generation,
+            profiles=(audio_cpp_profile, openai_profile),
+            total=2,
+        )
+    )
+
+    assert tts_service.capability_calls == [("audio_cpp", ("model-a",))]
+    assert tuple(item.state for item in observed.profiles) == (
+        "available",
+        "unverified",
+    )
+    # ADR-031: a legacy provider has no catalog to preflight, so its
+    # "unverified" is permanent and Refresh must not be offered as a
+    # recovery it can never perform. audio.cpp keeps "refresh".
+    assert tuple(item.recovery_action for item in observed.profiles) == (
+        "none",
+        "none",
     )
 
 
@@ -1749,6 +1872,24 @@ async def test_create_from_artifact_uses_only_immutable_requested_selection() ->
     assert loaded.profile.voice_id == "selected-voice"
     assert loaded.profile.provider_id != "legacy-response-provider"
     assert repository.coordinator_active_at_repository_calls == [False]
+
+
+@pytest.mark.asyncio
+async def test_create_from_artifact_accepts_legacy_selection() -> None:
+    service, repository, tts_service = _service()
+    selection = _selection(
+        provider_id="openai",
+        model_id="tts-1",
+        voice_id="alloy",
+        response_format="mp3",
+        speed=1.0,
+    )
+
+    await service.create_from_artifact("OpenAI voice", _artifact(selection=selection))
+
+    assert tts_service.revision_decisions == [("openai", 3)]
+    assert tts_service.capability_calls == []
+    assert [name for name, _ in repository.calls] == ["create"]
 
 
 @pytest.mark.asyncio
@@ -2394,7 +2535,7 @@ async def test_capability_rejects_mismatched_provider_before_state_or_decision(
 ) -> None:
     tts_service = _FakeTTSService(
         _capability_snapshot(
-            provider_id="future_native",
+            provider_id="openai",
             state=snapshot_state,
             models=(_model("model-b"),),
         )
@@ -2470,29 +2611,63 @@ async def test_generation_edit_sanitizes_malformed_exact_capability_snapshot(
     assert repository.calls == []
 
 
+def test_unknown_provider_draft_is_unconstructable() -> None:
+    with pytest.raises(
+        ProfileValidationError, match=r"^TTS profile validation failed: provider_id$"
+    ):
+        TTSProfileDraft(
+            display_name="Future",
+            provider_id="future_native",
+            model_id="model",
+            voice_id=None,
+            response_format="wav",
+            speed=1.0,
+            options={},
+        )
+
+
 @pytest.mark.asyncio
-async def test_generation_edit_rejects_unreviewed_native_provider() -> None:
+async def test_update_profile_accepts_openai_draft_without_native_calls() -> None:
     service, repository, tts_service = _service()
     loaded = LoadedTTSProfile(
-        repository_generation=repository.generation,
-        profile=_profile(),
+        repository_generation=repository.generation, profile=_profile()
     )
-    changed = TTSProfileDraft(
-        display_name="Future",
-        provider_id="future_native",
-        model_id="model",
-        voice_id=None,
-        response_format="wav",
-        speed=1.0,
+    draft = TTSProfileDraft(
+        display_name="Narrator",
+        provider_id="openai",
+        model_id="pocket-tts",
+        voice_id="marius",
+        response_format="mp3",
+        speed=1.25,
         options={},
     )
 
-    with pytest.raises(ProfileServiceError) as caught:
-        await service.update_profile(loaded, changed)
+    await service.update_profile(loaded, draft)
 
-    _assert_safe_service_error(caught.value, "unsupported_profile")
     assert tts_service.capability_calls == []
-    assert repository.calls == []
+    assert [name for name, _ in repository.calls] == ["update"]
+
+
+@pytest.mark.asyncio
+async def test_duplicate_of_legacy_profile_skips_native_capability() -> None:
+    repository = _FakeRepository()
+    repository.created_profile_id = _DUPLICATE_ID
+    service, repository, tts_service = _service(repository=repository)
+    source = _profile(
+        provider_id="elevenlabs",
+        model_id="eleven_multilingual_v2",
+        voice_id="21m00Tcm4TlvDq8ikWAM",
+        response_format="mp3",
+        speed=1.0,
+    )
+    loaded = LoadedTTSProfile(
+        repository_generation=repository.generation, profile=source
+    )
+
+    await service.duplicate_profile(loaded, "Narrator copy")
+
+    assert tts_service.capability_calls == []
+    assert [name for name, _ in repository.calls] == ["create"]
 
 
 @pytest.mark.asyncio
@@ -4263,12 +4438,11 @@ def test_preview_preset_copies_only_persisted_selection_and_availability() -> No
     loaded = LoadedTTSProfile(
         repository_generation=repository.generation,
         profile=_profile(
-            provider_id="future_native",
+            provider_id="openai",
             model_id="opaque-model",
             voice_id="opaque-voice",
             response_format="flac",
-            speed=1.5,
-            options={"quality": {"level": 2}},
+            speed=2.0,
         ),
     )
     availability = TTSProfileAvailability(
@@ -4298,13 +4472,19 @@ def test_preview_preset_forces_unsupported_profile_unavailable_before_enrichment
     None
 ):
     service, repository, tts_service = _service()
-    loaded = LoadedTTSProfile(
-        repository_generation=repository.generation,
-        profile=_profile(
-            provider_id="openai",
-            model_id="tts-1",
-            voice_id="alloy",
+    # Every recognized provider is now structurally supported at
+    # construction (Task 1), so the only way a loaded profile can still fail
+    # the allowlist is to forge one referencing an unrecognized provider,
+    # bypassing both `TTSGenerationProfile.__post_init__` and
+    # `LoadedTTSProfile.__post_init__`. `preview_preset` fails closed on it
+    # (via `_validate_loaded`'s canonicalization) rather than trusting the
+    # (falsely optimistic) passed-in `pending` state.
+    loaded = _forged_loaded_profile(
+        _forged_profile(
+            _profile(model_id="tts-1", voice_id="alloy"),
+            provider_id="unrecognized_future_provider",
         ),
+        repository_generation=repository.generation,
     )
     pending = TTSProfileAvailability(
         profile_id=loaded.profile.profile_id,
@@ -4312,10 +4492,10 @@ def test_preview_preset_forces_unsupported_profile_unavailable_before_enrichment
         recovery_action="refresh",
     )
 
-    preset = service.preview_preset(loaded, pending)
+    with pytest.raises(ProfileValidationError) as caught:
+        service.preview_preset(loaded, pending)
 
-    assert preset.provider_id == "openai"
-    assert preset.availability == "unavailable"
+    assert caught.value.code == "profiles"
     assert repository.calls == []
     assert tts_service.capability_calls == []
     assert tts_service.revision_decisions == []
@@ -4353,6 +4533,28 @@ async def test_portable_observation_reports_unavailable_without_writing() -> Non
     assert observation.repository_generation == repository.generation
     assert repository.calls == []
     assert tts_service.capability_calls == [("audio_cpp", ())]
+
+
+@pytest.mark.asyncio
+async def test_portable_observation_of_legacy_provider_skips_native_capability() -> (
+    None
+):
+    repository = _FakeRepository()
+    tts_service = _FakeTTSService()
+    service = TTSProfileService(repository, tts_service)
+    portable = _portable_profile(
+        provider_id="openai",
+        model_id="tts-1",
+        voice_id="alloy",
+        response_format="mp3",
+    )
+
+    observation = await service.observe_portable_profile(portable)
+
+    assert observation.availability == "unverified"
+    assert observation.repository_generation == repository.generation
+    assert repository.calls == []
+    assert tts_service.capability_calls == []
 
 
 def test_portable_import_plan_rejects_candidate_with_different_generation() -> None:
@@ -4473,9 +4675,7 @@ async def test_portable_collision_matrix_is_explicit_and_never_mutates(
 ) -> None:
     repository = _FakeRepository()
     repository.collision_result = collisions
-    tts_service = _FakeTTSService(
-        _capability_snapshot(models=(_model("model-a"),))
-    )
+    tts_service = _FakeTTSService(_capability_snapshot(models=(_model("model-a"),)))
     service = TTSProfileService(
         repository,
         tts_service,
@@ -4502,9 +4702,7 @@ async def test_portable_commit_revalidates_available_selection_and_assigns_atomi
     None
 ):
     repository = _FakeRepository()
-    tts_service = _FakeTTSService(
-        _capability_snapshot(models=(_model("model-a"),))
-    )
+    tts_service = _FakeTTSService(_capability_snapshot(models=(_model("model-a"),)))
     service = TTSProfileService(repository, tts_service)
     observation = await service.observe_portable_profile(_portable_profile())
     plan = await service.inspect_portable_profile_import(observation)
@@ -4535,9 +4733,7 @@ async def test_portable_commit_revalidates_available_selection_and_assigns_atomi
 @pytest.mark.asyncio
 async def test_portable_commit_persists_for_repair_when_availability_changes() -> None:
     repository = _FakeRepository()
-    tts_service = _FakeTTSService(
-        _capability_snapshot(models=(_model("model-a"),))
-    )
+    tts_service = _FakeTTSService(_capability_snapshot(models=(_model("model-a"),)))
     service = TTSProfileService(repository, tts_service)
     observation = await service.observe_portable_profile(_portable_profile())
     plan = await service.inspect_portable_profile_import(observation)
@@ -4593,9 +4789,7 @@ async def test_reusing_available_profile_assigns_only_the_observed_profile_ident
     repository = _FakeRepository()
     existing = _profile(display_name="Imported voice")
     repository.collision_result = TTSProfileCollisionSnapshot(existing, existing)
-    tts_service = _FakeTTSService(
-        _capability_snapshot(models=(_model("model-a"),))
-    )
+    tts_service = _FakeTTSService(_capability_snapshot(models=(_model("model-a"),)))
     service = TTSProfileService(repository, tts_service)
     observation = await service.observe_portable_profile(_portable_profile())
     plan = await service.inspect_portable_profile_import(observation)
@@ -4613,3 +4807,94 @@ async def test_reusing_available_profile_assigns_only_the_observed_profile_ident
         existing.profile_id,
     )
     assert repository.last_expected_profile == existing
+
+
+@pytest.mark.asyncio
+async def test_portable_commit_auto_applies_unverified_legacy_profile_on_create() -> (
+    None
+):
+    """Task-6c (TASK-2450 AC#8): an imported legacy-provider profile is always
+    classified 'unverified' (observe_portable_profile's early return for any
+    non-audio_cpp provider) -- it must auto-apply exactly like an 'available'
+    one, not fall through to the unassigned-for-repair branch."""
+
+    repository = _FakeRepository()
+    tts_service = _FakeTTSService(_capability_snapshot(models=(_model("model-a"),)))
+    service = TTSProfileService(repository, tts_service)
+    portable = _portable_profile(
+        provider_id="openai",
+        model_id="tts-1",
+        voice_id="alloy",
+        response_format="mp3",
+    )
+    observation = await service.observe_portable_profile(portable)
+    assert observation.availability == "unverified"
+    plan = await service.inspect_portable_profile_import(observation)
+    character_ref = _character_ref(source="local", authority_id="local-db")
+
+    result = await service.commit_portable_profile_import(
+        plan,
+        "create",
+        character_ref,
+        expected_current=None,
+    )
+
+    assert result.created is True
+    # Note: the successful-assign branch reports the literal "available" here
+    # regardless of the observed state, matching the pre-existing (unchanged)
+    # behavior on the already-passing audio_cpp path -- this field is never
+    # read by any caller (confirmed by grep across tldw_chatbook/), so it is
+    # left untouched; what this test pins is that assignment actually
+    # happened, which is the live-user-visible outcome.
+    assert result.availability == "available"
+    assert result.assignment is not None
+    assert result.assignment.character_ref == character_ref
+    assert [call[0] for call in repository.calls] == [
+        "collisions",
+        "create_with_assignment",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_portable_commit_auto_applies_unverified_legacy_profile_on_reuse() -> (
+    None
+):
+    """Complementary reuse-path pin for the same fix."""
+
+    repository = _FakeRepository()
+    existing = _profile(
+        display_name="Imported voice",
+        provider_id="openai",
+        model_id="tts-1",
+        voice_id="alloy",
+        response_format="mp3",
+    )
+    repository.collision_result = TTSProfileCollisionSnapshot(existing, existing)
+    tts_service = _FakeTTSService(_capability_snapshot(models=(_model("model-a"),)))
+    service = TTSProfileService(repository, tts_service)
+    portable = _portable_profile(
+        display_name="Imported voice",
+        provider_id="openai",
+        model_id="tts-1",
+        voice_id="alloy",
+        response_format="mp3",
+    )
+    observation = await service.observe_portable_profile(portable)
+    assert observation.availability == "unverified"
+    plan = await service.inspect_portable_profile_import(observation)
+    character_ref = _character_ref(source="local", authority_id="local-db")
+
+    result = await service.commit_portable_profile_import(
+        plan,
+        "reuse",
+        character_ref,
+        expected_current=None,
+    )
+
+    assert result.assignment == CharacterTTSAssignment(
+        character_ref,
+        existing.profile_id,
+    )
+    # Same pre-existing hardcoded "available" on the success branch as the
+    # create-path test above -- unchanged, not user-visible.
+    assert result.availability == "available"

@@ -3072,6 +3072,121 @@ class TestImportExport:
             and severity == "information"
             for message, severity in notifications
         )
+        # Task-6c (TASK-2450 AC#9): this copy is only ever reached for a
+        # genuinely unavailable profile now (an unverified one auto-applies
+        # instead) -- it must say so plainly, not the vaguer "not currently
+        # available" that used to also (inaccurately) describe "unverified".
+        assert any(
+            "unavailable" in message.casefold() for message, _severity in notifications
+        )
+
+    async def test_unverified_imported_voice_auto_applies_with_honest_copy(
+        self,
+        mock_app_instance,
+        stub_characters,
+        monkeypatch,
+        tmp_path,
+    ):
+        """Task-6c (TASK-2450 AC#8/#9): a legacy-provider imported profile is
+        always observed as 'unverified' (never 'available') -- it must
+        auto-apply, and the resulting toast must read as a success, never
+        mention 'unavailable', and never launder the state as verified
+        either (it simply reports the ordinary 'applied' outcome, matching
+        the honesty convention Gap 2 established: the Voice Profiles
+        library and Roleplay status line are where 'Unverified' is shown,
+        not a one-shot import toast)."""
+
+        profile = _character_tts_profile(1)
+        portable = _portable_tts_profile(profile)
+        observation = PortableProfileAvailabilityObservation(
+            7,
+            3,
+            portable,
+            "unverified",
+        )
+        plan = PortableProfileImportPlan(
+            observation,
+            ("create",),
+            None,
+            portable,
+        )
+        character_ref = CharacterRef(
+            source="local",
+            authority_id="local-test-authority",
+            character_id="1",
+        )
+        commit_calls: list[tuple[object, ...]] = []
+
+        class _Service:
+            async def observe_portable_profile(self, _profile):
+                return observation
+
+            async def inspect_portable_profile_import(self, _observation):
+                return plan
+
+            async def get_assigned_profile(self, _character_ref):
+                return LoadedCharacterTTSAssignment(7, None)
+
+            async def commit_portable_profile_import(
+                self,
+                candidate_plan,
+                choice,
+                candidate_ref,
+                *,
+                expected_current,
+            ):
+                commit_calls.append(
+                    (candidate_plan, choice, candidate_ref, expected_current)
+                )
+                return PortableProfileImportResult(
+                    created=True,
+                    availability="unverified",
+                    loaded=LoadedTTSProfile(7, profile),
+                    assignment=CharacterTTSAssignment(
+                        candidate_ref, profile.profile_id
+                    ),
+                )
+
+        source = tmp_path / "unverified.json"
+        source.write_bytes(b"one immutable character card")
+        monkeypatch.setattr(
+            character_handler_module,
+            "inspect_character_card_tts_attachment",
+            lambda _bytes: CharacterCardTTSInspection(portable),
+        )
+        monkeypatch.setattr(
+            character_handler_module,
+            "import_character_card_with_outcome",
+            lambda _bytes: CharacterCardImportOutcome(1, True, portable, None),
+        )
+        app = PersonasTestApp(mock_app_instance)
+        notifications = self._capture_notifications(app)
+
+        async with app.run_test() as pilot:
+            screen = await _mounted(pilot)
+            monkeypatch.setattr(screen, "_queue_character_tts_refresh", lambda: None)
+            monkeypatch.setattr(
+                screen,
+                "_character_tts_profile_service",
+                AsyncMock(return_value=_Service()),
+            )
+            monkeypatch.setattr(
+                screen,
+                "_local_character_ref_for_import",
+                AsyncMock(return_value=character_ref),
+            )
+
+            await screen._import_character_from_path(str(source))
+
+        assert commit_calls == [(plan, "create", character_ref, None)]
+        assert any(
+            "applied successfully" in message.casefold() and severity == "information"
+            for message, severity in notifications
+        )
+        assert all(
+            "unavailable" not in message.casefold()
+            for message, _severity in notifications
+        )
 
     async def test_unavailable_reused_voice_reports_new_character_is_unassigned(
         self,
@@ -3164,7 +3279,13 @@ class TestImportExport:
             if "voice" in message.casefold()
         ]
         assert any("remains unassigned" in message for message in matching)
-        assert all("existing voice assignment was preserved" not in message for message in matching)
+        assert all(
+            "existing voice assignment was preserved" not in message
+            for message in matching
+        )
+        # Task-6c (TASK-2450 AC#9): same honesty pin as the saved-for-repair
+        # case -- only reachable for a genuinely unavailable profile now.
+        assert any("unavailable" in message for message in matching)
 
     async def test_profile_commit_failure_keeps_character_and_hides_sensitive_detail(
         self,
@@ -10118,6 +10239,98 @@ async def test_character_tts_widget_emits_id_only_intents_for_available_profiles
         assert "authority" not in vars(app.actions[0])
 
 
+async def test_character_tts_widget_accepts_unverified_profile_assignment_without_laundering_it() -> (
+    None
+):
+    """A legacy-provider profile is always classified 'unverified' this slice
+    (task-2450 amendment). Refusing to assign it made no legacy profile ever
+    assignable through this UI (task-2453) -- it must be assignable, but the
+    option row and the post-assignment Edit/Repair label must keep saying so
+    honestly rather than presenting it as a confirmed-working 'available'
+    profile."""
+
+    unverified = _character_tts_profile(1)
+    unavailable = _character_tts_profile(2)
+    app = _CharacterTTSWidgetHost()
+    async with app.run_test() as pilot:
+        widget = app.query_one(PersonasCharacterTTSWidget)
+        widget.apply_state(
+            CharacterTTSPresentationState(
+                profiles=(
+                    CharacterTTSProfileOption(
+                        unverified.profile_id,
+                        unverified.display_name,
+                        "unverified",
+                    ),
+                    CharacterTTSProfileOption(
+                        unavailable.profile_id,
+                        unavailable.display_name,
+                        "unavailable",
+                    ),
+                ),
+                selected_profile_id=None,
+                status="Using the global speech default.",
+                controls_enabled=True,
+            )
+        )
+        await pilot.pause()
+        selector = widget.query_one(Select)
+
+        # The option row itself must still say "unverified" -- selecting it
+        # must never present it as a confirmed-working profile.
+        option_labels = [str(prompt) for prompt, _value in selector._options]
+        assert any(
+            unverified.display_name in label and "unverified" in label
+            for label in option_labels
+        )
+
+        # Still refused: genuinely unavailable stays refused, unchanged.
+        selector.value = str(unavailable.profile_id)
+        await pilot.pause()
+        assert app.actions == []
+        assert selector.value == "__global__"
+
+        # Newly accepted: unverified must be assignable.
+        selector.value = str(unverified.profile_id)
+        await pilot.pause()
+        assert len(app.actions) == 1
+        assert app.actions[0].action == "assign"
+        assert app.actions[0].profile_id == unverified.profile_id
+        assert selector.value == str(unverified.profile_id)
+
+        # The assignment must render honestly, not as a verified/available
+        # one: the Edit button stays "Edit" (not "Repair" -- that copy is
+        # reserved for a genuinely unavailable profile), and the status text
+        # passed in by the caller (asserted separately in
+        # personas_screen.py's own tests) is rendered verbatim.
+        widget.apply_state(
+            CharacterTTSPresentationState(
+                profiles=(
+                    CharacterTTSProfileOption(
+                        unverified.profile_id,
+                        unverified.display_name,
+                        "unverified",
+                    ),
+                ),
+                selected_profile_id=unverified.profile_id,
+                status=(
+                    f"{unverified.display_name} · Unverified · Used by 1 character. "
+                    "Refresh or repair the profile; the assignment is preserved."
+                ),
+                controls_enabled=True,
+                assignment_count=1,
+            )
+        )
+        await pilot.pause()
+        assert (
+            str(widget.query_one(".personas-character-tts-edit", Button).label)
+            == "Edit"
+        )
+        assert "Unverified" in str(
+            widget.query_one(".personas-character-tts-status", Static).renderable
+        )
+
+
 def _configure_character_tts_app(
     mock_app_instance: Any,
     service: _CharacterTTSProfileService,
@@ -10570,6 +10783,168 @@ async def test_character_tts_assign_and_detach_use_exact_observed_tokens(
         await pilot.pause()
         await pilot.app.workers.wait_for_complete()
         assert service.detach_calls == [(assignment, 7)]
+
+
+async def test_character_tts_assignment_worker_accepts_unverified_profile(
+    mock_app_instance,
+    stub_characters,
+) -> None:
+    """The screen-side assignment worker has its OWN availability gate,
+    independent of the widget's (`personas_character_tts_widget.py`). Fixing
+    only the widget still silently drops the assignment here -- this pins the
+    worker actually calling `set_assignment` for a legacy-provider profile
+    classified 'unverified' (task-2450 amendment), not just letting the
+    widget's own message through."""
+
+    profile = _character_tts_profile(1)
+    character_ref = CharacterRef(
+        source="local",
+        authority_id="local-test-authority",
+        character_id="1",
+    )
+    service = _CharacterTTSProfileService(
+        page=TTSProfilePageSnapshot(
+            repository_generation=7,
+            profiles=(profile,),
+            total=1,
+        ),
+        assigned=LoadedCharacterTTSAssignment(
+            repository_generation=7,
+            snapshot=None,
+        ),
+        availability_state="unverified",
+    )
+    _configure_character_tts_app(mock_app_instance, service)
+
+    app = PersonasTestApp(mock_app_instance)
+    async with app.run_test() as pilot:
+        screen = await _mounted(pilot)
+        await pilot.app.workers.wait_for_complete()
+        await screen._select_character("1", "Detective Sam")
+        await pilot.app.workers.wait_for_complete()
+
+        screen.post_message(
+            CharacterTTSActionRequested("assign", profile.profile_id)
+        )
+        await pilot.pause()
+        await pilot.app.workers.wait_for_complete()
+        assert service.set_calls == [
+            (
+                character_ref,
+                LoadedTTSProfile(
+                    repository_generation=7,
+                    profile=profile,
+                ),
+                None,
+            )
+        ]
+
+
+@pytest.mark.parametrize(
+    ("recovery_action", "expected_tail", "forbidden"),
+    [
+        (
+            "refresh",
+            "Refresh or repair the profile; the assignment is preserved.",
+            (),
+        ),
+        (
+            "none",
+            "This provider has no catalog check; the assignment is preserved.",
+            ("refresh", "retry"),
+        ),
+    ],
+)
+async def test_character_tts_unverified_status_never_promises_an_impossible_refresh(
+    recovery_action: str,
+    expected_tail: str,
+    forbidden: tuple[str, ...],
+) -> None:
+    """The Roleplay status line must follow the availability's own recovery.
+
+    A legacy-provider profile is permanently "unverified" (no catalog to
+    preflight), so telling the user to Refresh names a control that can
+    never change the state -- ADR-031. audio.cpp keeps its refresh copy.
+    """
+
+    profile = _character_tts_profile(1)
+    loaded = LoadedTTSProfile(repository_generation=7, profile=profile)
+    assignment = CharacterTTSAssignment(
+        character_ref=CharacterRef(
+            source="local",
+            authority_id="local-test-authority",
+            character_id="1",
+        ),
+        profile_id=profile.profile_id,
+    )
+    availability = TTSProfileAvailability(
+        profile_id=profile.profile_id,
+        state="unverified",
+        recovery_action=recovery_action,  # type: ignore[arg-type]
+    )
+    snapshot = personas_screen_module._CharacterTTSControlSnapshot(
+        request_generation=1,
+        runtime_source="local",
+        character_id="1",
+        character_ref=assignment.character_ref,
+        repository_generation=7,
+        loaded_profiles=(loaded,),
+        availability=(availability,),
+        current=AssignedTTSProfileSnapshot(
+            assignment=assignment,
+            profile=profile,
+        ),
+        assignment_count=1,
+        configuration_revision=4,
+        catalog_revision=None,
+        expected_server_id=None,
+        server_context_capture=None,
+    )
+
+    state = PersonasScreen._character_tts_presentation_from_snapshot(snapshot)
+
+    assert state.status == (
+        f"{profile.display_name} · Unverified · Used by 1 character. {expected_tail}"
+    )
+    for word in forbidden:
+        assert word not in state.status.casefold()
+
+
+async def test_character_tts_assignment_worker_still_refuses_unavailable_profile(
+    mock_app_instance,
+    stub_characters,
+) -> None:
+    """The complementary pin: a genuinely unavailable profile stays refused
+    at the worker layer, unchanged."""
+
+    profile = _character_tts_profile(1)
+    service = _CharacterTTSProfileService(
+        page=TTSProfilePageSnapshot(
+            repository_generation=7,
+            profiles=(profile,),
+            total=1,
+        ),
+        assigned=LoadedCharacterTTSAssignment(
+            repository_generation=7,
+            snapshot=None,
+        ),
+        availability_state="unavailable",
+    )
+    _configure_character_tts_app(mock_app_instance, service)
+
+    app = PersonasTestApp(mock_app_instance)
+    async with app.run_test() as pilot:
+        screen = await _mounted(pilot)
+        await pilot.app.workers.wait_for_complete()
+        await screen._select_character("1", "Detective Sam")
+        await pilot.app.workers.wait_for_complete()
+
+        screen.post_message(
+            CharacterTTSActionRequested("assign", profile.profile_id)
+        )
+        await pilot.pause()
+        await pilot.app.workers.wait_for_complete()
+        assert service.set_calls == []
 
 
 async def test_character_tts_preview_create_and_edit_reuse_existing_speech_surfaces(

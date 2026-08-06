@@ -43,13 +43,20 @@ def _character_ref(
     )
 
 
-def _profile(*, revision: int = 4) -> TTSGenerationProfile:
+def _profile(
+    *,
+    revision: int = 4,
+    provider_id: str = "audio_cpp",
+    model_id: str = "supertonic-3",
+    voice_id: str | None = "voice-7",
+    response_format: str = "wav",
+) -> TTSGenerationProfile:
     draft = TTSProfileDraft(
         display_name="Mara",
-        provider_id="audio_cpp",
-        model_id="supertonic-3",
-        voice_id="voice-7",
-        response_format="wav",
+        provider_id=provider_id,
+        model_id=model_id,
+        voice_id=voice_id,
+        response_format=response_format,
         speed=1.0,
         options={},
     )
@@ -74,8 +81,18 @@ def _loaded_assignment(
     *,
     generation: int = 9,
     revision: int = 4,
+    provider_id: str = "audio_cpp",
+    model_id: str = "supertonic-3",
+    voice_id: str | None = "voice-7",
+    response_format: str = "wav",
 ) -> LoadedCharacterTTSAssignment:
-    profile = _profile(revision=revision)
+    profile = _profile(
+        revision=revision,
+        provider_id=provider_id,
+        model_id=model_id,
+        voice_id=voice_id,
+        response_format=response_format,
+    )
     return LoadedCharacterTTSAssignment(
         repository_generation=generation,
         snapshot=AssignedTTSProfileSnapshot(
@@ -198,6 +215,35 @@ async def test_assigned_character_freezes_one_exact_request_without_preflight() 
     assert resolved.profile_id == _PROFILE_ID
     assert resolved.profile_revision == 6
     assert service.calls == [character_ref]
+
+
+@pytest.mark.asyncio
+async def test_assigned_openai_profile_resolves_to_exact_request() -> None:
+    character_ref = _character_ref()
+    service = _FakeProfileService(
+        _loaded_assignment(
+            character_ref,
+            revision=6,
+            provider_id="openai",
+            model_id="pocket-tts",
+            voice_id="marius",
+            response_format="mp3",
+        )
+    )
+    resolver = CharacterTTSRequestResolver(service)
+
+    resolved = await resolver.resolve(
+        text="A character-authored reply.",
+        assistant_kind="character",
+        character_ref=character_ref,
+    )
+
+    assert resolved.source == "assigned"
+    assert resolved.request is not None
+    assert resolved.request.provider_id == "openai"
+    assert resolved.request.model_id == "pocket-tts"
+    assert resolved.request.voice == "marius"
+    assert resolved.request.response_format == "mp3"
 
 
 @pytest.mark.asyncio
