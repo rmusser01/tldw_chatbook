@@ -299,6 +299,164 @@ async def test_the_header_summary_names_the_scope_with_a_live_count():
         assert summary == "Local Watchlists snapshot: Morning AI Brief (2 sources)"
 
 
+# --- task-2511 Task 7: the tree scope drives the items list -----------------
+#
+# Before this task `_load_items` fetched the newest 100 items of ANY source
+# regardless of the rail selection; `_items_scope_query` is the wiring that
+# makes picking "Unassigned", a watchlist, or a source in the tree show only
+# that scope's items. Items are seeded straight into `subscription_items`
+# (there is no service-level item insert -- items arrive via the monitoring
+# engine in production), the same pattern
+# `Tests/Subscriptions/test_briefing_selection.py` uses; the reads then flow
+# through the screen's real controller, scope service and DB against
+# `_build_test_app()`'s isolated temp-dir SQLite file.
+
+
+def _seed_item(db, subscription_id: int, title: str) -> int:
+    """Insert one `subscription_items` row for `subscription_id`."""
+    with db.transaction() as conn:
+        cursor = conn.execute(
+            "INSERT INTO subscription_items (subscription_id, url, title) "
+            "VALUES (?, ?, ?)",
+            (
+                subscription_id,
+                f"https://item.example/{subscription_id}/{title}",
+                title,
+            ),
+        )
+        return cursor.lastrowid
+
+
+@pytest.mark.asyncio
+async def test_items_reload_scopes_to_watchlist():
+    """A watchlist scope shows only its member sources' items."""
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+        service = app.watchlist_bundle_service
+        db = service._db
+
+        watchlist = service.create("Morning AI Brief")
+        member = db.add_subscription(
+            name="ArXiv", type="rss", source="https://a.example/f"
+        )
+        outsider = db.add_subscription(
+            name="Krebs", type="rss", source="https://b.example/f"
+        )
+        service.add_source(watchlist["id"], member)
+        _seed_item(db, member, "Member item")
+        _seed_item(db, outsider, "Outsider item")
+
+        screen._apply_tree_scope(
+            TreeScope(kind="watchlist", watchlist_id=watchlist["id"])
+        )
+        await screen._load_items()
+
+        assert screen._loaded_items, "precondition: the watchlist's source has items"
+        # `source_id` is the normalized item dict's own key for the
+        # originating subscription (see `normalize_watchlist_item`).
+        assert {item["source_id"] for item in screen._loaded_items} == {member}
+
+
+@pytest.mark.asyncio
+async def test_items_reload_scopes_to_unassigned():
+    """The Unassigned scope shows only items of sources in no watchlist."""
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+        service = app.watchlist_bundle_service
+        db = service._db
+
+        watchlist = service.create("Morning AI Brief")
+        member = db.add_subscription(
+            name="ArXiv", type="rss", source="https://a.example/f"
+        )
+        loose = db.add_subscription(
+            name="Loose Feed", type="rss", source="https://c.example/f"
+        )
+        service.add_source(watchlist["id"], member)
+        _seed_item(db, member, "Member item")
+        _seed_item(db, loose, "Loose item")
+
+        screen._apply_tree_scope(TreeScope(kind="unassigned"))
+        await screen._load_items()
+
+        assert screen._loaded_items, "precondition: the unassigned source has items"
+        assert {item["source_id"] for item in screen._loaded_items} == {loose}
+
+
+@pytest.mark.asyncio
+async def test_items_reload_scopes_to_source():
+    """A source scope collapses to that one source's items, even inside a
+    watchlist with other members."""
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+        service = app.watchlist_bundle_service
+        db = service._db
+
+        watchlist = service.create("Morning AI Brief")
+        arxiv = db.add_subscription(
+            name="ArXiv", type="rss", source="https://a.example/f"
+        )
+        krebs = db.add_subscription(
+            name="Krebs", type="rss", source="https://b.example/f"
+        )
+        service.add_source(watchlist["id"], arxiv)
+        service.add_source(watchlist["id"], krebs)
+        _seed_item(db, arxiv, "ArXiv item")
+        _seed_item(db, krebs, "Krebs item")
+
+        screen._apply_tree_scope(
+            TreeScope(kind="source", watchlist_id=watchlist["id"], source_id=krebs)
+        )
+        await screen._load_items()
+
+        assert screen._loaded_items, "precondition: the scoped source has items"
+        assert {item["source_id"] for item in screen._loaded_items} == {krebs}
+
+
+@pytest.mark.asyncio
+async def test_tree_move_triggers_items_reload_on_read_tab():
+    """Moving the tree while on the Read tab re-fetches the items list.
+
+    Task 5 added the guarded dispatch in `watch_tree_scope`; this task makes
+    the reload itself scope-plumbed. Pinned with a spy so a future refactor
+    that drops the dispatch fails loudly instead of surfacing as a stale
+    list.
+    """
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+        assert screen.active_section == "items", "precondition: lands on Read"
+
+        original_load_items = screen._load_items
+        dispatches = 0
+
+        def spy():
+            nonlocal dispatches
+            dispatches += 1
+            return original_load_items()
+
+        screen._load_items = spy
+        try:
+            screen._apply_tree_scope(TreeScope(kind="unassigned"))
+            await pilot.pause()
+            assert dispatches >= 1, (
+                "a tree move on the Read tab must re-dispatch `_load_items`"
+            )
+        finally:
+            screen._load_items = original_load_items
+
+
 # --- Fix round 1, Finding 2: a pane-row click must not discard the tree scope
 
 

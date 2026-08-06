@@ -3452,9 +3452,8 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
           carries the scoped summary on every tab since task-2511. (The
           FEEDS region, whose inline copy this used to refresh, is gone.)
         * The items list on the Read tab: a scope move changes which items
-          are in view, so `_load_items` is re-dispatched. (task-2511's
-          minimal wiring; the reload becomes fully scope-plumbed in the
-          follow-up task.)
+          are in view, so `_load_items` is re-dispatched — and the reload
+          itself is scope-plumbed through `_items_scope_query` (task-2511).
         * The Sources table (`_push_scoped_sources_to_pane`), an in-place
           push on the pane's own reactive, not a region rebuild.
         * The still-mounted `WatchlistTree` itself (task-876): since this
@@ -3744,7 +3743,10 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     def _load_active_section_data(self) -> None:
         """Start the loader owned by the currently visible section."""
         if self.active_section == "items":
-            self.run_worker(self._load_items(), exclusive=True)
+            # Own group (task-2511), as in `watch_tree_scope`:
+            # `exclusive=True` in the default group would cancel every
+            # in-flight default-group worker (`_create_source`, ...).
+            self.run_worker(self._load_items(), exclusive=True, group="wc_items")
         elif self.active_section == "rules":
             self.run_worker(self._load_rules(), exclusive=True)
         elif self.active_section == "runs":
@@ -8366,6 +8368,24 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         status = str(self._items_status_filter or "all")
         return None if status == "all" else status
 
+    def _items_scope_query(self) -> dict[str, Any]:
+        """The tree scope as `list_items` kwargs.
+
+        `all` passes nothing (every source). A `source` scope collapses to its
+        single `source_id`; watchlist membership (many-to-many) is resolved by
+        the query, not here. This is the wiring the whole phase exists for:
+        before it, `_load_items` fetched the newest 100 items of ANY source
+        regardless of the rail selection.
+        """
+        scope = self.tree_scope
+        if scope.kind == "source" and scope.source_id is not None:
+            return {"source_id": scope.source_id}
+        if scope.kind == "watchlist" and scope.watchlist_id is not None:
+            return {"watchlist_id": scope.watchlist_id}
+        if scope.kind == "unassigned":
+            return {"unassigned_only": True}
+        return {}
+
     def _with_open_item(
         self, page: list[dict[str, Any]]
     ) -> list[dict[str, Any]]:
@@ -8428,6 +8448,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 status=self._items_status_query(),
                 limit=100,
                 offset=0,
+                **self._items_scope_query(),
             )
             # Mirror to screen state (Finding 2, fix round 2) — see the note
             # on `_loaded_sources` in `_load_sources` above; same rebuild,
@@ -8965,12 +8986,16 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         self._items_status_filter = event.status_filter
         self._items_search_query = event.search_query
         if status_changed:
-            self.run_worker(self._load_items(), exclusive=True)
+            # Own group, as in `watch_tree_scope`: an exclusive reload in
+            # the default group cancels unrelated in-flight workers.
+            self.run_worker(self._load_items(), exclusive=True, group="wc_items")
 
     @on(RefreshItemsRequested)
     def handle_refresh_items_requested(self, event: RefreshItemsRequested) -> None:
         event.stop()
-        self.run_worker(self._load_items(), exclusive=True)
+        # Own group, as in `watch_tree_scope`: an exclusive reload in the
+        # default group cancels unrelated in-flight workers.
+        self.run_worker(self._load_items(), exclusive=True, group="wc_items")
 
     async def _load_rules(self) -> None:
         notify = getattr(self.app_instance, "notify", None)
@@ -9440,7 +9465,9 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             if notify_toast and callable(notify):
                 notify(f"Failed to mark item {status}.", severity="error")
         if refresh:
-            self.run_worker(self._load_items(), exclusive=True)
+            # Own group, as in `watch_tree_scope`: an exclusive reload in
+            # the default group cancels unrelated in-flight workers.
+            self.run_worker(self._load_items(), exclusive=True, group="wc_items")
             self._refresh_overview_data()
             # TASK-2304 AC#1. Every status this path writes moves the item
             # into or out of the `new` bucket the rail counts, so the rail is
