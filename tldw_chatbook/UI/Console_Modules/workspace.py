@@ -57,9 +57,15 @@ above, exactly as in `ConsoleDictationController`: it does not change
 identity over the controller's life, and the pre-extraction methods already
 read it as a plain attribute, never as a call.
 
-Moved verbatim: every `ChatScreen` method matching `*workspace*` whose body
-touched only `_console_workspace_conversation_*` state (or one of its
-sibling attributes) and the callables above -- 35 methods in total. `Chat
+Moved: every `ChatScreen` method matching `*workspace*` whose body touched
+only `_console_workspace_conversation_*` state (or one of its sibling
+attributes) and the callables above -- 35 methods in total. Thirty of the
+35 bodies are byte-identical to their pre-move source; the other five carry
+one mechanical edit each, all inert: four swap `self.app.push_screen(` for
+`self.push_screen(` (this class's own framework-service property, same
+call), and one requotes a type annotation to dodge an import cycle. Stated
+precisely because "verbatim" is the claim a later reader will lean on when
+deciding whether a behaviour change could have slipped in here. `Chat
 Screen` keeps SIX get/set proxy properties for this cluster's state
 (`_console_workspace_conversation_query`/`_search_timer`/`_search_token`/
 `_search_rows`/`_search_total`/`_search_error` -- NOT `_workspace_id`, which
