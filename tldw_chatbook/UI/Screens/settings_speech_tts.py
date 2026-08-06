@@ -1631,6 +1631,10 @@ def restore_non_secret_defaults(
         voice_id=default_preferences.voice_id,
         response_format=default_preferences.response_format,
         speed=default_preferences.speed,
+        # default_profile_id is a distinct precedence rung above these raw
+        # axes (see build_global_speech_tts_save_proposal) and is never part
+        # of TTSPreferencesSnapshot, so "restore defaults" must not clear it.
+        default_profile_id=state.defaults.default_profile_id,
     )
     environment_owned_values = {
         field_id: deepcopy(state.providers[configure_provider][field_id])

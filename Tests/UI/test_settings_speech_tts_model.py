@@ -536,6 +536,27 @@ def test_restore_non_secret_defaults_never_changes_credential_state() -> None:
     assert restored.providers["openai"]["organization_id"] == ""
 
 
+def test_restore_non_secret_defaults_preserves_a_set_default_profile_id() -> None:
+    settings = _settings()
+    settings["COMPREHENSIVE_CONFIG_RAW"]["app_tts"][  # type: ignore[index]
+        "default_profile_id"
+    ] = "3f2504e0-4f89-11d3-9a0c-0305e82c3301"
+    state = load_global_speech_tts_state(settings, environment={})
+
+    restored = restore_non_secret_defaults(state, configure_provider="openai")
+
+    # default_profile_id is a distinct precedence rung above the raw defaults
+    # axes: restoring the axes must not silently drop the saved default voice.
+    assert restored.defaults.default_profile_id == (
+        "3f2504e0-4f89-11d3-9a0c-0305e82c3301"
+    )
+    # ...while the axes this function is actually meant to reset still reset
+    # (original fixture is provider "audio_cpp" / voice_mode "server_default";
+    # TTSPreferencesSnapshot.from_settings({}) defaults to "openai" / "exact").
+    assert restored.defaults.provider_id == "openai"
+    assert restored.defaults.voice_mode == "exact"
+
+
 def test_credential_mutations_require_explicit_intent_and_never_accept_placeholders() -> (
     None
 ):
@@ -632,3 +653,30 @@ def test_unchanged_default_profile_id_is_not_written() -> None:
 
     assert "default_profile_id" not in proposal.settings
     assert "default_profile_id" not in proposal.delete_setting_keys
+
+
+@pytest.mark.parametrize("blank_value", ("", "   ", "\t\n"))
+def test_blank_default_profile_id_loads_as_none(blank_value: str) -> None:
+    settings = _settings()
+    settings["COMPREHENSIVE_CONFIG_RAW"]["app_tts"][  # type: ignore[index]
+        "default_profile_id"
+    ] = blank_value
+
+    state = load_global_speech_tts_state(settings, environment={})
+
+    assert state.defaults.default_profile_id is None
+
+
+def test_malformed_default_profile_id_still_loads_unchanged() -> None:
+    settings = _settings()
+    settings["COMPREHENSIVE_CONFIG_RAW"]["app_tts"][  # type: ignore[index]
+        "default_profile_id"
+    ] = "not-a-uuid"
+
+    state = load_global_speech_tts_state(settings, environment={})
+
+    # A malformed value is a defined dangling state, not a load-time error:
+    # it must survive the loader unchanged so a later task can surface it
+    # honestly and refuse it at speak time, rather than the loader silently
+    # discarding it here.
+    assert state.defaults.default_profile_id == "not-a-uuid"
