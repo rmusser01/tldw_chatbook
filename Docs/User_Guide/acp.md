@@ -12,5 +12,6 @@ Agents, Sessions, Runtimes, and Compatibility, scoped to Ready + Blocked.
 
 ## Getting there
 
-- Click **ACP** in the nav bar, or press **Ctrl+P** → "Switch to ACP".
-  (Or press **Ctrl+0** from anywhere.)
+- Press **Ctrl+0**, click **⌃0 ACP** in the nav bar, or press **Ctrl+P** →
+  "Tab Navigation: Switch to ACP".
+ 

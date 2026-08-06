@@ -336,14 +336,14 @@ a note on what would have to exist before Settings could own a default.
 
 | Category | Owner destination | What is still missing |
 |---|---|---|
-| **Artifacts** (view) | [Artifacts](artifacts.md) | Export/default controls wait on a persisted preference contract. |
+| **Artifacts** (view) | [Artifacts](artifacts.md) 🚧 | Export/default controls wait on a persisted preference contract. |
 | **Roleplay** (view) | [Roleplay & Chat Dictionaries](roleplay-chat-dictionaries.md) | Display/browsing preferences only — never which user profile is active. |
 | **Skills** (view) | Skills — now [Library ▸ Skills](library/skills.md) | Defaults wait on a persisted import/attach policy. |
-| **Schedules** (view) | [Schedules](schedules.md) | Waits on a dedicated settings adapter. |
-| **Watchlists** (view) | [Watchlists](watchlists.md) | Waits on persisted polling/notification settings. |
-| **Workflows** (view) | [Workflows](workflows.md) | Waits on a persisted execution-safety contract. |
-| **MCP Defaults** (view) | [MCP](mcp.md) | Server-first defaults only; tools stay in MCP. |
-| **ACP Defaults** (view) | [ACP](acp.md) | Waits on a persisted runtime/session preference contract. |
+| **Schedules** (view) | [Schedules](schedules.md) 🚧 | Waits on a dedicated settings adapter. |
+| **Watchlists** (view) | [Watchlists](watchlists.md) 🚧 | Waits on persisted polling/notification settings. |
+| **Workflows** (view) | [Workflows](workflows.md) 🚧 | Waits on a persisted execution-safety contract. |
+| **MCP Defaults** (view) | [MCP](mcp.md) 🚧 | Server-first defaults only; tools stay in MCP. |
+| **ACP Defaults** (view) | [ACP](acp.md) 🚧 | Waits on a persisted runtime/session preference contract. |
 
 ## Common tasks
 

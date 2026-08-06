@@ -13,8 +13,8 @@ Library sources, start with the [Library overview](../library.md).
 ## Getting there
 
 Press **Ctrl+3** to open Library, then click **Prompts** in the rail's
-"Browse" section (the row shows a live count). **Ctrl+P** → "Switch to
-Library" works too. To jump straight into writing one, click
+"Browse" section (the row shows a live count). **Ctrl+P** →
+"Tab Navigation: Switch to Library" works too. To jump straight into writing one, click
 **New prompt** under the rail's "Create" section.
 
 ## Layout tour

@@ -18,8 +18,8 @@ orientation tour; the details live on six child pages:
 
 ## Getting there
 
-- Press **Ctrl+2** from anywhere, or click **Console** in the nav bar.
-- **Ctrl+P** → "Switch to Console" in the command palette.
+- Press **Ctrl+2** from anywhere, or click **⌃2 Console** in the nav bar.
+- **Ctrl+P** → "Tab Navigation: Switch to Console" in the command palette.
 - To land here at launch, set `default_tab = "chat"` under `[general]` in `config.toml`.
 
 ## Layout tour
@@ -89,7 +89,7 @@ they are, the empty transcript reads "Ready — type a message to begin."
 | **Settings** | Opens the "Console Settings" modal (provider, model, tools, and generation). |
 | **Attach context** | Opens the "Console context" rail (staging itself is done from Library) — see [Context & RAG](console/context-and-rag.md). |
 | **Run Library RAG** | Searches Library evidence before sending — see [Context & RAG](console/context-and-rag.md). |
-| **Save Chatbook** | Saves this run as a Chatbook — see [Artifacts](artifacts.md). |
+| **Save Chatbook** | Saves this run as a Chatbook — see [Artifacts](artifacts.md) 🚧 (still a stub; the control itself works). |
 | **Help** | Opens the Console help panel (same as F1). |
 
 ### Rails and handles

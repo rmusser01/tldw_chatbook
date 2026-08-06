@@ -18,8 +18,9 @@ required.
 
 ## Getting there
 
-Click **Settings** in the nav bar (no hotkey digit; **Ctrl+P** →
-"Switch to Settings" also works), then pick **Speech & TTS** in the left
+Press **F9**, or click **F9 Settings** in the nav bar (**Ctrl+P** →
+"Tab Navigation: Switch to Settings" also works), then pick **Speech &
+TTS** in the left
 category rail (it sits in the **Core** group). The panel has three cards:
 **Global defaults**, **Provider setup**, and **Configuration inspector**,
 with a **Save** / **Revert** action row at the bottom.

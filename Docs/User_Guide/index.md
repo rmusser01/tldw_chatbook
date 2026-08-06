@@ -12,15 +12,18 @@ can sync with a tldw server you configure).
 
 ## Quick start — your first five minutes
 
-1. Install and launch — see the [README](../../README.md#installation). On
-   first launch, a "Get started" onboarding card appears and the composer
-   stays locked; sending unlocks once you've set up a provider in step 2.
-2. Open **[Settings](settings.md)** — click **Settings** in the nav bar
-   (or **Ctrl+P** → "Switch to Settings") — and set a provider + model (or
-   point at a local server) under **Providers & Models**.
-3. Open **[Console](console.md)** — press **Ctrl+2**, click "Console"
-   in the nav bar, or use **Ctrl+P** → "Switch to Console"; then send your
-   first message.
+1. Install and launch — see the [README](../../README.md#installation). On a
+   brand-new install the app opens on Home underneath the
+   [first-run setup wizard](First_Run_Setup.md), which offers to do step 2
+   for you; skipping it leaves you on [Home](home.md), and Console's
+   composer stays locked with a "Get started" card until a provider exists.
+2. Open **[Settings](settings.md)** — press **F9**, click **F9 Settings** in
+   the nav bar, or **Ctrl+P** → "Tab Navigation: Switch to Settings" — and
+   set a provider + model (or point at a local server) under **Providers &
+   Models**.
+3. Open **[Console](console.md)** — press **Ctrl+2**, click **⌃2 Console**
+   in the nav bar, or **Ctrl+P** → "Tab Navigation: Switch to Console"; then
+   send your first message.
 4. Press **F1** anywhere to open the current screen's keyboard-shortcuts
    list; **Ctrl+P** opens the command palette.
 
@@ -28,7 +31,7 @@ can sync with a tldw server you configure).
 
 | Hotkey | Screen | What it's for |
 |-----|--------|----------------|
-| Ctrl+1 | Home (not yet written) | Dashboard, notifications, status, and next actions. |
+| Ctrl+1 | [Home](home.md) | Triage snapshot: what needs attention, what's running, what's recent, and a suggested next action. |
 | Ctrl+2 | [Console](console.md) | Live agent conversations, approvals, tools, RAG, and runs. |
 | Ctrl+3 | [Library](library.md) | Source material, imports, notes, media, conversations, prompts, skills, Search/RAG — plus hand-offs to Study for flashcards and quizzes. |
 | Ctrl+4 | [Artifacts](artifacts.md) 🚧 | Generated outputs, bundles, reports, datasets, and Chatbooks. |
@@ -46,6 +49,16 @@ Lab, Logs, and Settings sit past the ten digits, so they get function keys
 instead: **F7**, **F8**, **F9** — the nav labels say so ("F7 Lab", "F8 Logs",
 "F9 Settings"). The nav bar and the command palette (**Ctrl+P**) reach them
 too.
+
+Four more screens exist with **no nav label and no "Tab Navigation" palette
+entry**: **Study** (flashcards and quizzes — reached from
+[Library](library.md), e.g. **Continue in Study**), **Media** and **Search**
+(older standalone screens reached from Library or via the palette commands
+"Media & Content: Open Media Library" and "Quick Actions: Search All
+Content"), and **Statistics** ("Settings & Preferences: Show Database
+Stats"). Typing "study", "media", or "search" into the palette surfaces the
+**Library** command — those words are aliases for Library, not entries of
+their own.
 
 ## How-to guides
 
@@ -75,7 +88,8 @@ Ctrl+5 … Ctrl+0 still navigate from there, as do the nav bar and
 | Ctrl+Q | Quit the app |
 | Ctrl+1 … Ctrl+9, Ctrl+0 | Switch to the screen with that hotkey digit (see the nav map above). Exception: on [Roleplay & Chat Dictionaries](roleplay-chat-dictionaries.md), Ctrl+1 – Ctrl+4 switch that screen's modes instead |
 | F7 / F8 / F9 | Switch to Lab / Logs / Settings — the three destinations past the digit row; they work while a text field has focus, like the Ctrl+digit chords |
-| F6 / Shift+F6 | Cycle forward/backward through the current screen's panes (on screens without multiple panes it only shows a notice) |
+| F6 | Cycle through the current screen's panes; on screens without a pane cycle it only shows a notice |
+| Shift+F6 | Cycle panes backward — bound only on [Console](console.md) and [Roleplay & Chat Dictionaries](roleplay-chat-dictionaries.md); elsewhere it does nothing |
 
 Everything else (Enter/Ctrl+K/Ctrl+T in Console, and the single-letter
 mnemonics like `s`/`r`/`t` on Settings) is screen-specific — see that
@@ -120,14 +134,30 @@ Full detail on runs, approvals, and tools:
 | CCP (Conversations, Characters & Prompts) | [Roleplay & Chat Dictionaries](roleplay-chat-dictionaries.md) for characters and personas; prompts moved to [Library ▸ Prompts](library/prompts.md) |
 | LLM management | [Lab](lab.md) 🚧 |
 | Research | [Library](library.md) |
-| Customize | [Settings](settings.md) |
+| Ingest | [Library ▸ Import & export](library/import-and-export.md) |
+| Writing | [Library](library.md) |
+| Chatbooks | [Artifacts](artifacts.md) 🚧 |
+| Characters / Roleplay | [Roleplay & Chat Dictionaries](roleplay-chat-dictionaries.md) |
+| Speech (STTS) / Evals | [Lab](lab.md) 🚧 |
+| Tools & Settings | [MCP](mcp.md) 🚧 |
+| Stats | [Settings](settings.md) (the palette's "Show Database Stats" opens the separate Statistics screen) |
+| Customize | [Settings](settings.md) — the Theme editor specifically |
 
 ## Conventions
 
-- Keys are shown as `Ctrl+P`; slash commands as `/rewind`.
+- Keys are **bold** in prose (**Ctrl+P**, **s**) and bare inside tables;
+  slash commands are shown as `/rewind`.
+- Pressable controls are **bold**; verbatim on-screen text is in "quotes";
+  command-palette entries are quoted with their group prefix
+  ("Tab Navigation: Switch to Library").
+- Breadcrumbs use ▸ (Settings ▸ Providers & Models); config keys are shown
+  as `[section]` + `key`; known defects are cited as (task-NNN).
+- What happens to unsaved work when you leave a screen **differs per
+  screen** — each page's "Quirks" or save-model section states its own rule;
+  do not generalize from one screen to another.
 - 🚧 marks stub pages awaiting a full write-up.
 - Deep dives live in [Docs/Features](../Features/); pages link out rather
   than duplicate them.
 
 —
-*Verified against dev @ 8975c9b8 — 2026-07-25*
+*Verified against dev @ 84e4b33f0 — 2026-08-06*

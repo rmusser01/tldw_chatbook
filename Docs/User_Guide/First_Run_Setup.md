@@ -16,15 +16,16 @@ every step has a Skip, Escape asks before closing, and anything you configure
 
 ## What each step does
 
-| Step | What it configures | Where it lives in Settings |
+| Step | What it configures | Where to change it later |
 |---|---|---|
-| Provider | API key or local server endpoint | Providers & Models |
-| Model | Default chat model | Providers & Models |
-| RAG | Embedding model (needs the `embeddings_rag` extras) | RAG |
-| Tools | Built-in tool gates (all off by default) | Tools |
-| Notes sync | Folder + on/off toggle | Notes |
-| Appearance | Theme and splash screen card | Appearance |
-| Protect keys | Config encryption (password at startup) | Privacy & Security |
+| Provider | API key or local server endpoint | Settings ▸ Providers & Models |
+| Model | Default chat model | Settings ▸ Providers & Models |
+| RAG | Embedding model (needs the `embeddings_rag` extras) | Settings ▸ RAG |
+| Speech (full track) | Voice-input transcription language and precision | `[transcription]` in config.toml — no Settings category owns it yet |
+| Tools | Built-in tool gates (all off by default) | `[tools]` in config.toml (Settings ▸ Advanced Config) — there is no Tools category |
+| Notes sync | Folder + on/off toggle | [Library ▸ Notes](library/notes.md), the toolbar's Sync panel — not in Settings |
+| Appearance | Theme and splash screen card | Settings ▸ Appearance |
+| Protect keys | Config encryption (password at startup) | Settings ▸ Privacy & Security is a read-out; encryption changes are password-gated and not editable there |
 
 The final summary shows a ✓/✗ line per area, read back from what was actually
 saved. Local servers (Ollama, llama.cpp) are auto-detected on localhost; no

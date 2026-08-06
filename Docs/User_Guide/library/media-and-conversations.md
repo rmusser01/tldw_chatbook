@@ -12,7 +12,7 @@ teaches you the other.
 
 ## Getting there
 
-Press **Ctrl+3** (or click "Library" in the nav bar, or **Ctrl+P** →
+Press **Ctrl+3** (or click **⌃3 Library** in the nav bar, or **Ctrl+P** →
 "Library"), then in the left rail's **Browse** section click **Media** or
 **Conversations**. Each rail row shows its count. The selected row's canvas
 fills the center of the screen.

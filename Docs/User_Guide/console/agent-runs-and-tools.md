@@ -90,7 +90,7 @@ appears above the transcript:
 **Always allow** (MCP tools only) is remembered per tool, tied to the tool's
 current definition — if the server later changes the tool, the approval card
 comes back with a "(definition changed)" badge. Review or change a remembered
-allow from the tool's row on the [MCP screen](../mcp.md).
+allow from the tool's row on the [MCP screen](../mcp.md) 🚧.
 
 ### Background & parked runs
 
@@ -136,7 +136,7 @@ appears above the transcript:
 
 ### MCP tools
 
-Servers you configure on the [MCP screen](../mcp.md) surface in Console as
+Servers you configure on the [MCP screen](../mcp.md) 🚧 surface in Console as
 extra tools the agent can call. The Inspector's **MCP** row (under Tools)
 shows their state: "N tools ready", or "N servers enabled, not connected" when
 servers are configured but unreachable. MCP tool calls go through the same

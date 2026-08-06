@@ -12,7 +12,8 @@ in Console, and this is the screen that fixes that.
 
 ## Getting there
 
-Press **Ctrl+3** (or **Ctrl+P** → "Library"), then in the left rail's
+Press **Ctrl+3** (or **Ctrl+P** → "Tab Navigation: Switch to Library"),
+then in the left rail's
 **Browse** section click **Skills** (the row shows its count). To start a
 new skill, use the rail's **Create ▸ New skill** instead — it opens the
 editor in create mode.

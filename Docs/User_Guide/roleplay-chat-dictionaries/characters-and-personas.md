@@ -12,7 +12,8 @@ off a character; come here for a persona when a full character is overkill.
 
 ## Getting there
 
-Press **Ctrl+5** (or **Ctrl+P** → "Roleplay & Chat Dictionaries"), then pick
+Press **Ctrl+5** (or **Ctrl+P** → "Tab Navigation: Switch to Roleplay &
+Chat Dictionaries"), then pick
 the **Characters** chip in the Modes strip — it is the mode the screen opens
 on. **Personas** is the chip beside it. Once you are on this screen,
 **Ctrl+1** and **Ctrl+2** jump to those two modes (they do *not* change

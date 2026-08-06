@@ -12,5 +12,5 @@ by type (All, Chatbooks, Reports, Datasets, Drafts, Exports) and sort
 
 ## Getting there
 
-- Click **Artifacts** in the nav bar, or press **Ctrl+P** → "Switch to
-  Artifacts". (Or press **Ctrl+4** from anywhere.)
+- Press **Ctrl+4**, click **⌃4 Artifacts** in the nav bar, or press
+  **Ctrl+P** → "Tab Navigation: Switch to Artifacts".

@@ -12,5 +12,5 @@ Steps, Dry Run, Approvals, and Outputs.
 
 ## Getting there
 
-- Click **Workflows** in the nav bar, or press **Ctrl+P** → "Switch to
-  Workflows". (Or press **Ctrl+8** from anywhere.)
+- Press **Ctrl+8**, click **⌃8 Workflows** in the nav bar, or press
+  **Ctrl+P** → "Tab Navigation: Switch to Workflows".

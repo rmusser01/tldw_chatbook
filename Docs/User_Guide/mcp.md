@@ -13,8 +13,9 @@ organized into four modes: Servers, Tools, Permissions, and Audit.
 
 ## Getting there
 
-- Click **MCP** in the nav bar, or press **Ctrl+P** → "Switch to MCP".
-  (Or press **Ctrl+9** from anywhere.)
+- Press **Ctrl+9**, click **⌃9 MCP** in the nav bar, or press **Ctrl+P** →
+  "Tab Navigation: Switch to MCP".
+ 
 
 ## Testing a tool (Tools mode)
 

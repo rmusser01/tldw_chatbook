@@ -12,5 +12,5 @@ panels for the Schedule Queue, Task Detail, and Inspector.
 
 ## Getting there
 
-- Click **Schedules** in the nav bar, or press **Ctrl+P** → "Switch to
-  Schedules". (Or press **Ctrl+7** from anywhere.)
+- Press **Ctrl+7**, click **⌃7 Schedules** in the nav bar, or press
+  **Ctrl+P** → "Tab Navigation: Switch to Schedules".
