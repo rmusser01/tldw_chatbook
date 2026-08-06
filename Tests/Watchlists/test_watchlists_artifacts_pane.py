@@ -1019,7 +1019,10 @@ async def test_a_failed_generation_toasts_its_reason_without_row_selection(monke
         than letting it propagate (see that method's docstring)."""
 
         def __call__(self, **kwargs):
-            raise RuntimeError("OpenAI API Key is required but not found")
+            # Trailing period deliberate -- matches the real message live
+            # verification hit, and is what makes the double-punctuation
+            # trap (below) reproducible.
+            raise RuntimeError("OpenAI API Key is required but not found.")
 
     _use_fake_chat(monkeypatch, _ExplodingChat())
 
@@ -1048,6 +1051,13 @@ async def test_a_failed_generation_toasts_its_reason_without_row_selection(monke
         )
         assert "Settings" in message, (
             "a configuration-class failure must point at where to fix it"
+        )
+        # Live-verified trap: the provider's own message ("...not found.")
+        # already ends in a period; naively appending another produced a
+        # visible ".." in the toast.
+        assert ".." not in message, (
+            f"double punctuation from concatenating the provider's own "
+            f"already-terminated sentence with this toast's own: {message!r}"
         )
 
 

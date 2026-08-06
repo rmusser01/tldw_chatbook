@@ -125,9 +125,33 @@ async def test_watchlists_shell_has_tab_strip_and_panes():
 
         screen.active_section = "items"
         await pilot.pause(0.2)
-        assert screen.query_one("#watchlists-list-pane"), (
-            "FEEDS's own pane must still exist on the Read tab"
+        list_pane = screen.query_one("#watchlists-list-pane")
+        assert list_pane, "FEEDS's own pane must still exist on the Read tab"
+        # TASK-2312: the tab strip and the snapshot status marker now come
+        # from `#wl-centre-status` on EVERY section, including Read -- the
+        # bug this task fixed was that Read alone mounted an independent
+        # SECOND copy of both, nested INSIDE this bordered FEEDS pane, so
+        # the tab strip visibly changed screen position depending on which
+        # tab was active. `#wl-centre-status` must exist here too now, and
+        # FEEDS's own pane must carry neither the tab strip nor a status
+        # marker id -- both now have exactly one home.
+        assert screen.query_one("#wl-centre-status"), (
+            "the shared header must exist on the Read tab too, not just "
+            "every other section"
         )
+        assert not list_pane.query("WatchlistsTabStrip"), (
+            "FEEDS's own pane must not carry a second copy of the tab strip"
+        )
+        for marker_id in (
+            "wc-loading-state",
+            "wc-service-error",
+            "wc-empty-state",
+            "wc-watchlists-summary",
+        ):
+            assert not list_pane.query(f"#{marker_id}"), (
+                f"FEEDS's own pane must not carry the status marker "
+                f"#{marker_id} -- that now lives only in #wl-centre-status"
+            )
 
 
 @pytest.mark.asyncio
@@ -2300,6 +2324,48 @@ async def test_z_with_focus_in_the_centre_header_does_not_toggle_a_stale_region(
         )
         assert not screen.region_layout.is_collapsed(Region.LEFT_RAIL)
         assert screen._last_persisted_collapsed == before.collapsed_for_persistence()
+
+
+@pytest.mark.asyncio
+async def test_the_tab_strip_is_recognized_as_the_centre_header_on_the_read_tab_too():
+    """TASK-2312: before this task, the Read ("items") tab was the ONE
+    section where the tab strip did NOT live in `#wl-centre-status` -- it
+    was mounted INSIDE FEEDS's own bordered body instead, so focusing it
+    there matched `on_descendant_focus`'s `wl-region-`/`wl-header-` prefix
+    check first and set `focused_region = FEEDS`, never reaching the
+    header-tracking branch at all. No prior test exercised that
+    combination (focus in the Items-tab tab strip) in either direction, so
+    this pins the corrected, now-uniform behaviour: focusing the tab strip
+    on Read sets `_focus_in_centre_header`, exactly like every other
+    section, and leaves `focused_region` at whatever it was before (a
+    stale FEEDS reference must not be manufactured by this focus move)."""
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.2)
+        screen = host.screen_stack[-1]
+        screen.active_section = "items"
+        await pilot.pause(0.2)
+
+        screen.query_one("#wl-region-left_rail").focus()
+        await pilot.pause()
+        assert screen.focused_region == Region.LEFT_RAIL, (
+            "precondition: focused_region names a REAL prior focus"
+        )
+        assert not screen._focus_in_centre_header
+
+        screen.query_one("#wl-tab-runs").focus()
+        await pilot.pause()
+
+        assert screen._focus_in_centre_header, (
+            "the tab strip must be recognized as the centre header on the "
+            "Read tab too, not just every other section"
+        )
+        assert screen.focused_region == Region.LEFT_RAIL, (
+            "focus moving into the header must not silently reassign "
+            "focused_region to FEEDS (the region the tab strip used to "
+            "live inside, pre-TASK-2312)"
+        )
 
 
 @pytest.mark.asyncio

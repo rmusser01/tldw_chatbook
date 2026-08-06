@@ -140,10 +140,17 @@ class WatchlistsWorkbench(Horizontal):
                 `hidden`. TASK-1344: the section tab strip and the
                 snapshot's own loading/error/empty markers are cross-
                 cutting chrome, not FEEDS content, so they must survive
-                FEEDS being hidden on every non-Read tab. `None` on the
-                Read tab, where `content[Region.FEEDS]`'s own factory
-                already supplies an (identical-looking) tab strip and
-                marker inline — passing both would mount two `#wl-tabs`.
+                FEEDS being hidden on every non-Read tab. TASK-2312: the
+                current screen caller (`WatchlistsCollectionsScreen.
+                compose_content`) now passes this on EVERY tab, including
+                Read — an earlier version passed `None` there in favour of
+                an inline copy in `content[Region.FEEDS]`'s own factory,
+                which visibly moved the tab strip's screen position
+                between sections (UAT F2/F22/F23) and is why `None` is
+                still accepted here: this class stays a generic building
+                block with no opinion about tabs, and any two factories
+                that both mount an id must never be combined by a caller,
+                same as ever.
         """
         super().__init__(**kwargs)
         self.add_class("watchlists-workbench")
@@ -361,21 +368,20 @@ class WatchlistsWorkbench(Horizontal):
         The header's twin of `refresh_region_content` above (task-1344 fix
         wave, Qodo correctness): `region_layout` is `recompose=True`, so
         picking up a header-only change (the tree scope moving while FEEDS
-        is hidden off the Read tab -- see
-        `WatchlistsCollectionsScreen.watch_tree_scope`) by pushing a new
-        layout would tear down and remount every region, including the
-        Inspector, which `watch_tree_scope` deliberately avoids (see its
-        own docstring). `refresh_region_content` only ever reaches FEEDS's
-        OWN inline copy of this content, and FEEDS is unmounted whenever
-        `self._header` is not `None` (`header=` is wired only off Read,
-        exactly where FEEDS is also in `hidden` -- see
-        `WatchlistsCollectionsScreen.compose_content`), so a header-only
-        tab had no OTHER path that picked up a scope change; the header
-        kept showing the PREVIOUS scope's summary until some unrelated
-        recompose came along and rebuilt it for a different reason.
+        is hidden -- see `WatchlistsCollectionsScreen.watch_tree_scope`) by
+        pushing a new layout would tear down and remount every region,
+        including the Inspector, which `watch_tree_scope` deliberately
+        avoids (see its own docstring). Before TASK-2312, the current
+        screen caller wired `header=` only off the Read tab (exactly where
+        FEEDS was also in `hidden`), so a header-only tab had no OTHER path
+        that picked up a scope change; the header kept showing the
+        PREVIOUS scope's summary until some unrelated recompose came along
+        and rebuilt it for a different reason. That caller now wires
+        `header=` on every tab, so this runs everywhere the header exists.
 
-        A no-op when this workbench was built with no `header` factory
-        (the Read tab): nothing to refresh, and no `#wl-centre-status` to
+        A no-op when this workbench was built with no `header` factory at
+        all (any caller may still pass `None`, per `__init__`'s own
+        docstring): nothing to refresh, and no `#wl-centre-status` to
         query for either.
         """
         if self._header is None:

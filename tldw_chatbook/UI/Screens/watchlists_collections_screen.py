@@ -1726,18 +1726,22 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     ) -> list[Widget]:
         """The snapshot's own loading/error/empty/summary marker.
 
-        Extracted (TASK-1344) so the SAME service-state readout can appear
-        in two places: inline in `_build_list_pane`'s FEEDS body on the Read
-        tab (unchanged from before this task -- Read-tab geometry and every
-        test pinned to it stays byte-identical), and in
-        `_build_centre_status_header` on every OTHER tab, now that FEEDS
-        itself is hidden there (`_hidden_centre_regions`). Before this task
-        FEEDS was unconditionally mounted, so this state was already visible
-        on every tab; keeping it that way through the new header avoids a
-        real regression (Sources/Runs/... silently losing all visibility
-        into "snapshot still loading" / "service unavailable" / "no sources
-        yet", not merely a cosmetic gap) rather than introducing new
-        behaviour.
+        Extracted (TASK-1344) so the same service-state readout could
+        appear on every tab once FEEDS itself started being hidden on all
+        but the Read tab (`_hidden_centre_regions`) -- before that, FEEDS
+        was unconditionally mounted, so this state was already visible
+        everywhere; the extraction avoided a real regression (Sources/
+        Runs/... silently losing all visibility into "snapshot still
+        loading" / "service unavailable" / "no sources yet") rather than
+        introducing new behaviour.
+
+        TASK-2312: called from exactly one place now,
+        `_build_centre_status_header`, on every section including Read.
+        `_build_list_pane` (FEEDS's own content) used to carry an inline
+        second copy of this same call specifically for the Read tab -- that
+        duplication, and the different DOM position it produced, is what
+        this task removed; see `_build_centre_status_header`'s own
+        docstring for the full history.
 
         Keyed on the async snapshot, NOT on `scoped_source_rows()`: the
         snapshot is the only service-health probe on this screen -- it is
@@ -1785,8 +1789,21 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             ]
         if not self._has_local_wc_context():
             return [
+                # TASK-2312, AC#3: this marker renders in the shared header
+                # on EVERY section (it is genuinely global -- "is there any
+                # local Watchlists data at all" -- not a Sources-tab fact),
+                # so its copy must read that way rather than as borrowed
+                # Sources-tab content. "No Watchlists sources yet." names
+                # the app-level noun instead of a bare "No sources", which
+                # on, say, the Overview or Runs tab previously read like
+                # Sources-tab copy had leaked in (UAT finding). The New
+                # source/Import OPML actions stay -- they are the only two
+                # ways to bootstrap ANY data on a fully empty profile,
+                # regardless of section; whether they duplicate a
+                # section's own onboarding CTAs is task-2313's own scope
+                # (empty-state sweep), not this task's positioning fix.
                 Static(
-                    "No sources yet.",
+                    "No Watchlists sources yet.",
                     id="wc-empty-state",
                 ),
                 Horizontal(
@@ -1833,12 +1850,15 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         TASK-1344 AC#1 hides FEEDS on every tab except Read
         (`_hidden_centre_regions`), but the tab strip and the snapshot
         markers are cross-cutting chrome, not FEEDS-specific "feed content"
-        — before this task FEEDS was unconditionally mounted, so both were
+        — before that task FEEDS was unconditionally mounted, so both were
         already visible on every tab. This is what carries that forward:
-        `WatchlistsWorkbench`'s `header=` factory, wired only when
-        `active_section != "items"` (`compose_content`) so it never
-        coexists with `_build_list_pane`'s own, identical-looking inline
-        copy on the Read tab — mounting both would duplicate `#wl-tabs`.
+        `WatchlistsWorkbench`'s `header=` factory (`compose_content`), wired
+        UNCONDITIONALLY as of TASK-2312 — it used to be skipped on the Read
+        tab in favour of an inline copy `_build_list_pane` mounted INSIDE
+        the bordered FEEDS box, which visibly moved the tab strip and the
+        status line between sections (UAT F2/F22/F23). `_build_list_pane`
+        no longer builds that copy, so this factory is now the ONE place
+        either widget is ever constructed, on every section including Read.
 
         Called fresh on every workbench rebuild, so it must stay
         side-effect-free, like every other factory here.
@@ -1860,9 +1880,8 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         )
 
     def _build_list_pane(self) -> Vertical:
-        """Build the FEEDS-region content: the section tab strip, a heading
-        naming the current tree scope, that scope's source rows, and the
-        snapshot's own loading/error/empty/summary marker.
+        """Build the FEEDS-region content: a heading naming the current tree
+        scope, and that scope's source rows.
 
         Read-tab-only (`_hidden_centre_regions` hides FEEDS everywhere
         else), and unchanged in shape from before TASK-1344 widened FEEDS's
@@ -1880,21 +1899,24 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         Staging now follows the tree scope (see `_snapshot_body`), so that
         block collapses to a single line.
 
-        The tab strip is unchanged -- `Tests/UI/test_destination_shells.py`
-        and `Tests/UI/test_destination_visual_parity_correction.py` both
-        drive its stable selectors.
+        TASK-2312: this pane no longer builds its own copy of the section
+        tab strip or the snapshot's loading/error/empty/summary marker.
+        Before this task it did -- an inline copy, mounted INSIDE this
+        bordered FEEDS box -- while `_build_centre_status_header` built an
+        independent SECOND copy, mounted OUTSIDE every region box, for
+        every OTHER section. Both widgets therefore visibly changed
+        position depending on which tab was active (UAT F2/F22/F23): the
+        tab strip sat inside a bordered region on Read and outside every
+        region everywhere else, and the snapshot line moved with it.
+        `_build_centre_status_header` is now the ONE place either is ever
+        built, unconditionally (`compose_content`'s `header=`) -- this pane
+        keeps only the content that is genuinely FEEDS-specific.
 
         Byte-identical logic to the pre-rehost inline composition for the
         snapshot itself; only the `yield` calls became list appends and a
         `Vertical(...)` return so the result can be handed to
         `WatchlistsWorkbench` as a content factory instead of being mounted
-        directly by `compose_content`. The tab strip is prepended here
-        (rather than left unwired) so section-switching by click is not lost
-        now that the navigator is retired — `Region.LEFT_RAIL` hosts the
-        watchlist tree (`_build_tree_pane`), and this is the strip's
-        permanent home per the design (a one-row strip at the top of the
-        centre). `_build_centre_status_header` is FEEDS's twin for every
-        OTHER tab, where this factory is never called at all.
+        directly by `compose_content`.
 
         This is called fresh on every region rebuild (see
         `WatchlistsWorkbench.__init__`'s docstring on why `content` holds
@@ -1902,7 +1924,6 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         """
         scoped_rows = self.scoped_source_rows()
         children: list[Widget] = [
-            WatchlistsTabStrip(active_section=self.active_section, id="wl-tabs"),
             Static(
                 self._scoped_feeds_heading(scoped_rows),
                 classes="destination-section watchlists-column-title",
@@ -1922,7 +1943,6 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                     classes="watchlist-feed-source-row",
                 )
             )
-        children.extend(self._watchlists_status_marker_widgets(scoped_rows))
         return Vertical(
             *children,
             id="watchlists-list-pane",
@@ -2447,16 +2467,10 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                     Region.RIGHT_RAIL: self._build_inspector_region,
                 },
                 hidden=self._hidden_centre_regions(),
-                # `None` on the Read tab: `_build_list_pane` (FEEDS's own
-                # factory, above) already supplies the tab strip and the
-                # snapshot markers inline there, exactly as it always has.
-                # Off Read, FEEDS is hidden, so this is what carries both
-                # forward -- see `_build_centre_status_header`.
-                header=(
-                    None
-                    if self.active_section == "items"
-                    else self._build_centre_status_header
-                ),
+                # TASK-2312: unconditional on every section, including Read
+                # -- see `_build_centre_status_header`'s own docstring for
+                # why this used to be `None` on Read and what that cost.
+                header=self._build_centre_status_header,
                 id="wl-workbench",
             )
 
@@ -3447,9 +3461,10 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         fix the header was left showing the PREVIOUS scope's summary until
         some unrelated recompose came along and rebuilt it for a different
         reason. `_refresh_centre_header_for_scope` is the header's
-        equivalent, called only when the header actually exists
-        (`active_section != "items"`, mirroring `compose_content`'s own
-        `header=` condition).
+        equivalent -- called UNCONDITIONALLY as of TASK-2312, since the
+        header now exists on every section including Read (see
+        `_build_centre_status_header`'s own docstring); both refreshes run
+        on Read too, one per surface, exactly like everywhere else.
 
         Also pushes the new scope into the still-mounted `WatchlistTree`
         (task-876): since this watcher is the single reconciliation point
@@ -3463,8 +3478,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         if not self.is_mounted:
             return
         self._refresh_feeds_region_for_scope()
-        if self.active_section != "items":
-            self._refresh_centre_header_for_scope()
+        self._refresh_centre_header_for_scope()
         # TASK-2304 AC#2. The Sources table follows the same scope the FEEDS
         # heading and the centre header just took, so the two counts of "how
         # many sources are in view" cannot disagree. An in-place push on the
@@ -3683,8 +3697,12 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         correctness): the centre header/tab strip (`#wl-centre-status`,
         mounted directly under `#wl-centre` by `_build_centre_status_header`
         -- see `compose_content`) sits OUTSIDE every `wl-region-*`/
-        `wl-header-*` wrapper, so neither prefix above ever matches while
-        focus is in it. Without this branch `focused_region` would keep
+        `wl-header-*` wrapper on every section including Read (TASK-2312;
+        Read used to mount its own copy of the tab strip INSIDE FEEDS's own
+        `wl-region-feeds` wrapper, so this branch never fired there and
+        focusing the tab strip on Read instead matched the `wl-region-`
+        prefix and set `focused_region = FEEDS`), so neither prefix above
+        ever matches while focus is in it. Without this branch `focused_region` would keep
         naming whatever region the user last actually visited, silently
         indistinguishable here from a live selection: a user who tabs into
         the tab strip and presses `z`/`Z` would act on that stale reference
@@ -3719,8 +3737,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     def watch_active_section(self) -> None:
         # A tab switch always fully recomposes the centre (below): whatever
         # `_focus_in_centre_header` was tracking about the OLD DOM is moot
-        # the instant that DOM is torn down, and the header itself may not
-        # even exist on the new tab at all (`header=None` on Read). Reset
+        # the instant that DOM is torn down. Reset
         # to "not in the header" rather than leave a stale `True` standing
         # -- `on_descendant_focus` will set it again the moment a fresh
         # focus event actually lands there, but nothing guarantees one
@@ -5364,6 +5381,11 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             else self._briefing_provider_display()
         )
         reason = str(row.get("error") or "").strip() or "no reason was recorded"
+        # Live-verified trap: the provider's own message is very often
+        # already a full sentence with its own trailing period (e.g.
+        # "OpenAI API Key is required but not found.") -- appending another
+        # unconditionally produced a visible ".." in the toast. One strip.
+        reason = reason.rstrip(".")
         self._notify_watchlists(
             f"Briefing generation failed using {provider}: {reason}. Check "
             "Settings ▸ Providers & Models, then press Generate again.",
