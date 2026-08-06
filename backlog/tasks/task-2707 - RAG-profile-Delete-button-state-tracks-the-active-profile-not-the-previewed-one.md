@@ -1,5 +1,5 @@
 ---
-id: task-1681
+id: TASK-2707
 title: 'Settings RAG: the Delete button''s state tracks the active profile, not the previewed one'
 status: To Do
 assignee: []

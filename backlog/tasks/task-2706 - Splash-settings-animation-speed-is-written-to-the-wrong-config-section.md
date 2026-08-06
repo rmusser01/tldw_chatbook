@@ -1,5 +1,5 @@
 ---
-id: task-1680
+id: TASK-2706
 title: 'Splash settings: "Animation speed" is written to the wrong config section'
 status: To Do
 assignee: []

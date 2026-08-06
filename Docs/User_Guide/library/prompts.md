@@ -90,7 +90,7 @@ text; Reload discards it." with **Overwrite** and **Reload** buttons.
 | Save | Saves the prompt (explicit save only) |
 | Use in Console | Inserts the user-prompt text into the Console composer and switches there |
 | Export… | Saves this one prompt as a Markdown file ("Export Prompt as Markdown" dialog) |
-| Copy text | Currently does nothing when pressed — see Quirks (task-1670) |
+| Copy text | Currently does nothing when pressed — see Quirks (task-2700) |
 | Duplicate prompt | Opens a new unsaved prompt named "<name> (copy)" with all fields prefilled |
 | Delete | Deletes the prompt immediately — there is no confirmation step |
 
@@ -156,7 +156,7 @@ prompt to the Library. See
   exists (even on a deleted prompt) is counted as "skipped (duplicate
   name)", never overwritten or auto-renamed.
 - **Copy text is not wired up.** Pressing it does nothing on this
-  build — use **Export…** or select text directly instead. (task-1670)
+  build — use **Export…** or select text directly instead. (task-2700)
 - **The filter ignores keywords** — it matches only the name and
   description, so a keywords-based search will come up empty.
 - **Size caps**: names up to 300 characters; the system prompt, user

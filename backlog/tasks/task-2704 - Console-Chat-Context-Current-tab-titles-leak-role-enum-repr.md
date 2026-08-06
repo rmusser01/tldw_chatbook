@@ -1,5 +1,5 @@
 ---
-id: task-1674
+id: TASK-2704
 title: 'Console Chat Context viewer: Current-tab fold titles leak the role enum repr'
 status: To Do
 assignee: []

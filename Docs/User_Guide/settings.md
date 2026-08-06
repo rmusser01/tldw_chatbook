@@ -411,7 +411,7 @@ not open an editor.
   **Appearance**.
 - **A splash change had no effect.** All splash settings are startup-only.
   Separately, **Animation speed (x)** is saved to a place this page does not
-  read back, so it looks unchanged when you return (backlog task-1680).
+  read back, so it looks unchanged when you return (backlog task-2706).
 - **Privacy & Security has no control that does anything.** It is a read-out;
   encryption cannot be turned on or off here, and credential changes are
   explicitly "not available yet - password-gated flow required".

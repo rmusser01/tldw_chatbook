@@ -64,7 +64,7 @@ ids; see the renumbering commits on this branch); commit trailer.
 - **`Theme` is startup-only**; `Preview` is the only in-session feedback, and
   the Theme editor never writes `[general].default_theme`.
 - **Splash settings are startup-only**, and `Animation speed (x)` is saved to
-  the wrong section (**task-1680**, filed this phase).
+  the wrong section (**task-2706**, filed this phase).
 - **Privacy & Security changes nothing** — it is a read-out; credential
   mutation is declared `not available yet - password-gated flow required`.
 - **Storage needs a restart**, and `Active files` can legitimately differ from

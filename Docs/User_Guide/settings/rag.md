@@ -217,7 +217,7 @@ field has focus the footer relabels the hints as `Esc, s` / `Esc, r` /
   you preview a profile of your own — so set one of your own active first.
   Conversely, with your own profile active the button stays enabled while you
   preview a built-in and fails with "Couldn't delete profile: `<reason>`".
-  (backlog task-1681)
+  (backlog task-2707)
 - **Search-group defaults are persisted, not live.** Saving them changes what
   the next Library query does, not anything already rendered. Library Search's
   "top 5 per source" ignores **Default results** entirely — see
