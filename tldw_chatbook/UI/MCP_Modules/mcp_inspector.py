@@ -186,6 +186,26 @@ _ADVANCED_EXECUTE_ACTION = "tool.execute"
 # formulation 46 lines above (`_TEST_RUN_ARMED_HINT`: "anything else
 # cancels") -- adopted here instead of maintaining a list that cannot stay
 # complete.
+#
+# Fix Round G, Items 1-2 (review of Fix Round E): "anything else cancels"
+# was STILL not true -- collapsing this disclosure's own triangle
+# (`_on_advanced_collapsible_toggled()`) and editing the payload
+# (`#mcp-adv-payload`, no `TextArea.Changed` handler existed at all) both
+# left a live arm untouched. Rather than extend the enumeration this
+# comment already rejected once, both are now wired to disarm
+# (`_on_advanced_collapsible_toggled()`, `_on_advanced_payload_changed()`),
+# closing the two remaining gaps between what this sentence claims and
+# what the code does. This also reconciles the wording with `_TEST_RUN_
+# ARMED_HINT`'s copy of the SAME sentence for the Test Tool arm
+# (`_test_run_armed`): the two arms' trigger sets were never identical
+# (`_test_run_armed` deliberately does NOT disarm on an argument-form
+# edit, because `_handle_test_run()` always re-collects CURRENT form
+# values rather than confirming a snapshot, so an edit before confirming
+# is safe without disarming), but both are now genuinely "every meaningful
+# interaction with this widget besides pressing the confirm control
+# itself" for THEIR OWN widget -- the chosen fix is to make the shared
+# sentence true of each arm on its own terms, not to force one arm's
+# trigger set to imitate the other's.
 _ADVANCED_EXECUTE_CONFIRM = (
     "Runs {tool} now — press Run Action again to confirm; anything else cancels."
 )
@@ -1277,6 +1297,29 @@ class MCPInspector(Vertical):
         if collapsed == self._advanced_last_collapsed:
             return
         self._advanced_last_collapsed = collapsed
+        # Fix Round G, Item 1 (review of Fix Round E): a real collapse/
+        # expand of this disclosure's own triangle used to be invisible to
+        # the arm entirely -- `_ADVANCED_EXECUTE_CONFIRM` promises "anything
+        # else cancels", but this handler only ever persisted the open/
+        # collapsed preference. Live-verified: arm `tool.execute`, collapse,
+        # then expand -- the arm survived, so ONE press ran the tool with no
+        # confirm ever shown for that viewing. The Collapsible's own child
+        # widgets (`#mcp-adv-result` included) stay mounted across a
+        # collapse -- only their CSS display toggles (see `_build_advanced_
+        # collapsible()`'s `.-collapsed` rule) -- so this is the same
+        # "attention moved" trigger `_hide_advanced()`'s own clear (:1226)
+        # already treats as arm-cancelling, just a lighter-touch version of
+        # it (tuck away, not tear down; see that method's own docstring for
+        # the teardown-vs-preserve rule this class follows). Same `_was_
+        # armed` gate every other disarm site in this class uses: a real
+        # run result/refusal sitting in `#mcp-adv-result` while UNARMED
+        # must survive a collapse/expand exactly as it survives a section
+        # change or a rebind (Fix Round E, Item 1) -- only a LIVE confirm
+        # sentence is ever cleared away.
+        _was_armed = self._advanced_confirm_key is not None
+        self._advanced_confirm_key = None
+        if _was_armed:
+            self.query_one("#mcp-adv-result", Static).update("")
         self.run_worker(
             self._persist_advanced_open(not collapsed),
             group="mcp-adv-open",

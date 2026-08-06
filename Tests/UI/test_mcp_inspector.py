@@ -4403,3 +4403,78 @@ async def test_action_switch_disarms_a_pending_confirm():
         assert app.service.action_calls == [
             ("resource.read", {"uri": "note://example"})
         ]
+
+
+# -- Fix Round G, Item 1: collapsing the disclosure disarms a pending -------
+# confirm too -- `_ADVANCED_EXECUTE_CONFIRM`'s "anything else cancels" was
+# untrue for this one interaction: `_on_advanced_collapsible_toggled()` only
+# ever persisted the open/collapsed preference. Live-verified: arm
+# `tool.execute`, collapse the disclosure, expand it again -- a single press
+# ran the tool with the arm still set, no confirm ever shown for that
+# viewing.
+
+
+@pytest.mark.asyncio
+async def test_collapsing_advanced_disarms_a_pending_confirm():
+    """Direct-state isolation (the RED condition mutation-verified against
+    dropping `_on_advanced_collapsible_toggled()`'s clear while keeping its
+    `_was_armed` blank) plus the end-to-end behavioral consequence in one
+    test: `Collapsible.collapsed = True/False` fires the SAME
+    `Collapsible.Toggled` message a real click on the disclosure's title
+    does -- this file's own established technique, see e.g.
+    `test_advanced_collapsible_toggle_persists_state`."""
+    app = ToolExecuteInspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        await pilot.click("#mcp-adv-run")  # arms
+        await pilot.pause()
+        assert app.service.action_calls == []
+
+        collapsible = app.query_one("#mcp-adv-collapsible", Collapsible)
+        collapsible.collapsed = True
+        await pilot.pause()
+        assert inspector._advanced_confirm_key is None, (
+            "collapsing the disclosure must clear the arm itself, not "
+            "merely be inert"
+        )
+        collapsible.collapsed = False
+        await pilot.pause()
+
+        await _press_run_again(pilot)
+        assert app.service.action_calls == [], (
+            "collapse-then-expand must disarm -- the first press after "
+            "must re-confirm, not execute"
+        )
+        assert "again" in _adv_result(app)
+
+        await _press_run_again(pilot)
+        assert app.service.action_calls == [
+            ("tool.execute", {"tool_name": "search_notes", "arguments": {"query": "example"}})
+        ]
+
+
+@pytest.mark.asyncio
+async def test_collapsing_advanced_preserves_real_run_output_when_not_armed():
+    """Same UNARMED-preservation discipline as `test_section_change_
+    preserves_real_run_output_when_not_armed`/`test_rebind_preserves_real_
+    run_output_when_not_armed` (Fix Round E, Item 1) -- collapsing after a
+    completed run (unarmed) must not blank the real result; only a LIVE
+    arm's confirm sentence is ever cleared. The Collapsible's children stay
+    mounted across a collapse (only CSS display toggles), so this is the
+    same "preserve" branch of the Fix Round G, Item 6 rule, not the
+    `_hide_advanced()` teardown branch."""
+    app = ToolExecuteInspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        await pilot.click("#mcp-adv-run")  # arms
+        await pilot.pause()
+        await _press_run_again(pilot)  # runs it -- real output now showing
+        result_before = _adv_result(app)
+        assert "ok" in result_before
+
+        collapsible = app.query_one("#mcp-adv-collapsible", Collapsible)
+        collapsible.collapsed = True
+        await pilot.pause()
+
+        assert _adv_result(app) == result_before, (
+            "collapsing while UNARMED must not blank real run output"
+        )
