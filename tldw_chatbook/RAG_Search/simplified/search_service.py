@@ -164,7 +164,15 @@ class SimplifiedRAGSearchService:
                         # outer result shape (consumed by MCP/tools.py) stays
                         # stable; there is no distinct value to put here.
                         "file_path": None,
-                        "score": 1.0,  # Default score for keyword search
+                        # No score, not a fabricated 1.0: FTS/keyword
+                        # relevance is not comparable to a real similarity
+                        # score, and a wrong band is worse than no band.
+                        # Mirrors the Library's own precedent of nulling the
+                        # score at the service boundary for exactly this
+                        # reason (see `library_rag_state.py`'s
+                        # `library_rag_score_suffix`, which already treats
+                        # `None` as "no band" for keyword-mode rows).
+                        "score": None,
                         "metadata": {
                             "author": item.get("author"),
                             "ingestion_date": item.get("ingestion_date"),
