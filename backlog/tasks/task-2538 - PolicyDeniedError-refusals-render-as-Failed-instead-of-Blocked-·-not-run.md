@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-08-06 09:48'
-updated_date: '2026-08-06 18:12'
+updated_date: '2026-08-06 19:28'
 labels:
   - mcp
   - honesty
@@ -63,4 +63,33 @@ configuration. Filed because the gap is structural, not because it currently fir
 
 <!-- SECTION:NOTES:BEGIN -->
 Investigated per the fix-round-B directive (prove reachability before handling), and CLOSED WITHOUT A CODE CHANGE -- AC #1/#2 intentionally not implemented; this is the 'not reachable' outcome the brief explicitly names as equally successful to 'reachable'. Evidence chain: _run_tool_test() -> service.test_hub_tool() -> execute_hub_tool() dispatches ONLY to local_service.execute_tool() ('builtin:' keys) or local_service.execute_external_tool() ('local:' keys) -- both call LocalMCPControlService._require_allowed() as their first line. _require_allowed() ALWAYS calls policy_enforcer.require_allowed(action_id=..., runtime_state_override=RuntimeSourceState(active_source='local')) -- a hardcoded override, so the 'state is None' PolicyDeniedError branch in ServicePolicyEnforcer.require_allowed() (runtime_policy/enforcement.py) is unreachable from this seam. Its other raise fires only when PolicyEngine.evaluate() denies, which requires: unregistered action_id (not the case -- both mcp.runtime.trigger.local and mcp.external_profiles.trigger.local are registered under the local_mcp_runtime capability), OR entry.enabled is False (both default True, never overridden -- confirmed by reading every action seed under that capability in runtime_policy/registry.py), OR active_source != required_source (both are LOCAL_ONLY_SOURCES, required_source='local', and normalize_runtime_source_state() never changes active_source -- confirmed by reading its body). So evaluate() always returns allowed=True on this path; PolicyDeniedError cannot propagate out of execute_tool()/execute_external_tool() in the current codebase. PolicyDeniedError's only other raise site, get_capability_entry() (runtime_policy/registry.py), is called only from UX_Interop/server_parity_contracts.py and Chat/chat_handoff_messages.py -- neither is in the MCP tool-test call graph. This confirms (does not merely repeat) the task's own filed claim with a full call-graph + registry-config evidence chain. AC #3 verified via the full targeted test sweep for this fix round staying green with zero PolicyDeniedError-related changes.
+
+Item 5 (PR-T3 fix round D) addendum: an independent reviewer re-derived and agreed with
+this verdict, but found the recorded chain above incomplete in two ways, now recorded
+for completeness --
+
+1. The chain above enumerates only the FIRST _require_allowed() of each entry point
+   (execute_tool()'s mcp.runtime.trigger.local, execute_external_tool()'s
+   mcp.external_profiles.trigger.local). execute_external_tool() reaches a THIRD guard
+   it does not mention: when profile_id is not already an open session, it calls
+   connect_profile(profile_id), whose own first line is
+   self._require_allowed("mcp.external_profiles.launch.local")
+   (local_control_service.py:194-195). That action is likewise registered under the
+   local_mcp_runtime capability, sources=LOCAL_ONLY_SOURCES, enabled by default --
+   verified by reading the same mcp.external_profiles resource entry (actions include
+   LAUNCH) already covered by the original investigation's "every action seed under that
+   capability" pass. The conclusion (PolicyDeniedError cannot propagate out of this call
+   graph in the current codebase) survives adding this third guard.
+
+2. The whole argument rests on policy_enforcer actually being a real
+   ServicePolicyEnforcer whose require_allowed() is what raises PolicyDeniedError. The
+   constructor parameter is typed `policy_enforcer: Any | None = None`
+   (local_control_service.py:101) -- nothing in LocalMCPControlService itself enforces
+   that type. The claim is true in app.py's actual wiring today, but that wiring is
+   assumed, not pinned by any test in this suite -- a future construction site passing a
+   differently-shaped object (or None, if _require_allowed tolerates that) would silently
+   change this analysis without any test failing to say so.
+
+No code change: still a documentation-only closure. A closed task carrying an incomplete
+evidence chain is how a wrong "cannot happen" survives review.
 <!-- SECTION:NOTES:END -->
