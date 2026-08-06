@@ -35,6 +35,7 @@ from tldw_chatbook.Widgets.enhanced_file_picker import (
 )
 
 from tldw_chatbook.TTS import STTSGeneratedAudio
+from tldw_chatbook.TTS.playground_types import PROFILE_SAVE_BLOCK_PROVIDER_OPTIONS
 
 
 EXAMPLE_TEXTS = [
@@ -301,7 +302,7 @@ class SpeechPlaybackMixin:
         )
         try:
             self.query_one("#audio-result-lifecycle", Static).update(
-                "Temporary result — export to keep a copy."
+                self._result_lifecycle_copy(artifact)
             )
             self.query_one("#audio-player-transport").add_class("hidden")
             self.query_one("#audio-progress-bar").add_class("hidden")
@@ -351,6 +352,26 @@ class SpeechPlaybackMixin:
         if duration is not None:
             parts.append(self._format_result_duration(duration))
         return " · ".join(parts)
+
+    @staticmethod
+    def _result_lifecycle_copy(artifact: STTSGeneratedAudio) -> str:
+        """State the file's lifecycle, and why Save is missing when it is.
+
+        An unexplained missing Save affordance is the chrome-honesty defect
+        this repo forbids: slice-1 profiles fix `options` empty, so a
+        generation that used provider-specific options (Higgs/ElevenLabs/
+        Chatterbox/Kokoro Inputs) cannot be reproduced by one and is refused
+        provenance -- `profile_save_block_code` names that one actionable
+        reason. Every other artifact keeps the original copy verbatim.
+        """
+
+        if artifact.profile_save_block_code == PROFILE_SAVE_BLOCK_PROVIDER_OPTIONS:
+            return (
+                "Temporary result — export to keep a copy. Not saved as a "
+                "voice profile: this generation used provider-specific "
+                "options, which voice profiles don't capture yet."
+            )
+        return "Temporary result — export to keep a copy."
 
     def _focus_current_result_action(self, action_id: str) -> None:
         """Focus and reveal the safest next action after artifact delivery."""

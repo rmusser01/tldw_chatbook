@@ -203,6 +203,9 @@ class _StudioService:
         effective_response_format: str = "wav",
         effective_speed: float = 1.0,
         effective_configuration_revision: int = 9,
+        # `TTSEffectiveSelection` always carries this axis; a fake that omits
+        # it invents a shape the real system never produces.
+        effective_provider_options: Mapping[str, Any] | None = None,
     ) -> None:
         self.response = response
         self.calls: list[dict[str, object]] = []
@@ -212,6 +215,9 @@ class _StudioService:
         self._effective_response_format = effective_response_format
         self._effective_speed = effective_speed
         self._effective_configuration_revision = effective_configuration_revision
+        self._effective_provider_options = (
+            {} if effective_provider_options is None else effective_provider_options
+        )
 
     async def synthesize_effective(self, **kwargs: object) -> tuple[object, object]:
         self.calls.append(kwargs)
@@ -221,6 +227,7 @@ class _StudioService:
             voice_id=self._effective_voice_id,
             response_format=self._effective_response_format,
             speed=self._effective_speed,
+            provider_options=self._effective_provider_options,
             revisions=SimpleNamespace(
                 provider_configuration=self._effective_configuration_revision
             ),
@@ -822,6 +829,47 @@ async def test_legacy_generation_retains_stream_bridge_and_requested_conversion(
 
 
 @pytest.mark.asyncio
+async def test_legacy_generation_with_provider_options_is_not_save_eligible(
+    tmp_path: Path,
+) -> None:
+    """Mirrors the Studio-effective coverage for the standalone legacy
+    bridge (`_generate_legacy`, taken when a Playground request carries no
+    Studio preferences): it must also pass the real `options` through to
+    `_build_requested_selection` rather than the pre-fix hardcoded `{}`, so
+    a Higgs/Chatterbox result that used `extra_params` is refused
+    provenance -- and states why -- instead of saving a profile that
+    silently drops what the user configured."""
+
+    service = _LegacyService()
+    handler = _handler(service)
+
+    async def convert(input_path: Path, output_format: str) -> Path:
+        output = input_path.with_suffix(".mp3")
+        output.write_bytes(b"converted")
+        return output
+
+    handler._convert_audio_format = AsyncMock(side_effect=convert)
+
+    artifact = await handler._generate_legacy(
+        _snapshot(
+            provider_id="higgs",
+            response_format="mp3",
+            options={"temperature": 0.8},
+        ),
+        None,
+    )
+
+    try:
+        assert artifact.provider_id == "higgs"
+        assert artifact.requested_selection is None
+        assert artifact.profile_save_eligible is False
+        assert artifact.profile_save_block_code == "provider_options"
+    finally:
+        for path in tuple(handler._playground_audio_files):
+            path.unlink(missing_ok=True)
+
+
+@pytest.mark.asyncio
 async def test_legacy_generation_survives_configuration_revision_failure(
     tmp_path: Path,
 ) -> None:
@@ -1183,6 +1231,130 @@ async def test_studio_generation_attaches_provenance_for_legacy_effective_provid
             configuration_revision=7,
         )
         assert artifact.profile_save_eligible is True
+    finally:
+        await handler.cleanup_tts_resources()
+
+
+@pytest.mark.asyncio
+async def test_studio_generation_with_provider_options_is_not_save_eligible() -> None:
+    """A generation that used provider options cannot be reproduced by a
+    slice-1 profile (options are fixed empty), so `_build_requested_selection`
+    must pass the real options and let the type's guard refuse -- and the
+    artifact must say WHY, not just go quiet."""
+
+    response = _Response(
+        _CountingStream((b"ID3", b"mp3-bytes")),
+        provider_id="higgs",
+        model_id="higgs-v2",
+        audio_format="mp3",
+        content_type="audio/mpeg",
+    )
+    service = _StudioService(
+        response,
+        effective_provider_id="higgs",
+        effective_model_id="higgs-v2",
+        effective_voice_id="narrator",
+        effective_response_format="mp3",
+        effective_speed=1.0,
+        effective_configuration_revision=7,
+        effective_provider_options={"temperature": 0.8},
+    )
+    app = _DeliveryApp()
+    handler = STTSEventHandler(app=app)
+    handler._stts_service = service
+    preferences = StudioTTSPreferencesSnapshot(revision=5)
+    draft = TTSStudioDraftSelection(
+        selection=TTSSelectionOverrides(
+            provider_id="higgs",
+            model_mode="exact",
+            model_id="higgs-v2",
+            voice_mode="exact",
+            voice_id="narrator",
+            response_format="mp3",
+            speed=1.0,
+            provider_options={"temperature": 0.8},
+        ),
+        base_revision=5,
+    )
+    request = STTSPlaygroundRequest(
+        operation_id="studio-options-operation",
+        provider_id="higgs",
+        model_id="higgs-v2",
+        text="private Studio options text",
+        voice_id="narrator",
+        response_format="mp3",
+        options={"temperature": 0.8},
+        studio_draft=draft,
+        studio_preferences=preferences,
+    )
+
+    await handler.handle_playground_generate(STTSPlaygroundGenerateEvent(request))
+
+    artifact = handler._current_playground_artifact
+    try:
+        assert artifact is not None
+        assert artifact.path.read_bytes() == b"ID3mp3-bytes"
+        assert artifact.requested_selection is None
+        assert artifact.profile_save_eligible is False
+        assert artifact.profile_save_block_code == "provider_options"
+    finally:
+        await handler.cleanup_tts_resources()
+
+
+@pytest.mark.asyncio
+async def test_studio_generation_without_provider_options_stays_save_eligible() -> None:
+    response = _Response(
+        _CountingStream((b"ID3", b"mp3-bytes")),
+        provider_id="higgs",
+        model_id="higgs-v2",
+        audio_format="mp3",
+        content_type="audio/mpeg",
+    )
+    service = _StudioService(
+        response,
+        effective_provider_id="higgs",
+        effective_model_id="higgs-v2",
+        effective_voice_id="narrator",
+        effective_response_format="mp3",
+        effective_speed=1.0,
+        effective_configuration_revision=7,
+    )
+    app = _DeliveryApp()
+    handler = STTSEventHandler(app=app)
+    handler._stts_service = service
+    preferences = StudioTTSPreferencesSnapshot(revision=5)
+    draft = TTSStudioDraftSelection(
+        selection=TTSSelectionOverrides(
+            provider_id="higgs",
+            model_mode="exact",
+            model_id="higgs-v2",
+            voice_mode="exact",
+            voice_id="narrator",
+            response_format="mp3",
+            speed=1.0,
+            provider_options={},
+        ),
+        base_revision=5,
+    )
+    request = STTSPlaygroundRequest(
+        operation_id="studio-no-options-operation",
+        provider_id="higgs",
+        model_id="higgs-v2",
+        text="private Studio text",
+        voice_id="narrator",
+        response_format="mp3",
+        studio_draft=draft,
+        studio_preferences=preferences,
+    )
+
+    await handler.handle_playground_generate(STTSPlaygroundGenerateEvent(request))
+
+    artifact = handler._current_playground_artifact
+    try:
+        assert artifact is not None
+        assert artifact.requested_selection is not None
+        assert artifact.profile_save_eligible is True
+        assert artifact.profile_save_block_code is None
     finally:
         await handler.cleanup_tts_resources()
 

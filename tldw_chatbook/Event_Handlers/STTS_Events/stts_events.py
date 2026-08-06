@@ -39,6 +39,10 @@ from tldw_chatbook.TTS.adapter_types import (
 )
 from tldw_chatbook.TTS.audio_cpp_config import project_audio_cpp_config
 from tldw_chatbook.TTS.legacy_bridge import legacy_provider_config
+from tldw_chatbook.TTS.playground_types import (
+    PROFILE_SAVE_BLOCK_PROVIDER_OPTIONS,
+    ProfileSaveBlockCode,
+)
 from tldw_chatbook.TTS.TTS_Generation import (
     TTSService,
     TTSSettingsPersistenceOutcome,
@@ -778,8 +782,9 @@ class STTSEventHandler:
         voice_id: str | None,
         response_format: str,
         speed: float,
+        options: Mapping[str, Any],
         configuration_revision: Callable[[], int],
-    ) -> TTSRequestedSelectionSnapshot | None:
+    ) -> tuple[TTSRequestedSelectionSnapshot | None, ProfileSaveBlockCode | None]:
         """Build one save-eligible provenance snapshot, degrading to `None`.
 
         Shared by every Playground generation path -- native audio_cpp (via
@@ -791,23 +796,48 @@ class STTSEventHandler:
         selection), and neither may fail the generation itself -- the caller
         already has real audio by the time this runs. A failure here only
         costs "Save result as profile" eligibility.
+
+        The real `options` are passed rather than hardcoded `{}`:
+        `TTSRequestedSelectionSnapshot` requires empty options precisely so a
+        generation that used options cannot masquerade as exact provenance,
+        and hardcoding here meant that guard could never fire -- so
+        Higgs/ElevenLabs/Chatterbox/Kokoro results (whose Inputs always
+        populate provider options) would have saved a profile that does not
+        reproduce what the user heard. Returns the reason alongside the
+        snapshot so the surface can say why Save is unavailable instead of
+        quietly dropping it.
         """
         try:
-            return TTSRequestedSelectionSnapshot(
-                provider_id=provider_id,
-                model_id=model_id,
-                voice_id=voice_id,
-                response_format=response_format,
-                speed=speed,
-                options={},
-                configuration_revision=configuration_revision(),
+            return (
+                TTSRequestedSelectionSnapshot(
+                    provider_id=provider_id,
+                    model_id=model_id,
+                    voice_id=voice_id,
+                    response_format=response_format,
+                    speed=speed,
+                    options=options,
+                    configuration_revision=configuration_revision(),
+                ),
+                None,
             )
         except Exception:  # noqa: BLE001 - best-effort provenance only
             logger.warning(
                 "Playground result is not profile-save eligible (provider={}).",
                 provider_id,
             )
+            return None, self._profile_save_block_code(options)
+
+    @staticmethod
+    def _profile_save_block_code(
+        options: Mapping[str, Any],
+    ) -> ProfileSaveBlockCode | None:
+        """Name the one refusal reason a user can act on, or stay silent."""
+
+        try:
+            used_options = bool(options)
+        except Exception:  # noqa: BLE001 - hostile options explain nothing
             return None
+        return PROFILE_SAVE_BLOCK_PROVIDER_OPTIONS if used_options else None
 
     async def _generate_legacy(
         self,
@@ -887,15 +917,18 @@ class STTSEventHandler:
                     )
                     created_paths.discard(conversion_destination)
 
-            requested_selection = self._build_requested_selection(
-                provider_id=snapshot.provider_id,
-                model_id=snapshot.model_id,
-                voice_id=snapshot.voice_id or None,
-                response_format=audio_format,
-                speed=snapshot.speed,
-                configuration_revision=lambda: (
-                    self._stts_service.configuration_revision(snapshot.provider_id)
-                ),
+            requested_selection, profile_save_block_code = (
+                self._build_requested_selection(
+                    provider_id=snapshot.provider_id,
+                    model_id=snapshot.model_id,
+                    voice_id=snapshot.voice_id or None,
+                    response_format=audio_format,
+                    speed=snapshot.speed,
+                    options=options,
+                    configuration_revision=lambda: (
+                        self._stts_service.configuration_revision(snapshot.provider_id)
+                    ),
+                )
             )
             return STTSGeneratedAudio(
                 path=output_file,
@@ -908,6 +941,7 @@ class STTSEventHandler:
                 content_type=self._audio_content_type(audio_format),
                 metadata={},
                 requested_selection=requested_selection,
+                profile_save_block_code=profile_save_block_code,
             )
         except BaseException:
             for path in created_paths:
@@ -963,13 +997,14 @@ class STTSEventHandler:
             )
         )
         self._track_operation_file(snapshot.operation_id, path)
-        requested_selection = self._build_requested_selection(
+        requested_selection, profile_save_block_code = self._build_requested_selection(
             provider_id=effective.provider_id,
             model_id=effective.model_id,
             voice_id=effective.voice_id,
             response_format=effective.response_format,
             speed=effective.speed,
-            configuration_revision=lambda: effective.revisions.provider_configuration,
+            options=effective.provider_options,
+            configuration_revision=(lambda: effective.revisions.provider_configuration),
         )
         try:
             return STTSGeneratedAudio(
@@ -983,6 +1018,7 @@ class STTSEventHandler:
                 content_type=response.content_type,
                 metadata=response.metadata,
                 requested_selection=requested_selection,
+                profile_save_block_code=profile_save_block_code,
             )
         except BaseException:
             if secure_delete_file(path) or not path.exists():

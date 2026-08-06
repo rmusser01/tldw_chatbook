@@ -6,7 +6,7 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any
+from typing import Any, Literal, TypeAlias
 
 from tldw_chatbook.TTS.effective_settings import TTSStudioDraftSelection
 from tldw_chatbook.TTS.profile_types import (
@@ -18,6 +18,15 @@ from tldw_chatbook.TTS.profile_types import (
 from tldw_chatbook.TTS.studio_preferences import StudioTTSPreferencesSnapshot
 
 AudioMetadataValue = str | int | float | bool | None
+
+#: The one reason a successful generation is refused profile provenance that
+#: the user can act on: slice 1 profiles hold empty options by design, so a
+#: generation that used provider-specific options cannot be reproduced by one.
+PROFILE_SAVE_BLOCK_PROVIDER_OPTIONS = "provider_options"
+ProfileSaveBlockCode: TypeAlias = Literal["provider_options"]
+PROFILE_SAVE_BLOCK_CODES: frozenset[str] = frozenset(
+    {PROFILE_SAVE_BLOCK_PROVIDER_OPTIONS}
+)
 
 
 def _freeze_option(value: Any) -> Any:
@@ -169,6 +178,13 @@ class STTSGeneratedAudio:
     content_type: str
     metadata: Mapping[str, AudioMetadataValue] = field(default_factory=dict)
     requested_selection: TTSRequestedSelectionSnapshot | None = None
+    #: Why provenance was refused, when the reason is actionable to explain.
+    #:
+    #: `None` covers both "provenance attached" and "dropped for a reason the
+    #: user cannot act on" (a momentarily unreadable registry revision). The
+    #: one bounded code says the generation used provider-specific options,
+    #: which a slice-1 profile fixes empty and therefore cannot reproduce.
+    profile_save_block_code: ProfileSaveBlockCode | None = None
 
     def __post_init__(self) -> None:
         for name in (
@@ -192,6 +208,13 @@ class STTSGeneratedAudio:
             raise TypeError(
                 "requested_selection must be a requested selection snapshot"
             )
+        if self.profile_save_block_code is not None:
+            if self.profile_save_block_code not in PROFILE_SAVE_BLOCK_CODES:
+                raise ValueError("profile_save_block_code is not a known code")
+            if self.requested_selection is not None:
+                raise ValueError(
+                    "profile_save_block_code cannot accompany attached provenance"
+                )
 
     @property
     def file_suffix(self) -> str:
