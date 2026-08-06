@@ -111,7 +111,13 @@ class TestKeywordSearchRealRowMapping:
         assert "knownmarker" in result["content"]
         assert result["media_type"] == "article"
         assert result["url"] == "https://example.com/known-word-article"
-        assert result["score"] == 1.0
+        # Deliberate contract change (PR-T3 task-1, controller-authorized):
+        # this used to pin `score == 1.0`, the fabricated "Default score for
+        # keyword search" this task removes. A test asserting a fabricated
+        # relevance score is pinning a lie about match quality, not a
+        # contract worth preserving -- see search_service.py's keyword_search
+        # and the task-1 report for the consumer enumeration and rationale.
+        assert result["score"] is None
         assert result["metadata"]["author"] == "Ada Lovelace"
         assert "ingestion_date" in result["metadata"]
 
@@ -360,10 +366,11 @@ class TestKeywordSearchScoreIsHonest:
 
     NOTE: this is additive coverage alongside
     `TestKeywordSearchRealRowMapping.test_returns_seeded_item_with_correctly_mapped_fields`
-    (`:114` in this file), which pins the OLD `score == 1.0` fabrication
-    and is expected to fail once this fix lands -- see the task-1 report
-    for the consumer enumeration and why the fix lands at the service
-    boundary rather than only in `MCP/tools.py`.
+    (`:114` in this file), whose own `score` assertion was updated in the
+    same change (a deliberate, controller-authorized contract change, not
+    a silent absorb) -- see the task-1 report for the consumer enumeration
+    and why the fix lands at the service boundary rather than only in
+    `MCP/tools.py`.
     """
 
     @pytest.mark.asyncio
