@@ -178,20 +178,42 @@ def resolve_library_rag_answer_provider() -> tuple[str | None, str | None]:
 
 
 def library_rag_answer_provider_ready() -> bool:
-    """Whether a provider is configured to answer a Library RAG query.
+    """Whether a provider is configured AND able to authenticate for a
+    Library RAG query (PR-T2 Task 7).
 
-    Feeds `LibraryRagQueryState.from_values`'s `provider_ready` parameter
-    (`Library/library_rag_state.py:893-897`), the RAG-mode-only run gate
-    whose blocked copy already reads "Select a provider/model before asking
-    for a RAG answer." -- this is what makes that branch reachable instead
-    of permanently dead code.
+    Feeds the RAG-mode-only run gate at `UI/Screens/library_screen.py`
+    (`_library_rag_panel_state`'s `provider_name=` argument, and the
+    invocation guard in `_start_library_rag_answer`), whose blocked copy
+    already reads "Select a provider/model before asking for a RAG
+    answer." -- this is what makes that branch reachable instead of
+    permanently dead code.
+
+    Before this task, this function (and the gate it fed, until PR-T2 Task
+    4's review collapsed `provider_ready`/`provider_name` into one
+    parameter and the gate started reading `resolve_library_rag_answer_
+    provider()` directly) only ever asked "is a default endpoint NAME
+    configured?" -- an endpoint name is not a credential. That gap is the
+    harm PR-T2 as a whole is named for: a config with only `[API]
+    anthropic_api_key` set spent real money through this path while
+    Console's own readiness check showed a blocking "Connect a provider"
+    wall for the identical config, because the two asked different
+    questions. This now asks the SAME question Console asks --
+    `Chat/provider_readiness.get_provider_readiness`, the exact function
+    Console's run gate calls -- so the two can no longer disagree.
 
     Returns:
         `True` when `resolve_library_rag_answer_provider` resolves a
-        provider; `False` otherwise.
+        provider AND `get_provider_readiness` reports that provider ready
+        to authenticate; `False` otherwise.
     """
     provider, _ = resolve_library_rag_answer_provider()
-    return provider is not None
+    if provider is None:
+        return False
+
+    from .. import config as app_config
+    from ..Chat.provider_readiness import get_provider_readiness
+
+    return get_provider_readiness(provider, app_config.load_settings()).ready
 
 
 @dataclass(frozen=True)

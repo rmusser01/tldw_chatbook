@@ -782,6 +782,118 @@ def resolve_tldw_api_config(app_config) -> Dict:
 TLDW_API_PLACEHOLDER_BASE_URL = "http://127.0.0.1:8000"
 TLDW_API_PLACEHOLDER_AUTH_TOKEN = "default-secret-key-for-single-user"
 
+_API_KEY_PLACEHOLDER = "<API_KEY_HERE>"
+
+#: Providers whose legacy `[API] <provider>_api_key` TOML key and
+#: `<PROVIDER>_API_KEY` environment variable both follow the plain
+#: `_normalize_legacy_provider_api_key` convention, keyed by the SAME
+#: normalized provider key `Chat/provider_readiness.provider_config_key`
+#: would derive (e.g. `"anthropic"`, not `"anthropic_api"`) -- this is what
+#: lets the bridge below write into `api_settings.<provider_key>`, the
+#: table `get_provider_readiness` actually reads.
+#:
+#: `mistral` is deliberately excluded: the shipped default config keys its
+#: modern table `[api_settings.mistralai]` (matching `[providers]`), one
+#: normalized key away from what `provider_config_key("Mistral")` computes
+#: (`"mistral"`) -- bridging under `"mistral"` would create a second,
+#: disconnected table rather than closing a gap. That mismatch predates
+#: this task and is out of scope for it.
+_LEGACY_PROVIDER_API_KEY_BRIDGE: tuple[tuple[str, str, str], ...] = (
+    ("openai", "openai_api_key", "OPENAI_API_KEY"),
+    ("anthropic", "anthropic_api_key", "ANTHROPIC_API_KEY"),
+    ("cohere", "cohere_api_key", "COHERE_API_KEY"),
+    ("groq", "groq_api_key", "GROQ_API_KEY"),
+    ("huggingface", "huggingface_api_key", "HUGGINGFACE_API_KEY"),
+    ("openrouter", "openrouter_api_key", "OPENROUTER_API_KEY"),
+    ("deepseek", "deepseek_api_key", "DEEPSEEK_API_KEY"),
+    ("google", "google_api_key", "GOOGLE_API_KEY"),
+)
+
+
+def _normalize_legacy_provider_api_key(
+    api_settings_section: Dict[str, Any],
+    provider_key: str,
+    *,
+    raw_api_section: Dict[str, Any],
+    toml_key: str,
+    env_var: str,
+) -> Optional[str]:
+    """One normalized credential for `provider_key` -- PR-T2 Task 7.
+
+    The harm this closes: a config with only `[API] anthropic_api_key` set
+    spent real money through the Library path (`LLM_Calls/LLM_API_Calls.
+    py`'s `chat_with_anthropic` reads the legacy `anthropic_api` dict built
+    a few lines below this function's call sites, which DOES see that key)
+    while Console's own readiness check (`Chat/provider_readiness.get_
+    provider_readiness`, reading only `api_settings.<provider>.api_key`)
+    showed a blocking "Connect a provider" wall for the identical config.
+    Both the modern `api_settings` table and the legacy `<provider>_api`
+    dict must be built from the SAME resolved value -- never two
+    independent reads of `[API]` -- or the split just moves.
+
+    Precedence: (1) an explicit, non-placeholder `api_settings.<provider_
+    key>.api_key` always wins -- a value entered through the Settings
+    screen (the modern location) was a deliberate choice; (2) the
+    environment variable, matching the existing legacy-resolution order
+    this replaces (env before TOML); (3) the legacy `[API] <toml_key>`
+    value.
+
+    Only the (3) TOML-sourced fallback is ever written back into
+    `api_settings_section` -- never an (2) env-sourced one. Writing an
+    env-derived secret into `api_settings` would flip its reported
+    `api_key_source` from `env:...` to `config:...`, and `provider_
+    readiness.chat_api_key_field_state` treats a `config:` source as safe
+    to prefill and persist in the inline Chat-Defaults API-key field --
+    silently exposing a secret that was never typed into config. `get_
+    provider_readiness`'s own environment fallback already reports the
+    env-only case as ready without this rewrite, so nothing is lost by
+    leaving `api_settings` untouched there.
+
+    A provider table that does not yet exist is created only when there is
+    an actual TOML-sourced value to write into it -- never eagerly, since
+    several tests pin an untouched config's `api_settings` as exactly `{}`.
+
+    Args:
+        api_settings_section: The (already TOML-loaded) `api_settings`
+            table, mutated in place only when a TOML-sourced fallback
+            applies.
+        provider_key: Normalized provider key, e.g. `"anthropic"` -- must
+            match `Chat/provider_readiness.provider_config_key`'s output
+            for this provider.
+        raw_api_section: The raw `[API]` TOML section (legacy namespace).
+        toml_key: The legacy key within `raw_api_section`, e.g.
+            `"anthropic_api_key"`.
+        env_var: The conventional environment variable, e.g.
+            `"ANTHROPIC_API_KEY"`.
+
+    Returns:
+        The normalized credential (feeds the legacy `<provider>_api` dict
+        built just below each call site), or `None` when no source
+        resolves one.
+    """
+    provider_table = api_settings_section.get(provider_key)
+    modern_value = (
+        provider_table.get("api_key") if isinstance(provider_table, dict) else None
+    )
+    if isinstance(modern_value, str):
+        stripped_modern = modern_value.strip()
+        if stripped_modern and stripped_modern != _API_KEY_PLACEHOLDER:
+            return modern_value  # explicit modern config always wins
+
+    env_value = os.getenv(env_var)
+    if env_value:
+        return env_value
+
+    legacy_value = raw_api_section.get(toml_key)
+    if isinstance(legacy_value, str) and legacy_value.strip():
+        if not isinstance(provider_table, dict):
+            provider_table = {}
+            api_settings_section[provider_key] = provider_table
+        provider_table["api_key"] = legacy_value
+        return legacy_value
+
+    return None
+
 
 def load_settings(force_reload: bool = False) -> Dict:
     """
@@ -987,15 +1099,35 @@ def load_settings(force_reload: bool = False) -> Dict:
     ) -> Optional[str]:
         return os.getenv(env_var, section.get(toml_key))
 
-    openai_api_key = get_api_key("openai_api_key", "OPENAI_API_KEY")
-    anthropic_api_key = get_api_key("anthropic_api_key", "ANTHROPIC_API_KEY")
-    cohere_api_key = get_api_key("cohere_api_key", "COHERE_API_KEY")
-    groq_api_key = get_api_key("groq_api_key", "GROQ_API_KEY")
-    huggingface_api_key = get_api_key("huggingface_api_key", "HUGGINGFACE_API_KEY")
-    openrouter_api_key = get_api_key("openrouter_api_key", "OPENROUTER_API_KEY")
-    deepseek_api_key = get_api_key("deepseek_api_key", "DEEPSEEK_API_KEY")
+    # PR-T2 Task 7: these 8 providers' legacy `[API] <provider>_api_key`
+    # value and `api_settings.<provider>.api_key` are resolved together by
+    # `_normalize_legacy_provider_api_key` -- ONE normalization -- so
+    # `final_api_settings` (below, "api_settings" in config_dict, what
+    # `get_provider_readiness` reads) and this same value (below, the
+    # `<provider>_api` dicts `chat_with_<provider>` spends through) can
+    # never disagree about the same config. `mistral` is excluded -- see
+    # `_LEGACY_PROVIDER_API_KEY_BRIDGE`'s docstring comment. `elevenlabs`
+    # is untouched: it is a TTS credential, not a Chat provider
+    # `get_provider_readiness` resolves.
+    _bridged_provider_api_keys = {
+        provider_key: _normalize_legacy_provider_api_key(
+            final_api_settings,
+            provider_key,
+            raw_api_section=api_section_legacy,
+            toml_key=toml_key,
+            env_var=env_var,
+        )
+        for provider_key, toml_key, env_var in _LEGACY_PROVIDER_API_KEY_BRIDGE
+    }
+    openai_api_key = _bridged_provider_api_keys["openai"]
+    anthropic_api_key = _bridged_provider_api_keys["anthropic"]
+    cohere_api_key = _bridged_provider_api_keys["cohere"]
+    groq_api_key = _bridged_provider_api_keys["groq"]
+    huggingface_api_key = _bridged_provider_api_keys["huggingface"]
+    openrouter_api_key = _bridged_provider_api_keys["openrouter"]
+    deepseek_api_key = _bridged_provider_api_keys["deepseek"]
+    google_api_key = _bridged_provider_api_keys["google"]
     mistral_api_key = get_api_key("mistral_api_key", "MISTRAL_API_KEY")
-    google_api_key = get_api_key("google_api_key", "GOOGLE_API_KEY")
     elevenlabs_api_key = get_api_key("elevenlabs_api_key", "ELEVENLABS_API_KEY")
 
     # Determine platform-specific default STT provider

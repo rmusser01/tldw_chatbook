@@ -11,6 +11,7 @@ from unittest.mock import Mock
 import pytest
 from textual.widgets import Button, Input, Static
 
+from tldw_chatbook import config as app_config
 from tldw_chatbook.Library.library_rag_state import LibraryRagResultRow
 from tldw_chatbook.Library.library_rag_service import (
     LibraryRagSearchOutcome,
@@ -37,6 +38,40 @@ from Tests.UI.test_library_shell import (
     _active_library_screen,
     _wait_for_library_shell,
 )
+
+
+@pytest.fixture(autouse=True)
+def _ready_library_rag_provider(monkeypatch):
+    """PR-T2 Task 7 made `library_rag_answer_provider_ready` also verify
+    credentials resolve (`Chat/provider_readiness.get_provider_readiness`),
+    not just that a default endpoint NAME is configured -- closing the gap
+    where the Library path spent money a credential-blind gate had no basis
+    to allow. This gate's own dedicated blocked-provider coverage
+    (`Tests/UI/test_library_shell.py::test_library_shell_search_rag_mode_
+    blocks_run_without_a_ready_provider`) already exercises the genuinely
+    unconfigured case; every OTHER mounted-UI test in this file uses `rag`
+    mode reachability purely as scaffolding for something else under test
+    (coverage notes, mid-flight answer discards, restore lifecycle, ...),
+    so autouse layers a resolvable OpenAI credential onto the REAL loaded
+    settings (never a hand-built stand-in, so the rest of app boot still
+    sees the genuine config shape) rather than requiring every test to opt
+    in individually.
+    """
+    monkeypatch.setattr(app_config, "default_api_endpoint", "openai", raising=False)
+    real_load_settings = app_config.load_settings
+
+    def _load_settings_with_ready_openai_key(*args, **kwargs):
+        settings = dict(real_load_settings(*args, **kwargs))
+        api_settings = dict(settings.get("api_settings") or {})
+        openai_settings = dict(api_settings.get("openai") or {})
+        openai_settings["api_key"] = "sk-test-gate16-ready-key"
+        api_settings["openai"] = openai_settings
+        settings["api_settings"] = api_settings
+        return settings
+
+    monkeypatch.setattr(
+        app_config, "load_settings", _load_settings_with_ready_openai_key
+    )
 
 
 async def _wait_for_library_shell_ready(screen, pilot, *, timeout: float = 2.0) -> None:

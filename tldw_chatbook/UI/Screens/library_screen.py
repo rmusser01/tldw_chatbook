@@ -162,6 +162,7 @@ from ...Widgets.Prompts.prompt_block_editor_state import (
 from ...Library.library_rag_answer_service import (
     LibraryRagAnswer,
     generate_library_rag_answer,
+    library_rag_answer_provider_ready,
     resolve_library_rag_answer_provider,
 )
 from ...Library.library_rag_service import (
@@ -3861,23 +3862,32 @@ class LibraryScreen(BaseAppScreen):
             # `provider_ready` joined this contract in task-249 as a
             # hardcoded `True` -- PR-3 task 2 activated the gate for real,
             # and PR-T2 Task 4 review collapsed it into this single
-            # `provider_name` argument (readiness IS "a real name was
-            # resolved" now, derived inside `LibraryRagQueryState.
-            # from_values` -- see its docstring): a Library with no default
-            # LLM endpoint configured (`resolve_library_rag_answer_
-            # provider()` returns `(None, None)`) sees the pre-existing
-            # "Select a provider/model before asking for a RAG answer."
-            # copy, and once one IS configured, this same value also names
-            # it in the ready-state quiet line's paid-mode notice
-            # (`library_rag_paid_mode_notice`) -- the ONLY provider-adjacent
-            # copy on this panel used to be that blocked-branch text, which
-            # disappeared the instant a provider was configured, the exact
-            # inversion of what a keyboard-fast user needs before pressing
-            # a button that spends real money. rag-mode-only by construction
-            # (`LibraryRagQueryState.from_values`'s `normalized_mode ==
-            # "rag"` check) -- keyword Search mode never calls a provider
-            # and stays unaffected regardless of this value.
-            provider_name=resolve_library_rag_answer_provider()[0],
+            # `provider_name` argument, derived inside `LibraryRagQueryState.
+            # from_values` as `bool((provider_name or "").strip())` -- see
+            # its docstring. A Library with no default LLM endpoint
+            # configured (`resolve_library_rag_answer_provider()` returns
+            # `(None, None)`) sees the pre-existing "Select a provider/model
+            # before asking for a RAG answer." copy, and once one IS
+            # configured AND `library_rag_answer_provider_ready()` confirms
+            # its credentials actually resolve (PR-T2 Task 7 -- an endpoint
+            # NAME alone used to be treated as ready, which is how the
+            # Library path spent money while Console's own readiness check
+            # showed a blocking wall for the same config), this same value
+            # also names the provider in the ready-state quiet line's
+            # paid-mode notice (`library_rag_paid_mode_notice`) -- the ONLY
+            # provider-adjacent copy on this panel used to be that
+            # blocked-branch text, which disappeared the instant a provider
+            # was configured, the exact inversion of what a keyboard-fast
+            # user needs before pressing a button that spends real money.
+            # rag-mode-only by construction (`LibraryRagQueryState.
+            # from_values`'s `normalized_mode == "rag"` check) -- keyword
+            # Search mode never calls a provider and stays unaffected
+            # regardless of this value.
+            provider_name=(
+                resolve_library_rag_answer_provider()[0]
+                if library_rag_answer_provider_ready()
+                else None
+            ),
             selected_source_types=selected_source_types,
             history=self._library_search_history,
             history_collapsed=self._library_rag_history_collapsed,
@@ -17429,15 +17439,17 @@ class LibraryScreen(BaseAppScreen):
         chat_kwargs = self._library_rag_answer_chat_kwargs()
         if chat_kwargs is None:
             return
-        # The run gate (`_library_rag_panel_state`'s `provider_name=
-        # resolve_library_rag_answer_provider()[0]`) and this call both
-        # resolve from the same underlying config read; `provider is None`
-        # below means the gate would already have blocked `rag` mode.
+        # The run gate (`_library_rag_panel_state`'s `provider_name=`) and
+        # this call both gate on `library_rag_answer_provider_ready()`
+        # (PR-T2 Task 7 -- endpoint name AND resolvable credentials, the
+        # same question Console's readiness check asks); `not ready` below
+        # means the gate would already have blocked `rag` mode.
         provider, model = resolve_library_rag_answer_provider()
-        if provider is None:
-            # The run gate blocks rag mode without a provider, so this is
-            # unreachable through the UI; if it ever is reached, saying
-            # nothing is honest -- that gate's copy already explains why.
+        if provider is None or not library_rag_answer_provider_ready():
+            # The run gate blocks rag mode without a ready provider, so
+            # this is unreachable through the UI; if it ever is reached,
+            # saying nothing is honest -- that gate's copy already explains
+            # why.
             logger.debug("Library RAG answer skipped: no provider configured.")
             return
         # Built from state that has just been applied, so the note describes

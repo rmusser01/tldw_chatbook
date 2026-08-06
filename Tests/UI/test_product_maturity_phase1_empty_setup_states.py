@@ -38,6 +38,7 @@ from Tests.UI.test_library_shell import (
     _wait_for_library_shell,
     _wait_for_selector,
 )
+from tldw_chatbook import config as app_config
 from tldw_chatbook.Library import library_local_rag_search_service
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 
@@ -339,11 +340,33 @@ async def test_library_rag_mode_dependency_missing_state_names_install_hint(
     keyword mode genuinely keeps working when the embeddings deps are
     gone; a test that only checked the failure path would let a
     regression that broke that escape hatch pass silently.
+
+    Also needs a resolvable provider credential: PR-T2 Task 7 made
+    `library_rag_answer_provider_ready` check `Chat/provider_readiness.
+    get_provider_readiness`, not just an endpoint NAME, so `rag` mode's Run
+    gate is genuinely blocked without one -- see `test_product_maturity_
+    gate16_library_search_rag.py`'s `_ready_library_rag_provider` for the
+    same pattern applied at file scope there.
     """
     monkeypatch.setattr(
         library_local_rag_search_service,
         "embeddings_rag_deps_installed",
         lambda: False,
+    )
+    monkeypatch.setattr(app_config, "default_api_endpoint", "openai", raising=False)
+    real_load_settings = app_config.load_settings
+
+    def _load_settings_with_ready_openai_key(*args, **kwargs):
+        settings = dict(real_load_settings(*args, **kwargs))
+        api_settings = dict(settings.get("api_settings") or {})
+        openai_settings = dict(api_settings.get("openai") or {})
+        openai_settings["api_key"] = "sk-test-phase1-ready-key"
+        api_settings["openai"] = openai_settings
+        settings["api_settings"] = api_settings
+        return settings
+
+    monkeypatch.setattr(
+        app_config, "load_settings", _load_settings_with_ready_openai_key
     )
 
     app = _build_test_app()

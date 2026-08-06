@@ -1544,13 +1544,32 @@ async def test_library_shell_search_rag_mode_keeps_run_enabled_without_runtime(
     cannot. That `dependencies_ready`/`index_ready` retirement is unaffected
     by PR-3 task 2 -- but this test's `provider_ready` leg is now the REAL
     gate (`Library.library_rag_answer_service.
-    library_rag_answer_provider_ready`), not a hardcoded `True`, so it is
-    satisfied here with an explicitly configured ready provider rather than
-    leaning on config.py's own "openai" fallback. See
+    library_rag_answer_provider_ready`), not a hardcoded `True` and (as of
+    PR-T2 Task 7) not satisfied by an endpoint NAME alone either -- it also
+    asks `Chat/provider_readiness.get_provider_readiness`, the same
+    question Console's own gate asks. So this test explicitly configures an
+    OpenAI credential `get_provider_readiness` will actually resolve
+    (layered onto the real loaded settings, not a hand-built stand-in, so
+    the rest of app boot sees the genuine config shape) rather than leaning
+    on config.py's own "openai" fallback. See
     `test_library_shell_search_rag_mode_blocks_run_without_a_ready_provider`
     for the blocked path this gate now actually reaches.
     """
     monkeypatch.setattr(app_config, "default_api_endpoint", "openai", raising=False)
+    _real_load_settings = app_config.load_settings
+
+    def _load_settings_with_ready_openai_key(*args, **kwargs):
+        settings = dict(_real_load_settings(*args, **kwargs))
+        api_settings = dict(settings.get("api_settings") or {})
+        openai_settings = dict(api_settings.get("openai") or {})
+        openai_settings["api_key"] = "sk-test-library-shell-ready-key"
+        api_settings["openai"] = openai_settings
+        settings["api_settings"] = api_settings
+        return settings
+
+    monkeypatch.setattr(
+        app_config, "load_settings", _load_settings_with_ready_openai_key
+    )
     app = _build_test_app()
     assert getattr(app, "_rag_service", None) is None
     _seed_conversations(app, _two_conversations())

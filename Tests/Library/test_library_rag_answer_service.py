@@ -1056,18 +1056,82 @@ def test_resolve_provider_reports_none_for_an_empty_or_missing_endpoint(
     assert model is None
 
 
-def test_provider_ready_is_true_when_a_default_endpoint_is_configured(monkeypatch):
-    monkeypatch.setattr(app_config, "default_api_endpoint", "openai", raising=False)
-
-    assert library_rag_answer_provider_ready() is True
-
-
 @pytest.mark.parametrize("blank_endpoint", ["", "   ", None])
 def test_provider_ready_is_false_for_an_empty_or_missing_endpoint(
     monkeypatch, blank_endpoint
 ):
+    """Unaffected by PR-T2 Task 7: `resolve_library_rag_answer_provider`
+    already short-circuits to `(None, None)` for a blank endpoint, so
+    `library_rag_answer_provider_ready` never even reaches the credential
+    check added below."""
     monkeypatch.setattr(
         app_config, "default_api_endpoint", blank_endpoint, raising=False
     )
 
     assert library_rag_answer_provider_ready() is False
+
+
+# --- PR-T2 Task 7: the Library gate asks the same question Console asks --
+#
+# Before this task, `library_rag_answer_provider_ready` (and the run gate
+# it feeds, via `provider_name=resolve_library_rag_answer_provider()[0]` at
+# `UI/Screens/library_screen.py`) only ever asked "is a default endpoint
+# NAME configured?" -- never whether that provider could actually
+# authenticate. `test_provider_ready_is_true_when_a_default_endpoint_is_
+# configured` (the test this section replaces) pinned exactly that gap: an
+# endpoint name with NO credentials anywhere read as ready. This is the
+# harm PR-T2 as a whole is named for: the Library path spent money a
+# credential-blind gate had no basis to allow. `library_rag_answer_
+# provider_ready` now also asks `Chat/provider_readiness.get_provider_
+# readiness` -- the exact function Console's own gate calls -- so the two
+# can no longer disagree about the same config.
+
+
+def test_provider_ready_is_true_when_endpoint_and_credentials_both_resolve(
+    monkeypatch,
+):
+    monkeypatch.setattr(app_config, "default_api_endpoint", "anthropic", raising=False)
+    monkeypatch.setattr(
+        app_config,
+        "load_settings",
+        lambda *args, **kwargs: {
+            "api_settings": {"anthropic": {"api_key": "sk-ant-test-key"}}
+        },
+    )
+
+    assert library_rag_answer_provider_ready() is True
+
+
+def test_provider_ready_is_false_when_endpoint_is_named_but_no_credential_resolves(
+    monkeypatch,
+):
+    """The exact inversion the harm was: a default endpoint NAME configured
+    with no way to authenticate must not read as ready -- an endpoint name
+    is not a credential."""
+    monkeypatch.setattr(app_config, "default_api_endpoint", "anthropic", raising=False)
+    monkeypatch.setattr(
+        app_config,
+        "load_settings",
+        lambda *args, **kwargs: {"api_settings": {}},
+    )
+
+    assert library_rag_answer_provider_ready() is False
+
+
+def test_provider_ready_rereads_settings_on_every_call_like_the_endpoint_does(
+    monkeypatch,
+):
+    """Same "read through the module, not once at import time" contract
+    `resolve_library_rag_answer_provider` already has for `default_api_
+    endpoint` (see `test_resolve_provider_rereads_the_module_global_on_
+    every_call` above) -- a settings save mid-session must be observed on
+    the very next call, not require a restart."""
+    monkeypatch.setattr(app_config, "default_api_endpoint", "anthropic", raising=False)
+    settings = {"api_settings": {}}
+    monkeypatch.setattr(app_config, "load_settings", lambda *a, **k: settings)
+
+    assert library_rag_answer_provider_ready() is False
+
+    settings["api_settings"]["anthropic"] = {"api_key": "sk-ant-test-key"}
+
+    assert library_rag_answer_provider_ready() is True

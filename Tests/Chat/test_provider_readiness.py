@@ -1,7 +1,11 @@
 """Provider readiness tests for first-run Chat guidance."""
 
+import os
+from contextlib import contextmanager
+
 import pytest
 
+from tldw_chatbook import config as config_mod
 from tldw_chatbook.Chat import provider_readiness as provider_readiness_module
 from tldw_chatbook.Chat.provider_readiness import (
     ProviderReadiness,
@@ -184,3 +188,184 @@ def test_unknown_provider_without_key_is_not_ready():
     assert readiness.recovery == (
         "Choose a supported provider or add api_key under [api_settings.openai_typo]."
     )
+
+
+# --- PR-T2 Task 7: one truth for "is a provider configured?" ---------------
+#
+# The critique's harm: a config with ONLY `[API] anthropic_api_key` set spent
+# real money through the Library path (`LLM_Calls/LLM_API_Calls.py`'s
+# `chat_with_anthropic` reads the legacy `anthropic_api` dict, which DOES see
+# that key -- `config.py` has always projected `[API]` into it) while
+# Console's own readiness check -- this module's `get_provider_readiness`,
+# reading only `api_settings.<provider>.api_key` -- showed a blocking
+# "Connect a provider" wall for the identical config. `config.py`'s
+# `load_settings()` now bridges a resolved legacy `[API] <provider>_api_key`
+# into `api_settings.<provider>.api_key` when the modern key is absent, so
+# both readers agree. These tests drive the REAL loader (same pattern as
+# `Tests/Utils/test_config_api_key_resolution.py`'s `_real_config`) because
+# the bridge lives inside `load_settings()` itself -- a hand-built config
+# dict cannot exercise it.
+
+#: Env vars this suite guarantees are unset so a developer machine's real
+#: credentials cannot mask the branch under test (same rationale as
+#: `test_config_api_key_resolution.py`'s `_clear_provider_env`).
+_REAL_LOADER_ENV_VARS = ("ANTHROPIC_API_KEY", "OPENAI_API_KEY")
+
+
+@contextmanager
+def _real_config(tmp_path, monkeypatch, toml_text: str):
+    """Point the real config loader at a scratch TOML file; restore + reload
+    afterwards. Copied deliberately from `Tests/Utils/test_config_api_key_
+    resolution.py`'s `_real_config` -- same isolation contract, same
+    teardown -- so this suite can never write to the live user config and
+    cannot drift from that file on how "the real loader" is driven.
+    """
+    config_path = tmp_path / "scratch-provider-readiness-config.toml"
+    config_path.write_text(toml_text, encoding="utf-8")
+    original_env = os.environ.get("TLDW_CONFIG_PATH")
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    config_mod.load_cli_config_and_ensure_existence(force_reload=True)
+    config_mod.load_settings(force_reload=True)
+    try:
+        yield
+    finally:
+        if original_env is not None:
+            monkeypatch.setenv("TLDW_CONFIG_PATH", original_env)
+        else:
+            monkeypatch.delenv("TLDW_CONFIG_PATH", raising=False)
+        config_mod.load_cli_config_and_ensure_existence(force_reload=True)
+        config_mod.load_settings(force_reload=True)
+
+
+def _clear_provider_env(monkeypatch) -> None:
+    for name in _REAL_LOADER_ENV_VARS:
+        monkeypatch.delenv(name, raising=False)
+
+
+def test_legacy_API_section_only_anthropic_key_satisfies_provider_readiness(
+    tmp_path, monkeypatch
+):
+    """With ONLY `[API] anthropic_api_key` set, `get_provider_readiness`
+    reports the provider configured -- Console's "Connect a provider" wall
+    disappears for the exact config that used to spend money silently
+    through the Library path.
+    """
+    _clear_provider_env(monkeypatch)
+    with _real_config(
+        tmp_path,
+        monkeypatch,
+        '[API]\nanthropic_api_key = "sk-ant-legacy-only-key"\n',
+    ):
+        settings = config_mod.load_settings()
+        readiness = get_provider_readiness("anthropic", settings)
+
+    assert readiness.ready is True
+    assert readiness.api_key == "sk-ant-legacy-only-key"
+    assert readiness.api_key_source == "config:api_settings.anthropic.api_key"
+
+
+def test_legacy_API_section_only_openai_key_satisfies_provider_readiness(
+    tmp_path, monkeypatch
+):
+    """Same bridge, a second provider -- proves the fix is not anthropic-
+    specific special-casing."""
+    _clear_provider_env(monkeypatch)
+    with _real_config(
+        tmp_path,
+        monkeypatch,
+        '[API]\nopenai_api_key = "sk-oai-legacy-only-key"\n',
+    ):
+        settings = config_mod.load_settings()
+        readiness = get_provider_readiness("openai", settings)
+
+    assert readiness.ready is True
+    assert readiness.api_key == "sk-oai-legacy-only-key"
+    assert readiness.api_key_source == "config:api_settings.openai.api_key"
+
+
+def test_legacy_API_section_only_anthropic_key_still_resolves_for_the_spending_path(
+    tmp_path, monkeypatch
+):
+    """`LLM_Calls/LLM_API_Calls.py`'s `chat_with_anthropic` (~1218-1219)
+    reads `settings["anthropic_api"]["api_key"]` directly -- this is the
+    single most important non-regression in PR-T2 Task 7: the bridge must
+    add a second place the key is visible from, not remove the first.
+    """
+    _clear_provider_env(monkeypatch)
+    with _real_config(
+        tmp_path,
+        monkeypatch,
+        '[API]\nanthropic_api_key = "sk-ant-legacy-only-key"\n',
+    ):
+        settings = config_mod.load_settings()
+
+    assert settings["anthropic_api"]["api_key"] == "sk-ant-legacy-only-key"
+
+
+def test_modern_api_settings_anthropic_key_wins_over_legacy_API_section_key(
+    tmp_path, monkeypatch
+):
+    """Precedence, named explicitly: a modern `api_settings.anthropic.
+    api_key` wins where both exist -- for BOTH readers, since Task 7 makes
+    them share one normalized value instead of two independent reads.
+    """
+    _clear_provider_env(monkeypatch)
+    toml_text = (
+        "[api_settings.anthropic]\n"
+        'api_key = "sk-ant-modern-key"\n'
+        "\n"
+        "[API]\n"
+        'anthropic_api_key = "sk-ant-legacy-key"\n'
+    )
+    with _real_config(tmp_path, monkeypatch, toml_text):
+        settings = config_mod.load_settings()
+        readiness = get_provider_readiness("anthropic", settings)
+
+    assert readiness.api_key == "sk-ant-modern-key"
+    assert settings["anthropic_api"]["api_key"] == "sk-ant-modern-key"
+
+
+def test_env_var_only_anthropic_key_is_not_bridged_into_api_settings(
+    tmp_path, monkeypatch
+):
+    """An env-var-only credential must NOT be written into `api_settings`.
+
+    Doing so would flip its reported `api_key_source` from `env:...` to
+    `config:...`, and `provider_readiness.chat_api_key_field_state` treats a
+    `config:` source as safe to prefill and persist in the inline Chat-
+    Defaults API-key field -- silently exposing a secret that was never
+    typed into config in the first place. `get_provider_readiness`'s own
+    environment fallback already reports the env-only case as ready without
+    this rewrite, so nothing is lost by leaving `api_settings` untouched.
+    """
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-env-only-key")
+    with _real_config(tmp_path, monkeypatch, ""):
+        settings = config_mod.load_settings()
+        readiness = get_provider_readiness("anthropic", settings)
+
+    assert readiness.ready is True
+    assert readiness.api_key == "sk-ant-env-only-key"
+    assert readiness.api_key_source == "env:ANTHROPIC_API_KEY"
+    assert settings["anthropic_api"]["api_key"] == "sk-ant-env-only-key"
+    assert (
+        settings.get("api_settings", {}).get("anthropic", {}).get("api_key")
+        != "sk-ant-env-only-key"
+    )
+
+
+def test_no_legacy_or_modern_key_leaves_api_settings_api_key_unset(
+    tmp_path, monkeypatch
+):
+    """A config with no credential anywhere must not gain a fabricated
+    `api_key` -- the bridge must never write a value it has no source for.
+
+    (The default shipped config already carries a `[api_settings.anthropic]`
+    table with `api_key_env_var`/`model` defaults but deliberately no
+    `api_key` -- this asserts the bridge leaves that absence alone rather
+    than asserting the whole table is empty.)
+    """
+    _clear_provider_env(monkeypatch)
+    with _real_config(tmp_path, monkeypatch, ""):
+        settings = config_mod.load_settings()
+
+    assert not settings.get("api_settings", {}).get("anthropic", {}).get("api_key")

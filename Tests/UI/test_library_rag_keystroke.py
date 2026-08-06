@@ -19,6 +19,7 @@ from __future__ import annotations
 import pytest
 from textual.widgets import Button, Input
 
+from tldw_chatbook import config as app_config
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 from Tests.UI.test_library_shell import (
     LIBRARY_TEST_SIZE,
@@ -246,7 +247,7 @@ def test_refresh_search_rag_panel_state_widgets_skips_results_and_history_when_a
 
 
 @pytest.mark.asyncio
-async def test_rag_mode_query_edit_never_remounts_the_landed_answer():
+async def test_rag_mode_query_edit_never_remounts_the_landed_answer(monkeypatch):
     """AC#1, extended to PR-3's Answer region (Task 4 review).
 
     The answer region is rebuilt on EVERY panel refresh, including the cheap
@@ -257,12 +258,35 @@ async def test_rag_mode_query_edit_never_remounts_the_landed_answer():
     8,000 characters of `Static` instead of 100+ rows. The keyboard pilots
     above never caught it because they all run in keyword mode, where the
     region does not exist at all.
+
+    The ONLY `rag`-mode test in this file, so it needs its own resolvable
+    credential (PR-T2 Task 7 made `library_rag_answer_provider_ready` also
+    check `Chat/provider_readiness.get_provider_readiness`, not just an
+    endpoint NAME) rather than a file-wide autouse fixture -- see
+    `test_product_maturity_gate16_library_search_rag.py`'s `_ready_library_
+    rag_provider` for the same pattern applied at file scope there.
     """
     from Tests.UI.test_product_maturity_gate16_library_search_rag import (
         RecordingAnswerChat,
         StaticLibraryRagSearchService,
         _rag_result_fixture,
         _switch_to_rag_mode,
+    )
+
+    monkeypatch.setattr(app_config, "default_api_endpoint", "openai", raising=False)
+    real_load_settings = app_config.load_settings
+
+    def _load_settings_with_ready_openai_key(*args, **kwargs):
+        settings = dict(real_load_settings(*args, **kwargs))
+        api_settings = dict(settings.get("api_settings") or {})
+        openai_settings = dict(api_settings.get("openai") or {})
+        openai_settings["api_key"] = "sk-test-keystroke-ready-key"
+        api_settings["openai"] = openai_settings
+        settings["api_settings"] = api_settings
+        return settings
+
+    monkeypatch.setattr(
+        app_config, "load_settings", _load_settings_with_ready_openai_key
     )
 
     app = _build_test_app()
