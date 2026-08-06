@@ -238,6 +238,23 @@ def _is_permission_refusal(exc: BaseException) -> bool:
     `PermissionError` (not `MCPGovernanceDenied`) now falls through to the
     ordinary `Failed` path, and a reword of the display-only message no
     longer has any bearing on classification.
+
+    Item 6 (PR-T3 fix round F): this set is DELIBERATELY narrower than
+    `mcp_inspector._run_advanced_action()`'s own typed-refusal tuple
+    (`MCPGovernanceDenied, MCPHubGateDeniedError, RawToolCallRefusedError`)
+    -- the two lists encode refusal-type knowledge independently and
+    nothing besides this comment (and its twin over there) ties them
+    together, so a fifth typed refusal added later has both to update.
+    Not a defect today: `MCPHubGateDeniedError` and `RawToolCallRefusedError`
+    are raised only by `execute_advanced_tool()`/`_refuse_raw_tool_call()`,
+    reachable only from the Advanced runner's `tool.execute`/
+    `runtime.request`/`runtime.batch` actions -- never from this Test Tool
+    path (`test_hub_tool()`/`execute_hub_tool()`), which handles its OWN
+    deny short-circuit earlier via `_resolve_test_gate()` instead of
+    catching an exception type. Do not merge the two sets into one: each
+    is correct for its own surface, and the asymmetry is what's true, not
+    an oversight -- see `_run_advanced_action()`'s own comment for why
+    `MCPServerSourceDisplayOnlyError` is excluded there.
     """
     return isinstance(exc, (MCPGovernanceDenied, MCPServerSourceDisplayOnlyError))
 

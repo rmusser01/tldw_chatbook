@@ -2767,6 +2767,25 @@ class MCPInspector(Vertical):
         `local_runtime_delegate`), not reused from `mcp_workbench.py`'s own
         classifier -- `mcp_workbench.py` imports FROM this module, so the
         reverse import would be circular.
+
+        Item 6 (PR-T3 fix round F): this tuple is DELIBERATELY narrower
+        than it could be, and DIFFERENT from `mcp_workbench.
+        _is_permission_refusal()`'s own set (`MCPGovernanceDenied,
+        MCPServerSourceDisplayOnlyError`) -- the two independently encode
+        refusal-type knowledge and nothing besides this comment (and its
+        twin over there) ties them together, so a fifth typed refusal
+        added later has both to update. Not a defect today:
+        `MCPServerSourceDisplayOnlyError` is excluded here because it is
+        unreachable from every action this runner can dispatch --
+        `execute_advanced_tool()` (the `tool.execute` action) hardcodes
+        `BUILTIN_SERVER_KEY` when it calls `execute_hub_tool()`, so the
+        server-source branch that raises it can never fire from this path,
+        and `runtime.request`/`runtime.batch` never call `execute_hub_
+        tool()` at all. Do not merge the two sets into one: each is
+        correct for its own surface, and the asymmetry is what's true, not
+        an oversight -- see `_is_permission_refusal()`'s own comment for
+        why `MCPHubGateDeniedError`/`RawToolCallRefusedError` are excluded
+        there.
         """
         result_widget = self.query_one("#mcp-adv-result", Static)
         action_select = self.query_one("#mcp-adv-action-select", Select)
