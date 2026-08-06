@@ -255,26 +255,51 @@ class LocalToolProvider:
         spec = self._specs.get(name)
         if spec is None:
             return None
-        hub = self.hub_tool_for(name)
+        gate, _resolve_failed = self._resolve_pending_gate(name, args, self.hub_tool_for(name))
+        return gate
+
+    def _resolve_pending_gate(
+        self, name: str, args: dict, hub: HubTool
+    ) -> tuple[MCPPendingCall | None, bool]:
+        """Shared resolution behind `pending_gate_for()`, plus (Fix Round I,
+        Item 5) whether a `None` result came from the resolver RAISING.
+
+        `pending_gate_for()`'s own public contract (`MCPPendingCall |
+        None`) is unchanged for its other callers (`console_chat_
+        controller.py`'s batch-review flow, MCPToolProvider parity tests)
+        -- none of them need to distinguish WHY there's nothing to
+        confirm, only whether there is. `_verdict_for()`'s "ask" branch is
+        the one caller that does: a `None` from a genuine state change (no
+        longer "ask", or a session grant that raced in -- both handled
+        below, same as before) is a legitimate "nothing to confirm now",
+        but a `None` from the resolver raising a SECOND time (this call's
+        own resolve, moments after `_verdict_for()`'s own top-of-function
+        resolve already succeeded with "ask") means the tool's state is
+        UNKNOWN, not settled. Collapsing that into the same "timeout"
+        verdict a genuine unapproved wait produces was the bug this item
+        fixes: `invoke()` renders "timeout" as LOCAL_TIMEOUT_REFUSAL ("...
+        do not retry"), the most costly possible false claim to hand an
+        agent for a transient failure that might succeed on retry.
+        """
         try:
             state = self._resolve_state(hub)
         except Exception as exc:  # noqa: BLE001 — fail closed to "let invoke handle it"
             logger.warning(
                 f"LocalToolProvider: resolve_state failed for {name}: {exc}"
             )
-            return None
+            return None, True
         if state.state != "ask":
-            return None
+            return None, False
         # Finding I1 parity: a live session approval makes invoke() execute
         # without a stamp, so asking again here would be a pure re-prompt.
         if self._is_session_approved_safe(hub):
-            return None
+            return None, False
         reason = (
             "config_changed" if state.config_changed
             else "risk_floored" if state.risk_floored
             else "ask"
         )
-        return MCPPendingCall(
+        gate = MCPPendingCall(
             llm_name=name,
             server_key=LOCAL_SERVER_KEY,
             tool_name=name,
@@ -282,6 +307,7 @@ class LocalToolProvider:
             arguments=args,
             reason=reason,
         )
+        return gate, False
 
     # -- invocation -----------------------------------------------------
 
@@ -398,26 +424,29 @@ class LocalToolProvider:
         if self._is_session_approved_safe(hub):
             return "allow"
         if self._approval_callback is not None:
-            gate = self.pending_gate_for(name, args)
+            # Fix Round H, Item 1 (checked, not fixed -- reported) / Fix
+            # Round I, Item 5 (fixed): this is a SECOND, narrower resolve_
+            # state collapse than the one at the top of this method. A
+            # resolver crash HERE (this call's own resolve, moments after
+            # the top-of-function resolve already succeeded with "ask")
+            # used to render LOCAL_TIMEOUT_REFUSAL ("... do not retry") via
+            # the "timeout" verdict below -- the same harm class the
+            # top-of-function branch above was fixed for: an agent told a
+            # false, terminal reason for a tool being unavailable abandons
+            # a tool that actually works. `_resolve_pending_gate()` (the
+            # helper `pending_gate_for()` itself now delegates to) exposes
+            # WHY it returned no gate -- `resolve_failed=True` only for a
+            # genuine resolver exception, never for a legitimate state
+            # flip or a session approval racing in (ruled out immediately
+            # above, since that check just ran moments earlier and cannot
+            # have changed without another resolve in between).
+            gate, resolve_failed = self._resolve_pending_gate(name, args, hub)
             if gate is None:
-                # state re-resolution failed or flipped mid-call; fail closed.
-                #
-                # Fix Round H, Item 1 (checked, not fixed -- reported): this
-                # is a SECOND, narrower resolve_state collapse. A resolver
-                # crash HERE (this call's top-of-function resolve already
-                # succeeded with "ask", moments earlier) renders
-                # LOCAL_TIMEOUT_REFUSAL ("... do not retry") via the
-                # "timeout" verdict below -- a lesser overclaim than
-                # LOCAL_DENY_REFUSAL's "set to Off" (no configuration-state
-                # assertion), but "do not retry" is still not quite true for
-                # a transient failure. Left as-is: pending_gate_for() does
-                # not expose WHY it returned None (resolve failure vs. a
-                # genuine state flip vs. -- ruled out here, since line
-                # ~398 just confirmed False moments earlier -- a session
-                # approval racing in), so distinguishing them cleanly would
-                # mean widening pending_gate_for()'s return contract, a
-                # larger change than this item's stated scope (the
-                # LOCAL_DENY_REFUSAL "set to Off" pattern).
+                if resolve_failed:
+                    return "gate_error"
+                # state re-resolution genuinely flipped away from "ask"
+                # (or a session approval raced in) -- nothing to confirm,
+                # fail closed the same way an unapproved wait would.
                 return "timeout"
             try:
                 decisions = self._approval_callback([gate])

@@ -500,6 +500,44 @@ def test_resolve_state_raise_fails_closed_everywhere(tmp_path):
     assert r.error != LOCAL_DENY_REFUSAL
 
 
+def test_second_resolve_state_raise_in_ask_branch_reports_gate_error_not_timeout(tmp_path):
+    """Fix Round I, Item 5 (PRE-AUTHORIZED, same class of contract change as
+    Fix Round H, Item 1 just above): `_verdict_for()`'s "ask" branch calls
+    `pending_gate_for()` a SECOND time (now `_resolve_pending_gate()`
+    directly) once a stamp/session check comes up empty and an
+    `approval_callback` is configured -- this call's own `resolve_state`
+    can ALSO raise, distinctly from the top-of-function resolve that
+    already succeeded with "ask" moments earlier. Before this fix, that
+    second raise was swallowed into a bare `None` indistinguishable from a
+    legitimate state flip, and unconditionally rendered "timeout" ->
+    `LOCAL_TIMEOUT_REFUSAL` ("... do not retry") -- the single most costly
+    false claim to hand an agent for what is, here, a TRANSIENT resolver
+    failure that might succeed on the very next call. `resolve_state` below
+    succeeds once (the top-of-function resolve, returning "ask") then
+    raises on every subsequent call (this branch's own second resolve,
+    inside `_resolve_pending_gate()`) -- proving it is specifically THIS
+    second call site's failure being tested, not the first one (already
+    covered by `test_resolve_state_raise_fails_closed_everywhere` above,
+    which raises unconditionally and never reaches this branch at all)."""
+    calls = {"n": 0}
+
+    def flaky(hub):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return ASK
+        raise RuntimeError("store gone (transient)")
+
+    p = make_provider(
+        root=tmp_path,
+        resolve_state=flaky,
+        approval_callback=lambda pending: {"fs_list": "approve_once"},
+    )
+    r = p.invoke("local:fs_list", {"path": "."})
+    assert not r.ok and r.error == LOCAL_GATE_ERROR_REFUSAL
+    assert r.error != LOCAL_TIMEOUT_REFUSAL
+    assert calls["n"] == 2  # top-of-function resolve, then this branch's own
+
+
 def test_kill_switch_read_failure_fails_closed(tmp_path):
     def boom():
         raise RuntimeError("store gone")
