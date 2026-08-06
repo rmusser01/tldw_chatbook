@@ -1,7 +1,7 @@
 ---
 id: TASK-2307
 title: Reader renders feed HTML as readable text
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-08-04'
 labels:
