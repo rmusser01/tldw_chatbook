@@ -3796,3 +3796,133 @@ async def test_advanced_non_execute_action_still_runs_on_the_first_press():
         await pilot.click("#mcp-adv-run")
         await pilot.pause()
         assert app.service.action_calls == [("profile.connect", {"profile_id": "demo"})]
+
+
+# -- Fix Round A, Item 3: the confirm arm has no lifecycle reset -------------
+#
+# `_advanced_confirm_key` was cleared only on a run (any outcome) or a JSON
+# parse error -- never on `set_service_context()` (called UNCONDITIONALLY by
+# the workbench on every reload/source-target switch/selection change, per
+# that method's own docstring), Advanced panel hide/show, or a section
+# change. A same-`(action, payload)` collision across two of those --
+# entirely plausible, since `tool.execute`'s default template is often
+# identical text regardless of which object is showing -- let a stale arm
+# from a PREVIOUS object satisfy a DIFFERENT object's very first press, with
+# no confirm text ever shown for it: a raw-JSON tool execution firing from a
+# single click.
+
+
+@pytest.mark.asyncio
+async def test_set_service_context_disarms_a_pending_confirm():
+    """The headline case: a rebind (reload / source-target switch /
+    selection change -- `set_service_context()`'s only caller,
+    `MCPWorkbench`, invokes it unconditionally for all three) must disarm
+    any confirm left over from whatever was showing before it, even when
+    the new object's `tool.execute` template renders byte-identical JSON to
+    what was just armed.
+
+    Uses `_press_run_again` (not a bare second `pilot.click`) for every
+    press past the first -- `Button._on_click()` ignores a click still
+    inside the widget's 0.2s active-effect window, and a silently-dropped
+    click would leave `action_calls == []` for the WRONG reason, making a
+    broken fix look like a passing test.
+    """
+    app = ToolExecuteInspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        await pilot.click("#mcp-adv-run")  # arms against the default payload
+        await pilot.pause()
+        assert app.service.action_calls == []
+
+        # The workbench rebinds Advanced on every reload/selection change --
+        # simulate that here with the SAME service, so the re-rendered
+        # tool.execute template is byte-identical to what was just armed.
+        inspector.set_service_context(app.service, [("Inventory", "inventory")])
+        await pilot.pause()
+
+        await _press_run_again(pilot)
+        assert app.service.action_calls == [], (
+            "a rebind must disarm -- the first press after it must "
+            "re-confirm, not execute"
+        )
+        assert "again" in _adv_result(app)
+
+        # A second (genuinely fresh) press DOES run it -- proving this is a
+        # real re-arm, not a button stuck disabled some other way.
+        await _press_run_again(pilot)
+        assert app.service.action_calls == [
+            ("tool.execute", {"tool_name": "search_notes", "arguments": {"query": "example"}})
+        ]
+
+
+@pytest.mark.asyncio
+async def test_advanced_hide_then_reveal_disarms_a_pending_confirm():
+    """The Advanced panel's hide/show toggle (F-053) is another
+    attention-moved transition: a user backing out of the legacy runner and
+    returning later must not find a stale arm from before they left ready
+    to fire on the first press after showing it again."""
+    app = ToolExecuteInspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        await pilot.click("#mcp-adv-run")  # arms
+        await pilot.pause()
+        assert app.service.action_calls == []
+
+        await pilot.click("#mcp-inspector-advanced-reveal")  # hide
+        await pilot.pause()
+        # Same Button active-effect cooldown as `_press_run_again` guards
+        # against, this time on the reveal/hide toggle button itself --
+        # two clicks on the SAME button back to back would otherwise drop
+        # this second one and leave the panel hidden.
+        await pilot.pause(0.3)
+        await pilot.click("#mcp-inspector-advanced-reveal")  # reveal again
+        await pilot.pause()
+
+        await _press_run_again(pilot)
+        assert app.service.action_calls == [], (
+            "hide-then-reveal must disarm -- the first press after "
+            "revealing must re-confirm, not execute"
+        )
+        assert "again" in _adv_result(app)
+
+        await _press_run_again(pilot)
+        assert app.service.action_calls == [
+            ("tool.execute", {"tool_name": "search_notes", "arguments": {"query": "example"}})
+        ]
+
+
+@pytest.mark.asyncio
+async def test_section_change_disarms_a_pending_confirm():
+    """A section change within the SAME service (no rebind at all) is the
+    narrowest version of the collision: `ToolExecuteAdvService.
+    available_actions()` is not itself keyed by section (mirroring the real
+    inventory-section template), so switching sections while `tool.execute`
+    is still offered reproduces the identical payload template -- exactly
+    the case a same-`(action, payload)` confirm key would otherwise
+    silently satisfy."""
+    app = ToolExecuteInspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        inspector.set_service_context(
+            app.service, [("Inventory", "inventory"), ("Overview", "overview")]
+        )
+        await pilot.pause()
+        await pilot.click("#mcp-adv-run")  # arms
+        await pilot.pause()
+        assert app.service.action_calls == []
+
+        section_select = app.query_one("#mcp-adv-section-select", Select)
+        section_select.value = "overview"
+        await pilot.pause()
+        await pilot.pause()
+
+        await _press_run_again(pilot)
+        assert app.service.action_calls == [], (
+            "a section change must disarm -- the first press in the new "
+            "section must re-confirm, not execute"
+        )
+        assert "again" in _adv_result(app)
+
+        await _press_run_again(pilot)
+        assert app.service.action_calls == [
+            ("tool.execute", {"tool_name": "search_notes", "arguments": {"query": "example"}})
+        ]

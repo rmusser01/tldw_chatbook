@@ -1198,6 +1198,14 @@ class MCPInspector(Vertical):
         if not self._advanced_visible:
             return
         self._advanced_visible = False
+        # Fix Round A, Item 3: hiding the panel is the user backing out of
+        # the legacy runner entirely -- disarm immediately rather than
+        # waiting for the next reveal's `set_service_context()` replay
+        # (`_reveal_advanced()` below) to do it. Defense in depth: that
+        # replay already covers the reveal path on its own, but a stale arm
+        # should not linger in memory for the whole time the panel is
+        # hidden either.
+        self._advanced_confirm_key = None
         try:
             await asyncio.to_thread(
                 save_setting_to_cli_config, "mcp.hub_state", "advanced_visible", False
@@ -2378,6 +2386,17 @@ class MCPInspector(Vertical):
         self._sections = sections or [("Overview", "overview")]
         self._advanced_source = source
         self._advanced_target_label = target_label
+        # Fix Round A, Item 3: a rebind means the user's attention moved to
+        # a (possibly different) object -- any confirm armed for a
+        # PREVIOUS `set_service_context()` call must not silently satisfy a
+        # first press against whatever is showing now, even when the new
+        # object's `tool.execute` template happens to render byte-identical
+        # JSON to what was just armed (two default templates that are the
+        # same text is entirely plausible, not a contrived edge case).
+        # Cleared unconditionally, before the `_advanced_visible` early
+        # return, since a rebind while hidden must not leave a stale arm
+        # for the next reveal to (re-)inherit either.
+        self._advanced_confirm_key = None
         if not self._advanced_visible:
             return
         self.query_one("#mcp-adv-object", Static).update(self._advanced_object_label())
@@ -2467,6 +2486,16 @@ class MCPInspector(Vertical):
         return bool(getattr(decision, "allowed", True))
 
     async def _load_advanced_section(self, section: str) -> None:
+        # Fix Round A, Item 3: a section change is an attention-moved
+        # transition too -- called both from `set_service_context()`'s own
+        # initial section load (already cleared there; redundant but
+        # harmless here) and from `on_select_changed()` when the user picks
+        # a DIFFERENT section directly, which `set_service_context()` never
+        # sees. Same rug-pull-adjacent reasoning as that clear: a section's
+        # `tool.execute` template can render byte-identical JSON to another
+        # section's, and a stale arm from before the switch must not
+        # silently satisfy this section's first press.
+        self._advanced_confirm_key = None
         if self._service is None:
             return
         payload = await self._service.load_section(section)
