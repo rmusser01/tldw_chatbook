@@ -608,6 +608,73 @@ async def test_advanced_tool_execute_allow_records_allowed_not_approved(tmp_path
     assert records[0]["ok"] is True
 
 
+@pytest.mark.asyncio
+async def test_advanced_tool_execute_gate_check_exception_uses_honest_copy(tmp_path):
+    """Item 1 (PR-T3 fix round F): the THIRD occurrence of one pattern in
+    this branch -- a permission-gate check that RAISES must not be told
+    to the user as a genuine "Off" verdict. Before this fix,
+    `execute_advanced_tool()` synthesized the same fail-closed
+    `EffectiveToolState(state="deny", origin="gate_error")` that
+    `MCPWorkbench._resolve_test_gate()` (`mcp_workbench.py`) synthesizes
+    for the identical case, then fell into the SAME deny branch as a
+    genuine "Off" and raised `_ADVANCED_EXECUTE_BLOCKED_MESSAGE` --
+    "{tool} is set to Off in Permissions." -- a confident, false claim
+    about the user's own configuration when the RESOLVER crashed, not the
+    gate. This is what task-2536 (fix round B) already fixed on the Test
+    Tool panel's blocked-result body and fix round D polished further;
+    this raise site had never branched on `origin` at all. Verified here
+    by making `gate_tool_test_by_key` raise directly, mirroring `_resolve_
+    test_gate()`'s own mutation precedent for that twin fix."""
+    service, fake, client, store = _service(tmp_path)
+
+    def _raise(server_key: str, tool_name: str):
+        raise RuntimeError("permission store corrupt")
+
+    service.gate_tool_test_by_key = _raise  # type: ignore[method-assign]
+
+    with pytest.raises(control_plane_module.MCPHubGateDeniedError) as exc_info:
+        await service.run_action(
+            "tool.execute", {"tool_name": "calculator", "arguments": {"x": 1}}
+        )
+
+    assert str(exc_info.value) == "Permission state could not be resolved."
+    assert "Off in Permissions" not in str(exc_info.value)
+    assert fake.execute_tool_calls == []
+
+
+@pytest.mark.asyncio
+async def test_advanced_tool_execute_gate_check_exception_records_gate_error_token(
+    tmp_path,
+):
+    """Item 1 (PR-T3 fix round F), audit-row half: `error_category=
+    "gate_denied"` is ALSO false for a gate check that raised -- that
+    token means the Hub's OWN Allow/Ask/Off gate genuinely resolved to
+    Off, and here the gate never resolved at all. A resolver failure now
+    records its own honest token, `"gate_error"` (matching the
+    `EffectiveToolState.origin` value that produced it, the same
+    vocabulary-consistency precedent `"gate_denied"`'s own comment
+    states), read back off the PERSISTED JSONL row -- not the in-memory
+    call -- proving it survives `safe_metadata_token()` unmodified, same
+    precedent as `test_advanced_tool_execute_refusal_is_recorded_as_
+    denied` above."""
+    service, fake, client, store = _service(tmp_path)
+
+    def _raise(server_key: str, tool_name: str):
+        raise RuntimeError("permission store corrupt")
+
+    service.gate_tool_test_by_key = _raise  # type: ignore[method-assign]
+
+    with pytest.raises(control_plane_module.MCPHubGateDeniedError):
+        await service.run_action("tool.execute", {"tool_name": "calculator"})
+
+    records = _log_records(store)
+    assert records and records[0]["decision"] == "denied"
+    assert records[0]["status"] == "blocked"
+    assert records[0]["error_category"] == "gate_error"
+    assert records[0]["error_category"] != "gate_denied"
+    assert "error" not in records[0]
+
+
 # -- Task 6 (PR-T3), Route B, second door: `runtime.request` /`runtime.batch`
 # are Advanced descriptors too, and the in-process runtime speaks the real
 # protocol -- `{"method": "tools/call"}` reached the SAME

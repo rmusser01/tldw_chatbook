@@ -43,7 +43,34 @@ from .unified_control_models import ServerAccessContext, UnifiedMCPContext
 # PermissionError this path can surface (the in-process runtime-governance
 # profile's own denials, raised by `local_control_service.execute_tool()`)
 # reads correctly under that same heading.
+#
+# ONLY for a genuine resolved "deny" (`state.origin != "gate_error"`) --
+# see `_ADVANCED_EXECUTE_GATE_ERROR_MESSAGE` just below for the synthesized
+# fail-closed case, where this claim would be false (the tool's actual
+# state was never determined).
 _ADVANCED_EXECUTE_BLOCKED_MESSAGE = "{tool} is set to Off in Permissions."
+
+# Item 1 (PR-T3 fix round F): honest counterpart to
+# `_ADVANCED_EXECUTE_BLOCKED_MESSAGE` above for `execute_advanced_tool()`'s
+# OWN fail-closed gate (`gate_tool_test_by_key()` raised, synthesized as
+# `EffectiveToolState(state="deny", origin="gate_error")` a few hundred
+# lines down) -- the resolver crashed, so the tool's configured state was
+# never determined; it is not necessarily "Off" at all. Before this, the
+# deny branch below used `_ADVANCED_EXECUTE_BLOCKED_MESSAGE` unconditionally
+# for BOTH cases, so a corrupt/erroring permission store told the user a
+# confident, false fact about their own configuration -- the THIRD
+# occurrence of the pattern task-2536 (fix round B, item 2) fixed on the
+# Test Tool panel's blocked-result body and task-2270's rider fixed on its
+# quiet decision note.
+#
+# Kept textually IDENTICAL to `mcp_inspector._UNKNOWN_ORIGIN_SENTENCE`
+# ("Permission state could not be resolved.") rather than re-imported:
+# this module is imported BY `mcp_workbench.py`/`mcp_inspector.py` (see
+# `_ADVANCED_EXECUTE_BLOCKED_MESSAGE`'s own mirrored-not-shared precedent,
+# and `_run_advanced_action()`'s docstring for why the reverse import would
+# be circular), so the two surfaces say the same true thing the same way
+# without either importing the other.
+_ADVANCED_EXECUTE_GATE_ERROR_MESSAGE = "Permission state could not be resolved."
 
 # task-2539 (PR-T3 fix round B, item 3): the exact message
 # `execute_hub_tool()` raises below for a server-source `server_key`. Its
@@ -2581,7 +2608,12 @@ class UnifiedMCPControlPlaneService:
 
         Raises:
             MCPHubGateDeniedError: The tool is set to Off in Permissions
-                (the Hub's own gate). A ``PermissionError`` subclass.
+                (the Hub's own gate), OR the gate check itself raised and
+                this failed closed -- the two are distinguished by message
+                and by the ``error_category`` recorded on the audit row
+                (``"gate_denied"`` vs. ``"gate_error"``; see the deny
+                branch below), never conflated in the user-facing text. A
+                ``PermissionError`` subclass.
             MCPGovernanceDenied: The in-process runtime-governance profile
                 denies it, raised further down by ``local_control_
                 service.execute_tool()``. A ``PermissionError`` subclass,
@@ -2605,8 +2637,25 @@ class UnifiedMCPControlPlaneService:
             state = EffectiveToolState(state="deny", origin="gate_error")
 
         if state.state == "deny":
-            blocked_message = _ADVANCED_EXECUTE_BLOCKED_MESSAGE.format(
-                tool=normalized_tool_name or "This tool"
+            # Item 1 (PR-T3 fix round F): `state.origin == "gate_error"` is
+            # THIS method's own synthesized fail-closed verdict from the
+            # `except Exception` above -- the permission RESOLVER raised,
+            # not a genuine "Off". Before this branch existed, that case
+            # fell straight into the genuine-deny copy/token below, telling
+            # the user (and the audit row) a confident, false fact about
+            # their configuration -- indistinguishable from a real
+            # user-configured deny. This is the third occurrence of the
+            # exact pattern fix round B (task-2536) removed from the Test
+            # Tool panel's blocked-result body, and fix round D polished
+            # further; `mcp_workbench._resolve_test_gate()` already branches
+            # on this same `origin` for the same reason.
+            is_gate_error = state.origin == "gate_error"
+            blocked_message = (
+                _ADVANCED_EXECUTE_GATE_ERROR_MESSAGE
+                if is_gate_error
+                else _ADVANCED_EXECUTE_BLOCKED_MESSAGE.format(
+                    tool=normalized_tool_name or "This tool"
+                )
             )
             # Fix Round B, Item 1: Fix Round A had this row reuse the
             # `error=` mechanism to reach `error_category="approval_
@@ -2627,12 +2676,24 @@ class UnifiedMCPControlPlaneService:
             # never persisted -- `error_category` is a sanitized token,
             # never free text, by the execution log's metadata-only
             # design.
+            #
+            # Item 1 (PR-T3 fix round F): `"gate_denied"` itself is ALSO
+            # false for the `is_gate_error` case -- it means "the Hub's
+            # gate denied", and here the gate never resolved at all. A
+            # fourth token, consistent with the three this branch already
+            # distinguishes (`"gate_denied"` = the Hub's own Allow/Ask/Off
+            # gate genuinely resolving to Off; `"governance_denied"` =
+            # the separate in-process runtime-governance profile, a few
+            # hundred lines up; `"policy_denied"` would name the unrelated
+            # `runtime_policy` engine, per that comment): `"gate_error"`,
+            # matching the `EffectiveToolState.origin` value that produced
+            # it rather than inventing an unrelated word for the same fact.
             self.record_tool_decision(
                 BUILTIN_SERVER_KEY,
                 normalized_tool_name,
                 decision="denied",
                 initiator="test",
-                error_category="gate_denied",
+                error_category="gate_error" if is_gate_error else "gate_denied",
             )
             # Item 2 (PR-T3 fix round D): typed, not a bare `PermissionError`
             # -- see `MCPHubGateDeniedError`'s own docstring for why this is
