@@ -4478,3 +4478,63 @@ async def test_collapsing_advanced_preserves_real_run_output_when_not_armed():
         assert _adv_result(app) == result_before, (
             "collapsing while UNARMED must not blank real run output"
         )
+
+
+# -- Fix Round G, Item 2: editing the payload disarms a pending confirm -----
+# too -- `_run_advanced_action()`'s own docstring has always promised
+# "switching action or editing the payload re-arms"; the action-switch half
+# was implemented (Fix Round E, Item 2), the payload-edit half had no
+# handler at all.
+
+
+@pytest.mark.asyncio
+async def test_editing_the_payload_disarms_a_pending_confirm_immediately():
+    """Checked immediately after the edit, no Run press in between -- proves
+    the new `TextArea.Changed` handler disarms on its own, not merely that
+    `_run_advanced_action()`'s pre-existing confirm-key mismatch happens to
+    save the day the next time Run is pressed (see `test_advanced_tool_
+    execute_payload_edit_rearms_the_confirm`, which pins that pre-existing
+    safety net and stays green either way -- it is not this gap's guard)."""
+    app = ToolExecuteInspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        await pilot.click("#mcp-adv-run")  # arms; renders "Runs search_notes..."
+        await pilot.pause()
+        assert "search_notes" in _adv_result(app)
+
+        app.query_one("#mcp-adv-payload", TextArea).text = (
+            '{"tool_name":"delete_everything","arguments":{}}'
+        )
+        await pilot.pause()
+
+        assert inspector._advanced_confirm_key is None, (
+            "editing the payload must clear the arm itself, immediately -- "
+            "not merely be discovered stale the next time Run is pressed"
+        )
+        assert _adv_result(app) == "", (
+            "the stale confirm sentence (naming the OLD tool) must not "
+            "survive a payload edit the user hasn't confirmed yet"
+        )
+
+
+@pytest.mark.asyncio
+async def test_editing_the_payload_preserves_real_run_output_when_not_armed():
+    """Same UNARMED-preservation discipline as the other disarm sites --
+    editing the payload after a completed run (unarmed) must not blank the
+    real result."""
+    app = ToolExecuteInspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        await pilot.click("#mcp-adv-run")  # arms
+        await pilot.pause()
+        await _press_run_again(pilot)  # runs it -- real output now showing
+        result_before = _adv_result(app)
+        assert "ok" in result_before
+
+        app.query_one("#mcp-adv-payload", TextArea).text = (
+            '{"tool_name":"search_notes","arguments":{"query":"other"}}'
+        )
+        await pilot.pause()
+
+        assert _adv_result(app) == result_before, (
+            "editing the payload while UNARMED must not blank real run output"
+        )

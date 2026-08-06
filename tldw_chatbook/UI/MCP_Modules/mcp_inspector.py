@@ -2667,6 +2667,39 @@ class MCPInspector(Vertical):
                     self._action_templates.get(str(event.value), "{}")
                 )
 
+    @on(TextArea.Changed, "#mcp-adv-payload")
+    def _on_advanced_payload_changed(self, event: TextArea.Changed) -> None:
+        """Item 2 (PR-T3 fix round G): `_run_advanced_action()`'s own
+        docstring has always promised "switching action or editing the
+        payload re-arms" -- the action-switch half was implemented (Fix
+        Round E, Item 2, `on_select_changed()` above); the payload-edit
+        half had NO handler at all (there was no `TextArea.Changed`
+        listener anywhere in this module), so a `tool.execute` arm
+        survived a payload edit with the STALE confirm sentence still on
+        screen -- naming the OLD tool and promising a confirm the very
+        next press would not give (`_run_advanced_action()`'s own
+        `confirm_key` mismatch already made that outcome SAFE -- an edited
+        payload always re-arms instead of running, never the reverse --
+        just not TRUTHFUL about what the pane was about to do).
+
+        Fires on every keystroke (and on this module's own programmatic
+        `payload.text = ...` assignments -- `_refresh_advanced_actions()`,
+        the action-switch branch above -- but those always run AFTER that
+        call site's own clear, so `_was_armed` is already False there and
+        this is a no-op). Same `_was_armed` gate as every other disarm
+        site in this class: only touch `#mcp-adv-result` when an arm was
+        actually live, so real run output/a refusal sitting there while
+        UNARMED survives ordinary typing. Deliberately does not touch
+        `event.text_area` itself -- clearing state and updating a
+        DIFFERENT widget never fights the user's cursor or selection in
+        this one.
+        """
+        event.stop()
+        _was_armed = self._advanced_confirm_key is not None
+        self._advanced_confirm_key = None
+        if _was_armed:
+            self.query_one("#mcp-adv-result", Static).update("")
+
     def on_button_pressed(self, event: Button.Pressed) -> None:
         button_id = event.button.id or ""
         if button_id == "mcp-inspector-advanced-reveal":
