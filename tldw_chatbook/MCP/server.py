@@ -129,6 +129,7 @@ class TldwMCPServer:
         self._register_tools()
         self._register_resources()
         self._register_prompts()
+        self._register_local_agent_tools()
 
         logger.info(f"MCP Server '{name}' initialized")
 
@@ -456,6 +457,56 @@ class TldwMCPServer:
                 context=context,
                 style_notes=style_notes,
             )
+
+    def _register_local_agent_tools(self):
+        """Register workspace-local agent tools (fs_*/git_*/web_*) when enabled.
+
+        Gated behind ``[mcp] expose_local_tools`` (default false); a no-op
+        when the flag is off. Called from ``__init__`` -- deliberately NOT
+        part of ``_register_tools`` so the AST-walking
+        ``_extract_registered_entries`` capability catalog stays unaffected.
+
+        Every call is routed through the composed ``LocalToolProvider``'s
+        permission gate (fresh ``MCPPermissionStore`` state per call, kill
+        switch honored, ask fails closed -- external clients cannot
+        approve). The store path is pinned to
+        ``get_user_data_dir() / "mcp_permissions.json"`` so Console
+        "Always allow" grants apply here.
+
+        FastMCP derives input schemas from Python type annotations (not
+        JSON schema), so each tool is bound with a generic
+        ``arguments: dict`` signature; the provider's JSON schema travels
+        on the registration for introspection/future SDK use.
+        """
+        import os
+
+        from ..config import get_cli_setting, get_user_data_dir
+        from .local_server_tools import (
+            _local_agent_tool_registrations,
+            build_server_local_provider,
+        )
+        from .permission_store import MCPPermissionStore
+
+        if not get_cli_setting("mcp", "expose_local_tools", False):
+            return
+
+        workspace_root = Path(
+            get_cli_setting("console", "workspace_root", "") or os.getcwd()
+        ).resolve()
+        store = MCPPermissionStore(get_user_data_dir() / "mcp_permissions.json")
+        provider = build_server_local_provider(workspace_root, store)
+
+        registrations = _local_agent_tool_registrations(provider)
+        for registration in registrations:
+            # The handler's signature IS the generic `arguments: dict`
+            # surface; invoke() is sync and worker-thread safe.
+            self.mcp.tool(
+                name=registration.name,
+                description=registration.description,
+            )(registration.handler)
+        logger.info(
+            f"Registered {len(registrations)} local agent tools (permission-gated)"
+        )
 
     async def run(self, transport: str = "stdio"):
         """Run the MCP server.

@@ -25,12 +25,17 @@ Deferred: ``record_decision`` is deliberately NOT wired. The server's audit
 path for external local-tool refusals is a separate design question
 (where the execution log lives for a headless server process), so refusals
 here record nothing for now.
+
+``_local_agent_tool_registrations`` turns a composed provider's catalog
+into binding-ready ``LocalToolRegistration`` entries (name, description,
+JSON parameters, handler); ``MCP/server.py`` binds them onto FastMCP when
+``[mcp] expose_local_tools`` is enabled.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable, NamedTuple
 
 from loguru import logger
 
@@ -85,3 +90,64 @@ def build_server_local_provider(
         approval_callback=None,
         no_callback_refusal=EXTERNAL_NO_CALLBACK_REFUSAL,
     )
+
+
+class LocalToolRegistration(NamedTuple):
+    """One local tool ready to bind onto a FastMCP server.
+
+    ``description``/``parameters`` come from the provider's ``load_schema``
+    and are kept for introspection and future SDK versions -- FastMCP
+    derives input schemas from Python type annotations, not JSON schema,
+    so the binding layer registers each tool with a generic
+    ``arguments: dict`` signature today.
+    """
+
+    name: str
+    description: str
+    parameters: dict
+    handler: Callable[[dict], Any]
+
+
+def _make_registration_handler(
+    provider: LocalToolProvider, tool_id: str
+) -> Callable[[dict], Any]:
+    """Build one tool handler with a clean ``handler(arguments: dict)`` signature.
+
+    A factory (not a closure default-arg) keeps the signature free of
+    extra parameters so FastMCP's annotation-derived schema sees only
+    ``arguments``. Fail-safe: ``invoke()`` never raises, so a malformed
+    (non-dict) arguments payload becomes an error dict, not an exception.
+    """
+
+    def handler(arguments: dict) -> Any:
+        result = provider.invoke(tool_id, arguments)
+        if result.ok:
+            return result.content
+        # server.py error-dict convention (server.py:187/:209).
+        return {"error": result.error}
+
+    return handler
+
+
+def _local_agent_tool_registrations(
+    provider: LocalToolProvider,
+) -> list[LocalToolRegistration]:
+    """Build the binding-ready registration list for a provider's catalog.
+
+    One registration per catalog entry (``todo_write`` is already absent
+    from the server composition's catalog). Each handler calls
+    ``provider.invoke`` and returns ``result.content`` on success or
+    ``{"error": result.error}`` on refusal/failure.
+    """
+    registrations: list[LocalToolRegistration] = []
+    for entry in provider.list_catalog():
+        schema = provider.load_schema(entry.id)
+        registrations.append(
+            LocalToolRegistration(
+                name=schema.name,
+                description=schema.description,
+                parameters=schema.parameters,
+                handler=_make_registration_handler(provider, entry.id),
+            )
+        )
+    return registrations
