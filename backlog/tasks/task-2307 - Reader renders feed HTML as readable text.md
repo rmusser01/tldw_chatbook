@@ -24,13 +24,13 @@ UAT findings F26 (high), F27.
 
 ## Acceptance Criteria (the what)
 
-- [ ] Feed HTML content renders as readable text (tags stripped or
+- [x] Feed HTML content renders as readable text (tags stripped or
       converted; links presented legibly), while remote-derived text remains
       inert against markup/injection — the escaping-terminal rule holds at
       the NEW final render step.
 - [ ] The reader advertises how to give itself more room (or provides a
       visible expand affordance).
-- [ ] Regression tests cover HTML-to-text rendering and the injection-
+- [x] Regression tests cover HTML-to-text rendering and the injection-
       inertness of rendered remote content.
 
 ## Implementation Plan (the how)
@@ -58,3 +58,45 @@ UAT findings F26 (high), F27.
    `[bold]`, `<script>`, ESC/OSC-8, malformed nesting) plus content-pane
    tests proving the rendered output is inert when actually rendered through
    a Rich console.
+
+## Implementation Notes
+
+Picked up mid-flight after a previous implementer was cut off by a rate
+limit (`wip(watchlists): batch-4 partial`, tasks 2307/2308/2309 together).
+That commit had already landed `Subscriptions/html_text.py` (complete,
+including `strip_control_characters`) and `content_pane.py`'s wiring
+(`readable_body_text` on the render path, plus the `Expand`/`Restore`
+button in `#content-actions` posting `ExpandReaderRequested`). This session
+added the test suite (AC#3) and live-verified AC#1.
+
+**AC#1 -- verified, live and in tests.** `Tests/Subscriptions/test_html_text.py`
+(32 cases) covers readability (paragraphs, lists, `<br>`, image alt text,
+entity unescaping exactly once, nested drop-content) and the hostile set the
+task asked for: bracket-shaped text (`[bold red]x[/]`), raw ESC, a full
+OSC-8 hyperlink sequence, a `javascript:` href, and the C1 control range --
+all proven to lose their control bytes while the surrounding prose survives.
+`Tests/UI/test_watchlists_content_pane.py` adds 4 more proving the SAME
+property through `render_article` and, end to end, through a mounted
+`ContentPane`. Live-verified against a real feed (hnrss.org/frontpage): the
+reader shows "Article URL: https://buttondown.com/blog/..." as legible
+prose, not `<p>Article URL: <a href=...>`.
+
+**AC#2 -- NOT done; left unchecked on purpose.** The button renders and
+carries the right tooltip, but nothing in `watchlists_collections_screen.py`
+imports or handles `ExpandReaderRequested` -- confirmed by grep and by
+mutation (there is no `@on(ExpandReaderRequested)` anywhere). Pressing
+Expand currently does nothing. This batch's dispatch explicitly scoped the
+remaining work to the Items publish column (task-2308) and Check-now
+progress (task-2309) plus tests, and did not include finishing this AC's
+region-solo wiring (`_apply_layout`/`Region.CONTENT`, per this task's own
+step 4) -- so it was left alone rather than expanding scope past what was
+asked. Filed as a gap for a follow-up task rather than silently checked off.
+
+**AC#3 -- done.** See above; 32 unit tests + 4 content-pane tests, all
+passing, including a mutation-verified check that a link whose label already
+IS the destination is not printed twice.
+
+Modified/added: `Tests/Subscriptions/test_html_text.py` (new),
+`Tests/UI/test_watchlists_content_pane.py` (4 tests appended). No production
+code changed for this task in this session -- `html_text.py` and
+`content_pane.py`'s HTML wiring were already complete in the WIP commit.

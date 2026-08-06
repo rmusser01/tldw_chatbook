@@ -2284,3 +2284,129 @@ async def test_snapshot_modal_renders_remote_markup_as_literal_text():
 
         modal.query_one("#svm-close", Button).press()
         await pilot.pause(0.3)
+
+
+# --- TASK-2307: HTML feed bodies render as readable text -------------------
+
+
+def test_an_html_body_renders_as_readable_prose_with_the_link_visible_as_text():
+    """The UAT finding, at the unit level: a feed's `<p>`/`<a href>` body
+    used to show up on screen exactly as written, one long unreadable line.
+    `readable_body_text` converts it before `render_article` ever appends it,
+    so the tags themselves must be gone and the link's destination must
+    still be legible -- as ordinary visible text, not a hidden hyperlink.
+    """
+    from tldw_chatbook.UI.Watchlists_Modules.content_pane import render_article
+
+    out = str(render_article({
+        "title": "Claude Opus 4.5 is now available",
+        "source_name": "Anthropic News",
+        "content": (
+            "<p>Article URL: <a href=\"https://example.test/opus\">"
+            "read more</a></p><p>It is <strong>fast</strong>.</p>"
+        ),
+        "content_kind": "article",
+        "content_format": "text",
+    }))
+
+    assert "<p>" not in out and "</p>" not in out, "block tags must be gone"
+    assert "<a href" not in out, "the raw anchor tag must be gone"
+    assert "<strong>" not in out
+    assert "read more" in out, "the link's label must survive"
+    assert "https://example.test/opus" in out, (
+        "the destination must be legible as text -- a terminal reader who "
+        "cannot see the address cannot judge it"
+    )
+    assert "It is fast." in out
+
+
+def test_html_derived_prose_is_still_inert_when_actually_rendered():
+    """The escaping-terminal rule holds at the NEW final render step too
+    (AC#1): the HTML converter must not turn a feed body into something a
+    real Rich console would interpret, and a raw control byte the HTML
+    parser passes through untouched must not reach the terminal either.
+    """
+    from tldw_chatbook.UI.Watchlists_Modules.content_pane import render_article
+
+    hostile = (
+        "<p>[bold red]not a style[/] and "
+        "<a href=\"javascript:alert(1)\">click</a></p>"
+        "<p>\x1b]8;;http://evil.test\x07label\x1b]8;;\x07 tail</p>"
+    )
+    plain, ansi = _render_to_console(render_article({
+        "title": "Hostile",
+        "source_name": "Hostile Feed",
+        "content": hostile,
+        "content_kind": "article",
+        "content_format": "text",
+    }))
+
+    assert "[bold red]not a style[/]" in plain, "bracket text must survive as characters"
+    assert "\x1b[31m" not in ansi, "the [bold red] tag must not have styled anything"
+    assert "\x1b]8;;" not in ansi, "no OSC-8 hyperlink may reach the terminal"
+    assert "\x1b" not in plain, "the raw ESC byte must not have survived at all"
+    assert "label" in plain and "tail" in plain, "the surrounding text must still render"
+
+
+def test_a_non_html_body_is_left_alone_apart_from_control_bytes():
+    """The other half of `readable_body_text`'s dispatch: a plain-text feed
+    body (most of them) must not be run through the HTML converter at all,
+    and must survive byte-for-byte apart from characters that cannot
+    legally reach the terminal.
+    """
+    from tldw_chatbook.UI.Watchlists_Modules.content_pane import render_article
+
+    out = str(render_article({
+        "title": "Plain text feed",
+        "source_name": "Feed",
+        "content": "1 < 2 and 2 < 3, plainly written, no markup at all.",
+        "content_kind": "article",
+        "content_format": "text",
+    }))
+
+    assert "1 < 2 and 2 < 3, plainly written, no markup at all." in out
+
+
+@pytest.mark.asyncio
+async def test_selecting_an_html_item_shows_readable_prose_in_the_mounted_reader():
+    """End to end through the real screen wiring (not a direct renderer
+    call): the same `<p>`/`<a href>` shape the UAT found, opened the way a
+    user actually opens it, must not show a single literal tag on screen.
+    """
+    from textual.widgets import Static
+
+    from Tests.UI.test_destination_shells import DestinationHarness
+    from Tests.UI.app_factory import _build_test_app
+    from tldw_chatbook.UI.Watchlists_Modules.content_pane import ContentPane
+    from tldw_chatbook.UI.Watchlists_Modules.items_pane import ItemsPane
+
+    item = {
+        "id": 9,
+        "title": "Site update",
+        "source_name": "Some Blog",
+        "content": '<p>Article URL: <a href="https://example.test/post">here</a></p>',
+        "content_kind": "article",
+        "content_format": "text",
+    }
+
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.2)
+        screen = host.screen_stack[-1]
+        screen.active_section = "items"
+        await pilot.pause(0.2)
+
+        items_pane = screen.query_one("#watchlists-items-pane", ItemsPane)
+        items_pane.items = [item]
+        await pilot.pause(0.2)
+        items_pane.select_item_by_id("9")
+        await pilot.pause(0.3)
+
+        content_pane = screen.query_one("#watchlists-content-pane", ContentPane)
+        body = content_pane.query_one("#content-body", Static)
+        rendered = str(body.renderable)
+
+        assert "<p>" not in rendered and "<a href=" not in rendered
+        assert "here" in rendered
+        assert "https://example.test/post" in rendered
