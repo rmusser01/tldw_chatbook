@@ -38,6 +38,8 @@ def _bare_console_screen(store: ConsoleChatStore) -> ChatScreen:
     screen = ChatScreen.__new__(ChatScreen)
     screen._console_chat_store = store
     screen._session = ConsoleSessionController.__new__(ConsoleSessionController)
+    screen._session._chat_store_accessor = lambda: screen._console_chat_store
+    screen._session._current_chat_store_accessor = lambda: screen._console_chat_store
     screen._console_visible_draft_session_id = None
     screen._console_composer_or_none = lambda: None
     return screen

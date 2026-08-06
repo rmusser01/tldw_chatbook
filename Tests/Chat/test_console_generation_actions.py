@@ -115,6 +115,8 @@ def _bare_generation_screen(store: ConsoleChatStore) -> ChatScreen:
     screen = ChatScreen.__new__(ChatScreen)
     screen._console_chat_store = store
     screen._session = ConsoleSessionController.__new__(ConsoleSessionController)
+    screen._session._chat_store_accessor = lambda: screen._console_chat_store
+    screen._session._current_chat_store_accessor = lambda: screen._console_chat_store
     screen._console_message_action_service = ConsoleMessageActionService()
     screen._pending_console_delete_message_id = None
     screen.app_instance = SimpleNamespace(notify=lambda *a, **k: None)
