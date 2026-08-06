@@ -891,12 +891,28 @@ def _normalize_legacy_provider_api_key(
     google` -- the last only since PR-T2 review round 3 (finding I4), which
     found it reading `api_settings.google_api`, a table nothing in this app
     has ever produced. Google was therefore the one provider for which
-    this docstring's claim was FALSE: a bridged `[API] google_api_key`
-    could not reach the spend path at all while readiness reported ready.
-    Pinned by `Tests/Chat/test_google_native_tools.py::test_google_api_key_
-    comes_from_the_api_settings_google_table` (handler half) and
+    this docstring's claim was FALSE for a bridged `[API] google_api_key`:
+    it could not reach the spend path at all while readiness reported
+    ready. Pinned by `Tests/Chat/test_google_native_tools.py::test_google_
+    api_key_comes_from_the_api_settings_google_table` (handler half) and
     `Tests/Chat/test_provider_readiness.py::test_legacy_only_google_key_
     lands_in_the_table_chat_with_google_reads` (config half).
+
+    **Scope of the "both readers agree" guarantee: the two CONFIG sources
+    only** -- the modern `api_settings.<provider>.api_key` table and the
+    legacy `[API] <provider>_api_key`. It does NOT extend to the
+    environment variable for every provider, and google is a known open
+    case (PR-T2 review round 4, R1; pre-existing, filed separately, NOT
+    closed here). With only `GOOGLE_API_KEY` set: readiness reports ready
+    (it has its own env fallback), this bridge deliberately does not write
+    env-sourced values into `api_settings` (see the paragraph above on
+    `api_key_source` and prefill safety -- that behavior is pinned and
+    correct), google's legacy dict is `google_generative_api` which the
+    handler no longer reads, and `chat_with_google` has no env fallback of
+    its own. A caller that passes no explicit `api_key` -- the Library RAG
+    path among them -- is therefore gated OPEN and fails at the wire. Any
+    claim that google is fully closed must say "config-sourced" or name
+    this gap.
 
     Precedence: (1) an explicit, non-placeholder `api_settings.<provider_
     key>.api_key` always wins -- a value entered through the Settings
