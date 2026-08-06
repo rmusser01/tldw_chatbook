@@ -118,6 +118,7 @@ class _FakeService:
         self._state = state
         self.session_approvals = set()
         self.persisted_states = []
+        self.recorded_decisions = []
 
     def get_kill_switch(self):
         return self._kill_switch
@@ -133,6 +134,11 @@ class _FakeService:
 
     def set_tool_state(self, server_key, tool_name, ui_state, *, tool=None):
         self.persisted_states.append((server_key, tool_name, ui_state))
+
+    def record_tool_decision(
+        self, server_key, tool_name, *, decision, initiator="agent", error=None
+    ):
+        self.recorded_decisions.append((server_key, tool_name, decision, initiator, error))
 
 
 def _bare_controller(app):
@@ -281,3 +287,153 @@ def test_compose_local_provider_session_approval_skips_reprompt(
     assert local_provider.pending_gate_for("fs_list", {"path": "."}) is None
     (tmp_path / "a.txt").write_text("a")
     assert local_provider.invoke("local:fs_list", {"path": "."}).ok
+
+
+# -- audit recording wiring (Task 7) -------------------------------------------
+
+
+def _composed(monkeypatch, tmp_path, service):
+    monkeypatch.setattr(
+        controller_mod,
+        "get_cli_setting",
+        _console_settings(workspace_root=str(tmp_path)),
+    )
+    controller = _bare_controller(SimpleNamespace(unified_mcp_service=service))
+    local_provider, _hook = controller._compose_local_provider()
+    assert local_provider is not None
+    return local_provider
+
+
+def test_compose_local_provider_records_deny_via_service(monkeypatch, tmp_path):
+    service = _FakeService(
+        state=EffectiveToolState(state="deny", origin="tool_override")
+    )
+    local_provider = _composed(monkeypatch, tmp_path, service)
+
+    r = local_provider.invoke("local:fs_list", {"path": "."})
+
+    assert not r.ok
+    assert service.recorded_decisions == [
+        ("local:__local__", "fs_list", "denied", "agent", None)
+    ]
+
+
+def test_compose_local_provider_records_timeout_via_service(monkeypatch, tmp_path):
+    service = _FakeService()  # ASK state
+    local_provider = _composed(monkeypatch, tmp_path, service)
+    local_provider.apply_batch_decisions({"fs_list": "timeout"})
+
+    r = local_provider.invoke("local:fs_list", {"path": "."})
+
+    assert not r.ok
+    assert service.recorded_decisions == [
+        ("local:__local__", "fs_list", "denied-timeout", "agent", None)
+    ]
+
+
+def test_compose_local_provider_allow_records_no_refusal(monkeypatch, tmp_path):
+    service = _FakeService(state=ALLOW)
+    local_provider = _composed(monkeypatch, tmp_path, service)
+    (tmp_path / "a.txt").write_text("a")
+
+    assert local_provider.invoke("local:fs_list", {"path": "."}).ok
+    assert service.recorded_decisions == []
+
+
+def test_compose_local_provider_recording_failure_does_not_break_invoke(
+    monkeypatch, tmp_path
+):
+    class _RaisingRecordService(_FakeService):
+        def __init__(self):
+            super().__init__(
+                state=EffectiveToolState(state="deny", origin="tool_override")
+            )
+
+        def record_tool_decision(self, *args, **kwargs):
+            raise RuntimeError("audit store down")
+
+    local_provider = _composed(monkeypatch, tmp_path, _RaisingRecordService())
+
+    r = local_provider.invoke("local:fs_list", {"path": "."})
+    assert not r.ok  # refusal still returned; the raise was swallowed
+
+
+
+# -- todo_write session wiring (phase-3a Task 4) --------------------------------
+
+
+def test_compose_local_provider_without_session_registers_no_todo_spec(
+    monkeypatch, tmp_path
+):
+    """No session context -> provider stays context-free: no todo_write."""
+    monkeypatch.setattr(
+        controller_mod,
+        "get_cli_setting",
+        _console_settings(workspace_root=str(tmp_path)),
+    )
+    controller = _bare_controller(SimpleNamespace(unified_mcp_service=_FakeService()))
+
+    local_provider, _hook = controller._compose_local_provider()
+
+    r = local_provider.invoke("local:todo_write", {"todos": []})
+    assert not r.ok
+    assert r.error == "Unknown local tool: todo_write"
+
+
+def test_compose_local_provider_wires_the_sessions_own_todo_list(
+    monkeypatch, tmp_path
+):
+    """The composed provider mutates the session's live ``todos`` list in
+    place and surfaces the change through the bridge's todo marker seam."""
+    from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+
+    monkeypatch.setattr(
+        controller_mod,
+        "get_cli_setting",
+        _console_settings(workspace_root=str(tmp_path)),
+    )
+    service = _FakeService(state=ALLOW)
+    controller = _bare_controller(SimpleNamespace(unified_mcp_service=service))
+    controller.store = ConsoleChatStore()
+    session = controller.store.create_session(workspace_id="ws")
+    markers = []
+    controller._agent_bridge = SimpleNamespace(
+        append_todo_marker=lambda session_id, todos: markers.append(
+            (session_id, list(todos))
+        )
+    )
+
+    local_provider, _hook = controller._compose_local_provider(session_id=session.id)
+
+    todos = [
+        {"content": "ship it", "status": "in_progress", "activeForm": "shipping"},
+        {"content": "celebrate", "status": "pending"},
+    ]
+    r = local_provider.invoke("local:todo_write", {"todos": todos})
+
+    assert r.ok
+    assert r.content == "2 todos (1 in progress)"
+    assert session.todos == todos  # the session's own list, mutated in place
+    assert markers == [(session.id, todos)]
+
+
+def test_compose_local_provider_unknown_session_registers_no_todo_spec(
+    monkeypatch, tmp_path
+):
+    """A session_id the store does not know must not create todo state."""
+    from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+
+    monkeypatch.setattr(
+        controller_mod,
+        "get_cli_setting",
+        _console_settings(workspace_root=str(tmp_path)),
+    )
+    controller = _bare_controller(SimpleNamespace(unified_mcp_service=_FakeService()))
+    controller.store = ConsoleChatStore()
+    controller._agent_bridge = SimpleNamespace(append_todo_marker=lambda *a: None)
+
+    local_provider, _hook = controller._compose_local_provider(session_id="ghost")
+
+    r = local_provider.invoke("local:todo_write", {"todos": []})
+    assert not r.ok
+    assert r.error == "Unknown local tool: todo_write"

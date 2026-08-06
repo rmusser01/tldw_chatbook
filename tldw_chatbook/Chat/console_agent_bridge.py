@@ -30,6 +30,7 @@ from loguru import logger
 from tldw_chatbook.Agents.agent_models import (
     AGENT_KIND_PRIMARY,
     AGENT_KIND_SUBAGENT,
+    DIRECT_DISCLOSE_THRESHOLD,
     FIND_TOOLS_NAME,
     LOAD_TOOLS_NAME,
     RunBudget,
@@ -173,6 +174,16 @@ CONSOLE_RUN_BUDGET = RunBudget(
 
 _QUIET_STEP_TOOLS = {FIND_TOOLS_NAME, LOAD_TOOLS_NAME}
 
+# Phase-3a Task 5: one-line pointer to the find/load discovery path, appended
+# to the composed system prompt ONLY when this run's catalog crosses
+# DIRECT_DISCLOSE_THRESHOLD (i.e. initial_disclosure would offer find/load) --
+# under direct disclosure every schema is already in the prompt and the hint
+# would point at tools that are, in fact, shown.
+FIND_LOAD_DISCOVERY_HINT = (
+    "Additional tools (file, web, and more) are available but not shown; "
+    "use find_tools to search the catalog and load_tools to load their "
+    "schemas before calling them."
+)
 
 def _combine_state_scopes(scopes: list) -> "Any | None":
     """Combine per-turn state scopes into the one ``review_state_scope`` seam.
@@ -211,18 +222,25 @@ def _combine_state_scopes(scopes: list) -> "Any | None":
     return _combined
 
 
-def compose_agent_system_prompt(session_prompt: str) -> str:
+def compose_agent_system_prompt(session_prompt: str, *, offer_find_load: bool = False) -> str:
     """Compose the primary system prompt: session prompt first, agent prompt appended.
 
     Args:
         session_prompt: The Console session's own system prompt, if any.
+        offer_find_load: True when this run's registry catalog crosses
+            ``DIRECT_DISCLOSE_THRESHOLD`` (the caller knows the registry;
+            compose does not), appending ``FIND_LOAD_DISCOVERY_HINT`` after
+            the operating prompt.
 
     Returns:
         ``session_prompt`` followed by the (registry-resolved) console agent
         operating prompt (blank-line separated), or just the operating
-        prompt when ``session_prompt`` is blank.
+        prompt when ``session_prompt`` is blank; plus the discovery hint
+        when ``offer_find_load`` is set.
     """
     operating = get_internal_prompt("agents.console_agent_operating")
+    if offer_find_load:
+        operating = f"{operating}\n\n{FIND_LOAD_DISCOVERY_HINT}"
     base = (session_prompt or "").strip()
     if not base:
         return operating
@@ -528,6 +546,38 @@ def format_agent_step_marker(
     if kind == STEP_ERROR:
         return f"⚠ {summary}"
     return None
+
+
+def format_todo_marker(todos: list[dict]) -> str:
+    """Return the transcript TOOL marker text for one todo_write state change.
+
+    Rendering counterpart to ``format_agent_step_marker`` for the session-
+    scoped todo list (phase-3a Task 4): one line per item with a status
+    glyph, using ``activeForm`` as the label for the in-progress item when
+    present. Kept raw (no escaping) for the same reason as step markers --
+    both transcript consumers render markup-off (see its docstring). Live
+    only: todos are session-lifetime and never persisted, so there is no
+    resume re-derivation path for these markers.
+
+    Render bounds: embedded newlines are flattened to spaces so the marker
+    stays one line per item, and each item's text is truncated at 200
+    chars -- the same convention as step-marker summaries (``_summarize``).
+    """
+    if not todos:
+        return "☰ Todos cleared"
+    glyphs = {"completed": "[x]", "in_progress": "[~]", "pending": "[ ]"}
+    in_progress = 0
+    lines = []
+    for item in todos:
+        status = str(item.get("status") or "pending")
+        if status == "in_progress":
+            in_progress += 1
+        label = item.get("activeForm") if status == "in_progress" else None
+        label = label or str(item.get("content") or "")
+        label = " ".join(str(label).splitlines())[:200]
+        lines.append(f"  {glyphs.get(status, '[ ]')} {label}")
+    header = f"☰ Todos ({in_progress} in progress):"
+    return "\n".join([header, *lines])
 
 
 def inject_resume_agent_markers(
@@ -1222,14 +1272,14 @@ def _compose_run_registry_and_allowed(
     Returns:
         ``(registry, allowed_tools, builtin_names, local_names)`` -- the
         per-run registry, its full allow-list (builtins + local + eligible
-        skills + eligible MCP tools + spawn), just the builtin names
-        (needed separately by ``_BridgeSkillRunner`` to intersect a
-        skill's own declared ``allowed_tools`` against -- never against
-        skill OR local names, so a skill's sub-agent can never call
-        another skill and skills never narrow/grant local tools), and
-        just the local names (needed by ``run_reply`` to keep its
+        skills + eligible MCP tools + spawn), just the builtin names, and
+        just the local names. ``_BridgeSkillRunner`` intersects a skill's
+        own declared ``allowed_tools`` against builtins + local (never
+        against skill names, so a skill's sub-agent can never call another
+        skill, and never against runtime/MCP names -- a skill narrows, it
+        never grants), and ``run_reply`` uses the local names to keep its
         skill-runner name set's collision filtering in agreement with the
-        registry built here).
+        registry built here.
     """
     registry = ToolCatalogRegistry(ephemeral=ephemeral)
     builtin_provider = BuiltinToolProvider(
@@ -1286,7 +1336,8 @@ class _BridgeSkillRunner:
     """``SkillRunner``: renders a skill, then routes it through THIS run's spawn.
 
     Built fresh per ``run_reply`` invocation from that run's own eligible
-    skill-name set and builtin names (see ``_compose_run_registry_and_allowed``).
+    skill-name set and builtin + local tool names (see
+    ``_compose_run_registry_and_allowed``).
     ``run`` re-verifies trust at render time via ``execute_skill`` -- never
     a cached snapshot -- so a skill approved when the catalog was built but
     revoked before the model actually calls it still refuses (mirrors
@@ -1300,11 +1351,13 @@ class _BridgeSkillRunner:
         skills_service: Any,
         skill_names: frozenset[str],
         builtin_names: tuple[str, ...],
+        local_names: tuple[str, ...] = (),
         skill_file_bindings: SkillFileBindings | None = None,
     ) -> None:
         self._skills_service = skills_service
         self._skill_names = skill_names
         self._builtin_names = builtin_names
+        self._local_names = local_names
         self._skill_file_bindings = skill_file_bindings
 
     def is_skill_tool(self, name: str) -> bool:
@@ -1326,8 +1379,15 @@ class _BridgeSkillRunner:
         declared_allowed_tools = (
             result.get("allowed_tools") if isinstance(result, Mapping) else None
         )
+        # Narrow-only against THIS run's builtin + local tool names: a skill
+        # can never grant its child a tool the parent run doesn't have (no
+        # runtime tools, no MCP tools, no other skills). Local tools in the
+        # child stay approval-gated -- the spawn below shares the parent's
+        # review hook and stamp scope. ``None`` (undeclared) passes the full
+        # builtin + local set through, matching how native spawn_subagent
+        # children already inherit local tools.
         allowed_tools = intersect_skill_tools(
-            declared_allowed_tools, self._builtin_names
+            declared_allowed_tools, self._builtin_names + self._local_names
         )
         # task-4 (skills-fork-reachability): grant the spawned skill's own
         # name skill_file authorization BEFORE spawn -- so the child's very
@@ -1561,6 +1621,7 @@ class ConsoleAgentBridge:
                     skills_service=self._skills_service,
                     skill_names=skill_names,
                     builtin_names=builtin_names,
+                    local_names=local_names,
                     skill_file_bindings=skill_file_bindings,
                 )
         # task-5 (skills-fork-reachability): seed this run's own bindings
@@ -1780,7 +1841,15 @@ class ConsoleAgentBridge:
         )
         config = AgentConfig(
             model=model,
-            system_prompt=compose_agent_system_prompt(session_system_prompt),
+            system_prompt=compose_agent_system_prompt(
+                session_system_prompt,
+                # Same condition initial_disclosure applies inside
+                # AgentService.run_turn: past the threshold, find/load is
+                # the live disclosure mode and the hint points at it.
+                offer_find_load=(
+                    len(registry.list_catalog()) > DIRECT_DISCLOSE_THRESHOLD
+                ),
+            ),
             allowed_tools=allowed_tools,
             budget=CONSOLE_RUN_BUDGET,
             native_tools=native_tools,
@@ -2455,6 +2524,18 @@ class ConsoleAgentBridge:
                     )
             blocks.append((record.get("assistant_message_id"), block))
         return blocks
+
+    def append_todo_marker(self, session_id: str, todos: list[dict]) -> None:
+        """Surface a todo_write state change in the transcript.
+
+        Public seam for the controller's ``on_todo_change`` wiring: the
+        local-tool handler fires it from the same agent worker thread the
+        step markers are appended on, so it reuses ``_append_marker``
+        directly (in-memory store append, ``persist=False``) -- no
+        ``call_from_thread`` marshalling, exactly like the live step-marker
+        path. Session-lifetime only; nothing is re-derived on resume.
+        """
+        self._append_marker(session_id, format_todo_marker(todos))
 
     # -- internals ------------------------------------------------------
 

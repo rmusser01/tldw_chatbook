@@ -9,9 +9,11 @@ import pytest
 
 from tldw_chatbook.Chat.console_agent_bridge import (
     CONSOLE_AGENT_OPERATING_PROMPT,
+    FIND_LOAD_DISCOVERY_HINT,
     ConsoleAgentBridge,
     compose_agent_system_prompt,
     format_agent_step_marker,
+    format_todo_marker,
     inject_resume_agent_markers,
     _BridgeSkillRunner,
     _compose_run_allowed_tools,
@@ -230,6 +232,21 @@ def test_compose_prepends_session_prompt_then_agent_prompt():
     assert composed.startswith("You are Ada.")
     assert CONSOLE_AGENT_OPERATING_PROMPT in composed
     assert compose_agent_system_prompt("") == CONSOLE_AGENT_OPERATING_PROMPT
+
+
+def test_compose_appends_discovery_hint_only_when_find_load_offered():
+    # Default (direct disclosure): no hint — find/load is not the live mode.
+    assert FIND_LOAD_DISCOVERY_HINT not in compose_agent_system_prompt("You are Ada.")
+    assert FIND_LOAD_DISCOVERY_HINT not in compose_agent_system_prompt("")
+    # Past the threshold the caller flags find/load mode: the hint is
+    # appended after the operating prompt, session prompt still first.
+    composed = compose_agent_system_prompt("You are Ada.", offer_find_load=True)
+    assert composed.startswith("You are Ada.")
+    assert CONSOLE_AGENT_OPERATING_PROMPT in composed
+    assert composed.endswith(FIND_LOAD_DISCOVERY_HINT)
+    blank = compose_agent_system_prompt("", offer_find_load=True)
+    assert blank.startswith(CONSOLE_AGENT_OPERATING_PROMPT)
+    assert blank.endswith(FIND_LOAD_DISCOVERY_HINT)
 
 
 def test_no_tool_message_streams_final_answer_like_today(tmp_path):
@@ -917,6 +934,53 @@ def test_step_truncation_cuts_on_newline_and_tab_boundaries():
     text = "### Heading\n\nsome body text that keeps going well past the limit here"
     out = _truncate_step_text(text, limit=15)
     assert out.split("\u2026", 1)[0] == "### Heading"  # cut at the newline, not "so"
+def test_format_todo_marker_renders_statuses_and_active_form():
+    text = format_todo_marker(
+        [
+            {"content": "write tests", "status": "completed"},
+            {"content": "implement", "status": "in_progress", "activeForm": "implementing"},
+            {"content": "commit", "status": "pending"},
+        ]
+    )
+    assert text == (
+        "☰ Todos (1 in progress):\n"
+        "  [x] write tests\n"
+        "  [~] implementing\n"
+        "  [ ] commit"
+    )
+
+
+def test_format_todo_marker_empty_list_reads_as_cleared():
+    assert format_todo_marker([]) == "☰ Todos cleared"
+
+
+def test_format_todo_marker_truncates_long_item_text():
+    # Same 200-char convention as step-marker summaries (_summarize).
+    long_content = "y" * 300
+    text = format_todo_marker([{"content": long_content, "status": "pending"}])
+    assert text == f"☰ Todos (0 in progress):\n  [ ] {'y' * 200}"
+
+
+def test_format_todo_marker_flattens_newlines_in_item_text():
+    # Markers stay one line per item; embedded newlines become spaces.
+    text = format_todo_marker(
+        [{"content": "first\nsecond\r\nthird", "status": "pending"}]
+    )
+    assert text == "☰ Todos (0 in progress):\n  [ ] first second third"
+
+
+def test_append_todo_marker_appends_tool_message_to_store(tmp_path):
+    bridge, _db, store, session, _aid = _bridge(tmp_path, [])
+    bridge.append_todo_marker(
+        session.id, [{"content": "ship it", "status": "in_progress"}]
+    )
+    tool_messages = [
+        m for m in store.messages_for_session(session.id)
+        if m.role is ConsoleMessageRole.TOOL
+    ]
+    assert [m.content for m in tool_messages] == [
+        "☰ Todos (1 in progress):\n  [~] ship it"
+    ]
 
 
 def test_resume_marker_messages_reproduces_live_markers_after_simulated_restart(

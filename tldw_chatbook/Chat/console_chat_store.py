@@ -386,6 +386,12 @@ class ConsoleChatSession:
         except ProfileValidationError:
             return None
 
+    #: Session-lifetime todo list for the local ``todo_write`` agent tool
+    #: (items: ``{content, status, activeForm}``, status in
+    #: ``pending|in_progress|completed``). Never persisted -- a resumed
+    #: session starts with an empty list.
+    todos: list[dict] = field(default_factory=list)
+
 
 class ConsoleChatStore:
     """Manage native Console sessions and messages before UI integration."""

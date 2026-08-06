@@ -5,6 +5,25 @@ MCP Server implementation for tldw_chatbook
 
 This module provides the main MCP server that exposes tldw_chatbook's functionality
 through the Model Context Protocol.
+
+## Exposed local agent tools (opt-in)
+
+When `[mcp] expose_local_tools = true` is set in config.toml, the server also
+exposes the workspace-local agent tools (`fs_*`, `fs_patch`, `git_*`,
+`web_fetch`, `web_search`) to external MCP clients. Invocation is routed
+through `Agents/local_tool_provider.LocalToolProvider`'s permission gate
+(`MCP/local_server_tools.py`) — never by wrapping the tool cores directly.
+
+Permission model for external callers: there is no approval card outside the
+Console, so tools in the `ask` state fail closed with an external-appropriate
+refusal. An operator grants a tool externally by approving it "Always allow"
+in a Console session (which persists `allow` + definition hash to the shared
+permission store under `local:__local__`) or by editing
+`<user_data_dir>/mcp_permissions.json` directly. `mutates`-tagged tools
+(writes, edits, patches) are therefore effectively denied to external clients
+by default. The kill switch and `deny` states are honored identically to the
+Console path. `todo_write` is Console-session-scoped and intentionally not
+exposed.
 """
 
 import asyncio  # noqa: E402
@@ -219,6 +238,7 @@ class TldwMCPServer:
         self._register_tools()
         self._register_resources()
         self._register_prompts()
+        self._register_local_agent_tools()
 
         logger.info(f"MCP Server '{name}' initialized")
 
@@ -619,6 +639,70 @@ class TldwMCPServer:
                 context=context,
                 style_notes=style_notes,
             )
+
+    def _register_local_agent_tools(self):
+        """Register workspace-local agent tools (fs_*/git_*/web_*) when enabled.
+
+        Gated behind ``[mcp] expose_local_tools`` (default false); a no-op
+        when the flag is off. Called from ``__init__`` -- deliberately NOT
+        part of ``_register_tools`` so the AST-walking
+        ``_extract_registered_entries`` capability catalog stays unaffected.
+
+        Every call is routed through the composed ``LocalToolProvider``'s
+        permission gate (fresh ``MCPPermissionStore`` state per call, kill
+        switch honored, ask fails closed -- external clients cannot
+        approve). The store path is pinned to
+        ``get_user_data_dir() / "mcp_permissions.json"`` so Console
+        "Always allow" grants apply here.
+
+        FastMCP derives input schemas from Python type annotations (not
+        JSON schema), so each tool is bound with a generic
+        ``arguments: dict`` signature; the provider's JSON schema travels
+        on the registration for introspection/future SDK use.
+        """
+        from ..config import get_user_data_dir
+        from .local_server_tools import (
+            _local_agent_tool_registrations,
+            _parameter_summary,
+            build_server_local_provider,
+            local_tools_exposure_enabled,
+            resolve_server_workspace_root,
+        )
+        from .permission_store import MCPPermissionStore
+
+        # The gate lives in local_server_tools (server.py never calls
+        # get_cli_setting directly — an AST test pins that).
+        if not local_tools_exposure_enabled():
+            return
+
+        # Guard the whole flag-on body: a failure here must never cost the
+        # operator the built-in tools — log and start without local tools.
+        try:
+            workspace_root = resolve_server_workspace_root()
+            store = MCPPermissionStore(
+                get_user_data_dir() / "mcp_permissions.json"
+            )
+            provider = build_server_local_provider(workspace_root, store)
+
+            registrations = _local_agent_tool_registrations(provider)
+            for registration in registrations:
+                # The handler's signature IS the generic `arguments: dict`
+                # surface; invoke() is sync and worker-thread safe. FastMCP
+                # can't consume the JSON schema, so append a compact
+                # parameter summary to the description — otherwise external
+                # clients get zero parameter documentation.
+                description = registration.description + _parameter_summary(
+                    registration.parameters
+                )
+                self.mcp.tool(
+                    name=registration.name,
+                    description=description,
+                )(registration.handler)
+            logger.info(
+                f"Registered {len(registrations)} local agent tools (permission-gated)"
+            )
+        except Exception:  # noqa: BLE001 — never sink the whole server for this
+            logger.exception("Failed to register local agent tools; continuing without them")
 
     async def run(self, transport: str = "stdio"):
         """Run the MCP server.

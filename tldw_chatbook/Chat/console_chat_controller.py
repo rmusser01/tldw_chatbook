@@ -3221,10 +3221,21 @@ class ConsoleChatController:
         ``persist_approval`` routes ``approve_session`` to the in-memory
         session cache and ``always_allow`` to ``set_tool_state``, which
         fingerprints ``definition_hash(description, input_schema)``
-        itself (the rug-pull guard, spec §3.2). Audit recording of
-        denied/timeout outcomes is NOT wired here (the MCP provider
-        records via ``record_tool_decision``); local refusals are
-        model-facing only this phase.
+        itself (the rug-pull guard, spec §3.2); ``record_decision`` is
+        the same ``record_tool_decision`` audit path the MCP provider
+        uses (``initiator="agent"``), recording local refusals as
+        "denied"/"denied-timeout" under the ``local:__local__`` server
+        key.
+
+        Todo wiring (phase-3a Task 4): when ``session_id`` resolves to a
+        live session, the provider is handed THAT session's own ``todos``
+        list (replaced in place by ``todo_write``) plus an
+        ``on_todo_change`` that renders the updated list into the
+        transcript via ``ConsoleAgentBridge.append_todo_marker`` -- the
+        same in-memory, worker-thread, persist-free path the agent step
+        markers use. Without a session (or without a bridge), the
+        provider stays context-free and no ``todo_write`` spec is
+        registered.
 
         Args:
             session_id: THIS run's owning session id, bound into the
@@ -3277,6 +3288,16 @@ class ConsoleChatController:
                 # hub.input_schema) itself -- required for the rug-pull guard.
                 service.set_tool_state(hub.server_key, hub.name, "allow", tool=hub)
 
+        def _record_decision(hub: "HubTool", decision: str) -> None:
+            # Same audit path MCPToolProvider._record_decision_safe uses;
+            # the provider guards the call (never-raise seam).
+            service.record_tool_decision(
+                hub.server_key,
+                hub.name,
+                decision=decision,
+                initiator="agent",
+            )
+
         # expanduser() before resolve(): a configured "~/repo" must land
         # under the user's home, not literal "~" under the cwd.
         raw_root = (get_cli_setting("console", "workspace_root", "") or "").strip()
@@ -3294,8 +3315,32 @@ class ConsoleChatController:
                 hub.server_key, hub.name
             ),
             persist_approval=_persist_approval,
+            record_decision=_record_decision,
+            **self._todo_wiring(session_id),
         )
         return provider, build_local_review_hook(provider, bound_request_approvals)
+
+    def _todo_wiring(self, session_id: str | None) -> dict:
+        """The todo_store/on_todo_change kwargs for ``_compose_local_provider``.
+
+        Empty dict (no todo capability) when there is no session context,
+        the session is unknown, or there is no bridge to render through.
+        """
+        if session_id is None:
+            return {}
+        bridge = self._agent_bridge
+        if bridge is None:
+            return {}
+        session = next(
+            (s for s in self.store.sessions() if s.id == session_id), None
+        )
+        if session is None:
+            return {}
+
+        def _on_todo_change(todos: list) -> None:
+            bridge.append_todo_marker(session_id, todos)
+
+        return {"todo_store": session.todos, "on_todo_change": _on_todo_change}
 
     def resolve_pending_approval(
         self, decisions: dict[str, str], *, round_id: str | None = None
