@@ -8,6 +8,7 @@ change rather than a dynamic schema side effect.
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Sequence
 from copy import deepcopy
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
@@ -112,6 +113,11 @@ _LANGUAGE_OPTIONS = [
 LeaveChoice = Literal["save", "discard", "cancel"]
 _GLOBAL_SPEECH_TTS_STACK_WIDTH = 104
 _COLLAPSIBLE_TITLE_FOCUS_SUFFIX = "::collapsible-title"
+# The panel's own blank sentinel for "no default voice profile chosen" in the
+# `#settings-speech-default-profile` Select. Never a real saved value: Task 2's
+# loader normalizes an absent/blank/whitespace-only `default_profile_id` to
+# `None`, so an empty string can never be a genuine saved profile id.
+_NO_DEFAULT_PROFILE_ID = ""
 
 _REALTIME_PROVIDER_OPTIONS = [("OpenAI", DEFAULT_REALTIME_PROVIDER)]
 
@@ -400,6 +406,7 @@ class SpeechTTSSettingsPanel(Vertical):
         state: GlobalSpeechTTSState,
         original_state: GlobalSpeechTTSState | None = None,
         configure_provider: str | None = None,
+        profiles: Sequence[tuple[str, str]] | None = None,
         audio_cpp_observation: TTSNativeCapabilityObservation | None = None,
         audio_cpp_configuration_revision: int | None = None,
         audio_cpp_saved_configuration_revision: int | None = None,
@@ -455,6 +462,13 @@ class SpeechTTSSettingsPanel(Vertical):
             else state.defaults.provider_id
             if state.defaults.provider_id in BUILT_IN_TTS_PROVIDER_ORDER
             else "audio_cpp"
+        )
+        # `None` means the profile store could not be listed (impure screen's
+        # honest failure signal, per the purity boundary) -- distinct from an
+        # empty sequence, which means the store answered with zero profiles.
+        # Never loaded here: this widget must stay pure of profile-store I/O.
+        self._profile_choices: list[tuple[str, str]] | None = (
+            list(profiles) if profiles is not None else None
         )
         self.result_text = "No global Speech & TTS changes saved this session."
         self._syncing = False
@@ -545,6 +559,88 @@ class SpeechTTSSettingsPanel(Vertical):
                 + (" settings-speech-field-error-visible" if message else "")
             ),
             markup=False,
+        )
+
+    def _default_profile_options(self) -> list[tuple[str, str]]:
+        """Build the Select's options from the injected static profile list.
+
+        Always includes the blank "None" choice. When the saved id is not
+        among the known profiles -- either because the store is unavailable
+        (`self._profile_choices is None`) or the profile is dangling (e.g.
+        deleted, or a malformed value from Task 2's non-rejecting loader) --
+        an explicit extra option is appended so the Select's initial value
+        stays valid without inventing a display name or dropping the value.
+        """
+        options: list[tuple[str, str]] = [
+            ("None — use the fields below", _NO_DEFAULT_PROFILE_ID)
+        ]
+        known_ids: set[str] = set()
+        if self._profile_choices is not None:
+            for display_name, profile_id in self._profile_choices:
+                options.append((display_name, profile_id))
+                known_ids.add(profile_id)
+        saved_id = self.state.defaults.default_profile_id
+        if saved_id and saved_id not in known_ids:
+            options.append((f"{saved_id} (unavailable)", saved_id))
+        return options
+
+    def _default_profile_select_value(self) -> str:
+        return self.state.defaults.default_profile_id or _NO_DEFAULT_PROFILE_ID
+
+    def _default_profile_note_copy(self) -> str:
+        """Explain an unresolvable saved default -- never silently dropped."""
+        saved_id = self.state.defaults.default_profile_id
+        if self._profile_choices is None:
+            if saved_id:
+                return (
+                    "The voice profile list is unavailable right now, so "
+                    f"the saved default voice profile ({saved_id}) cannot be "
+                    "shown by name. It is kept and will not change unless "
+                    "you pick something else here."
+                )
+            return "The voice profile list is unavailable right now."
+        known_ids = {profile_id for _label, profile_id in self._profile_choices}
+        if saved_id and saved_id not in known_ids:
+            return (
+                f"Saved default voice profile {saved_id} was not found (it "
+                "may have been deleted) and is unavailable. It is kept and "
+                "will not change unless you pick something else here."
+            )
+        return ""
+
+    def _default_profile_note(self) -> Static:
+        message = self._default_profile_note_copy()
+        return Static(
+            message,
+            id="settings-speech-default-profile-note",
+            classes=(
+                "settings-status-row settings-speech-field-error"
+                + (" settings-speech-field-error-visible" if message else "")
+            ),
+            markup=False,
+        )
+
+    def _default_profile_row(self) -> Horizontal:
+        select = Select(
+            self._default_profile_options(),
+            value=self._default_profile_select_value(),
+            id="settings-speech-default-profile",
+            allow_blank=False,
+            compact=True,
+            tooltip="Default voice profile",
+            classes="settings-compact-select settings-speech-draft-field",
+        )
+        return self._row(
+            "Default voice profile",
+            Vertical(
+                select,
+                self._default_profile_note(),
+                self._default_error(
+                    "default_profile_id", "settings-speech-default-profile"
+                ),
+                classes="settings-speech-control-stack",
+            ),
+            classes="settings-select-row",
         )
 
     def _input(
@@ -1023,6 +1119,7 @@ class SpeechTTSSettingsPanel(Vertical):
                 classes="settings-status-row",
                 markup=False,
             )
+            yield self._default_profile_row()
             yield self._row(
                 "Default TTS Provider",
                 Select(
@@ -1724,6 +1821,13 @@ class SpeechTTSSettingsPanel(Vertical):
     def _collect_visible_state(self) -> None:
         """Copy mounted widget values into the in-memory draft."""
         try:
+            default_profile = self.query_one(
+                "#settings-speech-default-profile", Select
+            ).value
+            if isinstance(default_profile, str):
+                self.state.defaults.default_profile_id = (
+                    default_profile if default_profile else None
+                )
             provider = self.query_one("#settings-speech-default-provider", Select).value
             model_mode = self.query_one("#settings-speech-model-policy", Select).value
             voice_mode = self.query_one("#settings-speech-voice-policy", Select).value
@@ -1846,6 +1950,17 @@ class SpeechTTSSettingsPanel(Vertical):
             if self.state.defaults != self.original_state.defaults:
                 return True
 
+        # `default_profile_id` is a distinct precedence rung, deliberately not
+        # part of `TTSPreferencesSnapshot` (see build_global_speech_tts_save_
+        # proposal's own comment) -- `.snapshot()` above cannot see it, so it
+        # must be compared explicitly or picking a default profile alone would
+        # look like "no changes" and never enable Save.
+        if (
+            self.state.defaults.default_profile_id
+            != self.original_state.defaults.default_profile_id
+        ):
+            return True
+
         for provider_id in BUILT_IN_TTS_PROVIDER_ORDER:
             try:
                 proposal = build_global_speech_tts_save_proposal(
@@ -1914,6 +2029,7 @@ class SpeechTTSSettingsPanel(Vertical):
             f"#{self._field_dom_id(error.provider_id, error.field_id)}"
             if error.provider_id != "defaults"
             else {
+                "default_profile_id": "#settings-speech-default-profile",
                 "provider_id": "#settings-speech-default-provider",
                 "model_mode": "#settings-speech-model-policy",
                 "default_model": "#settings-speech-model-value",
@@ -1950,6 +2066,16 @@ class SpeechTTSSettingsPanel(Vertical):
             )
             defaults_changed = (
                 proposal.preferences != self.original_state.defaults.snapshot()
+                # `default_profile_id` lives outside `TTSPreferencesSnapshot`
+                # (a distinct precedence rung -- see has_unsaved_changes and
+                # build_global_speech_tts_save_proposal), so the snapshot
+                # comparison above is blind to it. Without this,
+                # `_pending_saved_defaults` below would stay `None` on a
+                # default-profile-only save, and `original_state.defaults`
+                # would never learn the persisted value -- leaving the panel
+                # stuck reporting unsaved changes after a successful save.
+                or self.state.defaults.default_profile_id
+                != self.original_state.defaults.default_profile_id
             )
         except GlobalSpeechTTSValidationError as error:
             self._show_validation_error(error)

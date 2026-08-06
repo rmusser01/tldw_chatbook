@@ -1944,6 +1944,13 @@ class SettingsScreen(BaseAppScreen):
         self._speech_tts_original_state: GlobalSpeechTTSState | None = None
         self._speech_tts_leave_in_progress = False
         self._speech_tts_leave_bypass = False
+        #: (display_name, profile_id) choices for the "Default voice profile"
+        #: picker. `None` means the profile store hasn't answered yet or is
+        #: unavailable -- the panel renders that state honestly rather than
+        #: showing an empty/fake list. Loaded once per screen instance by
+        #: `_load_speech_tts_default_profile_choices`.
+        self._speech_tts_profile_choices: list[tuple[str, str]] | None = None
+        self._speech_tts_profile_choices_requested = False
         #: One-shot focus intent (task-290): `Widget.focus()` defers its
         #: set_focus via call_later, so a storm recompose can destroy the
         #: target between intent and processing. Recorded when navigation
@@ -11665,6 +11672,48 @@ class SettingsScreen(BaseAppScreen):
                 applied_revisions[provider_id] = applied_revision
         return observation, saved_revisions, runtime_revisions, applied_revisions
 
+    @work(exclusive=True, group="settings-speech-profile-choices")
+    async def _load_speech_tts_default_profile_choices(self) -> None:
+        """Best-effort fetch of known voice profiles for the "Default voice
+        profile" picker (slice 3, task 3).
+
+        `speech_tts_settings_panel.py` is the PURE model and must never load
+        profiles itself -- this impure screen owns that I/O and hands the
+        panel a static list, per the purity boundary. The fetch never blocks
+        the first render: `_render_detail_pane` always yields immediately
+        with whatever is cached (honestly `None`, i.e. "unavailable", until
+        this resolves). Deliberately does NOT force a recompose on success --
+        an unsolicited `mutate_reactive(active_category)` landing after a
+        deep-link navigation or mid-edit would steal/reset focus out from
+        under the user (confirmed live: it broke
+        test_bounded_speech_settings_deep_link_restores_provider_without_action's
+        focus assertion during this task's own verification). The cached
+        result is picked up honestly on the next natural re-render of this
+        category (leaving and returning, Save, Revert, Restore Defaults) --
+        never wrong, only possibly stale within one visit. Any failure (no
+        profile service, store unavailable, I/O error) leaves the choices
+        `None` -- the panel's own honesty requirement, never fabricated.
+        """
+        loader = getattr(self.app_instance, "_ensure_tts_profile_service", None)
+        if not callable(loader):
+            return
+        try:
+            service = await loader()
+            if service is None:
+                return
+            page = await service.list_profiles(search=None, offset=0)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - optional store, never crash Settings
+            logger.debug(
+                "Speech & TTS default-profile choices unavailable: %s",
+                type(exc).__name__,
+            )
+            return
+        self._speech_tts_profile_choices = [
+            (profile.display_name, str(profile.profile_id)) for profile in page.profiles
+        ]
+
     def _render_detail_pane(self) -> ComposeResult:
         category = SettingsCategoryId(self.active_category)
         if category is SettingsCategoryId.OVERVIEW:
@@ -11685,10 +11734,14 @@ class SettingsScreen(BaseAppScreen):
                 )
             except (OSError, TypeError, ValueError):
                 speech_tts_state = load_global_speech_tts_state({})
+            if not self._speech_tts_profile_choices_requested:
+                self._speech_tts_profile_choices_requested = True
+                self._load_speech_tts_default_profile_choices()
             yield SpeechTTSSettingsPanel(
                 state=self._speech_tts_draft_state or speech_tts_state,
                 original_state=self._speech_tts_original_state,
                 configure_provider=self._speech_tts_configure_provider,
+                profiles=self._speech_tts_profile_choices,
                 audio_cpp_observation=audio_cpp_observation,
                 audio_cpp_configuration_revision=provider_runtime_revisions.get(
                     "audio_cpp"
