@@ -60,6 +60,11 @@ class _FakeApp:
         self.posted: list = []
         self.push_screen_wait = AsyncMock(return_value=False)
         self.worker_tasks: list[asyncio.Task] = []
+        # Review round 2: `_offer_tts_global_override` reads this (when set)
+        # to pick domain-accurate confirmation-dialog copy. `None` by
+        # default -- exercises the same "no handler bound" fallback a real
+        # app would hit if a token somehow outlived its issuing handler.
+        self._tts_handler = None
 
     def query(self, widget_type):
         return [w for w in self._widgets if isinstance(w, widget_type)]
@@ -308,6 +313,62 @@ async def test_resolution_error_prompts_and_returns_exact_override_decision(
     assert decisions[0].accepted is accepted
     fake_app.push_screen_wait.assert_awaited_once()
     assert not any(isinstance(message, TTSPlaybackEvent) for message in fake_app.posted)
+
+
+@pytest.mark.asyncio
+async def test_offer_global_override_names_character_domain_accurately() -> None:
+    """Review round 2: a character-domain refusal keeps its existing copy."""
+    fake_app = _FakeApp(widgets=())
+    handler = MagicMock()
+    handler.peek_global_override_voice_domain = MagicMock(return_value="character")
+    fake_app._tts_handler = handler
+    token = "d" * 32
+
+    await fake_app._offer_tts_global_override(token)
+
+    handler.peek_global_override_voice_domain.assert_called_once_with(token)
+    dialog = fake_app.push_screen_wait.await_args.args[0]
+    assert "character" in dialog.message.lower()
+    fake_app.push_screen_wait.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_offer_global_override_names_default_profile_domain_not_character() -> (
+    None
+):
+    """Review round 2 (the Critical this fixes): a default-profile refusal's
+    dialog must never say "character" -- it fires for messages with no
+    character context at all."""
+    fake_app = _FakeApp(widgets=())
+    handler = MagicMock()
+    handler.peek_global_override_voice_domain = MagicMock(
+        return_value="default_profile"
+    )
+    fake_app._tts_handler = handler
+    token = "e" * 32
+
+    await fake_app._offer_tts_global_override(token)
+
+    dialog = fake_app.push_screen_wait.await_args.args[0]
+    assert "character" not in dialog.message.lower()
+    assert "default voice profile" in dialog.message.lower()
+
+
+@pytest.mark.asyncio
+async def test_offer_global_override_falls_back_to_neutral_copy_when_domain_unknown() -> (
+    None
+):
+    """No bound handler (or an unknown/expired token) must not claim
+    "character" either -- it genuinely does not know."""
+    fake_app = _FakeApp(widgets=())
+    assert fake_app._tts_handler is None
+    token = "f" * 32
+
+    await fake_app._offer_tts_global_override(token)
+
+    dialog = fake_app.push_screen_wait.await_args.args[0]
+    assert "character" not in dialog.message.lower()
+    assert "global tts voice" in dialog.message.lower()
 
 
 @pytest.mark.asyncio

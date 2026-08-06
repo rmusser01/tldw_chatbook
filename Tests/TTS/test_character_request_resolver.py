@@ -420,6 +420,70 @@ async def test_same_character_id_isolated_by_source_and_authority() -> None:
     assert second_service.calls == [second_ref]
 
 
+@pytest.mark.parametrize(
+    "code",
+    ("default_profile_missing", "default_profile_store_unavailable"),
+)
+def test_default_profile_codes_are_bounded_and_overridable(code: str) -> None:
+    """Slice-3 task-4: the default-profile codes reuse this bounded mechanism."""
+    error = CharacterTTSResolutionError(code)  # type: ignore[arg-type]
+
+    assert error.code == code
+    assert error.allow_global_override is True
+    assert "character" not in str(error).lower()
+    assert "default voice" in str(error).lower()
+    assert error.domain == "default_profile"
+
+
+@pytest.mark.parametrize(
+    "code",
+    (
+        "assignment_invalid",
+        "authorship_invalid",
+        "authority_missing",
+        "profile_store_unavailable",
+    ),
+)
+def test_character_domain_codes_report_the_character_domain(code: str) -> None:
+    """Review round 2: the dialog must be able to tell the domains apart."""
+    error = CharacterTTSResolutionError(code)  # type: ignore[arg-type]
+
+    assert error.domain == "character"
+
+
+def test_default_profile_resolution_accepts_the_assigned_shaped_request() -> None:
+    """`source="default_profile"` reuses "assigned"'s exact-request shape."""
+    character_ref_free_request = TTSRequest(
+        provider_id="openai",
+        model_id="gpt-4o-mini-tts",
+        text="Read this.",
+        voice="verse",
+        response_format="mp3",
+        speed=1.0,
+        options={},
+    )
+
+    resolution = CharacterTTSRequestResolution(
+        source="default_profile",
+        request=character_ref_free_request,
+        repository_generation=2,
+        profile_id=_PROFILE_ID,
+        profile_revision=1,
+    )
+
+    assert resolution.source == "default_profile"
+    assert resolution.request is character_ref_free_request
+
+    with pytest.raises(ValueError, match="default_profile resolution"):
+        CharacterTTSRequestResolution(
+            source="default_profile",
+            request=None,
+            repository_generation=None,
+            profile_id=None,
+            profile_revision=None,
+        )
+
+
 @pytest.mark.asyncio
 async def test_inconsistent_noncharacter_authorship_is_rejected() -> None:
     service = _FakeProfileService(result=object())

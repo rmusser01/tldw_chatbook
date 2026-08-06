@@ -46,6 +46,7 @@ from tldw_chatbook.UI.Screens.settings_speech_tts import (
     GLOBAL_TTS_PROVIDER_FIELD_IDS,
     CredentialIntent,
     GlobalSpeechTTSEffectiveSource,
+    GlobalSpeechTTSValidationError,
     load_global_speech_tts_state,
 )
 from tldw_chatbook.UI.Speech.speech_settings_contracts import (
@@ -85,12 +86,27 @@ async def _open_speech_tts(host, pilot):
     return screen
 
 
+# Small fixed default so every pre-existing test (none of which cares about
+# the default-voice-profile picker) keeps seeing a normal, populated Select
+# instead of the store-unavailable state. Includes the UUID the default-
+# profile tests below select, so `_PanelHarness(configure_provider="openai")`
+# with no explicit `profiles=` keeps that id selectable out of the box.
+_DEFAULT_TEST_PROFILES: tuple[tuple[str, str], ...] = (
+    ("Test Voice", "3f2504e0-4f89-11d3-9a0c-0305e82c3301"),
+)
+# Distinguishes "caller didn't pass profiles" (-> the small fixed default
+# above) from an explicit `profiles=None` (-> simulate an unavailable store).
+_PROFILES_UNSET = object()
+
+
 class _PanelHarness(App[None]):
     def __init__(
         self,
         *,
         configure_provider: str = "audio_cpp",
         state=None,
+        profiles: object = _PROFILES_UNSET,
+        profiles_unavailable: bool = False,
         observation: TTSNativeCapabilityObservation | None = None,
         current_configuration_revision: int | None = None,
         runtime_status_store: SpeechTTSRuntimeStatusStore | None = None,
@@ -98,6 +114,10 @@ class _PanelHarness(App[None]):
         super().__init__()
         self.configure_provider = configure_provider
         self.state = state or load_global_speech_tts_state({})
+        self.profiles = (
+            list(_DEFAULT_TEST_PROFILES) if profiles is _PROFILES_UNSET else profiles
+        )
+        self.profiles_unavailable = profiles_unavailable
         self.observation = observation
         self.current_configuration_revision = current_configuration_revision
         self.runtime_status_store = runtime_status_store
@@ -108,6 +128,8 @@ class _PanelHarness(App[None]):
         yield SpeechTTSSettingsPanel(
             state=self.state,
             configure_provider=self.configure_provider,
+            profiles=self.profiles,
+            profiles_unavailable=self.profiles_unavailable,
             audio_cpp_observation=self.observation,
             audio_cpp_configuration_revision=self.current_configuration_revision,
             runtime_status_store=self.runtime_status_store,
@@ -2088,7 +2110,9 @@ async def test_realtime_semantic_mode_deletes_the_server_vad_keys(
     """Switching back to semantic must not leave stale server_vad numbers
     in config for a later reader to hand the provider."""
     monkeypatch.setattr(
-        speech_tts_settings_panel_module, "_read_realtime_turn_detection", lambda: "server_vad"
+        speech_tts_settings_panel_module,
+        "_read_realtime_turn_detection",
+        lambda: "server_vad",
     )
     calls: list[tuple[tuple, dict]] = []
     monkeypatch.setattr(
@@ -2225,7 +2249,9 @@ async def test_realtime_toggle_and_save_writes_exact_keys_through_shared_helper(
         panel = app.query_one("#panel", SpeechTTSSettingsPanel)
         await _settle(pilot)
         app.query_one("#settings-speech-realtime-enabled", Switch).value = True
-        app.query_one("#settings-speech-realtime-model", Input).value = "gpt-realtime-mini"
+        app.query_one(
+            "#settings-speech-realtime-model", Input
+        ).value = "gpt-realtime-mini"
         app.query_one("#settings-speech-realtime-voice", Input).value = "marin"
         app.query_one(
             "#settings-speech-realtime-idle-timeout-minutes", Input
@@ -2374,9 +2400,7 @@ async def test_realtime_save_failure_surfaces_error_and_keeps_draft_dirty(
         await pilot.pause()
 
         assert panel.has_unsaved_changes() is True
-        result = str(
-            app.query_one("#settings-speech-save-result", Static).renderable
-        )
+        result = str(app.query_one("#settings-speech-save-result", Static).renderable)
         assert "not saved" in result.lower()
 
 
@@ -2395,9 +2419,7 @@ async def test_realtime_block_dirty_state_and_revert() -> None:
         await panel.revert_to_saved()
         await pilot.pause()
 
-        assert (
-            app.query_one("#settings-speech-realtime-enabled", Switch).value is False
-        )
+        assert app.query_one("#settings-speech-realtime-enabled", Switch).value is False
         assert panel.has_unsaved_changes() is False
 
 
@@ -2439,3 +2461,218 @@ async def test_realtime_and_tts_changes_save_together_in_one_click(
             )
         )
         assert panel.has_unsaved_changes() is False
+
+
+@pytest.mark.asyncio
+async def test_selecting_a_default_voice_profile_saves_its_id() -> None:
+    app = _PanelHarness(configure_provider="openai")
+    async with app.run_test(size=(150, 60)) as pilot:
+        select = app.query_one("#settings-speech-default-profile", Select)
+        select.value = "3f2504e0-4f89-11d3-9a0c-0305e82c3301"
+        await pilot.click("#settings-speech-save")
+        await pilot.pause()
+
+        assert app.events
+        assert app.events[0].settings["default_profile_id"] == (
+            "3f2504e0-4f89-11d3-9a0c-0305e82c3301"
+        )
+
+
+@pytest.mark.asyncio
+async def test_choosing_none_clears_the_default_voice_profile() -> None:
+    # Seed a state whose saved default is already the picker's known profile,
+    # then act by choosing "None — use the fields below".
+    state = load_global_speech_tts_state({})
+    state.defaults.default_profile_id = "3f2504e0-4f89-11d3-9a0c-0305e82c3301"
+    app = _PanelHarness(configure_provider="openai", state=state)
+    async with app.run_test(size=(150, 60)) as pilot:
+        select = app.query_one("#settings-speech-default-profile", Select)
+        assert select.value == "3f2504e0-4f89-11d3-9a0c-0305e82c3301"
+
+        select.value = ""  # the panel's blank sentinel
+        await pilot.click("#settings-speech-save")
+        await pilot.pause()
+
+        assert app.events
+        assert "default_profile_id" in app.events[0].delete_setting_keys
+        assert "default_profile_id" not in app.events[0].settings
+
+
+@pytest.mark.asyncio
+async def test_unavailable_profile_store_keeps_the_saved_id_and_says_so() -> None:
+    # Seed a saved default, then construct with profiles=None + an explicit
+    # "confirmed unavailable" flag -- distinct from the default "loading"
+    # state (see the next test), which must never say "unavailable".
+    state = load_global_speech_tts_state({})
+    state.defaults.default_profile_id = "3f2504e0-4f89-11d3-9a0c-0305e82c3301"
+    app = _PanelHarness(
+        configure_provider="openai",
+        state=state,
+        profiles=None,
+        profiles_unavailable=True,
+    )
+    async with app.run_test(size=(150, 60)) as pilot:
+        await pilot.pause()
+        rendered = str(
+            app.query_one("#settings-speech-default-profile-note", Static).renderable
+        )
+
+        assert "3f2504e0-4f89-11d3-9a0c-0305e82c3301" in rendered
+        assert "unavailable" in rendered.lower()
+        # Never silently cleared or dropped: the Select still carries the
+        # saved id as its value, and the raw pick survives untouched.
+        select = app.query_one("#settings-speech-default-profile", Select)
+        assert select.value == "3f2504e0-4f89-11d3-9a0c-0305e82c3301"
+
+
+@pytest.mark.asyncio
+async def test_default_profile_store_loading_state_is_distinct_from_unavailable() -> (
+    None
+):
+    """Regression coverage for task 3 review round 1's IMPORTANT finding:
+    `_render_detail_pane` starts the fetch and reads the cache in the same
+    call, so it is always `None` on first paint -- that must render as
+    "loading", never "unavailable" (a healthy store must not look broken).
+    """
+    state = load_global_speech_tts_state({})
+    state.defaults.default_profile_id = "3f2504e0-4f89-11d3-9a0c-0305e82c3301"
+    # profiles=None with the default profiles_unavailable=False -- exactly
+    # what `_render_detail_pane` passes on a session's first visit, before
+    # its background fetch has had a chance to resolve.
+    app = _PanelHarness(configure_provider="openai", state=state, profiles=None)
+    async with app.run_test(size=(150, 60)) as pilot:
+        await pilot.pause()
+        rendered = str(
+            app.query_one("#settings-speech-default-profile-note", Static).renderable
+        )
+
+        assert "loading" in rendered.lower()
+        assert "unavailable" not in rendered.lower()
+        # Still never dropped while loading.
+        select = app.query_one("#settings-speech-default-profile", Select)
+        assert select.value == "3f2504e0-4f89-11d3-9a0c-0305e82c3301"
+
+
+@pytest.mark.asyncio
+async def test_dangling_default_profile_id_is_flagged_when_the_store_is_available() -> (
+    None
+):
+    """MINOR finding from task 3 review round 1: the store answers
+    successfully, but the saved id isn't among the known profiles (e.g. the
+    profile was deleted elsewhere). Distinct from "store unavailable" --
+    same honesty requirement, different cause."""
+    state = load_global_speech_tts_state({})
+    state.defaults.default_profile_id = "3f2504e0-4f89-11d3-9a0c-0305e82c3301"
+    app = _PanelHarness(
+        configure_provider="openai",
+        state=state,
+        profiles=[("Some Other Voice", "9c858901-8a57-4791-81fe-4c455b099bc9")],
+    )
+    async with app.run_test(size=(150, 60)) as pilot:
+        await pilot.pause()
+        rendered = str(
+            app.query_one("#settings-speech-default-profile-note", Static).renderable
+        )
+
+        assert "3f2504e0-4f89-11d3-9a0c-0305e82c3301" in rendered
+        assert "not found" in rendered.lower() or "deleted" in rendered.lower()
+        select = app.query_one("#settings-speech-default-profile", Select)
+        assert select.value == "3f2504e0-4f89-11d3-9a0c-0305e82c3301"
+
+
+@pytest.mark.asyncio
+async def test_apply_profile_choices_preserves_the_current_selection() -> None:
+    """The narrow live-update mechanism (`apply_profile_choices`, called by
+    settings_screen.py once its background fetch resolves) must never reset
+    an in-progress pick -- `Select.set_options()` resets the selection by
+    default, which is exactly the "silently reverts the user's choice" bug
+    this test guards against.
+    """
+    app = _PanelHarness(configure_provider="openai")
+    async with app.run_test(size=(150, 60)) as pilot:
+        panel = app.query_one("#panel", SpeechTTSSettingsPanel)
+        select = app.query_one("#settings-speech-default-profile", Select)
+        select.value = "3f2504e0-4f89-11d3-9a0c-0305e82c3301"
+        await pilot.pause()
+
+        panel.apply_profile_choices(
+            [
+                ("Test Voice", "3f2504e0-4f89-11d3-9a0c-0305e82c3301"),
+                ("Another Voice", "9c858901-8a57-4791-81fe-4c455b099bc9"),
+            ]
+        )
+        await pilot.pause()
+
+        assert select.value == "3f2504e0-4f89-11d3-9a0c-0305e82c3301"
+        note = str(
+            app.query_one("#settings-speech-default-profile-note", Static).renderable
+        )
+        assert note == ""
+
+
+@pytest.mark.asyncio
+async def test_saving_only_the_default_profile_settles_the_dirty_state() -> None:
+    """Mutation-check target for the request_save()/has_unsaved_changes() fix.
+
+    `default_profile_id` lives outside `TTSPreferencesSnapshot`, so a save
+    that changes *only* this field must still update `original_state.defaults`
+    on success -- otherwise the panel keeps reporting unsaved changes forever
+    after a successful save (see request_save()'s `defaults_changed`).
+    """
+    app = _PanelHarness(configure_provider="openai")
+    async with app.run_test(size=(150, 60)) as pilot:
+        panel = app.query_one("#panel", SpeechTTSSettingsPanel)
+        select = app.query_one("#settings-speech-default-profile", Select)
+        select.value = "3f2504e0-4f89-11d3-9a0c-0305e82c3301"
+        await pilot.pause()
+        assert panel.has_unsaved_changes() is True
+
+        request_id = panel.request_save()
+        assert request_id is not None
+        await pilot.pause()
+
+        panel.receive_stts_settings_save_result(
+            STTSSettingsSaveResult(
+                request_id=request_id,
+                persisted=True,
+                provider_statuses={"openai": "unchanged"},
+                provider_configuration_revisions={"openai": 1},
+                provider_runtime_revisions={"openai": 1},
+            )
+        )
+
+        assert panel.has_unsaved_changes() is False
+        assert panel.original_state.defaults.default_profile_id == (
+            "3f2504e0-4f89-11d3-9a0c-0305e82c3301"
+        )
+
+
+@pytest.mark.asyncio
+async def test_default_profile_dirty_check_does_not_depend_on_provider_validity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """has_unsaved_changes()'s per-provider loop incidentally folds in a
+    default-profile diff too (build_global_speech_tts_save_proposal computes
+    it independent of `configure_provider`) -- but only when at least one
+    provider's own fields still validate. If every provider proposal raises
+    (all providers incomplete/invalid), that fallback can't run, so the
+    explicit default_profile_id comparison is the only thing left standing
+    between a real change and an incorrectly "clean" dirty state.
+    """
+
+    def _always_invalid(*_args: object, **_kwargs: object) -> None:
+        raise GlobalSpeechTTSValidationError("openai", "base_url", "boom")
+
+    monkeypatch.setattr(
+        speech_tts_settings_panel_module,
+        "build_global_speech_tts_save_proposal",
+        _always_invalid,
+    )
+    app = _PanelHarness(configure_provider="openai")
+    async with app.run_test(size=(150, 60)) as pilot:
+        panel = app.query_one("#panel", SpeechTTSSettingsPanel)
+        select = app.query_one("#settings-speech-default-profile", Select)
+        select.value = "3f2504e0-4f89-11d3-9a0c-0305e82c3301"
+        await pilot.pause()
+
+        assert panel.has_unsaved_changes() is True

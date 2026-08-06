@@ -4727,7 +4727,14 @@ class STTSWindow(Container):
             if self._pending_playground_navigation is navigation_target:
                 self._pending_playground_navigation = None
         elif new_view == "profiles":
-            content_container.mount(STTSProfileLibrary(self._load_profile_service))
+            content_container.mount(
+                STTSProfileLibrary(
+                    self._load_profile_service,
+                    default_profile_id_reader=(
+                        lambda: get_cli_setting("app_tts", "default_profile_id", None)
+                    ),
+                )
+            )
         elif new_view == "settings":
             adopted = self._pending_adopted_preset
             content_container.mount(

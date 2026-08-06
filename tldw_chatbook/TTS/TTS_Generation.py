@@ -42,6 +42,7 @@ from tldw_chatbook.TTS.preferences import TTSPreferencesSnapshot
 from tldw_chatbook.TTS.effective_settings import (
     NativeCapabilityReader,
     TTSCharacterProfileSelection,
+    TTSDefaultProfileSelection,
     TTSEffectiveSelectionSnapshot,
     TTSSelectionOverrides,
     TTSStudioDraftSelection,
@@ -1115,6 +1116,7 @@ class TTSService:
         text: str,
         explicit: TTSSelectionOverrides | None = None,
         character_profile: TTSCharacterProfileSelection | None = None,
+        default_profile: TTSDefaultProfileSelection | None = None,
         studio_draft: TTSStudioDraftSelection | None = None,
         studio_preferences: StudioTTSPreferencesSnapshot | None = None,
         progress_sink: ProgressSink | None = None,
@@ -1125,6 +1127,7 @@ class TTSService:
             text=text,
             explicit=explicit,
             character_profile=character_profile,
+            default_profile=default_profile,
             studio_draft=studio_draft,
             studio_preferences=studio_preferences,
             progress_sink=progress_sink,

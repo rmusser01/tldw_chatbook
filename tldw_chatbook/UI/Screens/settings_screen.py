@@ -1944,6 +1944,22 @@ class SettingsScreen(BaseAppScreen):
         self._speech_tts_original_state: GlobalSpeechTTSState | None = None
         self._speech_tts_leave_in_progress = False
         self._speech_tts_leave_bypass = False
+        #: (display_name, profile_id) choices for the "Default voice profile"
+        #: picker. `None` means the profile store hasn't answered yet (the
+        #: default) OR answered with failure -- `_speech_tts_profile_choices_
+        #: unavailable` distinguishes those two so the panel can render a
+        #: genuine "loading" state that is never worded like "unavailable"
+        #: (task 3 review round 1: the two were getting collapsed together
+        #: because `_render_detail_pane` read this cache in the same call
+        #: that kicked off the async fetch, always seeing it still `None`
+        #: with no way to tell "hasn't answered" from "failed"). Loaded once
+        #: per screen instance by `_load_speech_tts_default_profile_choices`;
+        #: once it resolves, the mounted panel is updated narrowly via
+        #: `apply_profile_choices` (never a recompose -- that stole focus,
+        #: see the same review round).
+        self._speech_tts_profile_choices: list[tuple[str, str]] | None = None
+        self._speech_tts_profile_choices_unavailable = False
+        self._speech_tts_profile_choices_requested = False
         #: One-shot focus intent (task-290): `Widget.focus()` defers its
         #: set_focus via call_later, so a storm recompose can destroy the
         #: target between intent and processing. Recorded when navigation
@@ -2552,7 +2568,6 @@ class SettingsScreen(BaseAppScreen):
 
     def _domain_category_contracts(self) -> tuple[SettingsDomainCategoryContract, ...]:
         return SETTINGS_DOMAIN_CATEGORY_CONTRACTS
-
 
     def _domain_contract_by_category(
         self,
@@ -4218,7 +4233,6 @@ class SettingsScreen(BaseAppScreen):
         except QueryError:
             return
         button.label = self._category_button_label(summary)
-
 
     def _active_category_id(self) -> SettingsCategoryId:
         return SettingsCategoryId(self.active_category)
@@ -8800,7 +8814,10 @@ class SettingsScreen(BaseAppScreen):
                     "Saved as",
                     f"{provider_config_prefix}.model_defaults.<model>.streaming",
                 ),
-                ("Validation", "choose On or Off; Inherit default keeps the inherited default"),
+                (
+                    "Validation",
+                    "choose On or Off; Inherit default keeps the inherited default",
+                ),
             )
         if field_id == "settings-model-catalog-stale-hours":
             return (
@@ -9151,9 +9168,7 @@ class SettingsScreen(BaseAppScreen):
             group_heading.display = bool(visible_categories)
             yield group_heading
             group_expanded = (
-                not is_domain_group
-                or search_active
-                or self._domain_group_is_expanded()
+                not is_domain_group or search_active or self._domain_group_is_expanded()
             )
             for category_id in category_ids:
                 summary = summaries_by_id[category_id]
@@ -9518,9 +9533,7 @@ class SettingsScreen(BaseAppScreen):
                 id="settings-model-catalog-group",
                 classes="settings-instant-apply-group",
             ):
-                yield Static(
-                    "Automatic refresh", classes="destination-section"
-                )
+                yield Static("Automatic refresh", classes="destination-section")
                 yield Static(
                     INSTANT_APPLY_BEHAVIOR_COPY,
                     id="settings-model-catalog-instant-hint",
@@ -9532,7 +9545,9 @@ class SettingsScreen(BaseAppScreen):
                     id="settings-model-catalog-auto-refresh",
                 )
                 with Horizontal(classes="settings-input-row"):
-                    yield Static("Refresh after (hours):", classes="settings-status-row")
+                    yield Static(
+                        "Refresh after (hours):", classes="settings-status-row"
+                    )
                     yield Input(
                         f"{model_catalog_settings.stale_after_hours:g}",
                         id="settings-model-catalog-stale-hours",
@@ -9553,7 +9568,8 @@ class SettingsScreen(BaseAppScreen):
                         )
                         yield Checkbox(
                             "save to config",
-                            value=_provider_key in model_catalog_settings.write_to_config,
+                            value=_provider_key
+                            in model_catalog_settings.write_to_config,
                             id=f"settings-mc-write-{_pid}",
                             tooltip=(
                                 "Append newly discovered models to config.toml — "
@@ -10239,7 +10255,9 @@ class SettingsScreen(BaseAppScreen):
             f"{update.get('failed', 0)} failed"
         )
 
-    def _apply_library_rag_backfill_progress(self, update: Mapping[str, object]) -> None:
+    def _apply_library_rag_backfill_progress(
+        self, update: Mapping[str, object]
+    ) -> None:
         """Imperatively update the index-status Static with a live per-batch
         backfill progress line -- called off-thread (via ``call_from_thread``)
         from ``_rag_backfill_worker``'s ``progress_callback``.
@@ -11486,9 +11504,7 @@ class SettingsScreen(BaseAppScreen):
         so the row states the reason instead of offering a dead toggle.
         Copy stays monochrome per the pane's conventions.
         """
-        yield Static(
-            "Change review (post-run diffs)", classes="destination-section"
-        )
+        yield Static("Change review (post-run diffs)", classes="destination-section")
         from tldw_chatbook.Workspaces.change_tracking import ShadowRepoService
 
         if not ShadowRepoService().available:
@@ -11506,8 +11522,7 @@ class SettingsScreen(BaseAppScreen):
             # Qodo #1264: the per-workspace toggle is moot under the
             # global kill switch — say so instead of claiming tracking.
             yield Static(
-                "Change review is disabled globally "
-                "([change_review] enabled = false).",
+                "Change review is disabled globally ([change_review] enabled = false).",
                 id="settings-workspace-change-review-global-off",
                 classes="settings-detail-row",
             )
@@ -11665,6 +11680,70 @@ class SettingsScreen(BaseAppScreen):
                 applied_revisions[provider_id] = applied_revision
         return observation, saved_revisions, runtime_revisions, applied_revisions
 
+    @work(exclusive=True, group="settings-speech-profile-choices")
+    async def _load_speech_tts_default_profile_choices(self) -> None:
+        """Best-effort fetch of known voice profiles for the "Default voice
+        profile" picker (slice 3, task 3).
+
+        `speech_tts_settings_panel.py` is the PURE model and must never load
+        profiles itself -- this impure screen owns that I/O and hands the
+        panel a static list, per the purity boundary. The fetch never blocks
+        the first render: `_render_detail_pane` always yields immediately
+        with whatever is cached so far, honestly `None`/"loading" until this
+        resolves (task 3 review round 1: `_render_detail_pane` reads the
+        cache in the SAME call that starts this worker, so it is always
+        still `None` on first paint -- that must render as "loading", never
+        "unavailable", which is why the panel now distinguishes the two).
+
+        On resolution, does NOT force a recompose -- an earlier version did
+        (`mutate_reactive(active_category)`) and that landed after a
+        deep-link navigation and stole focus (confirmed live against
+        `test_bounded_speech_settings_deep_link_restores_provider_without_
+        action`, same review round). Instead, the currently-mounted panel
+        (if any) is updated narrowly via `apply_profile_choices`, mirroring
+        `personas_screen.py`'s `_publish_character_tts_presentation` ->
+        `control.apply_state(state)` pattern: touches only the Select's
+        options/value and the note's text, never focus, so it is safe to
+        call at any time including mid-edit.
+
+        Any failure (no profile service, store unavailable, I/O error)
+        reports `unavailable=True` with an empty cache -- the panel's own
+        honesty requirement, never fabricated.
+        """
+        loader = getattr(self.app_instance, "_ensure_tts_profile_service", None)
+        choices: list[tuple[str, str]] | None = None
+        failed = False
+        if not callable(loader):
+            failed = True
+        else:
+            try:
+                service = await loader()
+                if service is None:
+                    failed = True
+                else:
+                    page = await service.list_profiles(search=None, offset=0)
+                    choices = [
+                        (profile.display_name, str(profile.profile_id))
+                        for profile in page.profiles
+                    ]
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # noqa: BLE001 - optional store, never crash Settings
+                logger.debug(
+                    "Speech & TTS default-profile choices unavailable: %s",
+                    type(exc).__name__,
+                )
+                failed = True
+        self._speech_tts_profile_choices = choices
+        self._speech_tts_profile_choices_unavailable = failed
+        if not getattr(self, "is_mounted", False):
+            return
+        try:
+            panel = self.query_one(SpeechTTSSettingsPanel)
+        except QueryError:
+            return
+        panel.apply_profile_choices(choices, unavailable=failed)
+
     def _render_detail_pane(self) -> ComposeResult:
         category = SettingsCategoryId(self.active_category)
         if category is SettingsCategoryId.OVERVIEW:
@@ -11685,10 +11764,15 @@ class SettingsScreen(BaseAppScreen):
                 )
             except (OSError, TypeError, ValueError):
                 speech_tts_state = load_global_speech_tts_state({})
+            if not self._speech_tts_profile_choices_requested:
+                self._speech_tts_profile_choices_requested = True
+                self._load_speech_tts_default_profile_choices()
             yield SpeechTTSSettingsPanel(
                 state=self._speech_tts_draft_state or speech_tts_state,
                 original_state=self._speech_tts_original_state,
                 configure_provider=self._speech_tts_configure_provider,
+                profiles=self._speech_tts_profile_choices,
+                profiles_unavailable=self._speech_tts_profile_choices_unavailable,
                 audio_cpp_observation=audio_cpp_observation,
                 audio_cpp_configuration_revision=provider_runtime_revisions.get(
                     "audio_cpp"
@@ -12548,7 +12632,8 @@ class SettingsScreen(BaseAppScreen):
                     else VerticalScroll
                 )
                 detail_pane = Vertical(
-                    id="settings-detail-pane", classes="destination-workbench-pane" + pane_class_suffix
+                    id="settings-detail-pane",
+                    classes="destination-workbench-pane" + pane_class_suffix,
                 )
                 # Inline height: same bundle-collapse guard as the impact
                 # pane below.
@@ -12568,7 +12653,8 @@ class SettingsScreen(BaseAppScreen):
                 yield self._column_divider("settings-detail-impact-divider")
                 impact_pane = Vertical(
                     id="settings-impact-pane",
-                    classes="destination-workbench-pane ds-inspector" + pane_class_suffix,
+                    classes="destination-workbench-pane ds-inspector"
+                    + pane_class_suffix,
                 )
                 # Explicit height: under the real CSS bundle the pane class
                 # sizes a scroll container, not a plain Vertical -- without
@@ -13660,9 +13746,7 @@ class SettingsScreen(BaseAppScreen):
         )
 
     @on(Collapsible.Toggled, "#settings-overview-sync-details")
-    def handle_overview_sync_details_toggled(
-        self, event: Collapsible.Toggled
-    ) -> None:
+    def handle_overview_sync_details_toggled(self, event: Collapsible.Toggled) -> None:
         # task-1369 (review): persist disclosure state across recomposes.
         self._overview_sync_details_collapsed = event.collapsible.collapsed
 
@@ -14026,9 +14110,7 @@ class SettingsScreen(BaseAppScreen):
         self._update_draft_status_widgets(SettingsCategoryId.CONSOLE_BEHAVIOR)
 
     @on(Checkbox.Changed, "#settings-console-default-streaming")
-    def handle_console_default_streaming_changed(
-        self, event: Checkbox.Changed
-    ) -> None:
+    def handle_console_default_streaming_changed(self, event: Checkbox.Changed) -> None:
         event.stop()
         if self._syncing_console_defaults:
             return
@@ -16813,10 +16895,8 @@ class SettingsScreen(BaseAppScreen):
                     pass
             for selector, (enum_key, value) in select_values.items():
                 try:
-                    self.query_one(selector, Select).value = (
-                        self._select_option_value(
-                            value, CLOSED_ENUM_SELECT_OPTIONS[enum_key]
-                        )
+                    self.query_one(selector, Select).value = self._select_option_value(
+                        value, CLOSED_ENUM_SELECT_OPTIONS[enum_key]
                     )
                 except QueryError:
                     pass

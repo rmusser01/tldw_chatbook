@@ -445,6 +445,8 @@ class _DefaultService:
                     studio_preferences=None,
                     character_repository=character_profile.repository_generation,
                     character_profile=character_profile.profile_revision,
+                    default_profile_repository=None,
+                    default_profile_revision=None,
                     provider_configuration=3,
                     provider_catalog=None,
                 ),

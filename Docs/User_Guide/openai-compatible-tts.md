@@ -88,6 +88,42 @@ form: **Provider setup** → **Configure Provider** → **AllTalk**, then set
 **Server URL** (default `http://127.0.0.1:7851`) and **Default language**,
 and set **Default TTS Provider** → **AllTalk**. No key is needed.
 
+## App-wide default voice profile
+
+Beyond pointing individual axes (Provider / Model / Voice) at your server,
+**Global defaults** also has a **Default voice profile** selector at the
+very top of the card — above Default TTS Provider, since it outranks those
+fields. It lets you name one saved voice profile as the assistant's
+app-wide default voice, used for Console speech whenever no
+character-specific voice applies.
+
+- **Options:** "None — use the fields below" (the previous behavior — the
+  Default TTS Provider / Model / Voice fields underneath decide), plus one
+  entry per voice profile you've saved (Lab ▸ Speech ▸ Voice Profiles or
+  the Playground's "Save result as profile").
+- **Live-linked.** Editing the chosen profile elsewhere (its provider,
+  model, or voice) changes what speaks everywhere it's the default — you
+  never need to reselect it here.
+- **Precedence:** explicit request → a character's assigned voice → this
+  default profile → the Model/Voice fields below → provider fallback. A
+  character's own assigned voice always wins over the app-wide default;
+  the default profile only applies when no character-specific voice does.
+- **If the profile becomes unusable** (deleted, the profile store is
+  unavailable, or the saved id is malformed), speech does **not** silently
+  fall back — it refuses and offers a one-tap **"Use global voice?"**
+  confirmation naming the default voice specifically (never
+  mislabeled as a character voice, even on a message with no character
+  context at all). Settings itself never silently clears a saved-but-broken
+  selection: the picker keeps showing it (as "*id* (unavailable)") with an
+  explanatory note, until you pick something else.
+- **While the profile list is still loading** (e.g. right after opening
+  Settings), the note under the selector reads "Loading voice profiles…"
+  rather than a false "unavailable" — that only appears once the store has
+  actually confirmed the saved profile is gone.
+- **Deleting the profile that is the current app default warns you first**
+  in the Voice Profiles library's delete confirmation, in addition to any
+  character assignments it already reports.
+
 ## Quirks & troubleshooting
 
 - **"Unable to connect to TTS service"** — the server isn't running at the
@@ -111,4 +147,11 @@ and set **Default TTS Provider** → **AllTalk**. No key is needed.
 —
 *Verified against dev @ 265dbd687 — 2026-08-04 (labels quoted from
 `speech_tts_settings_panel.py`; keyless/passthrough behavior shipped in
-TASK-2260, PR #1332).*
+TASK-2260, PR #1332). Verified against 0c24f50d9 — 2026-08-06 (voice
+profiles slice 3, task 6 live check: default voice profile set and saved
+through Settings ▸ Speech & TTS ▸ Global defaults; a real OpenAI Console
+speak with no character active used the default profile's voice, not the
+global axes voice; deleting that profile made speech refuse with the
+"Use global voice?" dialog naming the default voice, not a character
+voice; a fresh Settings open resolved the picker straight to the real
+profile list with no false "unavailable").*

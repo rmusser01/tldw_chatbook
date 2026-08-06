@@ -20,6 +20,7 @@ from tldw_chatbook.TTS.audio_schemas import OpenAISpeechRequest
 from tldw_chatbook.TTS.effective_settings import (
     NativeCapabilityReader,
     TTSCharacterProfileSelection,
+    TTSDefaultProfileSelection,
     TTSEffectiveResolutionError,
     TTSEffectiveSelectionSnapshot,
     TTSEffectiveSettingsResolver,
@@ -171,6 +172,7 @@ class TTSRequestAdmissionCoordinator:
         text: str,
         explicit: TTSSelectionOverrides | None = None,
         character_profile: TTSCharacterProfileSelection | None = None,
+        default_profile: TTSDefaultProfileSelection | None = None,
         studio_draft: TTSStudioDraftSelection | None = None,
         studio_preferences: StudioTTSPreferencesSnapshot | None = None,
         progress_sink: ProgressSink | None = None,
@@ -183,6 +185,10 @@ class TTSRequestAdmissionCoordinator:
             type(character_profile) is not TTSCharacterProfileSelection
         ):
             raise TypeError("Character TTS profile selection is invalid")
+        if default_profile is not None and (
+            type(default_profile) is not TTSDefaultProfileSelection
+        ):
+            raise TypeError("Default-profile TTS selection is invalid")
         if (
             studio_draft is not None
             and type(studio_draft) is not TTSStudioDraftSelection
@@ -194,7 +200,11 @@ class TTSRequestAdmissionCoordinator:
             raise TypeError("Saved Studio TTS preferences are invalid")
 
         studio_request = studio_draft is not None or studio_preferences is not None
-        if studio_request and (explicit is not None or character_profile is not None):
+        if studio_request and (
+            explicit is not None
+            or character_profile is not None
+            or default_profile is not None
+        ):
             raise TypeError("Studio TTS resolution cannot use non-Studio layers")
         if studio_request and studio_preferences is None:
             raise TypeError("Studio TTS resolution requires saved preferences")
@@ -207,6 +217,11 @@ class TTSRequestAdmissionCoordinator:
                     (
                         character_profile.selection.provider_id
                         if character_profile is not None
+                        else None
+                    ),
+                    (
+                        default_profile.selection.provider_id
+                        if default_profile is not None
                         else None
                     ),
                     (
@@ -289,6 +304,7 @@ class TTSRequestAdmissionCoordinator:
                     selection = await self._effective_settings.resolve_non_studio(
                         explicit=explicit,
                         character_profile=character_profile,
+                        default_profile=default_profile,
                         global_preferences=preferences,
                         global_preferences_revision=self._preferences_generation,
                         provider_revision_reader=(self._service.configuration_revision),
