@@ -99,6 +99,13 @@ class LocalToolProvider:
         return f"{SOURCE}:{name}"
 
     def list_catalog(self) -> list[ToolCatalogEntry]:
+        """List this run's local tools as catalog entries.
+
+        Returns:
+            One ``ToolCatalogEntry`` per registered spec, id'd
+            ``local:<name>`` and sourced ``"local"``, in registration
+            order.
+        """
         return [
             ToolCatalogEntry(
                 id=self._tool_id(s.name),
@@ -110,6 +117,18 @@ class LocalToolProvider:
         ]
 
     def load_schema(self, tool_id: str) -> ToolSchema:
+        """Load one tool's full schema by catalog id or bare name.
+
+        Args:
+            tool_id: The catalog id (``local:<name>``) or bare tool name
+                to load.
+
+        Returns:
+            The tool's ``ToolSchema`` (id, name, description, parameters).
+
+        Raises:
+            KeyError: If ``tool_id`` names no registered local tool.
+        """
         name = tool_id.split(":", 1)[1] if ":" in tool_id else tool_id
         spec = self._specs[name]
         return ToolSchema(
@@ -118,7 +137,20 @@ class LocalToolProvider:
         )
 
     def hub_tool_for(self, name: str) -> HubTool:
-        """The HubTool view used for permission resolution (carries risk tags)."""
+        """Build the ``HubTool`` view used for permission resolution.
+
+        Args:
+            name: The bare local tool name (e.g. ``fs_list``).
+
+        Returns:
+            A ``HubTool`` carrying the synthetic ``local:__local__`` server
+            key plus the spec's description, input schema, and risk tags --
+            the exact payload ``resolve_state``/``set_tool_state``
+            fingerprint (definition_hash rug-pull guard).
+
+        Raises:
+            KeyError: If ``name`` is not a registered local tool.
+        """
         spec = self._specs[name]
         return HubTool(
             server_key=LOCAL_SERVER_KEY,
