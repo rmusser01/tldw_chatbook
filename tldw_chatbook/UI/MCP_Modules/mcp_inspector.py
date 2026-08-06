@@ -1212,6 +1212,22 @@ class MCPInspector(Vertical):
         (re-enabled). The `advanced_open` disclosure preference is left
         untouched -- collapsing-vs-expanded is a separate, already
         reversible choice the Collapsible's own triangle owns.
+
+        Fix Round G, Item 6: this panel's real-output policy, stated once.
+        `collapsible.remove()` below is a genuine TEARDOWN -- the whole
+        widget tree (including `#mcp-adv-result`'s run output/refusal
+        text) is destroyed, and `_reveal_advanced()` rebuilds a fresh one
+        from scratch (`_build_advanced_collapsible()`, a blank `Static("",
+        id="mcp-adv-result", ...)`) on the next reveal. Output does not,
+        and structurally cannot, survive a hide/reveal cycle. Every OTHER
+        interaction with this pane -- section change, rebind, action
+        switch, payload edit, collapse/expand of the disclosure triangle
+        (Fix Round E, Item 1; Fix Round G, Items 1-2) -- keeps the widget
+        tree mounted and therefore preserves real output, clearing only a
+        LIVE confirm arm/sentence (`_was_armed`-gated at each of those
+        sites). The rule: destroying the DOM subtree destroys its
+        content, by construction; anything short of that destruction
+        preserves it, by choice.
         """
         if not self._advanced_visible:
             return
