@@ -9,7 +9,7 @@ from textual.containers import Horizontal, Vertical
 from textual.css.query import NoMatches
 from textual.message import Message
 from textual.reactive import reactive
-from textual.widgets import Button, DataTable, Input, Select, Static
+from textual.widgets import Button, DataTable, Input, Select
 from textual.widgets.data_table import CellDoesNotExist, ColumnKey
 
 from ...Widgets.prune_safe_select import PruneSafeSelect

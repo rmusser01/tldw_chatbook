@@ -63,7 +63,7 @@ def sample_items():
 @pytest.mark.asyncio
 async def test_items_pane_renders_table_and_toolbar():
     app = ItemsPaneHarness()
-    async with app.run_test(size=(120, 40)) as pilot:
+    async with app.run_test(size=(120, 40)):
         pane = app.query_one(ItemsPane)
         assert pane.query_one("#items-refresh-button", Button)
         assert pane.query_one("#items-search-input", Input)
