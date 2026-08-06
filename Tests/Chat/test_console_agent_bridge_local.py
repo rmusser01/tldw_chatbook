@@ -96,7 +96,8 @@ def test_combined_stamp_scope_isolates_both(tmp_path):
     assert p1.stamps == {"x": "approve_once"} and p2.stamps == {"x": "approve_once"}
     assert p1.log == ["enter", "exit"] and p2.log == ["enter", "exit"]
     assert _combine_state_scopes([]) is None
-    assert _combine_state_scopes([p1.stamp_scope]) is p1.stamp_scope
+    single = p1.stamp_scope  # bound methods: capture once for identity
+    assert _combine_state_scopes([single]) is single
 
 
 def test_provider_without_stamp_scope_is_skipped():

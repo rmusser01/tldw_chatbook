@@ -221,6 +221,27 @@ def test_compose_local_provider_empty_workspace_root_uses_cwd(
     assert local_provider._root == tmp_path.resolve()
 
 
+def test_compose_local_provider_tilde_workspace_root_expands_home(
+    monkeypatch, tmp_path
+):
+    """A configured ``~/repo`` must expand against HOME (PR #1352 review):
+    without expanduser() the root would resolve to a literal "~" directory
+    under the cwd."""
+    home = tmp_path / "home"
+    (home / "repo").mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setattr(
+        controller_mod,
+        "get_cli_setting",
+        _console_settings(workspace_root="~/repo"),
+    )
+    controller = _bare_controller(SimpleNamespace(unified_mcp_service=_FakeService()))
+
+    local_provider, _hook = controller._compose_local_provider()
+
+    assert local_provider._root == (home / "repo").resolve()
+
+
 def test_compose_local_provider_persists_session_and_always_allow(
     monkeypatch, tmp_path
 ):

@@ -3277,9 +3277,14 @@ class ConsoleChatController:
                 # hub.input_schema) itself -- required for the rug-pull guard.
                 service.set_tool_state(hub.server_key, hub.name, "allow", tool=hub)
 
-        root = Path(
-            get_cli_setting("console", "workspace_root", "") or os.getcwd()
-        ).resolve()
+        # expanduser() before resolve(): a configured "~/repo" must land
+        # under the user's home, not literal "~" under the cwd.
+        raw_root = (get_cli_setting("console", "workspace_root", "") or "").strip()
+        root = (
+            Path(raw_root).expanduser().resolve()
+            if raw_root
+            else Path(os.getcwd()).resolve()
+        )
         provider = LocalToolProvider(
             workspace_root=root,
             resolve_state=service.gate_tool_test,
@@ -7155,18 +7160,6 @@ class ConsoleChatController:
             session_id
         )
         self._mcp_provider = mcp_provider
-        # Local tools (ADR-032): same per-run composition point. Both
-        # hooks see every batch; each gates only what its provider owns,
-        # so the combined hook is a collision-free merge.
-        local_provider, local_review_hook = self._compose_local_provider()
-        review_hooks = [
-            hook
-            for hook in (mcp_review_hook, local_review_hook)
-            if hook is not None
-        ]
-        review_tool_calls = (
-            build_combined_review_hook(review_hooks) if review_hooks else None
-        )
 
         # task-545/T6: build THIS run's built-in permission gate and hand
         # the SAME instance to both the review hook (below) and
