@@ -302,6 +302,7 @@ class GlobalSpeechTTSDefaults:
     voice_id: str | None
     response_format: str
     speed: float
+    default_profile_id: str | None = None
 
     def snapshot(
         self,
@@ -518,6 +519,20 @@ def _value(
     default: object,
 ) -> object:
     return deepcopy(section.get(key, default))
+
+
+def _normalize_default_profile_id(value: object) -> str | None:
+    """Normalize an ``app_tts.default_profile_id`` load value.
+
+    Absent, non-string, empty, and whitespace-only values load as ``None``.
+    A non-empty string that is not a well-formed UUID still loads as-is: it
+    is a defined dangling state that later surfaces honestly and refuses at
+    speak time rather than being silently discarded here.
+    """
+    if not isinstance(value, str):
+        return None
+    stripped = value.strip()
+    return stripped or None
 
 
 def _credential_states(
@@ -758,6 +773,9 @@ def load_global_speech_tts_state(
             voice_id=preferences.voice_id,
             response_format=preferences.response_format,
             speed=preferences.speed,
+            default_profile_id=_normalize_default_profile_id(
+                _value(app_tts, "default_profile_id", None)
+            ),
         ),
         providers=providers,
         credentials=credentials,
@@ -1519,21 +1537,29 @@ def build_global_speech_tts_save_proposal(
     )
     if validated == original_validated:
         settings: dict[str, object] = {}
-        delete_setting_keys: tuple[str, ...] = ()
+        delete_setting_keys: list[str] = []
         changed_provider_ids: tuple[str, ...] = ()
     else:
         settings = _provider_event_settings(configure_provider, validated)
         delete_setting_keys = (
-            ("CHATTERBOX_RANDOM_SEED",)
+            ["CHATTERBOX_RANDOM_SEED"]
             if configure_provider == "chatterbox"
             and original_validated.get("random_seed") != ""
             and validated.get("random_seed") == ""
-            else ()
+            else []
         )
         changed_provider_ids = (configure_provider,)
+    # The saved default-profile pick is a distinct precedence rung above the
+    # raw defaults axes (`preferences`, above) and is never part of that
+    # snapshot, so it is diffed here independent of `configure_provider`.
+    if draft.defaults.default_profile_id != original.defaults.default_profile_id:
+        if draft.defaults.default_profile_id is None:
+            delete_setting_keys.append("default_profile_id")
+        else:
+            settings["default_profile_id"] = draft.defaults.default_profile_id
     return GlobalSpeechTTSSaveProposal(
         settings=MappingProxyType(settings),
-        delete_setting_keys=delete_setting_keys,
+        delete_setting_keys=tuple(delete_setting_keys),
         preferences=preferences,
         changed_provider_ids=changed_provider_ids,
     )

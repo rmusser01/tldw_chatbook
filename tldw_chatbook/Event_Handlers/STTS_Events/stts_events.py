@@ -109,6 +109,7 @@ _TTS_SETTING_BINDINGS = {
             ("tts_settings", "default_openai_tts_speed"),
         )
     ),
+    "default_profile_id": _app_tts_binding("default_profile_id"),
     "openai_api_key": _SettingBinding(
         (("api_settings.openai", "api_key"),),
         "openai",
