@@ -342,6 +342,12 @@ def default_briefing_provider() -> str:
     then the preset's own provider, then this app default -- so both
     generation paths agree on what "the default" means without duplicating
     the config read.
+
+    Returns:
+        The provider name a generation will use when no explicit provider
+        and no preset provider apply -- `config.default_api_endpoint`, or
+        config.py's own fallback when that is unset. Never empty, so a
+        caller may display it without a None-check.
     """
     from .. import config as app_config
 
