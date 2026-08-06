@@ -110,7 +110,7 @@ class WebSearchTool(Tool):
                         "position": i + 1,
                         "title": result.get("title", "No title"),
                         "url": result.get("url", ""),
-                        "snippet": result.get("snippet", "No description available"),
+                        "snippet": result.get("snippet") or result.get("content", "No description available"),
                     }
                     formatted_results.append(formatted_result)
 
