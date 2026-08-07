@@ -689,7 +689,12 @@ def test_local_manifest_helper_stays_aligned_with_registered_server_surface():
     expected_resources = _registered_entries("_register_resources", "resource")
     expected_prompts = _registered_entries("_register_prompts", "prompt")
 
-    assert helper_manifest["tools"] == expected_tools
+    # task-1337 (plan Task 9): the manifest now appends the 18
+    # descriptor-backed Library tools after the AST-derived legacy entries.
+    # This mirror keeps owning the legacy AST-walk alignment (first N tools,
+    # resources, prompts); Tests/MCP/test_library_tools.py owns the
+    # descriptor tail.
+    assert helper_manifest["tools"][: len(expected_tools)] == expected_tools
     assert helper_manifest["resources"] == expected_resources
     assert helper_manifest["prompts"] == expected_prompts
     assert any(
@@ -1901,3 +1906,116 @@ async def test_mcp_client_tool_resource_and_prompt_calls_use_jsonrpc_requests(
     assert "tools/call" in methods
     assert "resources/read" in methods
     assert "prompts/get" in methods
+
+
+# -- task-1337 (plan Task 9): Library tool policy mapping ----------------------
+#
+# Each of the 18 descriptor-backed ``library_*`` tools resolves to a read
+# action owned by its Library item type (list/search -> the type's ``list``
+# action, get -> its ``detail`` action). Collections get the dedicated
+# local-only ``library.collections`` resource -- never
+# ``collections.reading_list.*``. Both ``tool.execute`` previews and
+# ``tools/call`` runtime requests resolve through the same mapping, with the
+# generic MCP trigger retained as the fallback seam for unknown names.
+
+_LIBRARY_TOOL_POLICY_EXPECTATIONS = {
+    "library_list_media": ("media.reading.list.local", "media_reading_ingestion_sources"),
+    "library_get_media": ("media.reading.detail.local", "media_reading_ingestion_sources"),
+    "library_search_media": ("media.reading.list.local", "media_reading_ingestion_sources"),
+    "library_list_notes": ("notes.list.local", "notes_workspaces"),
+    "library_get_note": ("notes.detail.local", "notes_workspaces"),
+    "library_search_notes": ("notes.list.local", "notes_workspaces"),
+    "library_list_prompts": ("prompts.list.local", "prompts_chatbooks"),
+    "library_get_prompt": ("prompts.detail.local", "prompts_chatbooks"),
+    "library_search_prompts": ("prompts.list.local", "prompts_chatbooks"),
+    "library_list_skills": ("skills.list.local", "server_skills"),
+    "library_get_skill": ("skills.detail.local", "server_skills"),
+    "library_search_skills": ("skills.list.local", "server_skills"),
+    "library_list_conversations": ("chat.list.local", "chat"),
+    "library_get_conversation": ("chat.detail.local", "chat"),
+    "library_search_conversations": ("chat.list.local", "chat"),
+    "library_list_collections": ("library.collections.list.local", "library_collections"),
+    "library_get_collection": ("library.collections.detail.local", "library_collections"),
+    "library_search_collections": ("library.collections.list.local", "library_collections"),
+}
+
+
+def _library_policy_control_service() -> LocalMCPControlService:
+    return LocalMCPControlService(
+        store=FakeLocalStore(),
+        client=FakeMCPClient(),
+        manifest_provider=lambda: {},
+        runtime_delegate=FakeLocalRuntimeDelegate(),
+    )
+
+
+@pytest.mark.parametrize(
+    "tool_name,expected",
+    sorted(_LIBRARY_TOOL_POLICY_EXPECTATIONS.items()),
+    ids=sorted(_LIBRARY_TOOL_POLICY_EXPECTATIONS),
+)
+def test_library_tools_resolve_to_type_owned_read_actions(tool_name, expected):
+    service = _library_policy_control_service()
+    expected_action_id, expected_capability_id = expected
+
+    preview = service.preview_runtime_access(
+        "tool.execute", {"tool_name": tool_name, "arguments": {}}
+    )
+
+    assert preview["resolved_action_id"] == expected_action_id
+    assert preview["registry_capability_id"] == expected_capability_id
+    assert preview["decision"] == "inherit"
+
+
+@pytest.mark.parametrize(
+    "tool_name,expected",
+    sorted(_LIBRARY_TOOL_POLICY_EXPECTATIONS.items()),
+    ids=sorted(_LIBRARY_TOOL_POLICY_EXPECTATIONS),
+)
+def test_library_tools_call_requests_use_the_same_mapping(tool_name, expected):
+    service = _library_policy_control_service()
+    expected_action_id, expected_capability_id = expected
+
+    preview = service.preview_runtime_access(
+        "runtime.request",
+        {
+            "method": "tools/call",
+            "params": {"name": tool_name, "arguments": {}},
+        },
+    )
+
+    assert preview["resolved_action_id"] == expected_action_id
+    assert preview["registry_capability_id"] == expected_capability_id
+
+
+def test_unknown_tools_keep_the_generic_mcp_trigger_fallback():
+    service = _library_policy_control_service()
+
+    preview = service.preview_runtime_access(
+        "tool.execute", {"tool_name": "not_a_real_tool", "arguments": {}}
+    )
+
+    assert preview["resolved_action_id"] == "mcp.runtime.trigger.local"
+    assert preview["registry_capability_id"] == "local_mcp_runtime"
+
+
+@pytest.mark.asyncio
+async def test_library_collections_deny_rule_blocks_execute_and_tools_call():
+    service = _library_policy_control_service()
+    service.save_governance_rule(
+        {
+            "rule_id": "rule-deny-library-collections",
+            "capability_id": "library.collections.list.local",
+            "decision": "deny",
+            "notes": "Library collection listing is blocked.",
+        }
+    )
+
+    with pytest.raises(PermissionError, match="library.collections.list.local"):
+        await service.execute_tool("library_list_collections", {})
+
+    with pytest.raises(PermissionError, match="library.collections.list.local"):
+        await service.run_runtime_request(
+            "tools/call",
+            {"name": "library_search_collections", "arguments": {"query": "x"}},
+        )

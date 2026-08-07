@@ -10,6 +10,10 @@ from uuid import uuid4
 
 from tldw_chatbook.runtime_policy.registry import CAPABILITY_REGISTRY
 from tldw_chatbook.runtime_policy.types import RuntimeSourceState
+from tldw_chatbook.Library.library_tool_contract import (
+    LIBRARY_TOOL_DESCRIPTORS,
+    LibraryToolDescriptor,
+)
 
 from .client import MCPClient
 from .local_runtime_delegate import LocalMCPRuntimeDelegate
@@ -36,6 +40,34 @@ _SPAWN_ENV_BASELINE_KEYS = (
     "COMSPEC",
     "PATHEXT",
 )
+
+# task-1337 (plan Task 9): each descriptor-backed ``library_*`` tool resolves
+# to a read action owned by its Library item type. Media/Notes/Prompts/Skills/
+# Conversations reuse their registered local list/detail actions; Collections
+# use the dedicated local-only ``library.collections`` resource (never
+# ``collections.reading_list.*``).
+_LIBRARY_ITEM_TYPE_ACTION_NAMESPACE = {
+    "media": "media.reading",
+    "note": "notes",
+    "prompt": "prompts",
+    "skill": "skills",
+    "conversation": "chat",
+    "collection": "library.collections",
+}
+
+
+def _library_tool_action_id(descriptor: LibraryToolDescriptor) -> str:
+    """Map one Library descriptor to its type-owned local read action id.
+
+    list/search are browse-level reads; get is a detail-level read. Derived
+    from the descriptor table so the policy surface can never drift from the
+    tool contract.
+    """
+    action = "detail" if descriptor.operation == "get" else "list"
+    namespace = _LIBRARY_ITEM_TYPE_ACTION_NAMESPACE[descriptor.item_type]
+    return f"{namespace}.{action}.local"
+
+
 _TOOL_ACTION_IDS = {
     "chat_with_llm": "chat.launch.local",
     "chat_with_character": "character.sessions.launch.local",
@@ -47,6 +79,10 @@ _TOOL_ACTION_IDS = {
     "get_conversation_history": "chat.detail.local",
     "export_conversation": "chat.detail.local",
     "ingest_media": "media.ingestion_jobs.launch.local",
+    **{
+        name: _library_tool_action_id(descriptor)
+        for name, descriptor in LIBRARY_TOOL_DESCRIPTORS.items()
+    },
 }
 _RESOURCE_ACTION_IDS = (
     ("conversation://", "chat.detail.local"),

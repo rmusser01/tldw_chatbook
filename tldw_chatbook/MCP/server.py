@@ -30,10 +30,26 @@ permission store under `local:__local__`) or by editing
 by default. The kill switch and `deny` states are honored identically to the
 Console path. `todo_write` is Console-session-scoped and intentionally not
 exposed.
+
+## Exposed local Library tools (task-1337)
+
+The 18 descriptor-backed `library_*` tools (media/notes/prompts/skills/
+conversations/collections list+get+search) are part of the local MCP
+surface: they are read-only, locally served, and contract-governed by
+`Library/library_tool_contract.py`. The capability manifest appends them from
+the descriptor table (`_describe_local_library_tools`), and the in-app direct
+runtime (`local_runtime_delegate.LocalMCPRuntimeDelegate`) dispatches them to
+one shared `LocalLibraryToolService` (composed by
+`build_local_library_tool_service`) via `asyncio.to_thread`. This surface is
+deliberately FastMCP-free (owner directive, 2026-08-07): the standalone
+`TldwMCPServer` below remains the legacy FastMCP-based stdio server and is
+untouched by this work. The Console-only `[console].direct_library_tools`
+retrieval-mode toggle has no effect on this surface.
 """
 
 import asyncio  # noqa: E402
 import ast  # noqa: E402
+import copy  # noqa: E402
 from pathlib import Path  # noqa: E402
 from typing import Dict, List, Optional, Any  # noqa: E402
 from datetime import datetime  # noqa: E402
@@ -50,6 +66,10 @@ except ImportError:
     FastMCP = None
 
 from loguru import logger  # noqa: E402
+
+from tldw_chatbook.Library.library_tool_contract import (  # noqa: E402
+    LIBRARY_TOOL_DESCRIPTORS,
+)
 
 
 #: Matches ``Tools/note_management_tools.py``'s ``_DEFAULT_USER_ID`` /
@@ -203,15 +223,157 @@ def _describe_local_tools() -> list[dict[str, Any]]:
     return _extract_registered_entries("_register_tools", "tool")
 
 
+def _describe_local_library_tools() -> list[dict[str, Any]]:
+    """Manifest entries for the 18 descriptor-backed Library tools (task-1337).
+
+    Derived from ``LIBRARY_TOOL_DESCRIPTORS`` -- never hand-maintained here --
+    so the local MCP capability manifest can never drift from the contract the
+    Console provider exposes. ``inputSchema`` is deep-copied so manifest
+    consumers can never mutate the shared descriptor table.
+    """
+    return [
+        {
+            "name": descriptor.name,
+            "description": descriptor.description,
+            "inputSchema": copy.deepcopy(descriptor.input_schema),
+        }
+        for descriptor in LIBRARY_TOOL_DESCRIPTORS.values()
+    ]
+
+
 def describe_local_mcp_capabilities() -> dict[str, Any]:
     """Return a stable local MCP capability manifest without opening a loopback connection."""
     return {
         "server_id": "local:tldw_chatbook",
         "server_label": "tldw_chatbook local MCP",
-        "tools": _describe_local_tools(),
+        "tools": _describe_local_tools() + _describe_local_library_tools(),
         "resources": _describe_local_resources(),
         "prompts": _describe_local_prompts(),
     }
+
+
+def build_local_library_tool_service(
+    *,
+    chachanotes_db: Any,
+    media_db: Any,
+    notes_service: Any = None,
+) -> Any:
+    """Compose the six local Library backends into one shared synchronous service.
+
+    Single construction site for ``LocalLibraryToolService`` on the local MCP
+    surface (task-1337, plan Task 9): ``LocalMCPRuntimeDelegate`` calls this
+    lazily on first Library dispatch, so every in-process consumer of the
+    direct runtime shares identical backend wiring. (The standalone
+    FastMCP-based ``TldwMCPServer`` deliberately does NOT use this -- the
+    local Library surface is FastMCP-free per owner directive, 2026-08-07.)
+
+    Every backend is best-effort: a construction failure degrades that item
+    type's tools to the service's structured ``feature_unavailable`` payload
+    instead of sinking the MCP surface. The skills backend is built WITHOUT a
+    trust service, which fails closed by design: skill list/search expose
+    safe metadata only and skill bodies/supporting files stay restricted.
+
+    Args:
+        chachanotes_db: Open ``CharactersRAGDB`` handle (conversations, and
+            the notes backend's ``global_db_to_use``).
+        media_db: Open ``MediaDatabase`` handle.
+        notes_service: Optional pre-built ``NotesInteropService``; when
+            omitted, one is constructed with the canonical signature off
+            ``get_chachanotes_db_path()`` and ``chachanotes_db``.
+
+    Returns:
+        The shared ``LocalLibraryToolService``.
+    """
+    from ..config import (
+        CLI_APP_CLIENT_ID,
+        get_chachanotes_db_path,
+        get_library_collections_db_path,
+        get_user_data_dir,
+    )
+    from ..Library.local_library_tool_service import LocalLibraryToolService
+
+    backends: dict[str, Any] = {}
+
+    def _build(key: str, builder) -> None:
+        try:
+            backends[key] = builder()
+        except Exception:  # noqa: BLE001 - degrade, never sink the surface
+            logger.exception(
+                f"Local Library {key} backend unavailable; "
+                "its tools will report feature_unavailable"
+            )
+            backends[key] = None
+
+    if notes_service is not None:
+        backends["note"] = notes_service
+    else:
+
+        def _build_notes():
+            from ..Notes.Notes_Library import NotesInteropService
+
+            return NotesInteropService(
+                base_db_directory=get_chachanotes_db_path().parent,
+                api_client_id=CLI_APP_CLIENT_ID,
+                global_db_to_use=chachanotes_db,
+            )
+
+        _build("note", _build_notes)
+
+    def _build_media():
+        from ..Media.local_media_reading_service import LocalMediaReadingService
+
+        return LocalMediaReadingService(media_db)
+
+    _build("media", _build_media)
+
+    def _build_prompts():
+        from ..Prompt_Management.local_prompt_service import LocalPromptService
+
+        return LocalPromptService()
+
+    _build("prompt", _build_prompts)
+
+    def _build_skills():
+        from ..Skills_Interop.local_skills_service import (
+            LocalSkillsService,
+            default_local_skills_store_dir,
+        )
+
+        return LocalSkillsService(
+            store_dir=default_local_skills_store_dir(get_user_data_dir())
+        )
+
+    _build("skill", _build_skills)
+
+    def _build_conversations():
+        from ..Chat.chat_conversation_service import ChatConversationService
+
+        return ChatConversationService(chachanotes_db)
+
+    _build("conversation", _build_conversations)
+
+    def _build_collections():
+        from ..DB.Library_Collections_DB import LibraryCollectionsDB
+        from ..Library.library_collections_service import (
+            LocalLibraryCollectionsService,
+        )
+
+        return LocalLibraryCollectionsService(
+            LibraryCollectionsDB(
+                get_library_collections_db_path(), CLI_APP_CLIENT_ID
+            )
+        )
+
+    _build("collection", _build_collections)
+
+    return LocalLibraryToolService(
+        media_service=backends["media"],
+        notes_service=backends["note"],
+        prompt_service=backends["prompt"],
+        skills_service=backends["skill"],
+        conversation_service=backends["conversation"],
+        collections_service=backends["collection"],
+    )
 
 
 class TldwMCPServer:
