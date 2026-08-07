@@ -9,6 +9,7 @@ from tldw_chatbook.Library import library_rag_state as _rag_state_module
 from tldw_chatbook.Library.library_rag_state import (
     LIBRARY_RAG_EMPTY_STATE_SELECTOR,
     LIBRARY_RAG_NO_SOURCES_GATE_COPY,
+    LIBRARY_RAG_ROUTE_NOTES_KEY,
     LIBRARY_RAG_SCOPE_ALL_LOCAL_COPY,
     LIBRARY_RAG_SERVICE_ERROR_SELECTOR,
     LIBRARY_RAG_SNIPPET_DISPLAY_MAX_CHARS,
@@ -1504,6 +1505,64 @@ class TestLibraryRagCoverageNote:
             "semantic_scope_coverage": {"covered": [], "uncovered": ["notes", "media"]}
         }
         assert library_rag_coverage_note(diagnostics, ()) == ""
+
+    # (RAG-port P0, Workstream A) The service now also reports how the
+    # retrieval was ROUTED when it could not run the active profile's
+    # configured mode -- a hybrid profile forced onto the semantic path by
+    # an active scope, a plain profile routed to the keyword seams. Those
+    # disclosures share this one quiet line rather than opening a second
+    # note channel on the same screen.
+
+    def test_route_note_renders_as_a_sentence_when_nothing_else_to_say(self):
+        rows = (self._row(0.6),)
+        diagnostics = {
+            LIBRARY_RAG_ROUTE_NOTES_KEY: ["media excluded — semantic only"]
+        }
+        assert (
+            library_rag_coverage_note(diagnostics, rows)
+            == "Media excluded — semantic only."
+        )
+
+    def test_route_note_renders_without_any_coverage_diagnostic(self):
+        """The plain-profile route returns the KEYWORD payload, which carries
+        no `semantic_scope_coverage` at all -- the disclosure must still
+        reach the line (this is the only thing telling the user their rag
+        query ran as keyword search)."""
+        rows = (self._row(score=None),)
+        diagnostics = {
+            LIBRARY_RAG_ROUTE_NOTES_KEY: [
+                "Profile 'BM25 Only': keyword search (no vectors)"
+            ]
+        }
+        assert (
+            library_rag_coverage_note(diagnostics, rows)
+            == "Profile 'BM25 Only': keyword search (no vectors)."
+        )
+
+    def test_route_notes_follow_the_weak_prefix_and_coverage_sentence(self):
+        rows = (self._row(0.09),)
+        diagnostics = {
+            "semantic_scope_coverage": {"covered": [], "uncovered": ["notes"]},
+            LIBRARY_RAG_ROUTE_NOTES_KEY: [
+                "scope active — semantic only until scope-aware hybrid lands"
+            ],
+        }
+        assert library_rag_coverage_note(diagnostics, rows) == (
+            "No strong semantic matches — results below are weak. "
+            "Semantic search found nothing from: Notes. "
+            "Scope active — semantic only until scope-aware hybrid lands."
+        )
+
+    def test_blank_route_notes_render_nothing(self):
+        rows = (self._row(0.6),)
+        diagnostics = {"semantic_scope_coverage": {"covered": ["notes"], "uncovered": []}}
+        assert library_rag_coverage_note(diagnostics, rows) == ""
+        assert (
+            library_rag_coverage_note(
+                {**diagnostics, LIBRARY_RAG_ROUTE_NOTES_KEY: ["", "   "]}, rows
+            )
+            == ""
+        )
 
 
 class TestLibraryRagEmptyStateQuietCopy:

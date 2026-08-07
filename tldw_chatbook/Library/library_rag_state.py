@@ -1544,6 +1544,35 @@ LIBRARY_RAG_ALL_WEAK_COVERAGE_PREFIX = (
     "No strong semantic matches — results below are weak."
 )
 
+# (RAG-port P0, Workstream A) Diagnostics slot carrying retrieval-ROUTING
+# disclosures: one short phrase per way the retrieval that actually ran
+# differs from the active RAG profile's configured search mode -- e.g. a
+# hybrid profile forced onto the semantic path because a scope allowlist is
+# active (the engine's allowlist pushdown is semantic-only), or a plain
+# (BM25) profile routed to the Library's own four-seam keyword path.
+# Distinct in MEANING from `semantic_scope_coverage` (which reports which
+# requested source types a search that ran as configured actually touched),
+# but deliberately rendered into the SAME single quiet line under the
+# Evidence heading by `library_rag_coverage_note` -- one note channel on
+# screen, never two competing ones.
+LIBRARY_RAG_ROUTE_NOTES_KEY = "retrieval_route_notes"
+
+
+def _route_note_sentence(note: str) -> str:
+    """Render one service-supplied routing disclosure as a sentence.
+
+    The service states these as lowercase fragments ("media excluded —
+    semantic only") so they read correctly in logs and tests; here they
+    become sentences that can sit after the coverage/weak sentences on one
+    line. Escaped for the same reason the uncovered labels are (task-15
+    finding M8): the text is service-supplied and reaches a `Static`.
+    """
+    text = escape_markup(str(note).strip())
+    if not text:
+        return ""
+    text = text[0].upper() + text[1:]
+    return text if text[-1] in ".!?" else f"{text}."
+
 
 def library_rag_coverage_note(
     diagnostics: Mapping[str, Any] | None,
@@ -1615,13 +1644,26 @@ def library_rag_coverage_note(
         if uncovered_labels
         else ""
     )
-    if library_rag_all_matches_weak(rows):
-        return (
-            f"{LIBRARY_RAG_ALL_WEAK_COVERAGE_PREFIX} {message}"
-            if message
-            else LIBRARY_RAG_ALL_WEAK_COVERAGE_PREFIX
+    route_notes = (
+        tuple(
+            str(item)
+            for item in (diagnostics.get(LIBRARY_RAG_ROUTE_NOTES_KEY) or ())
         )
-    return message
+        if isinstance(diagnostics, Mapping)
+        else ()
+    )
+    parts = [
+        part
+        for part in (
+            LIBRARY_RAG_ALL_WEAK_COVERAGE_PREFIX
+            if library_rag_all_matches_weak(rows)
+            else "",
+            message,
+            *(_route_note_sentence(note) for note in route_notes),
+        )
+        if part
+    ]
+    return " ".join(parts)
 
 
 @dataclass(frozen=True)
