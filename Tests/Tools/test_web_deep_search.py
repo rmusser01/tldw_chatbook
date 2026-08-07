@@ -335,67 +335,131 @@ def test_deep_search_footer_uses_relevant_scored_wording(deep_env):
     assert "Analyzed" not in out  # replaced -- K was the relevant count, not an analyzed count
 
 
-# --- Fix-round: total Sources-block byte budget (IMPORTANT) ------------------
+# --- Fix round 2: N4 -- a genuine TOTAL budget (answer + sources + footer) --
 
 def test_deep_search_sources_block_is_byte_capped(deep_env, monkeypatch):
-    """20 long-titled sources previously reproduced a ~400KB result even
-    with DEEP_SEARCH_SOURCES_MAX already bounding the source COUNT. With
-    per-title truncation (~200 bytes) applied, 20 titles land comfortably
-    under the 24KB Sources budget on their own -- so this specific
-    reproduction is fully absorbed by title truncation alone (no source
-    needs to be dropped); the separate byte-budget+omission-marker
-    mechanism is exercised by a long-URL scenario below, since the title
-    cap does not touch the URL field."""
+    """A genuinely large answer (consuming essentially the whole answer
+    cap) PLUS 20 long-titled sources: exercises the real total-budget
+    interaction (task-1356 review round 2, N4) -- previously the Sources
+    block had its OWN independent 24KB budget on top of a 16KB answer cap,
+    so the combined output could exceed what the agent runtime's
+    head-first tool-result truncation actually preserves (16,000 chars).
+    Uses a large answer so this assertion tests the TOTAL bound it names,
+    not just the sources sub-budget in isolation."""
+    huge_text = "A" * (web_tool_impls.DEEP_SEARCH_ANSWER_MAX_BYTES + 5000)
     long_title = "T" * 5000
     evidence = [
         {"id": i, "url": f"https://e.com/{i}", "title": long_title}
         for i in range(1, web_tool_impls.DEEP_SEARCH_SOURCES_MAX + 1)
     ]
 
-    async def fake_aa_long_titles(wsr, sqd, params, cancel_event=None):
-        final = dict(_FINAL, evidence=evidence)
+    async def fake_aa_large_answer_and_titles(wsr, sqd, params, cancel_event=None):
+        final = dict(_FINAL, text=huge_text, evidence=evidence)
         return {"final_answer": final, "relevant_results": {"1": {}}, "web_search_results_dict": wsr}
 
-    monkeypatch.setattr(WebSearch_APIs, "analyze_and_aggregate", fake_aa_long_titles)
+    monkeypatch.setattr(WebSearch_APIs, "analyze_and_aggregate", fake_aa_large_answer_and_titles)
     out = web_deep_search("what is love")
 
     total_bytes = len(out.encode("utf-8"))
-    slack = 4 * 1024  # answer cap + footer + omission-marker overhead
+    slack = 1024  # omission-marker text overhead
     assert total_bytes <= web_tool_impls.DEEP_SEARCH_TOTAL_MAX_BYTES + slack, (
         f"total output was {total_bytes} bytes"
     )
-    assert "Confidence:" in out  # footer survives
-    # None of the 20 (comfortably small once titles are truncated) needed
-    # to be dropped -- all are present, proving title truncation alone
-    # already defeats this specific "long titles" reproduction.
-    for i in range(1, web_tool_impls.DEEP_SEARCH_SOURCES_MAX + 1):
-        assert f"[{i}]" in out
+    assert "Confidence:" in out  # footer always survives
+    assert "truncated" in out.lower()  # the answer was genuinely capped
 
 
 def test_deep_search_sources_omission_marker_when_budget_exceeded(deep_env, monkeypatch):
-    """Title truncation does not touch the URL field -- a pathologically
-    long URL must still trip the total Sources-block byte budget and leave
-    an honest omission marker rather than growing the block unbounded."""
+    """A large answer plus 20 sources with BOTH an oversized title AND an
+    oversized URL (URL truncation is new in this round -- N4): the sources
+    budget is squeezed tight enough by the answer that most sources can't
+    fit even after per-field truncation, so the size-cap omission marker
+    must fire honestly rather than the block growing unbounded."""
+    huge_text = "A" * (web_tool_impls.DEEP_SEARCH_ANSWER_MAX_BYTES + 5000)
     long_url_tail = "x" * 3000
     evidence = [
-        {"id": i, "url": f"https://e.com/{long_url_tail}-{i}", "title": f"T{i}"}
+        {"id": i, "url": f"https://e.com/{long_url_tail}-{i}", "title": "T" * 5000}
         for i in range(1, web_tool_impls.DEEP_SEARCH_SOURCES_MAX + 1)
     ]
 
-    async def fake_aa_long_urls(wsr, sqd, params, cancel_event=None):
-        final = dict(_FINAL, evidence=evidence)
+    async def fake_aa_large_answer_and_long_fields(wsr, sqd, params, cancel_event=None):
+        final = dict(_FINAL, text=huge_text, evidence=evidence)
         return {"final_answer": final, "relevant_results": {"1": {}}, "web_search_results_dict": wsr}
 
-    monkeypatch.setattr(WebSearch_APIs, "analyze_and_aggregate", fake_aa_long_urls)
+    monkeypatch.setattr(WebSearch_APIs, "analyze_and_aggregate", fake_aa_large_answer_and_long_fields)
     out = web_deep_search("what is love")
 
     total_bytes = len(out.encode("utf-8"))
-    assert total_bytes <= web_tool_impls.DEEP_SEARCH_TOTAL_MAX_BYTES + 4096, (
+    assert total_bytes <= web_tool_impls.DEEP_SEARCH_TOTAL_MAX_BYTES + 1024, (
         f"total output was {total_bytes} bytes"
     )
     assert "Confidence:" in out  # footer survives
-    assert "omitted" in out.lower()  # omission marker present
+    assert "size cap reached" in out.lower()  # size-cap omission marker present
     assert "[1]" in out  # at least the first (newest-relevance) source made it in
+
+
+def test_deep_search_sources_url_truncated(deep_env, monkeypatch):
+    """A pathologically long URL alone (short title, tiny answer -- plenty
+    of budget otherwise) must still be truncated per-line (~500B, new in
+    this round), not carried through verbatim."""
+    long_url = "https://e.com/" + ("x" * 3000)
+    evidence = [{"id": 1, "url": long_url, "title": "T"}]
+
+    async def fake_aa_one_long_url(wsr, sqd, params, cancel_event=None):
+        final = dict(_FINAL, evidence=evidence)
+        return {"final_answer": final, "relevant_results": {"1": {}}, "web_search_results_dict": wsr}
+
+    monkeypatch.setattr(WebSearch_APIs, "analyze_and_aggregate", fake_aa_one_long_url)
+    out = web_deep_search("what is love")
+    assert long_url not in out
+    assert "truncated" in out.lower()
+    assert "[1] T" in out
+
+
+def test_deep_search_sources_count_cap_marker(deep_env, monkeypatch):
+    """More evidence than DEEP_SEARCH_SOURCES_MAX allows even considering
+    must leave an honest count-cap marker -- distinct from the size-cap
+    marker -- rather than silently dropping the excess with no signal."""
+    evidence = [
+        {"id": i, "url": f"https://e.com/{i}", "title": f"T{i}"}
+        for i in range(1, web_tool_impls.DEEP_SEARCH_SOURCES_MAX + 6)  # 5 over the count cap
+    ]
+
+    async def fake_aa_over_count_cap(wsr, sqd, params, cancel_event=None):
+        final = dict(_FINAL, evidence=evidence)
+        return {"final_answer": final, "relevant_results": {"1": {}}, "web_search_results_dict": wsr}
+
+    monkeypatch.setattr(WebSearch_APIs, "analyze_and_aggregate", fake_aa_over_count_cap)
+    out = web_deep_search("what is love")
+
+    for i in range(1, web_tool_impls.DEEP_SEARCH_SOURCES_MAX + 1):
+        assert f"[{i}]" in out
+    assert f"[{web_tool_impls.DEEP_SEARCH_SOURCES_MAX + 1}]" not in out
+    assert "count cap reached" in out.lower()
+    assert "5" in out  # exactly 5 were dropped by the count cap
+
+
+def test_deep_search_sources_single_oversized_line_still_emits_marker(deep_env, monkeypatch):
+    """When the sources budget is squeezed so tight that even the FIRST
+    line can't fit, the block must still say so -- not silently render as
+    "Sources: (none)" as if no evidence existed at all. Forced by raising
+    the answer cap close to the total and supplying an answer that actually
+    fills it, leaving ~0 bytes for sources -- less than even one line."""
+    raised_cap = web_tool_impls.DEEP_SEARCH_TOTAL_MAX_BYTES - 100  # leaves less than one source line
+    monkeypatch.setattr(web_tool_impls, "DEEP_SEARCH_ANSWER_MAX_BYTES", raised_cap)
+    huge_text = "A" * (raised_cap + 5000)
+    evidence = [{"id": 1, "url": "https://e.com/1", "title": "T"}]
+
+    async def fake_aa_tiny_budget(wsr, sqd, params, cancel_event=None):
+        final = dict(_FINAL, text=huge_text, evidence=evidence)
+        return {"final_answer": final, "relevant_results": {"1": {}}, "web_search_results_dict": wsr}
+
+    monkeypatch.setattr(WebSearch_APIs, "analyze_and_aggregate", fake_aa_tiny_budget)
+    out = web_deep_search("what is love")
+    assert "Sources: (none)" not in out
+    assert "size cap reached" in out.lower()
+    assert "[1]" not in out  # the one source genuinely didn't fit
+    assert "Confidence:" in out  # footer still survives
 
 
 # --- Fix-round: backstop must hold even when a pipeline call blocks the loop
@@ -426,3 +490,87 @@ def test_deep_search_backstop_holds_when_pipeline_blocks_the_loop(deep_env, monk
         asyncio.run(call_from_loop())
     elapsed = time.monotonic() - start
     assert elapsed < 0.4, f"backstop did not cut in before the 0.5s block finished (took {elapsed:.2f}s)"
+
+
+# --- Fix round 2: N1 -- empty-string config value must not fake a default --
+
+def test_deep_search_empty_string_provider_still_blocks_spend(tmp_path, monkeypatch):
+    """[SearchSettings] relevance_analysis_llm = "" in REAL TOML must still
+    trip spend-check-before-spend, not silently resolve to the "openai"
+    default and let a probe call a provider the user never named. Uses the
+    real config-loading seam (no wholesale _deep_search_settings monkeypatch)
+    so this exercises _str()'s actual coercion, not a test double of it."""
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        "[general]\nusers_name = 'test'\n"
+        "[SearchSettings]\n"
+        'relevance_analysis_llm = ""\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+
+    calls = {"n": 0}
+
+    def fake_generate(q, p):
+        calls["n"] += 1
+        return _PHASE1
+
+    monkeypatch.setattr(WebSearch_APIs, "generate_and_search", fake_generate)
+
+    with pytest.raises(LocalToolError, match=r"deep-search-failed.*relevance"):
+        web_deep_search("q")
+    assert calls["n"] == 0  # nothing spent
+
+
+# --- Fix round 2: N2 -- deadline message must not claim an unknowable count
+
+def test_deep_search_deadline_message_makes_no_scored_count_claim(deep_env, monkeypatch):
+    """The pipeline exposes no "how many were scored before cancellation"
+    signal -- a watchdog firing partway through the loop (some results
+    genuinely examined, just none proved relevant) must get a message that
+    claims neither zero nor any other specific scored count, and advice
+    that covers both worlds (too little time vs. genuinely no matches)."""
+    many_results = [{"title": f"T{i}", "url": f"https://e.com/{i}"} for i in range(40)]
+    phase1_many = {
+        "web_search_results_dict": {"results": many_results, "warnings": []},
+        "sub_query_dict": {"sub_questions": ["sq1"], "main_goal": "q"},
+    }
+    monkeypatch.setattr(WebSearch_APIs, "generate_and_search", lambda q, p: phase1_many)
+
+    async def fake_aa_deadline_midloop(wsr, sqd, params, cancel_event=None):
+        await asyncio.sleep(0.05)  # let the watchdog fire mid-"loop"
+        return {
+            "final_answer": {"text": "", "evidence": [], "confidence": 0.0, "chunks": []},
+            "relevant_results": {},
+            "web_search_results_dict": wsr,
+        }
+
+    monkeypatch.setattr(WebSearch_APIs, "analyze_and_aggregate", fake_aa_deadline_midloop)
+    settings = dict(_DEEP_SETTINGS, deep_search_timeout_s=0.01)
+    monkeypatch.setattr(web_tool_impls, "_deep_search_settings", lambda: settings)
+
+    out = web_deep_search("what is love")
+    assert "none were scored in time" not in out.lower()  # false zero-claim removed
+    assert "unknown number" in out.lower()
+    assert "longer" in out.lower() and "deep_search_timeout_s" in out
+    assert "rephrasing may help" in out.lower()
+
+
+def test_deep_search_footer_deadline_note_says_may_be_incomplete(deep_env, monkeypatch):
+    """A run whose watchdog fires while a call is STILL genuinely in
+    progress, yet the call still goes on to complete fully and
+    successfully, must not get flagged as definitely "partial" -- the code
+    only knows the deadline was reached, not whether that cost anything
+    (the b2 probe: a fully-completed run flagged as partial)."""
+    async def fake_aa_completes_anyway(wsr, sqd, params, cancel_event=None):
+        await asyncio.sleep(0.05)  # give the tiny-timeout watchdog a chance to fire
+        return {"final_answer": dict(_FINAL), "relevant_results": {"1": {}}, "web_search_results_dict": wsr}
+
+    monkeypatch.setattr(WebSearch_APIs, "analyze_and_aggregate", fake_aa_completes_anyway)
+    settings = dict(_DEEP_SETTINGS, deep_search_timeout_s=0.01)  # fires well before the 0.05s sleep ends
+    monkeypatch.setattr(web_tool_impls, "_deep_search_settings", lambda: settings)
+
+    out = web_deep_search("what is love")
+    assert "Deep answer [1]." in out  # the run DID fully succeed
+    assert "deadline reached: partial synthesis" not in out.lower()
+    assert "deadline reached" in out.lower() and "may be incomplete" in out.lower()

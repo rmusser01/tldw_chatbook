@@ -1215,15 +1215,22 @@ def web_crawl(
 # web_deep_search (task-1356 Task 5)
 # ---------------------------------------------------------------------------
 
-DEEP_SEARCH_ANSWER_MAX_BYTES = 16 * 1024
+# 10 KiB / 15 KiB, not 16/24 (task-1356 review round 2, N4 + the finding-5
+# residual -- RULING): the agent runtime truncates a tool RESULT to
+# RunBudget.max_tool_result_chars = 16,000 chars HEAD-FIRST
+# (Agents/agent_runtime.py:325-357 -- `content[:max_chars]` plus a trailer,
+# never the tail), which would silently eat the Sources block and this
+# tool's own honesty footer (confidence/warnings/deadline disclosure) off
+# the END of any output that grew past that ceiling -- the footer is theater
+# if it can't survive the delivery seam. DEEP_SEARCH_TOTAL_MAX_BYTES now
+# really is a TOTAL: it bounds the combined answer + Sources block + footer
+# (previously it capped the Sources block alone, which is why the "total"
+# name was a lie -- an answer near its own 16 KiB cap plus a 24 KiB Sources
+# block could still exceed 16,000 chars). 15 KiB keeps the whole output
+# under the 16,000-char ceiling with headroom.
+DEEP_SEARCH_ANSWER_MAX_BYTES = 10 * 1024
 DEEP_SEARCH_SOURCES_MAX = 20
-# Sibling convention (SEARCH_TOTAL_MAX_BYTES / CRAWL_RESULT_MAX_BYTES, both
-# above): caps the SOURCES block specifically (not the answer, which has its
-# own DEEP_SEARCH_ANSWER_MAX_BYTES cap, and not the combined return value).
-# Without this, a handful of pathologically long evidence titles reproduced
-# a ~400KB tool result even with DEEP_SEARCH_SOURCES_MAX already bounding
-# the source COUNT (task-1356 review).
-DEEP_SEARCH_TOTAL_MAX_BYTES = 24 * 1024
+DEEP_SEARCH_TOTAL_MAX_BYTES = 15 * 1024
 # Grace period asyncio.wait_for() adds on top of the remaining deadline when
 # awaiting analyze_and_aggregate. What this DOES bound: awaited work that
 # keeps yielding control back to the event loop between awaits (e.g. every
@@ -1281,8 +1288,17 @@ def _deep_search_settings() -> dict:
     from ..config import _get_int_timeout_value, get_cli_setting  # local: keep module import cheap
 
     def _str(key: str, default: str) -> str:
+        # Substitute the default ONLY for a missing key or a non-string
+        # value (matching config._get_typed_value's own contract) -- an
+        # EXPLICIT empty/whitespace string must pass through as "" so the
+        # spend-check-before-spend gate below still fires on it. Silently
+        # replacing "" with "openai" (task-1356 review, N1) let a probe
+        # with [SearchSettings] relevance_analysis_llm = "" make a REAL
+        # provider call against a provider the user never named.
         raw = get_cli_setting("SearchSettings", key, default)
-        return raw.strip() if isinstance(raw, str) and raw.strip() else default
+        if not isinstance(raw, str):
+            return default
+        return raw.strip()
 
     def _bool(key: str, default: bool) -> bool:
         raw = get_cli_setting("SearchSettings", key, default)
@@ -1316,13 +1332,27 @@ def _run_coro_loop_safe(coro, timeout_s: float):
     """Run ``coro`` to completion regardless of whether a loop is already running.
 
     No running loop on this thread (the common case -- a worker thread or a
-    plain sync caller): ``asyncio.run(coro)`` directly, with NOTHING here
-    bounding ``coro``'s wall-clock time -- whatever internal deadline
-    ``coro`` enforces on itself (e.g. its own ``asyncio.wait_for``) is the
-    only thing that can. A loop IS already running (the tool invoked from
-    inside async agent-runtime code): ``asyncio.run`` cannot nest, so
-    ``coro`` runs on a dedicated daemon thread with its own fresh loop, and
-    THIS thread blocks in ``thread.join(timeout_s)``.
+    plain sync caller): ``asyncio.run(coro)`` directly. Measured reality
+    (task-1356 review, N3 -- this paragraph previously overstated it):
+    ``coro``'s own internal ``asyncio.wait_for`` bounds the RETURNED VALUE
+    (or raised exception) only, and that part IS prompt -- but
+    ``asyncio.run()``'s own shutdown sequence still waits for any orphaned
+    ``asyncio.to_thread`` worker a cancelled-but-already-running call left
+    behind inside ``coro`` (same limitation as the dedicated-thread path
+    below: Python cannot forcibly kill a running thread), so the WALL-CLOCK
+    time of this whole call can exceed whatever timeout ``coro`` enforced
+    on itself by up to that blocking call's own remaining duration.
+    Empirically confirmed in ``test_analyze_and_aggregate_offloads_
+    aggregate_results_so_wait_for_can_fire``: a `wait_for(timeout=0.05)`
+    around a 0.3s-blocking call raised its `TimeoutError` promptly, but the
+    enclosing ``asyncio.run()`` call still took the full ~0.3s to return.
+    Nothing here bounds that overrun on the no-loop path -- only ``coro``'s
+    own internal deadline logic determines when its RESULT is ready; there
+    is no second thread to join for a hard wall-clock backstop, unlike the
+    path below. A loop IS already running (the tool invoked from inside
+    async agent-runtime code): ``asyncio.run`` cannot nest, so ``coro``
+    runs on a dedicated daemon thread with its own fresh loop, and THIS
+    thread blocks in ``thread.join(timeout_s)``.
 
     That join is a genuinely different kind of backstop from ``coro``'s own
     internal ``wait_for``: it is enforced by the OS thread scheduler on the
@@ -1415,11 +1445,16 @@ def web_deep_search(question: str, engine: Optional[str] = None, max_results: Op
             (config); defaults to ``search_result_max``.
 
     Returns:
-        str: On success, the synthesized answer (byte-capped at
+        str: On success, the synthesized answer (capped at
         ``DEEP_SEARCH_ANSWER_MAX_BYTES``) followed by a ``Sources:`` list
-        (evidence id/title/url, byte-capped at ``DEEP_SEARCH_TOTAL_MAX_BYTES``
-        and at most ``DEEP_SEARCH_SOURCES_MAX`` entries) and a one-line
-        status footer. When phase 2 finds no relevant results, returns an
+        (evidence id/title/url, at most ``DEEP_SEARCH_SOURCES_MAX`` entries)
+        and a one-line status footer -- with the COMBINED output (footer +
+        answer + sources) held under ``DEEP_SEARCH_TOTAL_MAX_BYTES``, since
+        that is what actually has to survive the agent runtime's
+        head-first tool-result truncation (see the constant's own
+        docstring); an omission marker in the Sources block distinguishes a
+        size-budget cutoff from the ordinary ``DEEP_SEARCH_SOURCES_MAX``
+        count cap. When phase 2 finds no relevant results, returns an
         explanatory (non-error) string -- listing the queries tried, or, on
         a deadline hit, disclosing the cutoff instead -- rather than raising;
         the model is expected to read and act on it.
@@ -1580,19 +1615,24 @@ def web_deep_search(question: str, engine: Optional[str] = None, max_results: Op
             # CRITICAL fix (task-1356 review): a watchdog firing before the
             # relevance loop confirms even one result must not claim
             # "Analyzed N results" (it analyzed none) and must not advise
-            # rephrasing (the cause was a timeout, not a bad query -- a
-            # second full-price run at the same deadline would likely
-            # repeat it). The pipeline gives no "how many were actually
-            # scored before cancellation" signal here, so this states only
-            # what phase 1 actually delivered, per the footer's own
-            # coverage-honesty fix below.
+            # rephrasing outright (the cause might be a timeout, not a bad
+            # query). Round-2 fix (task-1356 review, N2): the FIRST version
+            # of this message claimed "none were scored in time" -- also
+            # false. The pipeline exposes NO "how many were actually
+            # scored before cancellation" signal (search_result_relevance
+            # returns only the relevant subset, not an attempted count), so
+            # a probe with 19 of 40 genuinely scored (just none relevant)
+            # got the exact same byte-identical message as a cancel at the
+            # very top of the loop. This version claims only what's
+            # knowable -- N raw results found, an unknown number scored --
+            # and gives advice for both worlds.
             return (
                 f"Deep search for {question!r} was cut off by the {deadline_s:.0f}s "
-                "deep-search deadline before relevance analysis confirmed any result. "
-                f"Found {len(results)} raw result(s) across {n_queries} "
-                f"quer{query_plural}, but none were scored in time. Try again with a "
-                "longer deep_search_timeout_s, or a narrower question that needs "
-                "fewer results analyzed -- rephrasing alone will not fix a timeout."
+                "deep-search deadline before any result was confirmed relevant. "
+                f"Found {len(results)} raw result(s) across {n_queries} quer{query_plural}; "
+                "an unknown number were scored before the cutoff. A longer "
+                "deep_search_timeout_s allows more results to be scored; if many were "
+                "scored but none proved relevant, rephrasing may help."
             )
         queries_tried = "; ".join([question, *sub_questions]) if sub_questions else question
         return (
@@ -1612,7 +1652,12 @@ def web_deep_search(question: str, engine: Optional[str] = None, max_results: Op
     fallback_count = sum(1 for c in chunks if isinstance(c, dict) and c.get("generated") is False)
     fallback_note = f" · {fallback_count} chunk(s) used a fallback summary" if fallback_count else ""
     warning_note = f" · {len(warnings)} search warning(s)" if warnings else ""
-    deadline_note = " · deadline reached: partial synthesis" if deadline_hit else ""
+    # "may be incomplete", not a definite "partial synthesis" claim
+    # (task-1356 review, N2): the b2 probe showed a run whose watchdog
+    # fired mid-call but which still went on to complete fully and
+    # successfully -- deadline_hit only means the deadline was reached,
+    # not that anything was actually cut short.
+    deadline_note = " · deadline reached — results may be incomplete" if deadline_hit else ""
     # "scored" is only accurate when the relevance loop ran to completion --
     # a deadline hit means some of `results` were never examined at all, so
     # say "found" instead of implying full coverage the run never had
@@ -1628,31 +1673,58 @@ def web_deep_search(question: str, engine: Optional[str] = None, max_results: Op
 
     text = _truncate_to_bytes(str(final_answer.get("text") or ""), DEEP_SEARCH_ANSWER_MAX_BYTES)
 
-    # Sources: count-capped (DEEP_SEARCH_SOURCES_MAX) THEN byte-budget-capped
-    # (DEEP_SEARCH_TOTAL_MAX_BYTES) -- a handful of pathologically long
-    # evidence titles reproduced a ~400KB result even with the count cap
-    # alone (task-1356 review), so each title is also truncated to a
-    # display-sized prefix via the same house byte-truncation helper used
-    # elsewhere in this module.
+    # Sources gets whatever's left of the REAL total after the footer
+    # (built above, always emitted in full) and the answer (already capped)
+    # are reserved -- this is what makes DEEP_SEARCH_TOTAL_MAX_BYTES an
+    # actual total (task-1356 review round 2, N4): previously the Sources
+    # block had its own INDEPENDENT budget on top of the answer cap, so a
+    # maxed-out answer plus a maxed-out Sources block could together still
+    # exceed what the agent runtime's head-first tool-result truncation
+    # (RunBudget.max_tool_result_chars) actually preserves.
+    footer_bytes = len(footer.encode("utf-8"))
+    answer_bytes = len(text.encode("utf-8"))
+    section_separator_bytes = len("\n\n".encode("utf-8")) * 2  # joins the 3 sections below
+    sources_budget = max(
+        0, DEEP_SEARCH_TOTAL_MAX_BYTES - footer_bytes - answer_bytes - section_separator_bytes
+    )
+
+    # Count-capped (DEEP_SEARCH_SOURCES_MAX) THEN byte-budget-capped
+    # (sources_budget, derived above). Both title AND url are truncated via
+    # the house byte-truncation helper -- a pathologically long field in
+    # EITHER previously reproduced a runaway result (title first, then a
+    # long-URL variant once title truncation alone defeated the original
+    # reproduction). Two DISTINCT, honest omission markers: "size cap" for
+    # count-capped candidates that still didn't fit the byte budget
+    # (covers the single-oversized-line case too -- when even the FIRST
+    # candidate doesn't fit, every one of them is reported omitted rather
+    # than the block silently rendering "Sources: (none)" as if no
+    # evidence existed at all) and "count cap" for evidence beyond
+    # DEEP_SEARCH_SOURCES_MAX that was never even considered.
     evidence = final_answer.get("evidence") or []
     candidates = [item for item in evidence[:DEEP_SEARCH_SOURCES_MAX] if isinstance(item, dict)]
+    count_omitted = max(0, len(evidence) - DEEP_SEARCH_SOURCES_MAX)
     source_lines: list = []
     sources_bytes = 0
     emitted = 0
     for i, item in enumerate(candidates, 1):
         sid = item.get("id", i)
         title = _truncate_to_bytes(str(item.get("title") or item.get("url") or "Untitled"), 200)
-        url = item.get("url") or ""
+        url = _truncate_to_bytes(str(item.get("url") or ""), 500)
         line = f"[{sid}] {title} — {url}"
         line_bytes = len(line.encode("utf-8"))
-        if sources_bytes + line_bytes > DEEP_SEARCH_TOTAL_MAX_BYTES:
+        if sources_bytes + line_bytes > sources_budget:
             break
         source_lines.append(line)
         sources_bytes += line_bytes
         emitted += 1
-    omitted = len(candidates) - emitted
-    if omitted > 0:
-        source_lines.append(f"… [{omitted} further source(s) omitted: size cap reached]")
+    size_omitted = len(candidates) - emitted
+    if size_omitted > 0:
+        source_lines.append(f"… [{size_omitted} further source(s) omitted: size cap reached]")
+    if count_omitted > 0:
+        source_lines.append(
+            f"… [{count_omitted} further source(s) omitted: count cap reached "
+            f"({DEEP_SEARCH_SOURCES_MAX} max)]"
+        )
     sources_block = "Sources:\n" + "\n".join(source_lines) if source_lines else "Sources: (none)"
 
     return f"{text}\n\n{sources_block}\n\n{footer}"
