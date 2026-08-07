@@ -115,6 +115,7 @@ from ...Event_Handlers.Chat_Events.chat_rag_events import (
 )
 from ...Chat.rag_scope import (
     RagScope,
+    SCOPE_EMPTY_NOTICE_TEMPLATE,
     read_conversation_scope,
     write_conversation_scope,
 )
@@ -124,6 +125,7 @@ from ...Chat.scope_picker_listers import (
     build_notes_source_lister,
 )
 from ...Chat.console_command_grammar import (
+    COMMAND_PREFIX,
     GENERATE_IMAGE_COMMAND_HANDLER_ID,
     GENERATE_IMAGE_COMMAND_NAME,
     KIND_COMMAND,
@@ -167,6 +169,7 @@ from ...Chat.console_generate_image import (
 from ...Image_Generation.config import get_image_generation_config
 from ...Image_Generation.listing import list_image_models_for_catalog
 from ...Chat.console_skill_resolver import (
+    MENTION_SIGIL,
     SKILL_UNTRUSTED_REFUSE,
     SkillCommandCandidate,
     cap_skill_args,
@@ -366,6 +369,7 @@ from ...config import (
 from ...Library.library_rag_service import (
     LibraryRagSearchOutcome,
     LibraryRagSearchRequest,
+    RETRIEVAL_FAILED_WHY,
     run_library_rag_search,
     scope_empty_recovery_state,
 )
@@ -1284,11 +1288,98 @@ def _console_library_rag_source_scope(screen: Any) -> tuple[str, ...]:
     )
 
 
+#: TASK-406: hard cap on how much of a composer draft is turned into an
+#: auto-retrieve query. Aliased to the explicitly-typed-query ceiling rather
+#: than re-declared as a second `2000`, so the implicit and explicit paths
+#: can never drift to different limits.
+AUTO_RAG_QUERY_MAX_CHARS = CONSOLE_LIBRARY_RAG_QUERY_MAX_LENGTH
+#: TASK-406: how long an accepted send will wait for auto-retrieval before
+#: giving up and going out WITHOUT evidence. Deliberately short: this await
+#: sits inside the send worker, between "Send pressed" and the first provider
+#: byte, so every second here is dead time the user is staring at.
+AUTO_RAG_TIMEOUT_SECONDS = 5.0
+#: TASK-406: result count used when the active RAG profile's own `default_
+#: top_k` cannot be resolved. Matches the Console chip's historical literal.
+CONSOLE_LIBRARY_RAG_FALLBACK_TOP_K = 5
+#: TASK-406: the two auto-retrieve degradation notices. Both are toasts on an
+#: otherwise-successful send, so they say what the user LOSES (evidence), not
+#: what to click -- the send is already gone by the time either fires.
+CONSOLE_AUTO_RAG_INITIALIZING_NOTICE = (
+    "Auto-retrieve skipped: the RAG service is still initializing. "
+    "Message sent without Library evidence."
+)
+CONSOLE_AUTO_RAG_FAILED_NOTICE = (
+    f"Auto-retrieve skipped: {RETRIEVAL_FAILED_WHY}. "
+    "Message sent without Library evidence."
+)
+#: TASK-406: recovery copy on the in-flight ("Retrieving...") auto-retrieve
+#: card, distinct from the manual run's so a user can tell which one is
+#: spending time on their behalf.
+CONSOLE_AUTO_RAG_SEARCHING_COPY = "Auto-retrieving Library evidence for this message."
+
 #: RAG-43: above this length a composer draft reads as a paste/attachment,
 #: not a retrieval question -- well under ``CONSOLE_LIBRARY_RAG_QUERY_MAX_
 #: LENGTH`` (2000, a safety ceiling for an explicitly-typed query, not a
 #: "does this look like a question" heuristic for an implicit prefill).
 CONSOLE_LIBRARY_RAG_DRAFT_PREFILL_MAX_LENGTH = 200
+
+
+def _is_plain_text_send(draft_text: Any) -> bool:
+    """Return whether ``draft_text`` is an ordinary user question (TASK-406).
+
+    The Console has exactly two sigils that make a draft something other
+    than prose, and both are owned elsewhere: ``COMMAND_PREFIX`` (``/``, the
+    slash-command grammar) and ``MENTION_SIGIL`` (``$``, the skill
+    resolver). They are imported rather than re-spelled here so registering
+    a new command or changing a sigil cannot leave this gate behind.
+
+    Two send kinds reach the controller carrying one of those sigils
+    verbatim: a resolved ``$name`` skill invocation
+    (``_run_resolved_console_skill``) and the deliberate second-Enter
+    literal send of an unrecognized ``/word``. Neither is a retrieval
+    question, so neither auto-retrieves. Tool approvals and regenerations
+    never reach this classification at all -- they do not go through
+    ``submit_draft``/``_capture_rag_context``, which is the only caller.
+
+    Args:
+        draft_text: The validated draft about to be submitted.
+
+    Returns:
+        True when the draft is plain prose worth retrieving evidence for.
+    """
+    draft = str(draft_text or "").lstrip()
+    if not draft:
+        return False
+    return not draft.startswith((COMMAND_PREFIX, MENTION_SIGIL))
+
+
+def _console_library_rag_profile_top_k() -> int:
+    """Return the ACTIVE RAG profile's result count (TASK-406).
+
+    Auto-retrieval must honor the profile the user configured, the same way
+    task-5 made the Library service honor its search mode -- a hardcoded
+    count would silently ignore a profile tuned for more (or fewer)
+    results. Imported lazily: ``active_config`` pulls in the profile
+    manager, which this module has no other reason to load at import time.
+
+    Returns:
+        The profile's ``search.default_top_k`` when it resolves to a
+        positive integer, else ``CONSOLE_LIBRARY_RAG_FALLBACK_TOP_K`` -- a
+        broken/absent profile must degrade to retrieving, not to raising
+        inside a send.
+    """
+    try:
+        from ...RAG_Search.simplified.active_config import resolve_active_rag_config
+
+        value = int(resolve_active_rag_config().search.default_top_k)
+    except Exception as exc:
+        logger.debug(
+            "Console auto-retrieve could not read the active RAG profile's "
+            "top_k (exception_category={}); using the fallback.",
+            type(exc).__name__,
+        )
+        return CONSOLE_LIBRARY_RAG_FALLBACK_TOP_K
+    return value if value > 0 else CONSOLE_LIBRARY_RAG_FALLBACK_TOP_K
 
 
 def _console_draft_looks_like_rag_query(draft: Any) -> bool:
@@ -3956,6 +4047,24 @@ class ChatScreen(BaseAppScreen):
 
         # Whatever the previous send consumed is no longer "this message".
         self._clear_console_evidence_sent_notice()
+        # TASK-406: opt-in auto-retrieve runs HERE, immediately before the
+        # consume, so anything it stages is picked up by this same send. It
+        # is a no-op unless the toggle is on and nothing is already staged.
+        # Contained: this method sits on the provider's capture path, where
+        # `ConsoleChatController._capture_rag_context` turns ANY exception
+        # into `context=None` -- so an auto-retrieve failure escaping here
+        # would also discard whatever the consume below was about to hand
+        # the model. An optional convenience must never be able to do that.
+        try:
+            await self._maybe_auto_retrieve_for_send(draft)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.warning(
+                "Console auto-retrieve raised; the send proceeds "
+                "(exception_category={})",
+                type(exc).__name__,
+            )
         launch = self._consume_pending_console_launch()
         result = await capture_console_staged_evidence_for_chat(
             self.app_instance,
@@ -12333,6 +12442,226 @@ class ChatScreen(BaseAppScreen):
                 action_label="Resolve Library search setup",
             )
         )
+
+    def _has_staged_console_evidence(self) -> bool:
+        """Whether this send already has evidence the user staged themselves.
+
+        Two places count as "staged", because
+        ``_consume_pending_console_launch`` reads both on the very next line
+        of the send: the resident launch context, and an UNCLAIMED
+        ``CONSOLE_LIVE_WORK`` handoff (a Library "Use in Console" the user
+        just clicked). Ignoring the second would spend a retrieval whose
+        result the claim immediately supersedes -- the exact "no double
+        spend" the auto-retrieve gate exists to prevent.
+
+        Returns:
+            True when manual staging is present and must win.
+        """
+        if self._pending_console_launch_context is not None:
+            return True
+        try:
+            store = self.app_instance.pending_handoffs
+            return bool(store.has_pending(HandoffChannel.CONSOLE_LIVE_WORK))
+        except Exception:
+            # An unreadable store is not evidence; retrieving is the safe
+            # failure here (worst case a claim supersedes the result).
+            return False
+
+    def _rag_service_still_initializing(self) -> bool:
+        """Whether a timed-out retrieval was most likely first-run warm-up.
+
+        The distinction is real, not cosmetic: the shared RAG runtime's
+        FIRST construction loads an embedding model and can take seconds
+        (``library_local_rag_search_service._resolve_rag_runtime``), which
+        is precisely what blows :data:`AUTO_RAG_TIMEOUT_SECONDS`. A cached
+        runtime on the app means that cost was already paid, so the same
+        timeout is an honest retrieval failure instead.
+
+        Returns:
+            True when no usable, current runtime is cached on the app.
+        """
+        try:
+            from ...RAG_Search.semantic_availability import current_app_rag_service
+
+            return current_app_rag_service(self.app_instance) is None
+        except Exception:
+            return False
+
+    def _notify_console_auto_rag_scope_empty(self, outcome: Any) -> None:
+        """Surface the SHARED empty-scope copy for a skipped auto-retrieve.
+
+        Reuses ``scope_empty_recovery_state``'s ``why`` -- i.e.
+        ``SCOPE_EMPTY_NOTICE_TEMPLATE`` -- rather than writing a third
+        version of this sentence, so the Console's implicit path says
+        exactly what its explicit path and the chat entry point already say.
+
+        Args:
+            outcome: The short-circuit outcome from
+                ``_resolve_console_library_rag_scope``.
+        """
+        recovery = getattr(outcome, "recovery_state", None)
+        message = str(getattr(recovery, "why", "") or "").strip()
+        if not message:
+            message = SCOPE_EMPTY_NOTICE_TEMPLATE.format(cause="unknown")
+        self._notify_console_auto_rag(message)
+
+    def _notify_auto_rag_degraded(self, *, initializing: bool) -> None:
+        """Tell the user this send went out without the evidence it wanted.
+
+        Args:
+            initializing: True when the RAG runtime had not finished
+                building (see ``_rag_service_still_initializing``) -- a
+                "try again in a moment" situation, which reads very
+                differently from a retrieval that genuinely failed.
+        """
+        self._notify_console_auto_rag(
+            CONSOLE_AUTO_RAG_INITIALIZING_NOTICE
+            if initializing
+            else CONSOLE_AUTO_RAG_FAILED_NOTICE
+        )
+
+    def _notify_console_auto_rag(self, message: str) -> None:
+        """Toast one auto-retrieve notice, never at the cost of the send.
+
+        This runs from inside the send worker's capture seam, where an
+        escaping exception costs the message its evidence (see
+        ``_release_consumed_console_launch``) -- so a failing notify is
+        logged and swallowed, exactly as the sibling RAG notice sites do.
+        """
+        try:
+            self.app_instance.notify(message, severity="warning")
+        except Exception:
+            logger.debug(
+                "Console auto-retrieve notification unavailable; "
+                "reason=auto_rag_notification_failure"
+            )
+
+    def _clear_console_auto_rag_placeholder(
+        self, placeholder: ConsoleLiveWorkLaunch
+    ) -> None:
+        """Drop the in-flight "Retrieving..." card when nothing came back.
+
+        Identity-guarded like ``_release_consumed_console_launch``: if
+        anything staged over the placeholder while retrieval was awaited,
+        that newer context is left alone rather than silently dropped.
+
+        Leaving the placeholder behind would be worse than cosmetic --
+        ``_console_send_blocked_reason`` BLOCKS every send while a
+        RAG-sourced launch with zero available evidence is staged, so a
+        single failed auto-retrieve would lock the composer until the user
+        found the un-stage button.
+
+        Args:
+            placeholder: The launch this retrieval staged before awaiting.
+        """
+        if self._pending_console_launch_context is not placeholder:
+            return
+        self._pending_console_launch_context = None
+        self._pending_console_launch_auto_open_inspector = False
+        try:
+            self._sync_console_pending_launch_surfaces()
+        except Exception as exc:
+            logger.warning(
+                "Console surfaces did not refresh after clearing an "
+                "auto-retrieve placeholder (exception_category={})",
+                type(exc).__name__,
+            )
+
+    async def _maybe_auto_retrieve_for_send(self, draft_text: str) -> None:
+        """Auto-retrieve library evidence for a plain text send (TASK-406).
+
+        Fires only when ALL hold: the config toggle is on; the send is plain
+        user text (not a slash command, tool approval, or regeneration); and
+        nothing is already staged (manual staging always wins -- no double
+        spend). Retrieval failure or timeout NEVER blocks the send.
+
+        Called from ``_capture_console_staged_rag``, the one consume-on-send
+        seam, so anything staged here is picked up by the SAME send and
+        renders in the staged-evidence strip exactly like a manual chip run.
+        That seam runs inside the per-session exclusive send worker, past
+        every block gate, which is why this needs no worker of its own: a
+        double-send cannot double-retrieve, and a refused send never
+        retrieves at all.
+
+        Args:
+            draft_text: The validated draft this send is about to transmit.
+        """
+        if not get_cli_setting("chat_defaults", "rag_auto_retrieve_on_send", False):
+            return
+        if not _is_plain_text_send(draft_text):
+            return
+        if self._has_staged_console_evidence():
+            return
+        query = _sanitize_console_library_rag_query(
+            str(draft_text or "")[:AUTO_RAG_QUERY_MAX_CHARS]
+        )
+        if not query:
+            # Nothing survived centralized validation -- there is no query to
+            # run, and no user action to recommend. Stay silent.
+            return
+        request = LibraryRagSearchRequest(
+            query=query,
+            source_types=_console_library_rag_source_scope(self),
+            mode="rag",
+            top_k=_console_library_rag_profile_top_k(),
+            include_citations=True,
+        )
+        scoped_request, scope_empty_outcome = (
+            await self._resolve_console_library_rag_scope(request)
+        )
+        if scope_empty_outcome is not None:
+            self._notify_console_auto_rag_scope_empty(scope_empty_outcome)
+            return
+        placeholder = ConsoleLiveWorkLaunch.from_values(
+            source="Library Search/RAG",
+            title="Library Search/RAG retrieval",
+            payload={
+                "query": scoped_request.query,
+                "source_scope": ", ".join(scoped_request.source_types),
+            },
+            status="searching",
+            recovery=CONSOLE_AUTO_RAG_SEARCHING_COPY,
+            action_label="Review evidence in Console",
+        )
+        self._stage_console_library_rag_launch(placeholder)
+        try:
+            async with asyncio.timeout(AUTO_RAG_TIMEOUT_SECONDS):
+                outcome = await run_library_rag_search(
+                    self.app_instance, scoped_request
+                )
+        except asyncio.CancelledError:
+            # An interrupted send must not leave its placeholder behind.
+            self._clear_console_auto_rag_placeholder(placeholder)
+            raise
+        except TimeoutError:
+            self._clear_console_auto_rag_placeholder(placeholder)
+            self._notify_auto_rag_degraded(
+                initializing=self._rag_service_still_initializing()
+            )
+            return
+        except Exception as exc:
+            logger.warning(
+                "Console auto-retrieve failed; the send proceeds without "
+                "evidence (exception_category={})",
+                type(exc).__name__,
+            )
+            self._clear_console_auto_rag_placeholder(placeholder)
+            self._notify_auto_rag_degraded(initializing=False)
+            return
+        if not getattr(outcome, "results", ()):
+            # Deliberately NOT `_apply_console_library_rag_search_outcome`'s
+            # zero-result branch: that stages a recovery card, and a staged
+            # RAG launch with no available evidence blocks the NEXT send
+            # (`_console_send_blocked_reason`). One empty implicit retrieval
+            # must never lock the composer.
+            self._clear_console_auto_rag_placeholder(placeholder)
+            if str(getattr(outcome, "status", "") or "") in ("failed", "blocked"):
+                # An empty result set is an ordinary "nothing matched" and
+                # stays silent; a failed/blocked retrieval is a capability
+                # the user turned on not working, and must say so.
+                self._notify_auto_rag_degraded(initializing=False)
+            return
+        await self._apply_console_library_rag_search_outcome(scoped_request, outcome)
 
     def compose_content(self) -> ComposeResult:
         """Compose the chat content."""
