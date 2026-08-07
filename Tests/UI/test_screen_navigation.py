@@ -3860,3 +3860,125 @@ async def test_broken_screen_content_degrades_instead_of_killing_a_running_app()
         await pilot.press("tab")
         await pilot.pause()
         assert app.is_running, "app must stay responsive after the failed compose"
+
+
+# --- task-2858 (LIB-03 -> AC#1): entry routing + canvas restoration -------
+#
+# Direction (recorded in the task's Implementation Notes): EXPLICIT deep
+# links (e.g. "Library: Import...", the "media"/"search" legacy alias
+# routes) keep landing their own labeled canvas -- their own command text
+# states the destination. GENERIC entries (bare ``NavigateToScreen("library")``
+# with no nav-context -- the nav-bar tab button's and the "Switch to
+# Library" palette command's own shape) land ONE canonical surface: the
+# hub on a first visit, or the last-visited canvas on a revisit
+# (restore-over-reset -- a workbench should not lose your place). These
+# three pilot round trips pin that contract directly against the real
+# navigation orchestration (``TldwCli.handle_screen_navigation`` /
+# ``ScreenStateStore`` / ``LibraryScreen.save_state``/``restore_state``/
+# ``apply_navigation_context``) rather than re-deriving it, matching
+# ``test_rapid_tab_switch_storm_leaves_no_zombie_widgets``'s real-screen
+# harness pattern immediately above.
+async def _wait_for_initial_screen(pilot) -> None:
+    """Poll until the app's own startup navigation has pushed a real screen.
+
+    Waiting on ``app.screen``'s type alone races ``_push_initial_screen``:
+    the app already composes a real (non-generic ``Screen``) instance while
+    the splash screen closes, but ``handle_screen_navigation`` silently
+    ignores every request until ``_initial_screen_pushed`` flips True (see
+    ``_handle_screen_navigation_locked``'s startup guard) -- a direct
+    ``await app.handle_screen_navigation(...)`` issued in that window is
+    dropped with no error and no way to retry.
+    """
+    app = pilot.app
+    for _ in range(150):
+        await pilot.pause(0.02)
+        if getattr(app, "_initial_screen_pushed", False):
+            return
+    raise AssertionError("app never finished pushing its initial screen")
+
+
+@pytest.mark.asyncio
+async def test_generic_library_entry_lands_hub_on_first_visit():
+    """A GENERIC Library entry with no prior visit in this session lands the
+    hub/landing canvas (``_library_selected_row_id == ""``), never a
+    specific canvas by accident.
+    """
+    app = _build_test_app()
+
+    async with app.run_test(size=(160, 40)) as pilot:
+        await _wait_for_initial_screen(pilot)
+
+        await app.handle_screen_navigation(NavigateToScreen("library"))
+
+        assert type(app.screen).__name__ == "LibraryScreen"
+        assert app.screen._library_selected_row_id == ""
+
+
+@pytest.mark.asyncio
+async def test_deep_link_library_route_lands_its_canvas_over_restored_state():
+    """An EXPLICIT deep link (mirroring ``LibraryIngestProvider``'s
+    "Library: Import..." palette command, which supplies
+    ``{LIBRARY_NAV_CONTEXT_INGEST: True}``) must land its own labeled canvas
+    even when a DIFFERENT canvas was left behind by a prior visit -- deep
+    links state their own destination, so the generic-entry restore-over-
+    reset rule does not apply to them.
+    """
+    from tldw_chatbook.Constants import LIBRARY_NAV_CONTEXT_INGEST
+    from tldw_chatbook.Library.library_shell_state import (
+        LIBRARY_ROW_BROWSE_MEDIA,
+        LIBRARY_ROW_INGEST_MEDIA,
+    )
+
+    app = _build_test_app()
+
+    async with app.run_test(size=(160, 40)) as pilot:
+        await _wait_for_initial_screen(pilot)
+
+        # A prior visit lands on Media (the "media" legacy alias route --
+        # mirrors "Media & Content: Open Media Library").
+        await app.handle_screen_navigation(NavigateToScreen("media"))
+        assert app.screen._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA
+
+        # Leave -- this is what persists that Media selection as the
+        # "last-visited" canvas under the canonical "library" route.
+        await app.handle_screen_navigation(NavigateToScreen("home"))
+        assert type(app.screen).__name__ == "HomeScreen"
+
+        # The explicit deep link must land Import, not the restored Media row.
+        await app.handle_screen_navigation(
+            NavigateToScreen("library", {LIBRARY_NAV_CONTEXT_INGEST: True})
+        )
+
+        assert type(app.screen).__name__ == "LibraryScreen"
+        assert app.screen._library_selected_row_id == LIBRARY_ROW_INGEST_MEDIA
+
+
+@pytest.mark.asyncio
+async def test_generic_reentry_restores_last_visited_library_canvas():
+    """Core LIB-03 round trip: visit Search/RAG, leave to Home, then
+    re-enter Library GENERICALLY (bare ``NavigateToScreen``, no context --
+    the nav-bar tab button's own shape) -- the Search/RAG canvas must be
+    RESTORED, not reset back to the hub or any other canvas.
+    """
+    from tldw_chatbook.Library.library_shell_state import LIBRARY_ROW_BROWSE_SEARCH
+
+    app = _build_test_app()
+
+    async with app.run_test(size=(160, 40)) as pilot:
+        await _wait_for_initial_screen(pilot)
+
+        # Deep-link into Search/RAG (the "search" legacy alias route --
+        # mirrors "Media & Content: Search Transcripts").
+        await app.handle_screen_navigation(NavigateToScreen("search"))
+        assert type(app.screen).__name__ == "LibraryScreen"
+        assert app.screen._library_selected_row_id == LIBRARY_ROW_BROWSE_SEARCH
+
+        # Leave.
+        await app.handle_screen_navigation(NavigateToScreen("home"))
+        assert type(app.screen).__name__ == "HomeScreen"
+
+        # Generic re-entry must restore Search/RAG.
+        await app.handle_screen_navigation(NavigateToScreen("library"))
+
+        assert type(app.screen).__name__ == "LibraryScreen"
+        assert app.screen._library_selected_row_id == LIBRARY_ROW_BROWSE_SEARCH
