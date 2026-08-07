@@ -281,3 +281,59 @@ def test_agent_enum_engines_all_dispatchable():
         assert result["processing_error"] is None or "Invalid" not in str(result["processing_error"]), (
             f"agent enum advertises {engine!r} but process_web_search_results rejects it"
         )
+
+
+# ---------------------------------------------------------------------------
+# Live smoke (double-gated: key file AND TLDW_LIVE_SEARCH_TESTS=1 — spec §5)
+# ---------------------------------------------------------------------------
+
+import os
+from pathlib import Path
+
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+_LIVE_ENABLED = os.environ.get("TLDW_LIVE_SEARCH_TESTS") == "1"
+
+
+def _key_file(name):
+    p = _REPO_ROOT / name
+    return p.read_text().strip() if p.exists() else ""
+
+
+def _live_gate(*key_names):
+    missing = [n for n in key_names if not _key_file(n)]
+    if not _LIVE_ENABLED:
+        return pytest.mark.skip(reason="TLDW_LIVE_SEARCH_TESTS != 1")
+    if missing:
+        return pytest.mark.skip(reason=f"missing key file(s): {', '.join(missing)}")
+    return pytest.mark.live
+
+
+@_live_gate("serper-api-key.txt")
+def test_live_serper(monkeypatch):
+    _set_key(monkeypatch, "serper_search_api_key", _key_file("serper-api-key.txt"))
+    result = WebSearch_APIs.process_web_search_results(
+        WebSearch_APIs.search_web_serper("python programming language", "US", "en", 3), "serper"
+    )
+    assert result["processing_error"] is None
+    assert result["results"] and result["results"][0]["url"]
+
+
+@_live_gate("exa-api-key.txt")
+def test_live_exa(monkeypatch):
+    _set_key(monkeypatch, "exa_search_api_key", _key_file("exa-api-key.txt"))
+    result = WebSearch_APIs.process_web_search_results(
+        WebSearch_APIs.search_web_exa("python programming language", 3), "exa"
+    )
+    assert result["processing_error"] is None
+    assert result["results"] and result["results"][0]["url"]
+
+
+@_live_gate("yandex-api-key.txt", "yandex-folder-id.txt")
+def test_live_yandex(monkeypatch):
+    _set_key(monkeypatch, "yandex_search_api_key", _key_file("yandex-api-key.txt"))
+    _set_key(monkeypatch, "yandex_search_folder_id", _key_file("yandex-folder-id.txt"))
+    result = WebSearch_APIs.process_web_search_results(
+        WebSearch_APIs.search_web_yandex("python programming language", 3), "yandex"
+    )
+    assert result["processing_error"] is None
+    assert result["results"] and result["results"][0]["url"]
