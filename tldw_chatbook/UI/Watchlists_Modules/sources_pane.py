@@ -992,6 +992,13 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
         search_had_focus = (
             focused is not None and focused.id == "sources-search-input"
         )
+        # Capture whether the create form is mounted NOW, while the old DOM
+        # still exists: after the rebuild, `show_create_form` alone cannot
+        # distinguish "the form is OPENING with this recompose" (its
+        # focus-on-open must win over the search box) from "the form was
+        # already open" (an in-flight keystroke's focus must win).
+        # Qodo, PR #1418.
+        form_was_open = bool(self.query("#sources-create-form"))
         restore = self._focused_create_field_id() or self._pending_create_focus
         await super().recompose()
         # Guard explicitly after the await: the pane can be torn down while
@@ -1000,20 +1007,29 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
         # post-recompose work.
         if not self.is_mounted or not self.is_running:
             return
-        if search_had_focus:
-            # Typing mid-search must keep the box: refocus the fresh input
-            # and never let a still-armed create-form intent yank the caret
-            # away mid-keystroke -- the same "the user's CURRENT focus wins
-            # over a stale intent" ordering the TASK-1345 follow-up pinned
-            # for in-form fields.
-            self.call_after_refresh(self._restore_search_focus)
-            return
         if not self.show_create_form:
             # The form closed (Cancel/Create) while this recompose was in
             # flight. Any focus intent still armed is for a form that no
             # longer exists -- drop it so it cannot resurface later and
-            # steal focus for an unrelated rebuild (TASK-1345).
+            # steal focus for an unrelated rebuild (TASK-1345). This runs
+            # BEFORE the search branch so a closed form's stale intent is
+            # cleared even when the search box keeps focus (Qodo, PR #1418).
             self._pending_create_focus = None
+            if search_had_focus:
+                self.call_after_refresh(self._restore_search_focus)
+            return
+        if search_had_focus and form_was_open:
+            # Typing mid-search must keep the box: refocus the fresh input
+            # and never let a still-armed create-form intent yank the caret
+            # away mid-keystroke -- the same "the user's CURRENT focus wins
+            # over a stale intent" ordering the TASK-1345 follow-up pinned
+            # for in-form fields. Gated on `form_was_open`: when THIS
+            # recompose is the one mounting the form, focus-on-open wins
+            # instead (falls through to the restore path below), so the
+            # form's auto-focus-first-field behavior survives the screen's
+            # deferred open firing while the search box happens to be
+            # focused (Qodo, PR #1418).
+            self.call_after_refresh(self._restore_search_focus)
             return
         if not restore:
             return
