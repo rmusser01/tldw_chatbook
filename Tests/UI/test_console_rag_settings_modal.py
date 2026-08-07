@@ -17,6 +17,7 @@ from tldw_chatbook.Library.library_rag_state import (
     LIBRARY_RAG_SOURCE_TYPES,
 )
 from tldw_chatbook.Widgets.Console.console_rag_settings_modal import (
+    CONSOLE_RAG_AUTO_RETRIEVE_TOGGLE_ID,
     CONSOLE_RAG_DEFAULT_SOURCE_TYPES,
     CONSOLE_RAG_SOURCE_TOGGLE_ID_PREFIX,
     ConsoleRagSettingsModal,
@@ -228,6 +229,174 @@ async def test_leaving_auto_retrieve_untouched_returns_the_flag_unset():
             auto_retrieve_on_send=False,
         )
     ]
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_flipping_auto_retrieve_calls_back_immediately_once_per_toggle():
+    """TASK-3170 re-critique fix: "Auto-retrieve on send" is a standing
+    preference, not part of the query/source-type draft this modal
+    otherwise discards on Cancel/Escape/a backdrop click. Flipping the
+    switch invokes ``on_auto_retrieve_changed`` the instant it flips --
+    before any dismiss -- so the caller can persist it right away. Opening
+    the modal alone must not fire it."""
+
+    class RagHost(App):
+        pass
+
+    changes: list[bool] = []
+    app = RagHost()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(
+            ConsoleRagSettingsModal(on_auto_retrieve_changed=changes.append)
+        )
+        await pilot.pause()
+        assert changes == []
+
+        await pilot.click(f"#{CONSOLE_RAG_AUTO_RETRIEVE_TOGGLE_ID}")
+        await pilot.pause()
+        assert changes == [True]
+
+        await pilot.click(f"#{CONSOLE_RAG_AUTO_RETRIEVE_TOGGLE_ID}")
+        await pilot.pause()
+        assert changes == [True, False]
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_invariant_a_flip_then_escape_keeps_the_toggle_persisted():
+    """Invariant (a): flip + Escape -- the switch's callback already fired
+    (config updated in the real caller) before Escape ran, and Escape does
+    not re-fire it or claw it back, even though it discards the query
+    draft (dismiss result is None) exactly as before."""
+
+    class RagHost(App):
+        pass
+
+    changes: list[bool] = []
+    received: list[ConsoleRagSettingsResult | None] = []
+    app = RagHost()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(
+            ConsoleRagSettingsModal(
+                query="draft text", on_auto_retrieve_changed=changes.append
+            ),
+            callback=received.append,
+        )
+        await pilot.pause()
+
+        await pilot.click(f"#{CONSOLE_RAG_AUTO_RETRIEVE_TOGGLE_ID}")
+        await pilot.pause()
+        await pilot.press("escape")
+        await pilot.pause()
+        await pilot.pause()
+
+    assert received == [None]
+    assert changes == [True]
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_invariant_b_flip_then_run_persists_exactly_once():
+    """Invariant (b): flip + Run -- the toggle callback fires exactly once
+    (from the flip); Run/dismiss must not duplicate it."""
+
+    class RagHost(App):
+        pass
+
+    changes: list[bool] = []
+    received: list[ConsoleRagSettingsResult | None] = []
+    app = RagHost()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(
+            ConsoleRagSettingsModal(
+                query="what changed in auth",
+                on_auto_retrieve_changed=changes.append,
+            ),
+            callback=received.append,
+        )
+        await pilot.pause()
+
+        await pilot.click(f"#{CONSOLE_RAG_AUTO_RETRIEVE_TOGGLE_ID}")
+        await pilot.pause()
+        await pilot.click("#console-rag-settings-run")
+        await pilot.pause()
+        await pilot.pause()
+
+    assert changes == [True]
+    assert received == [
+        ConsoleRagSettingsResult(
+            query="what changed in auth",
+            run=True,
+            auto_retrieve_on_send=True,
+        )
+    ]
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_invariant_c_run_without_touching_the_switch_never_calls_back():
+    """Invariant (c): open + Run without touching the switch -- the
+    callback (and therefore the config write in the real caller) never
+    fires at all. Kills the old unconditional-write-on-every-dismiss
+    behavior."""
+
+    class RagHost(App):
+        pass
+
+    changes: list[bool] = []
+    app = RagHost()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(
+            ConsoleRagSettingsModal(
+                query="what changed in auth",
+                on_auto_retrieve_changed=changes.append,
+            )
+        )
+        await pilot.pause()
+        await pilot.click("#console-rag-settings-run")
+        await pilot.pause()
+        await pilot.pause()
+
+    assert changes == []
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_invariant_d_cancel_after_flip_still_discards_the_source_type_draft():
+    """Invariant (d): the query/source-type draft-discard behavior is
+    unchanged by this fix -- a source-type edit is still lost on Cancel
+    (dismiss result None, same as ``test_cancel_discards_toggle_changes``)
+    even though the auto-retrieve toggle, flipped in the same session,
+    already persisted independently and survives the Cancel."""
+
+    class RagHost(App):
+        pass
+
+    changes: list[bool] = []
+    received: list[ConsoleRagSettingsResult | None] = []
+    app = RagHost()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(
+            ConsoleRagSettingsModal(
+                query="what changed in auth",
+                source_types=CONSOLE_RAG_DEFAULT_SOURCE_TYPES,
+                on_auto_retrieve_changed=changes.append,
+            ),
+            callback=received.append,
+        )
+        await pilot.pause()
+
+        await pilot.click(f"#{CONSOLE_RAG_SOURCE_TOGGLE_ID_PREFIX}prompts")
+        await pilot.click(f"#{CONSOLE_RAG_AUTO_RETRIEVE_TOGGLE_ID}")
+        await pilot.pause()
+
+        await pilot.click("#console-rag-settings-cancel")
+        await pilot.pause()
+        await pilot.pause()
+
+    assert received == [None]
+    assert changes == [True]
 
 
 def _static_plain_text(widget: Static) -> str:
@@ -555,16 +724,16 @@ def test_modal_choice_stores_the_source_scope_before_running():
 
 
 @pytest.mark.unit
-def test_choice_persists_the_auto_retrieve_toggle_and_it_round_trips_through_config():
-    """TASK-3170 (task 7): the caller is the persistence seam -- the modal
-    itself never touches config. Uses the real ``save_setting_to_cli_config``
-    / ``get_cli_setting`` pair (isolated per-test by the autouse
-    ``isolate_test_environment`` fixture in ``Tests/conftest.py``), not a
-    mock, so this is a genuine round trip through the config file."""
+def test_apply_choice_never_writes_config_the_toggle_persists_separately():
+    """TASK-3170 re-critique fix: ``_apply_console_rag_settings_choice`` no
+    longer touches config at all -- persistence moved to the modal's
+    ``on_auto_retrieve_changed`` callback, fired the instant the switch
+    flips (see the modal-level invariant tests above), not gated on this
+    dismiss handler. Guards against the fix regressing back to an
+    unconditional write on every Run."""
     from tldw_chatbook.config import get_cli_setting
     from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
-    # Nothing saved yet: the documented default is OFF.
     assert (
         get_cli_setting("chat_defaults", "rag_auto_retrieve_on_send", False) is False
     )
@@ -577,17 +746,64 @@ def test_choice_persists_the_auto_retrieve_toggle_and_it_round_trips_through_con
         ),
     )
 
+    # Still False: applying the dismissed choice must not write config --
+    # only flipping the switch (through the callback) does that.
+    assert (
+        get_cli_setting("chat_defaults", "rag_auto_retrieve_on_send", False) is False
+    )
+
+
+@pytest.mark.unit
+def test_modal_open_wires_the_auto_retrieve_callback_to_the_real_persist_worker():
+    """The modal's ``on_auto_retrieve_changed`` must be the screen's real
+    worker-backed persist method -- not left unwired, and not a
+    synchronous write in the dismiss callback (see the previous test)."""
+    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+
+    screen = Mock()
+    screen._console_library_rag_query = ""
+    screen._pending_console_launch_context = None
+    composer = Mock()
+    composer.draft_text.return_value = ""
+    screen._console_composer_or_none.return_value = composer
+
+    ChatScreen._open_console_rag_settings(screen)
+
+    modal = screen.app.push_screen.call_args.args[0]
+    assert modal._on_auto_retrieve_changed is (
+        screen._persist_console_rag_auto_retrieve_on_send
+    )
+
+
+@pytest.mark.unit
+def test_persist_worker_body_writes_through_to_config():
+    """TASK-3170 re-critique fix (IMPORTANT 2): the write moved into a
+    ``@work(thread=True)`` method, matching the sibling Console preference
+    writers (``_save_console_rail_preferences``, ``_save_console_
+    onboarding_flag``, ``_save_console_fleet_coachmark_flag``). ``@work``'s
+    dispatch (``self.run_worker(...)``) asserts ``self`` is a live, mounted
+    ``DOMNode``, which a bare test double is not -- so this reaches the
+    original function body directly through ``__wrapped__``
+    (``functools.wraps`` sets it), the same pattern already used elsewhere
+    in this suite, e.g. ``LibraryScreen._run_parakeet_v2_install.__wrapped__``
+    in ``Tests/UI/test_parakeet_v2_install_ui.py``. This is a genuine round
+    trip through the real production code, not a duplicate helper."""
+    from tldw_chatbook.config import get_cli_setting
+    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+
+    assert (
+        get_cli_setting("chat_defaults", "rag_auto_retrieve_on_send", False) is False
+    )
+
+    screen = Mock()
+    ChatScreen._persist_console_rag_auto_retrieve_on_send.__wrapped__(screen, True)
+
     assert (
         get_cli_setting("chat_defaults", "rag_auto_retrieve_on_send", False) is True
     )
 
-    # Turning it back off persists too -- not a one-way ratchet.
-    ChatScreen._apply_console_rag_settings_choice(
-        screen,
-        ConsoleRagSettingsResult(
-            query="what changed", run=False, auto_retrieve_on_send=False
-        ),
-    )
+    # Not a one-way ratchet: flipping back off persists too.
+    ChatScreen._persist_console_rag_auto_retrieve_on_send.__wrapped__(screen, False)
 
     assert (
         get_cli_setting("chat_defaults", "rag_auto_retrieve_on_send", False) is False

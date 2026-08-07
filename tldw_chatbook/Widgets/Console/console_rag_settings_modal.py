@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Any, Sequence
+from typing import Any, Callable, Sequence
 
 from textual import on
 from textual.app import ComposeResult
@@ -121,10 +121,13 @@ class ConsoleRagSettingsResult:
             (RAG-44). Deliberately not the retrieval item scope
             (conversation ∩ workspace), which the Console resolves
             separately and this modal never touches.
-        auto_retrieve_on_send: The "Auto-retrieve on send" switch's value
-            (TASK-3170 / RAG-port P0 task 7). The screen persists this to
-            `[chat_defaults] rag_auto_retrieve_on_send`; the modal itself
-            never writes config.
+        auto_retrieve_on_send: The "Auto-retrieve on send" switch's value at
+            dismiss time (TASK-3170 / RAG-port P0 task 7), reported here for
+            completeness/tests. The switch is NOT gated on this dismiss --
+            it already persisted the instant it flipped, through the
+            modal's ``on_auto_retrieve_changed`` callback (see
+            ``ConsoleRagSettingsModal.__init__``), because it is a standing
+            preference rather than part of the query/source-type draft.
     """
 
     query: str
@@ -221,6 +224,7 @@ class ConsoleRagSettingsModal(ModalScreen["ConsoleRagSettingsResult | None"]):
         rag_active: bool = False,
         staged_title: str = "",
         auto_retrieve_on_send: bool = False,
+        on_auto_retrieve_changed: Callable[[bool], None] | None = None,
         **kwargs: Any,
     ) -> None:
         """Initialize the modal.
@@ -238,6 +242,16 @@ class ConsoleRagSettingsModal(ModalScreen["ConsoleRagSettingsResult | None"]):
                 send" switch (TASK-3170). The caller reads this from
                 `[chat_defaults] rag_auto_retrieve_on_send`; the modal's own
                 default here is OFF.
+            on_auto_retrieve_changed: Called with the new value the INSTANT
+                the switch flips (TASK-3170 fix). "Auto-retrieve on send" is
+                a standing preference, not part of the query/source-type
+                draft this modal otherwise discards on Cancel/Escape/a
+                backdrop click -- gating its persistence on those same
+                dismiss paths silently lost the setting on Escape, and gave
+                a blank-query user no way to save it without a throwaway
+                retrieval. The caller wires this to a real (worker-backed)
+                persist call; leaving it unset (e.g. in modal-only tests)
+                just means nothing is persisted.
             **kwargs: Forwarded to ``ModalScreen``.
         """
         super().__init__(**kwargs)
@@ -246,6 +260,7 @@ class ConsoleRagSettingsModal(ModalScreen["ConsoleRagSettingsResult | None"]):
         self._rag_active = rag_active
         self._staged_title = staged_title
         self._auto_retrieve_on_send = bool(auto_retrieve_on_send)
+        self._on_auto_retrieve_changed = on_auto_retrieve_changed
 
     def _status_copy(self) -> str:
         """Return honest Library-search-state copy for the top of the modal."""
@@ -390,13 +405,18 @@ class ConsoleRagSettingsModal(ModalScreen["ConsoleRagSettingsResult | None"]):
 
     @on(Switch.Changed, f"#{CONSOLE_RAG_AUTO_RETRIEVE_TOGGLE_ID}")
     def _auto_retrieve_toggled(self, event: Switch.Changed) -> None:
-        """Track the draft "Auto-retrieve on send" value (TASK-3170).
+        """Persist "Auto-retrieve on send" the instant it flips (TASK-3170).
 
-        Committed to config by the screen's dismiss callback, same as the
-        query and source-type edits this modal already treats as a draft.
+        Deliberately NOT treated as part of the query/source-type draft:
+        this is a standing preference, so it must survive Cancel/Escape/a
+        backdrop click, not be silently discarded with them. Also kept in
+        ``self._auto_retrieve_on_send`` so the dismiss result still reports
+        the current value (see ``_run_result``).
         """
         event.stop()
         self._auto_retrieve_on_send = event.value
+        if self._on_auto_retrieve_changed is not None:
+            self._on_auto_retrieve_changed(event.value)
 
     @on(Input.Changed, "#console-rag-settings-query")
     def _sync_run_availability(self, event: Input.Changed) -> None:

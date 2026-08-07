@@ -7991,6 +7991,7 @@ class ChatScreen(BaseAppScreen):
                 auto_retrieve_on_send=get_cli_setting(
                     "chat_defaults", "rag_auto_retrieve_on_send", False
                 ),
+                on_auto_retrieve_changed=self._persist_console_rag_auto_retrieve_on_send,
             ),
             callback=self._apply_console_rag_settings_choice,
         )
@@ -8046,13 +8047,15 @@ class ChatScreen(BaseAppScreen):
         """Store the modal's query and sources, then optionally run now.
 
         The "Auto-retrieve on send" toggle (TASK-3170 / RAG-port P0 task 7)
-        is written straight through to config here -- this is the one
-        write seam, reusing ``save_setting_to_cli_config`` the same way the
-        Console onboarding/rail-preference writers already do. It is a
-        module-level call (not routed through ``self``) so this stays the
-        single source of truth regardless of how the screen is constructed;
-        best-effort, since a write failure here must not block applying the
-        query/source-scope choice the user just made.
+        is NOT handled here -- it is a standing preference, not part of
+        this draft, so it already persisted the instant it flipped inside
+        the modal (see ``_open_console_rag_settings``'s
+        ``on_auto_retrieve_changed=self._persist_console_rag_auto_retrieve_
+        on_send`` and that method below). Gating it on this dismiss
+        callback the way the query/source-type edits are gated would have
+        silently lost the toggle on Escape/Cancel/a backdrop click, and
+        given a blank-query user no way to save it without running a
+        throwaway retrieval.
         """
         if result is None:
             return
@@ -8060,18 +8063,30 @@ class ChatScreen(BaseAppScreen):
         self._set_console_library_rag_query(
             _sanitize_console_library_rag_query(result.query)
         )
+        if result.run:
+            self._run_console_library_rag_from_visible_action()
+
+    @work(thread=True)
+    def _persist_console_rag_auto_retrieve_on_send(self, value: bool) -> None:
+        """Persist the "Auto-retrieve on send" toggle without blocking the UI thread.
+
+        TASK-3170 (RAG-port P0 task 7, re-critique fix): fired the instant
+        the RAG settings modal's switch flips (via its
+        ``on_auto_retrieve_changed`` callback), independent of how -- or
+        whether -- the modal is later dismissed. Mirrors the sibling
+        Console preference writers (``_save_console_rail_preferences``,
+        ``_save_console_onboarding_flag``, ``_save_console_fleet_coachmark_
+        flag``): a small best-effort ``save_setting_to_cli_config`` write
+        on a thread worker, not the UI thread.
+        """
         try:
             save_setting_to_cli_config(
-                "chat_defaults",
-                "rag_auto_retrieve_on_send",
-                bool(result.auto_retrieve_on_send),
+                "chat_defaults", "rag_auto_retrieve_on_send", bool(value)
             )
         except Exception as exc:
             logger.warning(
                 "Failed to persist Console auto-retrieve-on-send setting: {}", exc
             )
-        if result.run:
-            self._run_console_library_rag_from_visible_action()
 
     async def _open_console_character_picker(self) -> None:
         """Load characters off-thread and open the picker modal (task-1672)."""
