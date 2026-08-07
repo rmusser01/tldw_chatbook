@@ -1813,6 +1813,90 @@ async def test_library_search_rag_query_updates_action_and_survives_recompose() 
         assert screen.query_one("#library-rag-run-query", Button).disabled is False
 
 
+def test_hybrid_result_row_renders_the_vector_leg_band_not_the_fused_score() -> None:
+    """(RAG-port P0/Task 6) End of the thread: a *service-shaped* hybrid
+    result -- fused RRF score ~0.016, strong vector leg preserved in
+    `provenance["hybrid_fusion"]["vector_score"]` (Task 2) -- must compose
+    the STRONG band into the row's title line.
+
+    Before this, every hybrid search rendered a wall of
+    "match: weak (0.02)": RRF fused scores top out at `1/(rrf_k + 1)`
+    ~= 0.016 at the shipped `rrf_k=60`, an order of magnitude below the
+    0.2 weak boundary, so the panel banded excellent results as barely
+    matching. This pins the whole path -- service row shape -> row
+    normalization -> composed title -- not just the pure band function.
+    """
+    from tldw_chatbook.Library.library_rag_state import LibraryRagResultRow
+    from tldw_chatbook.Widgets.Library.library_search_rag_panel import (
+        library_rag_result_row_children,
+    )
+
+    row = LibraryRagResultRow.from_result(
+        {
+            "document_title": "Incident Review",
+            "snippet": "Expired credential caused the incident.",
+            "score": 0.016393442622950824,
+            "source_id": "media-42",
+            "chunk_id": "chunk-7",
+            "provenance": {
+                "source_type": "media",
+                "hybrid_fusion": {
+                    "fts_rank": 1,
+                    "vector_rank": 1,
+                    "fts_score": 0.001,
+                    "vector_score": 0.83,
+                    "alpha": 0.7,
+                    "rrf_k": 60,
+                },
+            },
+        }
+    )
+    card = library_rag_result_row_children(row, 0, "")[0]
+    title = next(
+        child
+        for child in _answer_region_children(card)
+        if child.id == "library-rag-result-0"
+    )
+    assert str(title.renderable) == "1. Incident Review | match: strong"
+
+
+def test_fts_only_hybrid_result_row_renders_keyword_match_not_a_band() -> None:
+    """(RAG-port P0/Task 6) The other hybrid shape: an FTS-leg-only row has
+    no similarity at all, so the title discloses "keyword match" rather
+    than inventing a band or exposing the fused 0.0x number."""
+    from tldw_chatbook.Library.library_rag_state import LibraryRagResultRow
+    from tldw_chatbook.Widgets.Library.library_search_rag_panel import (
+        library_rag_result_row_children,
+    )
+
+    row = LibraryRagResultRow.from_result(
+        {
+            "document_title": "Incident Review",
+            "snippet": "Expired credential caused the incident.",
+            "score": 0.004918032786885246,
+            "source_id": "media-42",
+            "provenance": {
+                "source_type": "media",
+                "hybrid_fusion": {
+                    "fts_rank": 1,
+                    "vector_rank": None,
+                    "fts_score": 0.001,
+                    "vector_score": None,
+                    "alpha": 0.7,
+                    "rrf_k": 60,
+                },
+            },
+        }
+    )
+    card = library_rag_result_row_children(row, 0, "")[0]
+    title = next(
+        child
+        for child in _answer_region_children(card)
+        if child.id == "library-rag-result-0"
+    )
+    assert str(title.renderable) == "1. Incident Review | keyword match"
+
+
 @pytest.mark.asyncio
 async def test_library_search_rag_run_query_renders_service_results_and_calls_scope() -> (
     None

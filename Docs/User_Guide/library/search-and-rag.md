@@ -181,10 +181,30 @@ Console](#sending-evidence-to-console) below.
 Each hit is one block:
 
 - **Title** — numbered, e.g. "1. g2_demo_article", with a match band
-  appended when the row carries a score: `| match: strong` (≥ 0.5),
-  `| match: moderate` (≥ 0.2), or `| match: weak (0.09)` — the weak band
-  keeps the raw number so you can see how weak. Keyword ("Search") mode
-  rows carry no score, so nothing is appended.
+  appended when the row carries a similarity score: `| match: strong`
+  (≥ 0.5), `| match: moderate` (≥ 0.2), or `| match: weak (0.09)` — the
+  weak band keeps the raw number so you can see how weak. Keyword
+  ("Search") mode rows carry no score, so nothing is appended.
+
+  The band is a statement about *semantic similarity*, so rows scored
+  another way say what they are instead of borrowing a band they don't
+  fit:
+
+  - Hybrid profiles (Hybrid Basic / Hybrid Full) blend the keyword and
+    vector rankings into a fused score that maxes out near 0.016 — far
+    below the weak boundary. Those rows are banded on the vector leg's own
+    similarity, so a strong hybrid hit reads `| match: strong`, exactly as
+    the same hit would in a semantic profile.
+  - A hybrid row that only the keyword leg found has no similarity at all
+    and reads `| keyword match`.
+  - A reranked row reads `| reranked`: reranker scores are on the
+    reranking model's own scale, not a 0-1 similarity, so the band is
+    withheld rather than guessed.
+
+  The "No strong semantic matches — results below are weak." line above
+  the list follows the same rule: only rows carrying a real similarity can
+  trigger it, so keyword-match and reranked rows neither cause it nor
+  suppress it.
 - **Badge line** — the source type first (e.g. "Media"), then a workspace
   name when it isn't "all workspaces", a citation count ("2 citations")
   when the hit carries citations, and "excluded from context" when the row

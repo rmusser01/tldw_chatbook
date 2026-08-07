@@ -1398,6 +1398,222 @@ class TestLibraryRagAllMatchesWeak:
         assert library_rag_all_matches_weak(rows) is False
 
 
+class TestLibraryRagScoreKindAwareBands:
+    """(RAG-port P0/Task 6) The match band is a claim about *cosine
+    similarity*. Hybrid retrieval replaces every row's score with an
+    RRF-fused number whose theoretical maximum is `1/(rrf_k + 1)` ~= 0.016
+    at the shipped `rrf_k=60` -- an order of magnitude below the 0.2 weak
+    boundary -- so banding a fused score on cosine thresholds renders a
+    wall of "match: weak (0.02)" on results that are in fact excellent.
+    Reranker scores are worse still: an LLM 0-10 scale or a raw
+    cross-encoder logit is not on the unit interval at all.
+
+    The band must therefore be computed from the score kind's own honest
+    similarity input -- the preserved vector leg for hybrid rows (Task 2's
+    `hybrid_fusion.vector_score`) -- and must disclose the kind instead of
+    inventing a similarity when there is none.
+    """
+
+    def test_fused_score_never_bands_on_cosine_thresholds(self):
+        """A fused RRF score (~0.016) with a strong vector leg bands strong."""
+        assert (
+            library_rag_score_suffix(
+                0.016, score_kind="hybrid_fusion", vector_score=0.83
+            )
+            == " | match: strong"
+        )
+
+    def test_fts_only_hybrid_row_reads_keyword_match(self):
+        """No vector leg means no similarity exists -- say "keyword match",
+        never a fabricated band and never the fused 0.0x number."""
+        assert (
+            library_rag_score_suffix(
+                0.0161, score_kind="hybrid_fusion", vector_score=None
+            )
+            == " | keyword match"
+        )
+
+    def test_reranker_scores_disclose_kind_not_band(self):
+        """Reranker scores are unbounded (logits, 0-10 LLM scales): the kind
+        is disclosed, the number is never banded as a cosine."""
+        assert library_rag_score_suffix(-3.2, score_kind="reranker") == " | reranked"
+
+    def test_hybrid_row_with_weak_vector_leg_still_bands_weak_on_the_leg(self):
+        """The converse pin: hybrid banding reads the VECTOR leg, not the
+        fused score -- a genuinely weak vector leg must still render weak,
+        with the leg's own number, not the fused one."""
+        assert (
+            library_rag_score_suffix(
+                0.0159, score_kind="hybrid_fusion", vector_score=0.09
+            )
+            == " | match: weak (0.09)"
+        )
+
+    def test_default_kind_preserves_the_legacy_similarity_contract(self):
+        """Every pre-existing call site passes a cosine similarity and no
+        kind -- the default must keep banding exactly as before."""
+        assert library_rag_score_suffix(0.93) == " | match: strong"
+        assert library_rag_score_suffix(None) == ""
+        assert (
+            library_rag_score_suffix(0.93, score_kind="vector_similarity")
+            == " | match: strong"
+        )
+
+    def test_reranked_row_discloses_kind_even_without_a_score(self):
+        """`None` means "unscored" for a similarity row, but a reranked row
+        was scored by definition -- the kind stays disclosed."""
+        assert library_rag_score_suffix(None, score_kind="reranker") == " | reranked"
+
+
+class TestLibraryRagAllMatchesWeakScoreKinds:
+    """(RAG-port P0/Task 6) The all-weak coverage note is a claim about
+    semantic similarity ("No strong semantic matches"), so only rows whose
+    effective banding input IS a similarity may participate. Keyword-only
+    hybrid rows and reranked rows neither trigger it nor suppress it."""
+
+    def test_all_matches_weak_ignores_non_similarity_kinds(self):
+        keyword_only = LibraryRagResultRow.from_result(
+            {
+                "title": "Keyword only",
+                "score": 0.0161,
+                "provenance": {
+                    "hybrid_fusion": {"fts_rank": 1, "vector_rank": None,
+                                      "fts_score": 0.001, "vector_score": None},
+                },
+            }
+        )
+        weak_vector = LibraryRagResultRow.from_result({"title": "Weak", "score": 0.09})
+        assert library_rag_all_matches_weak((keyword_only, weak_vector)) is True
+        assert library_rag_all_matches_weak((keyword_only,)) is False
+
+    def test_hybrid_rows_are_judged_on_their_vector_leg(self):
+        """A fused 0.016 must not read as a weak similarity -- the row's
+        strong vector leg makes the whole set non-weak."""
+        strong_hybrid = LibraryRagResultRow.from_result(
+            {
+                "title": "Strong hybrid",
+                "score": 0.0161,
+                "provenance": {
+                    "hybrid_fusion": {"fts_rank": 1, "vector_rank": 1,
+                                      "fts_score": 0.001, "vector_score": 0.83},
+                },
+            }
+        )
+        assert library_rag_all_matches_weak((strong_hybrid,)) is False
+
+    def test_reranked_rows_never_participate(self):
+        reranked = LibraryRagResultRow.from_result(
+            {
+                "title": "Reranked",
+                "score": 0.0,
+                "provenance": {"_final_score_kind": "reranker"},
+            }
+        )
+        # Alone: no similarity row exists at all, so no all-weak claim.
+        assert library_rag_all_matches_weak((reranked,)) is False
+        # Alongside a weak similarity row: does not suppress the claim.
+        weak_vector = LibraryRagResultRow.from_result({"title": "Weak", "score": 0.09})
+        assert library_rag_all_matches_weak((reranked, weak_vector)) is True
+        # Alongside a strong similarity row: does not create one either.
+        strong_vector = LibraryRagResultRow.from_result(
+            {"title": "Strong", "score": 0.83}
+        )
+        assert library_rag_all_matches_weak((reranked, strong_vector)) is False
+
+    def test_duck_typed_rows_without_the_new_fields_still_work(self):
+        """`mcp_inspector._ScoredRow` is a `__slots__ = ("score",)` shim that
+        feeds this same canonical check -- reading the new fields must be
+        `getattr`-tolerant or the MCP Test Tool interpretation line breaks."""
+
+        class _ScoreOnly:
+            __slots__ = ("score",)
+
+            def __init__(self, score):
+                self.score = score
+
+        assert library_rag_all_matches_weak((_ScoreOnly(0.09),)) is True
+        assert library_rag_all_matches_weak((_ScoreOnly(0.83),)) is False
+
+
+class TestLibraryRagResultRowScoreKind:
+    """(RAG-port P0/Task 6) The row is where the service's score provenance
+    becomes display state: `provenance["hybrid_fusion"]` (Task 2 preserves
+    the per-leg scores there) and the `_final_score_kind` reranker channel
+    are normalized once, on the row, so the band and the Console evidence
+    bundle cannot disagree."""
+
+    def test_plain_semantic_row_defaults_to_vector_similarity(self):
+        row = LibraryRagResultRow.from_result({"title": "A", "score": 0.83})
+        assert row.score_kind == "vector_similarity"
+        assert row.vector_score is None
+
+    def test_hybrid_row_carries_the_preserved_vector_leg(self):
+        row = LibraryRagResultRow.from_result(
+            {
+                "title": "A",
+                "score": 0.0161,
+                "provenance": {
+                    "hybrid_fusion": {"fts_rank": 1, "vector_rank": 1,
+                                      "fts_score": 0.001, "vector_score": 0.83},
+                },
+            }
+        )
+        assert row.score_kind == "hybrid_fusion"
+        assert row.vector_score == pytest.approx(0.83)
+        assert row.score == pytest.approx(0.0161)
+
+    def test_fts_only_hybrid_row_has_no_vector_leg(self):
+        row = LibraryRagResultRow.from_result(
+            {
+                "title": "A",
+                "score": 0.0161,
+                "provenance": {
+                    "hybrid_fusion": {"fts_rank": 1, "vector_rank": None,
+                                      "fts_score": 0.001, "vector_score": None},
+                },
+            }
+        )
+        assert row.score_kind == "hybrid_fusion"
+        assert row.vector_score is None
+
+    def test_reranker_channel_is_read_from_provenance(self):
+        row = LibraryRagResultRow.from_result(
+            {"title": "A", "score": 7.5, "provenance": {"_final_score_kind": "reranker"}}
+        )
+        assert row.score_kind == "reranker"
+
+    def test_reranking_skipped_tag_is_not_a_score_kind_signal(self):
+        """Task 4's `reranking_skipped`/`reranking_degraded` tags disclose
+        that reranking FAILED -- the scores on those rows are the base
+        retrieval scores, so treating the tag as a reranker score kind would
+        hide a real similarity behind " | reranked"."""
+        row = LibraryRagResultRow.from_result(
+            {
+                "title": "A",
+                "score": 0.83,
+                "provenance": {"reranking_skipped": "no credentials"},
+            }
+        )
+        assert row.score_kind == "vector_similarity"
+
+    def test_kind_also_resolves_from_engine_metadata(self):
+        """Not every producer folds engine metadata into `provenance` --
+        a top-level `metadata` block carrying the fusion provenance must
+        resolve identically."""
+        row = LibraryRagResultRow.from_result(
+            {
+                "title": "A",
+                "score": 0.0161,
+                "metadata": {
+                    "hybrid_fusion": {"fts_rank": 1, "vector_rank": 1,
+                                      "fts_score": 0.001, "vector_score": 0.51},
+                },
+            }
+        )
+        assert row.score_kind == "hybrid_fusion"
+        assert row.vector_score == pytest.approx(0.51)
+
+
 class TestLibraryRagCoverageNote:
     """(Task 8) `library_rag_coverage_note` builds the Evidence region's
     one-line semantic-coverage note from `_search_semantic`'s

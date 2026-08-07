@@ -725,7 +725,11 @@ def library_rag_result_row_children(
         evidence.
     """
     selected = row.result_id == selected_result_id
-    score = library_rag_score_suffix(row.score)
+    score = library_rag_score_suffix(
+        row.score,
+        score_kind=row.score_kind,
+        vector_score=row.vector_score,
+    )
     card_children: list[Widget] = [
         Static(
             f"{index + 1}. {row.title}{score}",

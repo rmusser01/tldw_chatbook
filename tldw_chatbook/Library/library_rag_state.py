@@ -11,6 +11,15 @@ from typing import Any, Mapping, Sequence
 from rich.markup import escape as escape_markup
 
 from tldw_chatbook.Library.library_rag_answer_service import LibraryRagAnswer
+from tldw_chatbook.Library.library_rag_score_kinds import (
+    LIBRARY_RAG_SCORE_KIND_HYBRID_FUSION,
+    LIBRARY_RAG_SCORE_KIND_RERANKER,
+    LIBRARY_RAG_SCORE_KIND_VECTOR_SIMILARITY,
+    coerce_optional_float as _coerce_score,
+    library_rag_result_score_kind,
+    library_rag_similarity_input,
+    normalize_library_rag_score_kind as _normalize_score_kind,
+)
 from tldw_chatbook.Utils.input_validation import (
     sanitize_string,
     validate_number_range,
@@ -104,6 +113,27 @@ LIBRARY_RAG_TOP_K_MAX = 50
 # below are the single seam a future refactor must touch to shift them.
 LIBRARY_RAG_MATCH_STRONG_THRESHOLD = 0.5
 LIBRARY_RAG_MATCH_MODERATE_THRESHOLD = 0.2
+# (RAG-port P0/Task 6) The band thresholds above are a claim about COSINE
+# SIMILARITY, and nothing else the retrieval stack produces lives on that
+# scale:
+#   * hybrid (RRF) fuses by RANK -- a fused score's theoretical maximum is
+#     `1/(rrf_k + 1)`, i.e. ~0.016 at the shipped `rrf_k = 60`, an order of
+#     magnitude below the 0.2 weak boundary. Banding it on the thresholds
+#     above rendered a wall of "match: weak (0.02)" on every hybrid search,
+#     including perfect matches.
+#   * reranker scores are unbounded (cross-encoder logits, 0-10 LLM
+#     scales); a value that happens to land inside [0, 1] is not a
+#     similarity either.
+# So the band's INPUT is chosen by score kind (`library_rag_score_suffix`):
+# hybrid rows band on the vector leg Task 2 preserves in
+# `hybrid_fusion["vector_score"]`, and rows with no similarity at all
+# disclose their kind instead of inventing one. The kind vocabulary and its
+# resolution rule live in `library_rag_score_kinds` (imported above) so the
+# Console evidence-bundle builder can share them without closing an import
+# cycle; only the DISPLAY copy for the two no-similarity kinds is here.
+#: Title-line suffixes for the two kinds that carry no similarity to band.
+LIBRARY_RAG_KEYWORD_MATCH_SUFFIX = " | keyword match"
+LIBRARY_RAG_RERANKED_SUFFIX = " | reranked"
 LIBRARY_RAG_PROVENANCE_KEYS = frozenset(
     {
         "active_context_eligible",
@@ -599,16 +629,12 @@ def _coerce_positive_int(value: Any, fallback: int) -> int:
     return coerced if coerced > 0 else fallback
 
 
-def _coerce_score(value: Any) -> float | None:
-    if value is None or value == "":
-        return None
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return None
-
-
-def library_rag_score_suffix(score: float | None) -> str:
+def library_rag_score_suffix(
+    score: float | None,
+    *,
+    score_kind: str = LIBRARY_RAG_SCORE_KIND_VECTOR_SIMILARITY,
+    vector_score: float | None = None,
+) -> str:
     """Return an evidence row's title-line score suffix as an honest band.
 
     Raw three-decimal cosine scores (e.g. "| score 0.091") are meaningless
@@ -624,20 +650,52 @@ def library_rag_score_suffix(score: float | None) -> str:
     `LIBRARY_RAG_MATCH_STRONG_THRESHOLD` is "strong", and a score exactly at
     `LIBRARY_RAG_MATCH_MODERATE_THRESHOLD` is "moderate".
 
+    The band is a claim about cosine similarity, so `score_kind` selects
+    what is banded (RAG-port P0/Task 6 -- see the thresholds' own comment
+    above):
+
+    * `vector_similarity` (the default, and every pre-existing call site):
+      band `score`, exactly as before.
+    * `hybrid_fusion` with a `vector_score`: band the VECTOR LEG. The fused
+      RRF number is a rank blend maxing out near 0.016 and is never banded.
+      The label is unchanged -- "match: strong" means the same thing it
+      always did, because it is computed from the same kind of number.
+    * `hybrid_fusion` with no `vector_score` (an FTS-leg-only row): no
+      similarity exists, so this discloses `" | keyword match"` -- never a
+      fabricated band, and never the fused 0.0x number.
+    * `reranker`: `" | reranked"`. Reranker outputs are unbounded (logits,
+      0-10 LLM scales); the kind is disclosed instead of banding them.
+
     Args:
         score: Retrieval score, or `None` for keyword-mode rows.
+        score_kind: The score's kind
+            (`library_rag_score_kinds.LIBRARY_RAG_SCORE_KINDS`).
+        vector_score: Preserved vector-leg similarity for hybrid rows.
 
     Returns:
-        `""` for `None`; otherwise `" | match: strong"`,
-        `" | match: moderate"`, or `" | match: weak (0.xx)"`.
+        `""` for an unscored similarity row;
+        `LIBRARY_RAG_RERANKED_SUFFIX` for reranked rows;
+        `LIBRARY_RAG_KEYWORD_MATCH_SUFFIX` for FTS-only hybrid rows;
+        otherwise `" | match: strong"`, `" | match: moderate"`, or
+        `" | match: weak (0.xx)"`.
     """
-    if score is None:
-        return ""
-    if score >= LIBRARY_RAG_MATCH_STRONG_THRESHOLD:
+    kind = _normalize_score_kind(score_kind)
+    if kind == LIBRARY_RAG_SCORE_KIND_RERANKER:
+        return LIBRARY_RAG_RERANKED_SUFFIX
+    similarity = library_rag_similarity_input(
+        score, score_kind=kind, vector_score=vector_score
+    )
+    if similarity is None:
+        return (
+            LIBRARY_RAG_KEYWORD_MATCH_SUFFIX
+            if kind == LIBRARY_RAG_SCORE_KIND_HYBRID_FUSION
+            else ""
+        )
+    if similarity >= LIBRARY_RAG_MATCH_STRONG_THRESHOLD:
         return " | match: strong"
-    if score >= LIBRARY_RAG_MATCH_MODERATE_THRESHOLD:
+    if similarity >= LIBRARY_RAG_MATCH_MODERATE_THRESHOLD:
         return " | match: moderate"
-    return f" | match: weak ({score:.2f})"
+    return f" | match: weak ({similarity:.2f})"
 
 
 def _normalize_mode(value: Any) -> str:
@@ -1223,6 +1281,19 @@ class LibraryRagResultRow:
     citations: tuple[LibraryRagCitation, ...]
     provenance: Mapping[str, Any]
     runtime_backend: str = ""
+    #: What scale `score` is on (RAG-port P0/Task 6). Defaults to
+    #: `vector_similarity` -- the only kind that existed before hybrid and
+    #: reranking became reachable -- so every pre-existing construction and
+    #: every `library_rag_score_suffix(row.score)` call site keeps its exact
+    #: prior behavior. Resolved once here, in `from_result`, rather than at
+    #: each display site, so the band, the all-weak coverage sentence and
+    #: the Console evidence bundle cannot disagree about one row.
+    score_kind: str = LIBRARY_RAG_SCORE_KIND_VECTOR_SIMILARITY
+    #: The vector leg's preserved cosine similarity for `hybrid_fusion`
+    #: rows (Task 2's `metadata["hybrid_fusion"]["vector_score"]`), or
+    #: `None` -- including for an FTS-leg-only hybrid row, which has no
+    #: similarity at all. Always `None` for the other kinds.
+    vector_score: float | None = None
     #: Sanitized/collapsed/HTML-entity-decoded snippet text, still UNESCAPED
     #: (RAG-30/31 C1 fix) -- `display_snippet` strips Markdown structure from
     #: this, never from `snippet` (which is already `escape_markup`-escaped
@@ -1281,11 +1352,23 @@ class LibraryRagResultRow:
             if key in values and key not in provenance:
                 provenance[key] = values[key]
         result_id = _result_id(source_id, chunk_id, title)
+        # Score-kind resolution reads the ORIGINAL `provenance_value` and
+        # engine `metadata` blocks, not the sanitized `provenance` copy
+        # above: `LIBRARY_RAG_PROVENANCE_KEYS` is a display allowlist, and
+        # the fusion/reranker channels are retrieval provenance, not
+        # display provenance.
+        score_kind, vector_score = library_rag_result_score_kind(
+            provenance_value,
+            values.get("metadata"),
+            values,
+        )
         return cls(
             result_id=result_id,
             title=title,
             snippet=snippet,
             score=_coerce_score(values.get("score")),
+            score_kind=score_kind,
+            vector_score=vector_score,
             source_id=source_id,
             chunk_id=chunk_id,
             citations=citations,
@@ -1514,23 +1597,54 @@ class LibraryRagResultRow:
 
 
 def library_rag_all_matches_weak(rows: Sequence[LibraryRagResultRow]) -> bool:
-    """True when every scored row among `rows` bands weak (RAG-34/Task 8).
+    """True when every row carrying a similarity bands weak (RAG-34/Task 8).
 
-    Feeds Task 8's evidence-list coverage note. Unscored rows (keyword-mode,
-    `score is None`) are ignored entirely -- neither counted toward "all"
-    nor treated as weak. True only when there is at least one scored row and
-    all of them fall below `LIBRARY_RAG_MATCH_MODERATE_THRESHOLD`; a result
-    set with no scored rows at all (e.g. pure keyword mode) returns `False`,
-    not `True` -- "everything is weak" is a claim about actual scores, not
-    about their absence.
+    Feeds Task 8's evidence-list coverage note, whose wording
+    (`LIBRARY_RAG_ALL_WEAK_COVERAGE_PREFIX`: "No strong semantic
+    matches...") is a claim about SEMANTIC SIMILARITY. Only rows whose
+    effective banding input is a similarity therefore participate --
+    `library_rag_similarity_input`, the same seam
+    `library_rag_score_suffix` bands with:
+
+    * unscored rows (keyword-mode, `score is None`),
+    * FTS-leg-only hybrid rows (no vector leg), and
+    * reranked rows (unbounded scores)
+
+    are ignored entirely -- neither counted toward "all" nor treated as
+    weak. A hybrid row IS counted, on its preserved vector leg: the fused
+    RRF number (~0.016) would otherwise make every hybrid result set read
+    as uniformly weak (RAG-port P0/Task 6).
+
+    True only when there is at least one such row and all of them fall
+    below `LIBRARY_RAG_MATCH_MODERATE_THRESHOLD`; a result set with no
+    similarity-bearing rows at all (e.g. pure keyword mode) returns
+    `False`, not `True` -- "everything is weak" is a claim about actual
+    scores, not about their absence.
 
     Args:
-        rows: Evidence rows to inspect.
+        rows: Evidence rows to inspect. Read by duck typing (`.score`, and
+            optionally `.score_kind`/`.vector_score`) rather than by type:
+            `mcp_inspector._ScoredRow` is a `__slots__ = ("score",)` shim
+            that feeds this same canonical check, so the two newer
+            attributes are read with `getattr` defaults.
 
     Returns:
-        Whether every scored row among `rows` bands weak.
+        Whether every similarity-bearing row among `rows` bands weak.
     """
-    scored = [row.score for row in rows if row.score is not None]
+    scored = [
+        similarity
+        for similarity in (
+            library_rag_similarity_input(
+                getattr(row, "score", None),
+                score_kind=getattr(
+                    row, "score_kind", LIBRARY_RAG_SCORE_KIND_VECTOR_SIMILARITY
+                ),
+                vector_score=getattr(row, "vector_score", None),
+            )
+            for row in rows
+        )
+        if similarity is not None
+    ]
     if not scored:
         return False
     return all(score < LIBRARY_RAG_MATCH_MODERATE_THRESHOLD for score in scored)
