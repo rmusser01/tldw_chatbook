@@ -91,4 +91,20 @@ there). Repo-wide --collect-only: 31874 collected, 0 errors. ruff check + format
 
 Files: tldw_chatbook/UI/Speech/speech_catalog_mixin.py,
 Tests/UI/test_speech_playground_pane_lifecycle.py (un-xfail + comment rewrite).
+
+### Review round: positive-branch coverage added
+
+Coordinator review approved the fix but flagged that health2/health3 only pin the
+negative case (a first-ever non-fresh load must NOT be marked stale) -- AC#3's
+positive branch (a genuine second-load supersession MUST still be marked stale) had
+no dedicated test of its own. Added
+test_second_load_after_genuine_config_change_marks_provider_stale to
+Tests/UI/test_speech_playground_pane_lifecycle.py: mounts normally (records
+configuration revision 1), bumps service.revisions["audio_cpp"] to 2, drives a
+second, successful (token-current) reload whose catalog still reports fresh=False,
+and asserts _stale_providers gains the provider with the "settings changed" status
+copy. Mutation-checked by disabling the elif genuine-supersession branch in
+_load_provider_catalog_worker (falls through to unconditional discard); RED under
+that mutation (only this test), GREEN restored -- health2/health3 and both TASK-3000
+tests unaffected in either direction. No production-code change in this round.
 <!-- SECTION:NOTES:END -->

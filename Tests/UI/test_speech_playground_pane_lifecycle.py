@@ -1354,6 +1354,49 @@ async def test_audio_cpp_health_states_use_fixed_safe_recovery_copy(
         assert service.catalog_calls == [("audio_cpp", False)]
 
 
+# TASK-2970 positive branch: health2/health3 above pin the negative case (a
+# first-ever non-fresh load must NOT be marked stale). This test pins the
+# other half of AC#3 -- a SECOND load whose own configuration revision has
+# genuinely moved past the one recorded from the first is a real
+# supersession, and must still be marked stale with the settings-changed
+# copy. Mutation-checked by disabling the `elif` branch in
+# `_load_provider_catalog_worker` (`speech_catalog_mixin.py`, the genuine-
+# supersession check) so it always falls through to `discard` -- this test
+# alone goes red; health2/health3 and the TASK-3000 tests stay green.
+@pytest.mark.asyncio
+async def test_second_load_after_genuine_config_change_marks_provider_stale(
+    audio_cpp_playground: FakeTTSService,
+) -> None:
+    service = audio_cpp_playground
+    app = _PaneHost()
+
+    async with app.run_test(size=(180, 70)) as pilot:
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        pane = app.query_one(SpeechPlaygroundPane)
+
+        assert "audio_cpp" not in pane._stale_providers
+        assert pane._catalog_configuration_revisions["audio_cpp"] == 1
+
+        # A genuine configuration-revision bump, then a second, successful
+        # (token-current) reload whose catalog still reports non-fresh
+        # health -- unlike the first-ever load above, this one really did
+        # follow a real config change.
+        service.revisions["audio_cpp"] = 2
+        service.catalogs["audio_cpp"] = _audio_catalog(
+            health=ProviderHealth(state="available", fresh=False)
+        )
+        pane._load_provider_catalog("audio_cpp", refresh=True)
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert pane._catalog_configuration_revisions["audio_cpp"] == 2
+        assert "audio_cpp" in pane._stale_providers
+        status = str(app.query_one("#tts-provider-status", Static).render()).lower()
+        assert "settings changed" in status
+
+
 # =====================================================================
 # Section B -- playback, export, unmount cleanup, mount rehydration
 # =====================================================================
@@ -2042,6 +2085,82 @@ async def test_configuration_change_detaches_cancellation_resistant_profile_voic
             "unverified" in message.lower() and severity == "warning"
             for message, severity in app.notices
         )
+
+        service.voice_gates[request_key].set()
+        await service.voice_finished_by_request[request_key].wait()
+
+
+# TASK-3000 regression guard (a): the token must detach ONLY on a genuine,
+# provider-matched `mark_provider_configuration_changed` call -- not on any
+# catalog-load failure whatsoever. A plain, unrelated catalog reload failure
+# while a voice validation is in flight (no config change anywhere in this
+# sequence) must leave the token, and Generate's disabled state, untouched.
+# Mutation-checked: widening `_load_provider_catalog_worker`'s `except
+# Exception` handler (speech_catalog_mixin.py ~:424-426) to clear
+# `self._profile_voice_validation_token` unconditionally, instead of only
+# its own locally-reserved `profile_voice_token`, turns this test red.
+@pytest.mark.asyncio
+async def test_unrelated_catalog_failure_does_not_detach_in_flight_profile_voice_token(
+    audio_cpp_playground: FakeTTSService,
+) -> None:
+    service = audio_cpp_playground
+    request_key = ("audio_cpp", "<opaque:model>")
+    service.voice_started_by_request[request_key] = asyncio.Event()
+    service.voice_finished_by_request[request_key] = asyncio.Event()
+    service.voice_gates[request_key] = asyncio.Event()
+    preset = _profile_preset(model_id=request_key[1], voice_id="[voice]")
+    app = _PaneHost(preset=preset)
+
+    async with app.run_test(size=(180, 70)) as pilot:
+        await service.voice_started_by_request[request_key].wait()
+        pane = app.query_one(SpeechPlaygroundPane)
+        pending_token = pane._profile_voice_validation_token
+        assert pending_token is not None
+        assert app.query_one("#tts-generate-btn", Button).disabled is True
+
+        # No configuration change anywhere in this sequence -- just an
+        # unrelated catalog reload that fails for its own reasons.
+        service.catalog_error = RuntimeError("unrelated catalog failure")
+        pane._load_provider_catalog("audio_cpp", refresh=True)
+        await _wait_until(pilot, lambda: "audio_cpp" in pane._stale_providers)
+
+        assert pane._profile_voice_validation_token is pending_token
+        assert app.query_one("#tts-generate-btn", Button).disabled is True
+
+        service.voice_gates[request_key].set()
+        await service.voice_finished_by_request[request_key].wait()
+
+
+# TASK-3000 regression guard (b): `mark_provider_configuration_changed`'s
+# token-detach only fires when the changed provider matches the token's OWN
+# provider. A config change for a completely different provider must leave
+# an audio_cpp exact profile's in-flight voice-validation token (and
+# Generate's disabled state) untouched. Mutation-checked: removing the
+# `pending_voice_token.provider_id == provider_id` guard
+# (speech_catalog_mixin.py ~:1527-1532) turns this test red.
+@pytest.mark.asyncio
+async def test_configuration_change_for_unrelated_provider_does_not_detach_profile_voice_token(
+    audio_cpp_playground: FakeTTSService,
+) -> None:
+    service = audio_cpp_playground
+    request_key = ("audio_cpp", "<opaque:model>")
+    service.voice_started_by_request[request_key] = asyncio.Event()
+    service.voice_finished_by_request[request_key] = asyncio.Event()
+    service.voice_gates[request_key] = asyncio.Event()
+    preset = _profile_preset(model_id=request_key[1], voice_id="[voice]")
+    app = _PaneHost(preset=preset)
+
+    async with app.run_test(size=(180, 70)) as pilot:
+        await service.voice_started_by_request[request_key].wait()
+        pane = app.query_one(SpeechPlaygroundPane)
+        pending_token = pane._profile_voice_validation_token
+        assert pending_token is not None
+
+        pane.mark_provider_configuration_changed("openai", 2)
+        await pilot.pause()
+
+        assert pane._profile_voice_validation_token is pending_token
+        assert app.query_one("#tts-generate-btn", Button).disabled is True
 
         service.voice_gates[request_key].set()
         await service.voice_finished_by_request[request_key].wait()

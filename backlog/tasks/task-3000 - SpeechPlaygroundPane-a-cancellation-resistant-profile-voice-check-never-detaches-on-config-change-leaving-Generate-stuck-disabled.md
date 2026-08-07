@@ -87,4 +87,45 @@ collected, 0 errors. ruff check + format --check clean on touched files.
 
 Files: tldw_chatbook/UI/Speech/speech_catalog_mixin.py (mark_provider_configuration_
 changed), Tests/UI/test_speech_playground_pane_lifecycle.py (new ported test).
+
+### Review round: trigger-wording correction + two regression-guard tests
+
+Coordinator review approved the fix as correct but flagged two things.
+
+First, a wording correction (no code change): this task's own description and my
+Implementation Notes above frame the trigger as "config change, followed by a failed
+catalog reload" -- narrower than what the fix actually depends on. The token detaches
+the moment mark_provider_configuration_changed runs for its own provider, full stop;
+no reload -- successful, failed, or never attempted at all -- has to follow. The
+failed reload in the ported test exists only to demonstrate that Generate *recovers*
+afterward (via the pre-existing _catalog_failure settling path), which is a separate
+guarantee from the detach itself. This isn't an ad-hoc relaxation: the event stream
+feeding mark_provider_configuration_changed is already scoped upstream to genuinely
+*applied* changes -- on_stts_provider_configuration_changed (stts_events.py
+:2092-2100) forwards every STTSProviderConfigurationChanged event verbatim, and that
+event is only ever posted by _post_applied_settings_changes (stts_events.py
+:1584-1598) for providers whose settings-save status == "applied".
+
+Second, two coverage-pinning tests were added to Tests/UI/test_speech_playground_pane_
+lifecycle.py to pin the fix's actual scope (only these two conditions -- no others --
+detach the token), rather than relying only on the reviewer's own throwaway probes:
+- test_unrelated_catalog_failure_does_not_detach_in_flight_profile_voice_token: voice
+  validation in flight, NO config-change event anywhere, an unrelated catalog reload
+  failure -- token and disabled button both untouched. Mutation-checked by widening
+  _load_provider_catalog_worker's except Exception handler to clear
+  self._profile_voice_validation_token unconditionally instead of only its own
+  locally-reserved profile_voice_token; RED under that mutation (only this test),
+  GREEN restored.
+- test_configuration_change_for_unrelated_provider_does_not_detach_profile_voice_token:
+  mark_provider_configuration_changed for a DIFFERENT provider while the token belongs
+  to audio_cpp -- token and disabled button both untouched. Mutation-checked by
+  removing the pending_voice_token.provider_id == provider_id guard; RED under that
+  mutation (only this test), GREEN restored.
+
+Both mutation checks were run together with health0-3 (TASK-2970) and the originally
+ported TASK-3000 test in one pytest invocation each, confirming no cross-
+contamination. Full 4-file targeted gate after adding both tests: 208 passed (205 +
+3, including TASK-2970's own new positive-branch test from the same review round).
+ruff check + format --check clean. No production-code changes in this round --
+mark_provider_configuration_changed's fix from the original pass is unchanged.
 <!-- SECTION:NOTES:END -->
