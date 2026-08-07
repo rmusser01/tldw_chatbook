@@ -33,8 +33,8 @@ summary, as it applies to this file:
   callable): it never changes identity over a controller's life.
 - Controllers own no DOM.
 
-`Screens/chat_screen.py` still imports all six controller CLASSES even though
-it no longer names four of them in code. That is deliberate, and re-deleting
+`Screens/chat_screen.py` still imports the controller CLASSES even though it
+no longer names most of them in code. That is deliberate, and re-deleting
 them is a regression: 18 sites across five test files reach them as
 `chat_screen_module.ConsoleDictationController` /
 `...ConsoleWorkspaceController` patch handles, and dropping the imports
@@ -45,6 +45,7 @@ already carries.
 
 from typing import TYPE_CHECKING
 
+from .agent import ConsoleAgentController
 from .dictation import ConsoleDictationController
 from .hands_free import ConsoleHandsFreeController
 from .message import ConsoleMessageController
@@ -59,19 +60,19 @@ __all__ = ["build_console_controllers"]
 
 
 def build_console_controllers(screen: "ChatScreen") -> None:
-    """Construct the Console screen's six controllers and attach them.
+    """Construct the Console screen's seven controllers and attach them.
 
     Assigns, in this order, `screen._workspace`, `screen._session`,
-    `screen._dictation`, `screen._hands_free`, `screen._message` and
-    `screen._prompts`. The order is documentation, not a constraint: every
-    cross-controller dependency below is resolved at call time (see the
-    module docstring), so no controller reads a sibling that does not exist
-    yet.
+    `screen._dictation`, `screen._hands_free`, `screen._message`,
+    `screen._prompts` and `screen._agent`. The order is documentation, not a
+    constraint: every cross-controller dependency below is resolved at call
+    time (see the module docstring), so no controller reads a sibling that
+    does not exist yet.
 
     `ChatScreen.__init__` calls this at exactly the point the first
     construction used to occupy. That position matters: the ~250 attribute
     assignments around it in `__init__` include names these lambdas read, and
-    none of the six constructors reads anything off `screen` eagerly (each
+    none of the seven constructors reads anything off `screen` eagerly (each
     stores `screen` and its callables and nothing else), so the call needs to
     sit where it can see everything the pre-move constructions could.
 
@@ -587,5 +588,56 @@ def build_console_controllers(screen: "ChatScreen") -> None:
         ),
         sync_console_settings_summary=(
             lambda: screen._sync_console_settings_summary()
+        ),
+    )
+    #: The agent runtime's screen-side cluster -- the lazily-built
+    #: `ConsoleAgentBridge`, the Agent rail section's text derivation, the
+    #: sub-agent drill-in cycle, the "View full log" target/probe/loader,
+    #: the fleet auto-open override, the `[N Sub-Agents]` badge-count
+    #: cache, and resume-time TOOL-marker re-derivation -- moved to
+    #: `ConsoleAgentController` (wave-4 console decomposition, task 3).
+    #: `self._console_agent_bridge`/`_console_agent_drilldown_run_id`/
+    #: `_console_agent_drilldown_conversation_id`/`_agent_section_user_
+    #: dismissed_while_busy` stay readable/writable via the four proxy
+    #: properties defined near `_console_composer_or_none`, so nothing
+    #: outside this cluster (compose, `_toggle_console_rail_section`, the
+    #: two sibling controllers' own drill-down clears, `on_button_pressed`,
+    #: tests) had to change. `_sync_console_agent_section` stays on the
+    #: screen (nine `query_one` calls); only its payload derivation moved.
+    #: See `agent.py`'s module docstring for the full map of what moved and
+    #: why, including the one method that name-matched but is not part of
+    #: this cluster.
+    screen._agent = ConsoleAgentController(
+        screen,
+        app_instance=screen.app_instance,
+        chat_store_accessor=lambda: screen._ensure_console_chat_store(),
+        provider_gateway_accessor=(
+            lambda: screen._ensure_console_provider_gateway()
+        ),
+        # A bare-attribute READ, not a call: `ConsoleAgentBridge` stores
+        # this callable and calls it per run, so the accessor must return
+        # the screen's method rather than today's answer -- the same shape
+        # `ConsolePromptsController`'s `open_console_provider_recovery_
+        # accessor` documents.
+        native_tool_calls_enabled_accessor=(
+            lambda: screen._console_native_tool_calls_enabled
+        ),
+        # Both of these are replaced by name on the screen instance in
+        # `Tests/UI/test_console_agent_rail.py` (5 and 3 sites), so a bound
+        # method captured here would silently stop observing those patches.
+        current_rail_conversation_id=(
+            lambda: screen._current_console_rail_conversation_id()
+        ),
+        current_rail_state_accessor=lambda: screen._current_console_rail_state(),
+        # `getattr` with a default, matching the pre-move body: the fleet
+        # summary line is reachable on a screen that has never built a chat
+        # controller.
+        chat_controller_accessor=(
+            lambda: getattr(screen, "_console_chat_controller", None)
+        ),
+        # Another bare-attribute READ: the drill-in toggle hands this
+        # straight to `run_worker` without calling it.
+        sync_native_console_chat_ui_accessor=(
+            lambda: screen._sync_native_console_chat_ui
         ),
     )

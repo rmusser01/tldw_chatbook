@@ -206,7 +206,15 @@ async def test_drilldown_cycle_steps_persisted_subagents_and_retargets_the_full_
         console._console_agent_drilldown_conversation_id = "conv-A"
 
         # Overview: the affordance targets the conversation's latest primary.
-        assert console._console_agent_full_log_run_id() == primary_id
+        #
+        # `_console_agent_full_log_run_id` is the ONE name in this file that
+        # had to follow the wave-4 task-3 extraction: it has no consumer
+        # outside the agent cluster, so it moved to `ConsoleAgentController`
+        # with no screen-level delegation. Every other assertion here still
+        # reads through `ChatScreen`'s own names, unchanged from the
+        # pre-move run.
+        full_log_run_id = console._agent._console_agent_full_log_run_id
+        assert full_log_run_id() == primary_id
 
         seen = []
         for _ in range(3):
@@ -215,7 +223,7 @@ async def test_drilldown_cycle_steps_persisted_subagents_and_retargets_the_full_
             seen.append(
                 (
                     console._console_agent_drilldown_run_id,
-                    console._console_agent_full_log_run_id(),
+                    full_log_run_id(),
                 )
             )
 
