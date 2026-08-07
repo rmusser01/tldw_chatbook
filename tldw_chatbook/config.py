@@ -2127,11 +2127,16 @@ def load_settings(force_reload: bool = False) -> Dict:
             "relevance_scrape_timeout_s": _get_int_timeout_value(
                 search_settings_section, "relevance_scrape_timeout_s", 30
             ),
-            # 240, not 300 (task-1356 review ruling): must undercut the agent
-            # runtime's 300s max_tool_call_seconds (Agents/agent_models.py
-            # RunBudget.max_tool_call_seconds) so a deadline-hit deep search
-            # can still return its partial synthesis instead of being killed
-            # by the outer tool-call ceiling first.
+            # 240 default (task-1356 review ruling). Fix round 1: this key
+            # is NOT required to stay under the agent runtime's 300s
+            # max_tool_call_seconds (Agents/agent_models.py RunBudget.
+            # max_tool_call_seconds) -- the runtime automatically allots the
+            # web_deep_search tool its own per-call timeout of this value
+            # plus ~50s slack (wait_for grace + thread-join + scheduling
+            # jitter) via LocalToolProvider.timeout_for, so a deadline-hit
+            # deep search can still return its partial synthesis instead of
+            # being killed by the outer tool-call ceiling first, for any
+            # value an operator sets here.
             "deep_search_timeout_s": _get_int_timeout_value(
                 search_settings_section, "deep_search_timeout_s", 240
             ),
@@ -3755,7 +3760,7 @@ log_unknown_models = true      # Whether to log when an unknown model is queried
 # search_result_max = 10
 # relevance_llm_timeout_s = 30
 # relevance_scrape_timeout_s = 30
-# deep_search_timeout_s = 240   # must undercut the agent runtime's 300s max_tool_call_seconds so a deadline-hit run can still return its partial synthesis
+# deep_search_timeout_s = 240   # the agent runtime automatically allots this tool its own per-call timeout of this value plus ~50s slack (wait_for grace + thread-join + scheduling jitter), via LocalToolProvider.timeout_for -- independent of max_tool_call_seconds, any value here is safe
 
 # ==========================================================
 # Search Engines Configuration

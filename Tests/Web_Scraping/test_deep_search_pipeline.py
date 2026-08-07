@@ -400,9 +400,11 @@ def test_search_settings_timeout_keys_with_defaults(tmp_path, monkeypatch):
     Acceptance: search_settings_general contains three new int keys:
     - relevance_llm_timeout_s = 30
     - relevance_scrape_timeout_s = 30
-    - deep_search_timeout_s = 240 (task-1356 review ruling: must undercut the
-      agent runtime's 300s max_tool_call_seconds so a deadline-hit run can
-      still return its partial synthesis instead of being killed first)
+    - deep_search_timeout_s = 240 (task-1356 review ruling; fix round 1: the
+      agent runtime now derives web_deep_search's own per-call timeout from
+      this value via LocalToolProvider.timeout_for, so a deadline-hit run
+      can still return its partial synthesis instead of being killed by the
+      runtime's own ceiling first, for any configured value)
     """
     config_path = tmp_path / "config.toml"
     # Minimal config with no SearchSettings section

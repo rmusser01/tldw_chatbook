@@ -12,6 +12,7 @@ from tldw_chatbook.Agents.local_tool_provider import (
     LocalToolProvider,
 )
 from tldw_chatbook.MCP.permission_store import EffectiveToolState
+from tldw_chatbook.Tools import web_tool_impls
 
 ALLOW = EffectiveToolState(state="allow", origin="tool_override")
 ASK = EffectiveToolState(state="ask", origin="global_default")
@@ -1269,6 +1270,10 @@ def test_web_deep_search_pinned_catalog_list_unchanged_by_default(tmp_path):
 
 
 def test_timeout_for_overrides_only_web_deep_search(tmp_path, monkeypatch):
+    # Fix round 1: at the shipped 240 default this still yields 290.0 --
+    # exactly the constant this derived override replaced -- so default
+    # behavior for every OTHER tool (and the "only web_deep_search gets an
+    # override" shape) is unchanged.
     _enable_deep_search(monkeypatch)
     p = make_provider(root=tmp_path)
     assert p.timeout_for("local:web_deep_search") == 290.0
@@ -1278,3 +1283,43 @@ def test_timeout_for_overrides_only_web_deep_search(tmp_path, monkeypatch):
     # A tool that doesn't even exist must not raise -- same "no override"
     # answer as any other unrecognized name.
     assert p.timeout_for("local:nonexistent") is None
+
+
+def test_timeout_for_tracks_configured_deep_search_timeout_s(tmp_path, monkeypatch):
+    # The override used to be a hardcoded 290.0 regardless of
+    # [SearchSettings] deep_search_timeout_s -- for any configured value in
+    # 256-299 (a range the shipped config template explicitly invited) that
+    # fired the outer override BEFORE the tool's own graceful
+    # deadline/grace/join sequence finished. It must now DERIVE from the
+    # same settings seam the tool itself reads (_deep_search_settings), not
+    # config internals.
+    _enable_deep_search(monkeypatch)
+    p = make_provider(root=tmp_path)
+    monkeypatch.setattr(
+        web_tool_impls, "_deep_search_settings", lambda: {"deep_search_timeout_s": 270}
+    )
+    # 270 + 30 (wait_for grace) + 5 (thread-join slack) + 15 (jitter) = 320,
+    # which exceeds the tool's own 305s internal worst case (270 + 35).
+    assert p.timeout_for("local:web_deep_search") == 320.0
+
+
+def test_timeout_for_falls_back_on_malformed_deep_search_timeout_s(tmp_path, monkeypatch):
+    # A malformed raw TOML value must not reach the derived override
+    # unfiltered -- it goes through _deep_search_settings' own coercion
+    # (falls back to the 240 default, per config._get_int_timeout_value)
+    # exactly like the tool's own read of the same key, so the outer
+    # ceiling and the tool's internal deadline never disagree about a bad
+    # config value. Deliberately exercises the REAL _deep_search_settings
+    # (unlike the wholesale fake above) to prove that end-to-end coercion
+    # chain still holds through the new derivation.
+    _enable_deep_search(monkeypatch)
+    p = make_provider(root=tmp_path)
+    import tldw_chatbook.config as config_module
+
+    def fake_get_cli_setting(section, key=None, default=None):
+        if key == "deep_search_timeout_s":
+            return "abc"  # not float()-able
+        return default
+
+    monkeypatch.setattr(config_module, "get_cli_setting", fake_get_cli_setting)
+    assert p.timeout_for("local:web_deep_search") == 290.0

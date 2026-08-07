@@ -67,18 +67,31 @@ _MAX_RESULT_BYTES = 32 * 1024
 _MAX_ERROR_CHARS = 300
 
 # web_deep_search's own internal deadline can run up to deep_search_timeout_s
-# (240s default) + a 30s asyncio.wait_for grace + a 5s thread-join slack =
-# 275s worst case before ITS OWN partial-synthesis return (see
-# Tools/web_tool_impls.py's _DEEP_SEARCH_DEADLINE_GRACE_S /
-# _DEEP_SEARCH_THREAD_JOIN_SLACK_S docstrings). The agent runtime's default
-# per-call ceiling (RunBudget.max_tool_call_seconds = 300s) already covers
-# that -- but an agent config that sets a SHORTER budget for its other, much
-# faster tools would preempt this one before it gets to return that honest
-# partial answer instead of nothing. This override (LocalToolProvider.
-# timeout_for, below) decouples web_deep_search's minimum viable runtime
-# from whatever budget the surrounding run happens to use for everything
-# else, while staying under the runtime's own 300s outer ceiling.
-_WEB_DEEP_SEARCH_TIMEOUT_S = 290.0
+# (operator-configured, default 240s) + a 30s asyncio.wait_for grace + a 5s
+# thread-join slack = deep_search_timeout_s + 35s worst case before ITS OWN
+# partial-synthesis return (see Tools/web_tool_impls.py's
+# _DEEP_SEARCH_DEADLINE_GRACE_S / _DEEP_SEARCH_THREAD_JOIN_SLACK_S
+# docstrings). The agent runtime's default per-call ceiling (RunBudget.
+# max_tool_call_seconds = 300s) only covers that for the DEFAULT
+# deep_search_timeout_s -- an operator who raises deep_search_timeout_s (the
+# key is deliberately uncapped; see config.py's template comment), or an
+# agent config that sets a SHORTER budget for its other, much faster tools,
+# would otherwise preempt this one before it gets to return that honest
+# partial answer instead of nothing.
+#
+# Fix round 1 (task-1356 review): the override used to be this hardcoded
+# constant, computed once against the SHIPPED default and never revisited --
+# so any configured deep_search_timeout_s in 256-299 (a range the config
+# template explicitly invited) fired the outer override BEFORE the tool's
+# own graceful sequence finished. LocalToolProvider.timeout_for (below) now
+# calls Tools/web_tool_impls.deep_search_outer_timeout_s() instead, which
+# reads the SAME settings seam the tool itself uses and DERIVES the ceiling
+# from it (configured deep_search_timeout_s + grace + join-slack + a
+# scheduling-jitter margin) -- the invariant "outer > internal worst case"
+# now holds for every configured value, not just the default. At the 240
+# default this still yields 290s, exactly what shipped before; no clamp is
+# applied anywhere, so an operator who sets 3600 gets a 3650s outer
+# ceiling -- their explicit, documented choice.
 
 
 @dataclass(frozen=True)
@@ -258,21 +271,28 @@ class LocalToolProvider:
         "timeout_for", None)`` and falls back to the run's
         ``config.budget.max_tool_call_seconds`` (default 300s) when it
         returns ``None`` -- which is every tool here except the one
-        override below (see ``_WEB_DEEP_SEARCH_TIMEOUT_S``'s docstring for
-        why that one needs a floor independent of the surrounding budget).
+        override below (see the module comment above this class's
+        ``web_deep_search``-related constants for why that one needs a
+        floor independent of the surrounding budget).
 
         Args:
             tool_id: Catalog id (``local:<name>``) or bare LLM-facing name
                 -- same prefix tolerance as ``invoke()``/``load_schema()``.
 
         Returns:
-            ``_WEB_DEEP_SEARCH_TIMEOUT_S`` for ``web_deep_search``
-            (registered or not -- this method does not consult the
-            catalog), ``None`` for every other name including unknown
-            ones.
+            ``Tools.web_tool_impls.deep_search_outer_timeout_s()`` for
+            ``web_deep_search`` (registered or not -- this method does not
+            consult the catalog), ``None`` for every other name including
+            unknown ones. Fix round 1: DERIVED per call from the configured
+            ``deep_search_timeout_s`` (not a module-load-time constant) --
+            see that function's docstring for the exact formula.
         """
         name = tool_id.split(":", 1)[1] if ":" in tool_id else tool_id
-        return _WEB_DEEP_SEARCH_TIMEOUT_S if name == "web_deep_search" else None
+        if name != "web_deep_search":
+            return None
+        from tldw_chatbook.Tools.web_tool_impls import deep_search_outer_timeout_s
+
+        return deep_search_outer_timeout_s()
 
     # -- approval stamps (mirror MCPToolProvider) ----------------------
 
@@ -696,6 +716,7 @@ def _default_specs(
         SEARCH_DEFAULT_RESULT_COUNT,
         SEARCH_ENGINES,
         SEARCH_MAX_RESULT_COUNT,
+        _deep_search_settings,
         web_crawl,
         web_deep_search,
         web_fetch,
@@ -1064,6 +1085,14 @@ def _default_specs(
         # (see the class docstring), so flipping the gate needs an app
         # restart -- documented below and in the config template comment
         # ([SearchSettings] block, config.py).
+        #
+        # Fix round 1: the deadline sentence below used to bake in a static
+        # "240s", drifting silently if an operator configured a different
+        # deep_search_timeout_s. Read from the same settings seam the tool
+        # itself (and timeout_for's derived override) use, at spec-
+        # construction time -- consistent with the restart-to-apply note
+        # already on this whole spec (the provider builds its list once).
+        _deep_search_deadline_s = _deep_search_settings()["deep_search_timeout_s"]
         specs.append(
             LocalToolSpec(
                 name="web_deep_search",
@@ -1075,11 +1104,13 @@ def _default_specs(
                     "real money on paid providers -- makes ~2x-results+3 LLM "
                     "calls plus up to max_results page fetches per call "
                     "(~25 LLM calls at defaults). Runs under an internal "
-                    "240s deadline (deep_search_timeout_s); if that deadline "
-                    "fires before synthesis finishes, returns a partial, "
-                    "explicitly labeled answer instead of failing outright. "
-                    "Opt-in: requires [tools] web_deep_search_enabled = true "
-                    "in config.toml and an app restart to take effect."
+                    f"{_deep_search_deadline_s}s deadline (configurable via "
+                    "[SearchSettings].deep_search_timeout_s; restart to "
+                    "apply); if that deadline fires before synthesis "
+                    "finishes, returns a partial, explicitly labeled answer "
+                    "instead of failing outright. Opt-in: requires [tools] "
+                    "web_deep_search_enabled = true in config.toml and an "
+                    "app restart to take effect."
                 ),
                 parameters={
                     "type": "object",

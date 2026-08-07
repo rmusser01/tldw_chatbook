@@ -1255,6 +1255,12 @@ _DEEP_SEARCH_DEADLINE_GRACE_S = 30.0
 # of the coroutine's own wait_for(deadline + grace) so the join timeout
 # never races the coroutine's own timeout under normal scheduling jitter.
 _DEEP_SEARCH_THREAD_JOIN_SLACK_S = 5.0
+# Additional margin on top of the two constants above, folded into
+# deep_search_outer_timeout_s() below -- covers ordinary scheduling jitter
+# between the agent runtime's own timer and this tool's internal one (two
+# independent clocks measuring "the same" deadline never fire at the exact
+# same instant).
+_DEEP_SEARCH_SCHEDULING_JITTER_S = 15.0
 
 
 def _deep_search_settings() -> dict:
@@ -1321,11 +1327,45 @@ def _deep_search_settings() -> dict:
         "search_result_max": _int("search_result_max", 10),
         "relevance_llm_timeout_s": _int("relevance_llm_timeout_s", 30),
         "relevance_scrape_timeout_s": _int("relevance_scrape_timeout_s", 30),
-        # 240, not 300 (task-1356 review ruling): must undercut the agent
-        # runtime's 300s max_tool_call_seconds so a deadline-hit run can
-        # still return its partial synthesis instead of being killed first.
+        # 240 default (task-1356 review ruling). Fix round 1: this used to
+        # need to undercut the agent runtime's 300s max_tool_call_seconds so
+        # a deadline-hit run could still return its partial synthesis
+        # instead of being killed first -- that is no longer an operator
+        # obligation. deep_search_outer_timeout_s() below now DERIVES the
+        # runtime's per-call ceiling from whatever this resolves to, so any
+        # configured value (not just ones under 300) keeps that guarantee.
         "deep_search_timeout_s": _int("deep_search_timeout_s", 240),
     }
+
+
+def deep_search_outer_timeout_s() -> float:
+    """Outer per-call timeout for the ``web_deep_search`` tool (task-1356
+    fix round 1).
+
+    Single source of truth: reads the SAME coerced settings seam the tool
+    itself uses (``_deep_search_settings()``), so a malformed
+    ``deep_search_timeout_s`` degrades identically for both -- the tool's
+    own internal deadline and this outer override both fall back to the
+    240 default, never disagreeing about a bad config value.
+
+    Derived, not pinned: returns ``deep_search_timeout_s`` plus the tool's
+    own worst-case internal overrun (``_DEEP_SEARCH_DEADLINE_GRACE_S`` +
+    ``_DEEP_SEARCH_THREAD_JOIN_SLACK_S``) plus a scheduling-jitter margin
+    (``_DEEP_SEARCH_SCHEDULING_JITTER_S``) -- so the outer ceiling exceeds
+    the tool's own graceful deadline/grace/join sequence for ANY configured
+    value, not only the shipped default. At the 240 default this still
+    returns 290.0, exactly the constant this function replaces
+    (``Agents/local_tool_provider.py``'s former ``_WEB_DEEP_SEARCH_
+    TIMEOUT_S``) -- default behavior is unchanged. Consulted by
+    ``LocalToolProvider.timeout_for`` for ``web_deep_search`` only.
+    """
+    settings = _deep_search_settings()
+    return (
+        settings["deep_search_timeout_s"]
+        + _DEEP_SEARCH_DEADLINE_GRACE_S
+        + _DEEP_SEARCH_THREAD_JOIN_SLACK_S
+        + _DEEP_SEARCH_SCHEDULING_JITTER_S
+    )
 
 
 def _run_coro_loop_safe(coro, timeout_s: float):
