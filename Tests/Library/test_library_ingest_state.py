@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import re
 
+import pytest
+
 from tldw_chatbook.Library.ingest_types import PreflightResult
 from tldw_chatbook.Library.library_ingest_jobs import IngestJobState, LibraryIngestJob
 from tldw_chatbook.Library.library_ingest_state import (
@@ -385,6 +387,39 @@ def test_failed_row_line_without_marker_passes_through_whole():
     state = build_library_ingest_state(jobs, form=LibraryIngestFormState())
     row = state.queue_rows[0]
     assert row.line == "✗ failed · report.txt · Media database is unavailable."
+
+
+def test_failed_row_line_for_a_non_clippable_source_says_imported_not_ingested():
+    """(task-2857 review, round 3) A local-file/media-URL source rejected by
+    ``build_web_clip_kwargs`` (``NotAWebClipSource``) is queued and marked
+    ``FAILED`` with that exception's own message (``app.py``'s
+    ``_submit_web_clip_job``) -- the exact text a user sees in the failed
+    queue row. It must say "imported", matching every other Import-flow
+    string, not survive as the sole remaining "ingested"."""
+    from tldw_chatbook.Library.web_clip_request import (
+        NotAWebClipSource,
+        build_web_clip_kwargs,
+    )
+
+    with pytest.raises(NotAWebClipSource) as excinfo:
+        build_web_clip_kwargs("/tmp/notes.txt", options={})
+    error_text = str(excinfo.value)
+    assert "imported" in error_text
+    assert "ingested" not in error_text
+
+    jobs = (
+        _job(
+            state=IngestJobState.FAILED,
+            source_path="/tmp/notes.txt",
+            started_at=100.0,
+            finished_at=101.0,
+            error=error_text,
+        ),
+    )
+    state = build_library_ingest_state(jobs, form=LibraryIngestFormState())
+    row = state.queue_rows[0]
+    assert "imported, not clipped" in row.line
+    assert "ingested" not in row.line
 
 
 def test_failed_row_line_appends_retry_suffix():

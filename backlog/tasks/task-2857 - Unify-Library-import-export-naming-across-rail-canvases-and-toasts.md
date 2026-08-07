@@ -107,6 +107,30 @@ Ingest canvas (still named "Import media" -- unchanged, already correct):
   Enter-in-path-field); every sibling warning on this form already said "import", this
   one was missed in the first pass. New test:
   `test_submit_with_blank_path_warns_to_import_not_ingest`.
+- **(round 3, re-review finding)** `web_clip_request.py:121` `NotAWebClipSource`'s
+  message `f"{text!r} is not a web page; a file or media URL is ingested, not clipped."`
+  -> "...is imported, not clipped." -- raised when a local file/media URL is submitted to
+  the web-clip mapper, caught by `app.py`'s `_submit_web_clip_job` (`except
+  NotAWebClipSource as exc: ... mark_failed(job.job_id, error=str(exc), ...)`), rendered
+  UNCHANGED into the failed queue row via `short_ingest_error()`/`unwrap_ingest_error()`
+  (`library_ingest_state.py`'s `line=f"... {short_error}..."`) -- a genuinely visible,
+  in-scope string two hops from its raise site that both round-1 and round-2's sweeps
+  missed (neither traced exception messages through `mark_failed(error=str(exc))`).
+  New test: `test_failed_row_line_for_a_non_clippable_source_says_imported_not_ingested`
+  in `test_library_ingest_state.py`, which calls the REAL `build_web_clip_kwargs`,
+  captures the REAL exception text, and renders it through the REAL queue-row builder --
+  proving the fix end to end, not just at the raise site.
+- **(round 3, re-review finding)** `server_ingest_request.py:73-76` `_ELSEWHERE["article"]`
+  -- same `mark_failed` sink via `ServerIngestUnsupported`, caught in `app.py`'s
+  `_submit_server_ingest_job`. The leading clause "A web page is clipped rather than
+  ingested as a media file" -> "...rather than imported as a media file" (plain user
+  copy). "the ingest-jobs API" in the trailing clause is KEPT and justified in a new
+  comment: it names the server's real, established endpoint family
+  (`ServerMediaReadingService.submit_ingest_jobs`/`list_media_ingest_jobs`/
+  `cancel_media_ingest_jobs_batch`, pinned by `SERVER_ACCEPTED_MEDIA_TYPES`'s own comment
+  as "Established by submitting to a live server") -- a proper noun for an external
+  system, not a Library UI label this task governs, same category as the config-key
+  carve-out.
 
 Media browse/viewer:
 - `library_media_state.py` `LIBRARY_MEDIA_EMPTY_COPY` "No media in your Library yet. Ingest
@@ -199,6 +223,24 @@ Export canvas:
   `DestinationRecoveryState(` call site in the three target trees, checking the FULL
   (multi-line) call text rather than the line the function name appears on -- this is what
   the first pass's line-scoped grep missed for both review findings.
+- **(round 3 re-review finding)** Both custom-sweep scripts (rounds 1 and 2) had a fixed
+  pattern list that never included `raise` statements / exception-message construction --
+  a genuinely rendered string can be *two hops* from any of the patterns searched (raised
+  as an exception -> caught -> `mark_failed(error=str(exc))`), which is exactly what
+  `web_clip_request.py`/`server_ingest_request.py` were. Round 3 abandoned the custom
+  script and instead: (a) ran the reviewer's literal `grep -rn -i
+  'ingest|chatbook|media manager'` across the three target trees (1234 raw hits) filtered
+  to lines containing an actual quoted-string pattern (376 hits -- see the fix report for
+  the full evidence), and (b) separately enumerated every `class ...Error`/`class
+  ...Exception` and `raise` site in the same three trees, reading each message in full.
+  Every one of the 376 filtered hits was individually classified as: already-fixed (rounds
+  1-3), an identifier (`id=`, `classes=`, config key, DOM selector, dict key mapped to an
+  enum, route id), a docstring/comment (not rendered), an internal `logger.debug`/
+  `logger.warning` call, a non-Library surface already documented above (File Notes Git
+  panel, Home), or a PyPI-package-name substring false positive. One hit,
+  `("Importable files", _is_ingestible)` (`library_screen.py:500`, a file-picker Filters
+  label), was found ALREADY correct -- it says "Importable", not "Ingestible"; no change
+  needed, noted here so it is not mistaken for an unreviewed hit.
 
 ### Tests
 
@@ -250,6 +292,33 @@ combined export+ingest slice of `test_library_shell.py` + `test_library_ingest_s
 `test_library_export_execution.py` (219 passed, 3 pre-existing deselected). Zero new
 failures.
 
+**Round 3 (re-review fixes).** No existing test pinned either exact exception-message
+string (checked: `grep -rn "is not a web page\|rather than ingested as a media file\|
+NotAWebClipSource\|ServerIngestUnsupported" Tests/` -- the two exception classes are
+raised-and-caught in several tests, but only one asserts any message substring
+(`test_plain_web_page_is_not_a_jobs_api_source` checks `"web page" in
+str(excinfo.value).lower()`, which still holds after the rename -- reran it to confirm).
+Added `Tests/Library/test_library_ingest_state.py::
+test_failed_row_line_for_a_non_clippable_source_says_imported_not_ingested` -- calls the
+real `build_web_clip_kwargs("/tmp/notes.txt", options={})`, captures the real
+`NotAWebClipSource` message, asserts it says "imported"/not "ingested", then feeds it into
+a `FAILED` `LibraryIngestJob` and renders it through `build_library_ingest_state` /
+`_build_queue_row`, asserting the rendered `row.line` also says "imported, not clipped"
+and never "ingested" -- covering the full raise -> `mark_failed` -> queue-row-render path
+the re-review flagged, not just the raise site. Re-ran:
+- the new test alone: 1 passed
+- `Tests/Library/test_library_ingest_state.py` (full file, includes the new test): 134
+  passed
+- `Tests/Library/test_web_clip_request.py` + `test_server_ingest_request.py` (both files
+  whose exceptions changed): 51 passed
+- `test_web_clip_request.py` + `test_server_ingest_request.py` + `test_library_ingest_
+  state.py` + `test_library_ingest_runner.py` + `Tests/App/test_submit_library_ingest_
+  job.py` + `Tests/integration/test_library_ingest_flow.py` (deselecting the one
+  pre-existing failure): 296 passed, 1 deselected
+- `--collect-only -q Tests/Library`: 1077 collected (1076 + the one new test)
+
+Zero new failures anywhere across all three rounds.
+
 ### Live verification (tmux, socket `sddT5lib<rand>`, scratch profile `/tmp/sddT5`)
 
 Walked Import end-to-end: command palette "Library: Import…" / "Open Library and import
@@ -274,4 +343,9 @@ conversations,notes}.md` (re-stamped `4acb17a0b`).
 Round 2 landed inside this same file set -- no new files: `library_screen.py` (2 more
 string fixes), `library_export_state.py` (comment), `Tests/UI/test_library_shell.py`
 (3 assertion sites) and `Tests/UI/test_library_ingest_guardrail_modal.py` (1 new test).
+
+Round 3 touched two files new to this task: `tldw_chatbook/Library/web_clip_request.py`
+(1 string fix) and `tldw_chatbook/Library/server_ingest_request.py` (1 string fix + 1
+justifying comment); plus `Tests/Library/test_library_ingest_state.py` (1 new test + the
+`pytest` import it needed).
 <!-- SECTION:NOTES:END -->

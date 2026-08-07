@@ -118,7 +118,7 @@ def build_web_clip_kwargs(
         raise NotAWebClipSource("No source was given to clip.")
     if not is_web_clip_source(text):
         raise NotAWebClipSource(
-            f"{text!r} is not a web page; a file or media URL is ingested, not clipped."
+            f"{text!r} is not a web page; a file or media URL is imported, not clipped."
         )
 
     generic = dict(options.get("generic") or {})
