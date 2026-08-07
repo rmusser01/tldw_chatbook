@@ -539,12 +539,26 @@ def _robots_allows(client: httpx.Client, url: str, user_agent: str) -> bool:
     in the original ``url``. Fetch/parse/redirect-following and fail-open
     semantics live in ``_fetch_robots_parser``.
 
+    IPv6 literals (fix round 2, Qodo finding): ``urlsplit(...).hostname``
+    strips the ``[...]`` brackets an IPv6 literal needs in a URL, returning
+    the bare address (e.g. ``2606:4700::1111``). Re-bracketing it here is
+    NOT cosmetic -- without it, the colons land straight in the assembled
+    ``scheme://host:port`` string, ``urljoin``/``urlsplit`` misparse the
+    result downstream in ``_fetch_robots_parser``, ``_validate_hop`` on the
+    constructed robots.txt URL raises, and the broad fail-open catch there
+    silently disables robots enforcement for every IPv6-literal host --
+    an input class ``validate_outbound_url`` explicitly supports (checked
+    directly, no DNS) and that ``_robots_allows`` must therefore support
+    too.
+
     Synchronous, no locks -- matches the module's existing idiom (single
     call per tool invocation; a cross-call stampede costs at most one
     duplicate robots.txt fetch, accepted).
     """
     parts = urlsplit(url)
     host = (parts.hostname or "").lower()
+    if ":" in host:  # IPv6 literal: bracket it back for URL assembly
+        host = f"[{host}]"
     port = f":{parts.port}" if parts.port else ""
     cache_key = f"{parts.scheme.lower()}://{host}{port}"
     cached = _robots_cache.get(cache_key)

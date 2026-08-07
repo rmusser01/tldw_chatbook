@@ -895,3 +895,49 @@ def test_webfetch_default_on_end_to_end_refuses_without_patching_seam(fetch_env_
     env.routes["http://example.com/page"] = _text_page(b"hello")
     with pytest.raises(LocalToolError, match=r"\[robots-disallowed\]"):
         web_fetch("http://example.com/page")
+
+
+# ---------------------------------------------------------------------------
+# robots.txt enforcement -- fix round 2 (Qodo PR review finding)
+# ---------------------------------------------------------------------------
+
+# 2606:4700::1111 (Cloudflare anycast), not a 2001:db8::/32 documentation
+# address: Python's ipaddress module classifies the documentation range as
+# is_private=True, so it would never even reach the robots check -- the
+# ordinary SSRF guard (_validate_hop, shared by every hop) would refuse it
+# first. This is a literal-IP URL either way: validate_outbound_url's
+# literal-IP branch handles it directly (ipaddress.ip_address(host)
+# succeeds), so no DNS resolution happens at all -- fetch_env's IPv4-only
+# fake getaddrinfo is irrelevant to these two tests.
+_IPV6_LITERAL = "2606:4700::1111"
+
+
+def test_fetch_robots_ipv6_literal_host_disallowed_refused(fetch_env, monkeypatch):
+    """Qodo finding: urlsplit(...).hostname strips the [...] brackets an
+    IPv6 literal needs in a URL. Without re-bracketing it for the
+    constructed robots.txt URL, the assembled string is malformed,
+    _validate_hop rejects it inside _fetch_robots_parser, and the broad
+    fail-open catch there silently disables robots enforcement for EVERY
+    IPv6-literal host -- an input class validate_outbound_url explicitly
+    supports."""
+    _enable_robots(monkeypatch)
+    fetch_env.routes[f"http://[{_IPV6_LITERAL}]/robots.txt"] = _text_page(
+        b"User-agent: *\nDisallow: /\n"
+    )
+    fetch_env.routes[f"http://[{_IPV6_LITERAL}]/page"] = _text_page(b"hello")
+    with pytest.raises(LocalToolError, match=r"\[robots-disallowed\]"):
+        web_fetch(f"http://[{_IPV6_LITERAL}]/page")
+    # The robots.txt URL was actually well-formed and fetched -- not
+    # silently skipped via the fail-open path.
+    assert f"http://[{_IPV6_LITERAL}]/robots.txt" in fetch_env.calls
+
+
+def test_fetch_robots_ipv6_literal_host_allowed_proceeds(fetch_env, monkeypatch):
+    """Control for the test above: an ALLOWING robots.txt on the same
+    IPv6-literal host must let the fetch proceed normally."""
+    _enable_robots(monkeypatch)
+    fetch_env.routes[f"http://[{_IPV6_LITERAL}]/robots.txt"] = _text_page(
+        b"User-agent: *\nAllow: /\n"
+    )
+    fetch_env.routes[f"http://[{_IPV6_LITERAL}]/page"] = _text_page(b"hello")
+    assert web_fetch(f"http://[{_IPV6_LITERAL}]/page") == "hello"
