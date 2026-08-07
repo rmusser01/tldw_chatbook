@@ -167,6 +167,7 @@ class MCPToolProvider:
         main_loop: asyncio.AbstractEventLoop,
         approval_callback: Callable[[list[MCPPendingCall]], dict[str, str]]
         | None = None,
+        builtin_raw_name_exclusions: Any = None,
     ) -> None:
         """Build an uncomposed provider; call `compose_catalog()` before use.
 
@@ -180,10 +181,22 @@ class MCPToolProvider:
                 an `"ask"`-state tool with no batch-review stamp (e.g. no
                 `review_tool_calls` hook was wired for this run). `None`
                 fails closed to deny.
+            builtin_raw_name_exclusions: task-1337 (plan Task 8): optional
+                iterable of raw tool names dropped during `compose_catalog()`
+                when (and only when) they arrive from the
+                `builtin:tldw_chatbook` source -- the Console uses this to
+                keep its own Library provider from being bypassed by the
+                built-in MCP copies. Same-named tools on local/server
+                sources are unaffected. Stored as an immutable frozenset;
+                `None` (default) preserves current behavior for every
+                non-Console caller.
         """
         self._service = service
         self._main_loop = main_loop
         self._approval_callback = approval_callback
+        self._builtin_raw_name_exclusions = frozenset(
+            builtin_raw_name_exclusions or ()
+        )
         self._catalog: list[ToolCatalogEntry] = []
         # llm_name -> (HubTool, EffectiveToolState as resolved at composition
         # time). Built ONCE by compose_catalog() so list_catalog()/
@@ -243,7 +256,21 @@ class MCPToolProvider:
                 )
                 inventory = None
             if isinstance(inventory, Mapping):
-                hub_tools.extend(builtin_tools_from_inventory(inventory))
+                builtin_tools = builtin_tools_from_inventory(inventory)
+                if self._builtin_raw_name_exclusions:
+                    # task-1337 (plan Task 8): drop the Console-shadowed raw
+                    # names from the built-in source ONLY -- same-named tools
+                    # on local/server sources are unaffected (the raw-name
+                    # match alone must never reach them).
+                    builtin_tools = [
+                        tool
+                        for tool in builtin_tools
+                        if not (
+                            tool.server_key == "builtin:tldw_chatbook"
+                            and tool.name in self._builtin_raw_name_exclusions
+                        )
+                    ]
+                hub_tools.extend(builtin_tools)
 
         effective = self._service.effective_tool_states(hub_tools)
         eligible = [

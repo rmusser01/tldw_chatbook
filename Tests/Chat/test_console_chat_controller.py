@@ -5047,3 +5047,68 @@ async def test_library_provider_factory_failure_degrades_to_no_provider():
 
     assert result.accepted
     assert bridge_calls[0]["library_provider"] is None
+
+
+# ---------------------------------------------------------------------------
+# task-1337, plan Task 8: Console MCP bypass prevention
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_compose_mcp_provider_excludes_console_shadowed_builtin_names():
+    """The Console-composed MCP provider drops exactly the 23 shadowed raw
+    names (18 descriptor tools + 5 legacy readers) from the
+    `builtin:tldw_chatbook` source -- the Console serves Library retrieval
+    through its own direct/RAG provider (either mode), so the MCP copies
+    would be an ungoverned duplicate. Same-named external/local profile
+    tools stay; the unrelated built-in stays; the exclusion set is
+    mode-independent (`_compose_mcp_provider` takes no mode argument)."""
+    from Tests.Agents.test_mcp_tool_provider import (
+        FakeMCPService,
+        _catalog_record,
+        _tool_dict,
+    )
+    from tldw_chatbook.Chat.console_chat_controller import (
+        CONSOLE_MCP_BUILTIN_RAW_NAME_EXCLUSIONS,
+    )
+    from tldw_chatbook.Library.library_tool_contract import LIBRARY_TOOL_DESCRIPTORS
+
+    # The exclusion set is exactly descriptor names + the five legacy names;
+    # the legacy names must NEVER join the shared descriptor table.
+    assert CONSOLE_MCP_BUILTIN_RAW_NAME_EXCLUSIONS == frozenset(
+        set(LIBRARY_TOOL_DESCRIPTORS)
+        | {
+            "search_rag",
+            "search_notes",
+            "search_conversations",
+            "get_conversation_history",
+            "export_conversation",
+        }
+    )
+    assert len(CONSOLE_MCP_BUILTIN_RAW_NAME_EXCLUSIONS) == 23
+    assert "search_rag" not in LIBRARY_TOOL_DESCRIPTORS
+
+    inventory = {
+        "tools": [
+            *(_tool_dict(name) for name in sorted(CONSOLE_MCP_BUILTIN_RAW_NAME_EXCLUSIONS)),
+            _tool_dict("chat_with_llm"),
+        ]
+    }
+    service = FakeMCPService(
+        inventory=inventory,
+        catalog_records=[
+            _catalog_record("docs", [_tool_dict("library_list_media")])
+        ],
+    )
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
+    controller.app = SimpleNamespace(unified_mcp_service=service)
+
+    provider = await controller._compose_mcp_provider()
+
+    assert provider is not None
+    names = {entry.name for entry in provider.list_catalog()}
+    assert names == {
+        "mcp__tldw_chatbook__chat_with_llm",
+        "mcp__docs__library_list_media",
+    }

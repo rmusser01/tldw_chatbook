@@ -86,6 +86,7 @@ from tldw_chatbook.Agents.mcp_tool_provider import MCPPendingCall, MCPToolProvid
 from tldw_chatbook.Agents.tool_catalog import BuiltinToolProvider
 from tldw_chatbook.config import get_cli_setting
 from tldw_chatbook.Internal_Prompts import get_internal_prompt
+from tldw_chatbook.Library.library_tool_contract import LIBRARY_TOOL_DESCRIPTORS
 from tldw_chatbook.MCP.permission_store import BUILTIN_TOOL_SERVER_KEY
 from tldw_chatbook.Skills_Interop.skill_trust_models import SkillTrustBlockedError
 from tldw_chatbook.Tools.file_operation_tools import path_precheck_failed
@@ -110,6 +111,27 @@ if TYPE_CHECKING:
     from tldw_chatbook.Agents.builtin_tool_gate import BuiltinToolGate
     from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
     from tldw_chatbook.MCP.hub_tool_catalog import HubTool
+
+
+#: task-1337 (plan Task 8): raw built-in tool names the Console-composed
+#: ``MCPToolProvider`` must exclude -- the 18 ``library_*`` descriptor tools
+#: (served to Console agents by the run's own direct/RAG Library provider, in
+#: either retrieval mode) plus the five legacy RAG/chat readers whose Console
+#: coverage those providers replace. The legacy names live HERE, not in the
+#: shared descriptor table: they are not part of the 18-tool contract. The
+#: filter is source-scoped inside the provider (``builtin:tldw_chatbook``
+#: only), so external/local MCP profiles fronting the same raw names stay
+#: eligible and permission-governed.
+CONSOLE_MCP_BUILTIN_RAW_NAME_EXCLUSIONS: frozenset = frozenset(
+    tuple(LIBRARY_TOOL_DESCRIPTORS)
+    + (
+        "search_rag",
+        "search_notes",
+        "search_conversations",
+        "get_conversation_history",
+        "export_conversation",
+    )
+)
 
 
 #: Fallback used when no `mcp_approval_timeout_seconds` seam is injected --
@@ -3237,6 +3259,11 @@ class ConsoleChatController:
             service=service,
             main_loop=asyncio.get_running_loop(),
             approval_callback=bound_request_approvals,
+            # task-1337 (plan Task 8): the Console always excludes the
+            # shadowed built-in raw names, in BOTH retrieval modes -- the
+            # run's own Library provider (direct or bounded-RAG) is the only
+            # Library retrieval path Console agents get.
+            builtin_raw_name_exclusions=CONSOLE_MCP_BUILTIN_RAW_NAME_EXCLUSIONS,
         )
         try:
             await provider.compose_catalog()
