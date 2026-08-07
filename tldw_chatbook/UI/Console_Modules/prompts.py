@@ -135,6 +135,16 @@ from ...Widgets.Console.console_prompts_modal import (
 )
 from ...Widgets.Console.console_system_prompt_modal import ConsoleSystemPromptModal
 
+#: One browse page of the Console prompt picker. Behaviour-defining: the
+#: modal's paging controls, its "no more results" state, and the Library's
+#: own page size are all in terms of this number.
+CONSOLE_PROMPT_PAGE_SIZE = 10
+
+#: Row cap for a prompt SEARCH, as distinct from a browse page. The modal
+#: renders a single unpaged result list for a search, so this bounds what a
+#: user can be shown at once rather than what one page holds.
+CONSOLE_PROMPT_SEARCH_LIMIT = 25
+
 if TYPE_CHECKING:
     from ..Screens.chat_screen import ChatScreen
 
@@ -237,18 +247,18 @@ class _ConsolePromptSource:
         return await method(mode=source)
 
     async def list_page(self, source: str, page: int) -> Any:
-        """Return one browse page of `source` at this cluster's page size."""
+        """Return one browse page of `source` at `CONSOLE_PROMPT_PAGE_SIZE`."""
         method = self._require(
             "list_prompts", f"{source.title()} Prompt source is unavailable."
         )
-        return await method(mode=source, page=page, per_page=10)
+        return await method(mode=source, page=page, per_page=CONSOLE_PROMPT_PAGE_SIZE)
 
     async def search(self, source: str, query: str) -> Any:
-        """Search `source`, bounded to the modal's 25-row contract."""
+        """Search `source`, bounded to `CONSOLE_PROMPT_SEARCH_LIMIT`."""
         method = self._require(
             "search_prompts", f"{source.title()} Prompt search is unavailable."
         )
-        return await method(mode=source, query=query, limit=25)
+        return await method(mode=source, query=query, limit=CONSOLE_PROMPT_SEARCH_LIMIT)
 
     async def detail(self, source: str, identifier: str) -> Any:
         """Fetch one record -- also the freshness probe the apply guards use."""
