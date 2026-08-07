@@ -1,8 +1,8 @@
 # Voice profiles beyond audio.cpp + app-wide default voice profile — design
 
 Date: 2026-08-04
-Status: **Approved. Three of four slices merged to dev; slice 4 authored,
-PR pending.**
+Status: **Approved. All four slices shipped to dev — program complete 2026-08-07.
+**
 
 - **Slice 1** (§4.1, all seven providers) — shipped 2026-08-06, PR #1368 →
   dev `e4f7aa24e`, TASK-2450.
