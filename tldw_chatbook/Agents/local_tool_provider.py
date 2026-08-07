@@ -20,7 +20,7 @@ from tldw_chatbook.MCP.hub_tool_catalog import HubTool
 from tldw_chatbook.MCP.local_runtime_delegate import PERMISSION_STATE_UNRESOLVED_CLAUSE
 from tldw_chatbook.MCP.permission_store import EffectiveToolState
 
-from ..config import get_cli_setting
+from ..config import coerce_bool_setting, get_cli_setting
 from .agent_models import ToolCatalogEntry, ToolResult, ToolSchema
 from .mcp_tool_provider import MCPPendingCall
 
@@ -1075,7 +1075,13 @@ def _default_specs(
                 tags=("mutates",),
             )
         )
-    if get_cli_setting("tools", "web_deep_search_enabled", False):
+    # Fail-closed coercion (Qodo, PR #1422): get_cli_setting returns the RAW
+    # TOML value, and a mis-typed string like "false" is truthy -- raw
+    # truthiness would have ENABLED this security gate. coerce_bool_setting
+    # applies load_settings' own bool rules ("false"/unrecognized -> False).
+    if coerce_bool_setting(
+        get_cli_setting("tools", "web_deep_search_enabled", False), False
+    ):
         # Double opt-in (Docs/superpowers/specs/2026-08-07-deep-search-tool-
         # design.md): a [tools] gate on top of the tool's own per-call
         # permission Ask default, so web_deep_search is absent from BOTH

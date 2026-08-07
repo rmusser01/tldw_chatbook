@@ -1210,6 +1210,38 @@ def test_web_deep_search_spec_schema(tmp_path, monkeypatch):
         assert optional not in schema.parameters["required"]
 
 
+def _set_deep_search_gate_raw(monkeypatch, raw_value):
+    """Patch the gate to return an arbitrary RAW TOML value (no coercion)."""
+    monkeypatch.setattr(
+        "tldw_chatbook.Agents.local_tool_provider.get_cli_setting",
+        lambda section, key, default=None: raw_value
+        if (section, key) == ("tools", "web_deep_search_enabled") else default,
+    )
+
+
+def test_web_deep_search_gate_string_false_stays_disabled(tmp_path, monkeypatch):
+    # Regression (Qodo, PR #1422): get_cli_setting returns raw TOML values,
+    # and the string "false" is truthy -- raw truthiness on the gate would
+    # ENABLE the tool from a config that plainly says false.
+    _set_deep_search_gate_raw(monkeypatch, "false")
+    p = make_provider(root=tmp_path)
+    assert "local:web_deep_search" not in [e.id for e in p.list_catalog()]
+
+
+def test_web_deep_search_gate_unrecognized_string_fails_closed(tmp_path, monkeypatch):
+    _set_deep_search_gate_raw(monkeypatch, "enabled-ish")
+    p = make_provider(root=tmp_path)
+    assert "local:web_deep_search" not in [e.id for e in p.list_catalog()]
+
+
+def test_web_deep_search_gate_string_true_enables(tmp_path, monkeypatch):
+    # Same coercion contract as load_settings: a string "true" is an
+    # unambiguous operator intent to enable.
+    _set_deep_search_gate_raw(monkeypatch, "true")
+    p = make_provider(root=tmp_path)
+    assert "local:web_deep_search" in [e.id for e in p.list_catalog()]
+
+
 def test_web_deep_search_description_states_restart_requirement(tmp_path, monkeypatch):
     _enable_deep_search(monkeypatch)
     p = make_provider(root=tmp_path)

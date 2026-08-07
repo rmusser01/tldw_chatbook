@@ -1358,6 +1358,11 @@ def deep_search_outer_timeout_s() -> float:
     (``Agents/local_tool_provider.py``'s former ``_WEB_DEEP_SEARCH_
     TIMEOUT_S``) -- default behavior is unchanged. Consulted by
     ``LocalToolProvider.timeout_for`` for ``web_deep_search`` only.
+
+    Returns:
+        Outer per-call ceiling in seconds: the configured (coerced)
+        ``deep_search_timeout_s`` plus the tool's worst-case internal
+        overrun plus jitter margin (290.0 at the shipped defaults).
     """
     settings = _deep_search_settings()
     return (
