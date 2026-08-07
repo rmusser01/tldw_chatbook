@@ -1,11 +1,11 @@
 ---
 id: TASK-3220
 title: Deep-search DNS offload can crowd the default executor
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-08-07 16:30'
-updated_date: '2026-08-07 18:51'
+updated_date: '2026-08-07 20:26'
 labels:
   - web-tools
   - tech-debt

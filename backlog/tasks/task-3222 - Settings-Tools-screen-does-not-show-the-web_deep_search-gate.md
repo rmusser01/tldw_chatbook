@@ -1,11 +1,11 @@
 ---
 id: TASK-3222
 title: Settings Tools screen does not show the web_deep_search gate
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-08-07 16:30'
-updated_date: '2026-08-07 19:14'
+updated_date: '2026-08-07 20:26'
 labels:
   - web-tools
   - ux

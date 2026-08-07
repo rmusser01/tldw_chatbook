@@ -1,11 +1,11 @@
 ---
 id: TASK-3221
 title: Deep-search sub-query generation fails silently after paid attempts
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-08-07 16:30'
-updated_date: '2026-08-07 18:54'
+updated_date: '2026-08-07 20:26'
 labels:
   - web-tools
   - ux
