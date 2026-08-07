@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-08-07 12:57'
-updated_date: '2026-08-07 13:05'
+updated_date: '2026-08-07 14:10'
 labels:
   - testing
   - baseline
@@ -57,4 +57,6 @@ Reviewed refresh, not a blind regeneration. Diffed the checker's deterministic o
 Verification: focused test 3/3 passed (was 1 failed/2 passed). Full Tests/Architecture/: 28 passed, 2 failed -- both in test_profile_owned_path_inventory.py, a DIFFERENT unrelated gate broken by the same task-2951 TTSPlaygroundWidget deletion (stale exception rule referencing deleted STTS_Window.py functions); confirmed pre-existing and out of scope (that checker never reads the diagnostic-inventory JSON, and this branch touches no Python source) -- not fixed here per the diff-hygiene constraint; flagged as a follow-up. JSON validated (463 owners, 1144 TASK-492 calls, 6841 TASK-494 calls, 6 sink files). Repo-wide `pytest --collect-only -q`: 31873 tests collected, 0 collection errors. No Python source changed, so ruff has nothing to check. Diff hygiene: exactly two changes -- the inventory artifact and this task file.
 
 Modified files: Docs/security/production-diagnostic-inventory.json and this task record. Full per-entry ADR-029 judgment table in .diag-refresh-report.md (worktree-local, git-ignored, not committed).
+
+Post-rebase incremental re-review (third commit on this branch): the coordinator rebased onto a later dev tip (origin/dev 15407a641) that advanced through 5 merged PRs since this task's 6b38a13b8 baseline, not just PR #1415 as predicted -- reported explicitly rather than silently blessed, per the coordinator's own stop condition. Delta: 2 added owners (UI/Console_Modules/message.py, prompts.py -- PR #1408 console decomposition wave 3, same split pattern as before), 4 changed (chat_screen.py -16 confirmed 1:1 moved to the two new files; AgentRuns_DB.py, speech_catalog_mixin.py, WebSearch_APIs.py all confirmed pure digest churn with zero logger-line diffs). All 6 reviewed safe under ADR-029; closest call was prompts.py logging a user-typed search query string, judged safe since it's an ordinary non-persisted Loguru call PersistentDiagnosticFilter rejects regardless of content. Sink topology unchanged. Also verified (on a disposable, git-stash-free worktree off origin/dev, not this checkout) that the coordinator's separately-flagged test_screen_size_ratchet.py failure for chat_screen.py is dev's own pre-existing issue from PR #1408, byte-identical failure on clean dev, unrelated to this branch, not touched. Full accounting in .diag-refresh-report.md (Extension 2).
 <!-- SECTION:NOTES:END -->

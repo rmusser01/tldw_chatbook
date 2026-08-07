@@ -363,7 +363,7 @@
     },
     {
       "call_count": 1,
-      "diagnostic_digest": "7825f316d9cc03b97180",
+      "diagnostic_digest": "f697411000f491a2bf36",
       "owner": "TASK-494",
       "path": "tldw_chatbook/DB/AgentRuns_DB.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -2007,6 +2007,20 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
+      "call_count": 13,
+      "diagnostic_digest": "ee2c749db4e92186a25a",
+      "owner": "TASK-494",
+      "path": "tldw_chatbook/UI/Console_Modules/message.py",
+      "reason": "remaining Chatbook production diagnostic owner"
+    },
+    {
+      "call_count": 3,
+      "diagnostic_digest": "542edfd662c59a16f67f",
+      "owner": "TASK-494",
+      "path": "tldw_chatbook/UI/Console_Modules/prompts.py",
+      "reason": "remaining Chatbook production diagnostic owner"
+    },
+    {
       "call_count": 9,
       "diagnostic_digest": "a38be726914123062a9a",
       "owner": "TASK-494",
@@ -2154,8 +2168,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 161,
-      "diagnostic_digest": "e7514ca448ba42c37d45",
+      "call_count": 145,
+      "diagnostic_digest": "b6b22c09e2f4c4cdcbd2",
       "owner": "TASK-494",
       "path": "tldw_chatbook/UI/Screens/chat_screen.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -2344,7 +2358,7 @@
     },
     {
       "call_count": 8,
-      "diagnostic_digest": "463ef1ece327283e80be",
+      "diagnostic_digest": "79a67d489b973e1a2810",
       "owner": "TASK-494",
       "path": "tldw_chatbook/UI/Speech/speech_catalog_mixin.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -2764,7 +2778,7 @@
     },
     {
       "call_count": 96,
-      "diagnostic_digest": "ed2d0b74d2f8ce1bbf91",
+      "diagnostic_digest": "e7b02e9f3dcdcfd50850",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Web_Scraping/WebSearch_APIs.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -3426,7 +3440,7 @@
   "schema_version": 1,
   "scope": "tldw_chatbook/**/*.py",
   "summary": {
-    "owner_files": 463,
+    "owner_files": 465,
     "persistent_sink_files": 6,
     "task_492_calls": 1144,
     "task_494_calls": 6841
