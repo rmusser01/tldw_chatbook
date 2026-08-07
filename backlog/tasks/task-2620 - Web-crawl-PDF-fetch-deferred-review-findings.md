@@ -66,10 +66,19 @@ Coverage and docstring polish implemented as planned, with two won't-fix rulings
 - **Optional-deps centralization (Qodo rule 497159):** availability probing uses `find_spec` because `optional_deps.check_dependency()` imports the module eagerly — the wrong cost profile for a hot fetch path. Heavy imports stay local per the module's v1 trafilatura precedent.
 - **Rate-limit bucket www-folding:** v1 `web_fetch` parity; diverging the two tools' buckets is worse than the 2-req/s worst case.
 
-**Known residuals** (triaged by the final review, left for later):
-- _pymupdf_available raises ValueError on sys.modules stubs (should guard with `except (ImportError, ValueError)`)
-- BFS corner where X redirecting onto enqueued-but-never-reached Y loses both rows (accepted by attempt-slot contract)
-- Foreign-namespace sitemaps still yield zero locs (spec asked for namespace-less only)
-- Sibling seed break can leave children unfetched, reporting "sitemap exhausted" when not truly exhausted
+**Final fix wave (2026-08-06, this review round):** the deferred-review re-critique found 3 real behavioral gaps and fixed all of them, plus 2 of the 4 items originally listed below turned out to be fixable now rather than permanent residuals:
+- **Redirect-dedup regression (was residual #2 below):** the guard compared the final URL against `visited` (every ENQUEUED url) instead of a set of actually-LISTED urls, so a page fetched via one URL's redirect onto another enqueued-but-unreached URL was silently discarded — confirmed via probe (`max_pages=2`, `/x` 302→`/y`, both linked from root: `/y`'s content, fetched through `/x`'s attempt, was thrown away and `/y` itself never got its own turn). Fixed by tracking a separate `listed: set[str]` of normalized URLs actually appended to `pages`; the dedup now checks membership in `listed`, not `visited`.
+- **Child sitemap skip-and-COUNT (AC#1's second half) was never implemented:** child fetch failures and parse refusals hit a bare `continue` with no accounting, so a sitemapindex whose children all fail reported "Crawled 0 pages (0 failed, 0 blocked)" with zero signal. `_seed_from_sitemap` now counts every such skip and `_format_crawl_result` renders it as `N child sitemaps skipped` in the footer when nonzero.
+- **"sitemap exhausted" overclaimed on budget-truncated seeds (was residual #4 below), including the DEFAULT path:** a plain urlset with more same-host URLs than `max_pages` (true of nearly every real sitemap at the default `max_pages=20`) filled the seed via `take()`'s cap and reported "sitemap exhausted" — false. `_seed_from_sitemap` now returns a `budget_truncated` flag; stop-reason priority is deadline → children_capped ("sitemap child budget reached") → budget_truncated ("page budget reached") → "sitemap exhausted" (only when every candidate was genuinely considered).
+- Spec §1's PDF read-ceiling line and §2's stop-reason text updated to match; a test docstring overstatement ("drained the entire body") corrected to "drained up to the 1 MiB page cap".
 
-All test files pass (186 tests green).
+**Known residuals** (re-triaged by the final review; the 2 items it found fixable are folded into the fix wave above, not listed here):
+- `_pymupdf_available` raises an uncaught `ValueError` on a `sys.modules` stub with no `__spec__` — a non-total probe (process-local stub state only, reachable only through test monkeypatching), but it contradicts the module's all-`LocalToolError` failure contract in principle. Won't-fix for now; tracked below.
+- `_pymupdf_available()` (`importlib.util.find_spec`) is called on every redirect hop inside `web_fetch`'s loop rather than once per call — `find_spec` is cached-cheap (import-system caching), so this is not a measurable per-hop cost. Won't-fix.
+- A redirect deduped by the (now-fixed) `listed` guard still spends its own attempt slot but produces no row in the footer's page count — accepted, attempt-slot-contract behavior; now documented in `web_crawl`'s docstring in one sentence.
+- Foreign-namespace (neither sitemaps.org-namespaced nor bare/namespace-less) sitemaps still parse to zero locs — this collapses into the already-accepted parse-zero-locs case (the spec asked for namespace-less support specifically, not arbitrary foreign namespaces). Won't-fix.
+- The `[too-large]` PDF message's "N MB" copy can render "0 MB" under integer-division truncation — reachable only via a test that monkeypatches `PDF_MAX_BYTES` to well under 1 MB; not reachable with the real module constant. Won't-fix.
+
+Follow-up **task-2870** files the won't-fix items above for future re-ruling or fix.
+
+All test files pass (100 tests green, `Tests/Tools/test_web_crawl.py` + `Tests/Tools/test_web_tool_impls.py`).
