@@ -30,8 +30,8 @@ from tldw_chatbook.Chat.console_chat_models import (
     GenerationVariantMeta,
     MessageAttachment,
 )
+from Tests.UI.console_controller_stubs import stub_message_controller
 from tldw_chatbook.Chat.console_image_view import ConsoleImageRowSpec
-from tldw_chatbook.UI.Console_Modules.message import ConsoleMessageController
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.Widgets.Console.console_generation_card import (
     ConsoleGenerationCard,
@@ -60,36 +60,7 @@ def _bare_screen() -> ChatScreen:
     branch that needs one for real, rather than a silently-wrong no-op.
     """
     screen = ChatScreen.__new__(ChatScreen)
-
-    def _unreached(*_args, **_kwargs):
-        raise AssertionError(
-            "_bare_screen: this constructor callable is not wired for real "
-            "-- only _recent_console_image_messages is exercised here."
-        )
-
-    screen._message = ConsoleMessageController(
-        screen,
-        app_instance=None,
-        chat_store_accessor=_unreached,
-        current_chat_store_accessor=_unreached,
-        ensure_console_chat_controller=_unreached,
-        current_chat_controller_accessor=_unreached,
-        sync_native_console_chat_ui=_unreached,
-        active_session_is_ephemeral=_unreached,
-        active_native_console_session=_unreached,
-        current_console_conversation_id=_unreached,
-        active_console_provider_model_display=_unreached,
-        console_initial_session_title_for_workspace=_unreached,
-        console_change_review_run_id=_unreached,
-        open_change_review=_unreached,
-        start_console_transcript_sync_timer=_unreached,
-        clear_native_console_message_selection=_unreached,
-        regenerate_console_generation_variant=_unreached,
-        select_console_generation_variant=_unreached,
-        keep_console_generation_variant=_unreached,
-        handle_console_toggle_image_view=_unreached,
-        invalidate_console_persisted_rows_cache=_unreached,
-    )
+    stub_message_controller(screen, context="test_console_generation_card._bare_screen")
     return screen
 
 

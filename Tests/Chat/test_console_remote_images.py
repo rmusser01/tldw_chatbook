@@ -77,12 +77,19 @@ from tldw_chatbook.Chat.console_chat_models import (
 
 
 def _bare_screen(*, enabled: bool):
+    from Tests.UI.console_controller_stubs import stub_message_controller
     from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
     screen = ChatScreen.__new__(ChatScreen)
     screen.app_instance = SimpleNamespace(
         app_config={"chat": {"images": {"render_remote_images": enabled}}}
     )
+    # `_build_console_image_specs` calls `_recent_console_image_messages`,
+    # which moved to `ConsoleMessageController` (wave-3 console
+    # decomposition, task 1) and is reached through `ChatScreen`'s
+    # delegation. `ChatScreen.__new__` skips the construction `__init__`
+    # would do. That method touches no injected seam, so nothing is wired.
+    stub_message_controller(screen, context="test_console_remote_images._bare_screen")
     return screen
 
 

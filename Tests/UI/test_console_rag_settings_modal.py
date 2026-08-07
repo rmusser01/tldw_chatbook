@@ -465,6 +465,8 @@ def test_source_scope_survives_a_screen_state_round_trip():
     from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
     from tldw_chatbook.UI.Screens.chat_screen_state import TaskResumeState
 
+    from Tests.UI.console_controller_stubs import stub_message_controller
+
     def _bare_screen(store: ConsoleChatStore) -> ChatScreen:
         screen = ChatScreen.__new__(ChatScreen)
         screen._console_chat_store = store
@@ -472,6 +474,16 @@ def test_source_scope_survives_a_screen_state_round_trip():
         screen._console_visible_draft_session_id = None
         screen._console_composer_or_none = lambda: None
         screen._task_resume_state = TaskResumeState()
+        # `_restore_native_console_state` calls the three
+        # `_rehydrate_console_message_*` helpers, which moved to
+        # `ConsoleMessageController` (wave-3 console decomposition, task 1)
+        # and are reached through `ChatScreen`'s delegations.
+        # `ChatScreen.__new__` skips the construction `__init__` would do.
+        # Those three read only `app_instance`, so nothing else is wired.
+        stub_message_controller(
+            screen,
+            context="test_console_rag_settings_modal._bare_screen",
+        )
         return screen
 
     store = ConsoleChatStore()
