@@ -23,6 +23,7 @@ Two things are under test:
    enrichment routine (existing databases).
 """
 
+import sqlite3
 from pathlib import Path
 
 import pytest
@@ -207,6 +208,8 @@ _EDIT_CASES = [
     ("personality", "Grumpy but helpful."),
     ("scenario", "A cozy cabin in the woods."),
     ("system_prompt", "Always answer in haiku."),
+    ("image", b"\x89PNG\r\n\x1a\n" + b"fake-avatar-bytes"),
+    ("post_history_instructions", "Always end with a one-line summary."),
     ("first_message", "Yo, what's up?"),
     ("message_example", "<START>\n{{user}}: Hi\n{{char}}: Hi!"),
     ("creator_notes", "I made this the way I like it."),
@@ -239,9 +242,20 @@ def test_migration_preserves_row_with_single_field_edited(
         v31_patch.setattr(CharactersRAGDB, "_CURRENT_SCHEMA_VERSION", 31)
         db = CharactersRAGDB(db_path, client_id="edit-seed")
         connection = db.get_connection()
-        connection.execute(
-            f"UPDATE character_cards SET {field} = ? WHERE id = 1", (edited_value,)
-        )
+        # `image` is the one BLOB column here (everything else is TEXT).
+        # sqlite3 binds a Python `bytes` object as BLOB, but that's an
+        # implementation detail worth making explicit rather than relying
+        # on -- the two branches deliberately mirror the two SQLite storage
+        # classes this fixture actually exercises.
+        if isinstance(edited_value, bytes):
+            connection.execute(
+                f"UPDATE character_cards SET {field} = ? WHERE id = 1",
+                (sqlite3.Binary(edited_value),),
+            )
+        else:
+            connection.execute(
+                f"UPDATE character_cards SET {field} = ? WHERE id = 1", (edited_value,)
+            )
         connection.commit()
         pre_migration_row = db.get_character_card_by_id(1)
         assert pre_migration_row[field] == expected_value
