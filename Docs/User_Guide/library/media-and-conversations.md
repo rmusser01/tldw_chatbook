@@ -31,7 +31,8 @@ Both list canvases follow the same shape, top to bottom:
   "3 messages - 4h"). Hovering a row shows its full title as a tooltip.
 - **Preview block** — appears under the list once a row is selected: a few
   summary lines plus one action ("Open in viewer" for media, "Open in
-  Console" for conversations).
+  Console" for conversations). Hidden in Media while Select mode is active
+  (see below) — it never shows an item outside the current selection.
 
 Opening a media item swaps the list for the **media viewer** (pictured
 above): "‹ Back to list", the title, metadata lines, then the "Content",
@@ -43,12 +44,27 @@ above): "‹ Back to list", the title, metadata lines, then the "Content",
 
 - **"Select"** switches the list into select mode: every row gains a **☑/☐**
   checkbox, and a strip appears showing "N selected", "Select all N shown",
-  "Clear", and "Export selected". The button relabels to **"Done"** to exit;
-  entering or leaving select mode clears the selection.
+  "Clear", and "Export selected" (Media also adds "Delete selected" — see
+  below). The button relabels to **"Done"** to exit; entering or leaving
+  select mode clears the selection, and leaving with items still checked
+  shows a quiet "Selection discarded (N items)" notice so exiting is never a
+  silent no-op.
 - **"Export…"** (hidden while selecting) exports the whole current scope —
   for Media that means the current type filter — and **"Export selected"**
   exports just the checked rows. Both open the same "Export bundle (.zip)"
   form, covered in [import & export](import-and-export.md).
+
+**Media's "Delete selected"** (Media only — Conversations has no delete;
+see its own row below) is a second bulk action next to "Export selected".
+Pressing it swaps the strip for a confirmation naming the count — "Delete N
+selected items? This moves them to trash." — with "Delete" / "Cancel", the
+same in-place armed-button pattern as the media viewer's own single-item
+"Delete" (never a popup modal). Confirming moves every checked item to
+trash (the same reversible soft-delete as the viewer's Delete) and updates
+the list and the rail's "Media N" count immediately; if any item fails, the
+rest of the batch still completes and a notice names how many could not be
+deleted. Row checkboxes are frozen while the confirmation is showing, so
+the count you confirm is always the count that gets deleted.
 
 ### Media list
 
@@ -141,6 +157,14 @@ conversation rail instead; that one resumes sessions, this one quotes them.
    whole visible list), then "Export selected".
 2. The "Export bundle (.zip)" form opens — name, destination, and options
    are covered in [import & export](import-and-export.md).
+
+### Delete selected media items
+1. In **Media**, click "Select", check the rows you want to remove.
+2. Click "Delete selected" — the strip becomes "Delete N selected items?
+   This moves them to trash." with "Delete" / "Cancel".
+3. Click "Delete" to confirm (or "Cancel" to back out without deleting
+   anything). The rows disappear and the rail's "Media N" count drops
+   immediately; the items are trashed, not permanently destroyed.
 
 ## Keyboard & commands
 

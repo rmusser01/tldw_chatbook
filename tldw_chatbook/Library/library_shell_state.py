@@ -59,6 +59,11 @@ LIBRARY_EXPORT_SERVER_DISABLED_TOOLTIP = "Export packages local content only."
 LIBRARY_EXPORT_SELECTED_DISABLED_TOOLTIP = "Select one or more items to export them."
 LIBRARY_EXPORT_SELECTED_TOOLTIP = "Export the selected items."
 
+# task-2853: the Media canvas's "Delete selected" bulk action follows the
+# same disabled/enabled tooltip pair as "Export selected" above.
+LIBRARY_DELETE_SELECTED_DISABLED_TOOLTIP = "Select one or more items to delete them."
+LIBRARY_DELETE_SELECTED_TOOLTIP = "Move the selected items to trash."
+
 
 @dataclass(frozen=True)
 class LibraryRailRow:

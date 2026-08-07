@@ -196,6 +196,8 @@ from ...Library.library_rail_state import (
     serialize_library_rail_preferences,
 )
 from ...Library.library_shell_state import (
+    LIBRARY_DELETE_SELECTED_DISABLED_TOOLTIP,
+    LIBRARY_DELETE_SELECTED_TOOLTIP,
     LIBRARY_EXPORT_SELECTED_DISABLED_TOOLTIP,
     LIBRARY_EXPORT_SELECTED_TOOLTIP,
     LIBRARY_EXPORT_SERVER_DISABLED_TOOLTIP,
@@ -880,6 +882,25 @@ def _apply_library_row_toggle(
             if export_button.disabled
             else LIBRARY_EXPORT_SELECTED_TOOLTIP
         )
+        # task-2853: Media is the only canvas with a "Delete selected" bulk
+        # action today (conversations/notes are out of this task's scope) --
+        # flip it in place too, same reason/action tooltip pair as export.
+        # Row presses are blocked outright while the bulk-delete confirm row
+        # has replaced this button (see ``handle_library_media_row``), so
+        # this lookup should always find it when ``kind == "media"``; any
+        # surprise (e.g. a future caller that skips that guard) falls
+        # through to the same full-recompose fallback as every other
+        # failure here.
+        if kind == "media":
+            delete_button = screen.query_one(
+                "#library-media-delete-selected", Button
+            )
+            delete_button.disabled = selection.count == 0
+            delete_button.tooltip = (
+                LIBRARY_DELETE_SELECTED_DISABLED_TOOLTIP
+                if delete_button.disabled
+                else LIBRARY_DELETE_SELECTED_TOOLTIP
+            )
     except Exception:
         logger.debug(
             f"Library {kind} row toggle in-place update failed; falling back "
@@ -1557,6 +1578,10 @@ class LibraryScreen(BaseAppScreen):
         self._selected_media_id: str = ""
         self._library_media_select_mode: bool = False
         self._library_media_row_selection = RowSelection("media")
+        # task-2853 AC3: True while the Media Select-mode toolbar's bulk
+        # "Delete N selected items?" confirmation should render in place of
+        # the normal Select all/Clear/Export selected/Delete selected row.
+        self._library_media_confirming_bulk_delete: bool = False
         self._library_media_view: str = "list"
         self._library_media_detail: Mapping[str, Any] | None = None
         self._library_media_editing: bool = False
@@ -5276,6 +5301,7 @@ class LibraryScreen(BaseAppScreen):
             selected_id=self._selected_media_id,
             select_mode=self._library_media_select_mode,
             selected_ids=self._library_media_row_selection.ids,
+            confirming_bulk_delete=self._library_media_confirming_bulk_delete,
         )
         if self._library_media_select_mode:
             self._library_media_row_selection.reconcile(r.media_id for r in state.rows)
@@ -8568,8 +8594,10 @@ class LibraryScreen(BaseAppScreen):
             current_index = 0
         next_index = (current_index + 1) % len(type_options)
         self._library_media_type_filter = type_options[next_index]
-        self._library_media_select_mode = False
-        self._library_media_row_selection.clear()
+        # task-2853 AC4: routes through the shared exit helper so this
+        # side-effect select-mode reset can't strand a pending bulk-delete
+        # confirmation either, and states the discard like every other exit.
+        self._exit_library_media_select_mode(announce_discard=True)
         self.refresh(recompose=True)
 
     @on(Button.Pressed, ".library-media-row")
@@ -8578,15 +8606,21 @@ class LibraryScreen(BaseAppScreen):
 
         In select mode, a row press toggles that row's id in
         ``_library_media_row_selection`` and patches the row's marker, the
-        "N selected" Static, and export-selected's disabled state in
-        place (task-252 Tier 1) -- it never opens the full Library media
-        viewer while in select mode. Outside select mode, behavior is
-        unchanged: switches the media canvas from its list view to the
-        in-canvas viewer (a widget-class swap to ``LibraryMediaViewer``,
-        not this canvas -- out of the Tier 2 sync_state scope), clears
-        any stale detail, and kicks the async detail fetch
-        (``_refresh_library_media_detail``); the viewer renders a loading
-        line until that worker stores the fetched detail and recomposes.
+        "N selected" Static, and export-selected's/delete-selected's
+        disabled state in place (task-252 Tier 1, extended by task-2853)
+        -- it never opens the full Library media viewer while in select
+        mode. While the bulk-delete confirmation is showing
+        (``_library_media_confirming_bulk_delete``), row presses are
+        ignored outright: the confirm copy already named a count, and
+        letting the selection drift underneath it would silently delete a
+        different set than what was confirmed (task-2853 AC3). Outside
+        select mode, behavior is unchanged: switches the media canvas from
+        its list view to the in-canvas viewer (a widget-class swap to
+        ``LibraryMediaViewer``, not this canvas -- out of the Tier 2
+        sync_state scope), clears any stale detail, and kicks the async
+        detail fetch (``_refresh_library_media_detail``); the viewer
+        renders a loading line until that worker stores the fetched detail
+        and recomposes.
 
         Args:
             event: Button press event emitted by a media row button.
@@ -8594,6 +8628,8 @@ class LibraryScreen(BaseAppScreen):
         event.stop()
         media_id = str(getattr(event.button, "media_id", "") or "")
         if self._library_media_select_mode:
+            if self._library_media_confirming_bulk_delete:
+                return
             self._library_media_row_selection.toggle(media_id)
             _apply_library_row_toggle(self, "media", event.button, media_id)
             return
@@ -8601,11 +8637,57 @@ class LibraryScreen(BaseAppScreen):
 
     @on(Button.Pressed, "#library-media-select-toggle")
     def handle_library_media_select_toggle(self, event: Button.Pressed) -> None:
-        """Enter/exit media select mode; clears the selection set (both on enter and exit)."""
+        """Enter/exit media select mode; clears the selection set (both on enter and exit).
+
+        Exiting states the discard explicitly when the selection being
+        cleared was non-empty (task-2853 AC4) -- the UAT's "Done discards
+        the selection [silently]" finding.
+        """
         event.stop()
-        self._library_media_select_mode = not self._library_media_select_mode
-        self._library_media_row_selection.clear()
+        if self._library_media_select_mode:
+            self._exit_library_media_select_mode(announce_discard=True)
+        else:
+            self._library_media_select_mode = True
+            self._library_media_row_selection.clear()
         _sync_library_canvas(self, "media")
+
+    def _exit_library_media_select_mode(self, *, announce_discard: bool) -> None:
+        """Leave media Select mode: clear the selection and any pending
+        bulk-delete confirmation (task-2853 AC4).
+
+        Shared by every path that leaves select mode -- the "Done" toggle
+        and the type-filter cycle (which resets select mode as a side
+        effect) -- so neither can strand
+        ``_library_media_confirming_bulk_delete`` in a stale ``True``
+        state. Announces the discard ("copy states it", AC4) only when
+        ``announce_discard`` and the selection being cleared is non-empty;
+        an already-empty selection has nothing to discard.
+
+        Args:
+            announce_discard: Whether to surface the "Selection discarded"
+                notice for a non-empty selection.
+        """
+        discarded = self._library_media_row_selection.count
+        if announce_discard and discarded:
+            self._notify_library_media_selection_discarded(discarded)
+        self._library_media_select_mode = False
+        self._library_media_confirming_bulk_delete = False
+        self._library_media_row_selection.clear()
+
+    def _notify_library_media_selection_discarded(self, count: int) -> None:
+        """Quiet notice for leaving Select mode without acting (task-2853 AC4).
+
+        Args:
+            count: Number of items that were selected and are being
+                discarded; only called for a non-zero count.
+        """
+        notify = getattr(self.app_instance, "notify", None)
+        if callable(notify):
+            item_word = "item" if count == 1 else "items"
+            notify(
+                f"Selection discarded ({count} {item_word}).",
+                severity="information",
+            )
 
     @on(Button.Pressed, "#library-media-select-all")
     def handle_library_media_select_all(self, event: Button.Pressed) -> None:
@@ -8633,6 +8715,151 @@ class LibraryScreen(BaseAppScreen):
         await self._open_library_export_canvas(
             self._library_media_row_selection.export_scope()
         )
+
+    @on(Button.Pressed, "#library-media-delete-selected")
+    def handle_library_media_delete_selected(self, event: Button.Pressed) -> None:
+        """Arm the bulk-delete confirmation for the current media selection (task-2853 AC3).
+
+        Mirrors the single-item viewer delete's own two-step armed-button
+        pattern (``handle_library_media_delete``): the first press never
+        deletes, it only swaps the normal select-mode toolbar for the
+        confirm copy + Delete/Cancel row.
+
+        Args:
+            event: Button press event emitted by "Delete selected".
+        """
+        event.stop()
+        # Defensive: the button is disabled at 0 selected (mirrors "Export
+        # selected"'s own guard).
+        if not self._library_media_row_selection.count:
+            return
+        self._library_media_confirming_bulk_delete = True
+        _sync_library_canvas(self, "media")
+
+    @on(Button.Pressed, "#library-media-bulk-delete-cancel")
+    def handle_library_media_bulk_delete_cancel(self, event: Button.Pressed) -> None:
+        """Dismiss the pending bulk-delete confirmation without deleting anything.
+
+        Args:
+            event: Button press event emitted by the confirm row's "Cancel".
+        """
+        event.stop()
+        self._library_media_confirming_bulk_delete = False
+        _sync_library_canvas(self, "media")
+
+    @on(Button.Pressed, "#library-media-bulk-delete-confirm")
+    def handle_library_media_bulk_delete_confirm(self, event: Button.Pressed) -> None:
+        """Hand the confirmed bulk delete off to a worker (task-2853 AC3).
+
+        Reads the selection synchronously (before any recompose could
+        change it) and hands the frozen id tuple to
+        ``_delete_library_media_selection`` -- mirroring how
+        ``handle_library_media_delete_confirm`` reads ``_selected_media_id``
+        synchronously for the single-item case.
+
+        Args:
+            event: Button press event emitted by the confirm row's "Delete".
+        """
+        event.stop()
+        media_ids = tuple(sorted(self._library_media_row_selection.ids))
+        if not media_ids:
+            self._library_media_confirming_bulk_delete = False
+            _sync_library_canvas(self, "media")
+            return
+        self.run_worker(self._delete_library_media_selection(media_ids))
+
+    async def _delete_library_media_selection(
+        self, media_ids: tuple[str, ...]
+    ) -> None:
+        """Soft-delete every selected Library media item (task-2853 AC3).
+
+        Reuses the exact seam ``_delete_library_media_item`` uses for the
+        single-item viewer delete --
+        ``media_reading_scope_service.delete_media_item(mode="local",
+        media_id=...)``, which for the local backend moves the item to
+        trash via ``MediaDatabase.mark_as_trash`` (the app's existing
+        soft-deletion pattern -- never raw SQL). Looped per id (mirroring
+        ``LocalMediaReadingService.empty_media_trash``'s own per-item
+        try/except loop) since the reading-scope service exposes no batch
+        delete: one bad id can never abort the rest of the batch.
+
+        On any success, the deleted ids are dropped from
+        ``_local_source_records["media"]`` (list updates in place) and
+        ``_local_source_counts["media"]`` is decremented by the number
+        actually deleted (rail counts update in place, AC3). The
+        selection is reconciled against the surviving records, so a
+        failed id stays checked (visible to retry) while a succeeded id
+        drops out automatically. A full success exits select mode
+        entirely -- the action the toolbar was armed for is done; any
+        failure keeps select mode active and surfaces a quiet warning
+        naming the failure count, mirroring
+        ``_notify_library_media_delete_warning``'s single-item wording.
+
+        Args:
+            media_ids: The exact ids to delete, read by the caller BEFORE
+                any recompose could change the live selection.
+        """
+        service = getattr(self.app_instance, "media_reading_scope_service", None)
+        delete_media_item = getattr(service, "delete_media_item", None)
+        succeeded: list[str] = []
+        failed: list[str] = []
+        if callable(delete_media_item):
+            for media_id in media_ids:
+                try:
+                    await self._run_library_service_call(
+                        delete_media_item,
+                        mode="local",
+                        media_id=media_id,
+                        isolate_in_worker=True,
+                    )
+                    succeeded.append(media_id)
+                except Exception:
+                    logger.opt(exception=True).warning(
+                        f"Failed to delete Library media item {media_id!r} "
+                        "in bulk delete."
+                    )
+                    failed.append(media_id)
+        else:
+            failed = list(media_ids)
+
+        if succeeded:
+            succeeded_ids = set(succeeded)
+            self._local_source_records["media"] = tuple(
+                record
+                for record in self._local_source_records.get("media", ())
+                if self._source_record_id(record) not in succeeded_ids
+            )
+            self._local_source_counts["media"] = max(
+                0, self._local_source_counts.get("media", 0) - len(succeeded)
+            )
+            self._library_media_row_selection.reconcile(
+                self._source_record_id(record) or ""
+                for record in self._local_source_records["media"]
+            )
+
+        self._library_media_confirming_bulk_delete = False
+        if failed:
+            self._notify_library_media_delete_warning(
+                f"Could not delete {len(failed)} of {len(media_ids)} "
+                "selected media item(s)."
+            )
+        else:
+            self._library_media_select_mode = False
+            self._library_media_row_selection.clear()
+
+        if self.is_mounted:
+            # A full screen recompose, not the canvas-scoped
+            # ``_sync_library_canvas`` every other select-mode handler
+            # above uses -- deliberately: AC3 requires the rail's "Media N"
+            # count (built from ``_local_source_counts`` in
+            # ``_build_library_shell_input``, just updated above) to update
+            # in place too, and the canvas-scoped sync explicitly skips the
+            # rail (see its own docstring). Mirrors
+            # ``_delete_library_media_item``'s own tail for the same
+            # reason; this is the one-shot completion of a rare, already
+            # doubly-confirmed action, not a hot path the hot-path
+            # recompose guidance is aimed at.
+            self.refresh(recompose=True)
 
     @on(Button.Pressed, "#library-media-open-viewer")
     def handle_library_media_open_viewer(self, event: Button.Pressed) -> None:

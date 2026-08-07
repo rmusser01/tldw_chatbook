@@ -268,6 +268,85 @@ def test_library_export_roundtrip_conversations_only_scope_excludes_media_and_no
         assert not any(name.startswith("content/media/") for name in zf.namelist())
 
 
+def test_library_export_roundtrip_media_ids_scope_exports_exactly_the_selected_items(
+    tmp_path,
+):
+    """task-2853 AC2: the Media Select-mode toolbar's "Export selected"
+    wires the checked ids straight into ``ExportScope.ids`` -- pin the
+    full path end to end: an explicit id subset resolves to exactly those
+    ids (Task 1's resolver), the real ``LocalChatbookService`` zips
+    exactly them, and neither an unselected media item nor any
+    conversation/note leaks in via a whole-source query."""
+    seeded = _seed_source_dbs(tmp_path)
+    media_db = seeded["media_db"]
+
+    # ``_seed_source_dbs`` already seeded one media item (``_MEDIA_TRANSCRIPT``)
+    # -- it is deliberately left OUT of the selection below.
+    selected_a_id, _msg, _status = media_db.add_media_with_keywords(
+        url="https://example.com/selected-a",
+        title="Selected A",
+        media_type="video",
+        content="SELECTED A TRANSCRIPT",
+        keywords=["a"],
+    )
+    selected_b_id, _msg, _status = media_db.add_media_with_keywords(
+        url="https://example.com/selected-b",
+        title="Selected B",
+        media_type="audio",
+        content="SELECTED B TRANSCRIPT",
+        keywords=["b"],
+    )
+
+    scope = ExportScope(kind="media", ids=(str(selected_a_id), str(selected_b_id)))
+    selections = resolve_export_selections(
+        scope, seeded["media_db"], seeded["chachanotes_db"]
+    )
+    # Ids-scoped resolution never queries the whole source -- the ids ARE
+    # the selection (Task 1's contract, pinned again here end to end).
+    assert selections == {
+        ContentType.MEDIA: [str(selected_a_id), str(selected_b_id)]
+    }
+
+    payload = LibraryScreen._build_library_export_payload(
+        name="Selected Media",
+        description="",
+        selections=selections,
+        destination=str(tmp_path / "selected_media.zip"),
+        media_quality="thumbnail",
+    )
+    assert payload["include_media"] is True
+
+    service = LocalChatbookService(
+        seeded["db_paths"], registry_path=tmp_path / "chatbooks.json"
+    )
+    outcome = LibraryScreen._run_library_export_via_service(
+        service, payload, name="Selected Media", description=""
+    )
+
+    assert outcome["success"] is True, outcome["message"]
+    export_path = Path(outcome["path"])
+    with zipfile.ZipFile(export_path, "r") as zf:
+        manifest = json.loads(zf.read("manifest.json"))
+        # Exactly the 2 selected media items -- neither the pre-existing
+        # seeded item nor any conversation/note leaked in.
+        assert manifest["statistics"]["total_media_items"] == 2
+        assert manifest["statistics"]["total_conversations"] == 0
+        assert manifest["statistics"]["total_notes"] == 0
+
+        media_content_names = sorted(
+            name
+            for name in zf.namelist()
+            if name.startswith("content/media/") and name.endswith(".txt")
+        )
+        assert len(media_content_names) == 2
+        exported_texts = {
+            zf.read(name).decode("utf-8") for name in media_content_names
+        }
+        assert exported_texts == {"SELECTED A TRANSCRIPT", "SELECTED B TRANSCRIPT"}
+        # The item left OUT of the selection genuinely never made it in.
+        assert _MEDIA_TRANSCRIPT not in exported_texts
+
+
 def test_library_export_roundtrip_unwritable_destination_fails_with_no_registry_record(
     tmp_path,
 ):
