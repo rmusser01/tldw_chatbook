@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-08-07 01:10'
-updated_date: '2026-08-07 09:44'
+updated_date: '2026-08-07 03:04'
 labels:
   - library
   - keyboard
@@ -108,4 +108,20 @@ re-running the full file alone (352 passed, only the known failure).
 
 All temporary timing/diagnostic instrumentation removed before commit; verified via grep + clean
 py_compile.
+
+ROUND 3 (re-critique fix): round 2's graduated media-viewer Escape (step back ONE level per
+sub-state) introduced a footer regression the re-critique caught: LIBRARY_DETAIL_BACK_SHORTCUTS
+still unconditionally advertised "esc back to list" while the edit/delete-confirm/analysis-edit
+sub-state was active, but Escape there only reaches the plain viewer, not the list -- a second
+Escape was needed to actually get back to the list, and the footer (and the User Guide) both
+claimed otherwise. Fixed with a new _library_media_viewer_substate_active() gate and
+LIBRARY_MEDIA_SUBSTATE_BACK_SHORTCUTS ("esc back a step") selected ahead of
+LIBRARY_DETAIL_BACK_SHORTCUTS in _register_footer_shortcuts(); verified every call site that
+flips the three sub-state flags already ends in self.refresh(recompose=True) (directly or via the
+async _refresh_library_media_detail chain), so compose_content()'s existing
+_register_footer_shortcuts() call picks up the new branch with no extra refresh call needed.
+Docs/User_Guide/library.md's Escape section now documents the two-Escape graduated path
+explicitly. Also corrected a comment-only math error (LIBRARY_LIST_ENTRY_FOCUS_ARMED_SECONDS'
+justification said "~4-7x" the measured 142ms/249ms worst case; the constant is 2.0s, so it's
+really ~8-14x).
 <!-- SECTION:NOTES:END -->

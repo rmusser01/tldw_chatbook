@@ -221,6 +221,13 @@ you're on:
   Prompts, or Skills editor) — Escape returns to that list, re-focusing
   its first row, exactly like pressing **‹ Back to list**. A dirty note
   or prompt edit vetoes the exit the same way Back does.
+- **Editing, deleting, or re-analyzing inside the media viewer** — the
+  media viewer's Edit / Delete / Edit analysis forms have no dirty-edit
+  guard, so a first Escape only discards that one form and returns to the
+  plain read-only viewer (matching that form's own **Cancel** button); a
+  *second* Escape from there returns to the list. The footer's hint
+  changes to "back a step" while one of these forms is open, so it never
+  claims "back to list" a step early.
 
 Escape and Ctrl+S are also bound inside the skill editor specifically
 (back to list / save) — see [Skills](library/skills.md). Escape also
@@ -262,7 +269,7 @@ here in Library.
   retired; their names now route to the matching Library row.
 
 —
-*Verified against dev @ 4acb17a0b — 2026-08-07 (TASK-2850: Notes ▸ Files
+*Verified against dev @ f0379c035 — 2026-08-07 (TASK-2850: Notes ▸ Files
 mode stays inside the Library rail/canvas frame; Escape returns to
 Database; TASK-2851: the legacy Media Library screen is retired — "Media &
 Content: Open Media Library" now deep-links into Library's Media row;
@@ -278,4 +285,7 @@ a Media/Notes/Prompts/Skills list now focuses its first row so ↑/↓/Enter
 work immediately (previously nothing was focused there, on entry or on
 return); Escape now moves focus from a list to the rail, and returns from
 that list's viewer/editor to the list, both newly advertised in the
-footer)*
+footer; TASK-2856 re-critique round 3: the media viewer's Edit/Delete/Edit
+analysis sub-states now document their own graduated two-Escape behavior
+and footer hint ("back a step") instead of implying a single Escape
+reaches the list from any viewer sub-state)*

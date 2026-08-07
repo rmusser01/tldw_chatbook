@@ -400,7 +400,7 @@ LIBRARY_SNAPSHOT_CACHE_TTL_SECONDS = 5.0
 # "New skill -> save -> Escape" chain that motivates this at all): the
 # gap between the exit's own synchronous recompose and the CHAINED
 # trust-posture worker's later one was 249ms and 142ms. This constant is
-# ~4-7x that measured worst case, comfortably absorbing a slower disk/
+# ~8-14x that measured worst case, comfortably absorbing a slower disk/
 # keyring backend or CI machine while still resolving quickly if a truly
 # idle list somehow never settles.
 LIBRARY_LIST_ENTRY_FOCUS_ARMED_SECONDS = 2.0
@@ -1175,6 +1175,25 @@ class LibraryScreen(BaseAppScreen):
         ("esc", "back to list"),
     )
 
+    #: task-2856 review round 3: the media viewer's edit/delete-confirm/
+    #: analysis-edit sub-states (``_library_media_editing`` /
+    #: ``_library_media_confirming_delete`` / ``_library_media_editing_
+    #: analysis``) are still ``_library_media_view == "viewer"``, so without
+    #: this dedicated set ``LIBRARY_DETAIL_BACK_SHORTCUTS`` would keep
+    #: advertising "esc back to list" there too -- but
+    #: ``action_library_media_viewer_back`` (review round 2) steps back only
+    #: ONE level while a sub-state is active (mirroring that sub-state's own
+    #: Cancel button), landing on the plain viewer, not the list. A second
+    #: Escape is then needed to actually reach the list. Deliberately one
+    #: generic, honest label rather than three sub-state-specific ones --
+    #: "back a step" is accurate for all three without tripling the constant
+    #: count for a wording-only difference.
+    LIBRARY_MEDIA_SUBSTATE_BACK_SHORTCUTS = (
+        ("/", "focus search"),
+        ("F6", "next pane"),
+        ("esc", "back a step"),
+    )
+
     #: task-2856 AC2: a list canvas (Media/Notes/Prompts/Skills) showing its
     #: plain list -- Escape moves focus toward the rail (never navigation).
     LIBRARY_LIST_SHORTCUTS = (
@@ -1851,18 +1870,26 @@ class LibraryScreen(BaseAppScreen):
         # "esc". task-2856: two more contexts -- a detail/viewer surface
         # (media viewer, note/prompt editor) advertises "esc back to list";
         # a list canvas showing its plain list advertises "esc focus rail".
-        # This method is ALSO called from ``compose_content`` on every
-        # recompose (not just at the transition call sites above), so a
-        # sub-view entered from ANY of the editor/viewer's several call
-        # sites (see ``_library_note_editor_active`` etc.) can never leave
-        # the footer stale the way an easily-missed per-call-site
-        # registration could.
+        # Review round 3: a SEVENTH context -- the media viewer's edit/
+        # delete-confirm/analysis-edit sub-states are still
+        # ``_library_media_view == "viewer"`` but Escape there only steps
+        # back one level (see ``action_library_media_viewer_back``), not to
+        # the list, so it gets its own honest hint instead of inheriting
+        # the plain viewer's "back to list" (see
+        # ``_library_media_viewer_substate_active``). This method is ALSO
+        # called from ``compose_content`` on every recompose (not just at
+        # the transition call sites above), so a sub-view entered from ANY
+        # of the editor/viewer's several call sites (see
+        # ``_library_note_editor_active`` etc.) can never leave the footer
+        # stale the way an easily-missed per-call-site registration could.
         if self._library_selected_row_id == LIBRARY_ROW_BROWSE_SEARCH:
             shortcuts = self.LIBRARY_SHORTCUTS
         elif not self._library_selected_row_id:
             shortcuts = self.LIBRARY_LANDING_SHORTCUTS
         elif self._file_notes_active():
             shortcuts = self.LIBRARY_NOTES_FILES_SHORTCUTS
+        elif self._library_media_viewer_substate_active():
+            shortcuts = self.LIBRARY_MEDIA_SUBSTATE_BACK_SHORTCUTS
         elif (
             (
                 self._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA
@@ -2343,6 +2370,28 @@ class LibraryScreen(BaseAppScreen):
             and getattr(self, "_library_selected_row_id", "")
             == LIBRARY_ROW_BROWSE_NOTES
             and getattr(self, "_library_file_notes_workspace", None) is not None
+        )
+
+    def _library_media_viewer_substate_active(self) -> bool:
+        """True while the media viewer's edit/delete-confirm/analysis-edit
+        sub-state is the live view (task-2856 review round 3).
+
+        All three sub-states leave ``_library_media_view == "viewer"``
+        unchanged (see ``handle_library_media_edit`` etc.), so they are
+        otherwise indistinguishable from the plain read-only viewer to
+        ``_register_footer_shortcuts`` -- but ``action_library_media_viewer_
+        back`` only steps back ONE level while any of these is set (to the
+        plain viewer, not the list), so the footer must not claim "back to
+        list" while this is true.
+        """
+        return (
+            self._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA
+            and self._library_media_view == "viewer"
+            and (
+                self._library_media_editing
+                or self._library_media_confirming_delete
+                or self._library_media_editing_analysis
+            )
         )
 
     def _library_note_editor_active(self) -> bool:

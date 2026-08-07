@@ -1747,6 +1747,56 @@ def test_check_action_gates_media_viewer_back_to_active_viewer():
     assert screen.check_action("library_rag_use_in_console", ()) is True
 
 
+def test_register_footer_shortcuts_distinguishes_plain_viewer_from_a_media_sub_state():
+    """task-2856 review round 3: ``LIBRARY_DETAIL_BACK_SHORTCUTS`` used to be
+    selected whenever the media canvas showed its viewer, unconditionally
+    advertising "esc back to list" -- but ``action_library_media_viewer_
+    back`` (review round 2) only steps back ONE level while an edit/
+    delete-confirm/analysis-edit sub-state is active (viewer -> plain
+    viewer, NOT viewer -> list), so a SECOND Escape is actually needed to
+    reach the list in that state. The footer must advertise a different,
+    accurate hint whenever any of the three sub-state flags is set, not
+    repeat the plain viewer's "back to list" claim."""
+    from tldw_chatbook.Library.library_shell_state import LIBRARY_ROW_BROWSE_MEDIA
+    from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+
+    app = _build_test_app()
+    screen = LibraryScreen(app)
+    screen._library_selected_row_id = LIBRARY_ROW_BROWSE_MEDIA
+    screen._library_media_view = "viewer"
+
+    # Plain read-only viewer -- no sub-state active -- Escape genuinely
+    # goes straight to the list, so "back to list" is true here.
+    screen._library_media_editing = False
+    screen._library_media_confirming_delete = False
+    screen._library_media_editing_analysis = False
+    screen._register_footer_shortcuts()
+    _source, plain_shortcuts = screen._footer_shortcut_registration
+    assert dict(plain_shortcuts)["esc"] == "back to list"
+
+    # Mid-edit sub-state active -- Escape only steps back to the plain
+    # viewer (see action_library_media_viewer_back's staged exit), so the
+    # footer must NOT repeat "back to list" here.
+    screen._library_media_editing = True
+    screen._register_footer_shortcuts()
+    _source, edit_shortcuts = screen._footer_shortcut_registration
+    assert dict(edit_shortcuts)["esc"] != "back to list"
+    assert edit_shortcuts != plain_shortcuts
+
+    # Same for the delete-confirm and analysis-edit sub-states.
+    screen._library_media_editing = False
+    screen._library_media_confirming_delete = True
+    screen._register_footer_shortcuts()
+    _source, delete_shortcuts = screen._footer_shortcut_registration
+    assert dict(delete_shortcuts)["esc"] != "back to list"
+
+    screen._library_media_confirming_delete = False
+    screen._library_media_editing_analysis = True
+    screen._register_footer_shortcuts()
+    _source, analysis_shortcuts = screen._footer_shortcut_registration
+    assert dict(analysis_shortcuts)["esc"] != "back to list"
+
+
 def test_check_action_gates_note_editor_back_to_active_editor():
     """task-2856 AC2: the note editor's Escape binding only fires for the
     DATABASE note editor -- Files mode (its own dedicated Escape gate) and
