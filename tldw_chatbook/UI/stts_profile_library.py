@@ -118,9 +118,44 @@ _PROFILE_UNAVAILABLE_COPY = (
     "The exact profile selection is unavailable. Refresh current capabilities "
     "or edit the persisted model and voice."
 )
+# This copy routes from `profile_unverified` and `stale_configuration` (see
+# `profile_action_error_copy` below). All FIVE raise sites of those two codes
+# in `profile_service.py` were traced:
+#   :1331 stale_configuration  -- `observe_availability`'s page-snapshot flow;
+#       gated on `audio_cpp_supported`, the provider_id == _PROFILE_PROVIDER_ID
+#       subset of the page built a few lines above. Legacy-unreachable.
+#   :1402 stale_configuration  -- `observe_portable_profile`; opens with
+#       `if draft.provider_id != _PROFILE_PROVIDER_ID: return` (an early
+#       return with availability="unverified", before this raise).
+#       Legacy-unreachable.
+#   :2357/:2374 profile_unverified -- both inside
+#       `_require_authoritative_capability`, which opens with
+#       `if draft.provider_id != _PROFILE_PROVIDER_ID: return`.
+#       Legacy-unreachable.
+#   :1612 (leads to :2330) stale_configuration -- `create_from_artifact`
+#       calls `_require_configuration_revision(selection.provider_id, ...)`
+#       with NO provider gate, and `_selection_is_profile_safe` permits any
+#       provider with a known response-format table. `configuration_revision`
+#       is a genuine per-provider counter (`adapter_registry.py`,
+#       `TTS_Generation.py`), so `stale_configuration` IS raisable here for a
+#       legacy provider. LEGACY-REACHABLE -- the two live callers
+#       (`STTS_Window.py`, `speech_profile_mixin.py`) already special-case
+#       this code with `_PROFILE_RESULT_STALE_COPY` before falling through to
+#       this toast; `STTSProfileLibrary.create_from_artifact` below mirrors
+#       that (slice 2, task 1 fix round).
 _PROFILE_UNVERIFIED_COPY = (
     "The exact profile selection could not be verified. Refresh and retry "
     "without changing persisted values."
+)
+_PROFILE_NO_CATALOG_CHECK_COPY = "No catalog check"
+#: Copy shown when the generated audio predates the current settings, so
+#: saving it as a profile would record something the user did not hear.
+#: Kept verbatim from `STTS_Window` / `speech_profile_mixin`, which define
+#: their own copies of this same string for the same `stale_configuration`
+#: case reached through `create_from_artifact`.
+_PROFILE_RESULT_STALE_COPY = (
+    "TTS settings changed after this audio was generated. Generate a new "
+    "result before saving it as a profile."
 )
 PROFILE_EXPORT_COMPLETE_COPY = "Voice profile exported."
 
@@ -189,6 +224,25 @@ class ProfilePreviewRequested(Message):
 def _assignment_copy(count: int) -> str:
     noun = "assignment" if count == 1 else "assignments"
     return f"{count} {noun}"
+
+
+def _availability_cell_text(availability: TTSProfileAvailability | None) -> str:
+    """Render one row's "Availability" cell -- the single source both
+    `_publish_page` and `_publish_availability` call, so they cannot diverge.
+
+    `recovery_action == "none"` on an `"unverified"` availability means the
+    provider has no catalog to preflight, so the state is permanent, not a
+    transient result waiting on Refresh (`_ALLOWED_RECOVERY_ACTIONS` in
+    `profile_service.py` documents the contract). That case alone gets the
+    honest "No catalog check" copy; every other state -- including
+    audio_cpp's transient "unverified" -- keeps today's plain
+    `.state.title()` rendering.
+    """
+    if availability is None:
+        return "Checking"
+    if availability.state == "unverified" and availability.recovery_action == "none":
+        return _PROFILE_NO_CATALOG_CHECK_COPY
+    return availability.state.title()
 
 
 def profile_action_error_copy(error: BaseException) -> str:
@@ -788,7 +842,7 @@ class STTSProfileLibrary(Widget):
         with Vertical(id="stts-profile-header"):
             yield Label("Voice profiles", id="stts-profile-title")
             yield Static(
-                "Manage exact native audio.cpp model and voice selections.",
+                "Manage exact model and voice selections for every speech provider.",
                 id="stts-profile-purpose",
             )
         with Horizontal(id="stts-profile-toolbar"):
@@ -1195,9 +1249,7 @@ class STTSProfileLibrary(Widget):
                     if profile.voice_id is not None
                     else "Server default"
                 ),
-                Text(
-                    "Checking" if availability is None else availability.state.title()
-                ),
+                Text(_availability_cell_text(availability)),
                 Text(str(profile.revision)),
                 key=key,
             )
@@ -1224,7 +1276,7 @@ class STTSProfileLibrary(Widget):
             table.update_cell(
                 key,
                 self._availability_column,
-                Text(item.state.title()),
+                Text(_availability_cell_text(item)),
             )
         self._availability_configuration_revision = snapshot.configuration_revision
         self._availability_catalog_revision = snapshot.catalog_revision
@@ -1334,7 +1386,12 @@ class STTSProfileLibrary(Widget):
             return
         profile = loaded.profile
         availability = self._row_availability.get(str(profile.profile_id))
-        state = "Checking" if availability is None else availability.state.title()
+        # Routed through the same helper as the DataTable cell: `state` is
+        # only used below when neither of the `elif` branches applies (i.e.
+        # never for "unverified" today), but computing it from the raw
+        # `.state.title()` left a trap for a future branch reorder to leak
+        # the bare "Unverified" word for a legacy no-catalog-check profile.
+        state = _availability_cell_text(availability)
         voice = profile.voice_id if profile.voice_id is not None else "Server default"
         if availability is not None and availability.state == "unavailable":
             status_line = "Unavailable — Refresh, then Edit."
@@ -1346,7 +1403,7 @@ class STTSProfileLibrary(Widget):
             status_line = (
                 "Unverified — Refresh and retry."
                 if availability.recovery_action == "refresh"
-                else "Unverified — this provider has no catalog check."
+                else "No catalog check — the exact selection is used as-is."
             )
         else:
             status_line = f"{state}."
@@ -1465,7 +1522,20 @@ class STTSProfileLibrary(Widget):
         except asyncio.CancelledError:
             raise
         except Exception as error:  # noqa: BLE001 - map to bounded UI copy
-            self._set_status(profile_action_error_copy(error))
+            # `create_from_artifact` checks the exact provider's
+            # configuration revision with no provider gate (see the trace
+            # above `_PROFILE_UNVERIFIED_COPY`), so `stale_configuration` is
+            # reachable for a legacy provider here -- unlike the other
+            # actions on this widget. Mirror the two live callers
+            # (`STTS_Window.py`, `speech_profile_mixin.py`), which already
+            # special-case it with provider-agnostic copy instead of the
+            # "Refresh and retry" toast that only makes sense for audio_cpp.
+            copy = (
+                _PROFILE_RESULT_STALE_COPY
+                if getattr(error, "code", None) == "stale_configuration"
+                else profile_action_error_copy(error)
+            )
+            self._set_status(copy)
             return None
         if self._live:
             self._queue_page_request(self._search, self._offset)

@@ -339,12 +339,13 @@ async def _wait_until(
 
 def _profile_preset(
     *,
+    provider_id: str = "audio_cpp",
     model_id: str = "profile/model",
     voice_id: str | None = "profile/voice",
     availability: str = "available",
 ) -> TTSPlaygroundSelectionPreset:
     return TTSPlaygroundSelectionPreset(
-        provider_id="audio_cpp",
+        provider_id=provider_id,
         model_id=model_id,
         voice_id=voice_id,
         response_format="wav",

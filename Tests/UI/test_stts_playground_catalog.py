@@ -19,6 +19,7 @@ from tldw_chatbook.UI.stts_playground_catalog import (
     SERVER_DEFAULT_VOICE_ID,
     CatalogRequestToken,
     controls_from_catalog,
+    preset_has_no_catalog_check,
     profile_availability_from_catalog,
     provider_options,
     voice_id_for_request,
@@ -336,3 +337,44 @@ def test_legacy_provider_preset_already_unavailable_is_not_upgraded_to_unverifie
     )
 
     assert profile_availability_from_catalog(preset, None) == "unavailable"
+
+
+@pytest.mark.parametrize(
+    "provider_id",
+    sorted(PROFILE_PROVIDER_IDS - {"audio_cpp"}),
+)
+def test_preset_has_no_catalog_check_is_true_for_every_legacy_provider(
+    provider_id: str,
+) -> None:
+    """Slice 2 task 3's single shared class test, exercised for every legacy
+    provider PROFILE_PROVIDER_IDS knows about -- so a new legacy provider
+    added to that set is automatically covered here too.
+    """
+    preset = TTSPlaygroundSelectionPreset(
+        provider_id=provider_id,
+        model_id="profile/model",
+        voice_id="profile/voice",
+        response_format=PROFILE_PROVIDER_FORMATS[provider_id][0],
+        speed=1.0,
+        options={},
+        availability="unverified",
+    )
+
+    assert preset_has_no_catalog_check(preset) is True
+
+
+def test_preset_has_no_catalog_check_is_false_for_audio_cpp() -> None:
+    """audio.cpp is the one provider class with real catalog authority --
+    its "unverified" is transient, never the permanent no-catalog story.
+    """
+    preset = TTSPlaygroundSelectionPreset(
+        provider_id="audio_cpp",
+        model_id="<opaque:model>",
+        voice_id=None,
+        response_format="wav",
+        speed=1.0,
+        options={},
+        availability="unverified",
+    )
+
+    assert preset_has_no_catalog_check(preset) is False

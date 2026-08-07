@@ -2,8 +2,19 @@
 
 Date: 2026-08-04
 Status: Approved. **Slice 1 shipped 2026-08-06** (PR #1368 → dev `e4f7aa24e`, TASK-2450).
-Slices 2-4 remain unplanned by design — each is planned after the prior one lands, because
-slice 1 demonstrated how much implementation reshapes a plan (see the §3 correction).
+**Slice 2 (§4.2's availability-honesty + P4 copy items) implemented 2026-08-06/07 on
+branch `feat/voice-profiles-slice2` (commits `7867416eb..8966edb46`, TASK-2950), pending
+merge** — legacy-provider profiles are never presented with the raw word "Unverified" or
+a refresh promise they cannot fulfill, across the profile library, Personas, and Playground
+surfaces (implemented at the presentation layer per `recovery_action`, not as a new
+`ProfileAvailabilityState`; see TASK-2950's Implementation Notes for the rationale). §4.2's
+edit-dialog provider-set expansion was already covered by slice 1. Two follow-ups filed,
+not blocking: TASK-2951 (a stale AC on the unrelated task-1266 board entry), TASK-2952
+(one untraced legacy-reachability question in the Playground preview's blocked-state copy).
+Slices 3-4: **slice 3 (default voice profile end-to-end) also shipped 2026-08-06**
+(PR #1375 → dev `e7b9ebabd`). Slice 4 remains unplanned by design — each slice is planned
+after the prior one lands, because slice 1 demonstrated how much implementation reshapes a
+plan (see the §3 correction).
 Owner decisions recorded: 2026-08-04 (five rulings, §2)
 Extends: ADR-023, ADR-028, ADR-037, ADR-039
 

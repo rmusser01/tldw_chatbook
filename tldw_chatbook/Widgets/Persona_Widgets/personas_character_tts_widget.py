@@ -12,6 +12,7 @@ from textual.containers import Container, Horizontal, Vertical
 from textual.widgets import Button, Select, Static
 
 from ...TTS import ProfileAvailabilityState
+from ...TTS.profile_service import ProfileRecoveryAction
 from .personas_pane_messages import CharacterTTSActionRequested
 
 _GLOBAL_PROFILE_VALUE = "__global__"
@@ -20,11 +21,22 @@ _CONTEXTS = frozenset({"card", "editor"})
 
 @dataclass(frozen=True, slots=True)
 class CharacterTTSProfileOption:
-    """One presentation-only profile choice."""
+    """One presentation-only profile choice.
+
+    `recovery_action` defaults to "refresh" -- the audio.cpp-transient
+    reading -- so any caller that predates this field (or that only ever
+    constructs "available"/"unavailable" options, where the value is
+    unused) keeps today's behavior unchanged. Only a caller that has the
+    real `TTSProfileAvailability` in hand (`personas_screen.py`'s
+    presentation builder) threads the actual value, which is what lets an
+    "unverified" option distinguish a legacy provider's permanent
+    no-catalog-check state from audio.cpp's transient one (slice 2, task 2).
+    """
 
     profile_id: UUID
     display_name: str
     availability: ProfileAvailabilityState
+    recovery_action: ProfileRecoveryAction = "refresh"
 
     def __post_init__(self) -> None:
         if (
@@ -34,6 +46,8 @@ class CharacterTTSProfileOption:
             or self.display_name != self.display_name.strip()
             or type(self.availability) is not str
             or self.availability not in {"available", "unavailable", "unverified"}
+            or type(self.recovery_action) is not str
+            or self.recovery_action not in {"none", "refresh", "edit"}
         ):
             raise ValueError("invalid character TTS profile option")
 
@@ -84,6 +98,23 @@ class CharacterTTSPresentationState:
             status=status,
             controls_enabled=False,
         )
+
+
+def _character_tts_option_suffix(option: CharacterTTSProfileOption) -> str:
+    """Return the Select option's availability suffix.
+
+    `recovery_action == "none"` on an "unverified" option means the
+    provider has no catalog to preflight, so the state is permanent --
+    naming it plain "unverified" would read as an audio.cpp-style
+    transient glitch a refresh could resolve. Never branch on
+    `provider_id` here; the recovery action already carries the honest
+    distinction (ADR-031, `_ALLOWED_RECOVERY_ACTIONS` in
+    `TTS/profile_service.py`).
+    """
+
+    if option.availability == "unverified" and option.recovery_action == "none":
+        return "no catalog check"
+    return option.availability
 
 
 class PersonasCharacterTTSWidget(Container):
@@ -192,7 +223,7 @@ class PersonasCharacterTTSWidget(Container):
         options = [("Use global default", _GLOBAL_PROFILE_VALUE)]
         options.extend(
             (
-                f"{profile.display_name} · {profile.availability}",
+                f"{profile.display_name} · {_character_tts_option_suffix(profile)}",
                 str(profile.profile_id),
             )
             for profile in state.profiles

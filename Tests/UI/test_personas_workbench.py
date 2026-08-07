@@ -10262,6 +10262,7 @@ async def test_character_tts_widget_accepts_unverified_profile_assignment_withou
                         unverified.profile_id,
                         unverified.display_name,
                         "unverified",
+                        recovery_action="none",
                     ),
                     CharacterTTSProfileOption(
                         unavailable.profile_id,
@@ -10277,13 +10278,16 @@ async def test_character_tts_widget_accepts_unverified_profile_assignment_withou
         await pilot.pause()
         selector = widget.query_one(Select)
 
-        # The option row itself must still say "unverified" -- selecting it
-        # must never present it as a confirmed-working profile.
+        # This profile's provider has no catalog to preflight
+        # (recovery_action == "none"), so the option row must say so
+        # honestly -- selecting it must never present it as a
+        # confirmed-working "available" profile.
         option_labels = [str(prompt) for prompt, _value in selector._options]
-        assert any(
-            unverified.display_name in label and "unverified" in label
-            for label in option_labels
+        unverified_label = next(
+            label for label in option_labels if unverified.display_name in label
         )
+        assert "no catalog check" in unverified_label
+        assert "available" not in unverified_label
 
         # Still refused: genuinely unavailable stays refused, unchanged.
         selector.value = str(unavailable.profile_id)
@@ -10311,12 +10315,14 @@ async def test_character_tts_widget_accepts_unverified_profile_assignment_withou
                         unverified.profile_id,
                         unverified.display_name,
                         "unverified",
+                        recovery_action="none",
                     ),
                 ),
                 selected_profile_id=unverified.profile_id,
                 status=(
-                    f"{unverified.display_name} · Unverified · Used by 1 character. "
-                    "Refresh or repair the profile; the assignment is preserved."
+                    f"{unverified.display_name} · No catalog check · Used by 1 "
+                    "character. The exact selection is used as-is; the "
+                    "assignment is preserved."
                 ),
                 controls_enabled=True,
                 assignment_count=1,
@@ -10327,9 +10333,11 @@ async def test_character_tts_widget_accepts_unverified_profile_assignment_withou
             str(widget.query_one(".personas-character-tts-edit", Button).label)
             == "Edit"
         )
-        assert "Unverified" in str(
+        status_text = str(
             widget.query_one(".personas-character-tts-status", Static).renderable
         )
+        assert "No catalog check" in status_text
+        assert "unverified" not in status_text.casefold()
 
 
 def _configure_character_tts_app(
@@ -10842,23 +10850,29 @@ async def test_character_tts_assignment_worker_accepts_unverified_profile(
 
 
 @pytest.mark.parametrize(
-    ("recovery_action", "expected_tail", "forbidden"),
+    ("recovery_action", "expected_status", "forbidden"),
     [
         (
             "refresh",
-            "Refresh or repair the profile; the assignment is preserved.",
+            (
+                "{name} · Unverified · Used by 1 character. Refresh or repair "
+                "the profile; the assignment is preserved."
+            ),
             (),
         ),
         (
             "none",
-            "This provider has no catalog check; the assignment is preserved.",
-            ("refresh", "retry"),
+            (
+                "{name} · No catalog check · Used by 1 character. The exact "
+                "selection is used as-is; the assignment is preserved."
+            ),
+            ("refresh", "retry", "unverified"),
         ),
     ],
 )
 async def test_character_tts_unverified_status_never_promises_an_impossible_refresh(
     recovery_action: str,
-    expected_tail: str,
+    expected_status: str,
     forbidden: tuple[str, ...],
 ) -> None:
     """The Roleplay status line must follow the availability's own recovery.
@@ -10904,11 +10918,21 @@ async def test_character_tts_unverified_status_never_promises_an_impossible_refr
 
     state = PersonasScreen._character_tts_presentation_from_snapshot(snapshot)
 
-    assert state.status == (
-        f"{profile.display_name} · Unverified · Used by 1 character. {expected_tail}"
-    )
+    assert state.status == expected_status.format(name=profile.display_name)
     for word in forbidden:
         assert word not in state.status.casefold()
+    # Pin the threading, not just its downstream effect: the status line
+    # above is derived from `current_availability.recovery_action`, a local
+    # read off `snapshot.availability` -- it says nothing about whether the
+    # *option row* for this same profile (`state.profiles[0]`) carries the
+    # real value too. personas_screen.py:1753-1756 is the only call site
+    # that threads it into `CharacterTTSProfileOption`; the dataclass
+    # default ("refresh") would silently paper over a dropped argument
+    # there, leaving the Select option reading "· unverified" beside a
+    # status line that correctly says "· No catalog check" -- with every
+    # other test in this suite (which construct options directly) still
+    # green.
+    assert state.profiles[0].recovery_action == recovery_action
 
 
 async def test_character_tts_assignment_worker_still_refuses_unavailable_profile(
