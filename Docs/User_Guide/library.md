@@ -57,10 +57,13 @@ pages:
     rows (e.g. "Search / RAG — find all"). On narrow terminals
     the gloss drops rather than truncating into fragments, and the title
     ellipsizes, so the count
-    always stays visible. The three Study rows are hand-offs (they open
-    the Study destination), so they group under their own section and
-    add a second "opens Study" line. The selected row is marked **▸**,
-    and the Flashcards row shows "due: N" instead of a plain count;
+    always stays visible. The three Study rows are hand-offs (they are a
+    two-step trip out of Library), so they group under their own section
+    and add a second "opens staging canvas" line — that click opens a
+    Library-local staging canvas, not the Study screen itself; **Continue
+    in Study** inside that canvas is the click that actually leaves. The
+    selected row is marked **▸**, and the Flashcards row shows "due: N"
+    instead of a plain count;
   - a **Details** section, collapsed by default (see below). Section
     headers toggle open (**▾**) and closed (**▸**).
 - **Canvas** (the right pane) — there are no tabs here: the canvas swaps
@@ -147,8 +150,10 @@ Collapsed by default; click the **Details** header to open it.
 command — typing "study" into the palette surfaces *Library*. The hand-off
 buttons below (and **Continue in Study**) are the way in.
 The three Create rows in Library don't host study content; each shows a
-small hand-off canvas that snapshots your Library sources and opens Study
-with them. Their purpose lines:
+small hand-off canvas that snapshots your Library sources. That first
+click never leaves Library — it opens the staging canvas below; **Continue
+in Study** inside it is the click that actually opens Study. Their purpose
+lines:
 
 - **Study decks** — "Plan study decks from Library sources."
 - **Flashcards** — "Generate or review cards from Library sources."
@@ -161,6 +166,12 @@ line ("Source snapshot is ready.", or a prompt to import sources or
 create notes first), and a **Continue in Study** button ("Open \<X\> with
 the current Library source snapshot, or globally when none is
 available.").
+
+Once you're on the Study screen, its header reads "Library ▸ Study" with
+an "Esc: back to Library" hint — the nav bar shows no highlighted tab
+there (Study renders none of Library's chrome, so boxing "Library" would
+be misleading), and pressing **Escape** returns you to the Study decks
+staging canvas above.
 
 ## Common tasks
 
@@ -195,7 +206,9 @@ Escape and Ctrl+S are bound only inside the skill editor (back to list /
 save) — see [Skills](library/skills.md). Escape also returns Notes ▸
 Files mode to the Database notes view, and is live inside the File Notes
 surface's own panels and dialogs — see
-[File Notes](library/file-notes.md).
+[File Notes](library/file-notes.md). On the Study screen (reached via
+**Continue in Study**), Escape returns to the Study decks staging canvas
+here in Library.
 
 ## Related settings & docs
 
@@ -219,9 +232,11 @@ surface's own panels and dialogs — see
 - **Pressing "u" does nothing.** The shortcut only works while the
   Search / RAG row is selected — select it (or use the **Search
   Library…** box) first.
-- **Clicking Study decks / Flashcards / Quizzes "leaves" Library.**
-  That's by design — those rows are hand-offs, not Library canvases;
-  generation and review run in the Study screen.
+- **Clicking Study decks / Flashcards / Quizzes doesn't open Study.**
+  That's by design — the row opens a Library-local staging canvas first
+  ("opens staging canvas"); press **Continue in Study** inside it to
+  actually leave Library. Generation and review run in the Study screen;
+  **Escape** there returns to this staging canvas.
 - **The palette found "Notes" but opened Library.** The standalone
   Notes, Prompts, Skills, Ingest, Research, and Media screens were
   retired; their names now route to the matching Library row.
@@ -230,4 +245,8 @@ surface's own panels and dialogs — see
 *Verified against dev @ e3d0d2c9d — 2026-08-07 (TASK-2850: Notes ▸ Files
 mode stays inside the Library rail/canvas frame; Escape returns to
 Database; TASK-2851: the legacy Media Library screen is retired — "Media &
-Content: Open Media Library" now deep-links into Library's Media row)*
+Content: Open Media Library" now deep-links into Library's Media row;
+TASK-2854: the Study/Flashcards/Quizzes hand-off rows read "opens staging
+canvas", not "opens Study"; the Study screen names itself "Library ▸
+Study" and no longer boxes the Library nav tab; Escape returns from Study
+to the Study decks staging canvas)*

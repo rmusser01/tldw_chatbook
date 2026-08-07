@@ -587,11 +587,20 @@ def _active_library_sync_scope(app_instance: Any) -> dict[str, str | None]:
 # alias -- mirrors "search"/"prompts"/"skills" above) lands on this same
 # canvas's browse row -- unlike those, its own selected item still round-
 # trips through ``open_source_type``/``open_source_id`` above rather than a
-# mode-table entry, so this only owns landing on the list. Any other mode
-# value -- including the retired ``study``/``flashcards``/``quizzes`` mode
-# values (those rows are now "handoff" rows, not nav-context targets) and
-# the retired ``sources``/``workspaces``/``import-export`` values --
-# degrades quietly, unchanged from before this table existed.
+# mode-table entry, so this only owns landing on the list. ``study`` (task-
+# 2854: the Study screen's Escape binding lands back here) is a "handoff"
+# row like ``flashcards``/``quizzes`` -- unlike the plain "canvas" rows
+# above, selecting it shows the staging canvas ("Continue in Study"), not a
+# browse list -- but ``_select_library_rail_row_after_source_admission``
+# treats every row_id identically regardless of target_kind, so nothing
+# about being a handoff row stops it from being a valid nav-context landing
+# spot. ``flashcards``/``quizzes`` stay out: nothing emits those modes yet
+# (Escape always returns to the shared "Study decks" row -- see
+# ``StudyScreen.action_study_back_to_library``), so adding them now would be
+# speculative, same posture as the other forward-compat-only entries below.
+# Any other mode value, including the retired ``sources``/``workspaces``/
+# ``import-export`` values, degrades quietly, unchanged from before this
+# table existed.
 LIBRARY_NAV_MODE_TO_ROW_ID = {
     "conversations": LIBRARY_ROW_BROWSE_CONVERSATIONS,
     "collections": LIBRARY_ROW_BROWSE_COLLECTIONS,
@@ -599,6 +608,7 @@ LIBRARY_NAV_MODE_TO_ROW_ID = {
     "prompts": LIBRARY_ROW_BROWSE_PROMPTS,
     "skills": LIBRARY_ROW_BROWSE_SKILLS,
     "media": LIBRARY_ROW_BROWSE_MEDIA,
+    "study": "create-study",
 }
 
 

@@ -2476,6 +2476,44 @@ async def test_search_route_lands_on_library_rag_canvas():
 
 
 @pytest.mark.asyncio
+async def test_study_screen_escape_returns_to_library_study_staging_canvas():
+    """task-2854 AC#3: Escape on the Study screen (reached via Library's
+    Study/Flashcards/Quizzes handoff rows -- "Continue in Study") must
+    return to Library with the Study staging canvas ("create-study" row)
+    selected. Before this fix Escape was dead on Study and the nav bar
+    falsely claimed Library was still current (see
+    ``test_study_screen_mounts_destination_header_and_clears_nav_highlight``
+    in ``test_destination_headers.py`` for that half of the fix); this
+    covers the actual round trip out.
+    """
+    app = _build_test_app()
+
+    async with app.run_test(size=(170, 48)) as pilot:
+        for _ in range(150):
+            await pilot.pause(0.02)
+            if type(app.screen).__name__ != "Screen":
+                break
+
+        app.post_message(NavigateToScreen("study"))
+        for _ in range(150):
+            await pilot.pause(0.02)
+            if type(app.screen).__name__ == "StudyScreen":
+                break
+        assert type(app.screen).__name__ == "StudyScreen"
+
+        await pilot.press("escape")
+        for _ in range(150):
+            await pilot.pause(0.02)
+            if type(app.screen).__name__ == "LibraryScreen" and app.screen.query(
+                "#library-row-create-study"
+            ):
+                break
+
+        assert type(app.screen).__name__ == "LibraryScreen"
+        assert app.screen._library_selected_row_id == "create-study"
+
+
+@pytest.mark.asyncio
 async def test_boot_with_search_default_tab_lands_on_library_rag_canvas():
     """RAG UX v2 PR-2, Task 4: booting with ``default_tab = "search"`` must
     land on Library with the Search/RAG rail row selected, not generic

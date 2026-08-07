@@ -703,7 +703,13 @@ async def test_rail_rows_are_one_line_by_default_with_meta_only_for_handoffs():
     """F-011: rail rows are one terminal line by default -- the blanket
     "in Library" second line (pure stutter on all ~11 rows) is gone. A
     meta line survives ONLY where it discriminates: the Study handoff
-    rows, which leave the Library for another screen."""
+    rows, which are a two-step trip out of Library to another screen.
+
+    task-2854: the meta line reads "opens staging canvas", not "opens
+    Study" -- the click this row responds to only ever opens a Library-
+    local staging canvas; leaving Library for Study is a second click
+    ("Continue in Study") from inside that canvas.
+    """
     app = _build_test_app()
     _seed_conversations(app, _two_conversations())
     host = LibraryHarness(app)
@@ -723,7 +729,8 @@ async def test_rail_rows_are_one_line_by_default_with_meta_only_for_handoffs():
             label = str(row.label)
             if row.id in handoff_ids:
                 assert "\n" in label, f"{row.id} lost its handoff discriminator"
-                assert "opens Study" in label
+                assert "opens staging canvas" in label
+                assert "opens Study" not in label
                 assert row.styles.height.value == 2
             else:
                 assert "\n" not in label, f"{row.id} still carries a second line"

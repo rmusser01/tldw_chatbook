@@ -19,8 +19,10 @@ from textual.reactive import reactive
 from textual.widgets import Button
 
 from ...Chat.chat_handoff_models import ChatHandoffPayload
+from ...Constants import LIBRARY_NAV_CONTEXT_MODE, TAB_LIBRARY
 from ...Utils.input_validation import sanitize_string, validate_text_input
 from ..Navigation.base_app_screen import BaseAppScreen
+from ..Navigation.main_navigation import NavigateToScreen
 from ..Navigation.pending_handoff_store import HandoffChannel
 from ..Study_Window import StudyWindow
 from ..Workbench.workbench_state import WorkbenchHeaderState
@@ -68,6 +70,19 @@ SOURCE_STUDY_PACK_JOB_STATUSES = frozenset(
 class StudyScreen(BaseAppScreen):
     """Screen wrapper for Study functionality."""
 
+    # task-2854: Study is reached from Library's Study/Flashcards/Quizzes
+    # handoff rows ("Continue in Study") but is a completely separate full
+    # screen -- no Library rail, no Library canvas. Escape returns to the
+    # Library staging canvas that reached it, mirroring the
+    # ``action_library_notes_files_back`` idiom Library's own Files-mode
+    # Escape binding uses (task-2850): a plain, screen-scoped Escape binding
+    # advertised in the footer (see ``on_mount``), not a new nav system.
+    BINDINGS = [("escape", "study_back_to_library", "Back to Library")]
+
+    #: Footer hint advertising the Escape binding above (task-2854), mirrors
+    #: ``LibraryScreen.LIBRARY_NOTES_FILES_SHORTCUTS``'s ``("esc", ...)`` entry.
+    STUDY_SHORTCUTS = (("esc", "back to Library"),)
+
     # Screen-specific state
     current_section: reactive[str] = reactive("dashboard")
     current_study_session: reactive[Optional[Dict[str, Any]]] = reactive(None)
@@ -98,6 +113,15 @@ class StudyScreen(BaseAppScreen):
 
     def __init__(self, app_instance, **kwargs):
         super().__init__(app_instance, "study", **kwargs)
+        # task-2854: "study" folds under the Library destination in
+        # shell_destinations.py for label/search purposes (Home's "Opens:"
+        # copy, the command palette's search aliases) -- but Study renders
+        # none of Library's chrome, so highlighting the Library nav button
+        # here would falsely claim Library is still on screen. Clearing it
+        # (see ``BaseAppScreen.nav_bar_active``) leaves no destination
+        # highlighted; the breadcrumb header in ``compose_content`` below
+        # names where the user actually is and how to get back instead.
+        self.nav_bar_active = ""
         self.scope_state = StudyScopeState(backend=self._runtime_backend())
         self._effective_scope_key: ScopeKey = self._scope_key(self.scope_state)
         self.study_dashboard: Optional[StudyDashboard] = None
@@ -123,8 +147,17 @@ class StudyScreen(BaseAppScreen):
         with Vertical(id="study-shell"):
             yield DestinationHeader(
                 WorkbenchHeaderState(
-                    title="Study",
-                    subtitle="Flashcards, quizzes, and study sessions.",
+                    # task-2854: the nav bar deliberately shows no highlighted
+                    # tab while this screen is up (see ``nav_bar_active`` in
+                    # __init__), so this breadcrumb is the only place that
+                    # names where the user is -- and, since Escape is unbound
+                    # anywhere else on this screen, the only VISIBLE (not
+                    # just footer/F1-panel) statement of how to get back.
+                    title="Library ▸ Study",
+                    subtitle=(
+                        "Flashcards, quizzes, and study sessions. "
+                        "Esc: back to Library."
+                    ),
                     status="ready",
                 ),
                 id="study-destination-header",
@@ -1227,7 +1260,29 @@ class StudyScreen(BaseAppScreen):
         """
         super().on_mount()
         logger.info("Study screen mounted")
+        # task-2854: advertise the Escape back-hint in the footer, mirroring
+        # LibraryScreen's Files-mode Escape registration (task-2850).
+        self.register_footer_shortcuts(source="study", shortcuts=self.STUDY_SHORTCUTS)
         self.call_after_refresh(self._start_initial_load)
+
+    def action_study_back_to_library(self) -> None:
+        """Escape: leave Study for the Library staging canvas that reached it.
+
+        task-2854: Study has no back affordance of its own -- it is a
+        separate full screen, not a Library canvas -- so this reuses the
+        existing ``NavigateToScreen``/nav-context seam
+        (``LIBRARY_NAV_CONTEXT_MODE``) the exact way
+        ``TldwCli.open_notes_workspace`` re-enters Library's Notes list,
+        landing on the "Study decks" handoff row (``LIBRARY_NAV_MODE_TO_ROW_ID``)
+        regardless of which of the three Study handoff rows (Study/
+        Flashcards/Quizzes) actually reached this screen -- they are three
+        variations of the same staging surface and share one "Continue in
+        Study" exit, so one shared landing spot keeps this simple rather
+        than threading the originating row id through the whole handoff.
+        """
+        self.app_instance.post_message(
+            NavigateToScreen(TAB_LIBRARY, {LIBRARY_NAV_CONTEXT_MODE: "study"})
+        )
 
     def _start_initial_load(self) -> None:
         self.run_worker(

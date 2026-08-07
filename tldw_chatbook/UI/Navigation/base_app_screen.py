@@ -41,6 +41,19 @@ class BaseAppScreen(Screen):
         self.state_data: Dict[str, Any] = {}
         #: (source, shortcuts) persisted so footer hints survive recompose.
         self._footer_shortcut_registration: Optional[tuple] = None
+        #: task-2854: the value handed to this screen's own ``MainNavigationBar``
+        #: as ``active``/``active_route``. Defaults to ``screen_name`` -- today's
+        #: behavior for every screen. A screen whose route is folded under
+        #: another destination in ``shell_destinations.py`` for label/search
+        #: purposes ONLY (e.g. Study is folded under Library, but renders none
+        #: of Library's chrome -- no rail, no Library canvas) can override this
+        #: to a value that resolves to no real destination (``""``), so its nav
+        #: bar shows no highlighted tab instead of falsely claiming the owning
+        #: destination is still on screen. The fold itself stays intact for
+        #: every other consumer (Home's "Opens:" labels, the command palette's
+        #: search aliases, screen routing) -- only this screen's OWN composed
+        #: nav bar's highlight is affected.
+        self.nav_bar_active: str = screen_name
 
         logger.debug(f"Initializing {self.__class__.__name__} screen: {screen_name}")
 
@@ -176,8 +189,11 @@ class BaseAppScreen(Screen):
         # initialized).
         from ...Widgets.AppFooterStatus import AppFooterStatus
 
-        # Navigation bar at the top
-        yield MainNavigationBar(active=self.screen_name, active_route=self.screen_name)
+        # Navigation bar at the top. task-2854: uses ``nav_bar_active`` (which
+        # defaults to ``screen_name``, see ``__init__``), not ``screen_name``
+        # directly, so a screen can opt out of a misleading destination
+        # highlight without touching every other screen's behavior.
+        yield MainNavigationBar(active=self.nav_bar_active, active_route=self.nav_bar_active)
 
         # Content area below navigation
         with Container(id="screen-content"):
