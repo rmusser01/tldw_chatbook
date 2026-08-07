@@ -26,15 +26,13 @@ from .region_layout import CENTRE_REGIONS, Region, RegionLayout
 #: Human-readable titles, used for both expanded bodies and collapsed headers.
 REGION_TITLES: dict[Region, str] = {
     Region.LEFT_RAIL: "Watchlists",
-    Region.FEEDS: "Feeds",
     Region.ITEMS: "Items",
     Region.CONTENT: "Content",
     Region.RIGHT_RAIL: "Inspector",
 }
 
 #: Regions whose supplied pane draws its own heading, so adding the generic
-#: region title from `REGION_TITLES` would produce a *second* heading (and,
-#: for FEEDS -- whose pane is the "Sources" list -- an inaccurate one).
+#: region title from `REGION_TITLES` would produce a *second* heading.
 #:
 #: This is deliberately NOT the same signal as "a content factory was
 #: supplied for this region". The two diverge at LEFT_RAIL: it supplies
@@ -53,7 +51,7 @@ REGION_TITLES: dict[Region, str] = {
 #: reason. CONTENT gets the generic "Content" title like LEFT_RAIL gets
 #: "Watchlists".
 SELF_HEADED_REGIONS: frozenset[Region] = frozenset(
-    {Region.FEEDS, Region.ITEMS, Region.RIGHT_RAIL}
+    {Region.ITEMS, Region.RIGHT_RAIL}
 )
 
 
@@ -94,6 +92,7 @@ class WatchlistsWorkbench(Horizontal):
         content: Mapping[Region, Callable[[], Widget]] | None = None,
         hidden: frozenset[Region] = frozenset(),
         header: Callable[[], Widget] | None = None,
+        collapsed_suffixes: Mapping[Region, str] | None = None,
         **kwargs: Any,
     ) -> None:
         """Build the workbench, seeding `region_layout` without triggering a recompose.
@@ -139,36 +138,37 @@ class WatchlistsWorkbench(Horizontal):
                 child of the centre stack, unconditionally — regardless of
                 `hidden`. TASK-1344: the section tab strip and the
                 snapshot's own loading/error/empty markers are cross-
-                cutting chrome, not FEEDS content, so they must survive
-                FEEDS being hidden on every non-Read tab. TASK-2312: the
-                current screen caller (`WatchlistsCollectionsScreen.
-                compose_content`) now passes this on EVERY tab, including
-                Read — an earlier version passed `None` there in favour of
-                an inline copy in `content[Region.FEEDS]`'s own factory,
-                which visibly moved the tab strip's screen position
-                between sections (UAT F2/F22/F23) and is why `None` is
-                still accepted here: this class stays a generic building
-                block with no opinion about tabs, and any two factories
-                that both mount an id must never be combined by a caller,
-                same as ever.
+                cutting chrome, not region content, so they must survive
+                CONTENT being hidden on every non-Read tab. Since
+                task-2513 removed the FEEDS region (whose own inline copy
+                used to carry that chrome on Read), the screen wires this
+                on EVERY tab — Read included; `None` is for callers (and
+                tests) that genuinely have no header to show. This class
+                stays a generic building block with no opinion about tabs,
+                and any two factories that both mount an id must never be
+                combined by a caller, same as ever.
         """
         super().__init__(**kwargs)
         self.add_class("watchlists-workbench")
         self._content: dict[Region, Callable[[], Widget]] = dict(content or {})
         self._hidden = frozenset(hidden)
         self._header = header
+        # Extra text appended to a collapsed region's header (task-2513 Task
+        # 9): "▸ Watchlists  12 unread". Mutable via `set_collapsed_suffixes`
+        # because counts change while the region stays collapsed.
+        self._collapsed_suffixes: dict[Region, str] = dict(collapsed_suffixes or {})
         self.set_reactive(WatchlistsWorkbench.region_layout, layout)
 
     def compose(self) -> ComposeResult:
         """Render the left rail, the stacked centre, and the right rail.
 
         Re-runs in full on every `region_layout` change (`recompose=True`),
-        rebuilding all five regions from `self.region_layout` and
+        rebuilding all four regions from `self.region_layout` and
         `self._content` regardless of which single region actually changed.
 
         Returns:
             The left-rail region, the centre `Vertical` (an optional header,
-            then FEEDS/ITEMS/CONTENT minus anything in `self._hidden`), and
+            then ITEMS/CONTENT minus anything in `self._hidden`), and
             the right-rail region, in that order.
         """
         yield self._region_widget(Region.LEFT_RAIL)
@@ -203,8 +203,9 @@ class WatchlistsWorkbench(Horizontal):
         if self.region_layout.is_collapsed(region):
             # A Button, not a Static: a collapsed region must stay focusable
             # and clickable, or collapsing it is one-way.
+            suffix = self._collapsed_suffixes.get(region, "")
             header = Button(
-                f"▸ {REGION_TITLES[region]}",
+                f"▸ {REGION_TITLES[region]}" + (f"  {suffix}" if suffix else ""),
                 id=f"wl-header-{region.value}",
                 compact=True,
             )
@@ -222,15 +223,9 @@ class WatchlistsWorkbench(Horizontal):
         #   2. Does this region render the placeholder stub, or real content?
         #      That IS the factory check.
         #
-        # They looked identical while FEEDS/ITEMS/RIGHT_RAIL were the only
-        # wired regions, which is how LEFT_RAIL — wired, but with a heading-
-        # less `WatchlistTree` inside — ended up as an unlabelled box.
-        #
-        # FEEDS's pane needs a companion CSS fix for its own title removal
-        # (see the `#watchlists-list-pane` rule in `_watchlists.tcss`): FEEDS
-        # is the one region styled `height: auto`, so its supplied pane can
-        # no longer lean on the (now-removed) title `Static` as a `height: 1`
-        # sibling to anchor that auto-sizing.
+        # They looked identical while ITEMS/RIGHT_RAIL were the only wired
+        # self-headed regions, which is how LEFT_RAIL — wired, but with a
+        # heading-less `WatchlistTree` inside — ended up as an unlabelled box.
         children: list[Widget] = []
         if region not in SELF_HEADED_REGIONS:
             children.append(
@@ -246,20 +241,20 @@ class WatchlistsWorkbench(Horizontal):
             children.append(supplied)
         classes = ["watchlists-region", f"watchlists-region-{region.value}"]
         if self._is_sole_expanded_centre_region(region):
-            # A CSS hook for the solo case. `.watchlists-region-feeds` carries
-            # a `max-height` cap so a long feeds list cannot crowd ITEMS and
-            # CONTENT out of the centre stack — but when those two are
-            # collapsed to their one-line headers there is nothing left to
-            # crowd, and the cap turns solo-FEEDS into a short scrolling
-            # window with 25 blank rows under it. Nothing in the DOM
-            # distinguished that state before this class: `RegionLayout.solo`
-            # only collapses the *siblings*, so the soloed region itself is
+            # A CSS hook for the solo case. `.watchlists-region-content`
+            # carries a `max-height` cap so a long article cannot crowd
+            # ITEMS out of the centre stack — but when ITEMS is collapsed
+            # to its one-line header there is nothing left to crowd, and
+            # the cap turns solo-CONTENT into a short scrolling window with
+            # blank rows under it. Nothing in the DOM distinguished that
+            # state before this class: `RegionLayout.solo` only collapses
+            # the *siblings*, so the soloed region itself is
             # indistinguishable from an ordinarily-expanded one.
             #
             # Keyed on "sole expanded centre region" rather than on
             # `solo_region` because the two produce the same DOM and want the
-            # same layout: `Z` on FEEDS and manually collapsing ITEMS+CONTENT
-            # with `z` both leave FEEDS alone in the centre.
+            # same layout: `Z` on CONTENT and manually collapsing ITEMS
+            # with `z` both leave CONTENT alone in the centre.
             classes.append("watchlists-region-sole-centre")
         body = Vertical(
             *children,
@@ -276,11 +271,11 @@ class WatchlistsWorkbench(Horizontal):
         True exactly when the centre stack shows one real pane and, for
         every OTHER centre region that is not hidden outright, a one-line
         header — the state `RegionLayout.solo` produces, and the state a
-        user reaches by collapsing the other two by hand. A region in
-        `self._hidden` (TASK-1344: FEEDS/CONTENT off the Read tab) is never
+        user reaches by collapsing the other one by hand. A region in
+        `self._hidden` (TASK-1344: CONTENT off the Read tab) is never
         rendered at all, not even as a header, so it is excluded from
         "expanded" the same way a rail is — without this, ITEMS would never
-        read as sole-expanded on a non-Read tab (FEEDS/CONTENT's real
+        read as sole-expanded on a non-Read tab (CONTENT's real
         `region_layout.collapsed` membership is whatever the user left it
         at on Read, not "hidden", so counting it unfiltered would make
         `expanded` include a region that in fact never mounted).
@@ -305,21 +300,20 @@ class WatchlistsWorkbench(Horizontal):
     async def refresh_region_content(self, region: Region) -> None:
         """Rebuild one expanded region's supplied content in place.
 
-        Task 7: the tree scope can change what FEEDS should show without
-        `region_layout` itself changing, so nothing would otherwise call
-        FEEDS's factory again. Setting `region_layout` (`recompose=True`)
-        would work too, but at the cost of tearing down and remounting
-        *every* region, including ones whose whole design point is staying
-        the same instance across an unrelated change -- the Inspector is
-        pushed new `scope`/`selected_entity` values in place for exactly
-        that reason (see `WatchlistsCollectionsScreen.watch_selected_scope`),
-        and a full recompose would silently replace it with a fresh
-        instance instead, breaking any caller holding a reference to the
-        old one.
+        Task 7: a region's content can go stale without `region_layout`
+        itself changing (the tree scope moving under the rail, a background
+        load landing), so nothing would otherwise call its factory again.
+        Setting `region_layout` (`recompose=True`) would work too, but at
+        the cost of tearing down and remounting *every* region, including
+        ones whose whole design point is staying the same instance across
+        an unrelated change -- the Inspector is pushed new
+        `scope`/`selected_entity` values in place for exactly that reason
+        (see `WatchlistsCollectionsScreen.watch_selected_scope`), and a
+        full recompose would silently replace it with a fresh instance
+        instead, breaking any caller holding a reference to the old one.
 
         A no-op when `region` is collapsed (nothing mounted to replace) or
-        was not given a content factory (the placeholder stub has nothing
-        to refresh either).
+        was not given a content factory (nothing to refresh either).
 
         Replaces only the *supplied content*, never the generic
         `REGION_TITLES` heading `_region_widget` prepends for regions
@@ -347,7 +341,7 @@ class WatchlistsWorkbench(Horizontal):
         # mounted pane standing rather than a bordered empty box. The
         # remove-then-mount pair below still has one await boundary --
         # Textual's `NodeList._ensure_unique_id` rejects mounting the new
-        # pane while the old one (same id, e.g. `watchlists-list-pane`) is
+        # pane while the old one (same id, e.g. `watchlists-items-pane`) is
         # still attached, so there is no single-await atomic swap available
         # without changing that guarded id.
         replacement = factory()
@@ -367,22 +361,17 @@ class WatchlistsWorkbench(Horizontal):
 
         The header's twin of `refresh_region_content` above (task-1344 fix
         wave, Qodo correctness): `region_layout` is `recompose=True`, so
-        picking up a header-only change (the tree scope moving while FEEDS
-        is hidden -- see `WatchlistsCollectionsScreen.watch_tree_scope`) by
-        pushing a new layout would tear down and remount every region,
-        including the Inspector, which `watch_tree_scope` deliberately
-        avoids (see its own docstring). Before TASK-2312, the current
-        screen caller wired `header=` only off the Read tab (exactly where
-        FEEDS was also in `hidden`), so a header-only tab had no OTHER path
-        that picked up a scope change; the header kept showing the
-        PREVIOUS scope's summary until some unrelated recompose came along
-        and rebuilt it for a different reason. That caller now wires
-        `header=` on every tab, so this runs everywhere the header exists.
+        picking up a header-only change (the tree scope moving -- see
+        `WatchlistsCollectionsScreen.watch_tree_scope`) by pushing a new
+        layout would tear down and remount every region, including the
+        Inspector, which `watch_tree_scope` deliberately avoids (see its
+        own docstring). The header is the only surface that carries the
+        tab strip and the snapshot's scoped markers (since task-2513, on
+        every tab), so a header-only refresh path is the one that keeps
+        that readout current between recomposes.
 
-        A no-op when this workbench was built with no `header` factory at
-        all (any caller may still pass `None`, per `__init__`'s own
-        docstring): nothing to refresh, and no `#wl-centre-status` to
-        query for either.
+        A no-op when this workbench was built with no `header` factory:
+        nothing to refresh, and no `#wl-centre-status` to query for either.
         """
         if self._header is None:
             return
@@ -402,6 +391,27 @@ class WatchlistsWorkbench(Horizontal):
         if stale is not None:
             await stale.remove()
         await centre.mount(replacement, before=0)
+
+    def set_collapsed_suffixes(self, suffixes: Mapping[Region, str]) -> None:
+        """Update collapsed-header suffixes in place (no recompose).
+
+        Counts refresh while the rail stays collapsed; tearing the workbench
+        down for a number is exactly what `refresh_region_content` exists to
+        avoid for bodies. A no-op for regions not currently collapsed — they
+        have no header mounted to repaint.
+
+        Args:
+            suffixes: The new suffix per region, replacing the current map.
+        """
+        self._collapsed_suffixes = dict(suffixes)
+        for region, suffix in self._collapsed_suffixes.items():
+            if not self.region_layout.is_collapsed(region):
+                continue
+            try:
+                header = self.query_one(f"#wl-header-{region.value}", Button)
+            except NoMatches:
+                continue
+            header.label = f"▸ {REGION_TITLES[region]}" + (f"  {suffix}" if suffix else "")
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         """Turn a collapsed-region header click into a `RegionToggled` message.

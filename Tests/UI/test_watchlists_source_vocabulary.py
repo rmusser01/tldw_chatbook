@@ -594,6 +594,10 @@ async def test_first_run_guidance_names_the_button_that_is_on_screen():
     host = DestinationHarness(app, "watchlists_collections")
     async with host.run_test(size=(180, 50)) as pilot:
         screen = await _mounted(host, pilot)
+        # The default section is Read since task-2513; the Overview pane
+        # lives behind its own tab now.
+        screen.active_section = "overview"
+        await pilot.pause(0.3)
         for _ in range(60):
             await pilot.pause(0.02)
             if screen.query("#overview-first-run-body"):

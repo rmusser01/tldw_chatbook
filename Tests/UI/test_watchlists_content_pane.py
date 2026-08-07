@@ -392,10 +392,16 @@ async def test_content_region_is_gated_to_the_items_read_tab():
         await pilot.pause(0.2)
         screen = host.screen_stack[-1]
 
-        # Default section is "overview" -- not Read -- so CONTENT must be
-        # unmounted despite the un-gated default (`region_layout`) being
-        # expanded.
+        # Default section is Read ("items") since task-2513, so CONTENT is
+        # mounted at rest...
         assert not screen.region_layout.is_collapsed(Region.CONTENT)
+        assert screen.query("#wl-region-content")
+        assert not screen.query("#wl-header-content")
+
+        # ...and off Read it must be unmounted despite the un-gated default
+        # (`region_layout`) being expanded.
+        screen.active_section = "overview"
+        await pilot.pause(0.2)
         assert not screen.query("#wl-header-content")
         assert not screen.query("#wl-region-content")
 
@@ -1674,7 +1680,9 @@ async def test_pressing_expand_actually_solos_content_and_restores_on_a_second_p
         items_pane.select_item_by_id("11")
         await pilot.pause(0.3)
 
-        assert screen.query("#wl-region-feeds"), "precondition: FEEDS starts visible"
+        # task-2513 removed the FEEDS region; the ITEMS region is now the
+        # neighbour whose collapse proves the solo actually happened.
+        assert screen.query("#wl-region-items"), "precondition: ITEMS starts visible"
         content_pane = screen.query_one("#watchlists-content-pane", ContentPane)
         expand_button = content_pane.query_one("#content-expand-button", Button)
         assert str(expand_button.label) == "Expand"
@@ -1686,11 +1694,10 @@ async def test_pressing_expand_actually_solos_content_and_restores_on_a_second_p
             "the SAME solo mechanism Z uses must actually have run"
         )
         assert screen.query("#wl-region-content")
-        assert not screen.query("#wl-region-feeds"), (
-            "soloing CONTENT must actually collapse FEEDS around it -- the "
+        assert not screen.query("#wl-region-items"), (
+            "soloing CONTENT must actually collapse ITEMS around it -- the "
             "real, visible effect, not just a state flag"
         )
-        assert not screen.query("#wl-region-items")
 
         content_pane = screen.query_one("#watchlists-content-pane", ContentPane)
         restore_button = content_pane.query_one("#content-expand-button", Button)
@@ -1703,7 +1710,6 @@ async def test_pressing_expand_actually_solos_content_and_restores_on_a_second_p
         await pilot.pause(0.3)
 
         assert screen.region_layout.solo_region is None, "a second press must restore"
-        assert screen.query("#wl-region-feeds")
         assert screen.query("#wl-region-items")
         content_pane = screen.query_one("#watchlists-content-pane", ContentPane)
         assert str(
@@ -1903,12 +1909,12 @@ async def test_mark_unread_refuses_an_ingest_that_sits_beyond_a_lookup_page():
 async def test_soloing_content_then_leaving_read_leaves_a_centre_region_expanded():
     """PR #1091 review, F2: the workbench must never render an empty centre.
 
-    Soloing CONTENT sets `collapsed` to `{FEEDS, ITEMS}`. Off the Read tab,
-    FEEDS and CONTENT are both hidden outright now (TASK-1344 AC#1/#4:
-    `_hidden_centre_regions` unmounts them, independent of `collapsed`), so
+    Soloing CONTENT sets `collapsed` to `{ITEMS}`. Off the Read tab,
+    CONTENT is hidden outright now (TASK-1344 AC#1/#4:
+    `_hidden_centre_regions` unmounts it, independent of `collapsed`), so
     the old failure mode this test was written against -- a force-collapse
     derivation that added CONTENT to the solo's own collapsed set and left
-    all three centre regions collapsed with nothing expanded -- can no
+    all the centre regions collapsed with nothing expanded -- can no
     longer happen structurally: hiding never touches `collapsed`, and ITEMS
     (the one region that must survive) is forced OUT of `collapsed` by
     `_rendered_region_layout` on every non-Read tab regardless of what
@@ -1938,20 +1944,18 @@ async def test_soloing_content_then_leaving_read_leaves_a_centre_region_expanded
         screen.active_section = "sources"
         await pilot.pause(0.3)
 
-        # TASK-1344 widened the gate to hide FEEDS off Read too (AC#1), so
-        # the only centre region ever mounted on Sources is now ITEMS --
-        # assert against the DOM directly rather than the old
-        # `_visible_region_layout` derivation, which no longer exists in
-        # that shape (`_hidden_centre_regions` + `_rendered_region_layout`
-        # replaced it; hiding is now orthogonal to `RegionLayout.collapsed`
-        # rather than expressed through it, so there is nothing left to
-        # probe for "still collapsed").
+        # TASK-1344 hides CONTENT off Read (AC#1), so the only centre region
+        # ever mounted on Sources is now ITEMS -- assert against the DOM
+        # directly rather than the old `_visible_region_layout` derivation,
+        # which no longer exists in that shape (`_hidden_centre_regions` +
+        # `_rendered_region_layout` replaced it; hiding is now orthogonal to
+        # `RegionLayout.collapsed` rather than expressed through it, so there
+        # is nothing left to probe for "still collapsed").
         assert screen.query("#wl-region-items"), (
             "at least one centre region must be mounted expanded, not an "
             "empty centre"
         )
-        assert not screen.query("#wl-region-feeds"), "FEEDS is hidden off Read too"
-        assert not screen.query("#wl-region-content"), "and CONTENT stays hidden"
+        assert not screen.query("#wl-region-content"), "CONTENT stays hidden off Read"
 
         screen.active_section = "items"
         await pilot.pause(0.3)
@@ -1959,7 +1963,7 @@ async def test_soloing_content_then_leaving_read_leaves_a_centre_region_expanded
             "the gate is display-only: the user's solo must survive the trip"
         )
         assert screen.query("#wl-region-content")
-        assert not screen.query("#wl-region-feeds"), "and it must still be a solo"
+        assert not screen.query("#wl-region-items"), "and it must still be a solo"
 
 
 @pytest.mark.asyncio
@@ -1971,7 +1975,7 @@ async def test_solo_on_content_off_the_read_tab_is_refused():
     outlives the widget that last set it, so `Z` can still be invoked with
     it pointing at CONTENT after a tab switch. That must be refused rather
     than soloing a region the user cannot see, which would otherwise
-    collapse FEEDS and ITEMS around it and leave nothing on screen.
+    collapse ITEMS around it and leave nothing on screen.
     """
     from Tests.UI.test_destination_shells import DestinationHarness
     from Tests.UI.app_factory import _build_test_app
@@ -1995,7 +1999,7 @@ async def test_solo_on_content_off_the_read_tab_is_refused():
             "solo on the gated CONTENT region must not touch the real layout"
         )
         assert screen.region_layout.solo_region is None
-        assert screen.query("#wl-region-feeds") or screen.query("#wl-region-items"), (
+        assert screen.query("#wl-region-items"), (
             "and the centre must still have something in it"
         )
 

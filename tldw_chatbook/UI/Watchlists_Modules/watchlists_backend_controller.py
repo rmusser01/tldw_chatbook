@@ -293,6 +293,27 @@ class WatchlistsBackendController:
                 return dict(result)
         raise NotImplementedError("Item status updates are not supported by the current backend.")
 
+    async def mark_all_read(self, *, runtime_backend: str | None = None, **kwargs: Any) -> list[int]:
+        """Mark every new item in scope reviewed; return the affected ids.
+
+        The ids are the undo batch — pass them to `restore_items_new` to
+        revert. Scope kwargs (``source_id``/``watchlist_id``/
+        ``unassigned_only``) forward to the scope service untouched.
+        """
+        backend = self._normalize_backend(runtime_backend)
+        result = await self._maybe_await(
+            self.scope_service.mark_all_read(runtime_backend=backend, **kwargs)
+        )
+        return [int(item_id) for item_id in list(result or [])]
+
+    async def restore_items_new(self, *, runtime_backend: str | None = None, item_ids: list[Any]) -> int:
+        """Move the given ids back to new — the undo half of `mark_all_read`."""
+        backend = self._normalize_backend(runtime_backend)
+        result = await self._maybe_await(
+            self.scope_service.restore_items_new(runtime_backend=backend, item_ids=item_ids)
+        )
+        return int(result)
+
     async def _safe_list(self, method_name: str, **kwargs: Any) -> list[dict[str, Any]]:
         """Call a scope-service list method if it exists, otherwise return []."""
         if self.scope_service is None:

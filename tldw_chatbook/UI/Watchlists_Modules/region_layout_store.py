@@ -32,14 +32,20 @@ _KEY = "collapsed_regions"
 #: What to show before anyone has ever touched collapse state. Through Phase
 #: C, CONTENT held only a placeholder stub, so it started collapsed rather
 #: than spending a third of the centre column on "Reader arrives in the next
-#: slice." on every first launch. Phase D wires a real reader into CONTENT
-#: (`ContentPane`), so that reasoning no longer applies -- a first-run user
-#: should see the reader like every other region. `RegionLayout()` (nothing
-#: collapsed) is now both the first-run default AND what a genuinely empty
-#: persisted layout means; see the None-vs-`[]` handling in
-#: `load_region_layout` below for why the *distinction between those two
-#: cases* still matters even though they resolve to the same value today.
-_FIRST_RUN_DEFAULT = RegionLayout()
+#: slice." on every first launch -- that stub-era default is the whole
+#: reason the `_CONTENT_READER_MIGRATED_KEY` one-time migration below
+#: exists. Phase D wired a real reader into CONTENT (`ContentPane`), so
+#: CONTENT no longer starts collapsed.
+#:
+#: RIGHT_RAIL (the Inspector) now does instead: a new user's Read tab is a
+#: reader, not an inspector, so the right rail's management actions recede
+#: until the user asks for them with `]`. The None-vs-`[]` handling in
+#: `load_region_layout` below already distinguishes "the key was never
+#: saved" (this default applies) from "saved as an empty list" (the user
+#: deliberately expanded everything, and that choice survives), so a user
+#: who opens the rail keeps it open across restarts with no further
+#: machinery.
+_FIRST_RUN_DEFAULT = RegionLayout(collapsed=frozenset({Region.RIGHT_RAIL}))
 
 #: One-time-migration marker (Phase D). A user who saved ANY layout before
 #: this change necessarily has CONTENT in their persisted `collapsed_regions`

@@ -18,7 +18,7 @@ from tldw_chatbook.UI.Watchlists_Modules.inspector_pane import (
     InspectorPane,
     PreviewRequested,
 )
-from tldw_chatbook.UI.Watchlists_Modules.items_pane import ItemSelected
+from tldw_chatbook.UI.Watchlists_Modules.items_pane import ItemSelected, ItemsPane
 from tldw_chatbook.UI.Watchlists_Modules.opml_dialogs import (
     OpmlExportDialog,
     OpmlImportDialog,
@@ -120,7 +120,89 @@ async def test_export_opml_handler_calls_controller(fake_controller):
         assert isinstance(screen.app.screen, OpmlExportDialog)
 
 
-# --- Task 7: scope-driven Feeds region, with real seeded data -------------
+# --- task-2513: Read-first IA -- Read is tab 1, the default section, and ---
+# the tab strip lives in the centre header on EVERY tab; the FEEDS region
+# (and its `#watchlists-list-pane`) is gone entirely.
+
+
+@pytest.mark.asyncio
+async def test_the_read_tab_is_the_default_section():
+    """The screen lands on Read: `active_section` defaults to "items" (the
+    section id is unchanged, so deep links keep working) and the Read tab's
+    own pane is what mounts first."""
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+        assert screen.active_section == "items"
+        assert screen.query_one("#wl-tab-items").has_class("is-active")
+        assert screen.query_one("#watchlists-items-pane")
+
+
+@pytest.mark.asyncio
+async def test_digit_1_switches_to_read_and_7_to_overview():
+    """The digit bindings follow the new tab order: Read first, Overview last."""
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+
+        await pilot.press("7")
+        await pilot.pause()
+        assert screen.active_section == "overview"
+
+        await pilot.press("1")
+        await pilot.pause()
+        assert screen.active_section == "items"
+
+        await pilot.press("2")
+        await pilot.pause()
+        assert screen.active_section == "sources"
+
+
+@pytest.mark.asyncio
+async def test_the_tab_strip_is_mounted_on_the_read_and_sources_tabs():
+    """`#wl-tabs` lives in the centre header (`_build_centre_status_header`),
+    which is wired unconditionally -- the strip is on every tab, Read
+    included, exactly once."""
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+
+        assert screen.active_section == "items", "precondition: lands on Read"
+        assert len(screen.query("#wl-tabs")) == 1
+        assert screen.query_one("#wl-centre-status")
+
+        screen.active_section = "sources"
+        await pilot.pause(0.2)
+        assert len(screen.query("#wl-tabs")) == 1
+        assert screen.query_one("#wl-centre-status")
+
+
+@pytest.mark.asyncio
+async def test_the_list_pane_is_gone_on_every_tab():
+    """The FEEDS region's `#watchlists-list-pane` died with the region -- no
+    tab may mount it (the geometry tests pinned to `.watchlists-region-feeds`
+    row caps died with it; the centre header now carries what it showed)."""
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+
+        for section in ("items", "sources", "overview"):
+            screen.active_section = section
+            await pilot.pause(0.2)
+            assert not screen.query("#watchlists-list-pane"), section
+            assert not screen.query("#wl-region-feeds"), section
+            assert not screen.query("#wl-header-feeds"), section
+
+
+# --- Task 7: scope-driven scoped rows, with real seeded data ---------------
 #
 # Tests/UI/test_watchlists_destination_shell.py's own scope tests run
 # against DestinationHarness's empty subscriptions DB, so the strongest
@@ -176,9 +258,9 @@ async def test_scoped_source_rows_narrows_by_watchlist_and_unassigned():
 
 
 @pytest.mark.asyncio
-async def test_feeds_heading_names_the_scope_with_a_live_count():
+async def test_the_header_summary_names_the_scope_with_a_live_count():
     # Seeded *before* the screen mounts (unlike the narrowing test above,
-    # which only needs id/type matches): the heading's watchlist-name lookup
+    # which only needs id/type matches): the summary's watchlist-name lookup
     # resolves against `_tree_watchlists`, populated once by `_load_tree_data`
     # in `on_mount` -- the same in-memory-only, no-second-query lookup
     # `_resolve_breadcrumb_labels` already relies on. Seeding after mount
@@ -197,26 +279,83 @@ async def test_feeds_heading_names_the_scope_with_a_live_count():
         await pilot.pause(0.1)
         screen = host.screen_stack[-1]
 
-        # TASK-1344: FEEDS (and its `#wl-feeds-scope-heading`) is gated to
-        # the Read tab, like CONTENT.
-        screen.active_section = "items"
-        await pilot.pause()
+        # task-2513: the scope readout lives in the centre header's summary
+        # line (`#wc-watchlists-summary`), mounted on every tab -- Read is
+        # the default, so no section switch is needed here anymore.
+        assert screen.active_section == "items"
 
         screen.post_message(
             TreeScopeChanged(TreeScope(kind="watchlist", watchlist_id=watchlist["id"]))
         )
-        await pilot.pause()
+        summary = ""
+        for _ in range(20):
+            await pilot.pause()
+            node = screen.query("#wc-watchlists-summary")
+            if node:
+                summary = _static_text(node[0])
+            if "Morning AI Brief" in summary:
+                break
 
-        heading = screen.query_one("#wl-feeds-scope-heading", Static)
-        assert _static_text(heading) == "Feeds in Morning AI Brief (2)"
+        assert summary == "Local Watchlists snapshot: Morning AI Brief (2 sources)"
+
+
+# --- task-2513 Task 7: the tree scope drives the items list -----------------
+#
+# Before this task `_load_items` fetched the newest 100 items of ANY source
+# regardless of the rail selection; `_items_scope_query` is the wiring that
+# makes picking "Unassigned", a watchlist, or a source in the tree show only
+# that scope's items. Items are seeded straight into `subscription_items`
+# (there is no service-level item insert -- items arrive via the monitoring
+# engine in production), the same pattern
+# `Tests/Subscriptions/test_briefing_selection.py` uses; the reads then flow
+# through the screen's real controller, scope service and DB against
+# `_build_test_app()`'s isolated temp-dir SQLite file.
+
+
+def _seed_item(db, subscription_id: int, title: str, created_at: str | None = None) -> int:
+    """Insert one `subscription_items` row for `subscription_id`.
+
+    `created_at` (ISO text) pins the display order when a test seeds several
+    items: the items query sorts newest-first, and same-second ties from a
+    fast seed loop would make row order (and thus `j`/`k`/`space`
+    expectations) nondeterministic.
+    """
+    with db.transaction() as conn:
+        if created_at is None:
+            cursor = conn.execute(
+                "INSERT INTO subscription_items (subscription_id, url, title) "
+                "VALUES (?, ?, ?)",
+                (
+                    subscription_id,
+                    f"https://item.example/{subscription_id}/{title}",
+                    title,
+                ),
+            )
+        else:
+            cursor = conn.execute(
+                "INSERT INTO subscription_items (subscription_id, url, title, created_at) "
+                "VALUES (?, ?, ?, ?)",
+                (
+                    subscription_id,
+                    f"https://item.example/{subscription_id}/{title}",
+                    title,
+                    created_at,
+                ),
+            )
+        return cursor.lastrowid
+
+
+async def _wait_for_items(pilot, pane, attempts: int = 60) -> None:
+    """Pause until the items pane holds rows (or give up and let assert fail)."""
+    for _ in range(attempts):
+        await pilot.pause()
+        if pane.items:
+            return
 
 
 @pytest.mark.asyncio
-async def test_feeds_source_row_escapes_an_untrusted_name():
-    """A remote feed's own title reaches the Feeds row label unescaped
-    markup has broken this exact screen before; pin it so a source named
-    with Rich markup syntax renders as literal text, not parsed markup.
-    """
+async def test_items_reload_scopes_to_watchlist():
+    """A watchlist scope shows only its member sources' items."""
     app = _build_test_app()
     host = DestinationHarness(app, "watchlists_collections")
     async with host.run_test(size=(180, 50)) as pilot:
@@ -225,42 +364,557 @@ async def test_feeds_source_row_escapes_an_untrusted_name():
         service = app.watchlist_bundle_service
         db = service._db
 
-        # TASK-1344: FEEDS is gated to the Read tab, like CONTENT.
-        screen.active_section = "items"
-        await pilot.pause()
+        watchlist = service.create("Morning AI Brief")
+        member = db.add_subscription(
+            name="ArXiv", type="rss", source="https://a.example/f"
+        )
+        outsider = db.add_subscription(
+            name="Krebs", type="rss", source="https://b.example/f"
+        )
+        service.add_source(watchlist["id"], member)
+        _seed_item(db, member, "Member item")
+        _seed_item(db, outsider, "Outsider item")
+
+        screen._apply_tree_scope(
+            TreeScope(kind="watchlist", watchlist_id=watchlist["id"])
+        )
+        await screen._load_items()
+
+        assert screen._loaded_items, "precondition: the watchlist's source has items"
+        # `source_id` is the normalized item dict's own key for the
+        # originating subscription (see `normalize_watchlist_item`).
+        assert {item["source_id"] for item in screen._loaded_items} == {member}
+
+
+@pytest.mark.asyncio
+async def test_items_reload_scopes_to_unassigned():
+    """The Unassigned scope shows only items of sources in no watchlist."""
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+        service = app.watchlist_bundle_service
+        db = service._db
 
         watchlist = service.create("Morning AI Brief")
+        member = db.add_subscription(
+            name="ArXiv", type="rss", source="https://a.example/f"
+        )
+        loose = db.add_subscription(
+            name="Loose Feed", type="rss", source="https://c.example/f"
+        )
+        service.add_source(watchlist["id"], member)
+        _seed_item(db, member, "Member item")
+        _seed_item(db, loose, "Loose item")
+
+        screen._apply_tree_scope(TreeScope(kind="unassigned"))
+        await screen._load_items()
+
+        assert screen._loaded_items, "precondition: the unassigned source has items"
+        assert {item["source_id"] for item in screen._loaded_items} == {loose}
+
+
+@pytest.mark.asyncio
+async def test_items_reload_scopes_to_source():
+    """A source scope collapses to that one source's items, even inside a
+    watchlist with other members."""
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+        service = app.watchlist_bundle_service
+        db = service._db
+
+        watchlist = service.create("Morning AI Brief")
+        arxiv = db.add_subscription(
+            name="ArXiv", type="rss", source="https://a.example/f"
+        )
+        krebs = db.add_subscription(
+            name="Krebs", type="rss", source="https://b.example/f"
+        )
+        service.add_source(watchlist["id"], arxiv)
+        service.add_source(watchlist["id"], krebs)
+        _seed_item(db, arxiv, "ArXiv item")
+        _seed_item(db, krebs, "Krebs item")
+
+        screen._apply_tree_scope(
+            TreeScope(kind="source", watchlist_id=watchlist["id"], source_id=krebs)
+        )
+        await screen._load_items()
+
+        assert screen._loaded_items, "precondition: the scoped source has items"
+        assert {item["source_id"] for item in screen._loaded_items} == {krebs}
+
+
+@pytest.mark.asyncio
+async def test_tree_move_triggers_items_reload_on_read_tab():
+    """Moving the tree while on the Read tab re-fetches the items list.
+
+    Task 5 added the guarded dispatch in `watch_tree_scope`; this task makes
+    the reload itself scope-plumbed. Pinned with a spy so a future refactor
+    that drops the dispatch fails loudly instead of surfacing as a stale
+    list.
+    """
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+        assert screen.active_section == "items", "precondition: lands on Read"
+
+        original_load_items = screen._load_items
+        dispatches = 0
+
+        def spy():
+            nonlocal dispatches
+            dispatches += 1
+            return original_load_items()
+
+        screen._load_items = spy
+        try:
+            screen._apply_tree_scope(TreeScope(kind="unassigned"))
+            await pilot.pause()
+            assert dispatches >= 1, (
+                "a tree move on the Read tab must re-dispatch `_load_items`"
+            )
+        finally:
+            screen._load_items = original_load_items
+
+
+# --- task-2513 Task 10: reader verbs (m / space / a / u) --------------------
+#
+# The keyboard half of the reading loop: `m` toggles read on the open item,
+# `space` opens the next unread, `a` catches the scope up (undo with `u`).
+# Driven end to end through the real screen, the real key pipeline and
+# `_build_test_app()`'s isolated SQLite file. `space` is pane-bound — the
+# rail-focus and typing-guard facts have their own regression tests below.
+
+
+@pytest.mark.asyncio
+async def test_m_toggles_read_state_on_open_item():
+    """`m` flips the open item new -> reviewed -> new (and the open itself
+    already marked it read, so the observed cycle starts at reviewed)."""
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+        db = app.watchlist_bundle_service._db
         source_id = db.add_subscription(
-            name="[bold red]Not Actually Bold[/bold red]",
-            type="rss",
-            source="https://a.example/f",
+            name="ArXiv", type="rss", source="https://a.example/f"
         )
-        service.add_source(watchlist["id"], source_id)
+        item_id = _seed_item(db, source_id, "Toggle me")
+        await screen._load_items()
+        pane = screen.query_one("#watchlists-items-pane", ItemsPane)
+        await _wait_for_items(pilot, pane)
+        assert pane.items, "precondition: the seeded item reaches the pane"
 
-        screen.post_message(
-            TreeScopeChanged(TreeScope(kind="watchlist", watchlist_id=watchlist["id"]))
+        pane.select_item_by_id(str(pane.items[0]["id"]))
+        for _ in range(60):
+            await pilot.pause()
+            if db.get_new_items(status="reviewed", limit=10):
+                break
+        assert [r["id"] for r in db.get_new_items(status="reviewed", limit=10)] == [
+            item_id
+        ], "precondition: opening marked the item read"
+
+        await pilot.press("m")
+        for _ in range(60):
+            await pilot.pause()
+            if db.get_new_items(status="new", limit=10):
+                break
+        assert [r["id"] for r in db.get_new_items(status="new", limit=10)] == [
+            item_id
+        ], "`m` on a read item must restore it to unread"
+
+        await pilot.press("m")
+        for _ in range(60):
+            await pilot.pause()
+            if db.get_new_items(status="reviewed", limit=10):
+                break
+        assert [r["id"] for r in db.get_new_items(status="reviewed", limit=10)] == [
+            item_id
+        ], "`m` on an unread item must mark it read"
+
+
+@pytest.mark.asyncio
+async def test_m_refuses_on_ingested_item():
+    """`m` is a read/unread verb only: an ingested item is a deliberate
+    record, never flipped back to `new` — the user gets a warning instead."""
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+        db = app.watchlist_bundle_service._db
+        source_id = db.add_subscription(
+            name="ArXiv", type="rss", source="https://a.example/f"
         )
-        await pilot.pause()
+        item_id = _seed_item(db, source_id, "Ingested one")
+        db.mark_item_status(item_id, "ingested")
+        await screen._load_items()
+        pane = screen.query_one("#watchlists-items-pane", ItemsPane)
+        await _wait_for_items(pilot, pane)
+        assert pane.items, "precondition: the ingested item is listed (filter: all)"
 
-        row = screen.query_one(f"#wl-feeds-source-{source_id}", Static)
-        row_text = _static_text(row)
-        assert "[bold red]Not Actually Bold[/bold red]" in row_text
+        pane.select_item_by_id(str(pane.items[0]["id"]))
+        await pilot.pause(0.3)
+        app.notify = Mock()
+        await pilot.press("m")
+        for _ in range(20):
+            await pilot.pause()
+            if app.notify.called:
+                break
+
+        assert app.notify.called, "refusing to toggle must say so"
+        _args, kwargs = app.notify.call_args
+        assert kwargs.get("severity") == "warning"
+        rows = db.get_new_items(status="ingested", limit=10)
+        assert [r["id"] for r in rows] == [item_id], (
+            "an ingested item must never be flipped by `m`"
+        )
+
+
+@pytest.mark.asyncio
+async def test_space_opens_next_unread():
+    """`space` walks to the next UNREAD item, skipping reviewed rows."""
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+        db = app.watchlist_bundle_service._db
+        source_id = db.add_subscription(
+            name="ArXiv", type="rss", source="https://a.example/f"
+        )
+        # Newest-first display: [c (09:02), b (09:01), a (09:00)].
+        _seed_item(db, source_id, "a", created_at="2026-08-06 09:00:00")
+        b_id = _seed_item(db, source_id, "b", created_at="2026-08-06 09:01:00")
+        _seed_item(db, source_id, "c", created_at="2026-08-06 09:02:00")
+        db.mark_item_status(b_id, "reviewed")
+        await screen._load_items()
+        pane = screen.query_one("#watchlists-items-pane", ItemsPane)
+        await _wait_for_items(pilot, pane)
+        assert len(pane.displayed_items()) == 3, "precondition: all three listed"
+        displayed = pane.displayed_items()
+        assert [d["title"] for d in displayed] == ["c", "b", "a"], (
+            "precondition: newest-first order is what the user sees"
+        )
+
+        # Open the top row (new -> reviewed on open), then space past the
+        # already-reviewed middle row to "a", the only remaining unread one.
+        pane.select_item_by_id(str(displayed[0]["id"]))
+        await pilot.pause(0.3)
+        assert screen._selected_content_item is not None
+        pane.query_one("#items-table").focus()
+        await pilot.press("space")
+        for _ in range(60):
+            await pilot.pause()
+            current = screen._selected_content_item
+            if current is not None and current.get("title") == "a":
+                break
+
+        assert screen._selected_content_item.get("title") == "a", (
+            "`space` must skip the reviewed row and open the next unread one"
+        )
+
+
+@pytest.mark.asyncio
+async def test_space_at_end_notifies_all_caught_up():
+    """No unread row below the current one: `space` says so, moves nothing."""
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+        db = app.watchlist_bundle_service._db
+        source_id = db.add_subscription(
+            name="ArXiv", type="rss", source="https://a.example/f"
+        )
+        _seed_item(db, source_id, "only one")
+        await screen._load_items()
+        pane = screen.query_one("#watchlists-items-pane", ItemsPane)
+        await _wait_for_items(pilot, pane)
+        pane.select_item_by_id(str(pane.items[0]["id"]))
+        await pilot.pause(0.3)
+        app.notify = Mock()
+        pane.query_one("#items-table").focus()
+        await pilot.press("space")
+        for _ in range(20):
+            await pilot.pause()
+            if app.notify.called:
+                break
+
+        assert app.notify.called, "running out of unread items must say so"
+        message = str(app.notify.call_args[0][0]).lower()
+        assert "caught up" in message
+        assert screen._selected_content_item.get("title") == "only one", (
+            "the reader must stay on the current item"
+        )
+
+
+@pytest.mark.asyncio
+async def test_space_with_rail_focused_does_not_navigate():
+    """Regression: `space` is pane-bound, so the rail never triggers it.
+
+    Assert the OUTCOME (no selection change) rather than whether a binding
+    fired — the pane binding is simply unreachable from the rail.
+    """
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+        db = app.watchlist_bundle_service._db
+        source_id = db.add_subscription(
+            name="ArXiv", type="rss", source="https://a.example/f"
+        )
+        _seed_item(db, source_id, "unread one")
+        await screen._load_items()
+        pane = screen.query_one("#watchlists-items-pane", ItemsPane)
+        await _wait_for_items(pilot, pane)
+        screen.query_one("#wl-tree-node-all", Button).focus()
+        await pilot.press("space")
+        await pilot.pause(0.3)
+
+        assert screen._selected_content_item is None, (
+            "space with the rail focused must not open anything"
+        )
+
+
+@pytest.mark.asyncio
+async def test_space_in_items_search_input_still_types():
+    """Typing spaces in the items search box is typing, not navigation.
+
+    Also pins the fix for a real pre-existing bug this test exposed:
+    `ItemsPane.search_query` is `reactive(..., recompose=True)`, so every
+    keystroke recomposed the pane and destroyed the focused input — only the
+    first character of any search ever landed. `ItemsPane.recompose()` now
+    restores focus to the fresh input, so the whole query lands in the box.
+    """
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+        db = app.watchlist_bundle_service._db
+        source_id = db.add_subscription(
+            name="ArXiv", type="rss", source="https://a.example/f"
+        )
+        _seed_item(db, source_id, "f o matcher")
+        await screen._load_items()
+        pane = screen.query_one("#watchlists-items-pane", ItemsPane)
+        await _wait_for_items(pilot, pane)
+        pane.query_one("#items-search-input", Input).focus()
+        await pilot.press("f", "space", "o")
+        await pilot.pause(0.2)
+
+        # Re-query: each keystroke recomposes the pane, so the input that was
+        # focused at the start was destroyed; this is the live replacement.
+        search = pane.query_one("#items-search-input", Input)
+        assert search.value == "f o"
+        assert search.has_focus, "typing must not lose the search box"
+        assert screen._selected_content_item is None
+
+
+@pytest.mark.asyncio
+async def test_mark_all_read_then_undo_roundtrip():
+    """`a` catches the scope up and `u` restores it — the two-key loop."""
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+        db = app.watchlist_bundle_service._db
+        source_id = db.add_subscription(
+            name="ArXiv", type="rss", source="https://a.example/f"
+        )
+        for minute in range(3):
+            _seed_item(
+                db, source_id, f"item {minute}",
+                created_at=f"2026-08-06 09:0{minute}:00",
+            )
+        await screen._load_items()
+        pane = screen.query_one("#watchlists-items-pane", ItemsPane)
+        await _wait_for_items(pilot, pane)
+        assert len(pane.displayed_items()) == 3, "precondition"
+
+        app.notify = Mock()
+        await pilot.press("a")
+        for _ in range(60):
+            await pilot.pause()
+            if len(db.get_new_items(status="reviewed", limit=10)) == 3:
+                break
+        assert len(db.get_new_items(status="reviewed", limit=10)) == 3, (
+            "`a` must mark every unread item in scope read"
+        )
+        assert db.get_new_items(status="new", limit=10) == []
+
+        await pilot.press("u")
+        for _ in range(60):
+            await pilot.pause()
+            if len(db.get_new_items(status="new", limit=10)) == 3:
+                break
+        assert len(db.get_new_items(status="new", limit=10)) == 3, (
+            "`u` must restore the whole mark-all-read batch to unread"
+        )
+
+
+@pytest.mark.asyncio
+async def test_undo_failure_keeps_the_batch_for_retry(monkeypatch):
+    """Qodo review (PR #1383): a failing restore must not consume the only
+    undo handle -- the batch survives so a second `u` retries it."""
+    from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
+
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+        db = app.watchlist_bundle_service._db
+        source_id = db.add_subscription(
+            name="ArXiv", type="rss", source="https://a.example/f"
+        )
+        _seed_item(db, source_id, "item 0", created_at="2026-08-06 09:00:00")
+        await screen._load_items()
+        pane = screen.query_one("#watchlists-items-pane", ItemsPane)
+        await _wait_for_items(pilot, pane)
+
+        await pilot.press("a")
+        for _ in range(60):
+            await pilot.pause()
+            if screen._last_mark_all_read_batch:
+                break
+        batch = list(screen._last_mark_all_read_batch)
+        assert batch, "precondition: `a` stored an undo batch"
+
+        app.notify = Mock()
+        original_restore = SubscriptionsDB.restore_items_new
+        state = {"calls": 0}
+
+        def fail_once(self, item_ids):
+            state["calls"] += 1
+            if state["calls"] == 1:
+                raise RuntimeError("transient DB failure")
+            return original_restore(self, item_ids)
+
+        monkeypatch.setattr(SubscriptionsDB, "restore_items_new", fail_once)
+
+        await pilot.press("u")
+        for _ in range(60):
+            await pilot.pause()
+            if state["calls"] >= 1:
+                break
+        assert state["calls"] == 1, "precondition: the failing restore ran"
+        assert screen._last_mark_all_read_batch == batch, (
+            "a failed restore must leave the undo batch intact for retry"
+        )
+        app.notify.assert_any_call("Undo failed — press u to retry.", severity="error")
+
+        await pilot.press("u")
+        for _ in range(60):
+            await pilot.pause()
+            if len(db.get_new_items(status="new", limit=10)) == 1:
+                break
+        assert len(db.get_new_items(status="new", limit=10)) == 1, (
+            "the retry must restore the batch to unread"
+        )
+        assert screen._last_mark_all_read_batch == [], (
+            "a successful restore consumes the batch"
+        )
+
+
+@pytest.mark.asyncio
+async def test_mark_all_read_scoped_to_watchlist():
+    """`a` catches up the rail's current scope only — sources outside the
+    scoped watchlist keep their unread items."""
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+        service = app.watchlist_bundle_service
+        db = service._db
+        watchlist = service.create("Morning AI Brief")
+        member = db.add_subscription(
+            name="ArXiv", type="rss", source="https://a.example/f"
+        )
+        outsider = db.add_subscription(
+            name="Krebs", type="rss", source="https://b.example/f"
+        )
+        service.add_source(watchlist["id"], member)
+        _seed_item(db, member, "member 1", created_at="2026-08-06 09:00:00")
+        _seed_item(db, member, "member 2", created_at="2026-08-06 09:01:00")
+        _seed_item(db, outsider, "outsider", created_at="2026-08-06 09:02:00")
+
+        screen._apply_tree_scope(TreeScope(kind="watchlist", watchlist_id=watchlist["id"]))
+        pane = screen.query_one("#watchlists-items-pane", ItemsPane)
+        for _ in range(60):
+            await pilot.pause()
+            if len(pane.displayed_items()) == 2:
+                break
+        assert len(pane.displayed_items()) == 2, (
+            "precondition: the scope shows only the member's items (task-2513 Task 7)"
+        )
+
+        await pilot.press("a")
+        for _ in range(60):
+            await pilot.pause()
+            if len(db.get_new_items(status="reviewed", limit=10)) == 2:
+                break
+
+        reviewed = db.get_new_items(status="reviewed", limit=10)
+        assert {r["subscription_id"] for r in reviewed} == {member}
+        remaining = db.get_new_items(status="new", limit=10)
+        assert [r["subscription_id"] for r in remaining] == [outsider], (
+            "the outsider's unread item must survive a scoped catch-up"
+        )
+
+
+@pytest.mark.asyncio
+async def test_verbs_noop_off_read_tab():
+    """m/a/u are Read-tab verbs: on any other tab they change nothing."""
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+        db = app.watchlist_bundle_service._db
+        source_id = db.add_subscription(
+            name="ArXiv", type="rss", source="https://a.example/f"
+        )
+        _seed_item(db, source_id, "untouched")
+        await screen._load_items()
+        screen.active_section = "sources"
+        await pilot.pause(0.3)
+
+        for key in ("m", "a", "u"):
+            await pilot.press(key)
+        await pilot.pause(0.3)
+
+        assert len(db.get_new_items(status="new", limit=10)) == 1, (
+            "no read-state writes may happen off the Read tab"
+        )
 
 
 # --- Fix round 1, Finding 2: a pane-row click must not discard the tree scope
 
 
 @pytest.mark.asyncio
-async def test_selecting_a_pane_row_keeps_the_feeds_region_on_the_tree_scope():
+async def test_selecting_a_pane_row_keeps_the_header_summary_on_the_tree_scope():
     """Finding 2's exact reproduction: click a watchlist in the tree, then
     click a row in the Sources table to inspect it.
 
     Before this fix `_select_entity` reset `selected_scope` to "all", and
-    since Task 7 made that same reactive drive the Feeds region, the heading
-    silently jumped from `Feeds in Morning AI Brief (1)` back to
-    `Feeds in All sources (2)` -- an interaction in one region discarding
-    the user's navigation in another, with no selection highlight in the
-    tree to fall back on.
+    since Task 7 made that same reactive drive the scoped readout, it
+    silently jumped from `Morning AI Brief (1)` back to `All sources (2)` --
+    an interaction in one region discarding the user's navigation in
+    another, with no selection highlight in the tree to fall back on.
+
+    task-2513: the scoped readout is the centre header's summary line now
+    that the FEEDS region is gone; the behaviour being pinned is unchanged.
     """
     app = _build_test_app()
     host = DestinationHarness(app, "watchlists_collections")
@@ -270,10 +924,9 @@ async def test_selecting_a_pane_row_keeps_the_feeds_region_on_the_tree_scope():
         service = app.watchlist_bundle_service
         db = service._db
 
-        # TASK-1344: FEEDS's own heading (`#wl-feeds-scope-heading`) is
-        # gated to the Read tab, like CONTENT.
-        screen.active_section = "items"
-        await pilot.pause()
+        # Read is the default section now, and the header (with the scoped
+        # summary) is mounted on every tab.
+        assert screen.active_section == "items"
 
         morning = service.create("Morning AI Brief")
         a = db.add_subscription(name="ArXiv", type="rss", source="https://a.example/f")
@@ -284,12 +937,16 @@ async def test_selecting_a_pane_row_keeps_the_feeds_region_on_the_tree_scope():
         screen.post_message(
             TreeScopeChanged(TreeScope(kind="watchlist", watchlist_id=morning["id"]))
         )
-        await pilot.pause()
+        summary = ""
+        for _ in range(20):
+            await pilot.pause()
+            node = screen.query("#wc-watchlists-summary")
+            if node:
+                summary = _static_text(node[0])
+            if "Morning AI Brief" in summary:
+                break
         assert [row["id"] for row in screen.scoped_source_rows()] == [a]
-        assert (
-            _static_text(screen.query_one("#wl-feeds-scope-heading", Static))
-            == "Feeds in Morning AI Brief (1)"
-        )
+        assert summary == "Local Watchlists snapshot: Morning AI Brief (1 source)"
 
         screen.post_message(SourceSelected({"id": "source-1", "name": "Some Feed", "url": "https://x"}))
         await pilot.pause()
@@ -299,8 +956,8 @@ async def test_selecting_a_pane_row_keeps_the_feeds_region_on_the_tree_scope():
         ), "inspecting a pane row is not navigation; the tree scope must survive it"
         assert [row["id"] for row in screen.scoped_source_rows()] == [a]
         assert (
-            _static_text(screen.query_one("#wl-feeds-scope-heading", Static))
-            == "Feeds in Morning AI Brief (1)"
+            _static_text(screen.query_one("#wc-watchlists-summary", Static))
+            == "Local Watchlists snapshot: Morning AI Brief (1 source)"
         )
 
 
@@ -351,9 +1008,9 @@ async def test_staged_console_payload_follows_the_tree_scope():
 
     Before this fix the payload was built from `_local_watchlist_records` --
     `WatchlistScopeService.list_watch_items` over every local source,
-    regardless of the tree selection -- which is also why the Feeds region
-    printed the same sources twice. Selecting "Morning AI Brief" and then
-    pressing Stage must stage Morning AI Brief.
+    regardless of the tree selection -- which is also why the (now-removed)
+    Feeds region printed the same sources twice. Selecting "Morning AI
+    Brief" and then pressing Stage must stage Morning AI Brief.
     """
     app = _build_test_app()
     app.open_chat_with_handoff = Mock()
@@ -391,10 +1048,12 @@ async def test_staged_console_payload_follows_the_tree_scope():
 
 
 @pytest.mark.asyncio
-async def test_feeds_lists_each_source_once_under_the_all_scope():
-    """Finding 1's headline symptom: with <= WC_LOCAL_PAGE_SIZE sources, the
-    unscoped staging block printed every source a second time in the same
-    box, in identical typography (`watchlist-feed-source-row` had no rule).
+async def test_the_all_scope_summary_is_a_single_line_in_the_header():
+    """Finding 1's headline symptom was the unscoped staging block printing
+    every source a second time in the same box, in identical typography. The
+    per-source rows died with the FEEDS region (task-2513); what remains on
+    screen is exactly one summary line naming the scope, carried by the
+    centre header on every tab.
     """
     app = _build_test_app()
     db = app.watchlist_bundle_service._db
@@ -408,44 +1067,35 @@ async def test_feeds_lists_each_source_once_under_the_all_scope():
         # rebuild. This is the resting state a user actually lands on.
         await pilot.pause(0.1)
         screen = host.screen_stack[-1]
-        # TASK-1344: FEEDS (`#watchlists-list-pane`) is gated to the Read
-        # tab, like CONTENT.
-        screen.active_section = "items"
-        await pilot.pause()
+        assert screen.active_section == "items", "precondition: lands on Read"
         for _ in range(20):
             await pilot.pause()
-            if list(screen.query(".watchlist-feed-source-row")):
+            if list(screen.query("#wc-watchlists-summary")):
                 break
 
-        pane_text = "\n".join(
-            _static_text(node) for node in screen.query("#watchlists-list-pane Static")
+        summaries = list(screen.query("#wc-watchlists-summary"))
+        assert len(summaries) == 1, "the summary must not be mounted twice"
+        assert (
+            _static_text(summaries[0])
+            == "Local Watchlists snapshot: All sources (2 sources)"
         )
-        assert pane_text.count("ArXiv") == 1, pane_text
-        assert pane_text.count("Krebs") == 1, pane_text
-        # TASK-2312: the snapshot summary line no longer lives inside
-        # `#watchlists-list-pane` -- it moved to the shared `#wl-centre-
-        # status` header (`_build_centre_status_header`), the ONE place the
-        # tab strip and this marker are ever built now, on every section
-        # including Read. `#wc-watchlists-summary` is its own stable id
-        # regardless of which container hosts it.
-        summary_text = _static_text(screen.query_one("#wc-watchlists-summary"))
-        assert "Local Watchlists snapshot: All sources (2 sources)" in summary_text
 
 
 @pytest.mark.asyncio
-async def test_feeds_heading_escapes_an_untrusted_source_name():
-    """The `source` scope takes its heading label from `rows[0]["name"]` --
-    a remote feed's own title. Only the row-level escaping was pinned.
+async def test_the_header_summary_escapes_an_untrusted_source_name():
+    """The `source` scope takes its summary label from `rows[0]["name"]` --
+    a remote feed's own title. Unescaped markup reaching a rendered label
+    has broken this exact screen before; the name must render as literal
+    text, not parsed markup.
     """
     app = _build_test_app()
     host = DestinationHarness(app, "watchlists_collections")
     async with host.run_test(size=(180, 50)) as pilot:
         await pilot.pause(0.1)
         screen = host.screen_stack[-1]
-        # TASK-1344: FEEDS's own heading (`#wl-feeds-scope-heading`) is
-        # gated to the Read tab, like CONTENT.
-        screen.active_section = "items"
-        await pilot.pause()
+        # task-2513: the scoped readout lives in the centre header's summary
+        # line, mounted on every tab; Read is the default now.
+        assert screen.active_section == "items"
         service = app.watchlist_bundle_service
         watchlist = service.create("Morning AI Brief")
         source_id = service._db.add_subscription(
@@ -462,27 +1112,26 @@ async def test_feeds_heading_escapes_an_untrusted_source_name():
                 )
             )
         )
+        summary = ""
         for _ in range(20):
             await pilot.pause()
-            if list(screen.query(".watchlist-feed-source-row")):
+            node = screen.query("#wc-watchlists-summary")
+            if node:
+                summary = _static_text(node[0])
+            if "Not Actually Bold" in summary:
                 break
 
-        heading = _static_text(screen.query_one("#wl-feeds-scope-heading", Static))
-        assert heading == "Feeds in [bold red]Not Actually Bold[/bold red] (1)"
-        summary = _static_text(screen.query_one("#wc-watchlists-summary", Static))
         assert "[bold red]Not Actually Bold[/bold red]" in summary
 
 
 @pytest.mark.asyncio
 async def test_centre_header_summary_follows_the_tree_scope_off_the_read_tab():
-    """task-1344 fix wave (Qodo correctness): off the Read tab, FEEDS is
-    unmounted (`_hidden_centre_regions`) and `#wl-centre-status`
-    (`_build_centre_status_header`) carries the scoped summary instead.
-    `watch_tree_scope` used to refresh only FEEDS
-    (`_refresh_feeds_region_for_scope`), a silent no-op here since FEEDS is
-    not mounted -- `WatchlistsWorkbench.refresh_region_content` cannot find
-    `#wl-region-feeds` to replace -- so the header kept showing the
-    PREVIOUS scope's summary until some unrelated recompose came along.
+    """task-1344 fix wave (Qodo correctness), kept current by task-2513:
+    `#wl-centre-status` (`_build_centre_status_header`) carries the scoped
+    summary on EVERY tab now -- the FEEDS region that used to have its own
+    inline copy on Read is gone. `watch_tree_scope` must still rebuild that
+    header in place on a scope move, or it keeps showing the PREVIOUS
+    scope's summary until some unrelated recompose comes along.
     """
     app = _build_test_app()
     host = DestinationHarness(app, "watchlists_collections")
@@ -502,8 +1151,8 @@ async def test_centre_header_summary_follows_the_tree_scope_off_the_read_tab():
 
         screen.active_section = "sources"
         await pilot.pause(0.2)
-        assert not screen.query("#wl-region-feeds"), (
-            "precondition: FEEDS is unmounted off the Read tab"
+        assert screen.query("#wl-centre-status"), (
+            "precondition: the centre header is mounted off the Read tab"
         )
 
         summary_before = _static_text(
@@ -539,7 +1188,11 @@ async def test_centre_header_summary_follows_the_tree_scope_on_the_read_tab_too(
     header exists on every section, its refresh must be unconditional too,
     or a scope change on the Read tab would leave `#wl-centre-status`
     showing the PREVIOUS scope's summary -- silently, since nothing else
-    on that tab would ever touch it."""
+    on that tab would ever touch it.
+
+    Kept current by task-2513: the FEEDS region itself is gone (the
+    sibling test's docstring covers that removal); what this test still
+    protects is the unconditional on-Read header refresh."""
     app = _build_test_app()
     host = DestinationHarness(app, "watchlists_collections")
     async with host.run_test(size=(180, 50)) as pilot:
@@ -556,11 +1209,13 @@ async def test_centre_header_summary_follows_the_tree_scope_on_the_read_tab_too(
         service.add_source(morning["id"], arxiv)
         screen._tree_watchlists = [{"id": morning["id"], "name": "Morning AI Brief"}]
 
-        screen.active_section = "items"
+        # task-2513 made Read ("items") the DEFAULT section, so the section
+        # write the sibling tests use to force a rebuild would be a no-op
+        # here -- the watcher only fires on a real change. Recompose
+        # directly instead: exactly what the watcher's
+        # `refresh(recompose=True)` does for the header.
+        screen.refresh(recompose=True)
         await pilot.pause(0.2)
-        assert screen.query_one("#wl-region-feeds"), (
-            "precondition: FEEDS is mounted on the Read tab"
-        )
         assert screen.query_one("#wl-centre-status"), (
             "precondition: the header exists on the Read tab too "
             "(TASK-2312)"
@@ -603,7 +1258,7 @@ async def test_centre_header_summary_follows_the_tree_scope_on_the_read_tab_too(
 @pytest.mark.asyncio
 async def test_breadcrumb_promotion_moves_the_tree_highlight_same_as_a_click():
     # Seeded *before* the screen mounts, like
-    # `test_feeds_heading_names_the_scope_with_a_live_count` above: the
+    # `test_the_header_summary_names_the_scope_with_a_live_count` above: the
     # mounted `WatchlistTree` captures its own `_watchlists` once, from
     # whatever `_load_tree_data` populated `_tree_watchlists` with by the
     # time IT (not this test) last rebuilt the tree -- setting
@@ -847,16 +1502,24 @@ async def test_a_duplicate_name_is_rejected_and_the_reason_escapes_the_name():
 async def test_renaming_a_watchlist_updates_the_rail():
     """AC #2, rename half."""
     app = _build_test_app()
-    watchlist = app.watchlist_bundle_service.create("Mroning AI Brief")
+    service = app.watchlist_bundle_service
+    watchlist = service.create("Mroning AI Brief")
+    # One member source, so the header's scoped summary (the FEEDS heading's
+    # successor, task-2513) renders at all -- it only exists once there is
+    # anything to stage.
+    source_id = service._db.add_subscription(
+        name="ArXiv", type="rss", source="https://a.example/f"
+    )
+    service.add_source(watchlist["id"], source_id)
 
     host = DestinationHarness(app, "watchlists_collections")
     async with host.run_test(size=(180, 50)) as pilot:
         await pilot.pause(0.1)
         screen = host.screen_stack[-1]
-        # TASK-1344: FEEDS's own heading (`#wl-feeds-scope-heading`,
-        # asserted below) is gated to the Read tab, like CONTENT.
-        screen.active_section = "items"
-        await pilot.pause()
+        # task-2513: the scope readout (asserted below) is the centre
+        # header's summary line, mounted on every tab -- Read, the default,
+        # included.
+        assert screen.active_section == "items"
         assert await _wait_until(pilot, lambda: bool(screen._tree_watchlists))
 
         screen.post_message(
@@ -893,10 +1556,13 @@ async def test_renaming_a_watchlist_updates_the_rail():
         # The rename must also reach the scope-derived copy, not just the
         # rail: `_tree_scope_label` and `_resolve_breadcrumb_labels` both
         # read `_tree_watchlists`, which a rename leaves stale until the
-        # reload re-resolves it.
-        assert (
-            _static_text(screen.query_one("#wl-feeds-scope-heading", Static))
-            == "Feeds in Morning AI Brief (0)"
+        # reload re-resolves it. The summary is rebuilt in place by the
+        # header refresh, so poll for it.
+        assert await _wait_until(
+            pilot,
+            lambda: bool(screen.query("#wc-watchlists-summary"))
+            and _static_text(screen.query_one("#wc-watchlists-summary", Static))
+            == "Local Watchlists snapshot: Morning AI Brief (1 source)",
         )
         assert screen._breadcrumb_labels == ["Morning AI Brief"]
         # ...and the MOUNTED Inspector, not only the screen's mirror of it

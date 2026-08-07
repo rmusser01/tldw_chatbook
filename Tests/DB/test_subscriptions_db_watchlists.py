@@ -647,3 +647,179 @@ def test_counts_use_a_single_query_regardless_of_watchlist_count(db, monkeypatch
     db.get_watchlist_item_counts()
 
     assert counting.execute_count == 1
+
+
+# --- TASK-2513: scoped item queries + per-source counts ----------------------
+
+
+@pytest.fixture
+def db_with_memberships(tmp_path):
+    """Two sources with items on both; only one belongs to a watchlist.
+
+    Returns:
+        ``(db, watchlist_id, in_watchlist_source_id, unassigned_source_id)``.
+        The in-watchlist source carries three items (new, new, reviewed) so
+        it doubles as the per-source-counts fixture; the unassigned source
+        carries two (new, new).
+    """
+    db = SubscriptionsDB(str(tmp_path / "subs.db"), client_id="test")
+    in_watchlist = db.add_subscription(
+        name="In List", type="rss", source="https://in.example/f"
+    )
+    unassigned = db.add_subscription(
+        name="Loose", type="rss", source="https://loose.example/f"
+    )
+    with db.transaction() as conn:
+        conn.execute("INSERT INTO watchlists (name) VALUES ('Morning')")
+        watchlist_id = conn.execute("SELECT id FROM watchlists").fetchone()[0]
+        conn.execute(
+            "INSERT INTO watchlist_sources (watchlist_id, subscription_id) VALUES (?, ?)",
+            (watchlist_id, in_watchlist),
+        )
+    for index, status in enumerate(("new", "new", "reviewed")):
+        url = f"https://in.example/{index}"
+        _insert_item(db, in_watchlist, url, f"In {index}", "body")
+        with db.transaction() as conn:
+            conn.execute(
+                "UPDATE subscription_items SET status = ? WHERE url = ?",
+                (status, url),
+            )
+    for index in range(2):
+        _insert_item(db, unassigned, f"https://loose.example/{index}", f"Loose {index}", "body")
+    return db, watchlist_id, in_watchlist, unassigned
+
+
+def test_get_new_items_filters_by_watchlist(db_with_memberships):
+    # Two sources, only one in the watchlist; items on both.
+    db, watchlist_id, in_watchlist, _unassigned = db_with_memberships
+    rows = db.get_new_items(status=None, watchlist_id=watchlist_id)
+    assert rows and all(r["subscription_id"] == in_watchlist for r in rows)
+
+
+def test_get_new_items_unassigned_only(db_with_memberships):
+    db, _watchlist_id, _in_watchlist, unassigned = db_with_memberships
+    rows = db.get_new_items(status=None, unassigned_only=True)
+    assert rows and all(r["subscription_id"] == unassigned for r in rows)
+
+
+def test_get_new_items_statuses_multi(db_with_memberships):
+    db, _watchlist_id, _in_watchlist, _unassigned = db_with_memberships
+    rows = db.get_new_items(status=None, statuses=["new", "ingested"])
+    # The fixture's one reviewed item must be excluded, and four new items
+    # must remain -- an empty or unfiltered result fails one of these.
+    assert rows
+    assert {r["status"] for r in rows} <= {"new", "ingested"}
+    assert len(rows) == 4
+
+
+def test_get_new_items_rejects_status_and_statuses(db_with_memberships):
+    db, _watchlist_id, _in_watchlist, _unassigned = db_with_memberships
+    with pytest.raises(ValueError):
+        db.get_new_items(status="new", statuses=["new"])
+
+
+def test_get_source_item_counts(db_with_memberships):
+    db, _watchlist_id, in_watchlist, unassigned = db_with_memberships
+    counts = db.get_source_item_counts()
+    assert counts[in_watchlist] == {"total": 3, "unread": 2}
+    assert counts[unassigned] == {"total": 2, "unread": 2}
+
+
+# --- TASK-2513: bulk mark-all-read + undo restore -----------------------------
+
+
+def _item_id(db, url):
+    row = db.conn.execute(
+        "SELECT id FROM subscription_items WHERE url = ?", (url,)
+    ).fetchone()
+    assert row is not None, f"fixture item missing: {url}"
+    return row[0]
+
+
+def test_mark_all_read_returns_ids_and_only_touches_new(db_with_memberships):
+    db, _watchlist_id, _in_watchlist, _unassigned = db_with_memberships
+    reviewed_id = _item_id(db, "https://in.example/2")
+    ingested_id = _item_id(db, "https://loose.example/1")
+    db.mark_item_status(ingested_id, "ingested")
+    new_ids = {
+        _item_id(db, "https://in.example/0"),
+        _item_id(db, "https://in.example/1"),
+        _item_id(db, "https://loose.example/0"),
+    }
+
+    ids = db.mark_all_read()  # scope: all
+
+    assert set(ids) == new_ids
+    assert all(db.get_item_status(item_id) == "reviewed" for item_id in ids)
+    assert db.get_item_status(reviewed_id) == "reviewed"   # untouched
+    assert db.get_item_status(ingested_id) == "ingested"   # untouched
+
+
+def test_mark_all_read_scoped_to_watchlist(db_with_memberships):
+    db, watchlist_id, _in_watchlist, _unassigned = db_with_memberships
+    expected = {
+        _item_id(db, "https://in.example/0"),
+        _item_id(db, "https://in.example/1"),
+    }
+
+    ids = db.mark_all_read(watchlist_id=watchlist_id)
+
+    assert set(ids) == expected
+    # Sources outside the watchlist keep their unread items.
+    assert db.get_item_status(_item_id(db, "https://loose.example/0")) == "new"
+    assert db.get_item_status(_item_id(db, "https://loose.example/1")) == "new"
+
+
+def test_mark_all_read_scoped_to_unassigned(db_with_memberships):
+    db, _watchlist_id, _in_watchlist, _unassigned = db_with_memberships
+    expected = {
+        _item_id(db, "https://loose.example/0"),
+        _item_id(db, "https://loose.example/1"),
+    }
+
+    ids = db.mark_all_read(unassigned_only=True)
+
+    assert set(ids) == expected
+    # The in-watchlist source keeps its unread items.
+    assert db.get_item_status(_item_id(db, "https://in.example/0")) == "new"
+    assert db.get_item_status(_item_id(db, "https://in.example/1")) == "new"
+
+
+def test_restore_items_new_only_restores_reviewed(db_with_memberships):
+    db, _watchlist_id, _in_watchlist, _unassigned = db_with_memberships
+    marked_read = _item_id(db, "https://in.example/0")
+    ingested = _item_id(db, "https://in.example/1")
+    db.mark_all_read()  # in.example/0 is now reviewed
+    db.mark_item_status(ingested, "ingested")  # this one moved past reviewed
+
+    n = db.restore_items_new([marked_read, ingested])
+
+    assert n == 1
+    assert db.get_item_status(marked_read) == "new"
+    assert db.get_item_status(ingested) == "ingested"
+    # An empty undo batch is a no-op, not an error.
+    assert db.restore_items_new([]) == 0
+
+
+def test_restore_items_new_chunks_batches_bigger_than_the_host_parameter_limit(db_with_memberships):
+    """Qodo review (PR #1383): the undo IN-list binds one parameter per id,
+    so a batch past SQLITE_MAX_VARIABLE_NUMBER (999 on older builds) must
+    still restore in full -- chunked, inside one transaction."""
+    db, _watchlist_id, in_watchlist, _unassigned = db_with_memberships
+    extra = db._RESTORE_ITEMS_CHUNK_SIZE + 7  # forces a second chunk
+    with db.transaction() as conn:
+        for index in range(extra):
+            conn.execute(
+                "INSERT INTO subscription_items (subscription_id, url, title) "
+                "VALUES (?, ?, ?)",
+                (in_watchlist, f"https://bulk.example/{index}", f"bulk {index}"),
+            )
+    ids = db.mark_all_read(subscription_id=in_watchlist)
+    assert len(ids) > db._RESTORE_ITEMS_CHUNK_SIZE, (
+        "precondition: the batch spans more than one chunk"
+    )
+
+    restored = db.restore_items_new(ids)
+
+    assert restored == len(ids)
+    assert all(db.get_item_status(item_id) == "new" for item_id in ids)

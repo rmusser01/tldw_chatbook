@@ -138,6 +138,7 @@ from ..Watchlists_Modules.items_pane import (
     ItemSelected,
     ItemsFilterChanged,
     ItemsPane,
+    NextUnreadRequested,
     RefreshItemsRequested,
 )
 from ..Watchlists_Modules.kept_briefings_modal import KeptBriefingsModal
@@ -184,6 +185,7 @@ from ..Watchlists_Modules.sources_pane import (
     SourcesPane,
 )
 from ..Watchlists_Modules.watchlist_tree import (
+    ALL_SOURCES_BUCKET,
     AddSourceToWatchlistRequested,
     CreateWatchlistRequested,
     DeleteWatchlistRequested,
@@ -307,9 +309,11 @@ class _ItemStatusIntent:
         patch_item: The live dict object (already held by `ItemsPane.items`/
             `_selected_content_item`/`ContentPane.item`) to mutate in place
             on a successful write, or `None` when the caller relies on
-            `refresh` instead. Passed by exactly one caller in the whole
-            app, `_mark_item_read_on_open` -- see `handle_unread_toggle_
-            requested`'s docstring for why that matters.
+            `refresh` instead. Passed by exactly two callers in the whole
+            app, `_mark_item_read_on_open` and `action_toggle_read_selected`
+            -- see `handle_unread_toggle_requested`'s docstring for why
+            that matters (guards must not read the dispatched item dict,
+            since the non-patching callers leave it stale).
         gate: Whether the drainer must re-ask the backend
             (`_blocking_status_for`) immediately before writing and refuse
             if the item already holds a terminal status
@@ -386,13 +390,13 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     """Monitored sources, runs, alerts, and recovery."""
 
     BINDINGS = [
-        ("1", "switch_section('overview')", "Overview"),
+        ("1", "switch_section('items')", "Read"),
         ("2", "switch_section('sources')", "Sources"),
-        ("3", "switch_section('items')", "Items"),
-        ("4", "switch_section('runs')", "Runs"),
-        ("5", "switch_section('rules')", "Rules"),
-        ("6", "switch_section('notifications')", "Notifications"),
-        ("7", "switch_section('artifacts')", "Artifacts"),
+        ("3", "switch_section('runs')", "Runs"),
+        ("4", "switch_section('rules')", "Rules"),
+        ("5", "switch_section('notifications')", "Notifications"),
+        ("6", "switch_section('artifacts')", "Artifacts"),
+        ("7", "switch_section('overview')", "Overview"),
         ("question", "show_help", "Help"),
         ("n", "new_source", "New source"),
         # Round 2, O3: the label names BOTH verbs because the key performs
@@ -407,13 +411,19 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         ("p", "preview_selected", "Preview"),
         ("j", "next_item", "Next item"),
         ("k", "previous_item", "Previous item"),
+        # task-2513 Task 10, the reading-loop verbs. `space` (next unread) is
+        # deliberately NOT here — it is bound on ItemsPane so it cannot fire
+        # from the rail (see `NextUnreadRequested`).
+        ("m", "toggle_read_selected", "Read/Unread"),
+        ("a", "mark_all_read", "Mark all read"),
+        ("u", "undo_mark_all_read", "Undo mark-all-read"),
         ("z", "toggle_region", "Collapse"),
         ("Z", "solo_region", "Solo"),
         ("left_square_bracket", "toggle_left_rail", "Left rail"),
         ("right_square_bracket", "toggle_right_rail", "Right rail"),
     ]
 
-    active_section = reactive("overview")
+    active_section = reactive("items")
     runtime_backend = reactive("local")
     selected_source = reactive(None)
     selected_run = reactive(None)
@@ -440,13 +450,14 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     # saved before this change, since that could only be a leftover of the
     # old stub-era default, never a deliberate choice about the real reader.
     region_layout = reactive(RegionLayout())
-    focused_region = reactive(Region.FEEDS)
+    focused_region = reactive(Region.ITEMS)
     # Two scopes, deliberately: they answer different questions and they
     # diverge (fix round 1, Finding 2).
     #
     # `tree_scope` is where the user has NAVIGATED -- the tree node in view.
-    # It drives the Feeds region (`scoped_source_rows`), and only a tree
-    # click or a breadcrumb promotion moves it.
+    # It drives the scoped readouts (`scoped_source_rows`: the centre
+    # header's summary line and the Sources table), and only a tree click
+    # or a breadcrumb promotion moves it.
     #
     # `selected_scope` is the ancestry the Inspector is entitled to CLAIM
     # for whatever is currently selected. It follows `tree_scope` on a tree
@@ -455,13 +466,13 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     # asserting one would put a breadcrumb over an entity that may not
     # belong to it (Task 5 fix round 2, Finding 1).
     #
-    # Task 7 made `selected_scope` drive Feeds as well, which silently
-    # merged the two: clicking a pane row to inspect it then reset the Feeds
-    # region back to "All sources", discarding tree navigation the user had
-    # done in another region. Splitting them keeps both properties -- the
-    # Feeds region follows the tree, and the Inspector still claims no
-    # ancestry it does not know. Clearing `_breadcrumb_labels` alone would
-    # NOT have been enough: `InspectorPane._scope_levels` derives an
+    # Task 7 made `selected_scope` drive the scoped readout as well, which
+    # silently merged the two: clicking a pane row to inspect it then reset
+    # the scope back to "All sources", discarding tree navigation the user
+    # had done in another region. Splitting them keeps both properties --
+    # the scoped readout follows the tree, and the Inspector still claims
+    # no ancestry it does not know. Clearing `_breadcrumb_labels` alone
+    # would NOT have been enough: `InspectorPane._scope_levels` derives an
     # ancestor level from `scope` alone and falls back to a `Watchlist {id}`
     # label, so the crumb would still render, just anonymously.
     #
@@ -477,7 +488,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     _SECTION_DETAIL_TITLE = {
         "overview": "Overview",
         "sources": "Sources",
-        "items": "Items",
+        "items": "Read",
         "runs": "Runs",
         "rules": "Rules",
         "notifications": "Notifications",
@@ -524,6 +535,11 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         # unrelated navigation happened to trigger a reload.
         self._loaded_sources: list[dict[str, Any]] = []
         self._loaded_items: list[dict[str, Any]] = []
+        # The undo batch for `action_mark_all_read` (task-2513 Task 10): the
+        # raw DB ids the last catch-up touched, cleared on undo. Raw ids —
+        # `mark_all_read` returns database ids, which the loaded item dicts
+        # carry as `item_id` (their `id` is the normalized table row key).
+        self._last_mark_all_read_batch: list[int] = []
         # The single debounce timer behind `_request_tree_counts_refresh`
         # (review wave, Minor 6). Declared here so the attribute always
         # exists, rather than springing into being on the first item opened.
@@ -712,10 +728,14 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         # reader out from under a user who hadn't touched Items at all.
         self._selected_content_item: dict[str, Any] | None = None
         # Left-rail tree inputs (Task 4): loaded together by `_load_tree_data`
-        # in exactly two queries (`list_watchlists` + `get_watchlist_item_counts`),
+        # in exactly three queries (`list_watchlists`,
+        # `get_watchlist_item_counts`, `get_source_item_counts`),
         # never one per node -- see that method's docstring.
         self._tree_watchlists: list[dict[str, Any]] = []
         self._tree_counts: dict[int, dict[str, int]] = {}
+        # Per-source totals/unread for the tree's source badges (Task 8 of
+        # the reader-first plan); loaded with the rest, rendered there.
+        self._tree_source_counts: dict[int, dict[str, int]] = {}
         # Which watchlists are expanded in the rail, and the rail's tag
         # filter (whole-branch review, Finding 2). Held here, not on
         # `WatchlistTree`, for exactly the reason the create-form draft and
@@ -1066,11 +1086,13 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
 
     @work(exclusive=True, group="wc_tree")
     async def _load_tree_data(self) -> None:
-        """Load the left-rail tree's two inputs: watchlists and counts.
+        """Load the left-rail tree's three inputs: watchlists and counts.
 
-        Exactly two queries total, never one per node: `list_watchlists()`
-        for the watchlist rows themselves, and `get_watchlist_item_counts()`
-        for every bucket's total/unread counts in a single statement. Both
+        Exactly three queries total, never one per node: `list_watchlists()`
+        for the watchlist rows themselves, `get_watchlist_item_counts()`
+        for every bucket's total/unread counts, and
+        `get_source_item_counts()` for every source's, each in a single
+        statement. All three
         are reached through `WatchlistBundleService` (Task 1) rather than a
         second accessor onto `SubscriptionsDB` directly.
 
@@ -1085,9 +1107,10 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             service = self._watchlist_bundle_service()
             self._tree_watchlists = service.list_watchlists()
             self._tree_counts = service.get_watchlist_item_counts()
+            self._tree_source_counts = service.get_source_item_counts()
         except Exception:
             logger.opt(exception=True).debug("Failed to load watchlists tree data.")
-            self._tree_watchlists, self._tree_counts = [], {}
+            self._tree_watchlists, self._tree_counts, self._tree_source_counts = [], {}, {}
             if callable(notify):
                 notify("Failed to load watchlists.", severity="error")
         # Re-resolve the Inspector's breadcrumb against what was just loaded
@@ -1101,6 +1124,16 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         # pushes the resolved labels into the mounted Inspector.
         self._breadcrumb_labels = self._resolve_breadcrumb_labels(self.selected_scope)
         self._apply_tree_data_to_live_surfaces()
+
+    def _rail_unread_suffix(self) -> str:
+        """The collapsed left rail's "N unread" suffix (task-2513 Task 9).
+
+        Empty when there is nothing unread — a permanent "0 unread" is
+        chrome, not information, and an expanded rail already shows the
+        per-node numbers.
+        """
+        unread = self._tree_counts.get(ALL_SOURCES_BUCKET, {}).get("unread", 0)
+        return f"{unread} unread" if unread else ""
 
     def _apply_tree_data_to_live_surfaces(self) -> None:
         """Publish freshly loaded tree data without recomposing the screen.
@@ -1119,9 +1152,9 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         * The rail itself (`_tree_watchlists`/`_tree_counts`) — rebuilt from
           `_build_tree_pane`, which re-seeds the expansion, tag filter and
           scope the user had, exactly as the full recompose did.
-        * FEEDS and the centre header, whose scope heading resolves a
-          watchlist's display name out of `_tree_watchlists` (a rename would
-          otherwise sit stale) and whose source rows are re-queried.
+        * The centre header, whose scoped summary resolves a watchlist's
+          display name out of `_tree_watchlists` (a rename would otherwise
+          sit stale) and whose source count is re-queried.
         * The Inspector's breadcrumb labels, and — in the ITEMS region — the
           Overview's watchlist count and the Artifacts pane's scope label,
           all pushed into the live panes the way `watch_selected_scope` and
@@ -1138,7 +1171,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         the whole-branch review (I1): it resolves a watchlist DISPLAY NAME via
         `_briefing_scope_label` -> `_watchlist_display_name` -> the same
         `_tree_watchlists` list, so renaming the scoped watchlist while the
-        Artifacts tab was open repainted the rail, the FEEDS heading and the
+        Artifacts tab was open repainted the rail, the header summary and the
         breadcrumb but left `#artifacts-scope-note` naming the old one — two
         surfaces on one screen disagreeing about the same watchlist.
 
@@ -1148,7 +1181,6 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             return
         self._request_surface_refresh(
             self._SURFACE_RAIL,
-            self._SURFACE_FEEDS,
             self._SURFACE_HEADER,
             self._SURFACE_INSPECTOR,
         )
@@ -1178,6 +1210,17 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             # left `#artifacts-scope-note` on the old one. Same seed
             # `_build_detail_pane` applies on a rebuild.
             artifacts.scope_label = self._briefing_scope_label()
+        try:
+            workbench = self.query_one("#wl-workbench", WatchlistsWorkbench)
+        except NoMatches:
+            pass
+        else:
+            # task-2513 Task 9: the collapsed left rail's "N unread" header
+            # suffix tracks the counts this loader just refreshed. In place,
+            # never a recompose — same discipline as every other push here.
+            workbench.set_collapsed_suffixes(
+                {Region.LEFT_RAIL: self._rail_unread_suffix()}
+            )
         # TASK-2304 AC#2, found in live verification, not by the suite. Which
         # sources the current scope covers is WATCHLIST MEMBERSHIP, and this
         # loader runs after every write that changes it (`Add source`,
@@ -1273,12 +1316,9 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
 
         The snapshot's loading/error/empty/summary marker
         (`_watchlists_status_marker_widgets`) is rendered in exactly one
-        place as of TASK-2312 (the centre header, on every section
-        including Read) -- this still requests both the FEEDS and HEADER
-        surfaces, since Read's FEEDS pane still has its own scope-derived
-        heading/rows that need a refresh independent of the header. Each
-        call is a no-op where that surface is not mounted, so no tab test
-        is needed here.
+        place -- the centre header, mounted on every tab since task-2513 --
+        and this rebuilds it. (The Read tab used to have a second, inline
+        copy inside the FEEDS region; that region is gone.)
 
         The Inspector's two snapshot-derived widgets are patched rather than
         rebuilt, following `_repaint_item_status_cell`'s discipline: the
@@ -1289,7 +1329,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         if not self._dom_is_live:
             return
         self._request_surface_refresh(
-            self._SURFACE_FEEDS, self._SURFACE_HEADER, self._SURFACE_INSPECTOR
+            self._SURFACE_HEADER, self._SURFACE_INSPECTOR
         )
         try:
             summary = self.query_one("#watchlists-state-summary", Static)
@@ -1410,16 +1450,17 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         Asks the tree scope as well as the async snapshot (fix round 1,
         Finding 1). Staging now sends `scoped_source_rows()`, so a gate that
         only consulted the snapshot could disable the Stage button -- and
-        render "No sources yet." -- directly underneath a Feeds list that
-        was showing rows. That split is not hypothetical: the two paths
+        render "No sources yet." -- directly underneath a scoped readout
+        that was showing rows. That split is not hypothetical: the two paths
         resolve their `SubscriptionsDB` independently, and in the UI
         harnesses they land on different temp files entirely.
 
         The snapshot stays the *health* probe (`_wc_loaded` /
-        `_wc_lookup_error` in `_wc_attach_state` and `_build_list_pane` are
-        untouched): it is the only caller that can distinguish "the service
-        is unavailable" or "policy denied" from "there are no rows", which a
-        synchronous local query cannot report.
+        `_wc_lookup_error` in `_wc_attach_state` and
+        `_watchlists_status_marker_widgets` are untouched): it is the only
+        caller that can distinguish "the service is unavailable" or "policy
+        denied" from "there are no rows", which a synchronous local query
+        cannot report.
         """
         if self._local_watchlist_count > 0:
             return True
@@ -1431,10 +1472,10 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         Fix round 1, Finding 1: the block used to enumerate
         `_local_watchlist_records`, which reaches `get_all_subscriptions`
         through `WatchlistScopeService.list_watch_items` -- the *same* table
-        `scoped_source_rows()` reads. FEEDS therefore printed every source
-        twice in one box (once scoped, once not), in identical typography.
-        Staging now follows the tree scope instead, so the block only has to
-        say what pressing the button would send.
+        `scoped_source_rows()` reads. The screen's scoped readout therefore
+        printed every source twice in one box (once scoped, once not), in
+        identical typography. Staging now follows the tree scope instead, so
+        the block only has to say what pressing the button would send.
 
         Args:
             rows: The current scope's rows, as returned by
@@ -1453,10 +1494,10 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     def _snapshot_body(self) -> str:
         """The Console handoff body: the sources the tree scope covers.
 
-        Reads the same `scoped_source_rows()` the Feeds region renders (fix
-        round 1, Finding 1), so selecting "Morning AI Brief" and then
-        staging stages Morning AI Brief -- not, as before, every local
-        source regardless of where the user had navigated.
+        Reads the same `scoped_source_rows()` the centre header's summary
+        line renders (fix round 1, Finding 1), so selecting "Morning AI
+        Brief" and then staging stages Morning AI Brief -- not, as before,
+        every local source regardless of where the user had navigated.
 
         Names still go through `_record_title` (and therefore `_safe_text`'s
         sanitise + validate pass), unchanged: a source name can come
@@ -1504,8 +1545,9 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     def _wc_attach_state(self) -> tuple[bool, str]:
         """Whether "Stage Watchlists Context in Console" should be enabled,
         and its tooltip — the same loading/error/empty/populated branching
-        `_build_list_pane` uses, split out so `compose_content` can get it
-        without constructing (and discarding) a pane widget just to read it.
+        `_watchlists_status_marker_widgets` uses, split out so
+        `compose_content` can get it without constructing (and discarding) a
+        pane widget just to read it.
         """
         if not self._wc_loaded:
             return True, "Stage local Watchlists context after the local snapshot loads."
@@ -1546,6 +1588,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             active_tag=self._tree_active_tag,
             active_scope=self.tree_scope,
             write_disabled_reason=self._tree_write_disabled_reason(),
+            source_counts=self._tree_source_counts,
             id="wl-tree",
         )
 
@@ -1590,15 +1633,17 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     def scoped_source_rows(self) -> list[dict[str, Any]]:
         """Source rows the current tree scope covers.
 
-        The Feeds region renders these, so selecting a node in the tree
-        actually narrows what the centre shows rather than only recording a
-        selection (Task 7). Kept on the screen (not the pane) because the
-        workbench recomposes and pane-local state does not survive it -- the
-        same reasoning already applied to `tree_scope` itself.
+        The centre header's scoped summary line and the Sources table both
+        render these (and, after Task 7, the items list scope does too), so
+        selecting a node in the tree actually narrows what the centre shows
+        rather than only recording a selection (Task 7). Kept on the screen
+        (not the pane) because the workbench recomposes and pane-local state
+        does not survive it -- the same reasoning already applied to
+        `tree_scope` itself.
 
         Reads `tree_scope`, not `selected_scope`: only tree navigation
-        changes what Feeds covers. See the note on those two reactives for
-        why they are not the same value.
+        changes what that summary covers. See the note on those two
+        reactives for why they are not the same value.
 
         Each branch costs exactly one query (`list_source_rows`,
         `list_all_source_rows`, or `list_unassigned_source_rows`); the
@@ -1705,53 +1750,18 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 return f"Source {scope.source_id}"
         return "All sources"
 
-    def _scoped_feeds_heading(self, rows: Sequence[Mapping[str, Any]]) -> Text:
-        """The scope-named Feeds heading, e.g. ``Feeds in Morning AI Brief (3)``.
-
-        Replaces the previous hardcoded "Sources" title (Task 7): with the
-        Sources tab active, that hardcoded word duplicated ITEMS's own
-        `_SECTION_DETAIL_TITLE["sources"]` heading in the adjacent box. This
-        also makes the heading say what Feeds is actually showing, since a
-        tree click now changes that.
-
-        Args:
-            rows: The current scope's rows, as returned by
-                `scoped_source_rows()` -- passed in rather than re-resolved
-                so the caller (which needs the rows anyway, to render them)
-                does not pay for the query twice.
-
-        Returns:
-            A single-line ``Text``, pre-parsed via `Text.from_markup` over
-            an escaped label -- the same "escape untrusted content, then
-            build a `Text` rather than hand a raw f-string to `Static`"
-            convention `_build_inspector_pane`'s follow-in-Console line
-            already uses, since the label may come straight from a remote
-            feed's own title.
-        """
-        label = escape_markup(self._tree_scope_label(rows))
-        return Text.from_markup(f"Feeds in {label} ({len(rows)})")
-
     def _watchlists_status_marker_widgets(
         self, scoped_rows: Sequence[Mapping[str, Any]]
     ) -> list[Widget]:
         """The snapshot's own loading/error/empty/summary marker.
 
-        Extracted (TASK-1344) so the same service-state readout could
-        appear on every tab once FEEDS itself started being hidden on all
-        but the Read tab (`_hidden_centre_regions`) -- before that, FEEDS
-        was unconditionally mounted, so this state was already visible
-        everywhere; the extraction avoided a real regression (Sources/
-        Runs/... silently losing all visibility into "snapshot still
-        loading" / "service unavailable" / "no sources yet") rather than
-        introducing new behaviour.
-
-        TASK-2312: called from exactly one place now,
-        `_build_centre_status_header`, on every section including Read.
-        `_build_list_pane` (FEEDS's own content) used to carry an inline
-        second copy of this same call specifically for the Read tab -- that
-        duplication, and the different DOM position it produced, is what
-        this task removed; see `_build_centre_status_header`'s own
-        docstring for the full history.
+        Rendered in exactly one place: `_build_centre_status_header`, the
+        centre header mounted on every tab. (TASK-1344 extracted this so the
+        readout could also live inline in the FEEDS region's Read-tab body --
+        avoiding a real regression, Sources/Runs/... silently losing all
+        visibility into "snapshot still loading" / "service unavailable" /
+        "no sources yet"; task-2513 removed that region, leaving the header
+        as the only home.)
 
         Keyed on the async snapshot, NOT on `scoped_source_rows()`: the
         snapshot is the only service-health probe on this screen -- it is
@@ -1762,7 +1772,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         cases, and `#wc-loading-state` has no meaning for it at all. In
         production the two agree anyway: both read `subscriptions`.
 
-        Called fresh on every region/header rebuild, so it must stay
+        Called fresh on every header rebuild, so it must stay
         side-effect-free (same discipline as every other content factory
         here -- see `WatchlistsWorkbench.__init__`'s docstring on why
         `content` holds factories, not instances).
@@ -1770,8 +1780,8 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         Args:
             scoped_rows: The current tree scope's source rows
                 (`scoped_source_rows()`), used only by the summary-line
-                branch. Passed in rather than re-resolved so a caller that
-                already has it (both callers do) does not query twice.
+                branch. Passed in rather than re-resolved so the caller
+                does not query twice.
 
         Returns:
             One widget (the loading/error/empty-state text, or the
@@ -1848,8 +1858,8 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         # `#wc-watchlists-summary` keeps its id -- it is the "snapshot
         # finished loading" terminal selector the guard suites wait on --
         # and says what pressing Stage would send, which is the scope
-        # `_build_list_pane`/`_build_centre_status_header` names just above
-        # it. `#wc-snapshot-title` is folded into this same line rather than
+        # `_build_centre_status_header` names just above it.
+        # `#wc-snapshot-title` is folded into this same line rather than
         # kept as a separate heading; no test referenced it, and a one-line
         # block does not need a title row.
         return [
@@ -1864,18 +1874,13 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         """Build the ALWAYS-rendered centre header: the section tab strip
         plus the snapshot's own loading/error/empty/summary marker.
 
-        TASK-1344 AC#1 hides FEEDS on every tab except Read
-        (`_hidden_centre_regions`), but the tab strip and the snapshot
-        markers are cross-cutting chrome, not FEEDS-specific "feed content"
-        — before that task FEEDS was unconditionally mounted, so both were
-        already visible on every tab. This is what carries that forward:
-        `WatchlistsWorkbench`'s `header=` factory (`compose_content`), wired
-        UNCONDITIONALLY as of TASK-2312 — it used to be skipped on the Read
-        tab in favour of an inline copy `_build_list_pane` mounted INSIDE
-        the bordered FEEDS box, which visibly moved the tab strip and the
-        status line between sections (UAT F2/F22/F23). `_build_list_pane`
-        no longer builds that copy, so this factory is now the ONE place
-        either widget is ever constructed, on every section including Read.
+        The tab strip and the snapshot markers are cross-cutting chrome,
+        not region content, so they live here rather than inside any
+        region: `WatchlistsWorkbench`'s `header=` factory, wired
+        unconditionally (`compose_content`) since task-2513 removed the
+        FEEDS region, whose Read-tab body used to carry an identical-
+        looking inline copy of both — mounting both would duplicate
+        `#wl-tabs`.
 
         Called fresh on every workbench rebuild, so it must stay
         side-effect-free, like every other factory here.
@@ -1894,76 +1899,6 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             *children,
             id="wl-centre-status",
             classes="watchlists-centre-status",
-        )
-
-    def _build_list_pane(self) -> Vertical:
-        """Build the FEEDS-region content: a heading naming the current tree
-        scope, and that scope's source rows.
-
-        Read-tab-only (`_hidden_centre_regions` hides FEEDS everywhere
-        else), and unchanged in shape from before TASK-1344 widened FEEDS's
-        gating: every Read-tab geometry test pinned to this pane's exact
-        row counts (`_watchlists.tcss`'s `.watchlists-region-feeds` cap
-        derivation) still applies untouched.
-
-        The source list appears ONCE (fix round 1, Finding 1). Task 7 added
-        the scoped rows above a block that already enumerated
-        `_local_watchlist_records` -- which resolve, via
-        `WatchlistScopeService.list_watch_items` ->
-        `local_watchlists_service.list_sources` -> `get_all_subscriptions`,
-        to the same `subscriptions` table the scope resolvers read. Every
-        source therefore printed twice in one box, in identical typography.
-        Staging now follows the tree scope (see `_snapshot_body`), so that
-        block collapses to a single line.
-
-        TASK-2312: this pane no longer builds its own copy of the section
-        tab strip or the snapshot's loading/error/empty/summary marker.
-        Before this task it did -- an inline copy, mounted INSIDE this
-        bordered FEEDS box -- while `_build_centre_status_header` built an
-        independent SECOND copy, mounted OUTSIDE every region box, for
-        every OTHER section. Both widgets therefore visibly changed
-        position depending on which tab was active (UAT F2/F22/F23): the
-        tab strip sat inside a bordered region on Read and outside every
-        region everywhere else, and the snapshot line moved with it.
-        `_build_centre_status_header` is now the ONE place either is ever
-        built, unconditionally (`compose_content`'s `header=`) -- this pane
-        keeps only the content that is genuinely FEEDS-specific.
-
-        Byte-identical logic to the pre-rehost inline composition for the
-        snapshot itself; only the `yield` calls became list appends and a
-        `Vertical(...)` return so the result can be handed to
-        `WatchlistsWorkbench` as a content factory instead of being mounted
-        directly by `compose_content`.
-
-        This is called fresh on every region rebuild (see
-        `WatchlistsWorkbench.__init__`'s docstring on why `content` holds
-        factories, not instances), so it must stay side-effect-free.
-        """
-        scoped_rows = self.scoped_source_rows()
-        children: list[Widget] = [
-            Static(
-                self._scoped_feeds_heading(scoped_rows),
-                classes="destination-section watchlists-column-title",
-                id="wl-feeds-scope-heading",
-            ),
-        ]
-        for row in scoped_rows:
-            # Source names are untrusted (imported OPML, a remote feed's own
-            # title, ...), so they must be escaped before reaching a
-            # rendered label -- this repo has shipped that bug before.
-            name = escape_markup(str(row.get("name") or ""))
-            source_type = escape_markup(str(row.get("type") or ""))
-            children.append(
-                Static(
-                    Text.from_markup(f"{name}  ({source_type})"),
-                    id=f"wl-feeds-source-{row.get('id')}",
-                    classes="watchlist-feed-source-row",
-                )
-            )
-        return Vertical(
-            *children,
-            id="watchlists-list-pane",
-            classes="destination-workbench-pane",
         )
 
     def _build_detail_pane(self) -> Vertical:
@@ -2562,16 +2497,21 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                     # remounted a second time comes back childless (verified
                     # empirically — see `WatchlistsWorkbench.__init__`).
                     Region.LEFT_RAIL: self._build_tree_pane,
-                    Region.FEEDS: self._build_list_pane,
                     Region.ITEMS: self._build_detail_pane,
                     Region.CONTENT: self._build_content_pane,
                     Region.RIGHT_RAIL: self._build_inspector_region,
                 },
                 hidden=self._hidden_centre_regions(),
-                # TASK-2312: unconditional on every section, including Read
-                # -- see `_build_centre_status_header`'s own docstring for
-                # why this used to be `None` on Read and what that cost.
+                # Unconditional since task-2513: the tab strip and the
+                # snapshot markers are cross-cutting chrome carried by the
+                # centre header on every tab, Read included -- see
+                # `_build_centre_status_header`. (They used to ride inside
+                # the FEEDS region's own body on Read; that region is gone.)
                 header=self._build_centre_status_header,
+                # task-2513 Task 9: the collapsed left rail keeps the total
+                # unread count visible; `_load_tree_data` refreshes it in
+                # place via `set_collapsed_suffixes`.
+                collapsed_suffixes={Region.LEFT_RAIL: self._rail_unread_suffix()},
                 id="wl-workbench",
             )
 
@@ -2584,35 +2524,33 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         `active_section == "items"` is this implementation's Read tab (the
         spec's five sections don't literally match today's six — Overview
         and Notifications aren't in the spec's list either — but Items is
-        unambiguously the one with an items-to-read relationship). FEEDS
-        (the scoped source list) and CONTENT (the reader) are both
-        meaningless outside that relationship, so both are hidden on every
-        other tab (TASK-1344 AC#1 generalises the CONTENT-only gating Task 4
-        introduced to cover FEEDS too, which had the identical violation
-        from Phase C and was never fixed alongside it).
+        unambiguously the one with an items-to-read relationship). CONTENT
+        (the reader) is meaningless outside that relationship, so it is
+        hidden on every other tab (Task 4's gating; the FEEDS region, gated
+        the same way by TASK-1344, was removed outright in task-2513).
 
         TASK-1344 AC#4: hidden means UNMOUNTED, not collapsed to a one-row
         header — see `_rendered_region_layout`'s docstring for why a header
         was rejected. `WatchlistsWorkbench.compose()` skips anything in the
         returned set entirely; nothing here touches `self.region_layout`
-        (the real, persisted preference), so a CONTENT/FEEDS collapse or
-        solo the user set on Read is untouched by which OTHER tab they
-        happen to be looking at.
+        (the real, persisted preference), so a CONTENT collapse or solo the
+        user set on Read is untouched by which OTHER tab they happen to be
+        looking at.
 
         Returns:
-            `{Region.FEEDS, Region.CONTENT}` on every section except Read,
-            otherwise the empty set.
+            `{Region.CONTENT}` on every section except Read, otherwise the
+            empty set.
         """
         if self.active_section == "items":
             return frozenset()
-        return frozenset({Region.FEEDS, Region.CONTENT})
+        return frozenset({Region.CONTENT})
 
     def _rendered_region_layout(self) -> RegionLayout:
         """`self.region_layout`, adjusted for what this tab can actually show.
 
-        FEEDS and CONTENT no longer need adjusting here at all (TASK-1344):
-        `_hidden_centre_regions` unmounts them outright on every non-Read
-        tab, regardless of their real collapsed/solo state, so the old
+        CONTENT no longer needs adjusting here at all (TASK-1344):
+        `_hidden_centre_regions` unmounts it outright on every non-Read
+        tab, regardless of its real collapsed/solo state, so the old
         "force CONTENT into `collapsed`, rebased onto the pre-solo baseline
         when CONTENT itself is soloed" derivation this method used to need
         (Task 4's fix round 1) is gone -- unmounting is orthogonal to
@@ -2637,18 +2575,17 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         covering ITEMS too, that mutation can no longer happen -- but
         `region_layout.collapsed` can still legitimately contain ITEMS from
         a real Read-tab action: a `z` on ITEMS while soloing CONTENT there
-        (`solo(CONTENT)` collapses the OTHER two centre regions, ITEMS
-        included) leaves `collapsed` containing ITEMS even after the user
-        switches away, and that is a genuine user preference this method
-        must still honor on Read without rendering it as a dead end
-        elsewhere. Rendering that verbatim would collapse e.g. the
-        Sources tab down to a focusable "▸ Items" header over an otherwise
-        empty centre -- the exact dead-end AC#3 exists to rule out, just
-        reached from CONTENT's solo bookkeeping rather than FEEDS's. Forcing
-        ITEMS out of `collapsed` on every non-Read tab closes that: the
-        section's pane is always what actually renders there, and
-        `self.region_layout` itself is untouched, so Read still shows
-        whatever ITEMS state the user really left behind.
+        (`solo(CONTENT)` collapses the OTHER centre region, ITEMS) leaves
+        `collapsed` containing ITEMS even after the user switches away, and
+        that is a genuine user preference this method must still honor on
+        Read without rendering it as a dead end elsewhere. Rendering that
+        verbatim would collapse e.g. the Sources tab down to a focusable
+        "▸ Items" header over an otherwise empty centre -- the exact
+        dead-end AC#3 exists to rule out, reached from CONTENT's solo
+        bookkeeping. Forcing ITEMS out of `collapsed` on every non-Read tab
+        closes that: the section's pane is always what actually renders
+        there, and `self.region_layout` itself is untouched, so Read still
+        shows whatever ITEMS state the user really left behind.
 
         Returns:
             `self.region_layout` verbatim on the Read tab; otherwise a copy
@@ -2759,7 +2696,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             region: The region a gesture (chevron click, `z`, `Z`) targets.
 
         Returns:
-            `True` when `region` is FEEDS or CONTENT and the active section
+            `True` when `region` is CONTENT and the active section
             is not Read (`"items"`), `False` otherwise.
         """
         return region in self._hidden_centre_regions()
@@ -2769,11 +2706,10 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
 
         Generalized from `_refuse_content_toggle_off_read_tab` (TASK-1344
         AC#2): that name special-cased `Region.CONTENT`, which was the only
-        gated region when it was written. FEEDS is now gated identically
-        (`_hidden_centre_regions`), so a stray `focused_region` left over
-        from the Read tab (e.g. the user last touched FEEDS there, then
+        gated region when it was written. A stray `focused_region` left over
+        from the Read tab (e.g. the user last touched CONTENT there, then
         switched to Sources without moving focus) must be refused the same
-        way CONTENT already was — this is the ONE place both `action_toggle_
+        way -- this is the ONE place both `action_toggle_
         region`/`action_solo_region`/`_on_region_toggled` consult, per the
         prompt's "one source of truth for is region R visible on section S".
 
@@ -2818,16 +2754,16 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         section pane -- `on_descendant_focus` sets exactly that while using
         Sources/Runs/...) toggled and PERSISTED a real ITEMS collapse with
         zero visible feedback on the current tab, and -- combined with
-        FEEDS+CONTENT already collapsed on Read -- returning to Read
-        rendered three headers over an empty centre: the exact dead-end
-        AC#3 exists to rule out, written to disk, surviving a restart.
+        CONTENT already collapsed on Read -- returning to Read rendered
+        headers over an empty centre: the exact dead-end AC#3 exists to
+        rule out, written to disk, surviving a restart.
         Region-layout gestures (collapse/solo of the three-pane centre)
         simply do not apply to ANY centre region off Read, not just the
         ones that happen to be unmounted there, so the gate now refuses
         every `region in CENTRE_REGIONS` off Read unconditionally. The
         notify copy forks on whether the region is actually hidden here:
-        FEEDS/CONTENT keep the "only shown on the Read tab" copy (true for
-        them), while ITEMS -- visible, just not collapsible from this tab
+        CONTENT keeps the "only shown on the Read tab" copy (true for
+        it), while ITEMS -- visible, just not collapsible from this tab
         -- gets copy that says so honestly instead of claiming it is not
         shown at all.
 
@@ -2891,7 +2827,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         notify keyed to a region the user is not looking at.
         """
         if self.focused_region not in CENTRE_REGIONS:
-            self.notify("Solo applies to the Feeds, Items, or Content panes.")
+            self.notify("Solo applies to the Items or Content panes.")
             return
         if self._focus_in_centre_header:
             return
@@ -3523,9 +3459,10 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         `_build_inspector_pane` covers the rebuild case by seeding a
         freshly-constructed `InspectorPane` from this same screen state.
 
-        Does NOT refresh FEEDS; `watch_tree_scope` owns that (fix round 1,
-        Finding 2). `selected_scope` also moves when a pane row is selected,
-        which is not navigation and must leave the Feeds region alone.
+        Does NOT refresh the scoped readouts; `watch_tree_scope` owns that
+        (fix round 1, Finding 2). `selected_scope` also moves when a pane
+        row is selected, which is not navigation and must leave the tree
+        scope's surfaces alone.
         """
         if not self.is_mounted:
             return
@@ -3537,8 +3474,9 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             pass
 
     def watch_tree_scope(self) -> None:
-        """Rebuild FEEDS (or the centre header) in place so it follows the
-        tree selection (Task 7; header half added task-1344 fix wave).
+        """Keep the scope-driven surfaces in step with the tree selection
+        (Task 7; header half added task-1344 fix wave; items reload added
+        task-2513).
 
         Deliberately does NOT do what `watch_active_section` does
         (`self.refresh(recompose=True)`): that rebuilds every region,
@@ -3548,43 +3486,39 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         holds a reference to the Inspector from *before* a scope change and
         asserts against it *after*, which a full recompose would silently
         break by handing that reference a defunct, unmounted widget.
-        `WatchlistsWorkbench.refresh_region_content` instead rebuilds only
-        FEEDS's own supplied content -- the one region whose display this
-        task makes scope-dependent -- leaving the Tree and Inspector
-        instances untouched.
 
-        Off the Read tab, FEEDS is unmounted (`_hidden_centre_regions`) and
-        `_build_centre_status_header` carries the SAME scoped summary
-        instead (`_watchlists_status_marker_widgets`), so
-        `_refresh_feeds_region_for_scope` alone is a silent no-op there --
-        `WatchlistsWorkbench.refresh_region_content` cannot find
-        `#wl-region-feeds` to replace, since it is not mounted. Before this
-        fix the header was left showing the PREVIOUS scope's summary until
-        some unrelated recompose came along and rebuilt it for a different
-        reason. `_refresh_centre_header_for_scope` is the header's
-        equivalent -- called UNCONDITIONALLY as of TASK-2312, since the
-        header now exists on every section including Read (see
-        `_build_centre_status_header`'s own docstring); both refreshes run
-        on Read too, one per surface, exactly like everywhere else.
+        What moves instead, in place:
 
-        Also pushes the new scope into the still-mounted `WatchlistTree`
-        (task-876): since this watcher is the single reconciliation point
-        for BOTH a real tree click and a breadcrumb promotion (the latter
-        never touches the tree widget at all -- see
-        `handle_breadcrumb_scope_selected`), and neither one rebuilds the
-        Tree instance (only FEEDS/the header refresh above), the tree's own
-        `active_scope` would otherwise go stale the moment the scope changes
-        by any path other than a fresh `_build_tree_pane` construction.
+        * The centre header (`_refresh_centre_header_for_scope`), which
+          carries the scoped summary on every tab since task-2513. (The
+          FEEDS region, whose inline copy this used to refresh, is gone.)
+        * The items list on the Read tab: a scope move changes which items
+          are in view, so `_load_items` is re-dispatched — and the reload
+          itself is scope-plumbed through `_items_scope_query` (task-2513).
+        * The Sources table (`_push_scoped_sources_to_pane`), an in-place
+          push on the pane's own reactive, not a region rebuild.
+        * The still-mounted `WatchlistTree` itself (task-876): since this
+          watcher is the single reconciliation point for BOTH a real tree
+          click and a breadcrumb promotion (the latter never touches the
+          tree widget at all -- see `handle_breadcrumb_scope_selected`),
+          and neither one rebuilds the Tree instance, the tree's own
+          `active_scope` would otherwise go stale the moment the scope
+          changes by any path other than a fresh `_build_tree_pane`
+          construction.
         """
         if not self.is_mounted:
             return
-        self._refresh_feeds_region_for_scope()
         self._refresh_centre_header_for_scope()
-        # TASK-2304 AC#2. The Sources table follows the same scope the FEEDS
-        # heading and the centre header just took, so the two counts of "how
-        # many sources are in view" cannot disagree. An in-place push on the
-        # pane's own reactive, not a region rebuild -- see
-        # `_push_scoped_sources_to_pane`.
+        if self.active_section == "items":
+            # Own group, not the default one: `exclusive=True` in the
+            # default group would cancel every in-flight default-group
+            # worker (`_create_source`, `_delete_source`, ...) -- the
+            # hazard `_request_surface_refresh` documents for its drainer.
+            self.run_worker(self._load_items(), exclusive=True, group="wc_items")
+        # TASK-2304 AC#2. The Sources table follows the same scope the
+        # centre header just took, so the two counts of "how many sources
+        # are in view" cannot disagree. An in-place push on the pane's own
+        # reactive, not a region rebuild -- see `_push_scoped_sources_to_pane`.
         self._push_scoped_sources_to_pane()
         try:
             self.query_one("#wl-tree", WatchlistTree).active_scope = self.tree_scope
@@ -3602,28 +3536,18 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 self._load_briefings(), exclusive=True, group="wl-briefings-load"
             )
 
-    def _refresh_feeds_region_for_scope(self) -> None:
-        """Queue a FEEDS rebuild so it follows the tree selection.
-
-        Was its own `@work(exclusive=True, group="wc_feeds_scope_refresh")`
-        worker until TASK-2200. It now records intent on the shared surface
-        queue instead, because it is no longer the only actor that rebuilds
-        FEEDS: `_apply_local_wc_snapshot` and `_load_tree_data` both changed
-        from a full-screen recompose to a FEEDS/header rebuild, and three
-        independent `exclusive=True` workers swapping the SAME region would
-        either interleave two remove/mount pairs over one `#watchlists-list-
-        pane` id or -- with a shared group -- cancel one of them between its
-        `remove()` and its `mount()`, leaving an empty bordered box. See
-        `_request_surface_refresh`.
-        """
-        self._request_surface_refresh(self._SURFACE_FEEDS)
-
     def _refresh_centre_header_for_scope(self) -> None:
-        """Queue a centre-header rebuild, the header's twin of the above.
+        """Queue a centre-header rebuild so the scoped summary follows the
+        tree selection (task-1344 fix wave, Qodo correctness; made the only
+        scoped readout by task-2513).
 
-        Off the Read tab FEEDS is unmounted and `_build_centre_status_header`
-        carries the same scoped summary, so a FEEDS-only refresh is a silent
-        no-op there (task-1344 fix wave, Qodo correctness).
+        Records intent on the shared surface queue rather than swapping the
+        DOM itself: `_apply_local_wc_snapshot` and `_load_tree_data` also
+        rebuild the header, and independent `exclusive=True` workers
+        swapping the SAME surface would either interleave two remove/mount
+        pairs over one `#wl-centre-status` id or -- with a shared group --
+        cancel one of them between its `remove()` and its `mount()`,
+        leaving nothing mounted. See `_request_surface_refresh`.
         """
         self._request_surface_refresh(self._SURFACE_HEADER)
 
@@ -3641,7 +3565,6 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     #: every background load would destroy a half-typed selector set -- the
     #: same class of harm this task removes from the Sources create form.
     _SURFACE_RAIL = "rail"
-    _SURFACE_FEEDS = "feeds"
     _SURFACE_HEADER = "header"
     _SURFACE_INSPECTOR = "inspector"
 
@@ -3665,12 +3588,12 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         next loop rather than starting -- or cancelling -- anything.
 
         Args:
-            surfaces: Any of `_SURFACE_RAIL`, `_SURFACE_FEEDS`,
-                `_SURFACE_HEADER` (each an unconditional rebuild of that
-                surface) or `_SURFACE_INSPECTOR` (conditional -- the right
-                rail is rebuilt only when the Console-follow row no longer
-                matches the adapter; see `_resolve_console_follow_drift`).
-                Unknown names are ignored by the drainer.
+            surfaces: Any of `_SURFACE_RAIL`, `_SURFACE_HEADER` (each an
+                unconditional rebuild of that surface) or
+                `_SURFACE_INSPECTOR` (conditional -- the right rail is
+                rebuilt only when the Console-follow row no longer matches
+                the adapter; see `_resolve_console_follow_drift`). Unknown
+                names are ignored by the drainer.
         """
         if not self._dom_is_live:
             return
@@ -3682,7 +3605,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         # `_drain_surface_refresh`'s `finally` ever lowers this flag, and it
         # never runs if `run_worker` raises synchronously; the flag would then
         # be stuck True for the life of the screen, every later request would
-        # queue and return, and the rail/FEEDS/header would silently stop
+        # queue and return, and the rail/header would silently stop
         # following every background loader. Arming *after* scheduling is not
         # the fix either: the drainer's `finally` could already have lowered
         # the flag by the time we raised it.
@@ -3729,11 +3652,6 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                     await self._rebuild_surface(
                         workbench.refresh_region_content(Region.LEFT_RAIL),
                         "the Watchlists rail",
-                    )
-                if self._SURFACE_FEEDS in surfaces:
-                    await self._rebuild_surface(
-                        workbench.refresh_region_content(Region.FEEDS),
-                        "the Feeds region",
                     )
                 if self._SURFACE_HEADER in surfaces:
                     await self._rebuild_surface(
@@ -3866,7 +3784,10 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     def _load_active_section_data(self) -> None:
         """Start the loader owned by the currently visible section."""
         if self.active_section == "items":
-            self.run_worker(self._load_items(), exclusive=True)
+            # Own group (task-2513), as in `watch_tree_scope`:
+            # `exclusive=True` in the default group would cancel every
+            # in-flight default-group worker (`_create_source`, ...).
+            self.run_worker(self._load_items(), exclusive=True, group="wc_items")
         elif self.active_section == "rules":
             self.run_worker(self._load_rules(), exclusive=True)
         elif self.active_section == "runs":
@@ -4042,10 +3963,11 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
 
         Deliberately leaves `tree_scope` ALONE (fix round 1, Finding 2).
         Inspecting a row is not navigation: the tree has not moved, so the
-        Feeds region must keep showing the watchlist the user opened. Before
-        the two scopes were split, this reset silently rebuilt Feeds back to
-        "All sources" -- an interaction in one region discarding the user's
-        navigation in another, with no tree selection highlight to fall back
+        centre header's scoped summary must keep naming the watchlist the
+        user opened. Before the two scopes were split, this reset silently
+        rebuilt that readout back to "All sources" -- an interaction in one
+        region discarding the user's navigation in another, with no tree
+        selection highlight to fall back
         on. Clearing `_breadcrumb_labels` alone would not have been a
         substitute: `InspectorPane._scope_levels` derives an ancestor level
         from `scope` alone and falls back to a `Watchlist {id}` label, so an
@@ -4513,7 +4435,8 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         # feeds the staging line and `_refresh_overview_data` the cards, but
         # `#sources-table` and the rail's counts read their own queries — so
         # without these the table kept the previous list and the rail said
-        # `All sources  0` while the centre said `Feeds in All sources (1)`,
+        # `All sources  0` while the centre said `Feeds in All sources (1)`
+        # (then Feeds, now the header summary),
         # describing the same thing on one screen.
         self._refresh_local_wc_snapshot()
         self._refresh_overview_data()
@@ -5101,10 +5024,9 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         screen, disagreeing -- because only one of them was scoped.
 
         Resolved through `scoped_source_rows()`, which is the SAME resolver
-        `_staging_summary_line` and `_scoped_feeds_heading` count, so the
-        header and the table cannot drift by construction; making the table
-        agree by re-deriving the scope some other way would just create a
-        third answer. That call costs one query, and the `all` scope short
+        `_staging_summary_line` counts, so the header and the table cannot
+        drift by construction; making the table agree by re-deriving the
+        scope some other way would just create a third answer. That call costs one query, and the `all` scope short
         -circuits before paying it -- it is the default, and its answer is
         "everything" regardless.
 
@@ -8487,6 +8409,24 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         status = str(self._items_status_filter or "all")
         return None if status == "all" else status
 
+    def _items_scope_query(self) -> dict[str, Any]:
+        """The tree scope as `list_items` kwargs.
+
+        `all` passes nothing (every source). A `source` scope collapses to its
+        single `source_id`; watchlist membership (many-to-many) is resolved by
+        the query, not here. This is the wiring the whole phase exists for:
+        before it, `_load_items` fetched the newest 100 items of ANY source
+        regardless of the rail selection.
+        """
+        scope = self.tree_scope
+        if scope.kind == "source" and scope.source_id is not None:
+            return {"source_id": scope.source_id}
+        if scope.kind == "watchlist" and scope.watchlist_id is not None:
+            return {"watchlist_id": scope.watchlist_id}
+        if scope.kind == "unassigned":
+            return {"unassigned_only": True}
+        return {}
+
     def _with_open_item(
         self, page: list[dict[str, Any]]
     ) -> list[dict[str, Any]]:
@@ -8549,6 +8489,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 status=self._items_status_query(),
                 limit=100,
                 offset=0,
+                **self._items_scope_query(),
             )
             # Mirror to screen state (Finding 2, fix round 2) — see the note
             # on `_loaded_sources` in `_load_sources` above; same rebuild,
@@ -8605,7 +8546,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         calls `_refresh_overview_data()`, which used to set `overview_data`,
         then a `reactive({}, recompose=True)` -- a SCREEN-level recompose,
         which rebuilt every region via its factory
-        (`_build_list_pane`/`_build_content_pane`/etc.), replacing the live
+        (`_build_detail_pane`/`_build_content_pane`/etc.), replacing the live
         `ItemsPane`/`DataTable` instances wholesale. Proven live: with the
         default refresh, one item selection detached the old `ItemsPane`,
         reset the table cursor to 0, cleared screen focus, and a SECOND
@@ -9086,12 +9027,16 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         self._items_status_filter = event.status_filter
         self._items_search_query = event.search_query
         if status_changed:
-            self.run_worker(self._load_items(), exclusive=True)
+            # Own group, as in `watch_tree_scope`: an exclusive reload in
+            # the default group cancels unrelated in-flight workers.
+            self.run_worker(self._load_items(), exclusive=True, group="wc_items")
 
     @on(RefreshItemsRequested)
     def handle_refresh_items_requested(self, event: RefreshItemsRequested) -> None:
         event.stop()
-        self.run_worker(self._load_items(), exclusive=True)
+        # Own group, as in `watch_tree_scope`: an exclusive reload in the
+        # default group cancels unrelated in-flight workers.
+        self.run_worker(self._load_items(), exclusive=True, group="wc_items")
 
     async def _load_rules(self) -> None:
         notify = getattr(self.app_instance, "notify", None)
@@ -9561,22 +9506,28 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             if notify_toast and callable(notify):
                 notify(f"Failed to mark item {status}.", severity="error")
         if refresh:
-            self.run_worker(self._load_items(), exclusive=True)
+            # Own group, as in `watch_tree_scope`: an exclusive reload in
+            # the default group cancels unrelated in-flight workers.
+            self.run_worker(self._load_items(), exclusive=True, group="wc_items")
             self._refresh_overview_data()
             # TASK-2304 AC#1. Every status this path writes moves the item
             # into or out of the `new` bucket the rail counts, so the rail is
             # stale the instant this returns.
             #
             # Deliberately inside `if refresh`, which is a real trade-off and
-            # not an oversight. The `refresh=False` caller is the silent
+            # not an oversight. The `refresh=False` callers are the silent
             # mark-read-on-open (`_mark_item_read_on_open`), which fires on
-            # EVERY item selection including each `j`/`k` keystroke, and it
-            # carries no reload of any kind -- that is the whole reason the
+            # EVERY item selection including each `j`/`k` keystroke, and
+            # `action_toggle_read_selected` (task-2513's `m` verb) -- neither
+            # carries a reload of any kind, which is the whole reason the
             # flag exists (a full refresh per selection was proven live to
             # detach the mounted `ItemsPane` and drop keyboard focus). So the
             # rail's unread count does lag by however many items were opened
             # since the last deliberate action, and is corrected by the next
             # one, by a tab switch, or by any other `_load_tree_data` caller.
+            # (`m` compensates directly: `action_toggle_read_selected` calls
+            # `_request_tree_counts_refresh()` right after dispatching, so
+            # only the open-on-selection path leaves the rail one out.)
             # Two SQLite queries and a rail rebuild per arrow key is the
             # wrong price for a number that is one out.
             self._load_tree_data()
@@ -9753,7 +9704,8 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         # feeds the staging line and `_refresh_overview_data` the cards, but
         # `#sources-table` and the rail's counts read their own queries — so
         # without these the table kept the previous list and the rail said
-        # `All sources  0` while the centre said `Feeds in All sources (1)`,
+        # `All sources  0` while the centre said `Feeds in All sources (1)`
+        # (then Feeds, now the header summary),
         # describing the same thing on one screen.
         self._refresh_local_wc_snapshot()
         self._refresh_overview_data()
@@ -9814,8 +9766,8 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     def action_show_help(self) -> None:
         """Show a notification with available keyboard shortcuts."""
         self.app_instance.notify(
-            "1=Overview 2=Sources 3=Items 4=Runs 5=Rules 6=Notifications "
-            "7=Artifacts | n=new d=delete/ignore c=check p=preview ?=help",
+            "1=Read 2=Sources 3=Runs 4=Rules 5=Notifications 6=Artifacts "
+            "7=Overview | n=new d=delete/ignore c=check p=preview ?=help",
             severity="information",
             timeout=8,
         )
@@ -9990,3 +9942,194 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         if new_index < 0 or new_index >= len(items):
             return
         pane.select_and_reveal(items[new_index])
+
+    def _reader_verb_blocked(self) -> bool:
+        """Whether a Read-tab verb key (`m`/`a`/`u`) must do nothing.
+
+        The same two guards `_navigate_item` applies — see its docstring for
+        the full rationale: typing in an `Input` or editable `TextArea` is
+        typing, not a verb (defensive against a future `priority=True` edit);
+        and read-state writes are scoped to the Read tab, where the affected
+        items are actually visible (off-tab writes would silently rewrite
+        rows the user cannot see).
+        """
+        focused = self.focused
+        if isinstance(focused, Input) or (
+            isinstance(focused, TextArea) and not focused.read_only
+        ):
+            return True
+        return self.active_section != "items"
+
+    def action_toggle_read_selected(self) -> None:
+        """`m`: flip the open item between new and reviewed (task-2513 Task 10).
+
+        Only the read/unread pair is togglable: `ingested`/`ignored`/`error`
+        record deliberate user actions and are never rewritten by a verb key
+        (the same rule `_mark_item_read_on_open` and the unread toggle
+        follow). Dispatches through `_dispatch_item_status`, so the gating,
+        in-place patch and cell repaint come along unchanged.
+        `refresh=False` + `patch_item=item` is mark-read-on-open's contract:
+        the live dict is patched in place instead of a full reload, so
+        `_selected_content_item` stays current and a second `m` flips the
+        item back to unread rather than re-deriving from a stale status.
+        """
+        if self._reader_verb_blocked():
+            return
+        item = self._selected_content_item
+        if item is None:
+            return
+        item_id = item.get("id")
+        if item_id is None:
+            return
+        current = str(item.get("status") or "").strip().lower()
+        if current == "new":
+            target = "reviewed"
+        elif current == "reviewed":
+            target = "new"
+        else:
+            notify = getattr(self.app_instance, "notify", None)
+            if callable(notify):
+                notify("Only read/unread items can be toggled.", severity="warning")
+            return
+        self._dispatch_item_status(
+            item_id,
+            _ItemStatusIntent(status=target, gate=True, refresh=False, patch_item=item),
+        )
+        self._request_tree_counts_refresh()
+
+    @on(NextUnreadRequested)
+    def handle_next_unread_requested(self, event: NextUnreadRequested) -> None:
+        """`space` (the ItemsPane binding): open the next unread item.
+
+        No Input/rail focus guards are needed here, unlike `_navigate_item`:
+        `Input` consumes printable keys before the pane binding can fire, and
+        rail widgets are not ItemsPane descendants, so this message can only
+        originate from the items region. Walks the same displayed sequence
+        `j`/`k` use, and hands the choice to `select_and_reveal` for the
+        same reason (selection, cursor, scroll and reader stay in step).
+
+        Args:
+            event: The pane-posted request; stopped here so it cannot
+                bubble further.
+        """
+        event.stop()
+        if self.active_section != "items":
+            return
+        try:
+            pane = self.query_one("#watchlists-items-pane", ItemsPane)
+        except NoMatches:
+            return
+        items = pane.displayed_items()
+        if not items:
+            return
+        current = self._selected_content_item
+        current_id = current.get("id") if current else None
+        start = -1
+        if current_id is not None:
+            for position, candidate in enumerate(items):
+                if candidate.get("id") == current_id:
+                    start = position
+                    break
+        for candidate in items[start + 1:]:
+            if str(candidate.get("status") or "").strip().lower() == "new":
+                pane.select_and_reveal(candidate)
+                return
+        notify = getattr(self.app_instance, "notify", None)
+        if callable(notify):
+            notify("All caught up.", severity="information")
+
+    def action_mark_all_read(self) -> None:
+        """`a`: catch the current scope up. Undoable with `u` (task-2513 Task 10)."""
+        if self._reader_verb_blocked():
+            return
+        self.run_worker(
+            self._mark_all_read_worker(), exclusive=True, group="wl-mark-all-read"
+        )
+
+    async def _mark_all_read_worker(self) -> None:
+        """The write half of `a`: one scoped bulk UPDATE, then a repaint.
+
+        Runs in a worker (DB write plus a badge refresh), mirroring every
+        other write handler on this screen. The in-place patch follows the
+        same contract as `_mark_item_read_on_open`'s `patch_item`: mutate
+        the cached dicts, repaint the visible cells, never recompose the
+        live table.
+        """
+        notify = getattr(self.app_instance, "notify", None)
+        ids = await self._controller.mark_all_read(
+            runtime_backend=self.runtime_backend, **self._items_scope_query()
+        )
+        if not ids:
+            if callable(notify):
+                notify("Nothing unread in this scope.")
+            return
+        self._last_mark_all_read_batch = [int(i) for i in ids]
+        id_set = set(self._last_mark_all_read_batch)
+        for item in self._loaded_items:
+            if item.get("item_id") in id_set:
+                item["status"] = "reviewed"
+        self._repaint_visible_status_cells()
+        self._request_tree_counts_refresh()
+        if callable(notify):
+            notify(f"Marked {len(ids)} read — press u to undo.")
+
+    def action_undo_mark_all_read(self) -> None:
+        """`u`: restore the most recent mark-all-read batch (task-2513 Task 10)."""
+        if self._reader_verb_blocked():
+            return
+        if not self._last_mark_all_read_batch:
+            notify = getattr(self.app_instance, "notify", None)
+            if callable(notify):
+                notify("Nothing to undo.")
+            return
+        self.run_worker(
+            self._undo_mark_all_read_worker(), exclusive=True, group="wl-mark-all-read"
+        )
+
+    async def _undo_mark_all_read_worker(self) -> None:
+        """The write half of `u`: put the batch back to new — except rows
+        the user has since moved on (ingested/ignored), which
+        `restore_items_new`'s `status = 'reviewed'` guard leaves alone."""
+        notify = getattr(self.app_instance, "notify", None)
+        batch = list(self._last_mark_all_read_batch)
+        try:
+            restored = await self._controller.restore_items_new(
+                runtime_backend=self.runtime_backend, item_ids=batch
+            )
+        except Exception:
+            # The batch is the user's ONLY undo handle: a transient DB
+            # failure must not consume it. Keep it so `u` can be retried
+            # (Qodo review, PR #1383).
+            logger.opt(exception=True).warning(
+                "Undo mark-all-read failed; batch kept for retry."
+            )
+            if callable(notify):
+                notify("Undo failed — press u to retry.", severity="error")
+            return
+        self._last_mark_all_read_batch = []
+        id_set = {int(i) for i in batch}
+        for item in self._loaded_items:
+            if item.get("item_id") in id_set and item.get("status") == "reviewed":
+                item["status"] = "new"
+        self._repaint_visible_status_cells()
+        self._request_tree_counts_refresh()
+        if callable(notify):
+            notify(f"Restored {restored} to unread.")
+
+    def _repaint_visible_status_cells(self) -> None:
+        """Repaint the Status column from the cached item dicts, in place.
+
+        Bulk verbs (`a`/`u`) patch `_loaded_items` without a recompose for
+        the same reason mark-read-on-open does (a recompose destroys the
+        live table); the visible cells then need the same single-cell
+        repaint path `_dispatch_item_status` uses per item. Rows not
+        currently rendered are skipped inside `update_item_status_cell`.
+        """
+        try:
+            pane = self.query_one("#watchlists-items-pane", ItemsPane)
+        except NoMatches:
+            return
+        for item in pane.displayed_items():
+            if item.get("id") is None or item.get("status") is None:
+                continue
+            pane.update_item_status_cell(item["id"], str(item["status"]))

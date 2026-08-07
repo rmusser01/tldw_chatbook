@@ -70,7 +70,10 @@ async def test_the_overview_shows_a_loading_state_while_the_request_is_in_flight
     async with host.run_test(size=(180, 50)) as pilot:
         await pilot.pause(0.3)
         screen = _active_destination_screen(host)
-        assert screen.active_section == "overview"
+        # The default section is Read since task-2513; the Overview pane
+        # lives behind its own tab now.
+        screen.active_section = "overview"
+        await pilot.pause(0.2)
         overview = screen.query_one("#watchlists-overview-pane", OverviewPane)
 
         assert overview.query("#overview-loading"), (
@@ -173,6 +176,10 @@ async def test_a_user_with_sources_never_flashes_first_run_copy():
     host = DestinationHarness(app, "watchlists_collections")
     async with host.run_test(size=(180, 50)) as pilot:
         screen = _active_destination_screen(host)
+        # The default section is Read since task-2513; the Overview pane
+        # lives behind its own tab now.
+        screen.active_section = "overview"
+        await pilot.pause(0.2)
         seen_first_run = False
         seen_cards = False
         for _ in range(120):

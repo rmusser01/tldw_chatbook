@@ -1037,6 +1037,10 @@ class SubscriptionsDB(BaseDB):
     # Sentinel bucket ids for the watchlists tree roots.
     UNASSIGNED_BUCKET = -1
     ALL_SOURCES_BUCKET = -2
+    # One bound parameter per id in the undo restore's IN-list, and
+    # `mark_all_read` batches are unbounded -- keep each chunk comfortably
+    # under SQLITE_MAX_VARIABLE_NUMBER (999 on older builds).
+    _RESTORE_ITEMS_CHUNK_SIZE = 500
 
     def get_watchlist_item_counts(self) -> Dict[int, Dict[str, int]]:
         """Item totals and unread counts for every watchlists tree node.
@@ -1060,8 +1064,9 @@ class SubscriptionsDB(BaseDB):
             ``-1`` is Unassigned (sources in no watchlist) and ``-2`` is All
             sources. Real watchlist ids are positive.
         """
-        rows = self.conn.execute(
-            """
+        with self.transaction() as conn:
+            rows = conn.execute(
+                """
             SELECT w.id AS bucket,
                    SUM(CASE WHEN si.id IS NOT NULL THEN 1 ELSE 0 END) AS total,
                    SUM(CASE WHEN si.status = 'new' THEN 1 ELSE 0 END) AS unread
@@ -1092,6 +1097,31 @@ class SubscriptionsDB(BaseDB):
         # No `if row[0] is not None` filter here: watchlists.id and
         # watchlist_sources.watchlist_id are NOT NULL, and both sentinels
         # bind non-null literals, so every row's bucket id is always non-null.
+        return {
+            row[0]: {"total": row[1] or 0, "unread": row[2] or 0}
+            for row in rows
+        }
+
+    def get_source_item_counts(self) -> Dict[int, Dict[str, int]]:
+        """Per-source item totals and unread counts, for rail badges.
+
+        One grouped query, mirroring `get_watchlist_item_counts`: adding
+        sources never adds round-trips. Sources with no items are absent
+        (a missing key renders as no badge, which is the honest state).
+
+        Returns:
+            Mapping of source id to ``{"total": int, "unread": int}``.
+        """
+        with self.transaction() as conn:
+            rows = conn.execute(
+                """
+            SELECT subscription_id,
+                   COUNT(id) AS total,
+                   SUM(CASE WHEN status = 'new' THEN 1 ELSE 0 END) AS unread
+            FROM subscription_items
+            GROUP BY subscription_id
+            """
+        ).fetchall()
         return {
             row[0]: {"total": row[1] or 0, "unread": row[2] or 0}
             for row in rows
@@ -1766,6 +1796,9 @@ class SubscriptionsDB(BaseDB):
         status: Optional[str] = "new",
         limit: int = 100,
         run_id: Optional[int] = None,
+        watchlist_id: Optional[int] = None,
+        unassigned_only: bool = False,
+        statuses: Optional[List[str]] = None,
     ) -> List[Dict[str, Any]]:
         """Items for a subscription (or all of them), newest first.
 
@@ -1783,6 +1816,12 @@ class SubscriptionsDB(BaseDB):
         untouched; only a caller that deliberately passes `None` sees the new
         behaviour.
 
+        TASK-2513 adds the rail's scope dimensions: `watchlist_id` and
+        `unassigned_only` filter by watchlist membership (independently of
+        every other predicate, and of each other), and `statuses` is the
+        multi-status form of `status` for a caller that wants more than one
+        bucket without wanting all of them.
+
         Args:
             subscription_id: Restrict to one subscription, or `None` for all.
             status: The single status to return, or `None` for every status.
@@ -1792,16 +1831,31 @@ class SubscriptionsDB(BaseDB):
                 exactly this question, and `subscription_items.run_id` has
                 carried the answer (with its own index) since the column was
                 added; nothing had ever queried it.
+            watchlist_id: Restrict to items whose subscription is a member of
+                this watchlist, or `None` to not scope by membership.
+            unassigned_only: Restrict to items whose subscription belongs to
+                no watchlist at all -- the rail's Unassigned bucket.
+            statuses: Several statuses to include, or `None` to defer to
+                `status`. Requires `status=None` (a caller wanting the unread
+                bucket by name passes `status="new"`, or names `"new"` in
+                `statuses`); passing both is rejected rather than silently
+                intersected.
 
         Returns:
             One dict per item row, joined to its subscription's name and type,
             ordered by `created_at` descending.
+
+        Raises:
+            ValueError: If both `status` and `statuses` are passed.
         """
-        # Built as predicate fragments rather than eight hand-written SELECTs:
-        # the three dimensions (subscription filter, status filter, run filter)
-        # are independent, and enumerating their product is how the "all
-        # statuses" case came to be missing in the first place. Values stay
-        # bound parameters -- only the fixed predicate TEXT is assembled here.
+        if status is not None and statuses is not None:
+            raise ValueError("Pass either status or statuses, not both.")
+        # Built as predicate fragments rather than hand-written SELECTs per
+        # combination: the dimensions (subscription filter, status filter,
+        # run filter, membership scope) are independent, and enumerating
+        # their product is how the "all statuses" case came to be missing in
+        # the first place. Values stay bound parameters -- only the fixed
+        # predicate TEXT is assembled here.
         predicates: List[str] = []
         params: List[Any] = []
         if subscription_id:
@@ -1813,6 +1867,19 @@ class SubscriptionsDB(BaseDB):
         if run_id is not None:
             predicates.append("i.run_id = ?")
             params.append(run_id)
+        if watchlist_id is not None:
+            predicates.append(
+                "i.subscription_id IN (SELECT subscription_id FROM watchlist_sources WHERE watchlist_id = ?)"
+            )
+            params.append(watchlist_id)
+        if unassigned_only:
+            predicates.append(
+                "NOT EXISTS (SELECT 1 FROM watchlist_sources ws WHERE ws.subscription_id = i.subscription_id)"
+            )
+        if statuses is not None:
+            placeholders = ", ".join("?" for _ in statuses)
+            predicates.append(f"i.status IN ({placeholders})")
+            params.extend(statuses)
         where_clause = f"WHERE {' AND '.join(predicates)}" if predicates else ""
         params.append(limit)
 
@@ -1948,6 +2015,84 @@ class SubscriptionsDB(BaseDB):
             )
 
             return cursor.rowcount > 0
+
+    def mark_all_read(
+        self,
+        subscription_id: Optional[int] = None,
+        watchlist_id: Optional[int] = None,
+        unassigned_only: bool = False,
+    ) -> List[int]:
+        """Mark every ``new`` item in scope ``reviewed``; return the affected ids.
+
+        One transactional UPDATE. Only ``new`` rows are touched —
+        ``reviewed``/``ingested``/``ignored``/``error`` all record deliberate
+        user actions and are never rewritten here (same rule
+        `persist_subscription_item`'s upsert follows, `item_persist.py:132-136`).
+        The returned ids are the undo batch for
+        `WatchlistsCollectionsScreen.action_undo_mark_all_read`.
+
+        Args:
+            subscription_id: Restrict to one source's items, or `None` for all.
+            watchlist_id: Restrict to items of the sources in one watchlist
+                (same sub-select `get_new_items` uses).
+            unassigned_only: Restrict to items of sources belonging to no
+                watchlist (same NOT EXISTS shape `get_new_items` uses).
+
+        Returns:
+            The ids of the rows moved to ``reviewed``.
+        """
+        predicates = ["status = 'new'"]
+        params: List[Any] = []
+        if subscription_id is not None:
+            predicates.append("subscription_id = ?")
+            params.append(subscription_id)
+        if watchlist_id is not None:
+            predicates.append(
+                "subscription_id IN (SELECT subscription_id FROM watchlist_sources WHERE watchlist_id = ?)"
+            )
+            params.append(watchlist_id)
+        if unassigned_only:
+            predicates.append(
+                "NOT EXISTS (SELECT 1 FROM watchlist_sources ws WHERE ws.subscription_id = subscription_items.subscription_id)"
+            )
+        with self.transaction() as conn:
+            rows = conn.execute(
+                f"UPDATE subscription_items SET status = 'reviewed' WHERE {' AND '.join(predicates)} RETURNING id",
+                tuple(params),
+            ).fetchall()
+        return [row[0] for row in rows]
+
+    def restore_items_new(self, item_ids: List[int]) -> int:
+        """Move the given ids back to ``new`` — but only ones still ``reviewed``.
+
+        The undo half of `mark_all_read`. The ``status = 'reviewed'`` guard
+        means an item the user has since ingested or ignored is not yanked
+        back to unread.
+
+        Args:
+            item_ids: The undo batch `mark_all_read` returned.
+
+        Returns:
+            How many rows were actually restored.
+        """
+        if not item_ids:
+            return 0
+        # Chunked (Qodo review, PR #1383): the IN-list binds one parameter
+        # per id and `mark_all_read` batches are unbounded, so a single
+        # statement could exceed SQLite's host-parameter limit. One
+        # transaction still wraps every chunk, so a mid-batch failure
+        # rolls the whole restore back.
+        restored = 0
+        with self.transaction() as conn:
+            for offset in range(0, len(item_ids), self._RESTORE_ITEMS_CHUNK_SIZE):
+                chunk = item_ids[offset : offset + self._RESTORE_ITEMS_CHUNK_SIZE]
+                placeholders = ", ".join("?" for _ in chunk)
+                cursor = conn.execute(
+                    f"UPDATE subscription_items SET status = 'new' WHERE id IN ({placeholders}) AND status = 'reviewed'",
+                    tuple(chunk),
+                )
+                restored += cursor.rowcount
+        return restored
 
     # --- Briefings (spec #2 phase 1) ---
 

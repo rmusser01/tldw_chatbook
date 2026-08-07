@@ -12,8 +12,22 @@ def test_default_layout_has_everything_visible():
     assert layout.collapsed == frozenset()
     assert layout.solo_region is None
     assert layout.visible() == (
-        Region.LEFT_RAIL, Region.FEEDS, Region.ITEMS, Region.CONTENT, Region.RIGHT_RAIL,
+        Region.LEFT_RAIL, Region.ITEMS, Region.CONTENT, Region.RIGHT_RAIL,
     )
+
+
+def test_the_centre_regions_are_items_and_content():
+    # Reader-first IA (task-2513): the FEEDS region is gone; the centre
+    # stack is the items list over the reader, nothing else.
+    assert CENTRE_REGIONS == (Region.ITEMS, Region.CONTENT)
+
+
+def test_feeds_is_no_longer_a_region():
+    # Persisted "feeds" collapse strings from before the removal are dropped
+    # by `region_layout_store.load_region_layout`'s unknown-region guard
+    # (ADR-042) — which only works because this lookup raises.
+    with pytest.raises(ValueError):
+        Region("feeds")
 
 
 def test_toggle_collapses_then_expands():
@@ -44,7 +58,6 @@ def test_solo_collapses_the_other_centre_regions_only():
     layout = RegionLayout().solo(Region.ITEMS)
     assert layout.solo_region == Region.ITEMS
     assert not layout.is_collapsed(Region.ITEMS)
-    assert layout.is_collapsed(Region.FEEDS)
     assert layout.is_collapsed(Region.CONTENT)
     # Rails are untouched by solo.
     assert not layout.is_collapsed(Region.LEFT_RAIL)
@@ -52,7 +65,7 @@ def test_solo_collapses_the_other_centre_regions_only():
 
 
 def test_solo_twice_restores_the_prior_layout():
-    before = RegionLayout().toggle(Region.FEEDS).toggle(Region.LEFT_RAIL)
+    before = RegionLayout().toggle(Region.CONTENT).toggle(Region.LEFT_RAIL)
     after = before.solo(Region.ITEMS).solo(Region.ITEMS)
     assert after.collapsed == before.collapsed
     assert after.solo_region is None
@@ -71,9 +84,9 @@ def test_solo_on_a_different_region_re_solos_without_stacking():
 
 def test_manual_toggle_while_soloed_clears_solo():
     # Otherwise a later Z would "restore" a layout the user has since edited by hand.
-    layout = RegionLayout().solo(Region.ITEMS).toggle(Region.FEEDS)
+    layout = RegionLayout().solo(Region.ITEMS).toggle(Region.CONTENT)
     assert layout.solo_region is None
-    assert not layout.is_collapsed(Region.FEEDS)
+    assert not layout.is_collapsed(Region.CONTENT)
 
 
 def test_solo_rejects_rails():
@@ -81,7 +94,7 @@ def test_solo_rejects_rails():
         RegionLayout().solo(Region.LEFT_RAIL)
 
 
-def test_all_three_centre_regions_may_collapse_at_once():
+def test_all_centre_regions_may_collapse_at_once():
     # Legal: each collapses to a one-line header that stays clickable, so this is recoverable.
     layout = RegionLayout()
     for region in CENTRE_REGIONS:

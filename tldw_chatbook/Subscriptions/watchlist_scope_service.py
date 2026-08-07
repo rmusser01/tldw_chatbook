@@ -221,6 +221,9 @@ class WatchlistScopeService:
         limit: int = 100,
         offset: int = 0,
         run_id: Any = None,
+        watchlist_id: Any = None,
+        unassigned_only: bool = False,
+        statuses: list[str] | None = None,
     ) -> list[dict[str, Any]]:
         """List content items for watchlist sources.
 
@@ -234,6 +237,12 @@ class WatchlistScopeService:
             run_id: Optional run whose items to return (TASK-2306). Routed as
                 ``items.list`` like every other item read: it narrows which
                 items come back, it does not read the run record.
+            watchlist_id: Optional watchlist whose sources' items to return
+                (TASK-2513).
+            unassigned_only: When true, return only items of sources in no
+                watchlist (TASK-2513).
+            statuses: Optional list of statuses to match any of (TASK-2513);
+                combine only with a falsey ``status``.
 
         Returns:
             List of normalized watchlist item dicts.
@@ -254,6 +263,9 @@ class WatchlistScopeService:
                 limit=limit,
                 offset=offset,
                 run_id=run_id,
+                watchlist_id=watchlist_id,
+                unassigned_only=unassigned_only,
+                statuses=statuses,
             )
         )
 
@@ -340,6 +352,92 @@ class WatchlistScopeService:
             service.update_item(
                 item_id=self._source_id_from_item_id(item_id), status=status
             )
+        )
+
+    async def mark_all_read(
+        self,
+        *,
+        runtime_backend: WatchlistBackend | str | None = None,
+        source_id: Any = None,
+        watchlist_id: Any = None,
+        unassigned_only: bool = False,
+    ) -> list[int]:
+        """Mark every ``new`` item in scope ``reviewed``; return the affected ids.
+
+        The reader's mark-all-read affordance (TASK-2513). Routed as
+        ``items.update`` like `update_item`: it is the same write, batched.
+        The returned ids are the undo batch for `restore_items_new`.
+
+        Args:
+            runtime_backend: Target backend (``local`` or ``server``).
+            source_id: Restrict to one source, or `None` for all. Forwarded
+                bare, exactly as `list_items` forwards its `source_id`.
+            watchlist_id: Restrict to items of the sources in one watchlist.
+            unassigned_only: Restrict to items of sources in no watchlist.
+
+        Returns:
+            The local row ids moved to ``reviewed``.
+
+        Raises:
+            ValueError: If the server backend is requested; item writes are
+                local-only, mirroring `update_item` -- the server API carries
+                no item-status route.
+        """
+        backend = self._normalize_backend(runtime_backend)
+        self._enforce_policy(backend, "items.update")
+        if backend == WatchlistBackend.SERVER:
+            raise ValueError(
+                "Item status updates are only supported for the local backend "
+                "in this slice."
+            )
+        service = self._service_for_backend(backend)
+        result = await self._maybe_await(
+            service.mark_all_read(
+                source_id=source_id,
+                watchlist_id=watchlist_id,
+                unassigned_only=unassigned_only,
+            )
+        )
+        return [int(item_id) for item_id in list(result or [])]
+
+    async def restore_items_new(
+        self,
+        *,
+        runtime_backend: WatchlistBackend | str | None = None,
+        item_ids: list[Any],
+    ) -> int:
+        """Move the given ids back to ``new`` — the undo half of `mark_all_read`.
+
+        Only rows still ``reviewed`` are restored, so an item the user has
+        since ingested or ignored keeps its status.
+
+        Args:
+            runtime_backend: Target backend (``local`` or ``server``).
+            item_ids: Item identifiers, namespaced
+                (``local:watchlist_item:2``) or bare — the batch
+                `mark_all_read` returned.
+
+        Returns:
+            How many rows were actually restored.
+
+        Raises:
+            ValueError: If the server backend is requested; item writes are
+                local-only, mirroring `update_item` -- the server API carries
+                no item-status route.
+        """
+        backend = self._normalize_backend(runtime_backend)
+        self._enforce_policy(backend, "items.update")
+        if backend == WatchlistBackend.SERVER:
+            raise ValueError(
+                "Item status updates are only supported for the local backend "
+                "in this slice."
+            )
+        service = self._service_for_backend(backend)
+        row_ids = [
+            self._source_id_from_item_id(item_id) for item_id in item_ids or []
+        ]
+        return int(
+            await self._maybe_await(service.restore_items_new(item_ids=row_ids))
         )
 
     async def get_watch_item_detail(

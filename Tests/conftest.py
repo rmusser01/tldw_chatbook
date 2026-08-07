@@ -737,6 +737,27 @@ def isolate_test_environment(monkeypatch, tmp_path):
     if ii is not None:
         monkeypatch.setattr(ii, "_first_run_import_attempted", True, raising=False)
 
+    # Pre-expand the Watchlists workbench's right rail (the Inspector) for
+    # screen-level tests. task-2513 (reader-first Phase 1) changed the
+    # first-run default so a genuinely new user's RIGHT_RAIL starts collapsed
+    # (`region_layout_store._FIRST_RUN_DEFAULT`), and every watchlists screen
+    # test written before that change mounts the screen with the per-test
+    # sandbox's empty config -- i.e. as a "genuinely new user" -- while
+    # asserting against panes (above all `#watchlists-entity-inspector`) that
+    # a collapsed rail leaves unmounted. Those tests exercise inspector/tree/
+    # pane behaviour, not the layout default, so the screen's loader symbol
+    # is patched back to the old all-expanded default here. Same sys.modules
+    # guard as the RAG flag above: the patch only applies when some
+    # already-collected test imported the screen module, so this never drags
+    # the screen stack into an unrelated run. Tests that DO care about the
+    # loader monkeypatch this same symbol themselves (e.g.
+    # test_persisted_layout_is_applied_on_mount, which overrides this patch),
+    # and the default itself is pinned at the store level by
+    # Tests/Watchlists/test_region_layout_store.py.
+    wcs = sys.modules.get("tldw_chatbook.UI.Screens.watchlists_collections_screen")
+    if wcs is not None:
+        monkeypatch.setattr(wcs, "load_region_layout", lambda: wcs.RegionLayout())
+
     yield test_data_dir
 
     if config is not None:

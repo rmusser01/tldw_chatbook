@@ -1,12 +1,17 @@
-"""Collapse and solo state for the Watchlists workbench's five regions.
+"""Collapse and solo state for the Watchlists workbench's four regions.
 
 Pure state: no Textual import, no I/O. The screen's fiddliest interaction —
-five independently collapsible regions plus a solo/restore toggle — lives
+four independently collapsible regions plus a solo/restore toggle — lives
 here so it can be tested without a Textual pilot.
 
 Every mutator returns a new instance; the type is frozen and hashable, so a
 Textual reactive can hold it and equality comparison decides whether to
 re-render.
+
+The FEEDS region was removed in task-2513 (reader-first IA, ADR-042) with no
+migration code: a persisted ``"feeds"`` string from before the removal is an
+unknown region name now, dropped with a debug log by
+`region_layout_store.load_region_layout`'s existing guard.
 """
 
 from __future__ import annotations
@@ -19,7 +24,6 @@ class Region(str, Enum):
     """One collapsible region of the Watchlists workbench."""
 
     LEFT_RAIL = "left_rail"
-    FEEDS = "feeds"
     ITEMS = "items"
     CONTENT = "content"
     RIGHT_RAIL = "right_rail"
@@ -28,14 +32,13 @@ class Region(str, Enum):
 #: Display order, left rail through right rail.
 REGION_ORDER: tuple[Region, ...] = (
     Region.LEFT_RAIL,
-    Region.FEEDS,
     Region.ITEMS,
     Region.CONTENT,
     Region.RIGHT_RAIL,
 )
 
 #: The vertically stacked centre panes. Only these may be soloed.
-CENTRE_REGIONS: tuple[Region, ...] = (Region.FEEDS, Region.ITEMS, Region.CONTENT)
+CENTRE_REGIONS: tuple[Region, ...] = (Region.ITEMS, Region.CONTENT)
 
 
 @dataclass(frozen=True)

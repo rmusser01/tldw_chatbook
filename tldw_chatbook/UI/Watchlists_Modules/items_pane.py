@@ -30,6 +30,19 @@ class RefreshItemsRequested(Message):
     """Posted when the user requests a refresh of the items list."""
 
 
+class NextUnreadRequested(Message):
+    """Posted when the user asks for the next unread item (`space`).
+
+    Pane-bound rather than screen-bound (task-2513 Task 10): the rail's
+    `WatchlistTree` is made of `Button`s, so a SCREEN-level `space` binding
+    would fire while the rail has focus and hijack it. Bound here, the key
+    exists only while focus is inside the items region — `Input` consumes
+    printable keys first (typing spaces in the search box stays typing),
+    and `DataTable` has no `space` binding, so space with the table focused
+    bubbles up to the pane.
+    """
+
+
 class ItemsFilterChanged(Message):
     """Posted whenever the status filter or the search query changes.
 
@@ -52,6 +65,8 @@ class ItemsFilterChanged(Message):
 
 class ItemsPane(RecomposeCaptureGuard, Vertical):
     """Content item list and filter for watchlists."""
+
+    BINDINGS = [("space", "next_unread", "Next unread")]
 
     #: Spec #2 phase 1. A plain, app-controlled glyph -- never item-derived
     #: text -- so the pre-existing M6 note ("`DataTable` cells markup-parse
@@ -156,7 +171,12 @@ class ItemsPane(RecomposeCaptureGuard, Vertical):
         than recomposing (a recompose destroys the live table and drops focus).
         """
         with Horizontal(id="items-toolbar", classes="destination-filter-strip"):
-            yield Button("Refresh", id="items-refresh-button", variant="primary")
+            yield Button(
+                "Refresh",
+                id="items-refresh-button",
+                variant="primary",
+                tooltip="Reload the items list.",
+            )
             # TASK-995: same one-row-strip/three-row-child clipping the
             # Sources toolbar had -- `.destination-filter-strip` is
             # `height: 1`. See `sources_pane.compose()` for the full note.
@@ -164,6 +184,16 @@ class ItemsPane(RecomposeCaptureGuard, Vertical):
                 placeholder="Search items...",
                 id="items-search-input",
                 value=self.search_query,
+                # `select_on_focus=False` is load-bearing, not taste. This
+                # pane recomposes on every keystroke (`search_query` is
+                # `reactive(..., recompose=True)`) and `recompose()` restores
+                # focus to the fresh input; with Textual's default
+                # `select_on_focus=True` that programmatic focus selects ALL
+                # the text, so the next keystroke REPLACES the query instead
+                # of appending to it ("f", space, "o" ended as "o"). A
+                # search-as-you-type box wants caret-at-end on refocus, which
+                # `_restore_search_focus` then supplies.
+                select_on_focus=False,
                 compact=True,
             )
             # TASK-2310: a visible "Status" label ahead of the filter Select
@@ -277,6 +307,53 @@ class ItemsPane(RecomposeCaptureGuard, Vertical):
 
     def watch_search_query(self, search_query: str) -> None:
         self._post_filter_changed()
+
+    async def recompose(self) -> None:
+        """Preserve search-box focus across the recompose that typing triggers.
+
+        `search_query` is `reactive(..., recompose=True)`, so EVERY keystroke
+        in `#items-search-input` tears the whole pane down and rebuilds it --
+        and the focused input goes with it (`Widget.recompose()` removes all
+        children; Textual has no focus preservation). The user-visible
+        symptom was that only the first character of a search ever landed in
+        the box: the rest fell through to the table, where they fired the
+        reader verb keys. Textual schedules the teardown via
+        `call_next(_check_recompose)`, so a `call_after_refresh` from the
+        watcher can fire BEFORE the rebuild and refocus a doomed widget --
+        the only ordering-proof place to restore focus is here, after the
+        teardown's `await` completes. Capture WHO was focused before the
+        teardown (not a "was typing" flag: with two fast keystrokes the
+        second recompose would already have consumed a one-shot flag and
+        dropped focus again), and restore it to the fresh input afterwards.
+        Any focus other than the search box is left exactly as Textual
+        leaves it, so programmatic rebuilds never steal focus.
+
+        `self.screen.focused`, NOT `self.app.focused`: `App.focused` goes
+        through `App.screen`, which RAISES `ScreenStackError` while the app
+        stack is transiently empty (a mode switch, startup, teardown), and
+        raising here would abort the rebuild mid-flight. `DOMNode.screen`
+        walks this widget's own ancestors instead -- the same guarded
+        accessor `SourcesPane._focused_create_field_id` uses (TASK-1345).
+        """
+        try:
+            focused = self.screen.focused if self.is_mounted else None
+        except Exception:
+            focused = None
+        refocus_search = focused is not None and focused.id == "items-search-input"
+        await super().recompose()
+        if refocus_search and self.is_running:
+            # The fresh input is mounted by `super().recompose()`'s
+            # `mount_all`; deferring one refresh lets it finish `on_mount`.
+            self.call_after_refresh(self._restore_search_focus)
+
+    def _restore_search_focus(self) -> None:
+        """Focus the freshly recomposed search input, caret at end of query."""
+        try:
+            search = self.query_one("#items-search-input", Input)
+        except NoMatches:
+            return
+        search.focus()
+        search.cursor_position = len(search.value)
 
     def _post_filter_changed(self) -> None:
         """Mirror the filter state to the screen so a rebuild can restore it.
@@ -464,3 +541,7 @@ class ItemsPane(RecomposeCaptureGuard, Vertical):
     def watch_selected_item(self, item: dict[str, Any] | None) -> None:
         if self.is_mounted:
             self.post_message(ItemSelected(item))
+
+    def action_next_unread(self) -> None:
+        """`space`: ask the screen to open the next unread item."""
+        self.post_message(NextUnreadRequested())
