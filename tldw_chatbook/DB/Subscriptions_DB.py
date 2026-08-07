@@ -1799,6 +1799,7 @@ class SubscriptionsDB(BaseDB):
         watchlist_id: Optional[int] = None,
         unassigned_only: bool = False,
         statuses: Optional[List[str]] = None,
+        is_flagged: Optional[bool] = None,
     ) -> List[Dict[str, Any]]:
         """Items for a subscription (or all of them), newest first.
 
@@ -1840,6 +1841,10 @@ class SubscriptionsDB(BaseDB):
                 bucket by name passes `status="new"`, or names `"new"` in
                 `statuses`); passing both is rejected rather than silently
                 intersected.
+            is_flagged: Restrict to starred rows (`True`) or unstarred rows
+                (`False`), or `None` to not filter by the flag at all
+                (TASK-3072 -- the Starred feed's page). Composes with every
+                other predicate, the same as the membership scopes.
 
         Returns:
             One dict per item row, joined to its subscription's name and type,
@@ -1880,6 +1885,9 @@ class SubscriptionsDB(BaseDB):
             placeholders = ", ".join("?" for _ in statuses)
             predicates.append(f"i.status IN ({placeholders})")
             params.extend(statuses)
+        if is_flagged is not None:
+            predicates.append("i.is_flagged = ?")
+            params.append(1 if is_flagged else 0)
         where_clause = f"WHERE {' AND '.join(predicates)}" if predicates else ""
         params.append(limit)
 
@@ -2115,6 +2123,38 @@ class SubscriptionsDB(BaseDB):
                 "UPDATE subscription_items SET queued_for_briefing = ? WHERE id = ?",
                 (1 if queued else 0, item_id),
             )
+
+    def set_item_flagged(self, item_id: int, flagged: bool) -> None:
+        """Set or clear the global "starred" flag on one item (TASK-3072).
+
+        Same shape and same global semantics as `set_item_briefing_queued`:
+        one row, one flag -- an item starred through any scope reads starred
+        in all of them, and nothing but this explicit call changes it.
+        `persist_subscription_item` never writes the column, so the flag
+        survives re-fetches (pinned in
+        `Tests/DB/test_subscriptions_db_watchlists.py`).
+
+        Args:
+            item_id: `subscription_items.id` to update.
+            flagged: `True` to star the item, `False` to unstar it.
+        """
+        with self.transaction() as conn:
+            conn.execute(
+                "UPDATE subscription_items SET is_flagged = ? WHERE id = ?",
+                (1 if flagged else 0, item_id),
+            )
+
+    def get_flagged_items_count(self) -> int:
+        """How many items are starred, across every source and status.
+
+        The Starred rail node's badge (TASK-3072). Status-agnostic on
+        purpose: starring is orthogonal to triage, and a badge that shrank
+        as the user read their starred items would read as data loss.
+        """
+        row = self.conn.execute(
+            "SELECT COUNT(*) FROM subscription_items WHERE is_flagged = 1"
+        ).fetchone()
+        return int(row[0]) if row else 0
 
     def insert_briefing(self, watchlist_id: int, status: str = "generating") -> int:
         """Create a new `briefings` row for a watchlist.

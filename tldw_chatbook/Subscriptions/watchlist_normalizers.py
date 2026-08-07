@@ -590,6 +590,8 @@ def normalize_watchlist_item(source: str, row: Mapping[str, Any]) -> dict[str, A
         # column -- coerce SQLite's 0/1 to an actual bool, or every
         # downstream consumer sees a truthy int instead of a real flag.
         "queued_for_briefing": bool(row.get("queued_for_briefing")),
+        # task-3072: same column-present/bool-coercion shape for the star.
+        "is_flagged": bool(row.get("is_flagged")),
         # `canonical_url` is deliberately NOT re-exported as its own key: it
         # is already folded into `url` two lines above (`row.get("url") or
         # row.get("canonical_url")`), and a second copy under a second name

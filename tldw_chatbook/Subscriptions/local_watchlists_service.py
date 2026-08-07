@@ -363,6 +363,7 @@ class LocalWatchlistsService:
         watchlist_id: Any = None,
         unassigned_only: bool = False,
         statuses: list[str] | None = None,
+        is_flagged: bool | None = None,
     ) -> list[dict[str, Any]]:
         """List watchlist items from the local subscriptions database.
 
@@ -404,6 +405,9 @@ class LocalWatchlistsService:
                 `None` to defer to `status`. Safe to combine with the default
                 falsey `status` only -- `get_new_items` rejects passing both
                 a truthy `status` and `statuses`.
+            is_flagged: Restrict to starred rows (`True`) or unstarred rows
+                (`False`), or `None` -- the default -- to not filter by the
+                flag at all (TASK-3072).
 
         Returns:
             Normalized item dicts for the requested window.
@@ -420,6 +424,7 @@ class LocalWatchlistsService:
             watchlist_id=int(watchlist_id) if watchlist_id is not None else None,
             unassigned_only=bool(unassigned_only),
             statuses=list(statuses) if statuses is not None else None,
+            is_flagged=is_flagged,
         )
         normalized = [normalize_watchlist_item("local", row) for row in rows]
         return normalized[int(offset) : int(offset) + int(limit)]

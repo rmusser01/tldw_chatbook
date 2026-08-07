@@ -14,6 +14,10 @@ class FakeLocalWatchlists:
         self.calls.append(("list_sources", kwargs))
         return [{"id": "local:subscription:1", "backend": "local"}]
 
+    async def list_items(self, **kwargs):
+        self.calls.append(("list_items", kwargs))
+        return []
+
     async def get_source(self, source_id):
         self.calls.append(("get_source", source_id))
         return {"id": f"local:subscription:{source_id}", "backend": "local"}
@@ -622,3 +626,25 @@ async def test_a_cancelled_check_produces_exactly_one_notification_not_two(tmp_p
         "the run itself must still reach a terminal state (this is C1's "
         "own guarantee, re-checked here as the test's precondition)"
     )
+
+
+async def test_scope_service_forwards_is_flagged_to_local_list_items():
+    """task-3072: the Starred feed's scope reaches the local backend.
+
+    The scope service names its `list_items` filters explicitly (the
+    TASK-2513 threading), so a new one is only real once it is forwarded --
+    this pins the passthrough the screen's `{"is_flagged": True}` scope
+    mapping relies on.
+    """
+    local = FakeLocalWatchlists()
+    scope = WatchlistScopeService(
+        local_service=local,
+        server_service=FakeServerWatchlists(),
+        policy_enforcer=Mock(),
+    )
+
+    await scope.list_items(runtime_backend="local", is_flagged=True)
+
+    list_calls = [call for call in local.calls if call[0] == "list_items"]
+    assert len(list_calls) == 1
+    assert list_calls[0][1]["is_flagged"] is True
