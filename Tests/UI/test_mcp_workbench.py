@@ -8347,3 +8347,99 @@ async def test_stale_server_key_action_under_local_source_is_harmless():
             f"Expected 2 'Managed on the server.' toasts, got {len(managed_toasts)}: "
             f"{notifications!r}"
         )
+
+
+# -- task-2838: local agent tool catalog in the Hub -----------------------------
+
+_LOCAL_AGENT_TOOL_NAMES = {
+    "fs_list", "fs_read", "fs_write", "fs_edit", "fs_patch", "fs_glob",
+    "fs_grep", "git_status", "git_diff", "git_log", "git_blame",
+    "git_branches", "web_fetch", "web_search", "web_crawl",
+}
+
+
+def _enable_local_tools(monkeypatch):
+    """Flip the workbench's `[console] local_tools_enabled` read on, leaving
+    every other config key routed to the real `get_cli_setting`."""
+    original = mcp_workbench_module.get_cli_setting
+
+    def _patched(section, key, default=None):
+        if section == "console" and key == "local_tools_enabled":
+            return True
+        return original(section, key, default)
+
+    monkeypatch.setattr(mcp_workbench_module, "get_cli_setting", _patched)
+
+
+@pytest.mark.asyncio
+async def test_tools_catalog_includes_local_agent_tools_as_own_group(monkeypatch):
+    _enable_local_tools(monkeypatch)
+    app = WorkbenchApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        await workbench._sync_children()
+
+        local = [
+            t for t in workbench._last_hub_tools
+            if t.server_key == "local:__local__"
+        ]
+        names = {t.name for t in local}
+        assert _LOCAL_AGENT_TOOL_NAMES <= names
+        # Console-session-scoped: no todo_store at the catalog layer.
+        assert "todo_write" not in names
+        # One coherent group, honestly non-executable until Hub-side
+        # execution is wired (inspector renders "not_executable" from this).
+        assert all(t.server_label == "Local workspace" for t in local)
+        assert all(t.source == "local" for t in local)
+        assert all(t.executable is False for t in local)
+        assert all(t.stale is False for t in local)
+        # Schemas and risk tags ride along for the inspector and the
+        # permission risk floor.
+        assert all(t.input_schema for t in local)
+        assert {t.name: t.tags for t in local}["fs_write"] == ("mutates",)
+        # The pre-existing sources are untouched: the fake's "docs" profile
+        # tool still lists under its own key.
+        assert any(
+            t.server_key == "local:docs" for t in workbench._last_hub_tools
+        )
+
+
+@pytest.mark.asyncio
+async def test_local_agent_group_absent_when_master_flag_off():
+    # Default posture: `[console] local_tools_enabled` defaults False, so the
+    # management surface does not advertise the workspace tool set either.
+    app = WorkbenchApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        await workbench._sync_children()
+        assert [
+            t for t in workbench._last_hub_tools
+            if t.server_key == "local:__local__"
+        ] == []
+
+
+@pytest.mark.asyncio
+async def test_local_agent_catalog_failure_degrades_to_no_local_group(monkeypatch):
+    _enable_local_tools(monkeypatch)
+
+    def _boom(*args, **kwargs):
+        raise RuntimeError("provider construction exploded")
+
+    monkeypatch.setattr(mcp_workbench_module, "LocalToolProvider", _boom)
+    app = WorkbenchApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        await workbench._sync_children()
+
+        # The local group is simply absent...
+        assert [
+            t for t in workbench._last_hub_tools
+            if t.server_key == "local:__local__"
+        ] == []
+        # ...and the rest of the catalog was neither broken nor emptied.
+        assert any(
+            t.server_key == "local:docs" for t in workbench._last_hub_tools
+        )

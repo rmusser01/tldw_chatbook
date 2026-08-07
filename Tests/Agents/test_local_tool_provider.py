@@ -56,6 +56,37 @@ def test_catalog_lists_fs_read_with_paging_params(tmp_path):
     assert p.hub_tool_for("fs_read").tags == ()  # read-only: no risk tags
 
 
+def test_hub_tools_lists_every_spec_under_the_local_server_key(tmp_path):
+    p = make_provider(root=tmp_path)
+    hubs = p.hub_tools()
+    assert [h.name for h in hubs] == [
+        "fs_list", "fs_read", "fs_write", "fs_edit",
+        "fs_patch", "fs_glob", "fs_grep",
+        "git_status", "git_diff", "git_log",
+        "git_blame", "git_branches",
+        "web_fetch", "web_search", "web_crawl",
+    ]
+    for hub in hubs:
+        assert hub.server_key == "local:__local__"
+        assert hub.server_label == "Local workspace"
+        assert hub.source == "local"
+        assert hub.stale is False
+        assert hub.executable is True  # provider view stays invocation-capable
+        assert hub.input_schema  # every spec ships a parameters schema
+    # risk tags ride along so the permission risk floor sees them hub-side
+    assert {h.name: h.tags for h in hubs}["fs_write"] == ("mutates",)
+
+
+def test_hub_tools_omits_todo_write_without_a_todo_store(tmp_path):
+    p = make_provider(root=tmp_path)  # no todo_store injected
+    assert "todo_write" not in [h.name for h in p.hub_tools()]
+
+
+def test_hub_tools_includes_todo_write_when_a_todo_store_exists(tmp_path):
+    p = make_provider(root=tmp_path, todo_store=[])
+    assert "todo_write" in [h.name for h in p.hub_tools()]
+
+
 def test_fs_write_spec_carries_mutates_tag(tmp_path):
     p = make_provider(root=tmp_path)
     schema = p.load_schema("local:fs_write")
