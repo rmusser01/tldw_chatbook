@@ -158,6 +158,10 @@ def test_options_persist_to_config(monkeypatch):
         preflight_checking=False,
     )
     screen._cancel_library_ingest_preflight = lambda: None
+    # Seeded by ``__init__`` (bypassed by ``__new__``); ``_do_submit_ingest``
+    # bumps it to invalidate in-flight pre-flights (stale-helper repair,
+    # task-3300).
+    screen._library_ingest_preflight_generation = 0
     screen.refresh = lambda **_kwargs: None
 
     library_screen_module.LibraryScreen._do_submit_ingest(screen, "doc.pdf")

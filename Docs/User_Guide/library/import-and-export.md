@@ -90,10 +90,11 @@ the rest of the session.
 | "Clear finished" | Removes all done and failed rows at once. |
 
 The guardrail dialog — "Some files may fail to import:" — lists each
-problem as "- <package> (N files): <what needs it>" with a
-"Copy install command" button per line, then "Cancel" and
-"Start import anyway". Starting anyway is safe: affected files simply fail
-individually and show up as ✗ rows you can retry after installing.
+problem as "- <package> (N files): <what needs it>" ("1 file" when only
+one is affected) with a "Copy install command" button per line, then
+"Cancel" and "Start import anyway". Starting anyway is safe: affected
+files simply fail individually and show up as ✗ rows you can retry after
+installing.
 
 | Export control | What it does |
 |---|---|
@@ -195,3 +196,10 @@ the Export button's disabled state now always carries an explaining
 tooltip, and a successful export leaves the durable "Last export: …"
 line described above — previously an empty-scope/no-destination press
 had no tooltip and a successful export left the canvas unchanged)*
+
+*Verified against dev @ 023a04a48 — 2026-08-07 (task-3300: the "Some
+files may fail to import:" dialog now renders every warning line and its
+"Copy install command" button in a compact themed dialog — previously the
+warning rows collapsed to an empty full-height column; counts read
+"1 file" / "N files"; "Start import anyway" fits on one line; Cancel is
+no longer styled red)*

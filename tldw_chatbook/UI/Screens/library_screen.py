@@ -1214,13 +1214,24 @@ class IngestGuardrailModal(ModalScreen[bool]):
     #ingest-guardrail-modal {
         width: 60;
         height: auto;
-        border: tall gray;
-        background: black;
+        max-height: 90%;
+        border: thick $primary;
+        background: $surface;
         padding: 1 2;
     }
 
+    /* task-3300: a bare ``Vertical()`` defaults to ``height: 1fr``, which
+       inside this ``height: auto`` modal starved every warning Static to
+       zero rendered height (the DESIGN.md section 7 "bare Container starving
+       its sibling" defect -- live capture showed an empty full-height
+       column). Each warning block must hug its content. */
+    .ingest-guardrail-warning {
+        height: auto;
+        margin-top: 1;
+    }
+
     #ingest-guardrail-actions {
-        height: 3;
+        height: auto;
         min-height: 3;
         margin: 1 0 0 0;
         align-horizontal: right;
@@ -1228,10 +1239,11 @@ class IngestGuardrailModal(ModalScreen[bool]):
 
     #ingest-guardrail-cancel,
     #ingest-guardrail-confirm {
-        width: 14;
-        min-width: 14;
+        width: auto;
+        min-width: 10;
         height: 3;
         min-height: 3;
+        margin-left: 1;
     }
     """
 
@@ -1247,8 +1259,9 @@ class IngestGuardrailModal(ModalScreen[bool]):
             yield Static("Some files may fail to import:")
             for i, w in enumerate(self.warnings):
                 count = self.affected_counts.get(w["feature"], 0)
-                with Vertical():
-                    yield Static(f"- {w['label']} ({count} files): {w['hint']}")
+                files_word = "file" if count == 1 else "files"
+                with Vertical(classes="ingest-guardrail-warning"):
+                    yield Static(f"- {w['label']} ({count} {files_word}): {w['hint']}")
                     if w.get("command"):
                         yield Button(
                             "Copy install command",
@@ -1256,7 +1269,9 @@ class IngestGuardrailModal(ModalScreen[bool]):
                             classes="copy-command",
                         )
             with Horizontal(id="ingest-guardrail-actions"):
-                yield Button("Cancel", id="ingest-guardrail-cancel", variant="error")
+                # Cancel is the safe action -- repo convention keeps it
+                # ``default``; the confirm carries the emphasis (task-3300).
+                yield Button("Cancel", id="ingest-guardrail-cancel", variant="default")
                 yield Button(
                     "Start import anyway",
                     id="ingest-guardrail-confirm",

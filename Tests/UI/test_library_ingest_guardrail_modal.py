@@ -147,6 +147,150 @@ async def test_guardrail_modal_renders_warning_details(sample_warnings, sample_c
         assert any("OCR document extraction (3 files):" in label for label in labels)
 
 
+# ---------------------------------------------------------------------------
+# task-3300: rendered-geometry regression tests. The modal's per-warning rows
+# sat in bare ``Vertical()`` wrappers whose default ``height: 1fr`` inside the
+# ``height: auto`` modal starved every Static to zero rendered height (live
+# capture: an empty full-height column). These tests assert on *rendered
+# regions*, not the DOM, so they are RED on the pre-fix CSS.
+# ---------------------------------------------------------------------------
+
+
+def _warning(feature: str, label: str, command: str | None = None) -> dict:
+    w = {"feature": feature, "label": label, "hint": f"Install {feature}."}
+    if command:
+        w["command"] = command
+    return w
+
+
+async def _mount_modal(app: GuardrailApp, pilot, warnings, counts):
+    modal = IngestGuardrailModal(warnings, counts)
+    await app.push_screen(modal)
+    await pilot.pause()
+    return modal
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("warning_count", [1, 3])
+async def test_guardrail_modal_warnings_render_in_compact_modal(warning_count):
+    """Every warning line and its Copy-install-command button must occupy
+    real rendered rows inside a compact (not full-screen-height) modal."""
+    warnings = [
+        _warning(f"feat_{i}", f"Feature {i}", command=f"pip install feat-{i}")
+        for i in range(warning_count)
+    ]
+    counts = {f"feat_{i}": i + 1 for i in range(warning_count)}
+
+    app = GuardrailApp()
+    async with app.run_test(size=(90, 32)) as pilot:
+        modal = await _mount_modal(app, pilot, warnings, counts)
+
+        container = modal.query_one("#ingest-guardrail-modal")
+        statics = list(container.query(Static))
+        # Header + one Static per warning.
+        assert len(statics) == 1 + warning_count
+        for static in statics:
+            assert static.region.height >= 1, (
+                f"warning Static {str(static.renderable)!r} rendered with "
+                f"zero height (region={static.region}) -- the bare Vertical "
+                "wrapper is starving its children"
+            )
+
+        for i in range(warning_count):
+            button = modal.query_one(f"#ingest-guardrail-copy-command-{i}", Button)
+            assert button.region.height >= 1, (
+                f"copy button {i} rendered with zero height "
+                f"(region={button.region})"
+            )
+            assert (
+                button.region.y + button.region.height
+                <= container.region.y + container.region.height
+            ), f"copy button {i} clipped below the modal container"
+
+        screen_height = app.size.height
+        assert container.region.height < screen_height, (
+            f"modal container fills the full screen height "
+            f"({container.region.height} of {screen_height} rows) -- the "
+            "empty black full-height column defect"
+        )
+        # Compact: header + warnings + buttons + chrome, with slack for
+        # wrapped lines; nowhere near the 32-row harness screen.
+        assert container.region.height <= 8 + 6 * warning_count, (
+            f"modal is {container.region.height} rows tall for "
+            f"{warning_count} warning(s); expected a compact dialog"
+        )
+
+
+@pytest.mark.asyncio
+async def test_guardrail_modal_action_buttons_single_line_aligned(
+    sample_warnings, sample_counts
+):
+    """Both action buttons render their full labels on one line with
+    aligned baselines ("Start import anyway" wrapped inside width: 14)."""
+    app = GuardrailApp()
+    async with app.run_test(size=(90, 32)) as pilot:
+        modal = await _mount_modal(app, pilot, sample_warnings, sample_counts)
+
+        cancel = modal.query_one("#ingest-guardrail-cancel", Button)
+        confirm = modal.query_one("#ingest-guardrail-confirm", Button)
+
+        for button in (cancel, confirm):
+            label = str(button.label)
+            assert button.content_region.width >= len(label), (
+                f"button label {label!r} needs {len(label)} columns but got "
+                f"{button.content_region.width} -- it wraps to multiple lines"
+            )
+        assert cancel.region.y == confirm.region.y, "button baselines misaligned"
+        assert cancel.region.height == confirm.region.height
+
+
+@pytest.mark.asyncio
+async def test_guardrail_modal_pluralizes_file_counts():
+    """"1 file" for a single affected file, "2 files" for many (not
+    "(1 files)")."""
+    warnings = [
+        _warning("solo_feat", "Solo feature"),
+        _warning("multi_feat", "Multi feature"),
+    ]
+    counts = {"solo_feat": 1, "multi_feat": 2}
+
+    app = GuardrailApp()
+    async with app.run_test(size=(90, 32)) as pilot:
+        modal = await _mount_modal(app, pilot, warnings, counts)
+
+        labels = {str(s.renderable) for s in modal.query(Static)}
+        assert any("Solo feature (1 file):" in label for label in labels), (
+            f"expected singular '1 file'; rendered labels: {labels}"
+        )
+        assert any("Multi feature (2 files):" in label for label in labels)
+        assert not any("(1 files)" in label for label in labels)
+
+
+@pytest.mark.asyncio
+async def test_guardrail_modal_cancel_not_destructive_confirm_emphasized(
+    sample_warnings, sample_counts
+):
+    """Cancel (the safe action) must not carry the red destructive variant;
+    the confirm carries the action emphasis -- the repo-wide convention
+    (Cancel variant="default", confirm variant="primary")."""
+    app = GuardrailApp()
+    async with app.run_test(size=(90, 32)) as pilot:
+        modal = await _mount_modal(app, pilot, sample_warnings, sample_counts)
+
+        cancel = modal.query_one("#ingest-guardrail-cancel", Button)
+        confirm = modal.query_one("#ingest-guardrail-confirm", Button)
+        assert cancel.variant != "error", "Cancel is styled as the destructive action"
+        assert confirm.variant == "primary"
+
+
+def test_guardrail_modal_css_uses_theme_tokens():
+    """No off-token color literals: ``background: black`` / ``border: tall
+    gray`` must be replaced with theme tokens ($surface / $primary etc.)."""
+    css = IngestGuardrailModal.DEFAULT_CSS
+    assert "black" not in css, "off-token 'black' literal in modal CSS"
+    assert "gray" not in css, "off-token 'gray' literal in modal CSS"
+
+
 def _empty_preflight(**kwargs) -> PreflightResult:
     defaults = {
         "type_groups": {},
@@ -185,6 +329,10 @@ def _minimal_library_screen() -> LibraryScreen:
     # in-flight pre-flight so a late result cannot repopulate the summary it
     # just cleared.
     screen._library_ingest_preflight_worker = None
+    # Also seeded by ``__init__`` (library_screen.py:1841); submit bumps it
+    # to invalidate in-flight pre-flight results, so the bypass must seed it
+    # too (stale-helper repair, task-3300).
+    screen._library_ingest_preflight_generation = 0
     screen._notify_library_ingest_warning = MagicMock()
     screen.refresh = MagicMock()
     screen.app_instance = MagicMock()
