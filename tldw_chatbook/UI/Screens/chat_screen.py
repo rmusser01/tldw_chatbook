@@ -4895,9 +4895,23 @@ class ChatScreen(BaseAppScreen):
     # `_console_message_action_service` has no proxy: nothing outside the
     # moved cluster ever read or wrote it (a pre-existing bare-screen test
     # fixture assigns it defensively; see the task-1 extraction report).
+    # Every proxy below is read-WRITE. At baseline each of these was a plain
+    # assignable instance attribute set in `ChatScreen.__init__`, so a
+    # getter-only property would turn a legal write into `AttributeError` --
+    # a behaviour change, which this decomposition's contract forbids
+    # regardless of whether an in-repo writer exists today. (`_last_console_
+    # action` has no writer outside the moved cluster right now; its setter
+    # is here for exactly that reason -- see the task-1 fix-round report.)
+    # Note this is the OPPOSITE case to the binding rule's write-only proxy,
+    # where the *getter* deliberately raises `RuntimeError`: that forbids a
+    # direction the pre-move source never had, this restores one it did.
     @property
     def _last_console_action(self) -> Any:
         return self._message._last_console_action
+
+    @_last_console_action.setter
+    def _last_console_action(self, value: Any) -> None:
+        self._message._last_console_action = value
 
     @property
     def _pending_console_delete_message_id(self) -> str | None:
@@ -4910,6 +4924,10 @@ class ChatScreen(BaseAppScreen):
     @property
     def _console_original_attempt_previews(self) -> dict[str, str]:
         return self._message._console_original_attempt_previews
+
+    @_console_original_attempt_previews.setter
+    def _console_original_attempt_previews(self, value: dict[str, str]) -> None:
+        self._message._console_original_attempt_previews = value
 
     @property
     def _console_speaking_message_id(self) -> str | None:

@@ -66,6 +66,7 @@ from tldw_chatbook.Constants import (
 )
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 import tldw_chatbook.UI.Screens.chat_screen as chat_screen_module
+from tldw_chatbook.UI.Console_Modules.message import ConsoleMessageController
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.Widgets.Console.console_citation_sources_modal import (
     ConsoleCitationSourceRow,
@@ -435,6 +436,59 @@ async def _async_noop() -> None:
     return None
 
 
+def _attach_message_controller(screen: ChatScreen) -> None:
+    """Give a bypassed-``__init__`` screen shell its ``_message`` controller.
+
+    The citation cluster stays screen-owned, but three of the members it
+    reaches moved to ``ConsoleMessageController`` (wave-3 console
+    decomposition, task 1) and are reached here through ``ChatScreen``'s
+    delegations/proxy properties: ``_native_console_messages``,
+    ``_console_citation_message_body``, and the
+    ``_console_original_attempt_previews``/``_pending_console_swipe_
+    selection`` state these tests assign directly. ``ChatScreen.__new__``
+    skips the construction ``__init__`` would do, so it is done here --
+    mirroring the same fixture pattern in ``Tests/Chat/test_console_
+    generation_actions.py`` and ``Tests/UI/test_console_native_chat_flow.py``.
+
+    Only the store accessors are wired for real (that is all
+    ``_native_console_messages`` reads). Every other constructor callable
+    raises -- a fail-loud guard if a future test here starts exercising a
+    branch that needs one, rather than a silently-wrong no-op.
+    """
+
+    def _unreached(*_args, **_kwargs):
+        raise AssertionError(
+            "_attach_message_controller: this constructor callable is not "
+            "wired for real -- the scenario reaching it needs its own stub."
+        )
+
+    screen._message = ConsoleMessageController(
+        screen,
+        app_instance=getattr(screen, "app_instance", None),
+        chat_store_accessor=lambda: screen._console_chat_store,
+        current_chat_store_accessor=lambda: screen._console_chat_store,
+        ensure_console_chat_controller=_unreached,
+        current_chat_controller_accessor=lambda: getattr(
+            screen, "_console_chat_controller", None
+        ),
+        sync_native_console_chat_ui=_unreached,
+        active_session_is_ephemeral=_unreached,
+        active_native_console_session=_unreached,
+        current_console_conversation_id=_unreached,
+        active_console_provider_model_display=_unreached,
+        console_initial_session_title_for_workspace=_unreached,
+        console_change_review_run_id=_unreached,
+        open_change_review=_unreached,
+        start_console_transcript_sync_timer=_unreached,
+        clear_native_console_message_selection=_unreached,
+        regenerate_console_generation_variant=_unreached,
+        select_console_generation_variant=_unreached,
+        keep_console_generation_variant=_unreached,
+        handle_console_toggle_image_view=_unreached,
+        invalidate_console_persisted_rows_cache=_unreached,
+    )
+
+
 def _bare_screen(
     messages: list[ConsoleChatMessage],
     repository: object | None,
@@ -455,6 +509,7 @@ def _bare_screen(
     )
     screen._sync_native_console_transcript_to_legacy_surface = _async_noop
     screen._sync_native_console_chat_ui = _async_noop
+    _attach_message_controller(screen)
     return screen
 
 
@@ -1257,6 +1312,7 @@ def _citation_harness(
     screen._console_chat_store = _FakeStore([message])
     screen._console_citation_counts = {"assistant-1": 2}
     screen._console_citation_request_generation = 1
+    _attach_message_controller(screen)
     app = _CitationHarnessApp(
         screen,
         repository,

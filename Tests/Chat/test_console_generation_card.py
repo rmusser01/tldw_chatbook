@@ -31,6 +31,7 @@ from tldw_chatbook.Chat.console_chat_models import (
     MessageAttachment,
 )
 from tldw_chatbook.Chat.console_image_view import ConsoleImageRowSpec
+from tldw_chatbook.UI.Console_Modules.message import ConsoleMessageController
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.Widgets.Console.console_generation_card import (
     ConsoleGenerationCard,
@@ -48,8 +49,48 @@ def _bare_screen() -> ChatScreen:
     ``_bare_console_screen`` pattern -- ``_ensure_console_image_view`` reads
     ``app_instance``/``app_config`` defensively via ``getattr`` specifically
     so tests can call it on an unmounted screen shell like this one.
+
+    ``_recent_console_image_messages`` moved to ``ConsoleMessageController``
+    (wave-3 console decomposition, task 1) and is reached here through
+    ``ChatScreen``'s delegation, so this shell needs a ``_message`` that
+    ``__init__`` would otherwise have built. That one method is pure (it
+    filters a list against ``IMAGE_CACHE_MAX_ENTRIES`` and touches no
+    injected seam), so every constructor callable is stubbed to raise --
+    a fail-loud guard if a future test in this file starts exercising a
+    branch that needs one for real, rather than a silently-wrong no-op.
     """
-    return ChatScreen.__new__(ChatScreen)
+    screen = ChatScreen.__new__(ChatScreen)
+
+    def _unreached(*_args, **_kwargs):
+        raise AssertionError(
+            "_bare_screen: this constructor callable is not wired for real "
+            "-- only _recent_console_image_messages is exercised here."
+        )
+
+    screen._message = ConsoleMessageController(
+        screen,
+        app_instance=None,
+        chat_store_accessor=_unreached,
+        current_chat_store_accessor=_unreached,
+        ensure_console_chat_controller=_unreached,
+        current_chat_controller_accessor=_unreached,
+        sync_native_console_chat_ui=_unreached,
+        active_session_is_ephemeral=_unreached,
+        active_native_console_session=_unreached,
+        current_console_conversation_id=_unreached,
+        active_console_provider_model_display=_unreached,
+        console_initial_session_title_for_workspace=_unreached,
+        console_change_review_run_id=_unreached,
+        open_change_review=_unreached,
+        start_console_transcript_sync_timer=_unreached,
+        clear_native_console_message_selection=_unreached,
+        regenerate_console_generation_variant=_unreached,
+        select_console_generation_variant=_unreached,
+        keep_console_generation_variant=_unreached,
+        handle_console_toggle_image_view=_unreached,
+        invalidate_console_persisted_rows_cache=_unreached,
+    )
+    return screen
 
 
 def _meta(

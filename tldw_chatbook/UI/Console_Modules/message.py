@@ -128,6 +128,7 @@ from ...Chat.console_chat_models import (
 from ...Chat.console_chat_store import ConsoleChatStore
 from ...Chat.console_command_grammar import GENERATE_IMAGE_COMMAND_HANDLER_ID
 from ...Chat.console_ephemeral import blocked_reason
+from ...Chat.console_image_view import IMAGE_CACHE_MAX_ENTRIES
 from ...Chat.console_message_actions import ConsoleActionResult, ConsoleMessageActionService
 from ...Chat.console_save_targets import (
     console_chatbook_artifact_payload,
@@ -472,8 +473,6 @@ class ConsoleMessageController:
         them here would double-render and burn a plain-image LRU slot under
         their bare message id for no row that ever reads it (TASK P2a-7).
         """
-        from ...Chat.console_image_view import IMAGE_CACHE_MAX_ENTRIES
-
         # Bound the working set to the cache capacity so prep can never evict
         # what the transcript still shows (churn guard).
         image_messages = [
