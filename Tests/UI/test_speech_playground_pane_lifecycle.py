@@ -1278,9 +1278,9 @@ async def test_higgs_saved_profile_is_prefixed_exactly_once_in_request(
         assert app.generation_events[0].request.voice_id == "profile:saved-voice"
 
 
-#: PANE DEFECT (see the `xfail`s below): `_load_provider_catalog_worker`
-#: adds a provider to `_stale_providers` whenever the *freshly-fetched*
-#: catalog itself reports `health.fresh is False` --
+#: TASK-2970 (fixed): `_load_provider_catalog_worker` used to add a
+#: provider to `_stale_providers` whenever the *freshly-fetched* catalog
+#: itself reported `health.fresh is False`, unconditionally --
 #:
 #:     if catalog.health.fresh:
 #:         self._stale_providers.discard(provider_id)
@@ -1288,28 +1288,22 @@ async def test_higgs_saved_profile_is_prefixed_exactly_once_in_request(
 #:         self._stale_providers.add(provider_id)
 #:
 #: -- and `_catalog_health_copy` checks `_stale_providers` FIRST, ahead of
-#: `health.state`, so any fresh (first-ever) load whose health happens to
+#: `health.state`, so any fresh (first-ever) load whose health happened to
 #: report `fresh=False` (a "reconfiguring" provider, or a naturally stale
-#: "available" catalog) is shown the generic "settings changed; refresh
+#: "available" catalog) was shown the generic "settings changed; refresh
 #: models" instead of the accurate, state-specific recovery copy -- even
-#: though nothing has changed; this is simply how the very first read came
-#: back. Confirmed NOT present in the retired widget: its equivalent
+#: though nothing had changed; this was simply how the very first read
+#: came back. Confirmed NOT present in the retired widget: its equivalent
 #: success path was an unconditional `self._stale_providers.discard(
 #: provider_id)` with no `health.fresh` branch at all (verified by diffing
 #: `git show HEAD:tldw_chatbook/UI/STTS_Window.py` against the pane before
-#: this branch's own sibling task deleted the widget). `_catalog_health_
-#: copy` itself is byte-for-byte identical between the two -- the
-#: divergence is entirely in what populates `_stale_providers`.
-_STALE_ON_FIRST_LOAD_DEFECT = (
-    "PANE DEFECT (TASK-2951 finding): a fresh (first-ever) catalog load "
-    "whose reported health.fresh is False is shown the generic 'settings "
-    "changed; refresh models' instead of the accurate state-specific "
-    "copy, because _load_provider_catalog_worker marks the provider "
-    "'stale' purely from health.fresh on ANY load, not only a load that "
-    "followed a real configuration change. The retired widget's "
-    "equivalent success path never did this (unconditional discard, no "
-    "health.fresh branch)."
-)
+#: TASK-2951 deleted the widget). Fixed by only adding to `_stale_
+#: providers` when this load's own configuration revision genuinely
+#: supersedes a previously recorded one for the same provider -- a real
+#: configuration change this particular fetch has not caught up to yet --
+#: not merely because this load's health happens to read non-fresh with no
+#: revision history behind it. The two health2/health3 parametrizations
+#: below were `xfail(strict=True)` against the pre-fix code; both now pass.
 
 
 @pytest.mark.asyncio
@@ -1324,21 +1318,13 @@ _STALE_ON_FIRST_LOAD_DEFECT = (
             ProviderHealth(state="not_configured", fresh=True),
             "not configured",
         ),
-        pytest.param(
+        (
             ProviderHealth(state="reconfiguring", fresh=False),
             "settings are being applied",
-            marks=pytest.mark.xfail(
-                reason=_STALE_ON_FIRST_LOAD_DEFECT,
-                strict=True,
-            ),
         ),
-        pytest.param(
+        (
             ProviderHealth(state="available", fresh=False),
             "catalog is stale",
-            marks=pytest.mark.xfail(
-                reason=_STALE_ON_FIRST_LOAD_DEFECT,
-                strict=True,
-            ),
         ),
     ),
 )
@@ -1366,6 +1352,49 @@ async def test_audio_cpp_health_states_use_fixed_safe_recovery_copy(
             "second-model",
         )
         assert service.catalog_calls == [("audio_cpp", False)]
+
+
+# TASK-2970 positive branch: health2/health3 above pin the negative case (a
+# first-ever non-fresh load must NOT be marked stale). This test pins the
+# other half of AC#3 -- a SECOND load whose own configuration revision has
+# genuinely moved past the one recorded from the first is a real
+# supersession, and must still be marked stale with the settings-changed
+# copy. Mutation-checked by disabling the `elif` branch in
+# `_load_provider_catalog_worker` (`speech_catalog_mixin.py`, the genuine-
+# supersession check) so it always falls through to `discard` -- this test
+# alone goes red; health2/health3 and the TASK-3000 tests stay green.
+@pytest.mark.asyncio
+async def test_second_load_after_genuine_config_change_marks_provider_stale(
+    audio_cpp_playground: FakeTTSService,
+) -> None:
+    service = audio_cpp_playground
+    app = _PaneHost()
+
+    async with app.run_test(size=(180, 70)) as pilot:
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        pane = app.query_one(SpeechPlaygroundPane)
+
+        assert "audio_cpp" not in pane._stale_providers
+        assert pane._catalog_configuration_revisions["audio_cpp"] == 1
+
+        # A genuine configuration-revision bump, then a second, successful
+        # (token-current) reload whose catalog still reports non-fresh
+        # health -- unlike the first-ever load above, this one really did
+        # follow a real config change.
+        service.revisions["audio_cpp"] = 2
+        service.catalogs["audio_cpp"] = _audio_catalog(
+            health=ProviderHealth(state="available", fresh=False)
+        )
+        pane._load_provider_catalog("audio_cpp", refresh=True)
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert pane._catalog_configuration_revisions["audio_cpp"] == 2
+        assert "audio_cpp" in pane._stale_providers
+        status = str(app.query_one("#tts-provider-status", Static).render()).lower()
+        assert "settings changed" in status
 
 
 # =====================================================================
@@ -1995,6 +2024,146 @@ async def test_exact_profile_cannot_generate_while_voice_validation_is_pending(
 
         assert pane._profile_effective_availability == "unavailable"
         assert app.query_one("#tts-generate-btn", Button).disabled is True
+
+
+# TASK-3000 (fixed): a config change arriving while an exact profile's
+# voice validation is in flight, on a request that ignores cancellation
+# and keeps running, never cleared `_profile_voice_validation_token` --
+# not in `mark_provider_configuration_changed`, not in the failed-reload
+# exception path, not in `_catalog_failure`. `_generation_readiness_
+# error`'s preset branch blocks unconditionally on that token being
+# non-None, so Generate stayed disabled forever with no way to recover
+# short of leaving and re-entering the Playground. Confirmed pre-existing
+# by task-2951's own re-review, identical against pre- and post-fix
+# task-2951 code -- a fail-*closed* gap, the opposite direction from the
+# two fail-open CRITICALs that task fixed. The retired widget's own
+# `mark_provider_configuration_changed` (`git show
+# f560217fb~1:tldw_chatbook/UI/STTS_Window.py`) detached the token
+# immediately, as soon as the change targeted the token's own provider,
+# before any reload even ran -- ported verbatim rather than inventing a
+# parallel settling path; the existing `_catalog_failure` preset branch
+# (task-2951 CRITICAL-2) already settles availability to "unverified" and
+# re-enables Generate for one warned exact attempt once the token is out
+# of the way.
+@pytest.mark.asyncio
+async def test_configuration_change_detaches_cancellation_resistant_profile_voice_gate(
+    audio_cpp_playground: FakeTTSService,
+) -> None:
+    service = audio_cpp_playground
+    request_key = ("audio_cpp", "<opaque:model>")
+    service.voice_started_by_request[request_key] = asyncio.Event()
+    service.voice_finished_by_request[request_key] = asyncio.Event()
+    service.voice_gates[request_key] = asyncio.Event()
+    service.voice_ignore_cancellation.add(request_key)
+    preset = _profile_preset(model_id=request_key[1], voice_id="[voice]")
+    app = _PaneHost(preset=preset)
+
+    async with app.run_test(size=(180, 70)) as pilot:
+        await service.voice_started_by_request[request_key].wait()
+        pane = app.query_one(SpeechPlaygroundPane)
+
+        service.revisions["audio_cpp"] = 2
+        pane.mark_provider_configuration_changed("audio_cpp", 2)
+        service.catalog_error = RuntimeError("private catalog failure")
+        pane._load_provider_catalog("audio_cpp", refresh=True)
+        await _wait_until(
+            pilot,
+            lambda: (
+                pane._profile_effective_availability == "unverified"
+                and pane._catalog_generation_allowed
+            ),
+        )
+
+        assert pane._profile_voice_validation_token is None
+        assert app.query_one("#tts-generate-btn", Button).disabled is False
+
+        pane.action_generate_tts()
+        await pilot.pause()
+
+        assert len(app.generation_events) == 1
+        assert any(
+            "unverified" in message.lower() and severity == "warning"
+            for message, severity in app.notices
+        )
+
+        service.voice_gates[request_key].set()
+        await service.voice_finished_by_request[request_key].wait()
+
+
+# TASK-3000 regression guard (a): the token must detach ONLY on a genuine,
+# provider-matched `mark_provider_configuration_changed` call -- not on any
+# catalog-load failure whatsoever. A plain, unrelated catalog reload failure
+# while a voice validation is in flight (no config change anywhere in this
+# sequence) must leave the token, and Generate's disabled state, untouched.
+# Mutation-checked: widening `_load_provider_catalog_worker`'s `except
+# Exception` handler (speech_catalog_mixin.py ~:424-426) to clear
+# `self._profile_voice_validation_token` unconditionally, instead of only
+# its own locally-reserved `profile_voice_token`, turns this test red.
+@pytest.mark.asyncio
+async def test_unrelated_catalog_failure_does_not_detach_in_flight_profile_voice_token(
+    audio_cpp_playground: FakeTTSService,
+) -> None:
+    service = audio_cpp_playground
+    request_key = ("audio_cpp", "<opaque:model>")
+    service.voice_started_by_request[request_key] = asyncio.Event()
+    service.voice_finished_by_request[request_key] = asyncio.Event()
+    service.voice_gates[request_key] = asyncio.Event()
+    preset = _profile_preset(model_id=request_key[1], voice_id="[voice]")
+    app = _PaneHost(preset=preset)
+
+    async with app.run_test(size=(180, 70)) as pilot:
+        await service.voice_started_by_request[request_key].wait()
+        pane = app.query_one(SpeechPlaygroundPane)
+        pending_token = pane._profile_voice_validation_token
+        assert pending_token is not None
+        assert app.query_one("#tts-generate-btn", Button).disabled is True
+
+        # No configuration change anywhere in this sequence -- just an
+        # unrelated catalog reload that fails for its own reasons.
+        service.catalog_error = RuntimeError("unrelated catalog failure")
+        pane._load_provider_catalog("audio_cpp", refresh=True)
+        await _wait_until(pilot, lambda: "audio_cpp" in pane._stale_providers)
+
+        assert pane._profile_voice_validation_token is pending_token
+        assert app.query_one("#tts-generate-btn", Button).disabled is True
+
+        service.voice_gates[request_key].set()
+        await service.voice_finished_by_request[request_key].wait()
+
+
+# TASK-3000 regression guard (b): `mark_provider_configuration_changed`'s
+# token-detach only fires when the changed provider matches the token's OWN
+# provider. A config change for a completely different provider must leave
+# an audio_cpp exact profile's in-flight voice-validation token (and
+# Generate's disabled state) untouched. Mutation-checked: removing the
+# `pending_voice_token.provider_id == provider_id` guard
+# (speech_catalog_mixin.py ~:1527-1532) turns this test red.
+@pytest.mark.asyncio
+async def test_configuration_change_for_unrelated_provider_does_not_detach_profile_voice_token(
+    audio_cpp_playground: FakeTTSService,
+) -> None:
+    service = audio_cpp_playground
+    request_key = ("audio_cpp", "<opaque:model>")
+    service.voice_started_by_request[request_key] = asyncio.Event()
+    service.voice_finished_by_request[request_key] = asyncio.Event()
+    service.voice_gates[request_key] = asyncio.Event()
+    preset = _profile_preset(model_id=request_key[1], voice_id="[voice]")
+    app = _PaneHost(preset=preset)
+
+    async with app.run_test(size=(180, 70)) as pilot:
+        await service.voice_started_by_request[request_key].wait()
+        pane = app.query_one(SpeechPlaygroundPane)
+        pending_token = pane._profile_voice_validation_token
+        assert pending_token is not None
+
+        pane.mark_provider_configuration_changed("openai", 2)
+        await pilot.pause()
+
+        assert pane._profile_voice_validation_token is pending_token
+        assert app.query_one("#tts-generate-btn", Button).disabled is True
+
+        service.voice_gates[request_key].set()
+        await service.voice_finished_by_request[request_key].wait()
 
 
 @pytest.mark.asyncio
