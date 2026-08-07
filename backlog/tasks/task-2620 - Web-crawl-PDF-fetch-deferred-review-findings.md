@@ -29,7 +29,7 @@ The web-tools v2 branch (`feat/web-crawl-pdf-fetch`, tasks 1357/1358) went throu
 6. Two same-host URLs redirecting to one target are fetched and listed twice (visited marked only post-fetch; intermediate hops never marked).
 7. No static ephemerality regression guard (spec §5 called for a "no media-DB import in web_tool_impls" assertion) — true by inspection, unpinned.
 8. Namespace-less (non-conformant) sitemaps silently parse to zero URLs → "sitemap exhausted" instead of a parse complaint.
-9. `[too-large]` copy hardcodes "20 MB" independent of `PDF_MAX_BYTES`; a pymupdf-absent pre-check (`importlib.util.find_spec`) before raising the 20 MB read ceiling would avoid pointless downloads; `_CrawlLinkParser` title accumulation unbounded on unclosed `<title>` (transient memory only); frontier cap test asserts `<= 6` where `== 6` would pin both directions; between-hops `_CrawlDeadline` path uncovered.
+9. Optional-dep imports (`defusedxml`, `pymupdf`) use the module's local try/except pattern (v1's trafilatura precedent) rather than the central `optional_deps.py` helper — Qodo rule 497159 flagged it on PR #1376; centralize when touching these imports. `[too-large]` copy hardcodes "20 MB" independent of `PDF_MAX_BYTES`; a pymupdf-absent pre-check (`importlib.util.find_spec`) before raising the 20 MB read ceiling would avoid pointless downloads; `_CrawlLinkParser` title accumulation unbounded on unclosed `<title>` (transient memory only); frontier cap test asserts `<= 6` where `== 6` would pin both directions; between-hops `_CrawlDeadline` path uncovered.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
