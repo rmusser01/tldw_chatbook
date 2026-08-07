@@ -1559,6 +1559,8 @@ def web_deep_search(question: str, engine: Optional[str] = None, max_results: Op
     if not final_answer_llm or not str(final_answer_llm).strip():
         raise LocalToolError("[deep-search-failed] synthesis: no final_answer_llm configured")
 
+    deadline_s = float(settings.get("deep_search_timeout_s", 240) or 240)
+
     search_params = {
         "engine": engine,
         "content_country": "US",
@@ -1574,11 +1576,23 @@ def web_deep_search(question: str, engine: Optional[str] = None, max_results: Op
         # never reach the pipeline and it falls back to its own 30s defaults.
         "relevance_llm_timeout_s": settings.get("relevance_llm_timeout_s", 30),
         "relevance_scrape_timeout_s": settings.get("relevance_scrape_timeout_s", 30),
+        # Important 2 (final review): generate_and_search reads this to cap
+        # total fan-out (question + sub-queries) at search_default_max_queries
+        # -- resolved by _deep_search_settings() but previously never handed
+        # to the pipeline, so subquery generation could fan out far past the
+        # description's "~25 LLM calls at defaults".
+        "search_default_max_queries": settings.get("search_default_max_queries", 5),
+        # Important 3a (final review): the tool's remaining phase-1 budget,
+        # computed here at entry (phase 1 hasn't run yet, so this is the
+        # full configured deadline). generate_and_search checks it between
+        # per-query searches and stops the fan-out early on expiry -- a
+        # cheap bound on top of the per-request backend timeouts (Important
+        # 3b), covering the six engines that still have none.
+        "phase1_time_budget_s": deadline_s,
     }
 
     from ..Web_Scraping import WebSearch_APIs  # local import: keep module import cheap
 
-    deadline_s = float(settings.get("deep_search_timeout_s", 240) or 240)
     start = time.monotonic()
     try:
         phase1 = WebSearch_APIs.generate_and_search(question, search_params)

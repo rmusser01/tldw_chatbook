@@ -286,6 +286,38 @@ def test_deep_search_places_timeouts_into_search_params(deep_env, monkeypatch):
     assert seen["search_params"].get("relevance_scrape_timeout_s") == 30
 
 
+def test_deep_search_places_max_queries_cap_into_search_params(deep_env, monkeypatch):
+    """Important 2 (final review): search_default_max_queries is already
+    resolved by _deep_search_settings() but was never handed to the
+    pipeline -- generate_and_search reads it from search_params (pydantic-safe:
+    the same route the timeouts use), so the tool must place it there."""
+    seen = {}
+
+    def fake_generate(q, p):
+        seen["search_params"] = dict(p)
+        return _PHASE1
+
+    monkeypatch.setattr(WebSearch_APIs, "generate_and_search", fake_generate)
+    web_deep_search("q")
+    assert seen["search_params"].get("search_default_max_queries") == 5
+
+
+def test_deep_search_places_phase1_time_budget_into_search_params(deep_env, monkeypatch):
+    """Important 3a (final review): the tool computes its remaining phase-1
+    budget from deep_search_timeout_s at entry and hands it to
+    generate_and_search via search_params -- checked at entry, so with
+    (almost) no elapsed time yet it should equal the configured timeout."""
+    seen = {}
+
+    def fake_generate(q, p):
+        seen["search_params"] = dict(p)
+        return _PHASE1
+
+    monkeypatch.setattr(WebSearch_APIs, "generate_and_search", fake_generate)
+    web_deep_search("q")
+    assert seen["search_params"].get("phase1_time_budget_s") == pytest.approx(240, abs=2)
+
+
 # --- Fix-round: deadline-before-first-relevant honesty (CRITICAL) -----------
 
 def test_deep_search_deadline_before_first_relevant_is_honest(deep_env, monkeypatch):

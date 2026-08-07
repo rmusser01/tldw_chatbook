@@ -472,6 +472,20 @@ def generate_and_search(question: str, search_params: Dict) -> Dict:
     sub_queries = [
         sub_query for sub_query in sub_queries if sub_query.strip().casefold() != question_key
     ]
+
+    # Cap total fan-out at search_default_max_queries (final review,
+    # Important 2): the resolved cap was never applied here, so an LLM
+    # returning e.g. 12 sub-questions fanned out to 13 total searches --
+    # far past the tool description's "~25 LLM calls at defaults" budget
+    # when subquery generation is enabled. The original question always
+    # counts as one query, so sub-queries are truncated to cap - 1. Read
+    # from search_params (the same pydantic-safe route the timeouts use --
+    # WebSearchRequest drops unknown fields, so this value travels INSIDE
+    # search_params), coerced defensively like the timeouts above (float(...
+    # or default) below).
+    max_queries_cap = int(search_params.get("search_default_max_queries", 5) or 5)
+    sub_queries = sub_queries[: max(0, max_queries_cap - 1)]
+
     sub_query_dict["sub_questions"] = sub_queries
     sub_query_dict["search_queries"] = sub_queries
     logger.info(f"Sub-queries generated: {sub_queries}")
@@ -483,7 +497,33 @@ def generate_and_search(question: str, search_params: Dict) -> Dict:
     web_search_results_dict["warnings"] = []
 
     # 3. Perform searches and accumulate all raw results
-    for q in all_queries:
+    #
+    # Cheap between-queries deadline bound (final review, Important 3a): NO
+    # search backend except serper/exa/yandex/bing sets a request timeout, so
+    # a hung phase-1 socket could previously push past the caller's overall
+    # deep-search deadline unbounded -- the runtime would then abandon the
+    # whole worker with a bare timeout instead of the tool's own honest
+    # partial-results path. This bounds everything EXCEPT one in-flight
+    # request: the caller places its remaining phase-1 budget into
+    # search_params (e.g. "phase1_time_budget_s"); checked BEFORE each
+    # per-query call, coerced defensively like the timeouts elsewhere in
+    # this module. Absent (None) -> no bound, unchanged behavior for any
+    # caller that doesn't opt in.
+    phase1_start = time.monotonic()
+    phase1_budget_raw = search_params.get("phase1_time_budget_s")
+    try:
+        phase1_budget = float(phase1_budget_raw) if phase1_budget_raw is not None else None
+    except (TypeError, ValueError):
+        phase1_budget = None
+
+    for n, q in enumerate(all_queries):
+        if phase1_budget is not None and (time.monotonic() - phase1_start) >= phase1_budget:
+            warning = (
+                f"deadline reached during search fan-out; searched {n} of {len(all_queries)} queries"
+            )
+            logger.warning(warning)
+            web_search_results_dict["warnings"].append(warning)
+            break
         random.uniform(1, 1.5)  # Add a random delay to avoid rate limiting
         logger.info(f"Performing web search for query: {q}")
         raw_results = perform_websearch(

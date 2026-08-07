@@ -98,6 +98,69 @@ def test_generate_and_search_dedupes_subquery_equal_to_question(monkeypatch):
     assert seen_queries == ["what is love", "real subquery"]  # casefold-dup dropped
 
 
+def test_generate_and_search_caps_fanout_at_search_default_max_queries(monkeypatch):
+    """Important 2 (final review): search_default_max_queries resolves but was
+    never applied -- an LLM returning 12 sub-questions fanned out to 13
+    total searches. Sub-queries are truncated to cap - 1 (the original
+    question always counts as one), so total fan-out <= cap."""
+    seen_queries = []
+
+    def fake_perform(search_engine, search_query, *a, **k):
+        seen_queries.append(search_query)
+        return {"results": [_std_result("T", "https://e.com/", "c")], "processing_error": None}
+
+    def fake_chat(**kwargs):
+        return json.dumps({"sub_questions": [f"sub question {i}" for i in range(12)]})
+
+    monkeypatch.setattr(WebSearch_APIs, "perform_websearch", fake_perform)
+    monkeypatch.setattr(WebSearch_APIs, "chat_api_call", fake_chat)
+    monkeypatch.setattr(WebSearch_APIs.time, "sleep", lambda s: None)
+    WebSearch_APIs.generate_and_search(
+        "what is love",
+        _search_params(subquery_generation=True, subquery_generation_llm="openai",
+                       search_default_max_queries=5),
+    )
+    assert len(seen_queries) == 5  # question + 4 sub-queries, NOT question + 12
+
+
+def test_generate_and_search_stops_fanout_at_phase1_time_budget(monkeypatch):
+    """Important 3a (final review): a cheap between-queries deadline check.
+    A fake clock advances past the budget after the first search call, so
+    the fan-out must stop before the remaining queries are searched, leave
+    a warning naming how many of how many were searched, and still return
+    the partial results gathered so far. No real sleeps -- the clock is
+    faked via WebSearch_APIs.time.monotonic."""
+    fake_clock = {"t": 1000.0}
+
+    def fake_monotonic():
+        return fake_clock["t"]
+
+    seen_queries = []
+
+    def fake_perform(search_engine, search_query, *a, **k):
+        seen_queries.append(search_query)
+        fake_clock["t"] += 10.0  # advance well past the budget after each call
+        return {"results": [_std_result("T", "https://e.com/", "c")], "processing_error": None}
+
+    def fake_chat(**kwargs):
+        return json.dumps({"sub_questions": ["sq1", "sq2", "sq3"]})
+
+    monkeypatch.setattr(WebSearch_APIs, "perform_websearch", fake_perform)
+    monkeypatch.setattr(WebSearch_APIs, "chat_api_call", fake_chat)
+    monkeypatch.setattr(WebSearch_APIs.time, "sleep", lambda s: None)
+    monkeypatch.setattr(WebSearch_APIs.time, "monotonic", fake_monotonic)
+
+    out = WebSearch_APIs.generate_and_search(
+        "what is love",
+        _search_params(subquery_generation=True, subquery_generation_llm="openai",
+                       phase1_time_budget_s=5.0),
+    )
+    wsr = out["web_search_results_dict"]
+    assert len(seen_queries) == 1  # fan-out stopped after the first query
+    assert any("deadline reached during search fan-out" in w for w in wsr["warnings"])
+    assert wsr["results"]  # partial results still returned, not discarded
+
+
 # --- chunking / confidence ----------------------------------------------------
 
 def test_build_chunk_infos_packs_and_splits():
