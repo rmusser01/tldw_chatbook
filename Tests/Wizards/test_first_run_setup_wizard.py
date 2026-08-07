@@ -73,6 +73,41 @@ async def test_welcome_track_choice_activates_quick_steps():
 
 
 @pytest.mark.asyncio
+async def test_show_step_runs_exactly_once_on_wizard_mount(monkeypatch):
+    """TASK-2710 regression guard: WizardContainer.on_mount calls
+    show_step(0) exactly once, at the end of its own initialization.
+
+    Before TASK-2710, SetupWizardContainer.on_mount called
+    super().on_mount() explicitly AND Textual's dispatcher separately
+    invoked WizardContainer.on_mount again for the same Mount event (it
+    walks the whole MRO -- see WizardContainer.on_mount's docstring), so
+    show_step(0) -- and the on_hide/on_show pair on the current step, plus
+    the validation timer -- ran twice per wizard mount. Harmless in
+    practice (idempotent state), but exactly the fragile pattern this task
+    exists to guard against; pin it here so it can't silently come back.
+    """
+    from tldw_chatbook.UI.Wizards import BaseWizard as base_wizard_module
+
+    calls: list[int] = []
+    original_show_step = base_wizard_module.WizardContainer.show_step
+
+    def _counting_show_step(self, step_index):
+        calls.append(step_index)
+        return original_show_step(self, step_index)
+
+    monkeypatch.setattr(
+        base_wizard_module.WizardContainer, "show_step", _counting_show_step
+    )
+
+    wizard = _make_wizard()
+    app = _HostApp(wizard)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.2)
+
+    assert calls == [0]
+
+
+@pytest.mark.asyncio
 async def test_select_track_rebuilds_progress_in_original_slot():
     """F-C regression (live-verified via tmux screenshot): _rebuild_progress
     replaces the WizardProgress widget wholesale on every track change, but

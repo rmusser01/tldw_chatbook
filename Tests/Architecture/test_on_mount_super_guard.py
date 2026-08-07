@@ -36,6 +36,7 @@ PACKAGE_ROOT = PROJECT_ROOT / "tldw_chatbook"
 SCANNED_SUBDIRS = ("UI/Screens", "UI/Wizards", "Widgets")
 
 BASE_APP_SCREEN = "BaseAppScreen"
+WIZARD_CONTAINER = "WizardContainer"
 
 
 def _scanned_source_paths(package_root: Path = PACKAGE_ROOT) -> list[Path]:
@@ -176,6 +177,30 @@ def test_no_baseappscreen_subclass_calls_super_on_mount() -> None:
         "super().on_mount() over BaseAppScreen runs the parent handler "
         "twice via Textual's whole-MRO dispatch (TASK-2610/TASK-2710) -- "
         "found: " + ", ".join(f"{module}:{cls}:{line}" for module, cls, line in violations)
+    )
+
+
+def test_no_wizardcontainer_subclass_calls_super_on_mount() -> None:
+    """The one real bug this audit found, guarded the same way.
+
+    ``SetupWizardContainer`` (over ``WizardContainer``, `UI/Wizards/
+    BaseWizard.py` + `FirstRunSetupWizard.py`) is not a ``BaseAppScreen``
+    subclass, so the guard above never covers it -- but it was the one site
+    in this audit where ``super().on_mount()`` was genuinely double-running
+    real work (`show_step(0)`, its on_hide/on_show pair, and a validation
+    timer) rather than a harmless log line. TASK-2710 fixed it with
+    `WizardContainer._post_mount_hook()`. This guards that fix the same way
+    as the ``BaseAppScreen`` guard above, over the ``WizardContainer`` tree,
+    so a future ``on_mount`` + ``super().on_mount()`` override cannot creep
+    back in undetected.
+    """
+    records = _collect_class_records(_scanned_source_paths())
+    violations = _find_super_on_mount_violations(records, root=WIZARD_CONTAINER)
+
+    assert violations == [], (
+        "super().on_mount() over WizardContainer double-runs show_step(0) "
+        "(TASK-2710) -- found: "
+        + ", ".join(f"{module}:{cls}:{line}" for module, cls, line in violations)
     )
 
 
