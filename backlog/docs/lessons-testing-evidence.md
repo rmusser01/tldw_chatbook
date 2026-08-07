@@ -803,3 +803,47 @@ mitigation has to be mechanical, not a mental note.
    it is the same shape as a guard that cannot fail (see "Mutation-test every guard
    you add," above), and here the false-positive mechanism was in the test harness's
    plumbing, not the guard's logic.
+
+---
+
+## 900+ green tests never exercised the first edit of a seeded row
+
+**TASK-2451, 2026-08-06.** Enriching the seeded 'Default Assistant' character card
+(`character_cards` id=1) meant writing a conditional `UPDATE` to that row. A quick
+manual prototype — construct a real `CharactersRAGDB` against a temp file, then run
+that `UPDATE` — crashed immediately with `sqlite3.DatabaseError: database disk image
+is malformed` (`SQLITE_CORRUPT_VTAB`). Nothing about the prototype's content mattered:
+even `UPDATE character_cards SET description = 'x' WHERE id = 1` crashed the same way,
+on a completely fresh database, through the real constructor. Root cause: row 1's
+`INSERT` in `_FULL_SCHEMA_SQL_V4` ran *before* `character_cards_fts` and its
+`character_cards_ai` trigger were created later in the same script, so row 1 was never
+indexed into the FTS5 shadow tables — on every database this schema had ever produced.
+The first `UPDATE` to that row makes `character_cards_au` ask FTS5 to remove index
+entries that were never inserted, and FTS5 reports that as disk corruption. This means
+`update_character_card(1, ...)` — an ordinary user editing the built-in Default
+Assistant via the normal Roleplay editor — already crashed the app, on every existing
+install, before this task touched anything. The full `Tests/ChaChaNotesDB/` +
+`Tests/DB/` suites (900+ tests, routinely green) never caught it, because no existing
+test performs a write against character id=1 as the first write after database
+creation — every test that touches character cards either inserts a fresh row first or
+edits a different id.
+
+**What to do.**
+1. Before trusting a migration's `UPDATE`/`INSERT` against a long-lived seeded row,
+   prototype it against a database built the SAME way production builds one (the real
+   constructor, not a hand-rolled minimal fixture) and actually run the write — do not
+   reason about FTS5/trigger ordering from reading the schema SQL alone.
+2. "900+ passing tests" is not evidence a specific write path has ever been exercised.
+   Ask what the very FIRST write to a specific row would look like, and whether any
+   test performs exactly that — a seeded/default row (id=1, "the default X") is
+   disproportionately likely to be read constantly and written to never, in the whole
+   existing suite.
+3. A `content=`/`content_rowid=` FTS5 table's row must be created strictly after the
+   external-content table's own `INSERT` trigger exists, or the row is invisible to the
+   index forever while still being readable via plain `SELECT` (FTS5 can satisfy an
+   unfiltered `SELECT` straight from the content table, so `SELECT rowid FROM fts_tbl`
+   looks fine and gives no warning). `PRAGMA integrity_check` also reports "ok" in this
+   state — it does not catch this class of defect. The tell is `SQLITE_CORRUPT_VTAB`
+   (not generic `SQLITE_CORRUPT`) the first time a row in that state is deleted or
+   updated. Fix forward with `INSERT INTO fts_tbl(fts_tbl) VALUES ('rebuild')`, which is
+   safe and idempotent for exactly this "shadow tables drifted from content" situation.

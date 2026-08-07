@@ -162,7 +162,7 @@ class CharactersRAGDB:
         db_path_str (str): String representation of the database path for SQLite connection.
     """
 
-    _CURRENT_SCHEMA_VERSION = 31  # Adds local-only messages.metadata_json (task-2364).
+    _CURRENT_SCHEMA_VERSION = 32  # Enriches the seeded Default Assistant card with documentation-grade content, if still bare (task-2451).
     _SCHEMA_NAME = "rag_char_chat_schema"  # Used for the db_schema_version table
     _ALLOWED_CONVERSATION_STATES = ("in-progress", "resolved", "backlog", "non-viable")
     _DEFAULT_CONVERSATION_STATE = "in-progress"
@@ -219,18 +219,6 @@ CREATE TABLE IF NOT EXISTS character_cards(
   version       INTEGER  NOT NULL DEFAULT 1
 );
 
-/* Ensure default character card (ID 1) exists */
-INSERT OR IGNORE INTO character_cards
-    (id, name, description, personality, scenario, system_prompt, image,
-     post_history_instructions, first_message, message_example,
-     creator_notes, alternate_greetings, tags, creator, character_version, extensions,
-     created_at, last_modified, client_id, version, deleted)
-VALUES
-    (1, 'Default Assistant', 'A general-purpose assistant.', NULL, NULL, NULL, NULL, NULL,
-     'Hello! How can I help you today?', NULL, NULL, '[]', '[]', 'System', '1.0', '{}',
-     CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 'system_init', 1, 0);
-/* End of insertion of default character card */
-
 CREATE VIRTUAL TABLE IF NOT EXISTS character_cards_fts
 USING fts5(
   name, description, personality, scenario, system_prompt,
@@ -267,6 +255,28 @@ AFTER DELETE ON character_cards BEGIN
                                   name,description,personality,scenario,system_prompt)
   VALUES('delete',old.id,old.name,old.description,old.personality,old.scenario,old.system_prompt);
 END;
+
+/* Ensure default character card (ID 1) exists. task-2451: this INSERT must
+   come AFTER character_cards_fts and its ai/au/ad triggers exist -- for
+   years it ran BEFORE them, so character_cards_ai never fired for this row
+   and row 1 was never indexed into the FTS5 shadow tables. The first-ever
+   UPDATE to row 1 (character_cards_au's 'delete' special command asking
+   FTS5 to remove index entries that were never inserted) then raised
+   SQLITE_CORRUPT_VTAB ("database disk image is malformed") -- discovered
+   via this task's own enrichment write, but it hit ANY edit of the seeded
+   Default Assistant card, on every existing database. See
+   _enrich_default_assistant_card_if_bare's 'rebuild' call for the
+   companion fix that repairs already-created databases. */
+INSERT OR IGNORE INTO character_cards
+    (id, name, description, personality, scenario, system_prompt, image,
+     post_history_instructions, first_message, message_example,
+     creator_notes, alternate_greetings, tags, creator, character_version, extensions,
+     created_at, last_modified, client_id, version, deleted)
+VALUES
+    (1, 'Default Assistant', 'A general-purpose assistant.', NULL, NULL, NULL, NULL, NULL,
+     'Hello! How can I help you today?', NULL, NULL, '[]', '[]', 'System', '1.0', '{}',
+     CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 'system_init', 1, 0);
+/* End of insertion of default character card */
 
 /*----------------------------------------------------------------
   2. Conversations
@@ -3226,6 +3236,15 @@ UPDATE db_schema_version
             logger.info(
                 f"[{self._SCHEMA_NAME} V4] Schema 4 applied and version confirmed for DB: {self.db_path_str}."
             )
+            # task-2451: a brand-new database seeds the enriched Default
+            # Assistant card directly rather than passing through the bare
+            # seed state the v31->v32 migration exists to fix for EXISTING
+            # databases. Calling the same conditional-UPDATE routine here
+            # keeps "what counts as still bare" and "what rich content looks
+            # like" defined in exactly one place for both paths -- the WHERE
+            # clause matches the row this INSERT just created (still bare),
+            # so this always enriches a fresh install.
+            self._enrich_default_assistant_card_if_bare(conn)
         except sqlite3.Error as e:
             logger.opt(exception=True).error(
                 f"[{self._SCHEMA_NAME} V4] Schema application failed: {e}"
@@ -3242,6 +3261,244 @@ UPDATE db_schema_version
             raise SchemaError(
                 f"Unexpected error applying schema V4 for '{self._SCHEMA_NAME}': {e}"
             ) from e
+
+    # task-2451: bare vs. rich literals for the seeded 'Default Assistant'
+    # card (id=1). A row is "still bare" only when EVERY content field below
+    # matches, byte-for-byte -- not just the fields this migration writes.
+    # Any single edited field (even one this migration never touches, like
+    # `tags`) means a user has customized the card, and owner ruling 2 is
+    # explicit: it is left exactly as-is. The compared set is every
+    # user-editable content column on `character_cards`; `id`, `created_at`,
+    # `last_modified`, `deleted`, `client_id`, and `version` are bookkeeping,
+    # not content, and are deliberately excluded from the comparison.
+    #
+    # Keep this runner content aligned with tldw_chatbook/DB/migrations/
+    # chachanotes_v31_to_v32_default_assistant_enrichment.sql (a hand-apply
+    # reference generated FROM these constants; it is not read at runtime).
+    _DEFAULT_ASSISTANT_BARE_NAME = "Default Assistant"
+    _DEFAULT_ASSISTANT_BARE_DESCRIPTION = "A general-purpose assistant."
+    _DEFAULT_ASSISTANT_BARE_FIRST_MESSAGE = "Hello! How can I help you today?"
+    _DEFAULT_ASSISTANT_BARE_ALTERNATE_GREETINGS = "[]"
+    _DEFAULT_ASSISTANT_BARE_TAGS = "[]"
+    _DEFAULT_ASSISTANT_BARE_CREATOR = "System"
+    _DEFAULT_ASSISTANT_BARE_CHARACTER_VERSION = "1.0"
+    _DEFAULT_ASSISTANT_BARE_EXTENSIONS = "{}"
+    # personality, scenario, system_prompt, image, post_history_instructions,
+    # and message_example are all bare-seeded NULL (compared via `IS NULL`).
+
+    # Rich content only. `name` stays 'Default Assistant' and `creator` stays
+    # 'System' -- both are the FK anchor / provenance and must not move.
+    _DEFAULT_ASSISTANT_RICH_DESCRIPTION = (
+        "The built-in Default Assistant character -- used for any new "
+        "conversation until you choose a different character. It also "
+        "serves as a worked example: every field on this card (personality, "
+        "system prompt, greeting, alternate greetings, creator notes) is "
+        "filled in on purpose, so editing one and starting a fresh chat "
+        "shows exactly what that field does."
+    )
+    _DEFAULT_ASSISTANT_RICH_PERSONALITY = (
+        "Concise by default: gives the direct answer first, then reasoning "
+        "only if it adds something. Says which parts of an answer are "
+        "uncertain instead of guessing at them. Asks one clarifying "
+        "question before assuming something that would change the answer, "
+        "rather than assuming and hoping."
+    )
+    _DEFAULT_ASSISTANT_RICH_SYSTEM_PROMPT = (
+        "You are {{char}}: a measured, general-purpose assistant.\n"
+        "\n"
+        "1. Lead with the answer. Give the direct answer first, then "
+        "explain your reasoning if it adds something.\n"
+        "2. Name what you're relying on. When an answer depends on a "
+        "specific fact, document, or source, say which one. When it "
+        "depends on your own judgment instead, say that.\n"
+        "3. Ask before assuming. If a request is ambiguous in a way that "
+        "would change the answer, ask one clarifying question rather than "
+        "guessing.\n"
+        "4. Match {{user}}'s register. Mirror their level of formality and "
+        "technical depth instead of defaulting to one style.\n"
+        "5. Say what you don't know. A confident wrong answer is worse "
+        "than an honest \"I'm not sure.\"\n"
+        "\n"
+        "Stay consistent with these rules as the conversation continues."
+    )
+    _DEFAULT_ASSISTANT_RICH_FIRST_MESSAGE = (
+        "Hello! I'm the Default Assistant -- the character every new chat "
+        "starts with until you pick another one.\n"
+        "\n"
+        "This card is also a working example: everything about me is "
+        "editable from **Roleplay ▸ Characters ▸ Default "
+        "Assistant** -- personality, system prompt, this greeting, all of "
+        "it. I don't come with a voice assigned (voice profiles are set up "
+        "separately) -- give me one from the card's **Voice & Speech** "
+        "section, or set an app-wide default under **Settings ▸ "
+        "Speech & TTS ▸ Default voice profile**.\n"
+        "\n"
+        "Prefer to keep this card as-is? Duplicate it from the Characters "
+        "list and customize the copy instead.\n"
+        "\n"
+        "What can I help you with?"
+    )
+    _DEFAULT_ASSISTANT_RICH_CREATOR_NOTES = (
+        "This is the Default Assistant: tldw_chatbook's built-in character "
+        "and a worked example of what a character card can hold. Everything "
+        "on it is safe to edit or delete -- nothing else in the app depends "
+        "on these specific values.\n"
+        "\n"
+        "Where each field surfaces (Roleplay ▸ Characters ▸ "
+        "Default Assistant):\n"
+        "- Description -- shown in the character list, and folded into the "
+        "system prompt as \"Description: ...\".\n"
+        "- Personality -- folded into the system prompt as "
+        "\"Personality: ...\"; the quickest field to change to see a "
+        "difference in tone.\n"
+        "- System prompt -- sent to the model verbatim, first.\n"
+        "- First message -- what a new conversation opens with.\n"
+        "- Alternate greetings -- extra opening lines to pick between when "
+        "starting a chat.\n"
+        "- Creator / Version / Tags -- bookkeeping only; never sent to the "
+        "model.\n"
+        "\n"
+        "Voice: a character card ships with no voice assigned -- voice "
+        "profiles live in a separate store and can't be pre-assigned at "
+        "install time. To give this character a voice, open its editor's "
+        "Voice & Speech section and choose a profile; leaving it on \"Use "
+        "global default\" follows whatever is set under Settings ▸ "
+        "Speech & TTS ▸ Default voice profile.\n"
+        "\n"
+        "To make this yours: edit any field above, or duplicate the card "
+        "from the Characters list and edit the copy instead."
+    )
+    _DEFAULT_ASSISTANT_RICH_ALTERNATE_GREETINGS = json.dumps(
+        [
+            (
+                "Hi -- quick orientation, since this is an alternate "
+                "greeting: this character card lives at Roleplay ▸ "
+                "Characters ▸ Default Assistant, and everything on it "
+                "(including which greeting opens a chat) is editable. What "
+                "are you working on?"
+            ),
+            (
+                "Hey. You picked this card's second greeting -- a "
+                "demonstration that a character can offer more than one "
+                "opening line. Add, edit, or reorder them from the card's "
+                "editor. What's on your mind?"
+            ),
+        ]
+    )
+
+    def _enrich_default_assistant_card_if_bare(self, conn: sqlite3.Connection) -> None:
+        """Promote the seeded 'Default Assistant' card (id=1) to
+        documentation-grade rich content (task-2451), but ONLY when it is
+        still byte-identical to the original bare-seed literals across
+        every content field -- not just the ones this promotes. Any user
+        edit, anywhere on the row, leaves it untouched (owner ruling 2:
+        nobody's customization is ever overwritten). `name` and `creator`
+        are part of the bare-identity comparison (a renamed or
+        re-attributed card is a real edit) even though the rich content
+        keeps their values unchanged -- they are the FK anchor and
+        provenance fields and must not move.
+
+        Shared by two callers so both agree on what "still bare" and "rich"
+        mean: `_apply_schema_v4` (a fresh database, immediately after the
+        bare row is inserted) and `_migrate_from_v31_to_v32` (an existing
+        database walking forward through the migration chain). Affects 0 or
+        1 rows; the caller does not treat a 0-row result as an error --
+        that's the expected outcome for an already-rich or user-edited row.
+
+        Every database created before this task's schema-SQL reordering fix
+        has row 1's `character_cards_fts` shadow index permanently missing
+        (its INSERT ran before the `character_cards_ai` trigger existed to
+        index it), which raises SQLITE_CORRUPT_VTAB the first time ANYTHING
+        updates that row -- including this very UPDATE. The FTS5 `rebuild`
+        special command discards and reconstructs the whole index from the
+        current `character_cards` content table, which is always safe and
+        idempotent (SQLite docs: for exactly this "shadow tables drifted
+        from content" situation) and fixes every row, not just id=1.
+
+        Guarded by an existence check: some tests (and, in principle, a
+        pre-v4 fixture) build a synthetic database that never went through
+        `_apply_schema_v4` and so has neither `character_cards` nor
+        `character_cards_fts` at all. A real production database always has
+        both from v4 onward, but this routine has no business assuming that
+        -- if the table doesn't exist there is nothing to rebuild and
+        nothing to enrich, so it is simply a no-op.
+        """
+        table_exists = (
+            conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type IN ('table', 'view') AND name = ?",
+                ("character_cards",),
+            ).fetchone()
+            is not None
+        )
+        if not table_exists:
+            logger.debug(
+                "[task-2451] character_cards table absent; skipping Default "
+                f"Assistant enrichment for DB: {self.db_path_str}."
+            )
+            return
+        conn.execute("INSERT INTO character_cards_fts(character_cards_fts) VALUES ('rebuild')")
+        cursor = conn.execute(
+            """
+            UPDATE character_cards
+               SET description = ?,
+                   personality = ?,
+                   system_prompt = ?,
+                   first_message = ?,
+                   creator_notes = ?,
+                   alternate_greetings = ?,
+                   last_modified = ?,
+                   version = version + 1,
+                   client_id = ?
+             WHERE id = 1
+               AND deleted = 0
+               AND name IS ?
+               AND description IS ?
+               AND personality IS ?
+               AND scenario IS ?
+               AND system_prompt IS ?
+               AND image IS ?
+               AND post_history_instructions IS ?
+               AND first_message IS ?
+               AND message_example IS ?
+               AND creator_notes IS ?
+               AND alternate_greetings IS ?
+               AND tags IS ?
+               AND creator IS ?
+               AND character_version IS ?
+               AND extensions IS ?
+            """,
+            (
+                # SET values (rich content)
+                self._DEFAULT_ASSISTANT_RICH_DESCRIPTION,
+                self._DEFAULT_ASSISTANT_RICH_PERSONALITY,
+                self._DEFAULT_ASSISTANT_RICH_SYSTEM_PROMPT,
+                self._DEFAULT_ASSISTANT_RICH_FIRST_MESSAGE,
+                self._DEFAULT_ASSISTANT_RICH_CREATOR_NOTES,
+                self._DEFAULT_ASSISTANT_RICH_ALTERNATE_GREETINGS,
+                self._get_current_utc_timestamp_iso(),
+                self.client_id,
+                # WHERE bare-identity comparison values (original seed literals)
+                self._DEFAULT_ASSISTANT_BARE_NAME,
+                self._DEFAULT_ASSISTANT_BARE_DESCRIPTION,
+                None,  # personality
+                None,  # scenario
+                None,  # system_prompt
+                None,  # image
+                None,  # post_history_instructions
+                self._DEFAULT_ASSISTANT_BARE_FIRST_MESSAGE,
+                None,  # message_example
+                None,  # creator_notes
+                self._DEFAULT_ASSISTANT_BARE_ALTERNATE_GREETINGS,
+                self._DEFAULT_ASSISTANT_BARE_TAGS,
+                self._DEFAULT_ASSISTANT_BARE_CREATOR,
+                self._DEFAULT_ASSISTANT_BARE_CHARACTER_VERSION,
+                self._DEFAULT_ASSISTANT_BARE_EXTENSIONS,
+            ),
+        )
+        logger.debug(
+            f"[task-2451] Default Assistant enrichment UPDATE affected "
+            f"{cursor.rowcount} row(s) in DB: {self.db_path_str}."
+        )
 
     def _migrate_from_v4_to_v5(self, conn: sqlite3.Connection):
         """
@@ -4424,6 +4681,67 @@ UPDATE db_schema_version
                 f"Unexpected error migrating from V30 to V31 for '{self._SCHEMA_NAME}': {e}"
             ) from e
 
+    def _migrate_from_v31_to_v32(self, conn: sqlite3.Connection) -> None:
+        """Migrate schema V31->V32: enrich the seeded 'Default Assistant'
+        character card (id=1) with documentation-grade content (task-2451),
+        but ONLY when the row is still byte-identical to the original
+        bare-seed literals -- see `_enrich_default_assistant_card_if_bare`
+        for the shared conditional-UPDATE routine and the exact field set
+        compared. A row with any single field edited by a user is left
+        completely untouched; this is data enrichment, not a DDL change,
+        so there is no ALTER/CREATE to guard for idempotence -- the WHERE
+        clause itself is the idempotence guard (an already-rich row no
+        longer matches it)."""
+        if self._get_db_version(conn) != 31:
+            raise SchemaError(
+                f"[{self._SCHEMA_NAME} V31→V32] Migration requires schema version 31"
+            )
+        logger.info(
+            f"Migrating schema from V31 to V32 for '{self._SCHEMA_NAME}' in DB: {self.db_path_str}..."
+        )
+        try:
+            self._enrich_default_assistant_card_if_bare(conn)
+
+            version_cursor = conn.execute(
+                """
+                UPDATE db_schema_version
+                   SET version = 32
+                 WHERE schema_name = ?
+                   AND version = 31
+                """,
+                (self._SCHEMA_NAME,),
+            )
+            if version_cursor.rowcount != 1:
+                raise SchemaError(
+                    f"[{self._SCHEMA_NAME} V31→V32] Migration version update was not applied"
+                )
+
+            final_version = self._get_db_version(conn)
+            if final_version != 32:
+                raise SchemaError(
+                    f"[{self._SCHEMA_NAME} V31→V32] Migration version check failed. Expected 32, got: {final_version}"
+                )
+
+            logger.info(
+                f"[{self._SCHEMA_NAME} V31→V32] Migration completed successfully for DB: {self.db_path_str}."
+            )
+        except sqlite3.Error as e:
+            logger.opt(exception=True).error(
+                f"[{self._SCHEMA_NAME} V31→V32] Migration failed: {e}"
+            )
+            raise SchemaError(
+                f"Migration from V31 to V32 failed for '{self._SCHEMA_NAME}': {e}"
+            ) from e
+        except SchemaError:
+            raise
+        except Exception as e:
+            logger.opt(exception=True).error(
+                f"[{self._SCHEMA_NAME} V31→V32] Unexpected error during migration: {e}"
+            )
+            raise SchemaError(
+                f"Unexpected error migrating from V31 to V32 for '{self._SCHEMA_NAME}': {e}"
+            ) from e
+
     def _migrate_from_v18_to_v19(self, conn: sqlite3.Connection):
         """
         Migrates the database schema from version 18 to version 19.
@@ -4585,6 +4903,7 @@ UPDATE db_schema_version
                     28: self._migrate_from_v28_to_v29,
                     29: self._migrate_from_v29_to_v30,
                     30: self._migrate_from_v30_to_v31,
+                    31: self._migrate_from_v31_to_v32,
                 }
 
                 if current_db_version == 0:
