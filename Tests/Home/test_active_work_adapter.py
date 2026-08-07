@@ -1596,3 +1596,45 @@ def test_local_notification_adapter_excludes_dismissed_ingest_job():
     )
 
     assert dashboard_input.active_work_items == ()
+
+
+def test_local_notification_adapter_treats_policy_refusal_quietly():
+    """task-2722: in local runtime mode the server feed is refused by policy
+    ("requires server mode"). That is the expected state for a local-only
+    profile — it must not be logged as a warning on every Home visit."""
+    from loguru import logger as loguru_root_logger
+
+    from tldw_chatbook.runtime_policy.types import PolicyDeniedError
+
+    class FakeServerEventService:
+        def list_observed_server_feed(self, *, limit=20, mark_presented=False):
+            raise PolicyDeniedError(
+                action_id="notifications.feed.list.server",
+                reason_code="server_mode_required",
+                user_message="notifications.feed.list.server requires server mode.",
+                effective_source="local",
+                authority_owner="server",
+            )
+
+    adapter = LocalNotificationHomeActiveWorkAdapter(
+        server_event_service=FakeServerEventService()
+    )
+
+    warnings: list[str] = []
+    sink_id = loguru_root_logger.add(
+        lambda message: warnings.append(str(message)), level="WARNING"
+    )
+    try:
+        dashboard_input = adapter.build_dashboard_input(
+            providers_models={"OpenAI": ["gpt-4.1"]},
+            has_recent_work=False,
+        )
+    finally:
+        loguru_root_logger.remove(sink_id)
+
+    assert dashboard_input.server_event_count == 0
+    assert dashboard_input.server_event_state == "unavailable"
+    assert "server mode" in dashboard_input.server_event_recovery
+    assert not [w for w in warnings if "server event feed" in w], (
+        f"policy refusal logged as warning: {warnings}"
+    )

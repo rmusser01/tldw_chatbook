@@ -1096,3 +1096,100 @@ async def test_conflicts_tab_resolve_false_does_not_post_message():
         assert engine.calls == [("c1", "server")]
         assert len(tab.posted_messages) == 0
         assert table.row_count == 1
+
+
+@pytest.mark.asyncio
+async def test_persisted_policy_refusal_is_not_surfaced_as_sync_error():
+    """task-2722: older builds persisted the local-mode policy refusal as a
+    sync error; profiles carrying those rows must not wear the error badge."""
+    app = WorkbenchTestAppWithService()
+    app.scheduling_service.db = _MockSchedulingDB(
+        sync_state={
+            "sync_errors": [
+                {
+                    "message": (
+                        "notifications.reminders.list.server requires server mode."
+                    ),
+                    "timestamp": "2026-08-02T22:36:00+00:00",
+                }
+            ]
+        }
+    )
+
+    async with app.run_test() as pilot:
+        workbench = SchedulesWorkbench(app_instance=pilot.app)
+        await pilot.app.push_screen(workbench)
+        await pilot.pause()
+
+        header_calls: list[tuple[str, str]] = []
+        workbench._sync_header_status = lambda status, label: header_calls.append(
+            (status, label)
+        )
+        workbench._refresh_owner_select()
+        await pilot.pause()
+
+        error_widget = workbench.query_one("#scheduling-sync-error", Static)
+        assert str(error_widget.renderable) == "", (
+            f"refusal shown as sync error: {error_widget.renderable!r}"
+        )
+        assert not [c for c in header_calls if c[0] == "error"], (
+            f"header wears the error badge for a policy refusal: {header_calls}"
+        )
+
+
+@pytest.mark.asyncio
+async def test_real_sync_error_still_surfaces():
+    """Guard for task-2722: only policy refusals are filtered from display."""
+    app = WorkbenchTestAppWithService()
+    app.scheduling_service.db = _MockSchedulingDB(
+        sync_state={
+            "sync_errors": [
+                {
+                    "message": "server unreachable: connection refused",
+                    "timestamp": "2026-08-02T22:36:00+00:00",
+                }
+            ]
+        }
+    )
+
+    async with app.run_test() as pilot:
+        workbench = SchedulesWorkbench(app_instance=pilot.app)
+        await pilot.app.push_screen(workbench)
+        await pilot.pause()
+
+        error_widget = workbench.query_one("#scheduling-sync-error", Static)
+        assert "connection refused" in str(error_widget.renderable)
+
+
+@pytest.mark.asyncio
+async def test_sync_strip_fields_do_not_abut():
+    """task-2723: 'Last pull: —Last push: —<error text>' rendered as one
+    unbroken run. Assert real layout geometry: each field ends at least one
+    cell before the next begins."""
+    app = WorkbenchTestAppWithService()
+    app.scheduling_service.db = _MockSchedulingDB(
+        sync_state={
+            "sync_errors": [
+                {
+                    "message": "server unreachable: connection refused",
+                    "timestamp": "2026-08-02T22:36:00+00:00",
+                }
+            ]
+        }
+    )
+
+    async with app.run_test(size=(200, 40)) as pilot:
+        workbench = SchedulesWorkbench(app_instance=pilot.app)
+        await pilot.app.push_screen(workbench)
+        await pilot.pause()
+
+        pull = workbench.query_one("#scheduling-last-pull", Static)
+        push = workbench.query_one("#scheduling-last-push", Static)
+        error = workbench.query_one("#scheduling-sync-error", Static)
+
+        assert pull.region.right < push.region.x, (
+            f"pull {pull.region} abuts push {push.region}"
+        )
+        assert push.region.right < error.region.x, (
+            f"push {push.region} abuts error {error.region}"
+        )

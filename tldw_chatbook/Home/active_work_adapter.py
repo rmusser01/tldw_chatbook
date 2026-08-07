@@ -21,7 +21,7 @@ from tldw_chatbook.Library.library_ingest_state import short_ingest_error
 from tldw_chatbook.Notifications.notifications_scope_service import (
     ServerEventScopeRequiredError,
 )
-from tldw_chatbook.runtime_policy.types import RuntimeSourceState
+from tldw_chatbook.runtime_policy.types import PolicyDeniedError, RuntimeSourceState
 from tldw_chatbook.Utils.input_validation import sanitize_string, validate_text_input
 from tldw_chatbook.Utils.path_validation import validate_path
 from .dashboard_state import (
@@ -455,6 +455,16 @@ class LocalNotificationHomeActiveWorkAdapter(UnavailableHomeActiveWorkAdapter):
                 "server_event_count": 0,
                 "server_event_state": SERVER_EVENT_STATE_RECONNECT_REQUIRED,
                 "server_event_recovery": "Reconnect or select an active server.",
+            }
+        except PolicyDeniedError as exc:
+            # Local runtime mode refuses the server feed by design; that is
+            # the normal state for a local-only profile, not a failure worth
+            # a warning on every Home visit (task-2722).
+            logger.debug(f"Server event feed not applicable for Home: {exc}")
+            return {
+                "server_event_count": 0,
+                "server_event_state": SERVER_EVENT_STATE_UNAVAILABLE,
+                "server_event_recovery": "Server events apply in server mode.",
             }
         except ValueError as exc:
             logger.warning(f"Failed to resolve server event feed scope for Home: {exc}")

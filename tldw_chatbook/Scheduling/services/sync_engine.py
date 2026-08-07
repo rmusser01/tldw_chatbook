@@ -12,6 +12,7 @@ from tldw_chatbook.Scheduling.services.server_client import (
     SchedulingServerClient,
     ServerClientError,
     ServerClientNotFoundError,
+    ServerClientPolicyError,
 )
 
 
@@ -62,6 +63,12 @@ class SyncEngine:
             if not isinstance(response, dict):
                 response = {}
             pulled_items = response.get("items", [])
+        except ServerClientPolicyError as exc:
+            # A runtime-mode refusal ("requires server mode") means sync is
+            # not applicable right now — recording it as a sync error put a
+            # standing error badge on local-only profiles (task-2722).
+            logger.info(f"Sync pull not applicable for {target_owner}: {exc}")
+            return
         except ServerClientError as exc:
             self._record_sync_error(str(exc), target_owner)
             return
@@ -117,6 +124,11 @@ class SyncEngine:
                 pending_local_ids,
                 mutations,
             ) = await self._network_phase(target_owner)
+        except ServerClientPolicyError as exc:
+            # Same rule as `pull`: a runtime-mode refusal is "not applicable",
+            # never a persisted sync error (task-2722).
+            logger.info(f"Sync not applicable for {target_owner}: {exc}")
+            return
         except ServerClientError as exc:
             self._record_sync_error(str(exc), target_owner)
             return

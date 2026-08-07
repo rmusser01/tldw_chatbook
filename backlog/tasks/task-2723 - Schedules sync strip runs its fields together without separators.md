@@ -1,7 +1,7 @@
 ---
 id: TASK-2723
 title: Schedules sync strip runs its fields together without separators
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-08-06 17:00'
 labels:
@@ -25,9 +25,22 @@ On the Schedules screen (UAT on `origin/dev` `b0185749c`, 235x52) the sync statu
 (The error text itself being shown at all in local mode is TASK-2722; this task is only the layout/separator defect, which would remain visible in genuine server-mode failure states.)
 <!-- SECTION:DESCRIPTION:END -->
 
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. RED: layout-geometry test — each sync-strip field's region must end at least one cell before the next begins (was flush: right==x==51).
+2. GREEN: `margin-left: 2` on pull/push/error in `SyncStatusWidget.DEFAULT_CSS`; error additionally `text-wrap: nowrap; text-overflow: ellipsis` so a long message truncates instead of displacing fields.
+<!-- SECTION:PLAN:END -->
+
 ## Acceptance Criteria
 
 <!-- SECTION:ACCEPTANCE_CRITERIA:BEGIN -->
-- [ ] Sync-strip fields (mode, server, last pull, last push, error/status message) are visually separated; no field's value abuts the next field's label.
-- [ ] A long error/status message wraps or truncates without displacing the pull/push fields.
+- [x] Sync-strip fields (mode, server, last pull, last push, error/status message) are visually separated; no field's value abuts the next field's label.
+- [x] A long error/status message wraps or truncates without displacing the pull/push fields.
 <!-- SECTION:ACCEPTANCE_CRITERIA:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+CSS-only fix in `SyncStatusWidget.DEFAULT_CSS`: the pull/push/error Statics had `width: auto` and no margins, so they rendered flush ("Last pull: —Last push: —notifications…"). Added `margin-left: 2` to all three; the error Static (already `width: 1fr`) now truncates with ellipsis instead of wrapping/displacing. Regression pinned by real layout geometry (`region.right < next.region.x`), not by style introspection — `test_sync_strip_fields_do_not_abut`, watched RED (51 < 51) then GREEN. Files: tldw_chatbook/UI/Screens/scheduling/sync_status_widget.py, Tests/UI/test_schedules_workbench.py.
+<!-- SECTION:NOTES:END -->

@@ -592,6 +592,16 @@ class SchedulesWorkbench(BaseAppScreen):
         status.set_owner_state(service.owner_id, active_server_id, server_available)
         state = service.db.get_sync_state(service.owner_id) or {}
         sync_errors = state.get("sync_errors") or []
+        # A runtime-mode refusal is "sync not applicable", never a failure.
+        # New refusals are no longer recorded (task-2722, SyncEngine), but
+        # profiles that synced on older builds still carry persisted ones —
+        # keep them off the error surface instead of badging local-only
+        # profiles with an error the user did nothing to cause.
+        sync_errors = [
+            entry
+            for entry in sync_errors
+            if "requires server mode" not in str(entry.get("message", ""))
+        ]
         status.update_status(
             last_pull_at=state.get("last_pull_at"),
             last_push_at=state.get("last_push_at"),
