@@ -550,6 +550,7 @@ CONSOLE_FOCUS_FRAME_COLOR = "#0178D4"
 CONSOLE_FOCUS_FRAME_BORDER = ("solid", CONSOLE_FOCUS_FRAME_COLOR)
 CONSOLE_START_HERE_COPY = ""
 CONSOLE_ACTION_HINTS_COPY = ""
+# "Absent" bucket of the untrusted-refuse copy (Task 7's SKILL_UNTRUSTED_REFUSE):
 # a typed skill name that matches nothing at all -- not a trusted candidate,
 # not even a needs-review one.
 CONSOLE_SKILL_RUN_REFUSE_REASON_ABSENT = "no matching skill"

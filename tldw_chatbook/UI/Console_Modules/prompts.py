@@ -13,7 +13,7 @@ This module follows the SAME binding rule waves 1-2 established (see
 canonical statement, and `message.py` for the closest analogue in size and
 fan-in; restated briefly here):
 
-1. **Framework services** (`run_worker`, `push_screen`) live-read from the
+1. **Framework services** (`push_screen`) live-read from the
    screen via `@property` on every access -- never snapshotted.
 2. **Everything else this cluster depends on that is not its own state** is
    a NAMED keyword-only constructor callable, matching the design spec's
@@ -220,7 +220,7 @@ class ConsolePromptsController:
 
         Args:
             screen: The Console screen. Used ONLY for the framework
-                services (`run_worker`, `push_screen`) below. Zero
+                services (`push_screen`) below. Zero
                 `query_one`/`query` traffic reaches through `screen` here --
                 see the module docstring's "Zero DOM" section.
             app_instance: Snapshotted once, not re-read through `screen` --
@@ -333,12 +333,6 @@ class ConsolePromptsController:
         self._console_prompt_history: Any | None = None
 
     # -- Framework services (live-read via `@property`) --------------------
-
-    @property
-    def run_worker(self) -> Any:
-        """`Screen.run_worker`, bound. See `__init__`'s docstring for why
-        this is a property rather than a value snapshotted once."""
-        return self._screen.run_worker
 
     @property
     def push_screen(self) -> Any:
