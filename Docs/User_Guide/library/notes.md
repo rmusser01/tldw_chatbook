@@ -79,11 +79,15 @@ pick **Overwrite** or **Reload**.
 
 ### New note view
 
-"Blank note" creates an empty note and drops you in the editor. The
-"From a template" list pre-fills title, body, and keywords; each row shows
-the template name with the title the note will get. Available templates:
-Brainstorming session, Bug report, Code review, Daily journal entry,
-Meeting notes, Project planning, Research notes, Todo list.
+"Blank note" drops you straight into the editor with an empty title (shown
+as an "Untitled" placeholder — just start typing) and an empty body. If you
+leave again via "‹ Back to list" without typing anything, the blank note is
+quietly discarded rather than left behind as a stray "Untitled" row; typing
+anything, or pressing "Save", keeps it. The "From a template" list
+pre-fills title, body, and keywords instead; each row shows the template
+name with the title the note will get. Available templates: Brainstorming
+session, Bug report, Code review, Daily journal entry, Meeting notes,
+Project planning, Research notes, Todo list.
 
 ### Notes sync panel
 
@@ -178,6 +182,10 @@ click-driven. Global navigation keys live in the [guide index](../index.md).
 *Verified against c2cbb8081 — 2026-08-04 (PR-T1: "Use in Console"
 delivering the note's real content on send is covered by capture
 round-trip tests, task-2374).*
+*Verified against dev @ 6b38a13b8 — 2026-08-07 (task-2858 Task 3, LIB-14:
+"Blank note" no longer leaves a stray "Untitled" row if abandoned
+untouched, and the title shows an "Untitled" placeholder instead of
+literal editable text).*
 
 *Re-stamped against dev @ 4acb17a0b — 2026-08-07 (TASK-2857: "Export…"
 now opens the "Export bundle (.zip)" canvas, not "Export chatbook").*

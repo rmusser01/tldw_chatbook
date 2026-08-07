@@ -1592,6 +1592,13 @@ class LibraryScreen(BaseAppScreen):
         self._library_media_editing_analysis: bool = False
         self._library_media_content_query: str = ""
         self._library_media_content_match_index: int = 0
+        # LIB-13: "rendered" (Markdown, via the same render path Notes
+        # Preview uses) or "raw" (plain/highlighted text). Reseeded per
+        # item by ``_refresh_library_media_detail`` from the freshly built
+        # viewer state's ``is_markdown`` (rendered default for markdown
+        # media, raw for everything else); the toggle handlers below flip
+        # it in place without touching the default-selection logic.
+        self._library_media_content_mode: str = "raw"
         self._library_notes_view: str = "list"
         self._library_notes_select_mode: bool = False
         self._library_notes_row_selection = RowSelection("notes")
@@ -1733,6 +1740,21 @@ class LibraryScreen(BaseAppScreen):
         # autosave even though the user never typed anything. Re-armed via
         # ``call_after_refresh`` after every notes-editor (re)compose.
         self._library_note_editor_armed: bool = False
+        # LIB-14: the id of a note created via "Blank note" that has not
+        # been touched since (title/body/keywords Input.Changed never fired
+        # past the mount-time armed guard, and Save was never explicitly
+        # pressed) -- both clear this. Read by ``_flush_library_note_save``
+        # (the single choke point every editor-exit path already calls) to
+        # quietly delete the row instead of leaving a permanent literal
+        # "Untitled" row behind. ``None`` means "nothing pending" -- either
+        # no blank note is open, or it has already been edited/saved/GC'd.
+        # Also drives the title Input's placeholder-vs-value rendering (see
+        # ``LibraryNotesCanvas``'s ``title_placeholder_only``): while this
+        # is set for the open note, the title Input shows empty with an
+        # "Untitled" placeholder instead of a literal editable "Untitled"
+        # value -- the fix for typing landing at the cursor's end and
+        # producing e.g. "UntitledAtlas follow-ups".
+        self._library_note_pending_blank_gc_id: str | None = None
         # Notes sync panel state. Seeded from config lazily on first entry
         # into sync mode (``_ensure_library_notes_sync_config_loaded``), not
         # here in __init__, so tests/screens that never open the sync panel
@@ -4881,6 +4903,7 @@ class LibraryScreen(BaseAppScreen):
                             editing_analysis=self._library_media_editing_analysis,
                             content_query=self._library_media_content_query,
                             content_match_index=self._library_media_content_match_index,
+                            content_mode=self._library_media_content_mode,
                             id="library-media-viewer",
                         )
                 elif shell.canvas_kind == "media":
@@ -4949,6 +4972,11 @@ class LibraryScreen(BaseAppScreen):
                             editor_state=editor_state,
                             confirming_delete=self._library_note_confirming_delete,
                             preview=self._library_note_preview,
+                            title_placeholder_only=(
+                                self._library_note_pending_blank_gc_id is not None
+                                and self._library_note_pending_blank_gc_id
+                                == self._selected_note_id
+                            ),
                             id="library-notes-canvas",
                         )
                 elif (
@@ -5540,6 +5568,18 @@ class LibraryScreen(BaseAppScreen):
             return
         self._library_media_detail = detail if isinstance(detail, Mapping) else None
         self._library_media_highlights = highlights
+        # LIB-13: default the content view per item, from the just-fetched
+        # detail's own is_markdown -- computed here (once, at load) rather
+        # than on every recompose, so a later Rendered<->Raw toggle press
+        # is never silently reset back to the default by an unrelated
+        # recompose (mirrors the note editor's ``_library_note_preview``
+        # not being re-derived on every render).
+        self._library_media_content_mode = (
+            "rendered"
+            if isinstance(self._library_media_detail, Mapping)
+            and build_library_media_viewer_state(self._library_media_detail).is_markdown
+            else "raw"
+        )
         if (
             self._library_media_detail is None
             and media_id == self._selected_media_id
@@ -5763,6 +5803,13 @@ class LibraryScreen(BaseAppScreen):
         self._library_note_preview = False
         self._library_note_preview_snapshot = None
         self._library_note_editor_armed = False
+        # Defense in depth: the normal exit path is ``_flush_library_note_
+        # save`` (which GCs a still-pending blank note and clears this
+        # itself, before this reset ever runs); this catches the other
+        # "note is gone" fallback paths that reach this reset without going
+        # through that flush first, so the flag can never outlive the
+        # editor session it was armed for.
+        self._library_note_pending_blank_gc_id = None
         if self._library_notes_autosave_timer is not None:
             self._library_notes_autosave_timer.stop()
             self._library_notes_autosave_timer = None
@@ -7297,6 +7344,14 @@ class LibraryScreen(BaseAppScreen):
         if not self._library_note_editor_armed:
             return
         self._library_note_dirty = True
+        # LIB-14: a real edit (this is only reached once armed, i.e. never
+        # for the mount-time phantom Input/TextArea.Changed) disqualifies a
+        # "Blank note" from GC-on-exit and drops it back to a normal,
+        # literal title on the next recompose -- no recompose is forced
+        # here, matching this method's existing silent (no per-keystroke
+        # recompose) discipline; the mounted Input already shows whatever
+        # the user is typing regardless of this flag.
+        self._library_note_pending_blank_gc_id = None
         if self._library_note_autosave_state == "conflict":
             return
         if self._library_notes_autosave_timer is not None:
@@ -7349,6 +7404,10 @@ class LibraryScreen(BaseAppScreen):
     def handle_library_note_save(self, event: Button.Pressed) -> None:
         """Explicitly save the open note, bypassing the autosave debounce."""
         event.stop()
+        # LIB-14: an explicit Save is the user's own deliberate "keep it"
+        # act, even if the note is still blank -- never GC a note the user
+        # just told the app to save.
+        self._library_note_pending_blank_gc_id = None
         if self._library_notes_autosave_timer is not None:
             self._library_notes_autosave_timer.stop()
             self._library_notes_autosave_timer = None
@@ -7426,7 +7485,13 @@ class LibraryScreen(BaseAppScreen):
             return
         raw_title, raw_content, raw_keywords_text = fields
 
-        title = self._sanitize_media_field(raw_title, max_length=300)
+        # LIB-14: the title Input can now render genuinely empty (see
+        # ``title_placeholder_only``) for a pristine "Blank note" the user
+        # tabs/clicks past without typing a title -- a note otherwise
+        # always has a non-blank title, so an empty save falls back to the
+        # same "Untitled" default the create seam itself uses, rather than
+        # persisting a blank one.
+        title = self._sanitize_media_field(raw_title, max_length=300) or "Untitled"
         content = self._sanitize_note_content(
             raw_content, max_length=LIBRARY_NOTE_CONTENT_MAX_CHARS
         )
@@ -7575,6 +7640,15 @@ class LibraryScreen(BaseAppScreen):
         flag, so the re-check below usually short-circuits; the inline save
         only runs when edits genuinely remain, and then against the bumped
         version.
+
+        LIB-14 (AC#5): this is also the single choke point every editor-exit
+        path already awaits before tearing the editor down, so it doubles
+        as the GC point for a "Blank note" that was never touched -- see
+        ``_gc_pending_blank_note``. GC runs before the dirty check below
+        (an untouched blank note is never dirty, so it would otherwise hit
+        the early return and never be considered) and only when nothing is
+        dirty, so a real in-progress edit is never at risk of being
+        mistaken for GC-eligible.
         """
         if self._library_notes_autosave_timer is not None:
             self._library_notes_autosave_timer.stop()
@@ -7587,9 +7661,66 @@ class LibraryScreen(BaseAppScreen):
                     logger.opt(exception=True).debug(
                         "In-flight note-save worker errored while flushing; continuing.",
                     )
+        if (
+            self._library_note_pending_blank_gc_id
+            and self._library_note_pending_blank_gc_id == self._selected_note_id
+            and not self._library_note_dirty
+        ):
+            await self._gc_pending_blank_note()
         if not self._library_note_dirty:
             return
         await self._save_library_note(explicit=False)
+
+    async def _gc_pending_blank_note(self) -> None:
+        """Delete an untouched "Blank note" row before it is left behind (LIB-14).
+
+        "Blank note" still commits its DB row immediately on click (the
+        create-note seam has no create-on-first-edit branch -- see the
+        AC#5 decision recorded on task-2858); this is the smaller-diff
+        alternative the task allows instead: if the editor is left again
+        with the row never having been touched (no title/body/keywords
+        edit ever passed the mount-time armed guard, and Save was never
+        explicitly pressed -- both clear ``_library_note_pending_blank_gc_id``
+        before this can run), the row is quietly removed here rather than
+        surviving as a permanent literal "Untitled" row the user has to
+        find and delete by hand.
+
+        A freshly created note is always at version 1 (the create seam's
+        own contract; nothing else has saved to it yet, since any save
+        would have cleared the pending-GC flag). Best-effort: any failure
+        (including a version conflict from a vanishingly-unlikely
+        concurrent external change) is swallowed -- GC must never block the
+        exit it runs inside, and the worst case on failure is the
+        pre-existing behavior (the row survives), not a new regression. On
+        success, kicks the same full local-source snapshot reload the
+        create/delete flows already use, so the notes list/rail count drop
+        the now-gone row on the next recompose instead of a stale one
+        lingering in the cached snapshot.
+        """
+        note_id = self._library_note_pending_blank_gc_id
+        self._library_note_pending_blank_gc_id = None
+        if not note_id:
+            return
+        service = getattr(self.app_instance, "notes_scope_service", None)
+        delete_note = getattr(service, "delete_note", None)
+        if not callable(delete_note):
+            return
+        try:
+            deleted = await self._run_library_service_call(
+                delete_note,
+                scope="local_note",
+                note_id=note_id,
+                version=1,
+                user_id=self._library_notes_user_id(),
+                isolate_in_worker=True,
+            )
+        except Exception:
+            logger.opt(exception=True).debug(
+                f"Could not GC untouched blank note {note_id!r}; leaving it in place."
+            )
+            return
+        if deleted:
+            self._refresh_local_source_snapshot()
 
     async def _resolve_library_note_conflict(self, *, overwrite: bool) -> None:
         """Resolve a shown save conflict via the Overwrite or Reload action.
@@ -8487,6 +8618,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_media_editing_analysis = False
         self._library_media_content_query = ""
         self._library_media_content_match_index = 0
+        self._library_media_content_mode = "raw"
         self._library_notes_filter = ""
         self._library_notes_filter_records = None
         self._reset_library_note_editor_state()
@@ -9017,6 +9149,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_media_editing_analysis = False
         self._library_media_content_query = ""
         self._library_media_content_match_index = 0
+        self._library_media_content_mode = "raw"
         if media_id:
             # Exclusive in its own group so rapidly switching rows cancels the
             # previous in-flight detail fetch instead of letting a slower older
@@ -16179,6 +16312,13 @@ class LibraryScreen(BaseAppScreen):
             event: Button press event emitted by the editor's "Delete" action.
         """
         event.stop()
+        # LIB-14: the user is now explicitly managing this note's deletion
+        # themselves via the normal confirm-then-delete flow below -- clear
+        # any pending blank-note GC first so ``_flush_library_note_save``
+        # (called next) does not delete it out from under that flow (which
+        # would otherwise make the confirm button's own delete call fail
+        # against an already-gone row and surface a spurious warning).
+        self._library_note_pending_blank_gc_id = None
         await self._flush_library_note_save()
         if self._library_note_dirty:
             return
@@ -16356,7 +16496,7 @@ class LibraryScreen(BaseAppScreen):
         """
         event.stop()
         self.run_worker(
-            self._create_library_note(title="Untitled", content=""),
+            self._create_library_note(title="Untitled", content="", blank=True),
             exclusive=True,
             group="library_note_create",
         )
@@ -16448,7 +16588,12 @@ class LibraryScreen(BaseAppScreen):
         return title, content
 
     async def _create_library_note(
-        self, *, title: str, content: str, keywords: list[str] | None = None
+        self,
+        *,
+        title: str,
+        content: str,
+        keywords: list[str] | None = None,
+        blank: bool = False,
     ) -> None:
         """Create a new local note from the in-canvas Create view and open it.
 
@@ -16474,6 +16619,15 @@ class LibraryScreen(BaseAppScreen):
         Args:
             title: The note's title (already resolved; not yet sanitized).
             content: The note's body (already resolved; not yet sanitized).
+            blank: Whether this is the "Blank note" creation path (as
+                opposed to a template row, which already carries real
+                content the user likely wants kept even unedited). LIB-14:
+                the row still commits immediately either way (this seam has
+                no create-on-first-edit branch -- see the AC#5 decision in
+                ``_flush_library_note_save``/``_gc_pending_blank_note``),
+                but a blank-note row that is never touched is armed for
+                quiet deletion on exit instead of surviving as a permanent
+                literal "Untitled" row.
         """
         sanitized_title = self._sanitize_media_field(title, max_length=300)
         sanitized_content = self._sanitize_note_content(
@@ -16524,6 +16678,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_note_preview = False
         self._library_note_preview_snapshot = None
         self._library_note_editor_armed = False
+        self._library_note_pending_blank_gc_id = created_id if blank else None
         self._library_notes_filter = ""
         self._library_notes_filter_records = None
         # Reuses the same full local-source reload the initial mount load
@@ -16576,6 +16731,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_media_editing_analysis = False
         self._library_media_content_query = ""
         self._library_media_content_match_index = 0
+        self._library_media_content_mode = "raw"
         self.refresh(recompose=True)
         # task-2856 AC1: every "back to list" exit re-focuses the list's
         # first row so Up/Down/Enter work immediately.
@@ -16899,6 +17055,7 @@ class LibraryScreen(BaseAppScreen):
             self._library_media_editing_analysis = False
             self._library_media_content_query = ""
             self._library_media_content_match_index = 0
+            self._library_media_content_mode = "raw"
             self._selected_media_id = ""
         if self.is_mounted:
             self.refresh(recompose=True)
@@ -17126,6 +17283,44 @@ class LibraryScreen(BaseAppScreen):
             self.query_one("#library-media-content-search", Input).focus()
         except (NoMatches, QueryError):
             pass
+
+    @on(Button.Pressed, "#library-media-content-mode-rendered")
+    def handle_library_media_content_mode_rendered(self, event: Button.Pressed) -> None:
+        """Switch the open media item's Content section to the Rendered (Markdown) view.
+
+        Args:
+            event: Button press event emitted by the toggle strip's
+                "Rendered" action.
+        """
+        event.stop()
+        self._set_library_media_content_mode("rendered")
+
+    @on(Button.Pressed, "#library-media-content-mode-raw")
+    def handle_library_media_content_mode_raw(self, event: Button.Pressed) -> None:
+        """Switch the open media item's Content section to the Raw text view.
+
+        Args:
+            event: Button press event emitted by the toggle strip's "Raw"
+                action.
+        """
+        event.stop()
+        self._set_library_media_content_mode("raw")
+
+    def _set_library_media_content_mode(self, mode: str) -> None:
+        """Shared Rendered/Raw toggle: no-op when already in ``mode``.
+
+        A plain screen-state flip + recompose -- unlike the note editor's
+        Preview toggle, there is nothing to save here (the media viewer has
+        no editable body while browsing), so there is no write for this to
+        accidentally trigger.
+
+        Args:
+            mode: ``"rendered"`` or ``"raw"``.
+        """
+        if self._library_media_view != "viewer" or self._library_media_content_mode == mode:
+            return
+        self._library_media_content_mode = mode
+        self.refresh(recompose=True)
 
     @on(Button.Pressed, "#library-media-content-search-next")
     def handle_library_media_content_search_next(self, event: Button.Pressed) -> None:
@@ -18371,6 +18566,7 @@ class LibraryScreen(BaseAppScreen):
             self._library_media_editing_analysis = False
             self._library_media_content_query = ""
             self._library_media_content_match_index = 0
+            self._library_media_content_mode = "raw"
             self.run_worker(
                 self._refresh_library_media_detail(record_id),
                 exclusive=True,

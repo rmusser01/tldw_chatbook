@@ -4356,6 +4356,222 @@ async def test_library_shell_media_content_search_resets_on_back():
         assert screen._library_media_content_match_index == 0
 
 
+# --- LIB-13: media viewer markdown rendering + Rendered|Raw toggle ---------
+
+
+def _markdown_media_item():
+    """A ``media_type="plaintext"`` item (what local ingestion tags BOTH
+    .md and .txt with) whose content has a real heading + GFM table --
+    the exact LIB-13 repro shape (literal ``#``/``##``/table pipes shown
+    raw in the viewer while Notes Preview renders properly)."""
+    items = _two_media_items()
+    items[0]["type"] = "plaintext"
+    items[0]["content"] = (
+        "# Setup Guide\n\n"
+        "Some intro text.\n\n"
+        "| Step | Action |\n"
+        "| --- | --- |\n"
+        "| 1 | Install |\n"
+    )
+    return items
+
+
+def _markdown_text_widget_plain(widget) -> str:
+    """Return a Static-family widget's rendered text as a plain string,
+    tolerating both a plain ``str`` and a Rich ``Text`` renderable."""
+    renderable = getattr(widget, "renderable", "")
+    return getattr(renderable, "plain", str(renderable))
+
+
+@pytest.mark.asyncio
+async def test_library_shell_media_viewer_defaults_markdown_item_to_rendered():
+    """A markdown-typed item with real markdown syntax opens straight into
+    the Rendered view: the Markdown widget (with a parsed MarkdownH1, not
+    a literal ``#``) is mounted, the raw ``Static`` is not, and the toggle
+    strip shows "Rendered (selected) | Raw"."""
+    from textual.widgets._markdown import MarkdownH1
+
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), media=_markdown_media_item())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_media_viewer(screen, pilot)
+
+        assert screen._library_media_content_mode == "rendered"
+        assert not screen.query("#library-media-viewer-content-text")
+        heading = screen.query_one(MarkdownH1)
+        heading_text = _markdown_text_widget_plain(heading)
+        assert "Setup Guide" in heading_text
+        assert "#" not in heading_text
+
+        rendered_button = screen.query_one(
+            "#library-media-content-mode-rendered", Button
+        )
+        raw_button = screen.query_one("#library-media-content-mode-raw", Button)
+        assert "(selected)" in str(rendered_button.label)
+        assert "(selected)" not in str(raw_button.label)
+
+
+@pytest.mark.asyncio
+async def test_library_shell_media_viewer_content_mode_toggle_buttons_have_onscreen_geometry():
+    """Rendered-geometry check (the P1 arc's lesson: a widget can exist in
+    the DOM and pass an existence/label query while still being
+    zero-width/off-screen). Both toggle buttons must have a real,
+    on-screen region -- not just exist in ``query_one``."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), media=_markdown_media_item())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_media_viewer(screen, pilot)
+
+        rendered_button = screen.query_one(
+            "#library-media-content-mode-rendered", Button
+        )
+        raw_button = screen.query_one("#library-media-content-mode-raw", Button)
+        for label, button in (("Rendered", rendered_button), ("Raw", raw_button)):
+            assert button.region.width > 0 and button.region.height > 0, (
+                f"{label!r} toggle button has an empty on-screen region: "
+                f"{button.region!r}"
+            )
+            assert button.region.x + button.region.width <= screen.size.width, (
+                f"{label!r} toggle button is clipped past the screen's right "
+                f"edge: {button.region!r} vs screen width {screen.size.width}"
+            )
+
+
+@pytest.mark.asyncio
+async def test_library_shell_media_viewer_raw_toggle_restores_literal_markdown():
+    """Pressing "Raw" swaps back to the plain ``Static`` showing the
+    literal, un-rendered markdown text (the pre-LIB-13 behavior), and
+    pressing "Rendered" again restores the Markdown view -- the toggle is
+    reversible in both directions."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), media=_markdown_media_item())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_media_viewer(screen, pilot)
+
+        screen.query_one("#library-media-content-mode-raw", Button).press()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert screen._library_media_content_mode == "raw"
+        raw_text = _markdown_text_widget_plain(
+            screen.query_one("#library-media-viewer-content-text")
+        )
+        assert "# Setup Guide" in raw_text
+        assert "| --- | --- |" in raw_text
+        assert not screen.query("#library-media-viewer-content-markdown")
+
+        screen.query_one("#library-media-content-mode-rendered", Button).press()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert screen._library_media_content_mode == "rendered"
+        assert screen.query_one("#library-media-viewer-content-markdown")
+        assert not screen.query("#library-media-viewer-content-text")
+
+
+@pytest.mark.asyncio
+async def test_library_shell_media_viewer_non_markdown_item_never_shows_toggle():
+    """A non-markdown item (LIB-13's non-goal: no regression) never shows
+    the toggle strip and always renders through the plain raw Static, even
+    when its media_type happens to be the ambiguous "plaintext" the
+    markdown-typed allowlist also covers."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), media=_two_media_items())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_media_viewer(screen, pilot)
+
+        assert screen._library_media_content_mode == "raw"
+        assert not screen.query("#library-media-content-mode-strip")
+        assert not screen.query("#library-media-content-mode-rendered")
+        assert screen.query_one("#library-media-viewer-content-text")
+        assert not screen.query("#library-media-viewer-content-markdown")
+
+
+@pytest.mark.asyncio
+async def test_library_shell_media_viewer_plaintext_without_markdown_syntax_defaults_raw():
+    """A ``media_type="plaintext"`` item WITHOUT real markdown syntax (a
+    plain .txt/.csv/.log) must still default to Raw and show no toggle --
+    the media-type allowlist alone is not enough (LIB-13's content-sniff
+    decision, see ``looks_like_markdown_content``)."""
+    app = _build_test_app()
+    items = _two_media_items()
+    items[0]["type"] = "plaintext"
+    items[0]["content"] = "Just a plain note.\nNothing special here."
+    _seed_conversations(app, _two_conversations(), media=items)
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_media_viewer(screen, pilot)
+
+        assert screen._library_media_content_mode == "raw"
+        assert not screen.query("#library-media-content-mode-strip")
+
+
+@pytest.mark.asyncio
+async def test_library_shell_media_content_search_placeholder_states_raw_text_for_markdown_item():
+    """LIB-13's content-search decision: the search always matches the raw
+    text regardless of view mode, and the placeholder says so explicitly
+    whenever a Rendered|Raw toggle is offered (never for a plain item,
+    where there is no ambiguity to clarify)."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), media=_markdown_media_item())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_media_viewer(screen, pilot)
+
+        search_input = screen.query_one("#library-media-content-search", Input)
+        assert search_input.placeholder == "Search content (raw text)…"
+
+
+@pytest.mark.asyncio
+async def test_library_shell_media_viewer_content_mode_resets_on_back_and_next_open():
+    """Leaving the viewer and reopening a DIFFERENT (non-markdown) item
+    must not carry over a stale "rendered" mode from the previous item."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), media=_markdown_media_item())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_media_viewer(screen, pilot)
+        assert screen._library_media_content_mode == "rendered"
+
+        screen.query_one("#library-media-back").press()
+        await pilot.pause()
+        await pilot.pause()
+        assert screen._library_media_content_mode == "raw"
+
+        # Row 1 is the markdown item just opened/exited (items[0], the
+        # older-timestamp row under the default newest-first sort); row 0
+        # is the OTHER (unmodified, non-markdown "video") item.
+        screen.query_one("#library-media-row-0").press()
+        await _wait_for_selector(screen, pilot, "#library-media-content-search")
+        assert screen._library_media_content_mode == "raw"
+        assert not screen.query("#library-media-content-mode-strip")
+
+
 @pytest.mark.asyncio
 async def test_library_shell_media_canvas_shows_loading_before_snapshot_loads(
     monkeypatch,
@@ -8158,6 +8374,55 @@ async def test_library_shell_note_conflict_shows_overwrite_reload_and_keeps_user
 
 
 @pytest.mark.asyncio
+async def test_library_shell_note_preview_toggle_never_bumps_version_or_autosaves(
+    monkeypatch,
+):
+    """LIB-14 (AC#5c): toggling Preview on and back off must never call the
+    save seam or change the in-memory version -- only an explicit Save or
+    the autosave debounce (armed by a REAL edit) may do that. Uses a short
+    autosave interval and polls across many cycles so a phantom autosave
+    triggered by the toggle's recompose (the exact failure mode the
+    mount-time ``Input``/``TextArea.Changed`` armed-guard exists to
+    prevent -- see ``_library_note_editor_armed``) would be caught within
+    the window, not just missed by asserting immediately.
+    """
+    monkeypatch.setattr(library_screen_module, "LIBRARY_NOTES_AUTOSAVE_SECONDS", 0.05)
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_note_editor(screen, pilot)
+
+        service = app.notes_scope_service
+        version_before = screen._library_note_version
+        save_calls_before = len(service.save_calls)
+
+        screen.query_one("#library-note-preview").press()
+        await _wait_for_selector(screen, pilot, "#library-note-preview-body")
+        assert screen._library_note_preview is True
+
+        # Toggle back off, then wait across several autosave-interval
+        # windows -- long enough that a phantom-dirty bug would have fired
+        # the debounced autosave at least once.
+        screen.query_one("#library-note-preview").press()
+        await _wait_for_selector(screen, pilot, "#library-note-body")
+        for _ in range(60):
+            await pilot.pause(0.02)
+
+        assert screen._library_note_dirty is False, (
+            "Toggling Preview marked the note dirty with no real edit."
+        )
+        assert len(service.save_calls) == save_calls_before, (
+            "Toggling Preview triggered a save/autosave call: "
+            f"{service.save_calls[save_calls_before:]!r}"
+        )
+        assert screen._library_note_version == version_before
+
+
+@pytest.mark.asyncio
 async def test_library_shell_note_conflict_during_preview_reads_live_text():
     """A save conflict raised while Preview is toggled on must not leave a
     stale ``_library_note_preview``/``_library_note_preview_snapshot`` behind:
@@ -9204,8 +9469,13 @@ async def test_library_shell_create_note_row_renders_blank_and_template_rows():
 @pytest.mark.asyncio
 async def test_library_shell_create_blank_note_lands_in_editor():
     """Pressing Blank note calls ``save_note`` with ``note_id=None`` and
-    ``title="Untitled"``, then opens the in-canvas editor on the newly
-    created note and refreshes the notes rail count."""
+    ``title="Untitled"`` (the row still commits immediately -- LIB-14's
+    fix is GC-on-exit, not create-on-first-edit, see task-2858's Task 3
+    notes), then opens the in-canvas editor on the newly created note and
+    refreshes the notes rail count. The title Input itself renders EMPTY
+    with an "Untitled" placeholder (LIB-14 AC#5a) -- not the literal
+    editable value -- so first typing never lands after a "Untitled"
+    prefix."""
     app = _build_test_app()
     _seed_conversations(app, _two_conversations(), notes=_two_notes())
     host = LibraryHarness(app)
@@ -9232,7 +9502,10 @@ async def test_library_shell_create_blank_note_lands_in_editor():
         assert screen._library_selected_row_id == "browse-notes"
         created_note = next(n for n in service.notes if n["title"] == "Untitled")
         assert screen._selected_note_id == created_note["id"]
-        assert screen.query_one("#library-note-title", Input).value == "Untitled"
+        assert screen._library_note_pending_blank_gc_id == created_note["id"]
+        title_input = screen.query_one("#library-note-title", Input)
+        assert title_input.value == ""
+        assert title_input.placeholder == "Untitled"
 
         for _ in range(150):
             if screen._local_source_counts.get("notes") == 3:
@@ -9244,6 +9517,142 @@ async def test_library_shell_create_blank_note_lands_in_editor():
             )
         rail_label = str(screen.query_one("#library-row-browse-notes").label)
         assert "(3)" in rail_label
+
+
+def _real_notes_scope_service(tmp_path):
+    """A REAL ``NotesScopeService`` over a real (temp-file) ChaChaNotes DB.
+
+    Mirrors ``Tests/Notes/test_notes_scope_service_library_canvas.py``'s
+    fixture of the same shape (itself mirroring how ``app.py`` wires
+    ``self.notes_scope_service``) -- used here (rather than
+    ``StaticLibraryNotesScopeService``) for LIB-14's blank-note lifecycle
+    tests specifically, so "no premature row / GC'd untouched blank" is
+    asserted against real DB row counts, not a hand-rolled fake's list.
+    """
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+    from tldw_chatbook.Notes.Notes_Library import NotesInteropService
+    from tldw_chatbook.Notes.notes_scope_service import NotesScopeService
+
+    db_dir = tmp_path / "chachanotes"
+    db_dir.mkdir()
+    global_db = CharactersRAGDB(
+        str(db_dir / "unified.db"), client_id="library-p2-t3-app"
+    )
+    interop = NotesInteropService(
+        base_db_directory=db_dir,
+        api_client_id="library-p2-t3-client",
+        global_db_to_use=global_db,
+    )
+    return NotesScopeService(
+        local_notes_service=interop,
+        server_service=None,
+        policy_enforcer=None,
+    )
+
+
+@pytest.mark.asyncio
+async def test_library_shell_blank_note_untouched_is_gc_from_real_db_on_back(
+    tmp_path,
+):
+    """LIB-14 (AC#5b, real DB): "Blank note" still commits a row immediately
+    (create-on-first-edit was rejected as the larger-diff option -- see
+    task-2858's Task 3 notes), but leaving the editor again via Back
+    without ever typing anything must delete that row rather than leaving
+    a permanent literal "Untitled" row behind."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    app.notes_scope_service = _real_notes_scope_service(tmp_path)
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        assert (
+            await app.notes_scope_service.count_notes(
+                scope="local_note", user_id="default_user"
+            )
+            == 0
+        )
+
+        screen.query_one("#library-row-create-note").press()
+        await _wait_for_selector(screen, pilot, "#library-notes-create-blank")
+        screen.query_one("#library-notes-create-blank").press()
+        await _wait_for_selector(screen, pilot, "#library-note-title")
+        await pilot.pause()
+        await pilot.pause()
+
+        # The row lands in the real DB immediately (unchanged create-flow
+        # behavior) -- this is not what LIB-14 fixes.
+        assert (
+            await app.notes_scope_service.count_notes(
+                scope="local_note", user_id="default_user"
+            )
+            == 1
+        )
+        assert screen._library_note_pending_blank_gc_id == screen._selected_note_id
+
+        # Leave without typing anything -- Back must GC the untouched row.
+        screen.query_one("#library-note-back").press()
+        for _ in range(150):
+            if (
+                await app.notes_scope_service.count_notes(
+                    scope="local_note", user_id="default_user"
+                )
+                == 0
+            ):
+                break
+            await pilot.pause(0.02)
+        else:
+            raise AssertionError(
+                "The untouched blank note was never GC'd from the real DB."
+            )
+        assert screen._library_notes_view == "list"
+        assert screen._library_note_pending_blank_gc_id is None
+
+
+@pytest.mark.asyncio
+async def test_library_shell_blank_note_edited_then_back_survives_in_real_db(
+    tmp_path,
+):
+    """Contrast case for the GC test above: once the user types anything,
+    leaving via Back must save (not GC) the note -- exactly one row
+    remains in the real DB, carrying the typed content."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    app.notes_scope_service = _real_notes_scope_service(tmp_path)
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one("#library-row-create-note").press()
+        await _wait_for_selector(screen, pilot, "#library-notes-create-blank")
+        screen.query_one("#library-notes-create-blank").press()
+        await _wait_for_selector(screen, pilot, "#library-note-title")
+        await pilot.pause()
+        await pilot.pause()
+
+        screen.query_one("#library-note-body", TextArea).text = "a real edit"
+        await pilot.pause()
+        assert screen._library_note_pending_blank_gc_id is None, (
+            "A real edit must clear GC eligibility."
+        )
+
+        screen.query_one("#library-note-back").press()
+        for _ in range(150):
+            if screen._library_notes_view == "list":
+                break
+            await pilot.pause(0.02)
+        else:
+            raise AssertionError("Back never returned to the list view.")
+
+        notes = await app.notes_scope_service.list_notes(
+            scope="local_note", user_id="default_user"
+        )
+        assert len(notes) == 1
+        assert notes[0]["content"] == "a real edit"
 
 
 @pytest.mark.asyncio

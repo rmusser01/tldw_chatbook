@@ -10,6 +10,7 @@ from tldw_chatbook.Library.library_media_viewer_state import (
     build_library_media_highlight_rows,
     build_library_media_viewer_state,
     find_content_matches,
+    looks_like_markdown_content,
 )
 
 NOW = datetime(2026, 7, 6, 12, 0, tzinfo=timezone.utc)
@@ -596,3 +597,107 @@ def test_arrival_note_renders_first_in_metadata_lines():
         {"id": "m1", "title": "Report", "type": "document"}
     )
     assert plain.metadata_lines[0].startswith("Type:")
+
+
+# --- LIB-13: markdown-typed-media detection (Task 3) -----------------------
+
+
+def test_looks_like_markdown_content_detects_atx_heading():
+    assert looks_like_markdown_content("# Setup\n\nSome body text.") is True
+
+
+def test_looks_like_markdown_content_detects_gfm_table_separator_row():
+    content = "| Col A | Col B |\n| --- | --- |\n| 1 | 2 |"
+    assert looks_like_markdown_content(content) is True
+
+
+def test_looks_like_markdown_content_detects_fenced_code_block():
+    assert looks_like_markdown_content("```python\nprint('hi')\n```") is True
+
+
+def test_looks_like_markdown_content_bare_thematic_break_is_not_a_table():
+    """A lone ``---`` (a thematic break/front-matter fence) has no pipe, so
+    it must not be mistaken for a GFM table separator row."""
+    assert looks_like_markdown_content("above\n---\nbelow") is False
+
+
+def test_looks_like_markdown_content_plain_prose_is_false():
+    content = "Just a plain paragraph.\nAnother line, no markdown syntax here."
+    assert looks_like_markdown_content(content) is False
+
+
+def test_looks_like_markdown_content_empty_or_none_is_false():
+    assert looks_like_markdown_content("") is False
+    assert looks_like_markdown_content(None) is False  # type: ignore[arg-type]
+
+
+def test_build_state_flags_plaintext_media_with_heading_as_markdown():
+    """LIB-13 repro: a ``.md`` file ingested as ``media_type="plaintext"``
+    (the type local ingestion maps BOTH .md and .txt to) with a real
+    heading must be flagged markdown."""
+    state = build_library_media_viewer_state(
+        {
+            "id": "m1",
+            "title": "Setup Guide",
+            "type": "plaintext",
+            "content": "# Setup\n\n| A | B |\n| --- | --- |\n| 1 | 2 |",
+        }
+    )
+    assert state.media_type == "plaintext"
+    assert state.is_markdown is True
+
+
+def test_build_state_does_not_flag_plaintext_media_without_markdown_syntax():
+    """A ``.txt``/``.csv``/``.log`` file also carries ``media_type="plaintext"``
+    but has no markdown syntax -- must default to Raw, not Rendered."""
+    state = build_library_media_viewer_state(
+        {
+            "id": "m1",
+            "title": "Notes.txt",
+            "type": "plaintext",
+            "content": "Just a plain note.\nNothing special here.",
+        }
+    )
+    assert state.media_type == "plaintext"
+    assert state.is_markdown is False
+
+
+def test_build_state_obsidian_note_with_heading_is_markdown():
+    state = build_library_media_viewer_state(
+        {
+            "id": "m1",
+            "title": "My Obsidian Note",
+            "type": "obsidian_note",
+            "content": "# My Obsidian Note\n\nBody text.",
+        }
+    )
+    assert state.is_markdown is True
+
+
+def test_build_state_non_markdown_type_never_flagged_even_with_heading_syntax():
+    """A video/pdf/audio item whose transcript happens to contain a line
+    starting with ``#`` (e.g. a hashtag) must never default to Rendered --
+    the media-type allowlist gates the content sniff."""
+    state = build_library_media_viewer_state(
+        {
+            "id": "m1",
+            "title": "Interview",
+            "type": "audio",
+            "content": "# trending topic mentioned in the interview",
+        }
+    )
+    assert state.media_type == "audio"
+    assert state.is_markdown is False
+
+
+def test_build_state_missing_content_is_never_markdown():
+    state = build_library_media_viewer_state(
+        {"id": "m1", "title": "Empty", "type": "plaintext"}
+    )
+    assert state.is_markdown is False
+
+
+def test_empty_state_is_markdown_false_and_media_type_empty():
+    state = build_library_media_viewer_state(None)
+    assert state.is_markdown is False
+    assert state.media_type == ""

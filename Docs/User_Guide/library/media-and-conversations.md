@@ -83,10 +83,19 @@ of type 'pdf'."
 
 - **Metadata** — lines for "Type:", and when present "Author:", "URL:",
   "Keywords:", "Updated:".
-- **"Content"** — the stored text ("No stored content." when empty), with a
-  "Search content…" box above it. Typing a query shows "Match 1 of 4
-  matches" (or "No matches") and a "◀ Prev" / "Next ▶" pair that steps
-  through highlighted matches, wrapping at either end.
+- **"Content"** — the stored text ("No stored content." when empty). For
+  markdown-flavored media (a `.md`/Obsidian-style item whose content has a
+  real heading, table, or fenced code block), a "Rendered (selected) |
+  Raw" toggle appears above the box and defaults to **Rendered** — headings,
+  tables, and code render properly instead of showing literal `#`/`##`/`|`
+  characters, using the same renderer as Notes' own "Preview". Press
+  "Raw" to see the plain source instead. Below the toggle (or directly
+  above Content for everything else) is a "Search content…" box — its
+  placeholder reads "Search content (raw text)…" whenever the toggle is
+  present, since search always matches the raw stored text regardless of
+  which view is showing. Typing a query shows "Match 1 of 4 matches" (or
+  "No matches") and a "◀ Prev" / "Next ▶" pair that steps through
+  highlighted matches (shown only in the Raw view), wrapping at either end.
 - **"Analysis"** — a stored analysis text you can view and edit ("Edit
   analysis", or "Add analysis" when empty; "No analysis yet." otherwise).
   This section only edits text — it never calls a model; analysis is
@@ -223,6 +232,10 @@ handoffs delivering a real, attributed reference to the model on send is
 covered by capture round-trip tests, task-2374; the live check's own
 handoff scenario was blocked on that profile by an unrelated Library
 workspace-eligibility gate).*
+*Verified against dev @ 6b38a13b8 — 2026-08-07 (task-2858 Task 3, LIB-13:
+the media viewer's Content section renders markdown-flavored media
+through the same renderer Notes' "Preview" uses, behind a "Rendered |
+Raw" toggle defaulting to Rendered).*
 
 *Re-stamped against dev @ 4acb17a0b — 2026-08-07 (TASK-2857: "Open in
 Media manager" is now "Open in Library ▸ Media" — task-2851 had already

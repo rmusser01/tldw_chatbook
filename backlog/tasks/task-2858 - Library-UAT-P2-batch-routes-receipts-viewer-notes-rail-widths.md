@@ -46,8 +46,8 @@ observed at dev `6ffa56516`. Grouped for one pass; split if any item grows.
 - [x] #1 Library landing is route-independent (one canonical landing) or intentionally routed with the difference stated on-screen; revisits restore the last canvas or intentionally reset (decision recorded)
 - [x] #2 F1 and footers advertise only keys that work on the current surface
 - [x] #3 The Export button is never a silent no-op, and a successful export leaves a durable on-canvas receipt with the output path
-- [ ] #4 The media viewer renders markdown (with a raw toggle) for markdown media
-- [ ] #5 Blank notes no longer commit literal "Untitled" rows that require hand-deletion; version stamps change only on content saves
+- [x] #4 The media viewer renders markdown (with a raw toggle) for markdown media
+- [x] #5 Blank notes no longer commit literal "Untitled" rows that require hand-deletion; version stamps change only on content saves
 - [ ] #6 Rail glosses/counts follow one deterministic rule across all rows
 - [ ] #7 Prefilled search inputs are editable without cursor traps, and stale rail queries do not survive screen switches
 - [ ] #8 At 120/100/80 columns no rail row label truncates mid-word, and each finding's surface is re-verified live
@@ -261,4 +261,188 @@ Tests/UI/test_screen_navigation.py, Tests/Library/test_library_export_state.py,
 Tests/Library/test_library_export_roundtrip.py,
 Tests/UI/test_library_export_receipt.py (new),
 Docs/User_Guide/library/import-and-export.md.
+
+Task 3 (LIB-13/14 -> AC#4/AC#5) -- Content surfaces: media viewer markdown +
+note lifecycle:
+
+HEAD re-verification (live tmux, socket p2T3lib23968 -- an earlier socket
+p2T3lib13583 was reused mid-task for the first walkthrough, cleaned up, and
+restarted after the CSS fix landed -- scratch profile sdd_p2t3, cleaned up
+after) at 6b38a13b8:
+  LIB-13: STILL PRESENT. `LibraryMediaViewer._content_renderable()` only
+    ever built a plain/highlighted-``Text`` ``Static`` from the raw string
+    -- no ``Markdown`` widget existed anywhere in the media viewer. Live
+    import of a real `.md` fixture (heading + GFM table) confirmed literal
+    `#`/`##`/`|` shown raw, exactly as originally reported.
+  LIB-14: STILL PRESENT on all three sub-points. `handle_library_notes_
+    create_blank` unconditionally called the create seam with
+    `title="Untitled", content=""` the instant the button is pressed (a
+    real DB row, confirmed live and via a real-DB test: Notes (0)->(1) with
+    zero typing). The title `Input` was constructed with the literal
+    editable `value="Untitled"`, so typing right after opening landed
+    after the existing text (live-reproduced: typing "Atlas follow-ups"
+    without first clearing the field produced "UntitledAtlas follow-ups").
+    Preview toggling, by contrast, was ALREADY CORRECT at HEAD: the
+    pre-existing `_library_note_editor_armed` mount-time-Changed-event
+    guard (added for a different, earlier reason -- its own docstring
+    already names this exact hazard) also covers the toggle's recompose;
+    a dedicated pilot test (monkeypatched autosave interval, toggled
+    Preview on and back off, polled ~1.2s across many cycles) found no
+    save/autosave call and no version change. Recorded as "already
+    correct, verified" -- no fix needed for that sub-point, matching how
+    Task 1 handled an already-fixed LIB-03 sub-finding.
+
+Decisions:
+  LIB-13 rendering: reused the Notes Preview render path VERBATIM --
+    `Markdown` widget + `front_matter_parser_factory()` from
+    `Utils/markdown_parsing.py` (task-1993), the same two lines
+    `library_notes_canvas.py`'s `_compose_editor` already uses for Preview.
+    No new markdown dependency, no second pipeline; `Markdown` parses and
+    escapes internally exactly like the existing Notes Preview path (the
+    RAG arc's "escaping must be the terminal step" lesson is respected by
+    reuse, not by adding a new escaper).
+  "Markdown-typed media" detection: local ingestion (`local_file_
+    ingestion.py`) maps BOTH `.md`/`.markdown` and `.txt`/`.rst`/`.csv`/
+    `.log` to the single `media_type="plaintext"`, so `media_type` alone
+    cannot distinguish a real markdown file from a plain one. Added a pure
+    content sniff (`looks_like_markdown_content` in
+    `library_media_viewer_state.py`: an ATX heading, a fenced code block,
+    or a GFM table separator row) gated behind a small type allowlist
+    (`plaintext`/`markdown`/`obsidian_note`) -- "Rendered" only defaults
+    for an item that is BOTH a plausible type AND actually contains
+    markdown syntax, so a `.txt`/`.csv` item with `media_type="plaintext"`
+    still defaults to Raw (own test coverage).
+  Toggle placement/idiom: mirrored `LibraryScreen`'s own "Database
+    (selected) | Files" notes-source strip exactly -- a plain `Horizontal`
+    of two compact, unstyled `Button`s (label suffixed "(selected)" for
+    the active mode -- state-in-text, per the task's own naming of this
+    idiom) separated by a `Static("|")`. Scoped to the Content section
+    (inside `LibraryMediaViewer`, not the screen header) since it only
+    concerns that one section of one item, unlike Database/Files which
+    switches the whole canvas. Rendered defaults for markdown items, Raw
+    for everything else (unchanged for every pre-existing item).
+  Content search: always matches the RAW stored text regardless of the
+    visible mode (simplest, and the only text the existing `find_content_
+    matches`/highlighting machinery can operate on) -- the search box's
+    placeholder becomes "Search content (raw text)…" whenever a toggle is
+    offered, stating which text it searches per the task's own
+    requirement. Highlighting inside the body only applies in the Raw
+    view (the Markdown widget has no Rich-Text-span injection point);
+    Prev/Next's `scroll_to` still runs in Rendered mode too (imprecise but
+    harmless, matching its own pre-existing "not pixel-perfect" contract).
+  LIB-14(a) title fix: empty `value` + `placeholder="Untitled"` (the
+    brief's placeholder option), not select-all-on-focus -- side-steps
+    Textual's focus/selection timing entirely rather than depending on it,
+    and doubles as the SAME flag driving (b) below (see next). An empty
+    save now falls back to "Untitled" at the seam (`_save_library_note`)
+    so the DB never stores a blank title.
+  LIB-14(b) lifecycle: GC-untouched-blank-on-exit, not create-on-first-
+    edit -- picked as the smaller diff. Create-on-first-edit would have
+    required `_save_library_note`'s early guard
+    (`if ... not self._selected_note_id: return`) to grow a whole create
+    branch (new id, `_local_source_records` append-not-patch, etc.) for a
+    path that today no-ops by design. GC instead reuses
+    `_flush_library_note_save` -- already the single choke point every
+    editor-exit path (Back, note-row switch, rail-row switch, screen
+    navigation, the Delete confirm flow) already awaits before tearing the
+    editor down -- adding one `_library_note_pending_blank_gc_id` flag
+    (set on a Blank-note create, cleared by any real edit or an explicit
+    Save) and one `_gc_pending_blank_note` helper. No new call sites
+    needed at any of those seven+ exit points. The one collision handled
+    explicitly: pressing the editor's own "Delete" button now clears the
+    pending-GC flag BEFORE its own `_flush_library_note_save()` call, so
+    GC never races the user's own explicit delete-confirm flow.
+  LIB-14(c): no code change -- already correct (see re-verification
+    above); the existing `_library_note_editor_armed` guard is the
+    mechanism, reused unmodified.
+
+A defect found and fixed along the way (not in the original LIB-13/14
+findings): the Rendered|Raw toggle's `Static("|")` separator initially
+rendered off-screen entirely in a 170-column terminal -- a bare `Static`
+has no width rule of its own (only `height: auto` in its own
+`DEFAULT_CSS`), so it silently inherited Textual's base `1fr` default and
+consumed the Horizontal's remaining width, pushing the "Raw" button's
+region to `x=184` against a 170-column screen. This passed an
+existence/label-only `query_one` check while being completely invisible
+live -- exactly the P1 arc's documented "headless DOM queries miss
+off-screen/oversized widgets" trap named in this plan's Global
+Constraints. Found live (screenshot showed "Rendered (selected) |" with
+no "Raw" after it), reproduced via a dedicated rendered-geometry pytest
+(`region.width`/`region.x` assertions, RED confirmed before the fix), and
+fixed with a `LibraryMediaViewer.DEFAULT_CSS` rule pinning the
+separator's width to 1 -- mirroring `LibraryScreen`'s own
+`#library-notes-source-separator` rule for the strip this one was modeled
+on (which already had this exact pin; it was simply missed when copying
+the pattern into a new widget's DEFAULT_CSS instead of the screen's).
+
+Tests (TDD, RED evidence captured via a temporary Edit-based revert of the
+specific line under test, run, then restored -- never `git checkout`):
+Tests/Library/test_library_media_viewer_state.py gained 12 pure-function
+tests for `looks_like_markdown_content` and `build_library_media_viewer_
+state`'s `media_type`/`is_markdown` fields (heading/table/fenced-code
+detection, the plaintext-without-markdown-syntax negative case, the
+non-markdown-type-never-flagged case even with `#`-prefixed content, empty/
+None content). Tests/UI/test_library_shell.py gained: 7 media-viewer tests
+(defaults-to-rendered with a real `MarkdownH1` widget query, raw toggle
+round-trip both directions, non-markdown item never shows the toggle,
+plaintext-without-syntax defaults raw, search placeholder states "raw
+text", content_mode resets on Back and on opening a different item, and
+the rendered-geometry regression test for the off-screen-button defect);
+3 note-lifecycle tests (the real-DB GC test -- builds a real
+`NotesScopeService` over a real temp-file `CharactersRAGDB`, asserts
+`count_notes` 0->1 on create and back to 0 after an untouched Back-exit;
+the contrast real-DB test asserting an edited-then-Back note survives
+with its typed content; the Preview-toggle-never-bumps-version test with
+a monkeypatched short autosave interval polled across ~60 cycles); 1
+pre-existing test (`test_library_shell_create_blank_note_lands_in_editor`)
+updated for the new title-Input contract (empty value + "Untitled"
+placeholder, plus asserting `_library_note_pending_blank_gc_id`).
+
+RED evidence (each captured via a scoped Edit-revert, run, then restored):
+disabling the Markdown-widget branch failed both media-viewer-defaults and
+raw-toggle-round-trip tests; reverting the title Input's `value=""` swap
+failed `test_library_shell_create_blank_note_lands_in_editor`; disabling
+the `_flush_library_note_save` GC hook failed the real-DB GC test (poll
+loop timeout, DB count never reached 0); the off-screen-separator
+rendered-geometry test failed before the `DEFAULT_CSS` fix was added.
+
+Verification: Tests/UI/test_library_shell.py full file (362 passed, 1
+failed -- `test_landing_footer_advertises_the_landing_keyboard_story`, the
+plan's own named ambient debt task-3022; unrelated to notes/media-viewer
+code, not touched by this task) and Tests/Library --collect-only -q (1104
+collected, 0 errors) both green. Tests/Library/test_library_media_viewer_
+state.py (54 passed) and Tests/Notes/test_notes_scope_service_library_
+canvas.py (9 passed, unaffected) both green.
+
+Live tmux (socket p2T3lib23968, scratch profile sdd_p2t3, cleaned up
+after): imported a real `.md` fixture (heading + GFM table) via the Import
+canvas's path input -- opened straight into "Rendered (selected) | Raw"
+with the heading rendered as a real bordered heading and the table as a
+real bordered table (no literal `#`/`|`); clicked "Raw" and confirmed the
+literal `# Setup Guide` / `## Steps` / `| --- | --- |` source; toggled
+back to "Rendered (selected)". Created a Blank note, confirmed the title
+field showed "Untitled" in placeholder-gray (same color as the rail's
+"Search Library…" placeholder, distinct from real typed-text white), typed
+"Atlas follow-ups" and confirmed the value was exactly that (no
+"UntitledAtlas" prefix) -- Notes (0)->(1) on create. Toggled Preview twice
+and confirmed the meta line's version stayed at "v2" both times (v2 from
+the one real autosaved edit; no bump from either toggle). Created a SECOND
+blank note (Notes (1)->(2)), pressed "Back to list" without typing
+anything, and confirmed Notes dropped back to (1) with only the edited
+"Atlas follow-ups" note remaining -- the untouched blank row was GC'd.
+
+Docs: Docs/User_Guide/library/notes.md ("New note view" section rewritten
+for the placeholder title + GC-on-exit contract) and Docs/User_Guide/
+library/media-and-conversations.md ("Content" bullet rewritten for the
+Rendered|Raw toggle and the raw-text search placeholder), both with a new
+"Verified against dev @ 6b38a13b8" stamp for this change.
+
+Files changed: tldw_chatbook/Library/library_media_viewer_state.py,
+tldw_chatbook/Widgets/Library/library_media_viewer.py,
+tldw_chatbook/Widgets/Library/library_notes_canvas.py,
+tldw_chatbook/UI/Screens/library_screen.py,
+Tests/Library/test_library_media_viewer_state.py,
+Tests/UI/test_library_shell.py,
+Docs/User_Guide/library/notes.md,
+Docs/User_Guide/library/media-and-conversations.md.
 <!-- SECTION:NOTES:END -->

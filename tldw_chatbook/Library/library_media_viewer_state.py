@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Mapping, Sequence
@@ -12,6 +13,14 @@ from tldw_chatbook.Workspaces.conversation_browser_state import (
 
 _ID_KEYS = ("id", "media_id", "uuid")
 _TYPE_KEYS = ("type", "media_type")
+# local_file_ingestion.py maps BOTH .md/.markdown and .txt/.rst/.csv/.log to
+# the single "plaintext" media type, and Obsidian imports use
+# "obsidian_note" -- neither type alone proves the content is markdown, so
+# LIB-13's "Rendered by default" decision also requires a content sniff
+# (``looks_like_markdown_content``) before defaulting to the rendered view.
+_MARKDOWN_MEDIA_TYPES = frozenset({"plaintext", "markdown", "obsidian_note"})
+_ATX_HEADING_RE = re.compile(r"^#{1,6}\s+\S")
+_TABLE_SEPARATOR_ROW_RE = re.compile(r"^\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)+\|?$")
 # Match the media list's temporal field + label (library_media_state._UPDATED_KEYS)
 # so the same item reads the same "Updated: <age>" in the list and the viewer.
 _UPDATED_KEYS = ("last_modified", "ingestion_date", "date", "updated_at")
@@ -65,6 +74,14 @@ class LibraryMediaViewerState:
         read_later: Whether the item is currently saved for read-it-later,
             sourced from the detail's ``is_read_it_later`` flag (as set by
             ``LocalMediaReadingService._enrich_with_read_it_later_state``).
+        media_type: The raw type string (``type``/``media_type`` on the
+            detail), or "unknown" when absent -- the same value shown on
+            the "Type: ..." metadata line.
+        is_markdown: Whether the Content section should default to the
+            Rendered (Markdown) view rather than Raw -- true only when
+            ``media_type`` is one of the types local ingestion can
+            plausibly tag a markdown file with AND ``content`` actually
+            contains markdown syntax (see ``looks_like_markdown_content``).
     """
 
     media_id: str
@@ -77,6 +94,8 @@ class LibraryMediaViewerState:
     version: int | None
     edit_fields: dict[str, str]
     read_later: bool
+    media_type: str
+    is_markdown: bool
 
 
 def _text(value: Any) -> str:
@@ -118,6 +137,48 @@ def _version(detail: Mapping[str, Any]) -> int | None:
         return None
 
 
+def looks_like_markdown_content(content: str) -> bool:
+    """Return True when ``content`` contains at least one line of real markdown syntax.
+
+    Narrows the ambiguous ``"plaintext"``/``"obsidian_note"`` media types
+    (which cover genuinely-markdown files alongside plain .txt/.csv/.log)
+    down to the files LIB-13 is actually about: an ATX heading (``# ...``
+    through ``###### ...``), a fenced code block, or a GFM table separator
+    row (e.g. ``| --- | --- |``). A bare ``---`` thematic break does not
+    count on its own -- only a separator row that also has at least one
+    ``|`` reads as an actual table.
+
+    Args:
+        content: The media item's stored content/transcript text.
+
+    Returns:
+        True when ``content`` looks like markdown, else False.
+    """
+    if not content:
+        return False
+    for line in content.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if _ATX_HEADING_RE.match(stripped):
+            return True
+        if stripped.startswith("```"):
+            return True
+        if _TABLE_SEPARATOR_ROW_RE.match(stripped):
+            return True
+    return False
+
+
+def _is_markdown_media(media_type: str, content: str) -> bool:
+    """Combine the media-type allowlist with the content sniff (see
+    ``looks_like_markdown_content``) into the single "default to Rendered"
+    decision.
+    """
+    if media_type.strip().lower() not in _MARKDOWN_MEDIA_TYPES:
+        return False
+    return looks_like_markdown_content(content)
+
+
 def _empty_state() -> LibraryMediaViewerState:
     return LibraryMediaViewerState(
         media_id="",
@@ -130,6 +191,8 @@ def _empty_state() -> LibraryMediaViewerState:
         version=None,
         edit_fields=dict(_EMPTY_EDIT_FIELDS),
         read_later=False,
+        media_type="",
+        is_markdown=False,
     )
 
 
@@ -243,6 +306,8 @@ def build_library_media_viewer_state(
             "keywords": keywords_text,
         },
         read_later=read_later,
+        media_type=media_type,
+        is_markdown=_is_markdown_media(media_type, content),
     )
 
 
