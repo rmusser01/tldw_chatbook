@@ -1,8 +1,9 @@
 ---
 id: TASK-2910
 title: Web-tools residual hardening
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@claude'
 created_date: '2026-08-06'
 labels:
   - web-tools
@@ -23,6 +24,12 @@ task-2620's final review round (2026-08-06) re-triaged the web-tools v2 (`web_cr
 4. Foreign-namespace (neither sitemaps.org-namespaced nor bare/namespace-less) sitemaps still parse to zero locs — collapses into the already-accepted parse-zero-locs case; the original spec asked for namespace-less support specifically, not arbitrary foreign namespaces.
 5. The `[too-large]` PDF-ceiling message's "N MB" copy (`PDF_MAX_BYTES // (1024 * 1024)`) can render "0 MB" under integer-division truncation — only reachable via a test that monkeypatches `PDF_MAX_BYTES` to well under 1 MB, not with the real module constant, but the message would be misleading if that constant were ever lowered.
 <!-- SECTION:DESCRIPTION:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+Fix 3 (duplicate-redirect footer clause `; N duplicate redirects skipped`, spec-pinned, RED-first), 7+8 (prose enumerations/docstring), add deadline-vs-budget precedence test (final-review observation); re-rule 4+5 with reasoning. Close Done.
+<!-- SECTION:PLAN:END -->
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
