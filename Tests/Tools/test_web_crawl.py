@@ -140,6 +140,21 @@ def test_format_empty_crawl_is_just_footer():
     assert out == "Crawled 0 pages (1 failed, 0 blocked). Stopped: no more links within depth."
 
 
+def test_format_duplicate_redirects_skipped_clause():
+    """New optional param (item 3): a nonzero count renders a third footer
+    clause, following the existing `children_skipped` idiom exactly."""
+    out = _format_crawl_result(
+        [], failed=0, blocked=0, stop_reason="page budget reached",
+        duplicates_skipped=1,
+    )
+    assert out == "Crawled 0 pages (0 failed, 0 blocked; 1 duplicate redirects skipped). Stopped: page budget reached."
+
+
+def test_format_duplicate_redirects_skipped_clause_absent_when_zero():
+    out = _format_crawl_result([], failed=0, blocked=0, stop_reason="page budget reached")
+    assert "duplicate redirects skipped" not in out
+
+
 # ---------------------------------------------------------------------------
 # web_crawl BFS (transport-level tests, v1 fetch_env conventions)
 # ---------------------------------------------------------------------------
@@ -368,7 +383,12 @@ def test_crawl_redirect_duplicate_targets_listed_once(crawl_env):
     """Two different same-host pages that both redirect to the SAME final
     URL must list that final URL once, not once per redirecting source —
     each redirect still spends its own attempt slot (the budget contract),
-    but the duplicate row must not appear in the output or the page count."""
+    but the duplicate row must not appear in the output or the page count.
+
+    The spent-but-invisible attempt must still be surfaced somewhere: the
+    footer's "N duplicate redirects skipped" clause (item 3) — root
+    contributes 1 listed page (via /one's redirect), /two's redirect to the
+    same target is the one deduped skip."""
     _site(crawl_env, {
         "http://example.com/": ("root", ["/one", "/two"]),
     })
@@ -382,6 +402,19 @@ def test_crawl_redirect_duplicate_targets_listed_once(crawl_env):
     out = web_crawl("http://example.com/")
     assert out.count("URL: http://example.com/target") == 1
     assert "Crawled 2 pages" in out
+    assert "1 duplicate redirects skipped" in out
+
+
+def test_crawl_no_duplicates_omits_duplicate_redirects_clause(crawl_env):
+    """A crawl with no deduped redirects must not mention the clause at
+    all — it's additive, not a permanent zero-value fixture in the footer."""
+    _site(crawl_env, {
+        "http://example.com/": ("home page words", ["/a", "/b"]),
+        "http://example.com/a": ("alpha page words", []),
+        "http://example.com/b": ("beta page words", []),
+    })
+    out = web_crawl("http://example.com/")
+    assert "duplicate redirects skipped" not in out
 
 
 def test_crawl_redirect_into_private_space_blocked(crawl_env):
@@ -988,3 +1021,43 @@ def test_sitemap_trailing_duplicate_loc_does_not_flip_budget_truncated(crawl_env
         "http://example.com/", sitemap_url="http://example.com/sitemap.xml", max_pages=3
     )
     assert out.endswith("Stopped: sitemap exhausted.")
+
+
+def test_sitemap_seed_deadline_and_budget_both_hit_deadline_wins(crawl_env):
+    """Coverage add (final-review observation): when a sitemap child fetch
+    simultaneously exhausts the wall-clock deadline AND fills max_pages via
+    take()'s cap, the seeding path's documented priority order — "deadline
+    (wall-clock, non-negotiable) > children_capped > budget_truncated >
+    exhausted" (see the comment above web_crawl's `if time.monotonic() >=
+    deadline: ... elif seed.budget_truncated: ...` chain) — must report the
+    deadline, not "page budget reached". The child handler advances the
+    clock past the deadline while returning 5 same-host page URLs against
+    max_pages=3, so take() sets budget_truncated=True in the same call that
+    pushes the clock past the deadline."""
+    from tldw_chatbook.Tools.web_tool_impls import CRAWL_DEADLINE_SECONDS
+
+    index = (
+        b'<?xml version="1.0"?>'
+        b'<sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
+        b"<sitemap><loc>http://example.com/s1.xml</loc></sitemap>"
+        b"</sitemapindex>"
+    )
+    crawl_env.routes["http://example.com/sitemap.xml"] = _sitemap_response(index)
+
+    def slow_child_over_budget(request):
+        crawl_env.clock.now += CRAWL_DEADLINE_SECONDS + 1
+        urls_xml = "".join(f"<url><loc>http://example.com/p{i}</loc></url>" for i in range(5))
+        xml = (
+            '<?xml version="1.0"?>'
+            '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
+            f"{urls_xml}</urlset>"
+        ).encode()
+        return _sitemap_response(xml)
+
+    crawl_env.routes["http://example.com/s1.xml"] = slow_child_over_budget
+    out = web_crawl(
+        "http://example.com/", sitemap_url="http://example.com/sitemap.xml", max_pages=3
+    )
+    assert out.endswith("Stopped: deadline reached.")
+    page_calls = [c for c in crawl_env.calls if "/p" in c]
+    assert page_calls == []  # deadline hit before the seeded pages get their own attempt

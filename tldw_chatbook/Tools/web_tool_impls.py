@@ -765,6 +765,7 @@ def _format_crawl_result(
     blocked: int,
     stop_reason: str,
     children_skipped: int = 0,
+    duplicates_skipped: int = 0,
 ) -> str:
     blocks: list[str] = []
     total = 0
@@ -785,6 +786,8 @@ def _format_crawl_result(
     counts = f"{failed} failed, {blocked} blocked"
     if children_skipped > 0:
         counts += f"; {children_skipped} child sitemaps skipped"
+    if duplicates_skipped > 0:
+        counts += f"; {duplicates_skipped} duplicate redirects skipped"
     footer = f"Crawled {len(pages)} pages ({counts}). Stopped: {stop_reason}."
     return "\n\n".join(blocks + [footer]) if blocks else footer
 
@@ -859,8 +862,8 @@ class _SitemapSeed(NamedTuple):
         but excluded from `urls` for a reason OTHER than the host filter or
         the SITEMAP_MAX_CHILDREN cap — i.e. every `continue` below that
         represents a child that failed to contribute: fetch/redirect error,
-        oversized body, or a parse refusal (including a defusedxml
-        hardening refusal).
+        a deadline expiry mid-fetch, oversized body, or a parse refusal
+        (including a defusedxml hardening refusal).
     """
 
     urls: list[str]
@@ -971,15 +974,32 @@ def web_crawl(
     Every URL is egress-guarded; budgets bound fetch ATTEMPTS; a wall-clock
     deadline bounds the whole crawl. Ephemeral: no database writes.
 
-    Attempt/row invariant: a redirect that lands on an already-listed final
-    URL still spends its own attempt slot but produces no row (deduped
-    against the already-listed URL), so "Crawled N pages" can legitimately
-    be smaller than the number of fetch attempts spent.
+    Attempt/row invariant: A row-less attempt arises two ways: a redirect
+    that lands on an already-listed final URL, or a plain fetch of a URL
+    that an earlier page's redirect already listed (which occurs first
+    depends on discovery order); both are surfaced in the footer's
+    duplicate-redirects clause. Both cases are deduped against the same
+    `listed` set, so "Crawled N pages" can legitimately be smaller than the
+    number of fetch attempts spent.
 
     When ``sitemap_url`` is given, sitemap mode replaces link-discovery BFS:
     the page list comes from the sitemap (urlset, or a one-level
     sitemapindex); ``max_depth`` is ignored and links on seeded pages are
     not expanded.
+
+    Args:
+        url: Start URL; its host (www-folded) defines the crawl scope in
+            both modes.
+        max_pages: Fetch-attempt budget, clamped to
+            [1, CRAWL_MAX_PAGES_CEILING]; garbage coerces to the default.
+        max_depth: BFS link depth from the start URL (start = 0), clamped to
+            [1, CRAWL_MAX_DEPTH_CEILING]; ignored in sitemap mode.
+        sitemap_url: Optional sitemap URL; when given, the page list is
+            seeded from the sitemap and links are not expanded.
+
+    Returns:
+        str: Numbered page list (URL, title, excerpt or type marker),
+            byte-capped, ending with the status footer described above.
 
     Raises:
         LocalToolError: [invalid-args] for a bad url/host or a blank
@@ -1006,6 +1026,7 @@ def web_crawl(
     attempts = 0
     stop_reason = "no more links within depth"
     children_skipped = 0
+    duplicates_skipped = 0
 
     client = httpx.Client(
         follow_redirects=False,
@@ -1091,7 +1112,11 @@ def web_crawl(
                 # link would otherwise be discarded even though nothing had
                 # listed it yet — the start page's own final URL can't be
                 # in `listed` before it's listed, so no `!= current` carve-out
-                # is needed here.
+                # is needed here. Counted (item 3): this attempt spent a
+                # budget slot but produced no row, otherwise invisible to
+                # the model — surfaced via the footer's "N duplicate
+                # redirects skipped" clause.
+                duplicates_skipped += 1
                 continue
             visited.add(final_norm)
 
@@ -1179,4 +1204,6 @@ def web_crawl(
     finally:
         client.close()
 
-    return _format_crawl_result(pages, failed, blocked, stop_reason, children_skipped)
+    return _format_crawl_result(
+        pages, failed, blocked, stop_reason, children_skipped=children_skipped, duplicates_skipped=duplicates_skipped
+    )
