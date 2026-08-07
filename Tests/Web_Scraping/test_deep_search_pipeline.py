@@ -93,3 +93,137 @@ def test_generate_and_search_dedupes_subquery_equal_to_question(monkeypatch):
         "what is love", _search_params(subquery_generation=True, subquery_generation_llm="openai")
     )
     assert seen_queries == ["what is love", "real subquery"]  # casefold-dup dropped
+
+
+# --- chunking / confidence ----------------------------------------------------
+
+def test_build_chunk_infos_packs_and_splits():
+    small = ["a" * 100, "b" * 100]
+    chunks = WebSearch_APIs._build_chunk_infos(small, max_chars=250)
+    assert len(chunks) == 1
+    oversized = ["x" * 9000]
+    chunks2 = WebSearch_APIs._build_chunk_infos(oversized, max_chars=6000)
+    assert len(chunks2) == 1 and len(chunks2[0]["text"]) <= 6000
+
+
+def test_estimate_confidence_formula_points():
+    f = WebSearch_APIs._estimate_confidence
+    assert f(0, 0, 0, True) == 0.0
+    assert f(10, 2, 0, True) == pytest.approx(min(0.99, (0.35 + 0.45) * 1.0 + 0.05))
+    assert f(1, 1, 1, False) >= 0.1  # clamp floor
+
+
+# --- aggregate_results branches ----------------------------------------------
+
+_REL = {"1": {"content": "sum one", "original_content": "orig", "reasoning": "r1",
+              "url": "https://one.example/", "title": "One"}}
+
+
+def test_aggregate_empty_returns_typed_shape():
+    out = WebSearch_APIs.aggregate_results({}, "q", [], "openai")
+    assert set(out) == {"text", "evidence", "confidence", "chunks"}
+    assert out["confidence"] == 0.0 and out["evidence"] == []
+
+
+def test_aggregate_success_typed_and_numbered(monkeypatch):
+    captured = {}
+
+    def fake_chat(**kwargs):
+        captured["prompt"] = kwargs["messages_payload"][0]["content"]
+        return "Answer citing [1]."
+
+    monkeypatch.setattr(WebSearch_APIs, "chat_api_call", fake_chat)
+    # chunk-phase summarizer:
+    from tldw_chatbook.LLM_Calls import Summarization_General_Lib
+    monkeypatch.setattr(Summarization_General_Lib, "analyze", lambda *a, **k: "chunk summary")
+    out = WebSearch_APIs.aggregate_results(_REL, "q", [], "openai")
+    assert set(out) == {"text", "evidence", "confidence", "chunks"}
+    assert out["text"] == "Answer citing [1]."
+    assert out["evidence"][0]["id"] == 1
+    assert out["evidence"][0]["url"] == "https://one.example/"
+    assert "[1]" in captured["prompt"]          # numbered payload shown to the LLM
+    assert 0.1 <= out["confidence"] <= 0.99      # computed, not hardcoded
+
+
+def test_aggregate_llm_failure_still_typed(monkeypatch):
+    def boom(**kwargs):
+        raise RuntimeError("provider down")
+
+    monkeypatch.setattr(WebSearch_APIs, "chat_api_call", boom)
+    from tldw_chatbook.LLM_Calls import Summarization_General_Lib
+    monkeypatch.setattr(Summarization_General_Lib, "analyze", lambda *a, **k: "chunk summary")
+    out = WebSearch_APIs.aggregate_results(_REL, "q", [], "openai")
+    assert set(out) == {"text", "evidence", "confidence", "chunks"}  # no "summary" key ever
+
+
+def test_aggregate_no_llm_fallback():
+    out = WebSearch_APIs.aggregate_results(_REL, "q", [], None)
+    assert "sum one" in out["text"] and out["confidence"] > 0.0
+
+
+# --- relevance: timeouts, cancel, scrape fallback, url/title capture -----------
+
+@pytest.mark.asyncio
+async def test_relevance_scrape_failure_keeps_result_with_fallback(monkeypatch):
+    monkeypatch.setattr(WebSearch_APIs, "chat_api_call",
+                        _fake_chat(["Selected Answer: True\nReasoning: looks relevant"]))
+
+    async def failing_scrape(url, **k):
+        raise RuntimeError("scrape died")
+
+    monkeypatch.setattr(WebSearch_APIs, "scrape_article", failing_scrape)
+    results = [_std_result("Kept Title", "https://kept.example/", "snippet text")]
+    out = await WebSearch_APIs.search_result_relevance(results, "q", [], "openai")
+    assert len(out) == 1
+    entry = next(iter(out.values()))
+    assert entry["url"] == "https://kept.example/" and entry["title"] == "Kept Title"
+    assert "snippet text" in entry["content"] or "Kept Title" in entry["content"]
+
+
+@pytest.mark.asyncio
+async def test_relevance_cancel_event_stops_loop(monkeypatch):
+    import asyncio
+    evt = asyncio.Event()
+    calls = {"n": 0}
+
+    def fake_chat(**kwargs):
+        calls["n"] += 1
+        evt.set()  # cancel after the first result
+        return "Selected Answer: False\nReasoning: no"
+
+    monkeypatch.setattr(WebSearch_APIs, "chat_api_call", fake_chat)
+    results = [_std_result(f"T{i}", f"https://e{i}.example/", "c") for i in range(5)]
+    out = await WebSearch_APIs.search_result_relevance(results, "q", [], "openai", cancel_event=evt)
+    assert calls["n"] == 1  # loop stopped after cancellation
+
+
+@pytest.mark.asyncio
+async def test_relevance_llm_timeout_counts_as_not_relevant(monkeypatch):
+    import asyncio
+
+    def hanging_chat(**kwargs):
+        import time as _t
+        _t.sleep(0.3)
+        return "Selected Answer: True\nReasoning: slow"
+
+    monkeypatch.setattr(WebSearch_APIs, "chat_api_call", hanging_chat)
+    results = [_std_result("T", "https://e.example/", "c")]
+    out = await WebSearch_APIs.search_result_relevance(
+        results, "q", [], "openai", llm_timeout_s=0.05)
+    assert out == {}  # timed out -> skipped, not crashed
+
+
+# --- pure review ---------------------------------------------------------------
+
+def test_review_no_selector_passes_all():
+    wsr = {"results": [_std_result("A", "https://a.example/", "c")]}
+    out = WebSearch_APIs.review_and_select_results(wsr)
+    assert len(out["results"]) == 1
+
+
+def test_review_never_blocks_on_input(monkeypatch):
+    import builtins
+    def no_input(*a, **k):
+        raise AssertionError("input() must never be called")
+    monkeypatch.setattr(builtins, "input", no_input)
+    WebSearch_APIs.review_and_select_results({"results": []})

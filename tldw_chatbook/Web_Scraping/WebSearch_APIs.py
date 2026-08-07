@@ -44,7 +44,7 @@ from html import unescape
 import random
 import re
 import time
-from typing import Optional, Dict, Any, List, Union
+from typing import Optional, Dict, Any, List, Union, Callable, TypedDict
 from urllib.parse import urlparse, urlencode, unquote
 
 #
@@ -544,7 +544,11 @@ def generate_and_search(question: str, search_params: Dict) -> Dict:
 
 
 async def analyze_and_aggregate(
-    web_search_results_dict: Dict, sub_query_dict: Dict, search_params: Dict
+    web_search_results_dict: Dict,
+    sub_query_dict: Dict,
+    search_params: Dict,
+    *,
+    cancel_event: Optional[asyncio.Event] = None,
 ) -> Dict:
     """
     Analyze search results for relevance and create a final aggregated answer.
@@ -562,10 +566,15 @@ async def analyze_and_aggregate(
             - relevance_analysis_llm: LLM for relevance scoring
             - final_answer_llm: LLM for final aggregation
             - user_review: Enable manual result selection
+            - relevance_llm_timeout_s / relevance_scrape_timeout_s: per-call
+              timeouts passed through to search_result_relevance (default 30/30)
+        cancel_event: Optional cooperative-cancellation flag passed through to
+            search_result_relevance (port of server WebSearch_APIs.py :638;
+            task-1356).
 
     Returns:
         Dict: Contains:
-            - final_answer: Aggregated answer with citations
+            - final_answer: Aggregated answer with citations (FinalAnswerDict)
             - relevant_results: Filtered relevant results
             - web_search_results_dict: Original search results
 
@@ -583,11 +592,16 @@ async def analyze_and_aggregate(
     # 4. Score/filter results
     logger.info("Scoring and filtering search results")
     sub_questions = sub_query_dict.get("sub_questions", [])
+    relevance_llm_timeout_s = float(search_params.get("relevance_llm_timeout_s", 30.0) or 30.0)
+    relevance_scrape_timeout_s = float(search_params.get("relevance_scrape_timeout_s", 30.0) or 30.0)
     relevant_results = await search_result_relevance(
         web_search_results_dict["results"],
         sub_query_dict["main_goal"],
         sub_questions,
         search_params.get("relevance_analysis_llm"),
+        cancel_event=cancel_event,
+        llm_timeout_s=relevance_llm_timeout_s,
+        scrape_timeout_s=relevance_scrape_timeout_s,
     )
     # FIXME
     logger.debug("Relevant results returned by search_result_relevance:")
@@ -597,9 +611,7 @@ async def analyze_and_aggregate(
     logger.info("Reviewing and selecting relevant results")
     if search_params.get("user_review", False):
         logger.info("User review enabled")
-        relevant_results = review_and_select_results(
-            {"results": list(relevant_results.values())}
-        )
+        relevant_results = review_and_select_results(relevant_results)
 
     # 6. Summarize/aggregate final answer
     final_answer = aggregate_results(
@@ -759,6 +771,34 @@ def analyze_question(question: str, api_endpoint) -> Dict:
     }
 
 
+def _build_result_fallback_content(result: Dict[str, Any]) -> str:
+    """Construct a safe fallback text blob (title/snippet/url) from a
+    normalized search-result dict, used both as the relevance-eval prompt's
+    content and as the summarization source when scraping fails or a result
+    carries no `content` field (port of server WebSearch_APIs.py :306-327;
+    task-1356)."""
+    metadata = result.get("metadata")
+    metadata_dict = metadata if isinstance(metadata, dict) else {}
+    parts: List[str] = []
+    seen: set = set()
+
+    def _append(label: str, value: Any) -> None:
+        text = str(value or "").strip()
+        if not text:
+            return
+        key = text.casefold()
+        if key in seen:
+            return
+        seen.add(key)
+        parts.append(f"{label}: {text}")
+
+    _append("Title", result.get("title"))
+    _append("Snippet", result.get("content"))
+    _append("Snippet", metadata_dict.get("snippet"))
+    _append("URL", result.get("url"))
+    return "\n".join(parts).strip()
+
+
 ######################### Relevance Analysis #########################
 #
 # FIXME - Ensure edge cases are handled properly / Structured outputs?
@@ -767,6 +807,10 @@ async def search_result_relevance(
     original_question: str,
     sub_questions: List[str],
     api_endpoint: str,
+    *,
+    cancel_event: Optional[asyncio.Event] = None,
+    llm_timeout_s: float = 30.0,
+    scrape_timeout_s: float = 30.0,
 ) -> Dict[str, Dict]:
     """
     Evaluate search results for relevance and extract key content.
@@ -776,40 +820,39 @@ async def search_result_relevance(
     2. Scrapes full content from relevant URLs
     3. Summarizes the content focused on the question
 
-    Args:
-        search_results (List[Dict]): List of search results to evaluate
-        original_question (str): The main question
-        sub_questions (List[str]): Related sub-questions
-        api_endpoint (str): LLM API to use for analysis
-
-    Returns:
-        Dict[str, Dict]: Relevant results with:
-            - content: Summarized content
-            - original_content: Full scraped content
-            - reasoning: Why result was deemed relevant
-
-    Note:
-        - Implements rate limiting to avoid API throttling
-        - Filters out expired or irrelevant results
-        - Preserves result metadata for citations
-
-    Evaluate whether each search result is relevant to the original question and sub-questions.
+    Port of server WebSearch_APIs.py :789-985 (timeouts, cancel_event, scrape
+    fallback), with :306-327's `_build_result_fallback_content` supplying the
+    relevance-eval prompt's content instead of the raw (often-empty) `content`
+    field. Binding adaptations (task-1356): (1) no circuit breaker -- a
+    timed-out/erroring provider just costs this one result via
+    `asyncio.wait_for` around `asyncio.to_thread(chat_api_call, ...)` (the
+    chatbook transport is sync); (2) no outbound-policy calls; (3) each
+    relevant entry now also carries `url`/`title` captured from the source
+    result (not present on the server), for downstream citation display;
+    (6) jitter stays chatbook's `random.uniform(0.2, 0.6)` (no config knob).
 
     Args:
         search_results (List[Dict]): List of search results to evaluate.
         original_question (str): The original question posed by the user.
         sub_questions (List[str]): List of sub-questions generated from the original question.
         api_endpoint (str): The LLM or API endpoint to use for relevance analysis.
+        cancel_event: Optional cooperative-cancellation flag; checked at the
+            top of each iteration so a caller-side deadline watchdog can stop
+            the loop between results.
+        llm_timeout_s: Wall-clock timeout for each relevance/summarization LLM call.
+        scrape_timeout_s: Wall-clock timeout for the per-result scrape.
 
     Returns:
         Dict[str, Dict]: A dictionary of relevant results, keyed by a unique ID or index.
     """
-    from tldw_chatbook.LLM_Calls.Summarization_General_Lib import analyze
-
-    relevant_results = {}
+    relevant_results: Dict[str, Dict] = {}
 
     for idx, result in enumerate(search_results):
-        content = result.get("content", "")
+        if cancel_event and cancel_event.is_set():
+            logger.info("search_result_relevance: cancel_event set, stopping loop")
+            break
+
+        content = _build_result_fallback_content(result)
         if not content:
             logger.error("No Content found in search results array!")
             continue
@@ -828,23 +871,30 @@ async def search_result_relevance(
             sleep_time = random.uniform(0.2, 0.6)
             await asyncio.sleep(sleep_time)
 
-            # Evaluate relevance
+            # Evaluate relevance (chat_api_call is sync; run off-thread so the
+            # wait_for timeout can actually bound it).
             messages_payload = [
                 {"role": "user", "content": input_data + "\n\n" + eval_prompt}
             ]
-            relevancy_result = chat_api_call(
-                api_endpoint=api_endpoint,
-                messages_payload=messages_payload,
-                api_key=None,
-                temp=0.7,
-                system_message=None,
-                streaming=False,
-                minp=None,
-                maxp=None,
-                model=None,
-                topk=None,
-                topp=None,
-            )
+
+            async def _eval_call(_mp=messages_payload):
+                return await asyncio.to_thread(
+                    lambda: chat_api_call(
+                        api_endpoint=api_endpoint,
+                        messages_payload=_mp,
+                        api_key=None,
+                        temp=0.7,
+                        system_message=None,
+                        streaming=False,
+                        minp=None,
+                        maxp=None,
+                        model=None,
+                        topk=None,
+                        topp=None,
+                    )
+                )
+
+            relevancy_result = await asyncio.wait_for(_eval_call(), timeout=llm_timeout_s)
 
             # FIXME
             logger.debug(
@@ -853,7 +903,7 @@ async def search_result_relevance(
 
             if relevancy_result:
                 # Extract the selected answer and reasoning via regex
-                logger.debug("LLM Relevancy Response for item:", relevancy_result)
+                logger.debug(f"LLM Relevancy Response for item: {relevancy_result}")
                 selected_answer_match = re.search(
                     r"Selected Answer:\s*(True|False)", relevancy_result, re.IGNORECASE
                 )
@@ -871,8 +921,26 @@ async def search_result_relevance(
                         logger.debug("Relevant result found.")
                         # Use the 'id' from the result if available, otherwise use idx
                         result_id = result.get("id", str(idx))
-                        # Scrape the content of the relevant result
-                        scraped_content = await scrape_article(result["url"])
+                        source_content = content
+
+                        try:
+                            scraped_content = await asyncio.wait_for(
+                                scrape_article(result["url"]), timeout=scrape_timeout_s
+                            )
+                            scraped_text = ""
+                            if isinstance(scraped_content, dict):
+                                scraped_text = str(scraped_content.get("content") or "").strip()
+                            elif isinstance(scraped_content, str):
+                                scraped_text = scraped_content.strip()
+                            if scraped_text:
+                                source_content = scraped_text
+                        except asyncio.CancelledError:
+                            raise
+                        except Exception as scrape_error:
+                            logger.warning(
+                                f"Scrape failed for relevant result {result_id}; "
+                                f"falling back to search snippet/title/url: {scrape_error}"
+                            )
 
                         # Create Summarization prompt
                         logger.debug(
@@ -881,30 +949,56 @@ async def search_result_relevance(
                         summary_prompt = render_internal_prompt(
                             "websearch.result_summarization",
                             question=original_question,
-                            content=scraped_content["content"],
+                            content=source_content,
                         )
 
                         # Add delay before summarization
                         await asyncio.sleep(sleep_time)
 
-                        # Generate summary using the summarize function
+                        # `analyze` (LLM_Calls.Summarization_General_Lib) is imported
+                        # lazily here (chatbook precedent, see module docstring)
+                        # so a plain import of this module doesn't eagerly pull in
+                        # the summarization stack.
+                        from tldw_chatbook.LLM_Calls.Summarization_General_Lib import analyze
+
                         logger.info(f"Summarizing relevant result: ID={result_id}")
-                        summary = analyze(
-                            input_data=scraped_content["content"],
-                            custom_prompt_arg=summary_prompt,
-                            api_name=api_endpoint,
-                            api_key=None,
-                            temp=0.7,
-                            system_message=None,
-                            streaming=False,
-                        )
+
+                        async def _summ_call(_sc=source_content, _sp=summary_prompt):
+                            return await asyncio.to_thread(
+                                lambda: analyze(
+                                    input_data=_sc,
+                                    custom_prompt_arg=_sp,
+                                    api_name=api_endpoint,
+                                    api_key=None,
+                                    temp=0.7,
+                                    system_message=None,
+                                    streaming=False,
+                                )
+                            )
+
+                        summary = None
+                        try:
+                            summary = await asyncio.wait_for(_summ_call(), timeout=llm_timeout_s)
+                        except asyncio.CancelledError:
+                            raise
+                        except Exception as summ_error:
+                            logger.error(f"Summary generation failed: {summ_error}")
+
+                        # `analyze()` reports failure by returning an "Error: ..."
+                        # string rather than raising -- treat both cases the same
+                        # way the port source treats a raised exception: fall back
+                        # to the (scraped or fallback) source content itself.
+                        if not summary or (
+                            isinstance(summary, str) and summary.startswith("Error:")
+                        ):
+                            summary = source_content[:2000] or "Summary generation failed"
 
                         relevant_results[result_id] = {
                             "content": summary,  # Store the summary instead of full content
-                            "original_content": scraped_content[
-                                "content"
-                            ],  # Keep original content if needed
+                            "original_content": source_content,  # Keep original content if needed
                             "reasoning": reasoning,
+                            "url": result.get("url"),
+                            "title": result.get("title"),
                         }
                         logger.info(
                             f"Relevant result found and summarized: ID={result_id}; Reasoning={reasoning}"
@@ -916,6 +1010,11 @@ async def search_result_relevance(
                     logger.warning(
                         "Failed to parse the API response for relevance analysis."
                     )
+        except asyncio.CancelledError:
+            logger.warning("Relevance evaluation cancelled")
+            raise
+        except asyncio.TimeoutError:
+            logger.error(f"Timeout during LLM/scrape for result idx={idx}")
         except Exception as e:
             logger.error(
                 f"Error during relevance evaluation/summarization for result idx={idx}: {e}"
@@ -924,79 +1023,307 @@ async def search_result_relevance(
     return relevant_results
 
 
-def review_and_select_results(web_search_results_dict: Dict) -> Dict:
+def review_and_select_results(
+    web_search_results_dict: Dict, selector: Optional[Callable[[Dict], bool]] = None
+) -> Dict:
     """
-    Allows the user to review and select relevant results from the search results.
+    Select relevant results from a search-results payload -- pure, no
+    blocking `input()` (port of server WebSearch_APIs.py :988-1029;
+    task-1356). Two calling shapes are supported and the return shape mirrors
+    whichever one was given:
+      - ``{"results": [result, ...]}`` -> ``{"results": [selected, ...]}``
+      - ``{result_id: result, ...}`` (a flat mapping, e.g. relevant_results
+        from search_result_relevance) -> ``{result_id: selected, ...}``
 
     Args:
         web_search_results_dict (Dict): The dictionary containing all search results.
+        selector: Optional predicate `(result) -> bool`; when omitted every
+            candidate passes (there is no interactive prompt anymore -- the
+            caller decides selection, e.g. via config or an explicit filter).
 
     Returns:
-        Dict: A dictionary containing only the user-selected relevant results.
+        Dict: Only the selected results, in the same shape as the input.
     """
-    relevant_results = {}
-    logger.info("Review the search results and select the relevant ones:")
-    for idx, result in enumerate(web_search_results_dict["results"]):
-        logger.info(f"\nResult {idx + 1}:")
-        logger.info(f"Title: {result['title']}")
-        logger.info(f"URL: {result['url']}")
-        logger.info(
-            f"Content: {result['content'][:200]}..."
-        )  # Show a preview of the content
-        user_input = input("Is this result relevant? (y/n): ").strip().lower()
-        if user_input == "y":
-            relevant_results[str(idx)] = result
+    if not isinstance(web_search_results_dict, dict):
+        return {}
 
-    return relevant_results
+    results_list = web_search_results_dict.get("results")
+    is_results_shape = "results" in web_search_results_dict and isinstance(results_list, list)
+
+    if is_results_shape:
+        candidates = [
+            (str(result.get("id", idx)) if isinstance(result, dict) else str(idx), result)
+            for idx, result in enumerate(results_list)
+            if isinstance(result, dict)
+        ]
+    else:
+        candidates = [
+            (str(result_id), result)
+            for result_id, result in web_search_results_dict.items()
+            if isinstance(result, dict)
+        ]
+
+    if selector is None:
+        selected = candidates
+    else:
+        selected = []
+        for result_id, result in candidates:
+            try:
+                if selector(result):
+                    selected.append((result_id, result))
+            except Exception:
+                # If selector throws, skip selection for this item
+                continue
+
+    if is_results_shape:
+        return {"results": [result for _, result in selected]}
+    return {result_id: result for result_id, result in selected}
 
 
 ######################### Result Aggregation & Combination #########################
 #
+class FinalAnswerDict(TypedDict):
+    """Structured payload returned by the aggregation phase (port of server
+    WebSearch_APIs.py :1034-1039; task-1356). `evidence` entries are dicts
+    shaped ``{id: int, url, title, content, original_content, reasoning,
+    chunk_index}``."""
+
+    text: str
+    evidence: List[Dict[str, Any]]
+    confidence: float
+    chunks: List[Dict[str, Any]]
+
+
+def _build_chunk_infos(items: List[str], max_chars: int = 6000) -> List[Dict[str, Any]]:
+    """Greedily pack pre-formatted text entries into <= max_chars chunks for
+    map-reduce summarization (port of server WebSearch_APIs.py :1075-1117,
+    adapted to operate on plain formatted strings rather than (id, result)
+    tuples -- task-1356). A single entry at/over max_chars becomes its own
+    truncated chunk instead of being combined with neighbors.
+
+    Returns a list of dicts: ``{index: int (1-based), item_indices: list[int]
+    (1-based positions into `items` packed into this chunk), text: str,
+    truncated: bool}``.
+    """
+    chunk_infos: List[Dict[str, Any]] = []
+    current_entries: List[tuple] = []
+    current_length = 0
+
+    def flush_entries() -> None:
+        nonlocal current_entries, current_length
+        if not current_entries:
+            return
+        text = "\n\n".join(entry for _, entry in current_entries)
+        chunk_infos.append(
+            {
+                "index": len(chunk_infos) + 1,
+                "item_indices": [item_idx for item_idx, _ in current_entries],
+                "text": text,
+                "truncated": False,
+            }
+        )
+        current_entries = []
+        current_length = 0
+
+    for item_idx, entry in enumerate(items, start=1):
+        entry_length = len(entry)
+        if entry_length >= max_chars:
+            flush_entries()
+            chunk_infos.append(
+                {
+                    "index": len(chunk_infos) + 1,
+                    "item_indices": [item_idx],
+                    "text": entry[:max_chars],
+                    "truncated": True,
+                }
+            )
+            continue
+
+        if current_length + entry_length > max_chars and current_entries:
+            flush_entries()
+
+        current_entries.append((item_idx, entry))
+        current_length += entry_length
+
+    flush_entries()
+    return chunk_infos
+
+
+def _estimate_confidence(
+    relevant_count: int, chunk_count: int, failed_chunks: int, has_llm: bool
+) -> float:
+    """Confidence heuristic (Global Constraints formula, verbatim; port of
+    server WebSearch_APIs.py :1119-1133; task-1356):
+    ``coverage = min(relevant_count, 10) / 10``;
+    ``chunk_success = (chunk_count - failed_chunks) / chunk_count if chunk_count else 0.0``;
+    ``confidence = (0.35 + 0.45 * coverage) * (0.6 + 0.4 * chunk_success) + (0.05 if has_llm else 0.0)``,
+    clamped to [0.1, 0.99]; 0.0 only when relevant_count == 0.
+    """
+    if relevant_count <= 0:
+        return 0.0
+    coverage = min(relevant_count, 10) / 10.0
+    chunk_success = (chunk_count - failed_chunks) / chunk_count if chunk_count else 0.0
+    confidence = (0.35 + 0.45 * coverage) * (0.6 + 0.4 * chunk_success) + (
+        0.05 if has_llm else 0.0
+    )
+    return max(0.1, min(0.99, round(confidence, 3)))
+
+
 def aggregate_results(
     relevant_results: Dict[str, Dict],
     question: str,
     sub_questions: List[str],
-    api_endpoint: str,
-) -> Dict:
+    api_endpoint: Optional[str],
+) -> FinalAnswerDict:
     """
-    Combines and summarizes relevant results into a final answer.
+    Combines and summarizes relevant results into a final answer via a
+    chunked map-reduce: relevant results are renumbered 1..N (stable dict
+    order) and packed into <= 6000-char chunks (`_build_chunk_infos`); each
+    chunk is independently summarized (MAP, for the audit-trail `chunks`
+    field and the confidence signal) while the synthesis prompt itself
+    (REDUCE) is built directly from the full numbered evidence list -- not
+    from the chunk summaries -- so every "[n]" citation the LLM emits
+    resolves to a real evidence id (the citation-integrity fix; task-1356
+    binding adaptation 4, replacing the server's un-renumbered "ID: {rid}"
+    payload). Port of server WebSearch_APIs.py :1042-1298; binding adaptation
+    (5): chunk summarization uses chatbook's existing lazy
+    `Summarization_General_Lib.analyze` import, not the server's `summarize`.
 
     Args:
         relevant_results (Dict[str, Dict]): Dictionary of relevant articles/content.
         question (str): Original question.
         sub_questions (List[str]): List of sub-questions.
-        api_endpoint (str): LLM or API endpoint for summarization.
+        api_endpoint (str): LLM or API endpoint for summarization; falsy ->
+            no-LLM fallback branch (server :1154-1173).
 
     Returns:
-        Dict containing:
-        - summary (str): Final summarized answer.
-        - evidence (List[Dict]): List of relevant content items included in the summary.
-        - confidence (float): A rough confidence score (placeholder).
+        FinalAnswerDict: `{text, evidence, confidence, chunks}` on every branch.
     """
     logger.info("Aggregating and summarizing relevant results")
     if not relevant_results:
-        return {
-            "Report": "No relevant results found. Unable to provide an answer.",
+        empty_answer: FinalAnswerDict = {
+            "text": "No relevant results found. Unable to provide an answer.",
             "evidence": [],
             "confidence": 0.0,
+            "chunks": [],
         }
+        return empty_answer
 
-    # FIXME - Add summarization loop
     logger.info("Summarizing relevant results")
-    # ADD Code here to summarize the relevant results
 
-    # FIXME - Validate and test thoroughly, also structured generation
-    # Concatenate relevant contents for final analysis
-    concatenated_texts = "\n\n".join(
-        f"ID: {rid}\nContent: {res['content']}\nReasoning: {res['reasoning']}"
-        for rid, res in relevant_results.items()
-    )
+    # Renumber 1..N in the dict's stable iteration order and build the
+    # numbered "[n] title/content/reasoning" payload used both for chunk
+    # packing and for the synthesis prompt.
+    numbered_items = list(enumerate(relevant_results.items(), start=1))
+    entry_texts: List[str] = []
+    for n, (_rid, res) in numbered_items:
+        title = res.get("title") or res.get("url") or f"Result {n}"
+        entry_texts.append(
+            f"[{n}] {title}\n{res.get('content', '')}\nReasoning: {res.get('reasoning', '')}"
+        )
+
+    chunk_infos = _build_chunk_infos(entry_texts, max_chars=6000)
+    chunk_index_by_n: Dict[int, int] = {}
+    for info in chunk_infos:
+        for item_n in info["item_indices"]:
+            chunk_index_by_n[item_n] = info["index"]
+
+    evidence_payload: List[Dict[str, Any]] = []
+    for n, (_rid, res) in numbered_items:
+        evidence_payload.append(
+            {
+                "id": n,
+                "url": res.get("url"),
+                "title": res.get("title"),
+                "content": res.get("content"),
+                "original_content": res.get("original_content"),
+                "reasoning": res.get("reasoning"),
+                "chunk_index": chunk_index_by_n.get(n),
+            }
+        )
+
+    concatenated_texts = "\n\n".join(entry_texts)
+
+    if not api_endpoint:
+        logger.warning("No final answer LLM configured; returning evidence summaries only.")
+        chunk_metadata = [
+            {
+                "chunk_index": info["index"],
+                "result_ids": info["item_indices"],
+                "summary": info["text"][:1500],
+                "generated": False,
+                "source_characters": len(info["text"]),
+                "truncated_source": info["truncated"],
+            }
+            for info in chunk_infos
+        ]
+        combined_text = "\n\n".join(
+            str(res.get("content") or "") for _, res in relevant_results.items()
+        )
+        fallback_answer: FinalAnswerDict = {
+            "text": combined_text or "Unable to generate a final answer without an LLM.",
+            "evidence": evidence_payload,
+            "confidence": _estimate_confidence(
+                len(evidence_payload), len(chunk_infos), 0, has_llm=False
+            ),
+            "chunks": chunk_metadata,
+        }
+        return fallback_answer
+
+    # MAP: summarize each chunk (audit trail + confidence signal only -- the
+    # synthesis prompt below always uses the numbered evidence, never these
+    # summaries, to keep citations resolvable).
+    # `analyze` is imported lazily (chatbook precedent, see module docstring).
+    from tldw_chatbook.LLM_Calls.Summarization_General_Lib import analyze as _analyze
+
+    chunk_metadata: List[Dict[str, Any]] = []
+    failed_chunks = 0
+    for info in chunk_infos:
+        chunk_prompt = (
+            "Summarize the following set of relevant search snippets into a "
+            f'concise digest that preserves high-signal facts for answering the question: "{question}".\n\n'
+            "Requirements:\n"
+            "1. Keep the summary under 1500 characters.\n"
+            "2. Focus on verifiable facts and key statistics.\n"
+            "3. Mention the reasoning notes when helpful.\n\n"
+            f"<chunk index=\"{info['index']}\">\n{info['text']}\n</chunk>"
+        )
+        try:
+            chunk_summary = _analyze(
+                input_data=info["text"],
+                custom_prompt_arg=chunk_prompt,
+                api_name=api_endpoint,
+                api_key=None,
+                temp=0.3,
+                system_message=None,
+                streaming=False,
+            )
+            if not chunk_summary or (
+                isinstance(chunk_summary, str) and chunk_summary.startswith("Error:")
+            ):
+                raise RuntimeError(chunk_summary or "empty chunk summary")
+            generated = True
+        except Exception as chunk_error:
+            failed_chunks += 1
+            logger.warning(f"Chunk summarization failed for chunk {info['index']}: {chunk_error}")
+            chunk_summary = info["text"][:1500]
+            generated = False
+
+        chunk_metadata.append(
+            {
+                "chunk_index": info["index"],
+                "result_ids": info["item_indices"],
+                "summary": chunk_summary,
+                "generated": generated,
+                "source_characters": len(info["text"]),
+                "truncated_source": info["truncated"],
+            }
+        )
 
     current_date = time.strftime("%Y-%m-%d")
 
-    # Aggregation Prompt #1
-
-    # Aggregation Prompt #2
+    # REDUCE: the synthesis prompt is built from the full numbered evidence
+    # payload (concatenated_texts), not the chunk summaries above.
     analyze_search_results_prompt_2 = render_internal_prompt(
         "websearch.answer_synthesis",
         concatenated_texts=concatenated_texts,
@@ -1029,21 +1356,28 @@ def aggregate_results(
         )
         logger.debug(f"Returned response from LLM: {returned_response}")
         if returned_response:
-            # You could do further parsing or confidence estimation here
-            return {
-                "Report": returned_response,
-                "evidence": list(relevant_results.values()),
-                "confidence": 0.9,  # Hardcoded or computed as needed
+            success_answer: FinalAnswerDict = {
+                "text": returned_response,
+                "evidence": evidence_payload,
+                "confidence": _estimate_confidence(
+                    len(evidence_payload), len(chunk_infos), failed_chunks, has_llm=True
+                ),
+                "chunks": chunk_metadata,
             }
+            return success_answer
     except Exception as e:
         logger.error(f"Error aggregating results: {e}")
 
     logger.error("Could not create the report due to an error.")
-    return {
-        "summary": "Could not create the report due to an error.",
-        "evidence": list(relevant_results.values()),
-        "confidence": 0.0,
+    failure_answer: FinalAnswerDict = {
+        "text": "Could not create the report due to an error.",
+        "evidence": evidence_payload,
+        "confidence": _estimate_confidence(
+            len(evidence_payload), len(chunk_infos), len(chunk_infos), has_llm=False
+        ),
+        "chunks": chunk_metadata,
     }
+    return failure_answer
 
 
 #

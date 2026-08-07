@@ -60,6 +60,7 @@ def test_default_used_when_no_override(scratch_config, monkeypatch):
 
 def test_answer_synthesis_override_reaches_transport(scratch_config, monkeypatch):
     from tldw_chatbook.Web_Scraping import WebSearch_APIs
+    from tldw_chatbook.LLM_Calls import Summarization_General_Lib
 
     scratch_config(
         "[internal_prompts.websearch]\n"
@@ -72,6 +73,10 @@ def test_answer_synthesis_override_reaches_transport(scratch_config, monkeypatch
         return "final report"
 
     monkeypatch.setattr(WebSearch_APIs, "chat_api_call", fake_chat_api_call)
+    # aggregate_results' map phase chunk-summarizes via Summarization_General_Lib.analyze
+    # (task-1356) before the reduce/synthesis call below -- mock it so this test never
+    # makes a real (if fast-failing) LLM dispatch.
+    monkeypatch.setattr(Summarization_General_Lib, "analyze", lambda *a, **k: "chunk summary")
 
     WebSearch_APIs.aggregate_results(
         {"1": {"content": "some content", "reasoning": "because"}},
