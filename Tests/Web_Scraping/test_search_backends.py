@@ -309,17 +309,148 @@ def test_yandex_http_error_raises(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# Tavily (task-2990)
+# ---------------------------------------------------------------------------
+
+# Real Tavily API response shape: search_web_tavily returns response.json()
+# unmodified on success.
+_TAVILY_PAYLOAD = {
+    "query": "cherry cake",
+    "results": [
+        {"title": "Tavily One", "url": "https://tavily-one.example/", "content": "first content",
+         "score": 0.87, "published_date": "2026-03-03"},
+        {"title": "Tavily Two", "url": "https://tavily-two.example/", "content": "second content",
+         "score": 0.42},
+    ],
+}
+
+_TAVILY_ERROR_STRING = "There was an error searching for content. boom"
+
+
+def test_tavily_parser_standard_shape():
+    out = {}
+    WebSearch_APIs.parse_tavily_results(_TAVILY_PAYLOAD, out)
+    assert len(out["results"]) == 2
+    first, second = out["results"]
+    assert first["title"] == "Tavily One"
+    assert first["url"] == "https://tavily-one.example/"
+    assert first["content"] == "first content"
+    assert first["metadata"]["snippet"] == "first content"
+    assert first["metadata"]["relevance_score"] == 0.87
+    assert first["metadata"]["date_published"] == "2026-03-03"
+    # Tavily's score is a real 0-1 relevance score -- correctly directioned,
+    # unlike serper's rank-based "position".
+    assert second["metadata"]["relevance_score"] == 0.42
+    assert second["metadata"]["date_published"] is None
+
+
+def test_tavily_parser_absent_results_tolerated():
+    out = {}
+    WebSearch_APIs.parse_tavily_results({}, out)
+    assert out["results"] == []
+
+
+def test_tavily_error_string_raises_and_surfaces_as_processing_error():
+    """search_web_tavily returns a plain error STRING (not a dict) on
+    request failure. The parser must raise ValueError with that text
+    directly, AND process_web_search_results (which must not choke on the
+    non-dict input) must surface it as processing_error rather than
+    silently producing zero results (task-2990)."""
+    with pytest.raises(ValueError, match="boom"):
+        WebSearch_APIs.parse_tavily_results(_TAVILY_ERROR_STRING, {})
+
+    result = WebSearch_APIs.process_web_search_results(_TAVILY_ERROR_STRING, "tavily")
+    assert result["processing_error"] is not None
+    assert "boom" in result["processing_error"]
+    assert result["results"] == []
+
+
+def test_tavily_end_to_end_through_process(monkeypatch):
+    _set_key(monkeypatch, "tavily_search_api_key", "test-tavily-key")
+    _patch_requests(monkeypatch, _TAVILY_PAYLOAD)
+    raw = WebSearch_APIs.search_web_tavily("q")
+    result = WebSearch_APIs.process_web_search_results(raw, "tavily")
+    assert result["processing_error"] is None
+    assert [r["url"] for r in result["results"]] == [
+        "https://tavily-one.example/", "https://tavily-two.example/",
+    ]
+
+
+# ---------------------------------------------------------------------------
+# Searx (task-2990)
+# ---------------------------------------------------------------------------
+
+# Real SearX/SearXNG shape as search_web_searx hands it to the parser: it
+# always returns a JSON-encoded STRING (not a dict), of either a hit list
+# or an error dict -- unlike every other backend in this file.
+_SEARX_HITS = [
+    {"title": "Searx One", "link": "https://searx-one.example/", "snippet": "first snippet",
+     "publishedDate": "2026-04-04"},
+    {"title": "Searx Two", "link": "https://searx-two.example/", "snippet": "second snippet"},
+]
+_SEARX_PAYLOAD = json.dumps(_SEARX_HITS)
+_SEARX_ERROR_PAYLOAD = json.dumps({"error": "No information was found online for the search query."})
+
+
+def test_searx_parser_loads_json_string():
+    out = {}
+    WebSearch_APIs.parse_searx_results(_SEARX_PAYLOAD, out)
+    assert len(out["results"]) == 2
+    first, second = out["results"]
+    assert first["title"] == "Searx One"
+    assert first["url"] == "https://searx-one.example/"
+    assert first["content"] == "first snippet"
+    assert first["metadata"]["snippet"] == "first snippet"
+    assert first["metadata"]["date_published"] == "2026-04-04"
+    assert first["metadata"]["relevance_score"] is None
+    assert second["metadata"]["date_published"] is None
+
+
+def test_searx_parser_accepts_already_parsed_list():
+    """Defensive: direct/test callers may hand parse_searx_results an
+    already-decoded list instead of the JSON string search_web_searx
+    actually returns."""
+    out = {}
+    WebSearch_APIs.parse_searx_results(_SEARX_HITS, out)
+    assert len(out["results"]) == 2
+
+
+def test_searx_empty_list_tolerated():
+    out = {}
+    WebSearch_APIs.parse_searx_results(json.dumps([]), out)
+    assert out["results"] == []
+
+
+def test_searx_unparseable_json_raises_value_error():
+    with pytest.raises(ValueError):
+        WebSearch_APIs.parse_searx_results("not json {", {})
+
+
+def test_searx_error_dict_raises_and_surfaces_as_processing_error():
+    """search_web_searx encodes its error as `json.dumps({"error": ...})`
+    -- still a plain STRING. The parser must decode it, raise ValueError
+    with the error text directly, AND process_web_search_results must
+    surface it as processing_error rather than silently producing zero
+    results (task-2990)."""
+    with pytest.raises(ValueError, match="No information"):
+        WebSearch_APIs.parse_searx_results(_SEARX_ERROR_PAYLOAD, {})
+
+    result = WebSearch_APIs.process_web_search_results(_SEARX_ERROR_PAYLOAD, "searx")
+    assert result["processing_error"] is not None
+    assert "No information" in result["processing_error"]
+    assert result["results"] == []
+
+
+# ---------------------------------------------------------------------------
 # Parity: every engine SEARCH_ENGINES advertises must produce real results
 # ---------------------------------------------------------------------------
 
-# parse_tavily_results / parse_searx_results are `pass` stubs -- a real API
-# response parses to zero results, and the caller renders that as "No
-# results found" for an engine that is advertised as working (task-2990).
-# When one of these parsers is implemented, remove it from this set: the
-# assertion below will then start failing (results != [] for a `pass`
-# stub is impossible), which is the signal to also delete its branch in
-# the loop below.
-_KNOWN_BROKEN_PARSERS = {"tavily", "searx"}  # see task-2990
+# Emptied by task-2990: parse_tavily_results / parse_searx_results were
+# `pass` stubs, so a real API response parsed to zero results and the
+# caller rendered that as "No results found" for an engine advertised as
+# working. Both now have real implementations (see WebSearch_APIs.py);
+# every engine goes through the normal (>=1 result) assertion branch below.
+_KNOWN_BROKEN_PARSERS = set()  # see task-2990
 
 # One minimal, realistic non-empty payload per engine, shaped like that
 # engine's own real API response (read from each search_web_*/parse_*
@@ -344,31 +475,20 @@ _ENGINE_SAMPLE_PAYLOADS = {
     "exa": _EXA_PAYLOAD,
     "serper": _SERPER_PAYLOAD,
     "yandex": _yandex_payload(_YANDEX_XML),
-    # Real Tavily API response shape (docs.tavily.com/documentation/api-reference);
-    # parse_tavily_results ignores it entirely -- task-2990.
-    "tavily": {
-        "query": "cherry cake",
-        "results": [{"title": "T Title", "url": "https://t.example/", "content": "t snippet", "score": 0.9}],
-    },
-    # Real SearX/SearXNG JSON API response shape (docs.searxng.org/dev/search_api.html);
-    # parse_searx_results ignores it entirely -- task-2990.
-    "searx": {
-        "query": "cherry cake",
-        "results": [{"title": "S Title", "url": "https://s.example/", "content": "s snippet"}],
-        "number_of_results": 1,
-    },
+    "tavily": _TAVILY_PAYLOAD,
+    "searx": _SEARX_PAYLOAD,
 }
 
 
 def test_agent_enum_engines_all_dispatchable():
     """Every engine the agent tool advertises must reach a real backend that
     parses a realistic, non-empty payload of ITS OWN shape into at least one
-    standardized result -- except the parsers in _KNOWN_BROKEN_PARSERS, which
-    are `pass` stubs (task-2990) and silently render "No results found" for
-    real responses. Those are asserted at their CURRENT (broken) behavior so
-    this test starts failing the day someone fixes one, as a nudge to shrink
-    the allowlist and close task-2990.
+    standardized result. _KNOWN_BROKEN_PARSERS (task-2990) is now empty --
+    tavily and searx both have real parsers -- so every engine goes through
+    this one assertion branch; a regression back to a `pass` stub would fail
+    it immediately.
     """
+    assert _KNOWN_BROKEN_PARSERS == set(), "task-2990 allowlist should stay empty"
     from tldw_chatbook.Tools.web_tool_impls import SEARCH_ENGINES
     for engine in SEARCH_ENGINES:
         payload = _ENGINE_SAMPLE_PAYLOADS.get(engine)
@@ -378,17 +498,10 @@ def test_agent_enum_engines_all_dispatchable():
             f"{engine}: unexpected processing_error parsing a minimal {engine} payload: "
             f"{result['processing_error']}"
         )
-        if engine in _KNOWN_BROKEN_PARSERS:
-            assert result["results"] == [], (
-                f"{engine} parser now returns results for a real payload -- it is no "
-                f"longer a `pass` stub. Remove {engine!r} from _KNOWN_BROKEN_PARSERS "
-                f"and close task-2990."
-            )
-        else:
-            assert len(result["results"]) >= 1, (
-                f"agent enum advertises {engine!r} but its parser produced zero results "
-                f"from a minimal, realistic {engine} payload"
-            )
+        assert len(result["results"]) >= 1, (
+            f"agent enum advertises {engine!r} but its parser produced zero results "
+            f"from a minimal, realistic {engine} payload"
+        )
 
 
 # ---------------------------------------------------------------------------
