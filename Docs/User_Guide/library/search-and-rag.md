@@ -418,4 +418,18 @@ check uses — not just an endpoint name. Verified against 42b28089f —
 2026-08-06 (task-2852: live check on a fresh profile — "Use in Console"
 on a locked Console now warns before navigating and stages a visible
 receipt on the "Get started" card; a configured Console still lands on
-the unchanged staged-evidence strip).*
+the unchanged staged-evidence strip). Verified against d6b6a738f —
+2026-08-07 (RAG-port P0 live walkthrough on a scratch profile holding a
+copy of the real Library DBs, real provider): under the default Hybrid
+Basic profile a RAG Answer run returned rows banded on real similarity —
+"match: moderate" for the two best and "match: weak (0.18)" / "weak
+(0.17)" below them — not the old wall of "weak (0.02)" that banding a
+rank-fused score produced. Under BM25 Only the same panel disclosed
+"Profile 'BM25 Only': keyword search (no vectors)." and returned both a
+note and a **media** row, the keyword leg that previously could not
+return a row at all. Under Hybrid Full with no matching index the run
+disclosed "Semantic search found nothing from: Notes, Conversations.
+Semantic leg empty — keyword-only results." and rendered its FTS-leg row
+as "keyword match" rather than inventing a similarity. Turning Media off
+routed the run to semantic and said so: "Media excluded — semantic
+only." Every one of those route notes rendered on zero-row outcomes too.*

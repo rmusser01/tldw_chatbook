@@ -1,10 +1,10 @@
 ---
 id: TASK-3170
 title: RAG-port P0 profile-honoring retrieval and Console send-path injection
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-08-07 14:19'
-updated_date: '2026-08-07 20:44'
+updated_date: '2026-08-07 21:37'
 labels:
   - rag
   - console
@@ -54,12 +54,11 @@ Docs/superpowers/plans/2026-08-07-rag-port-p0-foundations.md (spec: Docs/superpo
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Status note: all 11 ACs above are ticked as CODE-COMPLETE (unit/integration
-tests, RED-first, mutation-checked per task -- see the SDD ledger at
+All 11 ACs are complete: unit/integration tests (RED-first, mutation-checked
+per task -- see the SDD ledger at
 .superpowers/sdd/2026-08-07-rag-port-p0-foundations/progress.md and each
-task's own report). This task is deliberately left In Progress, not Done --
-Task 11 (gates + a live TUI walkthrough) still owes the Definition of Done's
-live-verification evidence before this closes.
+task's own report) PLUS the live TUI walkthrough Task 11 owed, recorded at
+the end of these notes.
 
 Approach: nine sequential tasks, each RED-first with mutation checks, each
 independently reviewed (most needed one fix round; task-406/AC#1's Console
@@ -137,3 +136,61 @@ re-review residuals), TASK-3503 (config.load_settings cache-miss race can
 return None to worker threads), TASK-3504 (Console auto-retrieve zero-result
 outcome is fully silent).
 <!-- SECTION:NOTES:END -->
+
+### Task 11 gates + live TUI walkthrough (2026-08-07)
+
+**Targeted battery.** All 11 test files this branch created or modified, one
+run: **496 passed, 0 failed** (4:58). That equals the sum of their individual
+collected counts, so nothing was skipped or deselected.
+
+**Collection arithmetic** (`--collect-only -q` over `Tests/`, HEAD vs. a
+detached worktree at the merge-base `65c743d1e`): baseline **31,931**, HEAD
+**32,038**, delta **+107**. Accounted for exactly: five new files contribute
+16 + 2 + 4 + 12 + 23 = 57, and six modified files contribute 25 + 2 + 2 + 13
++ 5 + 3 = 50. 31,931 + 57 + 50 = 32,038. No pre-existing test was lost.
+
+**Live walkthrough.** Real TUI in tmux at 235x52, scratch profile via
+`TLDW_CONFIG_PATH` with `users_name = verify_ragp0`, holding a COPY of the
+real ChaChaNotes + media DBs and the real `chromadb/` directory (453 vectors)
+placed before first launch; real OpenAI (Library RAG Answer) and real
+Anthropic (Console) credentials. The live `~/.config/tldw_cli/config.toml`
+was byte-identical afterwards (SHA-256 unchanged, mtime unchanged).
+
+1. **Hybrid Basic (default), Library rag mode** -- rows banded on real cosine
+   similarity: "match: moderate" x2, then "weak (0.18)" / "weak (0.17)".
+   The pre-fix wall of "weak (0.02)" (banding an RRF score whose ceiling is
+   ~0.016) is gone. Zero-row sources disclosed: "Semantic search found
+   nothing from: Notes, Conversations."
+2. **BM25 Only** -- "Set active" repointed `[rag.service] profile` and the
+   next run disclosed "Profile 'BM25 Only': keyword search (no vectors)."
+   and returned a note row AND a **media** row -- the four-seam keyword path
+   including the media seam that AC#2 repaired. The route note also rendered
+   on a zero-row query, which is the AC#5 disclosure-survives-empty rule.
+3. **Hybrid Full** -- the service constructed and the search completed (the
+   pre-AC#4 double-strategy `TypeError` would have killed it). With no index
+   for that profile's embedding model it degraded honestly: "Semantic leg
+   empty -- keyword-only results", and its FTS-leg row rendered "keyword
+   match" rather than a fabricated similarity (AC#3).
+4. **Console** -- see TASK-406's notes: toggle persists at flip time,
+   "Auto-retrieving..." -> `RAG: on / Sources: 1 staged` -> "Evidence sent
+   with this message - 15 sources", and the model quoted the injected
+   `[S1]..[S15]` block back. A slash-command send retrieved nothing.
+5. **Scoped run** -- deselecting Media routed to semantic and said so:
+   "Media excluded -- semantic only."
+
+**Defect found live and fixed forward (RED-first, own commit).** Under
+Hybrid Full the one FTS-leg row rendered as "1. Untitled source | keyword
+match" while its own citation line read "Citations: meeting_notes". The
+vector leg gets `title` for free (indexing spreads document metadata into
+every chunk); the keyword leg builds metadata from scratch and stamped only
+`doc_title`, which `library_local_rag_search_service._semantic_row` -- the
+mapper every engine-backed Library row passes through -- does not read. The
+symptom was unreachable before this branch, because that leg could not
+return a row at all. Both keyword-leg metadata blocks now stamp `title`; the
+new test asserts through `_semantic_row` AND `LibraryRagResultRow.from_result`
+so it pins the rendered title, not a key name. Re-verified live after
+relaunch: the row now reads "1. meeting_notes | keyword match".
+
+Evidence captures (one file per checklist item) live in the session
+scratchpad under `ragp0-evidence/`, and the full gate report is at
+`.superpowers/sdd/2026-08-07-rag-port-p0-foundations/task-11-report.md`.

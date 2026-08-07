@@ -347,4 +347,15 @@ profile by an unrelated Library workspace-eligibility gate, so that part
 is verified at the code level, not live). Verified against e2c706303 —
 2026-08-06 (PR-T2, docs pass against shipped code/tests, live check
 pending Task 9): staged evidence now counts toward the context estimate
-and the cost chip (as an estimated `~` row) instead of reporting zero.*
+and the cost chip (as an estimated `~` row) instead of reporting zero.
+Verified against d6b6a738f — 2026-08-07 (RAG-port P0 live walkthrough, real
+Anthropic provider): flipping **Auto-retrieve on send** in the RAG chip
+modal writes `[chat_defaults] rag_auto_retrieve_on_send = true` at
+toggle time — before Esc, and Esc leaves it set. A plain-text send then
+showed "Auto-retrieving Library evidence for this message." with the chip
+reading `RAG: on · Sources: 1 staged` about a second in, then "Evidence
+sent with this message · 15 sources", and the model's own reply named the
+injected block back ("the evidence sections [S1] through [S15] …") — the
+end-to-end proof that retrieved evidence reaches the provider. A send
+beginning with a slash command fired no retrieval at all: no placeholder,
+no chip flip, no evidence line.*

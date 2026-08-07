@@ -1,10 +1,10 @@
 ---
 id: TASK-406
 title: Wire RAG context injection into the native Console send path
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-07-21 09:48'
-updated_date: '2026-08-07 20:44'
+updated_date: '2026-08-07 21:36'
 labels:
   - rag
   - console
@@ -41,38 +41,35 @@ to the modal's Run/Cancel draft-discard semantics -- an earlier draft
 persisted only on dismiss and lost the change on Escape; fixed in a review
 round before this task counted as code-complete.
 
-`ChatScreen._maybe_auto_retrieve_for_send` is called from
-`_capture_console_staged_rag`, immediately before `_consume_pending_console_
-launch()`, inside the same exclusive `run_worker(..., group=f"console-run-
-{session_id}")` the send already dispatches under -- no second worker, so a
-double-send cannot double-retrieve. Reached only after every send-blocking
-gate (provider readiness, workspace policy, skill-substitution refusal), so
-a blocked/refused send never auto-retrieves. Gate order (each mutation-
-tested to red exactly its own test): toggle off -> return; non-plain-text
-send (slash command, `$skill` invocation, second-Enter literal `/word`) ->
-return; evidence already staged (resident launch OR an unclaimed
-`HandoffChannel.CONSOLE_LIVE_WORK` entry) -> return; EMPTY resolved scope ->
-notify with the shared `SCOPE_EMPTY_NOTICE_TEMPLATE` copy (AC #2), return;
-otherwise stage a "Retrieving..." placeholder and await the search under a
-5s `asyncio.timeout`, with `top_k` from the active profile's `default_top_k`
-(task 9 gave the chip's manual run the same source, so the two paths cannot
-disagree about depth).
+LIVE VERIFICATION (2026-08-07, TASK-3170 Task 11) -- the status note above is
+now discharged; this task is Done. Driven in the real TUI (tmux 235x52) on a
+scratch profile (`TLDW_CONFIG_PATH`, `users_name = verify_ragp0`) holding a
+copy of the real ChaChaNotes + media DBs and the real `chromadb/` directory,
+against a real Anthropic account (claude-haiku-4-5-20251001) and the default
+Hybrid Basic profile:
 
-Two departures from the original sketch, both because reusing the manual
-chip run's own recovery path wholesale would have let a single empty auto-
-retrieve lock the composer (the existing block-while-`available_count==0`
-guard is screen-level, not query-specific): a zero-result outcome clears the
-placeholder silently rather than staging the manual run's blocking recovery
-card (tracked as a UX follow-up, TASK-3504, not a defect); a failed/timeout
-outcome shows a quiet notice distinguishing "RAG service still initializing"
-(no cached runtime -- the timeout is paying the first-run embedding-model
-load) from "retrieval failed" (a real error), and the auto-retrieve await
-itself is wrapped in try/except so an exploding retrieval cannot also
-discard a manually staged evidence bundle the same send was about to
-consume. AC #3 (legacy path untouched): confirmed by diff -- no
-`chat_events`/`get_rag_context_for_chat` file was touched by tasks 7-8.
+- AC #1 toggle + persistence: flipping "Auto-retrieve on send" in the RAG chip
+  modal wrote `[chat_defaults] rag_auto_retrieve_on_send = true` to the config
+  file at toggle time -- confirmed by reading the file WHILE the modal was
+  still open -- and Escape left it set (the dismiss path is write-free).
+- AC #1 injection through the staged pipeline, end to end: a plain-text send
+  showed "Auto-retrieving Library evidence for this message." at t=1.0s with
+  the footer chip reading `RAG: on · Sources: 1 staged`, then "Evidence sent
+  with this message · 15 sources" at t=2.1s. The reply that came back named
+  the injected block back to us -- "the evidence sections [S1] through [S15]
+  contain only repeated Latin placeholder words..." (the corpus fixture that
+  dominates this profile's index) -- which is the proof that the staged
+  evidence actually reached the provider rather than being staged and dropped.
+  Depth 15 is the profile's `default_top_k`, i.e. the TASK-3170 AC#8 parity.
+- AC #1 gating: a send beginning with a slash command fired NO retrieval --
+  no placeholder, no chip flip, no evidence line (polled at 0.15s for 18s).
+- AC #2/#3 are covered headlessly (Tests/UI/test_console_auto_rag_on_send.py);
+  the empty-scope short-circuit was not driven live because the scratch
+  profile could not cheaply produce an empty resolved scope.
 
-Files: tldw_chatbook/config.py, Widgets/Console/console_rag_settings_modal.py,
-UI/Screens/chat_screen.py. Full test/mutation evidence in
-.superpowers/sdd/2026-08-07-rag-port-p0-foundations/task-{7,8,9}-report.md.
+One live observation worth carrying forward, already filed: an auto-retrieve
+that returns zero rows is completely silent (placeholder cleared, no notice),
+so the model answers unaided and the user cannot tell retrieval was attempted.
+Observed on a first send whose phrasing matched nothing; that is TASK-3504.
+Evidence captures: scratchpad ragp0-evidence/04a..04d.
 <!-- SECTION:NOTES:END -->

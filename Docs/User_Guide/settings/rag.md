@@ -252,4 +252,15 @@ field has focus the footer relabels the hints as `Esc, s` / `Esc, r` /
   shortly." is different — that one is transient, so press **Backfill** again.
 
 —
-*Verified against dev @ e7b9ebabd — 2026-08-06*
+*Verified against dev @ e7b9ebabd — 2026-08-06. Verified against d6b6a738f
+— 2026-08-07 (RAG-port P0 live walkthrough on a scratch profile holding a
+copy of the real Library DBs): **Set active** on the Profile select writes
+`[rag.service] profile` immediately and the "Active:" line follows it —
+switched Hybrid Basic → BM25 Only → Hybrid Full → Hybrid Basic, and every
+switch changed what the next Library Search/RAG run actually did. The index
+line is honest about the switch: Hybrid Basic reads "Index: built · 453
+vectors · built with all-MiniLM-L6-v2 / chunk 384·64", and selecting a
+profile with a different embedding model immediately reads "Index: absent —
+will be created on next backfill" plus "Semantic index not built — Hybrid
+search is keyword-only until you Backfill" — which is exactly what the
+subsequent search then disclosed.*
