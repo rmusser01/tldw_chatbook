@@ -1680,7 +1680,9 @@ async def test_pressing_expand_actually_solos_content_and_restores_on_a_second_p
         items_pane.select_item_by_id("11")
         await pilot.pause(0.3)
 
-        assert screen.query("#wl-region-feeds"), "precondition: FEEDS starts visible"
+        # task-2511 removed the FEEDS region; the ITEMS region is now the
+        # neighbour whose collapse proves the solo actually happened.
+        assert screen.query("#wl-region-items"), "precondition: ITEMS starts visible"
         content_pane = screen.query_one("#watchlists-content-pane", ContentPane)
         expand_button = content_pane.query_one("#content-expand-button", Button)
         assert str(expand_button.label) == "Expand"
@@ -1692,11 +1694,10 @@ async def test_pressing_expand_actually_solos_content_and_restores_on_a_second_p
             "the SAME solo mechanism Z uses must actually have run"
         )
         assert screen.query("#wl-region-content")
-        assert not screen.query("#wl-region-feeds"), (
-            "soloing CONTENT must actually collapse FEEDS around it -- the "
+        assert not screen.query("#wl-region-items"), (
+            "soloing CONTENT must actually collapse ITEMS around it -- the "
             "real, visible effect, not just a state flag"
         )
-        assert not screen.query("#wl-region-items")
 
         content_pane = screen.query_one("#watchlists-content-pane", ContentPane)
         restore_button = content_pane.query_one("#content-expand-button", Button)
@@ -1709,7 +1710,6 @@ async def test_pressing_expand_actually_solos_content_and_restores_on_a_second_p
         await pilot.pause(0.3)
 
         assert screen.region_layout.solo_region is None, "a second press must restore"
-        assert screen.query("#wl-region-feeds")
         assert screen.query("#wl-region-items")
         content_pane = screen.query_one("#watchlists-content-pane", ContentPane)
         assert str(

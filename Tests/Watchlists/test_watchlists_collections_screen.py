@@ -1124,7 +1124,11 @@ async def test_centre_header_summary_follows_the_tree_scope_on_the_read_tab_too(
     header exists on every section, its refresh must be unconditional too,
     or a scope change on the Read tab would leave `#wl-centre-status`
     showing the PREVIOUS scope's summary -- silently, since nothing else
-    on that tab would ever touch it."""
+    on that tab would ever touch it.
+
+    Kept current by task-2511: the FEEDS region itself is gone (the
+    sibling test's docstring covers that removal); what this test still
+    protects is the unconditional on-Read header refresh."""
     app = _build_test_app()
     host = DestinationHarness(app, "watchlists_collections")
     async with host.run_test(size=(180, 50)) as pilot:
@@ -1141,11 +1145,13 @@ async def test_centre_header_summary_follows_the_tree_scope_on_the_read_tab_too(
         service.add_source(morning["id"], arxiv)
         screen._tree_watchlists = [{"id": morning["id"], "name": "Morning AI Brief"}]
 
-        screen.active_section = "items"
+        # task-2511 made Read ("items") the DEFAULT section, so the section
+        # write the sibling tests use to force a rebuild would be a no-op
+        # here -- the watcher only fires on a real change. Recompose
+        # directly instead: exactly what the watcher's
+        # `refresh(recompose=True)` does for the header.
+        screen.refresh(recompose=True)
         await pilot.pause(0.2)
-        assert screen.query_one("#wl-region-feeds"), (
-            "precondition: FEEDS is mounted on the Read tab"
-        )
         assert screen.query_one("#wl-centre-status"), (
             "precondition: the header exists on the Read tab too "
             "(TASK-2312)"

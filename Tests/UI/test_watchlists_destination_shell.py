@@ -209,6 +209,11 @@ async def test_the_inspector_first_run_hint_does_not_repeat_overviews_own_walkth
             "must not re-teach Overview's own watchlist-creation step -- "
             f"the whole walkthrough duplicated there: {hint!r}"
         )
+        # task-2511: Overview is no longer the DEFAULT section (Read/"items"
+        # is), so its pane is not mounted until the tab is selected -- the
+        # walkthrough body only exists once Overview has been shown.
+        screen.active_section = "overview"
+        await pilot.pause(0.2)
         overview_body = str(
             screen.query_one("#overview-first-run-body", Static).renderable
         )
@@ -318,6 +323,10 @@ def test_watchlists_navigation_context_accepts_only_supported_sections():
 @pytest.mark.asyncio
 async def test_subscriptions_alias_preserves_watchlists_navigation_context(monkeypatch):
     app = _build_test_app()
+    # `_handle_screen_navigation_locked` swallows every navigation until the
+    # initial screen exists (splash still up / startup push in flight). This
+    # harness never mounts a screen, so mark the app interactive explicitly.
+    app._initial_screen_pushed = True
     applied_contexts = []
     switched_screens = []
 

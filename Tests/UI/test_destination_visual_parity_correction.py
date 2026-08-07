@@ -58,10 +58,7 @@ from tldw_chatbook.UI.Watchlists_Modules.overview_pane import OverviewPane
 from tldw_chatbook.UI.Watchlists_Modules.region_layout import Region, RegionLayout
 from tldw_chatbook.UI.Watchlists_Modules.runs_pane import RunsPane
 from tldw_chatbook.UI.Watchlists_Modules.sources_pane import SourcesPane
-from tldw_chatbook.UI.Watchlists_Modules.watchlist_tree import (
-    TreeScope,
-    TreeScopeChanged,
-)
+from tldw_chatbook.UI.Watchlists_Modules.watchlist_tree import TreeScope
 from tldw_chatbook.UI.Watchlists_Modules.watchlists_tab_strip import SECTIONS
 from tldw_chatbook.Widgets.destination_workbench import (
     DestinationWorkbench,
