@@ -7,6 +7,7 @@ import re
 from textual import on
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal, Vertical
+from textual.css.query import QueryError
 from textual.widgets import Button, Checkbox, ListItem, ListView, Static
 
 from ..Console.console_image_viewer_modal import ClickableAvatarBox
@@ -417,10 +418,27 @@ class PersonasInspectorPane(Vertical):
         if items:
             await list_view.extend(items)
 
+    def on_mount(self) -> None:
+        """Replay any state pushed before the composed children existed.
+
+        task-2727: `PersonasScreen._load_after_mount` runs as a worker and can
+        push console-action state while this pane's children are still
+        mounting; `_apply_action_state` defers quietly in that window, and
+        this replay (after the first refresh, so the children are queryable)
+        makes sure nothing pushed early is dropped.
+        """
+        self.call_after_refresh(self._apply_action_state)
+
     def _apply_action_state(self) -> None:
         selected = self._has_selection
         unsaved = self._is_unsaved
         kind = self._selected_kind
+        try:
+            self.query_one("#personas-validation-summary", Static)
+        except QueryError:
+            # Children not composed yet (pre-mount push) — the on_mount
+            # replay applies the retained state once they exist (task-2727).
+            return
         # F-031: pre-selection the inspector is one guidance line only. The
         # section chrome (Validation, Conversations, Readiness header) and
         # the action stack stay hidden until there is something to act on;
