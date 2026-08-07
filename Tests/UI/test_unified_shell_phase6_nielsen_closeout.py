@@ -73,7 +73,7 @@ async def test_nielsen_closeout_replays_core_heuristic_signals_in_running_app() 
             )
 
             nav_buttons = list(
-                app.screen.query("MainNavigationBar").first().query("Button.nav-button")
+                app.screen.query("MainNavigationBar").first().query(".nav-button")
             )
             assert [
                 (button.id, str(button.label).strip()) for button in nav_buttons
@@ -84,7 +84,12 @@ async def test_nielsen_closeout_replays_core_heuristic_signals_in_running_app() 
             assert "Model: Blocked" in home_text
             assert "Needs Attention" in home_text
             assert "Set up Console model" in home_text
-            assert "More ›" in home_text
+            # NV-01 (TASK-2154.21): at 180 cols every destination fits, so
+            # the overflow affordance hides instead of docking over the strip.
+            await _wait_until(
+                pilot,
+                lambda: app.screen.query_one("#nav-overflow-hint").display is False,
+            )
 
             app.screen.query_one("#nav-console", Button).press()
             await _wait_until(

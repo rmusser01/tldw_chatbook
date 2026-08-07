@@ -26,7 +26,7 @@ CONSOLE_INSPECTOR_NO_CHANGE_TRACKING_REASON = (
 CONSOLE_INSPECTOR_REVIEW_TOOL_CALL_ID = "console-inspector-review-tool-call"
 CONSOLE_INSPECTOR_REVIEW_TOOL_CALL_LABEL = "Review tool call"
 CONSOLE_INSPECTOR_SAVE_CHATBOOK_ID = "console-inspector-save-chatbook"
-CONSOLE_INSPECTOR_SAVE_CHATBOOK_LABEL = "Save Chatbook"
+CONSOLE_INSPECTOR_SAVE_CHATBOOK_LABEL = "Save as Chatbook"
 CONSOLE_INSPECTOR_NO_APPROVAL_REASON = "No approval is pending."
 CONSOLE_INSPECTOR_NO_TOOL_CALLS_REASON = "No tool calls are ready for review."
 CONSOLE_INSPECTOR_NO_CHATBOOK_ARTIFACT_REASON = "No Chatbook artifact is available."
@@ -138,10 +138,15 @@ def _tools_ready_text(effective_tool_count: int) -> str:
         effective_tool_count: Built-in count plus MCP catalog size.
 
     Returns:
-        "not loaded" at zero -- "0 ready" reads as "no tools available" when
-        built-ins are always registered -- otherwise "<n> ready".
+        "—" at zero -- a neutral placeholder, since this app never
+        distinguishes "definitely zero" from "not counted yet" (and "0
+        ready" reads as "no tools available" when built-ins are always
+        registered). TASK-2154.12 (TX-04): "not loaded" exposed a
+        lazy-loading implementation detail, so the chip now HIDES at zero
+        and this row-level dash is all the Inspector shows. Otherwise
+        "<n> ready".
     """
-    return "not loaded" if effective_tool_count == 0 else f"{effective_tool_count} ready"
+    return "—" if effective_tool_count == 0 else f"{effective_tool_count} ready"
 
 
 def _mcp_inspector_row(
@@ -205,18 +210,28 @@ def build_console_disabled_reason(
     setup_reason = _clean(setup_blocked_reason, "")
     setup_reason_lower = setup_reason.lower()
     if send_blocked and setup_reason:
-        if "model" in setup_reason_lower:
-            return "Send blocked — choose a model to continue"
+        # TX-07 follow-up (TASK-2154.12): "api key"/"endpoint" must be
+        # checked BEFORE "model" -- the real blocker copy points at the
+        # "Settings > Providers & Models" screen (e.g. "Add API key in
+        # Settings > Providers & Models before sending."), so a naive
+        # "model" substring match swallowed the missing-key state and
+        # named the wrong blocker.
         if "api key" in setup_reason_lower:
             return "Send blocked — add an API key to continue"
         if "endpoint" in setup_reason_lower:
             return "Send blocked — configure the endpoint to continue"
+        if "model" in setup_reason_lower:
+            return "Send blocked — choose a model to continue"
         if (
             "choose a provider" in setup_reason_lower
             or "missing provider" in setup_reason_lower
         ):
             return "Send blocked — choose a provider to continue"
         return "Send blocked — finish provider setup to continue"
+    if send_blocked:
+        # No setup copy means an active run is the blocker (the setup gate
+        # always supplies its own reason).
+        return "Send blocked — wait for the active run to finish"
     if not has_draft:
         return "Send disabled: type a message"
     return ""
@@ -374,7 +389,9 @@ class ConsoleInspectorAction:
         return "" if self.enabled else self.disabled_reason
 
 
-CONSOLE_SYSTEM_PROMPT_LABEL_UNSET = "System Prompt"
+# TASK-2154.5 (TX-06): name:value grammar like every sibling chip -- the old
+# bare "System Prompt" read as a label with no state next to ": set".
+CONSOLE_SYSTEM_PROMPT_LABEL_UNSET = "System Prompt: off"
 CONSOLE_SYSTEM_PROMPT_LABEL_SET = "System Prompt: set"
 
 
@@ -432,10 +449,11 @@ class ConsoleControlState:
 
         Returns:
             A ``ConsoleControlState`` whose ``tools_label`` counts the tools that
-            can actually run (built-in + MCP) -- or reads "Tools: not loaded"
-            at a zero count (task-1234/F7: an honest placeholder, since this
-            app never distinguishes "definitely zero" from "not counted yet")
-            -- and whose ``*_active`` flags drive chip emphasis.
+            can actually run (built-in + MCP) -- or reads "Tools: —"
+            at a zero count (task-1234/F7: a neutral placeholder, since this
+            app never distinguishes "definitely zero" from "not counted yet";
+            TASK-2154.12/TX-04 hides the chip at zero so even the dash stays
+            off the strip) -- and whose ``*_active`` flags drive chip emphasis.
         """
         assistant_label = resolve_assistant_identity_label(
             character=character,
@@ -461,14 +479,16 @@ class ConsoleControlState:
         # actionable before any call ever happened. Scoped fix: a neutral,
         # honest placeholder for this chip alone at the zero count --
         # `tools_active` (dim/emphasis) is UNCHANGED, still `effective_tool_
-        # count > 0`.
+        # count > 0`. TASK-2154.12 (TX-04): the placeholder is now an inert
+        # dash and the chip HIDES at zero, so the lazy-loading detail
+        # ("not loaded") no longer renders at all.
         tools_label = f"Tools: {_tools_ready_text(effective_tool_count)}"
         return cls(
             provider_label=f"Provider: {_clean(provider, 'not selected')}",
             model_label=f"Model: {_clean(model, 'not selected')}",
             assistant_label=assistant_label,
-            rag_label=f"RAG: {'on' if rag_enabled else 'off'}",
-            sources_label=f"Sources: {staged_source_count} staged",
+            rag_label=f"Library search: {'on' if rag_enabled else 'off'}",
+            sources_label=f"Sources: {staged_source_count}",
             tools_label=tools_label,
             approvals_label=f"Approvals: {approval_count} pending",
             system_prompt_label=(
@@ -795,7 +815,8 @@ class ConsoleRetrievalScopeState:
     individual conversation-level and workspace-level scope counts
     alongside ``item_count`` (which is always the EFFECTIVE,
     post-intersection count) -- used only for the header chip's
-    intersection-breakdown tooltip ("conversation A ∩ workspace B → N").
+    two-level breakdown tooltip ("Only searching: conversation scope (A
+    items) and workspace scope (B items) — N in both.").
     ``None`` means that level has no active scope. Built via
     ``from_effective`` whenever a workspace scope might be in play;
     ``from_scope`` (the conversation-only shortcut still used before the
@@ -973,9 +994,13 @@ class ConsoleInspectorState:
             # from a getattr hook production never populates, so this row read
             # "0 ready" beside a chip reporting a real number -- the same bug
             # already fixed once on the chip and missed here. Both now share
-            # `_tools_ready_text`, including the honest zero placeholder
+            # `_tools_ready_text`, including the neutral zero placeholder
             # ("0 ready" reads as "no tools available" when built-ins like
             # calculator/get_current_datetime are always registered).
+            # TASK-2154.12 (TX-04): the zero placeholder is now an inert
+            # dash -- "not loaded" exposed a lazy-loading implementation
+            # detail. The CHIP additionally hides at zero; this row stays
+            # mounted so the Inspector's group structure doesn't reflow.
             ConsoleDisplayRow("Tools", _tools_ready_text(effective_tool_count)),
             ConsoleDisplayRow(
                 "Approvals",

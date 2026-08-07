@@ -85,6 +85,7 @@ from textual.timer import Timer
 from textual.widgets import Button, Checkbox, Input, Select, Static
 
 from tldw_chatbook.Chat.console_glyphs import GLYPH_SOURCE_MEDIA, GLYPH_SOURCE_NOTE
+from tldw_chatbook.Widgets.glyph_fallback import resolve_glyph
 from tldw_chatbook.Chat.rag_scope import (
     SOURCE_TYPE_MEDIA,
     SOURCE_TYPE_NOTE,
@@ -557,7 +558,9 @@ class ConsoleScopePickerModal(ModalScreen[None]):
     def _build_row(
         self, index: int, item: ScopeListItem, source_type: str, *, greyed: bool
     ) -> Checkbox:
-        glyph = GLYPH_SOURCE_MEDIA if source_type == SOURCE_TYPE_MEDIA else GLYPH_SOURCE_NOTE
+        glyph = resolve_glyph(
+            GLYPH_SOURCE_MEDIA if source_type == SOURCE_TYPE_MEDIA else GLYPH_SOURCE_NOTE
+        )
         title = escape_markup(item.title or item.source_id)
         label = f"{glyph} {title}"
         if greyed:

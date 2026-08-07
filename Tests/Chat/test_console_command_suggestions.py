@@ -1,6 +1,11 @@
 """Tests for the pure slash-command suggestion provider."""
 
-from tldw_chatbook.Chat.console_command_grammar import default_console_registry
+from tldw_chatbook.Chat.console_command_grammar import (
+    COMMAND_PREFIX,
+    ConsoleCommand,
+    ConsoleCommandRegistry,
+    default_console_registry,
+)
 from tldw_chatbook.Chat.console_command_suggestions import suggestions_for_draft
 from tldw_chatbook.Chat.console_skill_resolver import SkillCommandCandidate
 
@@ -78,3 +83,41 @@ def test_max_results_caps_both_modes():
     assert len(arg_result) == 200
     capped = suggestions_for_draft("/skills skill", registry, skills, max_results=5)
     assert len(capped) == 5
+
+
+# --- TX-05 (TASK-2154.12): jargon-free, never-empty descriptions ----------
+
+
+def test_builtin_command_descriptions_are_plain_language():
+    result = suggestions_for_draft("/", default_console_registry(), ())
+    descriptions = {s.label: s.description for s in result}
+    assert descriptions["/prefill"] == "Prepare the start of the assistant's reply"
+    # Every listed row carries a description; none is empty, none leaks the
+    # old "Arm"/"prefill" jargon.
+    for suggestion in result:
+        assert suggestion.description.strip(), suggestion.label
+    assert "Arm" not in descriptions["/prefill"]
+    assert "prefill" not in descriptions["/prefill"].lower()
+
+
+def test_registered_command_without_dict_entry_gets_fallback_description():
+    """A command registered outside the built-in set has no
+    ``_COMMAND_DESCRIPTIONS`` entry; the popup must not render an empty
+    description for it (TX-05)."""
+    registry = ConsoleCommandRegistry()
+    registry.register(
+        ConsoleCommand(name="frobnicate", argument_hint="", handler_id="frob")
+    )
+    result = suggestions_for_draft(f"{COMMAND_PREFIX}f", registry, ())
+    assert [s.label for s in result] == ["/frobnicate"]
+    assert result[0].description == "Custom command"
+
+
+def test_skill_rows_fall_back_when_snapshot_description_is_empty():
+    """``SkillCommandCandidate.description`` defaults to ""; the popup must
+    still never render an empty description (TX-05)."""
+    skills = (SkillCommandCandidate(name="mystery"),)
+    command_mode = suggestions_for_draft("/m", default_console_registry(), skills)
+    assert command_mode[0].description == "Run this skill"
+    arg_mode = suggestions_for_draft("/skills m", default_console_registry(), skills)
+    assert arg_mode[0].description == "Run this skill"

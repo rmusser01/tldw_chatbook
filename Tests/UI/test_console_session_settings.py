@@ -3485,7 +3485,13 @@ async def test_console_llamacpp_saved_missing_model_blocks_before_send() -> None
         console.query_one("#console-send-message", Button).press()
         await pilot.pause(0.1)
 
-        assert send_button.disabled is False
+        # TASK-2154.6 (FR-04): Send is now genuinely disabled while setup
+        # blocks, so the press above is a no-op by design; the persistent
+        # reason strip (plus the kept tooltip) is the pre-click affordance.
+        assert send_button.disabled is True
+        reason = console.query_one("#console-send-disabled-reason")
+        assert reason.styles.display == "block"
+        assert reason.renderable.plain == "Send blocked — choose a model to continue"
         assert (
             send_button.tooltip == "Choose a model in Console Settings before sending."
         )
@@ -3682,6 +3688,182 @@ def test_console_unsaved_generic_endpoint_blocks_inspector_with_endpoint_details
         screen._console_setup_blocked_reason()
         == "Save provider endpoint in Settings > Providers & Models before sending."
     )
+
+
+def test_console_no_provider_recovery_action_and_card_step_are_provider_actions() -> (
+    None
+):
+    """FR-05/FR-07: no provider at all -> provider action, no empty '' copy."""
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {}
+    app.app_config["api_settings"] = {}
+    screen = ChatScreen(app)
+    store = screen._ensure_console_chat_store()
+    session = store.ensure_session()
+    store.replace_session_settings(
+        session.id, ConsoleSessionSettings(provider="", model=None)
+    )
+
+    label, target, _tooltip = screen._console_provider_recovery_action()
+    card_state = screen._build_console_setup_card_state()
+    _settings, readiness = screen._active_console_settings_readiness()
+
+    assert (
+        screen._console_provider_blocker_copy()
+        == "Provider setup needed: choose a provider"
+    )
+    assert label == "Choose provider"
+    assert target == "console"
+    assert screen._console_provider_recovery_field() == ""
+    assert readiness.label == "Unknown"
+    assert "Select a provider" in readiness.detail
+    assert "''" not in readiness.detail
+    assert card_state.mode == "card"
+    step_one, step_two, _step_three = card_state.steps
+    assert step_one.state == "active"
+    assert step_one.label == "Choose a supported provider"
+    assert "''" not in step_one.label
+    assert step_two.state == "pending"
+
+
+def test_console_missing_key_no_model_recovery_action_is_provider_action() -> None:
+    """FR-05: with provider blocked AND model missing, the provider blocker wins."""
+    app = _build_test_app()
+    app.app_config["api_settings"] = {
+        "openai": {"api_key_env_var": "OPENAI_API_KEY"},
+    }
+    screen = ChatScreen(app)
+    store = screen._ensure_console_chat_store()
+    session = store.ensure_session()
+    store.replace_session_settings(
+        session.id, ConsoleSessionSettings(provider="openai", model=None)
+    )
+
+    label, target, _tooltip = screen._console_provider_recovery_action()
+    card_state = screen._build_console_setup_card_state()
+    _settings, readiness = screen._active_console_settings_readiness()
+
+    assert readiness.label == "Missing key"
+    assert readiness.native_send_supported is False
+    assert (
+        screen._console_provider_blocker_copy()
+        == "Provider setup needed: OpenAI missing API key"
+    )
+    assert label == CONSOLE_PROVIDER_CONFIGURE_API_KEY_LABEL
+    assert target == "settings"
+    assert screen._console_provider_recovery_field() == "api_key"
+    step_one, step_two, _step_three = card_state.steps
+    assert step_one.state == "active"
+    assert step_one.label == "Connect a provider (API key or local server)"
+    assert step_two.state == "pending"
+
+
+def test_console_provider_ready_missing_model_keeps_choose_model_action() -> None:
+    """FR-05 regression: provider ready + model missing -> Choose model, step 1 done."""
+    app = _build_test_app()
+    app.chat_api_provider_value = "llama_cpp"
+    app.chat_api_model_value = None
+    app.app_config["chat_defaults"] = {"provider": "llama_cpp"}
+    app.app_config["api_settings"] = {
+        "llama_cpp": {"api_url": "http://127.0.0.1:9099"},
+    }
+    screen = ChatScreen(app)
+    store = screen._ensure_console_chat_store()
+    session = store.ensure_session()
+    store.replace_session_settings(
+        session.id, ConsoleSessionSettings(provider="llama_cpp", model=None)
+    )
+
+    label, target, _tooltip = screen._console_provider_recovery_action()
+    card_state = screen._build_console_setup_card_state()
+    _settings, readiness = screen._active_console_settings_readiness()
+
+    assert readiness.label == "Missing model"
+    assert readiness.native_send_supported is False
+    assert (
+        screen._console_provider_blocker_copy()
+        == "Provider setup needed: choose a model"
+    )
+    assert label == "Choose model"
+    assert target == "console"
+    assert screen._console_provider_recovery_field() == ""
+    assert (
+        screen._console_send_blocked_reason()
+        == "Console send blocked: Select a model before sending."
+    )
+    step_one, step_two, _step_three = card_state.steps
+    assert step_one.state == "done"
+    assert step_one.label == "Provider ready"
+    assert step_two.state == "active"
+    assert step_two.label == "Pick a model"
+
+
+def test_console_unsaved_endpoint_no_model_recovery_action_is_configure_endpoint() -> (
+    None
+):
+    """FR-05: unsaved endpoint + no model -> Configure endpoint, step 1 active."""
+    app = _build_test_app()
+    app.app_config["api_settings"] = {
+        "ollama": {"api_url": "http://127.0.0.1:11434"},
+    }
+    screen = ChatScreen(app)
+    store = screen._ensure_console_chat_store()
+    session = store.ensure_session()
+    store.replace_session_settings(
+        session.id,
+        ConsoleSessionSettings(
+            provider="ollama",
+            model=None,
+            base_url="http://127.0.0.1:9999/v1",
+        ),
+    )
+
+    label, target, _tooltip = screen._console_provider_recovery_action()
+    card_state = screen._build_console_setup_card_state()
+
+    assert "save the endpoint in Settings" in screen._console_provider_blocker_copy()
+    assert label == "Configure endpoint"
+    assert target == "settings"
+    assert screen._console_provider_recovery_field() == "endpoint"
+    step_one, step_two, _step_three = card_state.steps
+    assert step_one.state == "active"
+    assert step_one.label == "Save the provider's server address (endpoint)"
+    assert step_two.state == "pending"
+
+
+def test_console_invalid_endpoint_no_model_recovery_action_is_configure_endpoint() -> (
+    None
+):
+    """FR-05: invalid endpoint + no model -> Configure endpoint, step 1 active."""
+    app = _build_test_app()
+    app.app_config["api_settings"] = {
+        "ollama": {"api_url": "http://127.0.0.1:11434"},
+    }
+    screen = ChatScreen(app)
+    store = screen._ensure_console_chat_store()
+    session = store.ensure_session()
+    store.replace_session_settings(
+        session.id,
+        ConsoleSessionSettings(
+            provider="ollama",
+            model=None,
+            base_url="not-a-url",
+        ),
+    )
+
+    label, target, _tooltip = screen._console_provider_recovery_action()
+    card_state = screen._build_console_setup_card_state()
+    _settings, readiness = screen._active_console_settings_readiness()
+
+    assert readiness.label == "Invalid URL"
+    assert "invalid base URL" in screen._console_provider_blocker_copy()
+    assert label == "Configure endpoint"
+    assert target == "settings"
+    assert screen._console_provider_recovery_field() == "endpoint"
+    step_one, step_two, _step_three = card_state.steps
+    assert step_one.state == "active"
+    assert step_one.label == "Save the provider's server address (endpoint)"
+    assert step_two.state == "pending"
 
 
 def test_console_saved_llamacpp_missing_model_summary_is_not_ready_without_fallback() -> (

@@ -57,7 +57,8 @@ reply:
 sources / tools / approvals for the next send.
 
 **In the status chips** (above the composer) — "Tools: N ready" counts the
-tools available to the agent ("Tools: not loaded" until your first send), and
+tools available to the agent (the chip stays hidden until tools are counted,
+which happens after your first send), and
 "Approvals: N pending" counts tool calls waiting on you. The Approvals chip is
 clickable: it jumps you to the pending approval card (with nothing pending it
 just says "No approval is pending.").
@@ -206,8 +207,9 @@ Enter). Tab-fleet keys (Ctrl+T, Alt+1…9, Ctrl+K) are covered in
   full log** keep the durable record.
 - **Tool results are previews.** Transcript markers truncate at the display
   cap; the full text is always in "Full run log — <run id>".
-- **"Tools: not loaded"** in the status chips is normal before your first
-  send in a session; it becomes "Tools: N ready" after.
+- **No Tools chip before your first send.** The Tools chip in the status
+  strip stays hidden until tools are counted (after your first send in a
+  session); it then reads "Tools: N ready".
 - Tab status markers clear as soon as you visit the tab — a missing `✓` just
   means you already looked.
 

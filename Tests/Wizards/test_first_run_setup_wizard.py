@@ -2486,7 +2486,7 @@ class TestCommandPaletteReentry:
         # Final-review finding 2: this push must wire the app-level result
         # callback, exactly like the Settings button and the auto-offer
         # path (app.py's _push_first_run_wizard) already do -- without it,
-        # a truthy exit_route off the Summary step's "Go to Chat" button is
+        # a truthy exit_route off the Summary step's "Go to Console" button is
         # silently dropped instead of navigating anywhere.
         assert callback == screen.app.handle_first_run_wizard_result
 
@@ -3081,3 +3081,73 @@ class TestComposeCrashPolicy:
                 assert container.active_ids[0] == STEP_PROVIDER
         finally:
             WelcomeStep.compose_step = original
+
+
+@pytest.mark.asyncio
+async def test_welcome_exit_paths_state_their_consequences():
+    """TASK-2154.9 (FR-01): the three Welcome exits are no longer
+    indistinguishable -- the nav cancel button is relabeled to its real
+    effect ("Finish later", same dialog as Esc, destructive error styling
+    dropped), the whole-wizard skip link says it is permanent ("don't ask
+    again") with a tooltip naming the way back, and the Esc hint copy stays
+    accurate."""
+    wizard = _make_wizard()
+    app = _HostApp(wizard)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.2)
+        cancel = wizard.query_one("#wizard-cancel", Button)
+        assert str(cancel.label) == "Finish later"
+        assert cancel.variant == "default"
+
+        skip = wizard.query_one("#setup-skip-entirely", Button)
+        assert str(skip.label) == "Skip setup — don't ask again"
+        tooltip = str(skip.tooltip or "")
+        assert "won't be offered again" in tooltip
+        assert "Settings ▸ Diagnostics" in tooltip
+
+        hints = wizard.query_one("#setup-key-hints", Static)
+        assert "Esc finish later" in str(hints.render())
+
+
+@pytest.mark.asyncio
+async def test_quick_track_label_names_the_steps_the_tracker_shows():
+    """TASK-2154.9 (FR-02): picking "provider & model" and then seeing four
+    tracker entries was the surprise -- the quick-track label now names
+    provider, model & summary (Welcome being the step the choice is made
+    on), matching the progress row and the "Step 1 of 4" count."""
+    wizard = _make_wizard()
+    app = _HostApp(wizard)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.2)
+        quick = wizard.query_one("#setup-track-quick", RadioButton)
+        label = str(quick.label)
+        assert "provider, model & summary" in label
+        assert "recommended" in label
+        container = wizard.query_one(SetupWizardContainer)
+        assert len(container.active_ids) == 4
+        nav = wizard.query_one(WizardNavigation)
+        assert nav.total_steps == 4
+
+
+@pytest.mark.asyncio
+async def test_nav_text_total_syncs_when_protect_keys_joins_on_key_entry():
+    """TASK-2154.9 (FR-02): the conditional protect-keys step joins the
+    quick track once a secret exists -- the "Step X of Y" text must update
+    in the same refresh as the progress dots; before this fix the text
+    total lagged one navigation behind."""
+    wizard = _make_wizard()
+    app = _HostApp(wizard)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.2)
+        container = wizard.query_one(SetupWizardContainer)
+        nav = wizard.query_one(WizardNavigation)
+        assert STEP_PROTECT not in container.active_ids
+        assert nav.total_steps == 4
+
+        container.note_key_entered()
+        await pilot.pause(0.1)
+
+        assert STEP_PROTECT in container.active_ids
+        assert nav.total_steps == 5
+        progress_text = str(wizard.query_one("#wizard-progress", Static).render())
+        assert "Step 1 of 5" in progress_text

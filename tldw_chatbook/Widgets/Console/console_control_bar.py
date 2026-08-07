@@ -39,12 +39,16 @@ FALLBACK_ACTIONS = (
     ),
     WorkbenchAction(
         id="attach-context",
-        label="Attach",
+        # CN-03 (TASK-2154.13): byte-matches the live action in
+        # ``console_workbench_state.py`` -- the composer's own ☰ menu entry
+        # is the file picker ("Attach file"), so this rail-opening action
+        # must never read as the same word.
+        label="Attach context",
         tooltip="Stage Library or workspace context",
     ),
     WorkbenchAction(
         id="run-library-rag",
-        label="Library RAG",
+        label="Search Library",
         tooltip="Search Library evidence before sending",
     ),
     WorkbenchAction(
@@ -232,6 +236,23 @@ class ConsoleControlBar(Vertical):
         with Horizontal(
             id="console-control-action-row", classes="console-control-action-row"
         ):
+            # TASK-2154.1 (LY-10): stand-in for the header status badge while
+            # compact-height mode hides #console-workbench-header. Display is
+            # Python-driven by ChatScreen._sync_console_compact_status_marker
+            # (hidden by default); it deliberately carries no
+            # `_workbench_action_id`, so `sync_actions` never removes it.
+            compact_status_marker = Static(
+                "",
+                id="console-compact-status-marker",
+                classes="console-compact-status-marker",
+                markup=False,
+            )
+            # `auto` is load-bearing: a bare Static defaults to width 1fr and
+            # would claim the whole action row, pushing the buttons off screen.
+            compact_status_marker.styles.width = "auto"
+            compact_status_marker.styles.display = "none"
+            compact_status_marker.display = False
+            yield compact_status_marker
             for action in self._visible_actions():
                 yield self._action(action)
         yield self._compatibility_layout_widget(

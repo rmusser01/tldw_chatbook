@@ -77,7 +77,7 @@ def build_console_workbench_state(
         ),
         WorkbenchAction(
             id="run-library-rag",
-            label="Run Library RAG",
+            label="Search Library",
             tooltip="Search Library evidence before sending",
         ),
         WorkbenchAction(

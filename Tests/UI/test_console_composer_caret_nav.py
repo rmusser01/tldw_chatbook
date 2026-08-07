@@ -567,6 +567,13 @@ async def test_clamp_into_a_soft_wrap_contiguous_row_stays_on_that_row_not_the_n
         console = await _mounted_console(host, pilot)
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         await pilot.pause()
+        # TASK-2154.6: the empty composer now shows the "Send disabled: type
+        # a message" reason strip, which borrows cells from the 1fr draft --
+        # measuring here would size the fixture to the SHRUNK width while the
+        # real draft below paints at the full width (strip hidden once text
+        # exists). Probe with a throwaway draft first so both share one width.
+        composer.load_draft("probe")
+        await pilot.pause()
         width = composer._draft_render_width()
 
         text = f"{'A' * width} BB {'C' * width}"

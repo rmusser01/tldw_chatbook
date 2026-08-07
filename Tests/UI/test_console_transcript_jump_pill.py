@@ -88,3 +88,47 @@ async def test_jump_to_latest_reattaches_and_hides_pill():
 
         assert _pill(app).display is False
         assert transcript.scroll_y == transcript.max_scroll_y
+
+
+@pytest.mark.asyncio
+async def test_jump_pill_is_keyboard_focusable_when_visible():
+    """TASK-2154.11 (DS-05): the visible pill joins the Tab focus chain."""
+    app = TailFollowHarness()
+    async with app.run_test() as pilot:
+        transcript = app.query_one(ConsoleTranscript)
+        await _seed_and_detach(pilot, transcript)
+        transcript.sync_jump_indicator("streaming")
+        pill = _pill(app)
+        assert pill.display is True
+        assert pill.focusable is True
+
+        pill.focus()
+        await pilot.pause()
+        assert app.focused is pill
+
+
+@pytest.mark.asyncio
+async def test_jump_pill_enter_and_space_jump_to_latest_and_focus_transcript():
+    """TASK-2154.11 (DS-05): Enter/Space activate the pill like a click.
+
+    Keyboard activation also moves focus to the transcript: the jump hides
+    the pill itself, and stranding focus on a display:none widget would be a
+    focus black hole.
+    """
+    for key in ("enter", "space"):
+        app = TailFollowHarness()
+        async with app.run_test() as pilot:
+            transcript = app.query_one(ConsoleTranscript)
+            await _seed_and_detach(pilot, transcript)
+            transcript.sync_jump_indicator("streaming")
+            pill = _pill(app)
+            assert pill.display is True
+            pill.focus()
+            await pilot.pause()
+
+            await pilot.press(key)
+            await pilot.pause()
+
+            assert _pill(app).display is False, f"{key} did not activate the pill"
+            assert transcript.scroll_y == transcript.max_scroll_y
+            assert app.focused is transcript

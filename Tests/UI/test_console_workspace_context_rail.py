@@ -1679,6 +1679,15 @@ async def test_console_workspace_many_conversations_keep_lower_status_reachable(
         if not console._current_console_rail_state().details_open:
             console._toggle_console_rail_section("details")
         await pilot.pause()
+        # The transitional "New conversation" alias mounts through an async
+        # worker (ChatScreen._sync_console_legacy_workspace_context_aliases,
+        # kicked via call_after_refresh + run_worker), so its landing turn is
+        # not fixed -- on a warm event loop (this test running after other
+        # pilot apps) one pause is not enough. Poll for it like every other
+        # async-mounted control in this file.
+        await _wait_for_selector(
+            console, pilot, "#console-new-workspace-conversation"
+        )
 
         workspace_context = console.query_one("#console-workspace-context")
         details_tray = console.query_one("#console-workspace-details")
@@ -2235,10 +2244,18 @@ async def test_empty_copy_estimator_handles_three_plus_line_wrap() -> None:
         base_state = _base_grouped_workspace_state()
         # All three sections empty (their real default empty_copy), built
         # through the actual production state builder -- not hand-rolled.
+        # TASK-2154.3 (LY-04): empty sections now default-COLLAPSE, so the
+        # expanded-empty render path this test measures is reached via
+        # explicit expand preferences -- the same state a user produces by
+        # expanding an empty section in the rail.
         empty_browser = build_console_conversation_browser_state(
             rows=(),
             active_workspace_id="ws-a",
-            group_collapse_preferences={"section:chats": False},
+            group_collapse_preferences={
+                "section:starred": False,
+                "section:workspaces": False,
+                "section:chats": False,
+            },
         )
         starred_section = next(
             section

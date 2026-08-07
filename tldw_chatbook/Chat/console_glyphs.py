@@ -26,3 +26,19 @@ GLYPH_SOURCE_NOTE = "✎"
 #: markers above, which mean a run is happening. Decoded in the tab tooltip;
 #: the 19-cell tab label has no room for a word.
 GLYPH_TEMPORARY = "◌"
+
+#: Voice capture is live (composer mic button's recording state and the inline
+#: voice chip's timer head). CN-05 (TASK-2154.13): recording used to share
+#: ``GLYPH_IN_PROGRESS``'s "●" with agent-run markers, one glyph with two
+#: meanings in adjacent regions; "●" is now agent-run-only, and the ringed
+#: dot reads as "the mic is on" without copying the run marker.
+GLYPH_VOICE_RECORDING = "◉"
+
+#: The voice pipeline is working WITHOUT capturing right now: model warmup /
+#: preparing messages (prefixed by the screen) and the transcribing phase
+#: (composer voice chip). CN-05 (TASK-2154.13): these used to share
+#: ``GLYPH_TEMPORARY``'s "◌" with temporary-session tabs; "◌" is now
+#: temporary-only, and the half-filled circle reads as "in progress" rather
+#: than "outline of a thing". TASK-2154.19 hangs ASCII fallbacks off both
+#: voice glyphs, same as the rest of this vocabulary.
+GLYPH_VOICE_WORKING = "◐"

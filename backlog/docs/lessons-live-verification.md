@@ -487,3 +487,21 @@ never asks who else was supposed to construct it that way.
 **Why the grep could not find it.** An identifier sweep finds code that *reads* the state. It cannot find code that *restates the state in prose* — a string literal that duplicates, in English, an assumption the code no longer guarantees. The dialog was correct when exactly one failure domain existed; adding the second falsified a sentence in a different file that nothing links to the code table.
 
 **What to do.** When a bounded vocabulary gains a new *domain* (not merely a new value), run a second sweep the identifier grep cannot substitute for: grep the **old copy's distinctive phrases** across every user-facing string in the repo — here, "character voice" / "assigned character" — and for each hit ask whether it is still true for every path that now reaches it. Then apply the structural remedy so the next domain cannot reintroduce it: the fix threaded a `domain` field derived *from the code itself* (frozenset membership, not a per-call-site argument) through to the UI, which selects from a bounded copy dict with an honest neutral fallback for an unknown domain — making desync impossible by construction rather than by discipline. **The general principle: a hardcoded sentence is an untested assertion about program state. Audit user-facing copy by asking "what does this screen claim, and is that true on every path that reaches it," not by grepping for symbols the copy never mentions.**
+
+---
+
+## `save_screenshot` does not render the toast rack — probe `app._notifications`
+
+**What happened.** TASK-2154.16 (FB-05) added an error toast on Console stream
+failure. The notification fired correctly — visible in `app._notifications` with
+`severity="error"`, alive 2.5s after posting — yet the UAT SVG capture
+(`app.save_screenshot`, Textual 8.2.8) showed no trace of it, and neither did a
+control probe that called `notify()` manually and screenshotted 0.3s later. The
+toast rack is simply absent from SVG exports in this Textual version, so "toast
+visible in capture" is unprovable by screenshot and a fix can look broken when it
+is not.
+
+**What to do.** To verify toast behavior in a pilot session, assert on
+`app._notifications` (message text + severity + that it is still alive after the
+expected interval), not on the SVG/PNG capture. Use captures for transcript/row
+content only.

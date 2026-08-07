@@ -15,8 +15,33 @@ CONSOLE_RAIL_RIGHT_DEFAULT_OPEN = False
 # into the Inspector rail, so it is no longer a collapsible left-rail section.
 CONSOLE_RAIL_SECTION_IDS = ("session", "model", "details", "agent", "character")
 CONSOLE_RAIL_RIGHT_COMPACT_COLLAPSE_COLUMNS = 150
+# TASK-2154.1 (LY-08): below 100 columns the left rail's min-width contract
+# (rail 24 + main 56 + handles) can no longer be honored, so the rail is
+# force-collapsed as a RENDERING override -- the stored preference is left
+# untouched, exactly mirroring the right rail's 150-column rule above. The
+# compose comment's "compact contract" already targeted 100 columns.
+# TASK-2154.2 (LY-11): both compact-collapse rules are the responsive
+# DEFAULT, not a hard block -- an explicit user toggle is honored below the
+# threshold (see build_console_rail_state and ADR-042), with the main
+# column's min-width waived so the grid always resolves. The stored
+# preference is still never rewritten by the width rules.
+CONSOLE_RAIL_LEFT_COMPACT_COLLAPSE_COLUMNS = 100
+# TASK-2154.1 (LY-08/LY-09): below this width even the collapsed-handle
+# layout (left handle 13 + main 56 + right handle 11 + grid frame 2 = 82)
+# does not fit, so the workspace drops to a single pane: both rail handles
+# hide and the main column's min-width is waived so the transcript always
+# renders (covers the 80x24 and 60x18 review captures).
+CONSOLE_SINGLE_PANE_COLUMNS = 84
 CONSOLE_RAIL_CONTEXT_LABEL = f"Context {GLYPH_COLLAPSED}"
 CONSOLE_RAIL_INSPECTOR_LABEL = f"{GLYPH_COLLAPSE_LEFT} Inspector"
+
+#: TASK-2154.2 (ADR-042): payload key marking that ``left_open`` was set by
+#: an explicit user toggle rather than riding along in a full-payload
+#: serialize. Only the marker lets the narrow left-rail collapse rule yield
+#: to explicit opens below 100 cols while keeping the LY-08 default; the
+#: right rail needs no marker because its closed default is distinguishable
+#: from an explicit ``right_open=True`` by value alone.
+CONSOLE_RAIL_LEFT_OPEN_EXPLICIT_KEY = "left_open_explicit"
 
 _PERSISTENCE_PREFIX = "console_rail_state"
 _INVALID_KEY_RUN_RE = re.compile(r"[^A-Za-z0-9_.-]+")
@@ -101,6 +126,17 @@ class ConsoleRailState:
     right_badge: str = ""
     persistence_key: str = ""
     right_forced_collapsed: bool = False
+    left_forced_collapsed: bool = False
+    single_pane: bool = False
+    # TASK-2154.2: a rail rendered OPEN below its compact-collapse threshold
+    # (an explicit user toggle overrode the responsive default). Drives the
+    # main column's min-width waiver so the honored rail can never break the
+    # grid. Computed only in build_console_rail_state -- the 118-128-col band
+    # and pending-launch auto-open paths replace() right_open afterwards and
+    # deliberately keep these flags False, preserving their exact rendering.
+    right_compact_override: bool = False
+    left_compact_override: bool = False
+    compact_override: bool = False
     session_open: bool = True
     model_open: bool = True
     details_open: bool = False
@@ -215,6 +251,26 @@ def _coerce_bool(value: Any, fallback: bool) -> bool:
         if normalized in _FALSE_STRINGS:
             return False
     return fallback
+
+
+def console_rail_left_open_explicit(stored_preferences: Any) -> bool:
+    """Return whether a stored payload marks ``left_open`` as user-toggled.
+
+    TASK-2154.2 (ADR-042): the marker is written alongside the toggle
+    gesture (``ChatScreen._set_console_rail_preference``) and preserved
+    across later unrelated writes; every read of left-rail explicitness
+    goes through here so the write/read sides can never drift.
+
+    Args:
+        stored_preferences: Raw stored preference payload, if any.
+
+    Returns:
+        ``True`` only when the payload carries a truthy
+        ``CONSOLE_RAIL_LEFT_OPEN_EXPLICIT_KEY``.
+    """
+    return isinstance(stored_preferences, Mapping) and _coerce_bool(
+        stored_preferences.get(CONSOLE_RAIL_LEFT_OPEN_EXPLICIT_KEY), False
+    )
 
 
 def coerce_console_rail_preferences(raw: Any) -> ConsoleRailPreferences:
@@ -448,6 +504,29 @@ def build_console_inspector_rail_badge(
     return ""
 
 
+def console_rail_width_band(available_columns: int | None) -> str:
+    """Bucket a terminal width into the Console workspace layout band.
+
+    TASK-2154.1: the resize hook rebuilds rail state only when the band
+    actually changes, so the bucketing lives here next to the thresholds.
+
+    Args:
+        available_columns: Current terminal width, when known.
+
+    Returns:
+        ``"single-pane"`` below ``CONSOLE_SINGLE_PANE_COLUMNS``, ``"narrow"``
+        below ``CONSOLE_RAIL_LEFT_COMPACT_COLLAPSE_COLUMNS``, otherwise
+        ``"standard"`` (also the fallback when the width is unknown).
+    """
+    if available_columns is None:
+        return "standard"
+    if available_columns < CONSOLE_SINGLE_PANE_COLUMNS:
+        return "single-pane"
+    if available_columns < CONSOLE_RAIL_LEFT_COMPACT_COLLAPSE_COLUMNS:
+        return "narrow"
+    return "standard"
+
+
 def build_console_rail_state(
     *,
     preference_key: ConsoleRailPreferenceKey,
@@ -468,7 +547,10 @@ def build_console_rail_state(
     Args:
         preference_key: Persistence key for the active workspace/scope.
         stored_preferences: Raw stored preference payload, if any (legacy
-            ``context_open`` keys are ignored; task-400).
+            ``context_open`` keys are ignored; task-400). Beyond the coerced
+            values, the ``left_open_explicit`` marker key matters: it marks
+            an explicit user toggle of the left rail, which the narrow
+            left-rail collapse rule honors (TASK-2154.2).
         staged_source_count: Staged-source count routed to the Inspector
             rail badge.
         staged_summary: Staged-context summary routed to the Inspector
@@ -481,21 +563,67 @@ def build_console_rail_state(
         approval_count: Pending approval count for the right badge.
         can_save_chatbook: Whether a Chatbook artifact save is available.
         available_columns: Current terminal width, when known, for the
-            compact right-rail collapse rule.
+            compact right-rail collapse rule, the narrow left-rail collapse
+            rule, and the single-pane fallback.
 
     Returns:
         Effective rail state combining stored preferences, badges, and the
-        responsive right-rail collapse.
+        responsive rail-collapse/single-pane rules. The collapse rules are
+        the default rendering only: explicit toggles below a threshold are
+        honored and reported via the ``*_compact_override`` flags.
     """
     preferences = coerce_console_rail_preferences(stored_preferences)
+    # TASK-2154.2 (LY-11, ADR-042): the compact-collapse rules below are the
+    # responsive DEFAULT rendering, not a hard block -- an explicit user
+    # toggle is honored at any width, so a manual rail toggle can never
+    # silently persist a preference with zero visual change. The two rails
+    # detect "explicit" differently because their defaults differ:
+    # - Right (default closed): value-based. Default AND explicitly-stored
+    #   ``right_open=False`` both keep the collapse, so the rendering AND
+    #   the pending-launch auto-open suppression below the threshold are
+    #   byte-identical to the pre-2154.2 behavior; only an explicit
+    #   ``right_open=True`` yields.
+    # - Left (default open): marker-based. The coerced value cannot tell
+    #   "never toggled" (must keep the LY-08 force-collapse) apart from
+    #   "explicitly opened below the threshold" (must be honored), because
+    #   both coerce to ``left_open=True`` -- and plain key-presence in the
+    #   stored mapping is useless because every write serializes the FULL
+    #   payload, so any toggle would mark ``left_open`` as present. Only a
+    #   dedicated marker written alongside the toggle gesture itself
+    #   (``CONSOLE_RAIL_LEFT_OPEN_EXPLICIT_KEY``, set by
+    #   ``ChatScreen._set_console_rail_preference``) records it. Legacy
+    #   payloads lack the marker and keep the force-collapse default.
+    explicit_left_open = console_rail_left_open_explicit(stored_preferences)
     right_forced_collapsed = (
         available_columns is not None
         and available_columns < CONSOLE_RAIL_RIGHT_COMPACT_COLLAPSE_COLUMNS
+        and not preferences.right_open
+    )
+    left_forced_collapsed = (
+        available_columns is not None
+        and available_columns < CONSOLE_RAIL_LEFT_COMPACT_COLLAPSE_COLUMNS
+        and not explicit_left_open
+    )
+    single_pane = (
+        available_columns is not None
+        and available_columns < CONSOLE_SINGLE_PANE_COLUMNS
+    )
+    left_open = False if left_forced_collapsed else preferences.left_open
+    right_open = False if right_forced_collapsed else preferences.right_open
+    right_compact_override = (
+        available_columns is not None
+        and available_columns < CONSOLE_RAIL_RIGHT_COMPACT_COLLAPSE_COLUMNS
+        and right_open
+    )
+    left_compact_override = (
+        available_columns is not None
+        and available_columns < CONSOLE_RAIL_LEFT_COMPACT_COLLAPSE_COLUMNS
+        and left_open
     )
 
     return ConsoleRailState(
-        left_open=preferences.left_open,
-        right_open=False if right_forced_collapsed else preferences.right_open,
+        left_open=left_open,
+        right_open=right_open,
         preferred_left_open=preferences.left_open,
         preferred_right_open=preferences.right_open,
         left_badge=build_console_context_rail_badge(
@@ -513,6 +641,11 @@ def build_console_rail_state(
         ),
         persistence_key=preference_key.value,
         right_forced_collapsed=right_forced_collapsed,
+        left_forced_collapsed=left_forced_collapsed,
+        single_pane=single_pane,
+        right_compact_override=right_compact_override,
+        left_compact_override=left_compact_override,
+        compact_override=right_compact_override or left_compact_override,
         session_open=preferences.session_open,
         model_open=preferences.model_open,
         details_open=preferences.details_open,

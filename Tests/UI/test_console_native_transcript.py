@@ -485,8 +485,15 @@ def test_console_transcript_selected_message_explains_icon_actions():
     assert "Copy 🔊 Edit Save as... ♻ ---> 👍 👎 🗑" in rendered
     # TASK-362 AC#2: the guide names the single-key shortcuts, not just icons.
     assert "Guide:" in rendered
-    assert "c Copy" in rendered and "e Edit" in rendered and "r Regenerate" in rendered
+    assert "c Copy" in rendered and "e Edit" in rendered and "r ♻ Regenerate" in rendered
     assert "j/k select" in rendered
+    # task-2154.14 (DS-01): the guide also names each glyph-only button in
+    # words, derived from the row's own actions, so the meaning is on screen
+    # instead of behind a tooltip.
+    assert "🔊 Speak" in rendered
+    assert "---> Continue" in rendered
+    assert "👍/👎 Rate" in rendered
+    assert "🗑 Delete" in rendered
 
 
 def test_console_transcript_variant_navigation_changes_displayed_content():
@@ -558,7 +565,7 @@ def test_console_transcript_failed_action_row_includes_retry_without_exceeding_b
         if line.startswith("Copy")
     )
 
-    assert action_row == "Copy Edit Save as... Try ♻ ---> 👍 👎 🗑"
+    assert action_row == "Copy Edit Save as... Retry ♻ ---> 👍 👎 🗑"
     assert len(action_row) <= 52
 
 
@@ -656,7 +663,9 @@ async def test_console_transcript_click_selects_message_and_shows_actions():
     assert "👍" in text
     assert "👎" in text
     assert "🗑" in text
-    assert "Guide:" in text and "r Regenerate" in text
+    assert "Guide:" in text and "r ♻ Regenerate" in text
+    # task-2154.14 (DS-01): the legend names the glyph-only buttons in words.
+    assert "🔊 Speak" in text and "🗑 Delete" in text
     assert "|" not in text
 
 
@@ -1077,14 +1086,19 @@ async def test_console_mounts_native_transcript_region():
 
 @pytest.mark.asyncio
 async def test_console_tab_reaches_major_console_screen_regions():
-    """Tab traversal reaches the major Console regions in the post-onboarding state.
+    """Keyboard traversal reaches the major Console regions in the post-onboarding state.
 
     First-run focus is intentionally owned by the blocking setup modal (see
     ``ConsoleSetupModal.is_blocking``), which traps Tab until setup completes.
     That is by design and covered separately. This test marks onboarding
     complete (the same ``first_send_completed`` flag the app persists after a
     real first send) so the modal renders in its non-blocking "quiet" mode
-    and Tab is free to reach the workbench regions during normal use.
+    and the workbench regions are reachable during normal use.
+
+    TASK-2154.11 (AC-02): Tab/Shift+Tab cycle WITHIN the focused Console
+    region; F6/Shift+F6 move between panes (context rail -> transcript ->
+    Inspector -> composer). Both rails are opened explicitly so the
+    Inspector pane joins the F6 cycle.
     """
     app = _build_test_app()
     app.app_config.setdefault("console", {})["onboarding"] = {
@@ -1099,21 +1113,39 @@ async def test_console_tab_reaches_major_console_screen_regions():
         await _wait_for_selector(console, pilot, "#console-native-transcript")
         await _wait_for_selector(console, pilot, "#console-inspector-rail-open")
 
+        console._set_console_rail_preference(
+            left_open=True, right_open=True, notify_on_failure=False
+        )
+        await pilot.pause(0.3)
+        console.query_one("#console-native-composer").focus()
+        await pilot.pause(0.2)
+
         seen_focus_ids = set()
-        for _ in range(64):
+
+        def _record() -> None:
             focused = getattr(console.app, "focused", None)
             if focused is not None and getattr(focused, "id", None):
                 seen_focus_ids.add(focused.id)
-            await pilot.press("tab")
+
+        # F6 cycles the four panes; a few Tabs inside each pane stay local.
+        for _ in range(8):
+            _record()
+            await pilot.press("f6")
+            await pilot.pause(0.05)
+            for _ in range(6):
+                _record()
+                await pilot.press("tab")
+                await pilot.pause(0.05)
 
     assert "console-native-transcript" in seen_focus_ids
     assert "console-native-composer" in seen_focus_ids
-    assert "console-inspector-rail-open" in seen_focus_ids
+    assert "console-inspector-rail-collapse" in seen_focus_ids
 
 
 def test_console_streaming_assistant_row_shows_generating_placeholder_until_first_token():
     """Between send-accepted and first token the assistant row must not be empty."""
     from tldw_chatbook.Widgets.Console.console_transcript import (
+        CONSOLE_FAILED_EMPTY_PLACEHOLDER,
         CONSOLE_GENERATING_PLACEHOLDER,
         _message_body,
         _message_render_text,
@@ -1129,23 +1161,47 @@ def test_console_streaming_assistant_row_shows_generating_placeholder_until_firs
     rendered = _message_render_text(pending, selected=False)
     assert CONSOLE_GENERATING_PLACEHOLDER in rendered.plain
 
-    # First streamed token replaces the placeholder immediately.
+    # First streamed token replaces the placeholder immediately. FB-01
+    # (task-2154.16): the streaming state is a dim status line under the
+    # body, not a "[streaming]" token appended to the content.
     started = ConsoleChatMessage(
         role=ConsoleMessageRole.ASSISTANT,
         content="Once",
         id="m-generating",
         status="streaming",
     )
-    assert _message_body(started) == "Once [streaming]"
+    assert _message_body(started) == "Once"
+    started_rendered = _message_render_text(started, selected=False)
+    assert "[streaming]" not in started_rendered.plain
+    assert "Streaming…" in started_rendered.plain
 
-    # Other terminal statuses keep their existing suffix rendering.
+    # FB-01 (task-2154.16): an empty failed row renders a meaningful
+    # placeholder plus a dim "Failed" status line -- never a bare "[failed]".
     failed = ConsoleChatMessage(
         role=ConsoleMessageRole.ASSISTANT,
         content="",
         id="m-failed",
         status="failed",
     )
-    assert _message_body(failed) == "[failed]"
+    assert _message_body(failed) == CONSOLE_FAILED_EMPTY_PLACEHOLDER
+    failed_rendered = _message_render_text(failed, selected=False)
+    assert "[failed]" not in failed_rendered.plain
+    assert CONSOLE_FAILED_EMPTY_PLACEHOLDER in failed_rendered.plain
+    assert "Failed" in failed_rendered.plain
+
+    # A failed row WITH partial content keeps that content; the state is the
+    # status line, not a token glued onto the text.
+    failed_partial = ConsoleChatMessage(
+        role=ConsoleMessageRole.ASSISTANT,
+        content="half an answer",
+        id="m-failed-partial",
+        status="failed",
+    )
+    partial_rendered = _message_render_text(failed_partial, selected=False)
+    assert _message_body(failed_partial) == "half an answer"
+    assert "half an answer" in partial_rendered.plain
+    assert "[failed]" not in partial_rendered.plain
+    assert "Failed" in partial_rendered.plain
 
     # TASK-457(a): a USER row only carries "failed" via the send-blocked echo;
     # the SYSTEM block-row explains it, so the user's text stays clean (no
@@ -1791,13 +1847,13 @@ async def test_transcript_signature_cache_miss_on_status_change():
         transcript = app.query_one("#console-native-transcript", ConsoleTranscript)
         transcript.set_messages([message])
         await transcript.refresh_messages()
-        assert "[streaming]" in _message_row_text(transcript, "m-stream")
+        assert "Streaming…" in _message_row_text(transcript, "m-stream")
 
         message.status = "complete"
         transcript.set_messages([message])
         await transcript.refresh_messages()
 
-        assert "[streaming]" not in _message_row_text(transcript, "m-stream")
+        assert "Streaming…" not in _message_row_text(transcript, "m-stream")
         assert transcript.message_signature_compute_counts()["m-stream"] == 2
 
 
@@ -1870,3 +1926,24 @@ async def test_console_transcript_summary_banner_mounts_and_clears():
         transcript.set_summary_boundary(None)
         await transcript.refresh_messages()
         assert len(transcript.query(".console-transcript-summary-banner")) == 0
+
+
+def test_console_transcript_empty_state_is_centered_in_stylesheets():
+    """LY-12 (TASK-2154.24): both stylesheets center the fresh-session empty
+    state so it reads as intentionally empty rather than stranded at an edge.
+
+    Source-level pin: bare-widget harnesses do not load the app stylesheets,
+    so geometry cannot be asserted here; the pattern mirrors the css-string
+    pins in test_master_shell_navigation.py.
+    """
+    from pathlib import Path
+
+    for css_path in (
+        Path("tldw_chatbook/css/components/_agentic_terminal.tcss"),
+        Path("tldw_chatbook/css/tldw_cli_modular.tcss"),
+    ):
+        css = css_path.read_text(encoding="utf-8")
+        panel_rule = css.split(".console-transcript-empty-panel {", 1)[1].split("}", 1)[0]
+        assert "align: center middle" in panel_rule, css_path
+        body_rule = css.split(".console-transcript-empty-body {", 1)[1].split("}", 1)[0]
+        assert "text-align: center" in body_rule, css_path

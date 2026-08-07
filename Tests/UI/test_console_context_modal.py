@@ -333,3 +333,38 @@ async def test_context_modal_save_button_is_disabled_with_a_reason_when_ephemera
         await pilot.pause()
         normal_button = app.screen.query_one("#console-context-save", Button)
         assert normal_button.disabled is False
+
+
+@pytest.mark.asyncio
+async def test_context_modal_empty_state_compacts_modal_and_guides():
+    """LY-13 (TASK-2154.23): the empty viewer sizes to content and guides."""
+    app = ModalHarness()
+    app._push_empty = lambda: app.push_screen(ConsoleContextModal(_empty_factory))
+
+    async with app.run_test(size=(100, 40)) as pilot:
+        app._push_empty()
+        await pilot.pause()
+        modal_screen = app.screen
+        current_container = modal_screen.query_one(
+            "#console-context-current-body", Vertical
+        )
+        labels = [str(label.renderable) for label in current_container.query(Label)]
+        guidance = next(
+            (text for text in labels if "No conversation context" in text), ""
+        )
+        assert "Next Send" in guidance
+        modal_box = modal_screen.query_one("#console-context-modal", Vertical)
+        assert modal_box.has_class("context-empty")
+        assert modal_box.region.height <= 22
+
+
+@pytest.mark.asyncio
+async def test_context_modal_populated_state_keeps_full_height():
+    """The compact class is empty-state-only; populated keeps the room."""
+    app = ModalHarness()  # pushes the populated snapshot on mount
+
+    async with app.run_test(size=(100, 40)) as pilot:
+        await pilot.pause()
+        modal_screen = app.screen
+        modal_box = modal_screen.query_one("#console-context-modal", Vertical)
+        assert not modal_box.has_class("context-empty")

@@ -1,5 +1,7 @@
 # Console Left Sidebar Usability & Legibility Redesign
 
+> **Rail IA reconciled 2026-08-06 (UX review DR-02):** the four-section IA this document styles (Session / Context / Model / Details) was later reorganized — the live left rail sections are `session / model / details / agent / character` (`CONSOLE_RAIL_SECTION_IDS`), and staged-context sources moved to the Inspector rail. Read this document for its visual and styling guidance only; the governing IA is the 2026-07-02 dual-audience spec as amended.
+
 ## Context
 
 The Console screen (`UI/Screens/chat_screen.py`) uses a left rail for session context, staged sources, model settings, and workspace details. The rail currently stacks four collapsible sections with minimal visual hierarchy:
@@ -61,7 +63,7 @@ The Session section gets clearer workspace controls:
 
 - A labeled status row:
   `Workspace   <active workspace name>`
-- A second row below the workspace value contains two compact action buttons, aligned under the value column:
+- A second row below the workspace value contains two compact action buttons, left-aligned at the body indent (Amended 2026-08-05, TASK-2154.3: originally "aligned under the value column" via a 12-cell left indent; that indent assumed a ~35-column rail, while the real rail renders at 24–30 columns and left only 3–6 cells for the buttons — Switch/New clipped mid-word or rendered past the rail edge. The buttons now sit at the same indent as every other body row):
   - `[Switch]` — ID `#console-change-workspace`; opens the existing `ConsoleWorkspaceSwitcherModal`; disabled when `change_workspace_enabled` is False.
   - `[New]` — ID `#console-new-workspace`; creates a local-only workspace using `workspace_registry_service.create_workspace(name=..., description="Local workspace created from Console.")`, activates it, and runs the same post-switch sync flow used by `[Switch]` (`_sync_console_chat_core_state`, `_activate_console_session_for_workspace`, `_sync_console_workspace_context`, `run_worker(self._sync_native_console_chat_ui(), exclusive=True)`).
 - The `[New]` button is disabled when `workspace_registry_service` is unavailable; the button row is still rendered so users can create a first workspace.

@@ -46,6 +46,7 @@ from textual.widgets import (
 from tldw_chatbook.Utils.about_text import ABOUT_MARKDOWN, get_app_version
 
 from ...Chat.console_chat_models import CONSOLE_DEFAULT_MAX_PARALLEL_RUNS
+from ...Widgets.glyph_fallback import set_ascii_glyph_mode
 from ...Chat.console_provider_endpoints import URL_BASED_PROVIDER_KEYS
 from ...Chat.provider_readiness import get_provider_readiness, provider_config_key
 from ...Chat.console_provider_support import (
@@ -2752,6 +2753,8 @@ class SettingsScreen(BaseAppScreen):
                     "appearance.density",
                     "appearance.animations_enabled",
                     "appearance.smooth_scrolling",
+                    "appearance.reduce_motion",
+                    "appearance.ascii_glyphs",
                 ),
                 reads_runtime_state_from=("app theme",),
                 writes_allowed=True,
@@ -4698,6 +4701,10 @@ class SettingsScreen(BaseAppScreen):
             return "density"
         if message.startswith("Animations"):
             return "animations_enabled"
+        if message.startswith("Reduce motion"):
+            return "reduce_motion"
+        if message.startswith("ASCII glyphs"):
+            return "ascii_glyphs"
         if message.startswith("Smooth scrolling"):
             return "smooth_scrolling"
         return None
@@ -4710,6 +4717,8 @@ class SettingsScreen(BaseAppScreen):
             "density": "#settings-appearance-density",
             "animations_enabled": "#settings-appearance-animations-enabled",
             "smooth_scrolling": "#settings-appearance-smooth-scrolling",
+            "reduce_motion": "#settings-appearance-reduce-motion",
+            "ascii_glyphs": "#settings-appearance-ascii-glyphs",
         }.get(key)
 
     def _update_appearance_validation_classes(self) -> None:
@@ -4721,6 +4730,8 @@ class SettingsScreen(BaseAppScreen):
             "density",
             "animations_enabled",
             "smooth_scrolling",
+            "reduce_motion",
+            "ascii_glyphs",
         ):
             selector = self._appearance_field_selector(key)
             if selector is None:
@@ -8951,6 +8962,28 @@ class SettingsScreen(BaseAppScreen):
                 ("Saved as", "appearance.smooth_scrolling"),
                 ("Validation", "toggle the checkbox on or off"),
             )
+        if field_id == "settings-appearance-reduce-motion":
+            return (
+                ("Focused setting", "Reduce motion"),
+                (
+                    "Purpose",
+                    "Renders the splash screen and Console setup backdrop as "
+                    "static frames instead of full-screen animations.",
+                ),
+                ("Saved as", "appearance.reduce_motion"),
+                ("Validation", "enabled or disabled"),
+            )
+        if field_id == "settings-appearance-ascii-glyphs":
+            return (
+                ("Focused setting", "ASCII glyphs"),
+                (
+                    "Purpose",
+                    "Substitutes ASCII status markers for unicode glyphs on "
+                    "narrow-font terminals.",
+                ),
+                ("Saved as", "appearance.ascii_glyphs"),
+                ("Validation", "enabled or disabled"),
+            )
         return (
             ("Focused setting", "Appearance defaults"),
             (
@@ -11946,9 +11979,29 @@ class SettingsScreen(BaseAppScreen):
                         tooltip="Toggle optional UI animation defaults.",
                     )
                 with Horizontal(classes="settings-input-row"):
-                    yield Static("Smooth scroll", classes="settings-input-label")
-                    yield Checkbox(
-                        value=bool(values["smooth_scrolling"]),
+                    yield Static("Reduce motion", classes="settings-input-label")
+                    yield Button(
+                        self._appearance_bool_label("reduce_motion"),
+                        id="settings-appearance-reduce-motion",
+                        tooltip=(
+                            "Render the splash screen and Console setup backdrop "
+                            "as static frames instead of animations."
+                        ),
+                    )
+                with Horizontal(classes="settings-input-row"):
+                    yield Static("ASCII glyphs", classes="settings-input-label")
+                    yield Button(
+                        self._appearance_bool_label("ascii_glyphs"),
+                        id="settings-appearance-ascii-glyphs",
+                        tooltip=(
+                            "Substitute ASCII status markers for unicode glyphs "
+                            "on narrow-font terminals."
+                        ),
+                    )
+                with Horizontal(classes="settings-input-row"):
+                    yield Static("Smooth scrolling", classes="settings-input-label")
+                    yield Button(
+                        self._appearance_bool_label("smooth_scrolling"),
                         id="settings-appearance-smooth-scrolling",
                         tooltip="Toggle smooth scrolling defaults where supported.",
                     )
@@ -13579,14 +13632,48 @@ class SettingsScreen(BaseAppScreen):
         self._stage_appearance_value("animations_enabled", bool(event.value))
         self._mark_appearance_settings_staged()
 
-    @on(Checkbox.Changed, "#settings-appearance-smooth-scrolling")
+    @on(Button.Pressed, "#settings-appearance-smooth-scrolling")
     def handle_appearance_smooth_scrolling_changed(
-        self, event: Checkbox.Changed
+        self, event: Button.Pressed
     ) -> None:
+        """Stage the smooth-scrolling toggle and refresh its label.
+
+        Args:
+            event: The press of the smooth-scrolling toggle button.
+        """
         event.stop()
-        if self._syncing_appearance_defaults:
-            return
-        self._stage_appearance_value("smooth_scrolling", bool(event.value))
+        next_value = not bool(self._appearance_setting_values()["smooth_scrolling"])
+        self._stage_appearance_value("smooth_scrolling", next_value)
+        event.button.label = self._appearance_bool_label("smooth_scrolling")
+        self._mark_appearance_settings_staged()
+
+    @on(Button.Pressed, "#settings-appearance-reduce-motion")
+    def handle_appearance_reduce_motion_changed(self, event: Button.Pressed) -> None:
+        """Stage the reduce-motion toggle and refresh its label.
+
+        Args:
+            event: The press of the reduce-motion toggle button.
+        """
+        event.stop()
+        next_value = not bool(self._appearance_setting_values()["reduce_motion"])
+        self._stage_appearance_value("reduce_motion", next_value)
+        event.button.label = self._appearance_bool_label("reduce_motion")
+        self._mark_appearance_settings_staged()
+
+    @on(Button.Pressed, "#settings-appearance-ascii-glyphs")
+    def handle_appearance_ascii_glyphs_changed(self, event: Button.Pressed) -> None:
+        """Stage the ASCII-glyphs toggle and apply it live process-wide.
+
+        Args:
+            event: The press of the ASCII-glyphs toggle button.
+        """
+        event.stop()
+        next_value = not bool(self._appearance_setting_values()["ascii_glyphs"])
+        self._stage_appearance_value("ascii_glyphs", next_value)
+        # Apply live so already-rendered Console surfaces switch markers on the
+        # next repaint without waiting for a relaunch.
+        set_ascii_glyph_mode(next_value)
+        event.button.label = self._appearance_bool_label("ascii_glyphs")
         self._mark_appearance_settings_staged()
 
     @on(Button.Pressed, "#settings-preview-appearance")
@@ -17043,8 +17130,20 @@ class SettingsScreen(BaseAppScreen):
                 pass
             try:
                 self.query_one(
-                    "#settings-appearance-smooth-scrolling", Checkbox
-                ).value = bool(values["smooth_scrolling"])
+                    "#settings-appearance-smooth-scrolling", Button
+                ).label = self._appearance_bool_label("smooth_scrolling")
+            except QueryError:
+                pass
+            try:
+                self.query_one(
+                    "#settings-appearance-reduce-motion", Button
+                ).label = self._appearance_bool_label("reduce_motion")
+            except QueryError:
+                pass
+            try:
+                self.query_one(
+                    "#settings-appearance-ascii-glyphs", Button
+                ).label = self._appearance_bool_label("ascii_glyphs")
             except QueryError:
                 pass
         finally:

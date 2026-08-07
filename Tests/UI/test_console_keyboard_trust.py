@@ -16,7 +16,7 @@ import re
 from pathlib import Path
 
 import pytest
-from textual.widgets import Button, Input
+from textual.widgets import Button, Input, Static
 
 from Tests.UI.test_console_native_chat_flow import _select_llamacpp_console
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
@@ -237,3 +237,28 @@ async def test_console_shell_drops_header_at_small_height():
         assert not shell.has_class("-console-compact"), (
             "ample height must restore the header banner"
         )
+
+
+@pytest.mark.asyncio
+async def test_switcher_footer_hints_document_real_accelerators():
+    """DS-08 (TASK-2154.15): the session switcher carries a footer hints
+    line documenting its real keyboard contract (Enter opens, F2 renames,
+    arrows navigate, Esc closes) so first-time users can discover the
+    accelerators without reading the source. Only keys that actually work
+    in the modal may be named here."""
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(120, 40)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        modal = ConsoleSessionSwitcherModal(rows=_switcher_rows())
+        host.push_screen(modal)
+        await pilot.pause()
+        await pilot.pause()
+
+        hints = modal.query_one("#console-switcher-hints", Static)
+        text = str(hints.renderable)
+        assert "Enter" in text
+        assert "F2" in text
+        assert "Esc" in text

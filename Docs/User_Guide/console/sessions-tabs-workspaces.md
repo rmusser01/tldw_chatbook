@@ -15,7 +15,7 @@ Open the Console screen (see [Console](../console.md) for navigation and the
 layout tour). Everything on this page lives in two places:
 
 - The **tab strip** — the row of tabs directly under the
-  "Transcript / Event Stream" title above the transcript.
+  "Conversation" title above the transcript.
 - The **"Console context"** rail on the left — its "Session" section (the
   Workspace block and the "Conversations" browser) and its "Details" section.
   If the rail is collapsed, click the "Context ▸" handle at the left edge to
@@ -28,7 +28,8 @@ layout tour). Everything on this page lives in two places:
 **Tab strip.** Each open chat is a tab. A tab's label starts out as
 "Chat 2"-style and takes the text of the first message you send. Labels are
 trimmed to about 19 characters — hover a tab to see the full title. Each tab
-has a "✕" close button, and the strip always ends with a "New tab" button.
+has a "✕" close button, and the strip always ends with a "New tab" button and
+a "Temporary" button (a chat that is never saved locally).
 Tabs that are running an agent show a marker glyph before the label:
 ● running, ◆ needs approval, ✓ finished, ✗ failed — the mark clears once you
 visit that tab (see [Agent runs & tools](agent-runs-and-tools.md)).
@@ -46,8 +47,11 @@ is active yet). "RAG Scope" narrows retrieval to this workspace's items — see
 
 **Conversations browser** (below the Session block). A "Conversations" header,
 a "Search conversations" box with a "Clear" button, a "New conversation"
-button, and three collapsible groups: "Starred" ("No starred conversations."
-when empty), "Workspaces", and "Chats". Each row shows the conversation title
+button, and three collapsible groups: "Starred", "Workspaces", and "Chats".
+Empty groups start collapsed as quiet one-line headers — expand one to see
+its empty copy (for example "No starred conversations."); while you search,
+groups with no matches stay expanded so the "No ... conversations." feedback
+stays visible. Each row shows the conversation title
 plus a secondary line of `<workspace> - <state> - <age>` (for example
 "Chats - active session - 1m"), and ends with a star toggle ("☆" / "★").
 
@@ -172,12 +176,16 @@ single summary line quoted in the layout tour instead.
 ## Quirks & troubleshooting
 
 - On a fresh profile only Default exists, so workspace switching is
-  unavailable — the Session block shows "Add another workspace before
-  switching." Click "New" first.
+  unavailable — the "Switch" button is disabled and hover shows why
+  ("Add another workspace before switching."). Click "New" first.
 - Closing a tab that has messages always asks the "Close Tab" confirmation;
   there is no way to close a non-empty tab silently.
 - Tab titles truncate at about 19 characters. Hover the tab for the full
   title.
+- With more tabs than fit the strip's width, the strip scrolls horizontally
+  instead of clipping its controls: the active tab scrolls into view
+  automatically, and keyboard focus (or scrolling) reveals the trailing
+  "New tab" and "Temporary" buttons.
 - The coach-mark only goes away for good when you dismiss it with its "✕" —
   if you close the second tab without dismissing it, it can appear again the
   next time you open one.

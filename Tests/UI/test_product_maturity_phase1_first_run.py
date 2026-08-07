@@ -140,15 +140,14 @@ async def test_clean_first_run_launches_home_and_exposes_setup_orientation(
             assert str(home_title.renderable).strip() == "Set up Console model"
             assert str(primary_action.label).strip() == "Set up Console model"
             assert str(primary_action.label).strip() != "Start in Console"
-            assert "More" in str(nav_overflow_hint.label)
-            assert "Ctrl+P" in str(nav_overflow_hint.tooltip)
+            assert str(nav_overflow_hint.label).strip() == "More ▾"
 
             for button_id, current_tab, screen_name, required_copy in (
                 (
                     "nav-console",
                     "chat",
                     "ChatScreen",
-                    ("Console", "Transcript / Event Stream"),
+                    ("Console", "Conversation"),
                 ),
                 (
                     "nav-library",
@@ -213,8 +212,7 @@ async def test_clean_first_run_home_survives_supported_terminal_sizes(
             assert app.current_tab == "home"
             assert app.screen.__class__.__name__ == "HomeScreen"
             assert str(primary_action.label).strip() == "Set up Console model"
-            assert "More" in str(nav_overflow_hint.label)
-            assert "Ctrl+P" in str(nav_overflow_hint.tooltip)
+            assert str(nav_overflow_hint.label).strip() == "More ▾"
 
 
 @pytest.mark.asyncio

@@ -140,8 +140,10 @@ from ...Chat.console_voice_input import (
     VoiceVadUnavailable,
     default_service_factory,
 )
+from ...Chat.console_glyphs import GLYPH_VOICE_WORKING
 from ...Utils.persistent_diagnostics import persist_event
 from ...Widgets.Console import ConsoleComposerBar
+from ...Widgets.glyph_fallback import resolve_glyph
 
 if TYPE_CHECKING:
     from ..Screens.chat_screen import ChatScreen
@@ -1326,7 +1328,7 @@ class ConsoleDictationController:
             if composer is not None:
                 # The composer *holds* this, so an unrelated control-bar
                 # refresh cannot wipe it mid-download.
-                composer.set_voice_preparing_message(f"◌ {event.message}")
+                composer.set_voice_preparing_message(f"{resolve_glyph(GLYPH_VOICE_WORKING)} {event.message}")
             # The chip is 42 cells and one row; the full explanation would be
             # cut mid-sentence there, taking the duration warning with it. Send
             # it somewhere with room, once.

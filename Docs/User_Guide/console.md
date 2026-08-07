@@ -32,13 +32,14 @@ Top to bottom:
   live runs, and control actions.", and a status badge that reads **Ready**,
   **Running**, or **Blocked** depending on the active session.
 - **Control bar** — one row of buttons: **New tab**, **Settings**,
-  **Attach context**, **Run Library RAG**, **Save Chatbook**, **Help**.
+  **Attach context**, **Search Library**, **Help**. (**Save as Chatbook**
+  lives in the composer's **Menu** button, left of the draft.)
 - **Left rail: "Console context"** — sections **Session** (workspace and
   the conversation browser), **Model**, **Agent**, and **Details**. The
   **◂** button in the rail header collapses it; while collapsed, a thin
   **Context ▸** handle on the far left brings it back.
-- **Transcript** — titled "Transcript / Event Stream", extended to
-  "Transcript / Event Stream | \<session title\>" once a session is active.
+- **Conversation pane** — titled "Conversation", extended to
+  "Conversation | \<session title\>" once a session is active.
   Above it sits the session tab strip: one button per tab (each with a
   **✕** close button) ending in **New tab**.
 - **Right rail: "Inspector"** — collapsed by default. Its handle on the
@@ -50,8 +51,15 @@ Top to bottom:
   (ask Library sources before sending), and the **Session Settings**
   summary.
 - **Status chip strip** — one row of chips directly above the composer:
-  **Provider**, **Model**, **Assistant**, **RAG**, **Sources**, **Tools**,
-  **Approvals**, and — once retrieval is narrowed — **Scope**.
+  **Provider**, **Model**, **Assistant**, **Library search**, **Sources**,
+  **Tools**, **Approvals**, and — once retrieval is narrowed — **Scope**.
+  The chips are actions, not just readouts: **Sources** and **Tools** open
+  the Inspector rail (the only way to reach it in single-pane mode, where
+  the edge handles hide), **Provider**/**Model** open the model picker,
+  **Library search** opens the search settings, **Approvals** jumps to the
+  pending approval card, and **Scope** opens the scope picker. The **Tools**
+  chip only appears once tools are counted for the session (after your
+  first send) — before that it stays hidden rather than guessing.
 - **Staged-evidence strip** — appears between the status chips and the
   composer only while Library RAG evidence is staged (or briefly after a
   send consumes it); lists what's staged with an **Un-stage** button — see
@@ -59,10 +67,27 @@ Top to bottom:
 - **Composer row** — the "Composer ▾" collapse toggle, the draft area
   ("Ask, command, or paste task..."), then **Send**, **Mic**, **Attach**,
   and **Save**; a **Stop** button appears between Send and Mic while a
-  reply is streaming. You can just start typing from almost anywhere on
+  reply is streaming. **Send** is genuinely disabled whenever a send can't
+  go through — nothing typed yet, setup incomplete, or a reply still
+  streaming — and the reason shows inline next to it (e.g. "Send blocked —
+  choose a model to continue"), so you never have to hover to find out why.
+  You can just start typing from almost anywhere on
   the screen — printable keys go straight into the draft.
 - **Footer** — shortcut hints (F6, Shift+F6, F1, Enter, Ctrl+K, Ctrl+T,
   Ctrl+P), a word count, the "Tokens:" counter, and database sizes.
+
+### Small terminals
+
+The shell adapts instead of clipping: below 35 rows the header banner hides
+(and the control bar gains a small **Ready**/**Running**/**Blocked** marker
+so the status identity survives); below 150 columns the Inspector rail
+starts collapsed and below 100 columns the left rail starts collapsed too —
+these compact collapses are only the default: opening a rail from its
+handle (or via the **Sources**/**Tools** chips) always works, at any width,
+and your stored open/closed preference is kept and restored at wider sizes;
+and below 84 columns the workspace switches to a single pane — both edge
+handles hide and the transcript takes the full width, so it stays usable
+even at 80x24 or 60x18.
 
 ### First run: the "Get started" card
 
@@ -96,8 +121,8 @@ composer-level strip below shows once setup completes.
 | **New tab** | Creates a Console tab — see [Sessions, tabs & workspaces](console/sessions-tabs-workspaces.md). |
 | **Settings** | Opens the "Console Settings" modal (provider, model, tools, and generation). |
 | **Attach context** | Opens the "Console context" rail (staging itself is done from Library) — see [Context & RAG](console/context-and-rag.md). |
-| **Run Library RAG** | Searches Library evidence before sending — see [Context & RAG](console/context-and-rag.md). |
-| **Save Chatbook** | Saves this run as a Chatbook — see [Artifacts](artifacts.md) 🚧 (still a stub; the control itself works). |
+| **Search Library** | Searches Library evidence before sending — see [Context & RAG](console/context-and-rag.md). |
+| **Save as Chatbook** (composer **Menu**) | Saves this run as a Chatbook — see [Artifacts](artifacts.md). |
 | **Help** | Opens the Console help panel (same as F1). |
 
 ### Rails and handles
@@ -118,8 +143,8 @@ composer-level strip below shows once setup completes.
 | Chip | What it shows |
 |---|---|
 | **Provider** / **Model** | The active provider and model for this session. |
-| **Assistant** / **RAG** | The active assistant; whether retrieval is on for the next send. |
-| **Sources** / **Tools** | Staged source count (e.g. "Sources: 0 staged"); tool readiness (e.g. "Tools: 10 ready"). |
+| **Assistant** / **Library search** | The active assistant; whether a Library search is on for the next send. |
+| **Sources** / **Tools** | Staged source count (e.g. "Sources: 0"); tool readiness (e.g. "Tools: 10 ready" — hidden until tools are counted). |
 | **Approvals** | Pending approvals; press Enter or Space on it to jump to the approval card. |
 | **Scope** | Appears when retrieval is narrowed ("Scope: N"); Enter or Space opens the scope picker. |
 
@@ -223,8 +248,9 @@ are covered on the child pages, chiefly [Context & RAG](console/context-and-rag.
 
 - **Status chips look truncated.** They ellipsize to fit the row — hover a
   chip for its full text.
-- **The Tools chip says "not loaded".** Tools are counted lazily; the chip
-  updates (e.g. to "Tools: 10 ready") after your first send in the session.
+- **There's no Tools chip before the first send.** Tools are counted lazily,
+  so the chip stays hidden until your first send in the session; it then
+  reads e.g. "Tools: 10 ready".
 - **A run vanished when you switched screens.** Leaving Console cancels
   runs and denies pending approvals — see [Leaving Console during a
   run](#leaving-console-during-a-run). Nothing is ever auto-approved.

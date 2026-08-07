@@ -45,6 +45,7 @@ from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 from tldw_chatbook.UI.Navigation.pending_handoff_store import HandoffChannel
 from tldw_chatbook.UI.Screens.chat_screen import (
     CONSOLE_PROVIDER_CONFIGURE_API_KEY_LABEL,
+    CONSOLE_WORKBENCH_SHORTCUT_GROUPS,
     ChatScreen,
 )
 from tldw_chatbook.config import resolve_provider_name
@@ -485,9 +486,17 @@ async def test_console_native_composer_spans_below_workbench_with_single_input_s
                 )
         assert str(send_button.label) == "Send"
         assert str(stop_button.label) == "Stop"
-        assert str(mic_button.label) == "Mic"
-        # Attach and Save Chatbook are ☰ menu rows now, not row buttons.
-        assert str(composer.query_one("#console-composer-menu", Button).label) == "☰"
+        assert str(mic_button.label) == "Dictate"
+        # Attach and Save Chatbook are composer-Menu rows now, not row
+        # buttons. The overflow button itself is labeled in words
+        # (task-2154.14 DS-01/DS-02): a bare ☰ glyph had a tooltip-only
+        # identity, and the tooltip under-sold the menu's contents.
+        menu_button = composer.query_one("#console-composer-menu", Button)
+        assert str(menu_button.label) == "Menu"
+        assert menu_button.tooltip == (
+            "Composer menu: prompts, attach, save as Chatbook, "
+            "generate image or caption, impersonate."
+        )
         assert legacy_inputs == []
 
 
@@ -676,6 +685,12 @@ async def test_console_composer_cursor_blink_keeps_row_count_stable_at_wrap_widt
         # this test owns every toggle and is clock-independent.
         composer._cursor_blink_timer.pause()
 
+        # TASK-2154.6: the empty composer's "Send disabled: type a message"
+        # reason strip borrows cells from the 1fr draft -- measure the wrap
+        # width only with a draft present (strip hidden) so the fixture and
+        # the painted window share one width.
+        composer.load_draft("probe")
+        await pilot.pause()
         width = composer._draft_render_width()
         composer.load_draft("a" * width)
         await pilot.pause(0.1)
@@ -713,7 +728,9 @@ async def test_console_composer_send_is_primary_only_with_draft():
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         send_button = composer.query_one("#console-send-message", Button)
 
-        assert send_button.disabled is False
+        # TASK-2154.6 (FR-04): Send is genuinely disabled while there is
+        # nothing sendable; the subdued/inactive classes still apply.
+        assert send_button.disabled is True
         assert not send_button.has_class("console-action-primary")
         assert send_button.has_class("console-action-subdued")
         assert send_button.has_class("console-send-inactive")
@@ -722,7 +739,7 @@ async def test_console_composer_send_is_primary_only_with_draft():
         await pilot.pause(0.1)
 
         assert composer.has_class("console-composer-has-draft")
-        assert send_button.disabled is False
+        assert send_button.disabled is True
         assert not send_button.has_class("console-action-primary")
         assert send_button.has_class("console-action-subdued")
         assert send_button.has_class("console-send-inactive")
@@ -739,7 +756,7 @@ async def test_console_composer_send_is_primary_only_with_draft():
         composer.clear_draft()
         await pilot.pause(0.1)
 
-        assert send_button.disabled is False
+        assert send_button.disabled is True
         assert not send_button.has_class("console-action-primary")
         assert send_button.has_class("console-action-subdued")
         assert send_button.has_class("console-send-inactive")
@@ -759,7 +776,10 @@ async def test_console_composer_ranks_actions_by_current_availability():
         stop_button = composer.query_one("#console-stop-generation", Button)
         mic_button = composer.query_one("#console-dictation", Button)
 
-        assert send_button.disabled is False
+        # TASK-2154.6 (FR-04): Send starts genuinely disabled -- a fresh
+        # composer has an empty draft, so there is nothing sendable yet.
+        # Stop/Mic are not part of the new flag's contract.
+        assert send_button.disabled is True
         assert stop_button.disabled is False
         assert mic_button.disabled is False
 
@@ -826,8 +846,15 @@ async def test_console_composer_empty_setup_blocked_state_shows_reason():
             == ConsoleComposerBar.DRAFT_PLACEHOLDER
         )
         assert recovery.styles.display == "none"
-        assert disabled_reason.styles.display == "none"
-        assert send_button.disabled is False
+        # TASK-2154.6 (FR-04): this test's name finally matches reality --
+        # the reason strip RENDERS the setup blocker (no hover needed) and
+        # Send is genuinely disabled, with the tooltip kept as well.
+        assert disabled_reason.styles.display == "block"
+        assert (
+            disabled_reason.renderable.plain
+            == "Send blocked — choose a model to continue"
+        )
+        assert send_button.disabled is True
         assert (
             send_button.tooltip == "Choose a model in Console Settings before sending."
         )
@@ -839,7 +866,9 @@ async def test_console_composer_empty_setup_blocked_state_shows_reason():
             _without_trailing_cursor(visible_draft.renderable.plain)
             == "draft despite missing setup"
         )
-        assert send_button.disabled is False
+        # A typed draft does not lift a setup block.
+        assert send_button.disabled is True
+        assert disabled_reason.styles.display == "block"
         assert (
             send_button.tooltip == "Choose a model in Console Settings before sending."
         )
@@ -2536,7 +2565,7 @@ async def test_console_empty_transcript_stays_neutral_when_setup_blocked(monkeyp
         assert "Send your first message" in text
         assert "Choose model" in text
         assert "Attach context" in text
-        assert "Run Library RAG" in text
+        assert "Search Library" in text
 
 
 @pytest.mark.asyncio
@@ -2556,7 +2585,7 @@ async def test_console_inline_guidance_does_not_reserve_transcript_space():
         title_copy = getattr(
             transcript_title.render(), "plain", str(transcript_title.render())
         )
-        assert title_copy.startswith("Transcript / Event Stream")
+        assert title_copy.startswith("Conversation")
 
         store = console._ensure_console_chat_store()
         session = store.ensure_session()
@@ -2572,7 +2601,7 @@ async def test_console_inline_guidance_does_not_reserve_transcript_space():
         title_copy = getattr(
             transcript_title.render(), "plain", str(transcript_title.render())
         )
-        assert title_copy.startswith("Transcript / Event Stream")
+        assert title_copy.startswith("Conversation")
 
 
 @pytest.mark.asyncio
@@ -2591,7 +2620,7 @@ async def test_console_inline_guidance_disappears_after_user_starts_typing():
         title_copy = getattr(
             transcript_title.render(), "plain", str(transcript_title.render())
         )
-        assert title_copy.startswith("Transcript / Event Stream")
+        assert title_copy.startswith("Conversation")
 
         await pilot.press("h")
         await pilot.pause(0.1)
@@ -2600,7 +2629,7 @@ async def test_console_inline_guidance_disappears_after_user_starts_typing():
             transcript_title.render(), "plain", str(transcript_title.render())
         )
         assert composer.draft_text() == "h"
-        assert title_copy.startswith("Transcript / Event Stream")
+        assert title_copy.startswith("Conversation")
 
         composer.clear_draft()
         console._sync_console_transcript_guidance()
@@ -2610,7 +2639,7 @@ async def test_console_inline_guidance_disappears_after_user_starts_typing():
             transcript_title.render(), "plain", str(transcript_title.render())
         )
         assert composer.draft_text() == ""
-        assert title_copy.startswith("Transcript / Event Stream")
+        assert title_copy.startswith("Conversation")
 
 
 @pytest.mark.asyncio
@@ -3273,7 +3302,7 @@ async def test_console_control_bar_renders_readable_summary_line():
         assert "Provider:" in plain
         assert " | Model:" in plain
         assert " | Assistant:" in plain
-        assert " | RAG:" in plain
+        assert " | Library search:" in plain
         assert " | Sources:" in plain
 
 
@@ -3338,8 +3367,8 @@ async def test_console_native_control_bar_and_staged_context_reflect_pending_han
         assert "Provider:" in text
         assert "Model:" in text
         assert "Assistant: General" in text
-        assert "RAG:" in text
-        assert "Sources: 1 staged" in text
+        assert "Library search: on" in text
+        assert "Sources: 1" in text
         assert "Transformer notes" in text
         assert "ready" in text
         assert "Review citations before sending." in text
@@ -3421,8 +3450,8 @@ def test_console_control_state_tolerates_missing_config_and_precise_rag_source()
         ConsoleLiveWorkLaunch(source="Library Search/RAG", title="RAG result"),
     )
 
-    assert non_rag_state.rag_label == "RAG: off"
-    assert rag_state.rag_label == "RAG: on"
+    assert non_rag_state.rag_label == "Library search: off"
+    assert rag_state.rag_label == "Library search: on"
 
 
 def test_console_control_state_tolerates_missing_launch_source():
@@ -3433,7 +3462,7 @@ def test_console_control_state_tolerates_missing_launch_source():
         ConsoleLiveWorkLaunch(source=None, title="Unknown source"),
     )
 
-    assert state.rag_label == "RAG: off"
+    assert state.rag_label == "Library search: off"
 
 
 def test_console_control_and_inspector_share_effective_provider_model_sources():
@@ -4088,13 +4117,13 @@ async def test_console_rag_send_blocks_when_staged_evidence_is_not_context_eligi
         await _wait_for_visible_text(
             console,
             pilot,
-            "Console send blocked: Library Search/RAG has no available evidence",
+            "Console send blocked: Library search has no available evidence",
         )
 
         text = _visible_text(console)
         assert "Evidence: 0/1 available (blocked)" in text
         assert (
-            "Console send blocked: Library Search/RAG has no available evidence" in text
+            "Console send blocked: Library search has no available evidence" in text
         )
         assert "Review source authority before sending." in text
         assert composer.draft_text() == "Answer using the staged RAG evidence"
@@ -4543,3 +4572,43 @@ async def test_alt_letter_is_not_captured_as_composer_typing():
         assert composer.draft_text() == "mwt", (
             f"plain typing broke: {composer.draft_text()!r}"
         )
+
+
+@pytest.mark.asyncio
+async def test_console_command_provider_covers_every_alt_bound_action():
+    """AC-03 (TASK-2154.20): each Alt binding has a palette path."""
+    from tldw_chatbook.UI.console_command_provider import ConsoleCommandProvider
+
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+    async with host.run_test(size=(180, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        provider = ConsoleCommandProvider(screen=console, match_style=None)
+        hits = [hit async for hit in provider.discover()]
+        commands = {hit.command for hit in hits}
+
+        # Alt+M, Alt+W, Alt+V, and (via the switcher) Alt+1..9.
+        assert console.action_open_console_model_popover in commands
+        assert console.action_open_console_workspace_switcher in commands
+        assert console.action_paste_clipboard_image in commands
+        assert console.action_open_console_session_switcher in commands
+
+        paste_hits = [hit async for hit in provider.search("paste image")]
+        assert paste_hits, "expected the paste-image command to be searchable"
+        assert any(
+            hit.command == console.action_paste_clipboard_image
+            for hit in paste_hits
+        )
+
+
+def test_console_f1_help_documents_the_macos_alt_caveat():
+    """AC-03 (TASK-2154.20): the F1 panel carries the Option-as-Meta note."""
+    group_names = [name for name, _rows in CONSOLE_WORKBENCH_SHORTCUT_GROUPS]
+    assert "macOS terminals" in group_names
+    rows = dict(CONSOLE_WORKBENCH_SHORTCUT_GROUPS)["macOS terminals"]
+    rendered = " ".join(f"{key} {copy}" for key, copy in rows)
+    assert "Option is not Meta" in rendered
+    assert "Ctrl+P" in rendered
+    assert "Ctrl+K" in rendered

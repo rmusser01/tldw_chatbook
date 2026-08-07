@@ -424,24 +424,21 @@ async def test_main_navigation_overflow_hint_does_not_overlap_settings_at_defaul
         await _wait_for_selector(home, pilot, "#home-triage-grid")
         nav = home.query_one(MainNavigationBar)
         strip = nav.query_one("#nav-destination-strip")
-        settings = nav.query_one("#nav-settings", Button)
+        # NV-01 (TASK-2154.21) + F-001: the hotkey-prefixed labels need ~153
+        # cells, so at 140 the strip genuinely overflows and the "More ▾"
+        # affordance shows. The anti-overlap contract in that regime IS the
+        # docking: the hint lives outside the strip, so it can never sit on
+        # top of a destination button. (Button regions are virtualized once
+        # the strip scrolls, so a per-button pixel-overlap check reads
+        # geometry the user never sees; the old "hidden buttons" variant of
+        # that check was doubly wrong -- nothing ever sets a nav button's
+        # display to False.)
+        await pilot.pause(0.4)
         more = nav.query_one("#nav-overflow-hint")
-        if more.display:
-            # Overflow regime (F-key labels made the bar wider than 140):
-            # the hint is docked outside the strip, so it can never sit on a
-            # button; destinations that don't fit are hidden, not clipped.
-            assert more.region.x >= strip.region.right, (
-                "More hint must dock right of the destination strip"
-            )
-            hidden = [button for button in nav.query(".nav-button") if not button.display]
-            assert hidden, "Overflow hint shown but no destination is hidden"
-        else:
-            _assert_no_horizontal_overlap(
-                settings, more, context="More hint overlaps Settings nav item"
-            )
-            _assert_no_horizontal_overlap(
-                strip, more, context="More hint overlaps the destination scroll strip"
-            )
+        assert more.display is True
+        assert more.region.x >= strip.region.right, (
+            "More hint must dock right of the destination strip"
+        )
 
 
 @pytest.mark.asyncio
@@ -907,7 +904,9 @@ async def test_core_default_empty_or_blocked_states_keep_workbench_geometry(
         await _wait_for_selector(screen, pilot, workbench)
         if route == "chat":
             # The inspector rail composes collapsed; open it via its handle
-            # (only honored at >=150 columns) and wait out the recompose.
+            # (TASK-2154.2: honored at any width now, though the compact
+            # override below 150 cols would waive the three-pane min-width
+            # geometry this contract asserts) and wait out the recompose.
             screen.query_one("#console-inspector-rail-open", Button).press()
             for _ in range(40):
                 await pilot.pause(0.05)

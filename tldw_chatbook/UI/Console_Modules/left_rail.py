@@ -64,6 +64,7 @@ from ...Widgets.destination_rail import (
     RAIL_SECTION_TOGGLE_PREFIX,
     DestinationRailSectionHeader,
 )
+from ...Widgets.glyph_fallback import resolve_glyph
 from ...Workspaces.display_state import ConsoleWorkspaceContextState
 from .frame import frame_console_region
 
@@ -217,7 +218,7 @@ class ConsoleLeftRail(Vertical):
             rail_label.styles.width = "1fr"
             yield rail_label
             collapse_button = Button(
-                GLYPH_COLLAPSE_LEFT,
+                resolve_glyph(GLYPH_COLLAPSE_LEFT),
                 id="console-context-rail-collapse",
                 classes="console-rail-collapse-button",
                 compact=True,

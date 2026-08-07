@@ -145,7 +145,7 @@ async def test_narrow_terminal_drops_the_partial_not_the_draft():
         await pilot.pause()
         chip = composer.query_one("#console-voice-status", Static)
         assert "very long partial" not in _painted(chip)
-        assert "●" in _painted(chip)
+        assert "◉" in _painted(chip)
 
 
 @pytest.mark.asyncio
@@ -170,7 +170,7 @@ async def test_the_transcribing_label_truncates_from_the_right_not_the_left():
         await pilot.pause()
         chip = composer.query_one("#console-voice-status", Static)
         painted = _painted(chip)
-        assert "●" in painted
+        assert "◉" in painted
         assert "Transcr" in painted, f"expected the label's start to survive, got {painted!r}"
         assert "scribing" not in painted, (
             f"the label was still truncated from the left, got {painted!r}"
@@ -270,7 +270,7 @@ async def test_chip_mirrors_the_shipping_dictation_states():
 
         composer.sync_dictation_state("recording")
         await pilot.pause()
-        assert "●" in _painted(chip)
+        assert "◉" in _painted(chip)
 
         composer.sync_dictation_state("transcribing")
         await pilot.pause()

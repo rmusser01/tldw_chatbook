@@ -52,6 +52,12 @@ class ConsoleSessionSwitcherModal(ModalScreen["ConsoleSwitcherChoice | None"]):
         margin: 1 0 0 0;
     }
 
+    #console-switcher-hints {
+        height: auto;
+        margin: 1 0 0 0;
+        color: gray;
+    }
+
     .console-switcher-result {
         width: 100%;
         height: 2;
@@ -93,6 +99,13 @@ class ConsoleSessionSwitcherModal(ModalScreen["ConsoleSwitcherChoice | None"]):
                 id="console-switcher-query",
             )
             yield Vertical(id="console-switcher-results")
+            # DS-08 (TASK-2154.15): in-modal key hints -- these bindings were
+            # documented only in F1 before. Only keys that actually work are
+            # listed (no Ctrl+Enter: that spec'd binding was never implemented).
+            yield Static(
+                "Enter: open  |  F2: rename  |  Up/Down: navigate  |  Esc: close",
+                id="console-switcher-hints",
+            )
 
     async def on_mount(self) -> None:
         """Focus the search input and populate the initial (unfiltered) results."""

@@ -258,3 +258,31 @@ async def test_enter_with_popup_closed_sends_normally():
         await pilot.app.workers.wait_for_complete()
         await pilot.pause()
         submit_spy.assert_awaited()
+
+
+@pytest.mark.asyncio
+async def test_popup_anchors_above_status_chips_with_real_css():
+    """DS-09 (TASK-2154.15): the always-on status chip strip sits between
+    the transcript and the composer; the open popup's bottom edge must
+    clear it (covering transcript rows instead — the conventional
+    autocomplete trade-off) so the chips are not wiped mid-composition."""
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = _StyledConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        chips = console.query_one("#console-status-chips")
+        popup = console.query_one("#console-command-popup", ConsoleCommandPopup)
+
+        await pilot.press("/")
+        await pilot.pause()
+        # Let the call_after_refresh re-anchor land and layout settle.
+        await pilot.pause(0.2)
+        assert popup.is_open
+        assert chips.display and chips.region.height > 0
+        popup_bottom = popup.region.y + popup.region.height
+        assert popup_bottom <= chips.region.y, (
+            f"popup {popup.region} overlaps status chips {chips.region}"
+        )

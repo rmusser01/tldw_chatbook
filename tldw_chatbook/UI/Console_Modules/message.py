@@ -1611,7 +1611,8 @@ class ConsoleMessageController:
             target_message_id=message_id,
             target_content=content,
         )
-        self.app_instance.notify("Saved message as Note.", severity="information")
+        # FB-07 (TASK-2154.17): success confirmations read as success.
+        self.app_instance.notify("Saved message as Note.", severity="success")
 
     async def _save_console_message_as_media(self, message_id: str) -> None:
         """Persist one selected Console message as a Library media item."""
@@ -1664,7 +1665,7 @@ class ConsoleMessageController:
         )
         self.app_instance.notify(
             "Saved message as Media. It appears under Library ▸ Media.",
-            severity="information",
+            severity="success",
         )
 
     async def _save_console_message_as_prompt(self, message_id: str) -> None:
@@ -1738,7 +1739,7 @@ class ConsoleMessageController:
         )
         self.app_instance.notify(
             f"Saved message as Prompt '{saved_name}' in the local Prompts library.",
-            severity="information",
+            severity="success",
         )
 
     async def _save_console_message_as_chatbook(self, message_id: str) -> None:
@@ -1947,9 +1948,20 @@ class ConsoleMessageController:
         # when the run leaves an active status).
         self._start_console_transcript_sync_timer()
         result = await controller.retry_message(message_id)
-        if result.visible_copy:
-            severity = "warning" if not result.accepted else "information"
-            self.app_instance.notify(result.visible_copy, severity=severity)
+        if result.accepted:
+            # FB-07 (TASK-2154.17): a deliberate retry used to confirm at
+            # "information" severity or stay silent; make the positive
+            # confirmation explicit. The toast carries STATUS copy, never
+            # `result.visible_copy` -- on an accepted retry that is the
+            # recovered assistant text, which belongs in the transcript.
+            # One toast per click on a failed row is not spam -- progress
+            # then lives on the run-state surface.
+            self.app_instance.notify(
+                "Retrying failed response.",
+                severity="success",
+            )
+        elif result.visible_copy:
+            self.app_instance.notify(result.visible_copy, severity="warning")
         await self._sync_native_console_chat_ui()
 
     async def _continue_console_message(

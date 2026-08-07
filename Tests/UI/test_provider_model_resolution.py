@@ -119,3 +119,44 @@ async def test_oversized_catalog_still_includes_current_model_transient():
         current_model="picked-elsewhere",
     )
     assert [o.model_id for o in options] == ["picked-elsewhere", "saved-1"]
+
+
+class _RaisingScope:
+    """Local catalog that does not cover the provider (FB-09)."""
+
+    async def merge_saved_and_discovered_models(self, *, mode, provider):
+        raise ValueError(f"Unknown or ambiguous local LLM provider: {provider}")
+
+
+@pytest.mark.asyncio
+async def test_empty_local_catalog_degrades_to_saved_only_without_raising():
+    """FB-09 (TASK-2154.18): a provider the local catalog does not cover
+    (a cloud-only provider, or an empty local catalog) makes the local
+    service raise ValueError("Unknown or ambiguous local LLM provider").
+    The merge must degrade to saved-only quietly instead of tracebacking
+    through the Alt+M popover path (logged via logger.exception there) or
+    the model search picker (which has no exception handler at all)."""
+    options = await resolve_provider_model_options(
+        {"OpenAI": ["saved-1"]},
+        _RaisingScope(),
+        provider="OpenAI",
+    )
+    assert [o.model_id for o in options] == ["saved-1"]
+
+
+class _BuggyScope:
+    async def merge_saved_and_discovered_models(self, *, mode, provider):
+        raise RuntimeError("catalog exploded")
+
+
+@pytest.mark.asyncio
+async def test_unexpected_merge_errors_still_propagate():
+    """Only the known 'provider absent from the local catalog' ValueError
+    degrades quietly; genuine catalog bugs must keep propagating to the
+    caller's traceback logging (FB-09 review guard)."""
+    with pytest.raises(RuntimeError, match="catalog exploded"):
+        await resolve_provider_model_options(
+            {"OpenAI": ["saved-1"]},
+            _BuggyScope(),
+            provider="OpenAI",
+        )

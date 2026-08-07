@@ -60,6 +60,14 @@ def describe_stream_failure(exc: BaseException) -> str:
     failed: "`` rendering ``"[failed]"``), so the failure class is always
     included in user terms: timeout vs connection vs HTTP status.
 
+    task-2154.16 (FB-06): the exception CLASS NAME is an internal
+    classification signal only -- it must never reach user copy. A generic
+    ``Exception`` subclass (``RuntimeError``, ``ValueError``, a provider
+    SDK's own error type) falls through to the plain "unexpected provider
+    error" category (mirroring ``safe_provider_error_copy``), with any
+    useful detail (e.g. "Connection refused: ... <url>") kept in the
+    parenthesized detail.
+
     Args:
         exc: The exception raised by the provider stream.
 
@@ -93,7 +101,11 @@ def describe_stream_failure(exc: BaseException) -> str:
         if body_detail:
             detail = body_detail
     else:
-        summary = f"{exc_name} error"
+        # FB-06 (task-2154.16): never surface the exception class name --
+        # "RuntimeError error" means nothing to a user. Plain category
+        # only; the actionable detail (connection refused, URL) is kept
+        # below in the parenthesized detail.
+        summary = "unexpected provider error"
 
     if detail:
         # Never emit httpx's MDN "For more information check: https://…"

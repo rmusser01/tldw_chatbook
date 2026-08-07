@@ -9,7 +9,7 @@ from typing import Any, Protocol
 
 from loguru import logger
 
-from tldw_chatbook.Chat.rag_scope import EffectiveScope, SCOPE_EMPTY_NOTICE_TEMPLATE
+from tldw_chatbook.Chat.rag_scope import EffectiveScope, scope_empty_notice
 from tldw_chatbook.Library.library_rag_state import (
     LIBRARY_RAG_EMPTY_STATE_SELECTOR,
     LIBRARY_RAG_SERVICE_ERROR_SELECTOR,
@@ -305,9 +305,9 @@ def scope_empty_recovery_state(cause: str | None) -> DestinationRecoveryState:
         "Retrieval scope is empty ({cause}); no sources searched." copy.
     """
     reason = cause or "unknown"
-    message = SCOPE_EMPTY_NOTICE_TEMPLATE.format(cause=reason)
+    message = scope_empty_notice(reason)
     return DestinationRecoveryState(
-        status_label="Scope empty",
+        status_label="Scope: no sources",
         unavailable_what="Library Search/RAG retrieval",
         why=message,
         next_action="Adjust or clear the conversation's retrieval scope",

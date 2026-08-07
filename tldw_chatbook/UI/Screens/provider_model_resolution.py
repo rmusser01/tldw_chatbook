@@ -6,6 +6,8 @@ import inspect
 from dataclasses import dataclass
 from typing import Any, Mapping, Sequence
 
+from loguru import logger
+
 from ...Chat.provider_readiness import provider_config_key
 from ...LLM_Provider_Catalog.model_catalog_settings import SELECTOR_MERGE_CAP
 from ...LLM_Provider_Catalog.model_discovery_contracts import MergedModelEntry
@@ -122,12 +124,28 @@ async def _merged_model_entries_from_scope(
     )
     if not callable(merge_models):
         return ()
-    result = await _maybe_await(
-        merge_models(
-            mode="local",
-            provider=provider,
+    try:
+        result = await _maybe_await(
+            merge_models(
+                mode="local",
+                provider=provider,
+            )
         )
-    )
+    except ValueError:
+        # FB-09 (TASK-2154.18): the local catalog legitimately does not
+        # cover every provider -- a cloud-only provider or an empty local
+        # catalog makes the local service raise "Unknown or ambiguous
+        # local LLM provider". The merge is best-effort enrichment over
+        # the saved list, so degrade to saved-only quietly instead of
+        # tracebacking through the Alt+M popover path (where the caller
+        # logs logger.exception) or the model search picker (which has no
+        # exception handler at all). Other exception types still
+        # propagate to those callers.
+        logger.debug(
+            "Local model catalog has no entry for provider={}; saved models only",
+            provider,
+        )
+        return ()
     return tuple(entry for entry in result if isinstance(entry, MergedModelEntry))
 
 

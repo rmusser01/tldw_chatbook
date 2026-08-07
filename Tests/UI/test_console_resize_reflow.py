@@ -45,6 +45,11 @@ async def test_console_live_resize_converges_to_cold_start_layout() -> None:
     TASK-361 AC#1: after resizing down, the panes are all present and the header
     is compacted -- the same layout a cold start produces -- not the review's
     rail-full-width / panes-gone divergence.
+
+    TASK-2154.1 (LY-08) changed WHAT the cold-start layout is at 90 cols: the
+    left rail now force-collapses below 100 columns (rendering override)
+    instead of overflowing the grid. The convergence contract itself --
+    ``live == cold`` -- is unchanged.
     """
     cold_host = ConsoleHarness(_build_test_app())
     async with cold_host.run_test(size=(90, 30)) as pilot:
@@ -63,9 +68,10 @@ async def test_console_live_resize_converges_to_cold_start_layout() -> None:
         live = _pane_layout(live_console)
 
     assert live == cold
-    # Every required pane is actually present (not the "panes gone" state) and
-    # the header is compacted at 30 rows.
-    assert cold["#console-left-rail"] is True
+    # The transcript and composer stay present and the header is compacted at
+    # 30 rows; at 90 cols the left rail is force-collapsed by the TASK-2154.1
+    # narrow-width rule, not eaten by / eating the grid.
+    assert cold["#console-left-rail"] is False
     assert cold["#console-transcript-surface"] is True
     assert cold["#console-native-composer"] is True
     assert cold["compact"] is True

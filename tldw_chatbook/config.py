@@ -2598,6 +2598,8 @@ fps = 6  # 1-12
 density = "normal"  # compact, normal, or comfortable default control density
 animations_enabled = true  # Enable optional UI animations where supported
 smooth_scrolling = true  # Enable smooth scrolling where supported
+reduce_motion = false  # Render animations as static frames (splash screen, Console setup backdrop)
+ascii_glyphs = false  # Substitute ASCII status markers for unicode glyphs (narrow-font terminals)
 
 [acp.runtime]
 # ACP owns runtime launch/setup. Leave command empty to keep ACP honestly blocked.

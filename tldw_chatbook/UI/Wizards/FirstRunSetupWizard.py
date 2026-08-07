@@ -2249,20 +2249,34 @@ class WelcomeStep(SetupStep):
                 classes="setup-subtitle",
             )
             with RadioSet(id="setup-track-choice", classes="setup-choice-list"):
+                # TASK-2154.9 (FR-02): name the steps the tracker will show
+                # (Welcome is this one; Provider, Model and Summary follow)
+                # so the "Step 1 of 4" count is not a surprise after picking
+                # what read as a two-item "provider & model" track.
                 yield SetupRadioButton(
-                    "Quick setup — provider & model (recommended)",
+                    "Quick setup — provider, model & summary (recommended)",
                     value=True,
                     id="setup-track-quick",
                 )
                 yield SetupRadioButton("Full setup — configure everything", id="setup-track-full")
             # TASK-1507: tertiary treatment — quiet, link-like, clearly a
             # control but visually subordinate to the track choice above.
-            yield Button(
-                "Skip — explore on my own",
+            # TASK-2154.9 (FR-01): unlike Cancel/Esc (finish later, resumed
+            # via toast), this path commits first_run.setup_completed and is
+            # NEVER auto-offered again -- the label must carry that
+            # consequence; the tooltip names the manual way back
+            # (Settings ▸ Diagnostics ▸ Run Setup Wizard).
+            skip_button = Button(
+                "Skip setup — don't ask again",
                 id="setup-skip-entirely",
                 variant="default",
                 classes="setup-tertiary-button",
             )
+            skip_button.tooltip = (
+                "Close setup for good — it won't be offered again on launch. "
+                "You can still rerun it from Settings ▸ Diagnostics."
+            )
+            yield skip_button
             yield Static("", classes="setup-step-error")
 
     def get_step_data(self) -> Dict[str, Any]:
@@ -2420,9 +2434,11 @@ class SummaryStep(SetupStep):
         with Horizontal(classes="setup-summary-actions"):
             if getattr(self.wizard, "rerun", False):
                 yield Button("Done", id="setup-exit-done", variant="primary")
-                yield Button("Go to Chat", id="setup-exit-chat")
+                yield Button("Go to Console", id="setup-exit-chat")
             else:
-                yield Button("Start chatting", id="setup-exit-chat", variant="primary")
+                # CN-06 (TASK-2154.13): name the destination the button lands
+                # on -- the tab, palette, and guide all say "Console".
+                yield Button("Open Console", id="setup-exit-chat", variant="primary")
                 yield Button("Explore on my own", id="setup-exit-home")
 
     def on_show(self) -> None:
@@ -2641,6 +2657,19 @@ class SetupWizardContainer(WizardContainer):
         """
         self._refresh_active_ids()
         self.update_progress()
+        # TASK-2154.9 (FR-01): the base nav's "Cancel" routes to the same
+        # finish-later ConfirmationDialog as Esc here
+        # (SetupWizardContainer.action_cancel → FirstRunSetupWizard's) --
+        # label it with its actual consequence and drop the destructive
+        # error styling. Scoped to this container so the Chatbook
+        # creation/import wizards, whose Cancel really aborts, keep the
+        # base "Cancel".
+        try:
+            cancel = self.query_one("#wizard-cancel", Button)
+            cancel.label = "Finish later"
+            cancel.variant = "default"
+        except NoMatches:
+            pass
 
     # -- step construction -------------------------------------------------
     def _create_steps(self) -> List[WizardStep]:
@@ -2709,6 +2738,11 @@ class SetupWizardContainer(WizardContainer):
         }
         self.active_ids = tuple(sid for sid in ids if sid not in failed)
         self._rebuild_progress()
+        # TASK-2154.9 (FR-02): keep the "Step X of Y" text in sync with the
+        # rebuilt dots -- note_key_entered() reaches here while the user is
+        # still on the Provider step, and without this the text total lagged
+        # one navigation behind the conditional protect-keys step joining.
+        self.update_progress()
         # Finding B: a step's compose_failed flag can only be known once its
         # own compose() has actually run -- which may land after this
         # container already displayed it (WelcomeStep is index 0 and
@@ -2940,8 +2974,8 @@ class SetupWizardContainer(WizardContainer):
     def advance_programmatically(self) -> None:
         """Same commit-and-advance path as clicking Next, without an event.
 
-        SummaryStep's own exit buttons ("Start chatting", "Explore on my
-        own", "Done", "Go to Chat") are not the "#wizard-next" button, so
+        SummaryStep's own exit buttons ("Open Console", "Explore on my
+        own", "Done", "Go to Console") are not the "#wizard-next" button, so
         they have no Button.Pressed event to hand to handle_next() above --
         which requires one, to call event.prevent_default() (see that
         method's docstring for why). This is the extracted guard + worker

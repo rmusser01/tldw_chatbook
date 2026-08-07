@@ -31,7 +31,6 @@ from ...Chat.rag_scope import (
     EffectiveScope,
     RagScope,
     SCOPE_VERSION,
-    SCOPE_EMPTY_NOTICE_TEMPLATE,
     SCOPE_REASON_EMPTY,
     SCOPE_STATUS_EMPTY,
     SOURCE_TYPE_MEDIA,
@@ -39,6 +38,7 @@ from ...Chat.rag_scope import (
     ScopeCache,
     SessionScopeHolder,
     parse_scope,
+    scope_empty_notice,
     resolve_effective_scope,
 )
 from ...RAG_Search.fusion import resolve_hybrid_alpha
@@ -479,7 +479,7 @@ def _notify_semantic_leg_state(
     )
     if scope_state.get("status") == SCOPE_STATUS_EMPTY:
         cause = scope_state.get("cause") or "unknown"
-        notification = SCOPE_EMPTY_NOTICE_TEMPLATE.format(cause=cause)
+        notification = scope_empty_notice(cause)
         logger.warning("RAG scope empty; reason=scope_empty")
         try:
             app.notify(notification, severity="warning")
@@ -795,8 +795,9 @@ class ScopeResolution:
     chat``, used to gate/filter the actual retrieval) and the Console
     display layer (``ChatScreen``'s Inspector "Retrieval scope" row and
     header chip, task-13), which additionally needs the two raw,
-    un-intersected scopes' item counts for the chip's intersection-
-    breakdown tooltip ("conversation A ∩ workspace B → N") -- information
+    un-intersected scopes' item counts for the chip's two-level breakdown
+    tooltip ("Only searching: conversation scope (A items) and workspace
+    scope (B items) — N in both.") -- information
     ``effective.allowlist`` alone cannot reconstruct once dangling ids have
     been dropped.
 

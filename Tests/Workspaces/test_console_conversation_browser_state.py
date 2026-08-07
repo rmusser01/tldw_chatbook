@@ -1174,3 +1174,70 @@ def test_workspaces_section_capped_run_marker_is_always_empty():
     )
 
     assert _section(state, "workspaces").capped_run_marker == ""
+
+
+def test_empty_sections_default_collapse_quietly():
+    """TASK-2154.3 (LY-04): empty Starred/Workspaces sections default-collapse
+    to a quiet single-line header -- the same default Chats already used --
+    instead of stacking "No ... conversations." messages before any intent."""
+    state = build_console_conversation_browser_state(
+        rows=(),
+        active_workspace_id="ws-a",
+    )
+
+    assert _section(state, "starred").collapsed is True
+    assert _section(state, "workspaces").collapsed is True
+    assert _section(state, "chats").collapsed is True
+
+
+def test_empty_sections_explicit_expand_preference_still_honored():
+    """A user who expands an empty section keeps it expanded -- the
+    empty-default-collapse only fills the MISSING-preference default."""
+    state = build_console_conversation_browser_state(
+        rows=(),
+        active_workspace_id="ws-a",
+        group_collapse_preferences={
+            "section:starred": False,
+            "section:workspaces": False,
+        },
+    )
+
+    assert _section(state, "starred").collapsed is False
+    assert _section(state, "workspaces").collapsed is False
+
+
+def test_no_match_search_expands_empty_workspaces_section_for_feedback():
+    """TASK-2154.3 (LY-04): an active query always expands the Workspaces
+    section so a no-match search keeps "No workspace conversations." as its
+    feedback (the pre-2154.3 default did the same by never collapsing)."""
+    state = build_console_conversation_browser_state(
+        rows=(
+            _row("conv-a", "Alpha", workspace_id="ws-a", workspace_label="Workspace A"),
+        ),
+        active_workspace_id="ws-a",
+        query="missing",
+    )
+
+    assert _section(state, "workspaces").collapsed is False
+    assert _section(state, "workspaces").groups == ()
+
+
+def test_selected_summary_drops_synthetic_chats_bucket_label():
+    """TASK-2154.3 (LY-05): "<title> - Chats" above the collapsible "Chats"
+    group was two list metaphors for one thing; the synthetic bucket label no
+    longer rides the summary (real workspace labels still disambiguate)."""
+    state = build_console_conversation_browser_state(
+        rows=(
+            _row(
+                "conv-a",
+                "Global chat",
+                scope_type="global",
+                workspace_id=None,
+                workspace_label="Chats",
+                selected=True,
+            ),
+        ),
+        active_workspace_id="ws-a",
+    )
+
+    assert state.selected_summary == "Global chat"

@@ -41,6 +41,9 @@ class ConsoleContextModal(ModalScreen[None]):
     DEFAULT_CSS = """
     ConsoleContextModal { align: center middle; }
     #console-context-modal { width: 95; height: 40; border: tall gray; }
+    /* LY-13 (TASK-2154.23): with no messages the modal would otherwise render
+       its full 95x40 frame around one line of copy; compact it to content. */
+    #console-context-modal.context-empty { height: 20; }
     #console-context-header { height: auto; }
     #console-context-warning { height: auto; color: yellow; }
     #console-context-loading { display: none; }
@@ -125,6 +128,11 @@ class ConsoleContextModal(ModalScreen[None]):
             loading.remove_class("loading")
 
     def _update_view(self) -> None:
+        # LY-13 (TASK-2154.23): compact the modal when there is nothing to
+        # show yet; the full 95x40 frame is only earned by actual content.
+        modal = self.query_one("#console-context-modal", Vertical)
+        modal.set_class(not self.snapshot.current_messages, "context-empty")
+
         warning = self.query_one("#console-context-warning", Static)
         if self.in_progress:
             warning.update("A response is in progress; snapshot may change.")
@@ -149,7 +157,16 @@ class ConsoleContextModal(ModalScreen[None]):
 
     def _build_current_context_widgets(self) -> list[Widget]:
         if not self.snapshot.current_messages:
-            return [Label("No conversation context.")]
+            # LY-13 (TASK-2154.23): guidance, not a void. Prefix kept so the
+            # existing "No conversation context" pins still match.
+            return [
+                Label(
+                    "No conversation context yet.\n"
+                    "Messages you send and receive will appear here.\n"
+                    "The Next Send tab shows the exact payload — model, "
+                    "system prompt, staged sources — your next message ships with."
+                )
+            ]
         return [
             Collapsible(
                 TextArea(msg.content, read_only=True),

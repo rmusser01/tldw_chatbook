@@ -361,6 +361,23 @@ def test_readiness_reports_missing_key_for_supported_openai_instead_of_wip() -> 
     assert "not wired" not in readiness.detail
 
 
+def test_readiness_empty_provider_uses_select_provider_copy_without_empty_quotes() -> (
+    None
+):
+    """FR-07: an unset provider is not an unsupported one; no empty '' copy."""
+    readiness = build_console_settings_readiness(
+        ConsoleSessionSettings(provider="", model=None),
+        app_config={},
+        environ={},
+    )
+
+    assert readiness.label == "Unknown"
+    assert readiness.native_send_supported is False
+    assert "Select a provider" in readiness.detail
+    assert "''" not in readiness.detail
+    assert "not available in Console yet" not in readiness.detail
+
+
 def test_readiness_reports_ready_for_keyless_supported_generic_provider() -> None:
     readiness = build_console_settings_readiness(
         ConsoleSessionSettings(

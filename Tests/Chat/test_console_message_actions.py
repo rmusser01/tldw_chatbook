@@ -5,7 +5,10 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleMessageRole,
     ConsoleVariantSet,
 )
-from tldw_chatbook.Chat.console_message_actions import ConsoleMessageActionService
+from tldw_chatbook.Chat.console_message_actions import (
+    ConsoleMessageActionService,
+    action_row_guide,
+)
 
 
 def test_assistant_message_actions_include_required_order():
@@ -254,7 +257,7 @@ def test_failed_action_labels_include_retry_inside_terminal_width_budget():
 
     labels = service.plain_action_labels(message)
 
-    assert " ".join(labels) == "Copy Edit Save as... Try ♻ ---> 👍 👎 🗑"
+    assert " ".join(labels) == "Copy Edit Save as... Retry ♻ ---> 👍 👎 🗑"
     assert len(" ".join(labels)) <= 52
 
 
@@ -921,3 +924,75 @@ def test_plain_tool_marker_offers_no_expansion():
     )
 
     assert _tool_output_action(message) is None
+# --- task-2154.14 (DS-01): the action-row legend names glyphs in words ----
+
+
+def test_action_row_guide_names_every_glyph_in_a_standard_row():
+    """The legend under a selected row must decode each glyph-only button."""
+    service = ConsoleMessageActionService()
+    message = ConsoleChatMessage(role=ConsoleMessageRole.ASSISTANT, content="answer")
+
+    guide = action_row_guide(service.available_actions(message))
+
+    assert guide == (
+        "Guide: j/k select · c Copy · 🔊 Speak · e Edit · r ♻ Regenerate · "
+        "---> Continue · 👍/👎 Rate · 🗑 Delete · Esc clear"
+    )
+
+
+def test_action_row_guide_mirrors_the_rows_own_actions():
+    """A row without Speak must not name a 🔊 the user cannot see."""
+    service = ConsoleMessageActionService()
+    user_message = ConsoleChatMessage(role=ConsoleMessageRole.USER, content="hi")
+
+    guide = action_row_guide(service.available_actions(user_message))
+
+    assert "🔊 Speak" not in guide
+    assert "🗑 Delete" in guide
+    assert guide.startswith("Guide: j/k select · ")
+    assert guide.endswith(" · Esc clear")
+
+
+def test_action_row_guide_follows_the_speak_stop_swap():
+    """While the row shows ⏹, the legend says Stop speech -- not Speak."""
+    service = ConsoleMessageActionService()
+    message = ConsoleChatMessage(
+        role=ConsoleMessageRole.ASSISTANT, content="answer", id="m1"
+    )
+
+    guide = action_row_guide(
+        service.available_actions(message, speaking_message_id="m1")
+    )
+
+    assert "⏹ Stop speech" in guide
+    assert "🔊 Speak" not in guide
+
+
+def test_action_row_guide_names_variant_navigation_when_present():
+    service = ConsoleMessageActionService()
+    message = ConsoleChatMessage(
+        role=ConsoleMessageRole.ASSISTANT,
+        content="answer",
+        sibling_count=2,
+        sibling_index=0,
+    )
+
+    guide = action_row_guide(service.available_actions(message))
+
+    assert "</> Variants" in guide
+
+
+def test_action_row_guide_without_glyph_actions_keeps_the_key_frame():
+    guide = action_row_guide([])
+
+    assert guide == "Guide: j/k select · Esc clear"
+
+
+def test_plain_action_guide_matches_the_plain_action_rows_inputs():
+    """Exports use the un-keyworded call, so the legend matches that row."""
+    service = ConsoleMessageActionService()
+    message = ConsoleChatMessage(role=ConsoleMessageRole.ASSISTANT, content="answer")
+
+    assert service.plain_action_guide(message) == action_row_guide(
+        service.available_actions(message)
+    )

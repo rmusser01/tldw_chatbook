@@ -70,9 +70,9 @@ async def test_stop_renders_stopped_state_even_when_direct_sync_coalesces():
         try:
             for _ in range(40):
                 await pilot.pause(0.05)
-                if "[streaming]" not in _visible_text(console):
+                if "Streaming…" not in _visible_text(console):
                     break
-            assert "[streaming]" not in _visible_text(console), (
+            assert "Streaming…" not in _visible_text(console), (
                 "stopped state never rendered after the direct sync coalesced"
             )
         finally:

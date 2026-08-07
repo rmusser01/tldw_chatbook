@@ -2089,6 +2089,10 @@ async def test_console_native_generic_provider_send_renders_completed_message(
         await _wait_for_selector(console, pilot, "#console-native-composer")
         gateway = console._ensure_console_provider_gateway()
         app.app_config["api_settings"] = {"openai": {"api_key": DUMMY_OPENAI_API_KEY}}
+        # TASK-2154.6: mounted setup-blocked (no key) -> Send genuinely
+        # disabled; re-sync after the config fix so the block lifts, exactly
+        # as the Settings save path syncs after a real key fix.
+        await console._sync_native_console_chat_ui()
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         composer.load_draft("hello")
 
@@ -2134,8 +2138,17 @@ async def test_console_native_send_button_click_dispatches_message(monkeypatch):
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
         app.app_config["api_settings"] = {"openai": {"api_key": DUMMY_OPENAI_API_KEY}}
+        # TASK-2154.6: the console mounted setup-blocked (no key), so Send is
+        # genuinely disabled; a raw post-mount config mutation only lifts the
+        # block once the UI re-syncs -- the same umbrella sync the Settings
+        # save path runs after a real key fix.
+        await console._sync_native_console_chat_ui()
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         composer.load_draft("click send")
+        # Settle the layout: typing hid the disabled-reason strip, which
+        # shifts Send right by the strip's cells -- a click issued before
+        # the reflow lands in the (newly widened) draft instead.
+        await pilot.pause(0.1)
 
         await pilot.click("#console-send-message")
         await _wait_for_text(console, pilot, "click provider response")
@@ -2663,7 +2676,9 @@ async def test_console_composer_stop_is_subdued_when_idle():
         await asyncio.wait_for(gateway.started.wait(), timeout=_ASYNC_SETTLE_TIMEOUT)
         await _wait_for_text(console, pilot, "partial")
 
-        assert send_button.disabled is False
+        # TASK-2154.6: a blocked Send is now genuinely disabled, not just
+        # class-subdued -- the classes below keep their old contract.
+        assert send_button.disabled is True
         assert send_button.has_class("console-action-disabled")
         assert send_button.has_class("console-send-blocked")
         assert not send_button.has_class("console-action-primary")
@@ -2698,7 +2713,10 @@ async def test_console_duplicate_send_during_stream_does_not_break_stop_control(
 
         composer.load_draft("second send")
         send_button = console.query_one("#console-send-message", Button)
-        assert send_button.disabled is False
+        # TASK-2154.6: genuinely disabled while the run blocks sends; the
+        # direct handler dispatch below (not `press()`, which no-ops on a
+        # disabled control) is exactly how the Enter hotkey still reaches it.
+        assert send_button.disabled is True
         assert send_button.has_class("console-send-blocked")
         await console.handle_console_send_message(Button.Pressed(send_button))
         await pilot.pause(0.1)
@@ -2739,7 +2757,9 @@ async def test_console_streaming_chunks_render_after_slow_provider_validation():
         send_button = console.query_one("#console-send-message", Button)
         stop_button = console.query_one("#console-stop-generation", Button)
 
-        assert send_button.disabled is False
+        # TASK-2154.6: VALIDATING blocks sends, so Send is now genuinely
+        # disabled here, not merely class-subdued (classes unchanged below).
+        assert send_button.disabled is True
         assert send_button.has_class("console-action-disabled")
         assert send_button.has_class("console-send-blocked")
         assert not send_button.has_class("console-action-primary")
@@ -3871,7 +3891,7 @@ async def test_console_empty_transcript_teaches_setup_and_start_paths():
         assert "Connect a provider (API key or local server)" in console_text
         assert "Send your first message" in console_text
         assert "Attach context" in console_text
-        assert "Run Library RAG" in console_text
+        assert "Search Library" in console_text
 
 
 def _assert_selector_hidden_or_absent(console, selector: str) -> None:
@@ -5902,7 +5922,7 @@ async def test_console_failed_stream_renders_inline_retry_and_recovers():
         retry_button = console.query_one(
             f"#console-message-action-retry-{failed.id}", Button
         )
-        assert str(retry_button.label) == "Try"
+        assert str(retry_button.label) == "Retry"
         assert retry_button.tooltip == "Retry the failed response."
 
         await pilot.click(f"#console-message-action-retry-{failed.id}")
@@ -9379,7 +9399,7 @@ async def test_console_native_tab_title_has_stable_visible_label_region():
 
         assert tab.tooltip == (
             "Active Console tab: Planning session with a long descriptive name. "
-            "Click again to rename."
+            "Click again to rename. Middle-click closes the tab."
         )
         # Fleet-UX expert review F7 (task-1234): END-truncated with a
         # single-cell ellipsis, replacing TASK-375's middle-truncation
@@ -10338,12 +10358,12 @@ async def test_staged_attachment_count_stays_visible_after_attach_moved_to_the_m
         # The count is on the indicator, and the control that acts on it.
         assert "2 files" in str(indicator.renderable)
         assert clear_button.styles.display == "block"
-        assert "2 attachments" in str(clear_button.tooltip)
+        assert "2 pending attachments" in str(clear_button.tooltip)
 
         composer.set_pending_attachment_label("photo.png · 240 B", count=1, total=5)
         await pilot.pause()
         assert "photo.png" in str(indicator.renderable)
-        assert str(clear_button.tooltip) == "Clear the attachment."
+        assert str(clear_button.tooltip) == "Remove the pending attachment."
 
 
 @pytest.mark.asyncio
@@ -11698,9 +11718,189 @@ def test_temporary_tab_marker_is_presentation_only():
 
     tooltip = _session_tab_tooltip(session, active=False)
     assert "not saved" in tooltip.lower()
+    # CN-02 (TASK-2154.13): the tab tooltip's ◌ decode is byte-for-byte the
+    # status chip's TEMPORARY_LABEL -- one short name for the concept, no
+    # third wording.
+    from tldw_chatbook.Chat.console_ephemeral import TEMPORARY_LABEL
+
+    assert tooltip.endswith(f"{TEMPORARY_LABEL}.")
     assert (
         "not saved"
         not in _session_tab_tooltip(
             ConsoleChatSession(title="Normal"), active=False
         ).lower()
     )
+
+
+# ---------------------------------------------------------------------------
+# FB-07 (TASK-2154.17): success confirmations for save/retry/settings actions.
+# ---------------------------------------------------------------------------
+
+
+def _capture_notify_severities(app) -> list[tuple[str, str]]:
+    """Replace app.notify with a (message, severity) capture list."""
+    notifications: list[tuple[str, str]] = []
+    app.notify = lambda message, **kwargs: notifications.append(
+        (str(message), str(kwargs.get("severity", "information")))
+    )
+    return notifications
+
+
+@pytest.mark.asyncio
+async def test_console_save_as_savers_confirm_at_success_severity():
+    """All four Save-as destinations toast severity="success" (FB-07)."""
+    app = _build_test_app()
+    _install_console_save_service_fakes(app)
+    notifications = _capture_notify_severities(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        store = console._ensure_console_chat_store()
+        session = store.ensure_session(title="Chat 1")
+        message = store.append_message(
+            session.id, role=ConsoleMessageRole.ASSISTANT, content="answer"
+        )
+        await console._sync_native_console_chat_ui()
+
+        await console._save_console_message_as_note(message.id)
+        await console._save_console_message_as_media(message.id)
+        await console._save_console_message_as_prompt(message.id)
+        await console._save_console_message_as_chatbook(message.id)
+
+    success_toasts = [m for m, severity in notifications if severity == "success"]
+    assert "Saved message as Note." in success_toasts
+    assert "Saved message as Media. It appears under Library ▸ Media." in success_toasts
+    assert any(
+        m.startswith("Saved message as Prompt '") for m in success_toasts
+    ), success_toasts
+    assert (
+        "Saved message as a Chatbook artifact. It appears under Artifacts."
+        in success_toasts
+    )
+
+
+@pytest.mark.asyncio
+async def test_console_retry_accepted_fires_success_toast():
+    """Retrying a failed response confirms at success severity (FB-07)."""
+    gateway = FailThenRecoverGateway()
+    app = _build_test_app()
+    app.chat_api_provider_value = "llama_cpp"
+    app.chat_api_model_value = "test-model"
+    app.console_provider_gateway_factory = lambda: gateway
+    notifications = _capture_notify_severities(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        _select_llamacpp_console(console)
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.load_draft("hello")
+        console.query_one("#console-send-message", Button).press()
+        await _wait_for_text(console, pilot, "llama.cpp stream failed")
+
+        store = console._ensure_console_chat_store()
+        failed = next(
+            message
+            for message in reversed(store.messages_for_session(store.active_session_id))
+            if message.role is ConsoleMessageRole.ASSISTANT
+            and message.status == "failed"
+        )
+        transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
+        transcript.select_message(failed.id)
+        await console._sync_native_console_chat_ui()
+        await _wait_for_selector(
+            console, pilot, f"#console-message-action-retry-{failed.id}"
+        )
+        success_before = [
+            m for m, severity in notifications if severity == "success"
+        ]
+        await pilot.click(f"#console-message-action-retry-{failed.id}")
+        await _wait_for_text(console, pilot, "recovered")
+
+    success_after = [m for m, severity in notifications if severity == "success"]
+    assert len(success_after) == len(success_before) + 1
+    assert "Retrying failed response." in success_after
+
+
+@pytest.mark.asyncio
+async def test_console_settings_save_fires_success_toast():
+    """Saving the Console settings modal confirms at success severity (FB-07)."""
+    app = _build_test_app()
+    notifications = _capture_notify_severities(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        # The palette action is guarded by setup state; the inspector rail's
+        # settings button is the established modal route in tests.
+        rail_state = replace(
+            console._current_console_rail_state(),
+            right_open=True,
+        )
+        console._sync_console_rail_visibility(rail_state)
+        await _wait_for_selector(console, pilot, "#console-settings-open")
+        console.query_one("#console-settings-open", Button).press()
+        modal = None
+        for _ in range(50):
+            await pilot.pause(0.1)
+            if host.screen_stack[-1].query("#console-settings-modal"):
+                modal = host.screen_stack[-1]
+                break
+        assert modal is not None, "ConsoleSettingsModal never opened"
+        settings = console._ensure_active_console_session_settings()
+        modal.dismiss(settings)
+        await pilot.pause(0.5)
+
+    assert ("Console settings saved.", "success") in notifications
+
+
+@pytest.mark.asyncio
+async def test_console_save_chatbook_handoff_fires_success_toast():
+    """The composer Save Chatbook button confirms the handoff (FB-07)."""
+    from tldw_chatbook.Chat.console_live_work import ConsoleLiveWorkLaunch
+
+    app = _build_test_app()
+    notifications = _capture_notify_severities(app)
+    app.open_console_live_work_primary_action = Mock(return_value=True)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        console._pending_console_launch_context = ConsoleLiveWorkLaunch.from_values(
+            source="artifacts",
+            title="Run artifact",
+            payload={"target_id": "run-1:chatbook:7"},
+        )
+        console._save_console_chatbook_from_visible_action()
+        await pilot.pause()
+
+    app.open_console_live_work_primary_action.assert_called_once()
+    assert ("Saved — opening the artifact in Artifacts.", "success") in notifications
+
+
+@pytest.mark.asyncio
+async def test_console_routine_send_fires_no_success_toast():
+    """AC guard: a plain successful send must NOT gain a success toast."""
+    app = _build_test_app()
+    app.chat_api_provider_value = "llama_cpp"
+    app.chat_api_model_value = "test-model"
+    app.console_provider_gateway_factory = lambda: CapturingGateway(chunks=("hel", "lo"))
+    notifications = _capture_notify_severities(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        _select_llamacpp_console(console)
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.load_draft("hello")
+        console.query_one("#console-send-message", Button).press()
+        await _wait_for_text(console, pilot, "hello")
+
+    success_toasts = [m for m, severity in notifications if severity == "success"]
+    assert success_toasts == []

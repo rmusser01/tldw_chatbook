@@ -13,7 +13,7 @@ from typing import Any
 from textual import events, on
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal
+from textual.containers import HorizontalScroll
 from textual.content import Content
 from textual.css.query import NoMatches
 from textual.message import Message
@@ -26,7 +26,7 @@ from tldw_chatbook.Chat.console_display_state import (
     ConsoleRetrievalScopeState,
 )
 from tldw_chatbook.Chat.console_ephemeral import TEMPORARY_LABEL, TEMPORARY_TOOLTIP
-from tldw_chatbook.Chat.rag_scope import SCOPE_EMPTY_NOTICE_TEMPLATE, SCOPE_REASON_EMPTY
+from tldw_chatbook.Chat.rag_scope import SCOPE_REASON_EMPTY, scope_empty_notice
 from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import ChatApprovalCard
 from tldw_chatbook.Widgets.Console.console_retrieval_scope_row import (
     UNSCOPED_LABEL as SCOPE_ROW_UNSCOPED_LABEL,
@@ -43,6 +43,11 @@ class ConsoleChip(Static):
     """
 
     can_focus = True
+
+
+def _items_word(count: int) -> str:
+    """Return the singular/plural scope-unit word for a tooltip count."""
+    return "item" if count == 1 else "items"
 
 
 class ConsoleApprovalsChip(ConsoleChip):
@@ -169,21 +174,21 @@ class ConsoleScopeChip(ConsoleChip):
 
 
 class ConsoleRagChip(ConsoleChip):
-    """RAG readiness chip that opens the Library RAG settings modal.
+    """Library-search readiness chip that opens the Library search settings modal.
 
     Same activation contract as the sibling action chips: Enter/Space while
-    focused, or a click. "RAG: off" is not a latent toggle the chip could
-    flip in place -- RAG reads "on" once retrieved Library evidence is
-    staged for the next send -- so activation opens the modal where the
-    user sets the retrieval query and runs it.
+    focused, or a click. "Library search: off" is not a latent toggle the
+    chip could flip in place -- it reads "on" once retrieved Library
+    evidence is staged for the next send -- so activation opens the modal
+    where the user sets the retrieval query and runs it.
     """
 
     BINDINGS = [
         Binding(
-            "enter", "open_rag_settings", "Open Library RAG settings", show=False
+            "enter", "open_rag_settings", "Open Library search settings", show=False
         ),
         Binding(
-            "space", "open_rag_settings", "Open Library RAG settings", show=False
+            "space", "open_rag_settings", "Open Library search settings", show=False
         ),
     ]
 
@@ -194,6 +199,98 @@ class ConsoleRagChip(ConsoleChip):
         self.post_message(self.OpenRequested())
 
     def _on_click(self, event: events.Click) -> None:
+        self.post_message(self.OpenRequested())
+
+
+class ConsoleSourcesChip(ConsoleChip):
+    """Staged-sources chip that opens the Inspector rail when activated.
+
+    TASK-2154.2 (DS-06/LY-11): same activation contract as the sibling
+    action chips -- Enter/Space while focused, or a click. Below 150 cols
+    the Inspector is the ONLY surface for staged sources (its compact
+    collapse used to make this chip's content unreachable), so activation
+    opens the rail itself
+    (``ChatScreen._reveal_console_inspector_rail``); the staged-sources
+    tray is pinned at the top of the Inspector body, visible immediately.
+    """
+
+    BINDINGS = [
+        Binding("enter", "open_inspector", "Show staged sources", show=False),
+        Binding("space", "open_inspector", "Show staged sources", show=False),
+    ]
+
+    class OpenRequested(Message):
+        """Posted when the sources chip is activated from keyboard or mouse."""
+
+    def action_open_inspector(self) -> None:
+        """Post ``OpenRequested`` so the host screen opens the Inspector rail."""
+        self.post_message(self.OpenRequested())
+
+    def _on_click(self, event: events.Click) -> None:
+        """Treat a click exactly like the Enter/Space activation."""
+        self.post_message(self.OpenRequested())
+
+
+class ConsoleToolsChip(ConsoleChip):
+    """Tools-readiness chip that opens the Inspector rail when activated.
+
+    TASK-2154.2 (DS-06): same activation contract as the sibling action
+    chips. The run inspector (inside the Inspector rail) carries the tool
+    rows, so activation opens the rail
+    (``ChatScreen._reveal_console_inspector_rail``) rather than toggling
+    anything in place -- "Tools: N ready" is a readout, not a latent
+    switch. TASK-2154.12 (TX-04): the chip is hidden at a zero count, so
+    activation is only reachable once tools are actually counted.
+    """
+
+    BINDINGS = [
+        Binding("enter", "open_inspector", "Show tool readiness", show=False),
+        Binding("space", "open_inspector", "Show tool readiness", show=False),
+    ]
+
+    class OpenRequested(Message):
+        """Posted when the tools chip is activated from keyboard or mouse."""
+
+    def action_open_inspector(self) -> None:
+        """Post ``OpenRequested`` so the host screen opens the Inspector rail."""
+        self.post_message(self.OpenRequested())
+
+    def _on_click(self, event: events.Click) -> None:
+        """Treat a click exactly like the Enter/Space activation."""
+        self.post_message(self.OpenRequested())
+
+
+class ConsoleRunChip(ConsoleChip):
+    """Active-run chip that opens the Inspector rail when activated.
+
+    TASK-2154.18 (FB-08): run-state copy previously had no persistent
+    on-screen home between the header badge and the transcript -- the
+    ``#console-mode-bar`` surface that carries ``Run: {status}`` is a
+    hidden compat static. This chip is that home: visible while the
+    viewed session's run status is active, hidden at idle and at terminal
+    states (terminal outcomes already have their ambient signals --
+    task-2154.16's failure toast, task-2154.17's success toasts, and the
+    tab markers -- and a persistent "Run: complete" chip would need a
+    dismissal model). Same activation contract as the sibling action
+    chips: Enter/Space while focused, or a click; the Inspector's run
+    rows carry the live detail, so activation opens the rail
+    (``ChatScreen._reveal_console_inspector_rail``).
+    """
+
+    BINDINGS = [
+        Binding("enter", "open_inspector", "Show run details", show=False),
+        Binding("space", "open_inspector", "Show run details", show=False),
+    ]
+
+    class OpenRequested(Message):
+        """Posted when the run chip is activated from keyboard or mouse."""
+
+    def action_open_inspector(self) -> None:
+        """Post ``OpenRequested`` so the host screen opens the Inspector rail."""
+        self.post_message(self.OpenRequested())
+
+    def _on_click(self, event: events.Click) -> None:
+        """Treat a click exactly like the Enter/Space activation."""
         self.post_message(self.OpenRequested())
 
 
@@ -245,9 +342,15 @@ class ConsoleCostChip(ConsoleChip):
         self.post_message(self.ConsoleCostChipPressed())
 
 
-class ConsoleStatusChips(Horizontal):
+class ConsoleStatusChips(HorizontalScroll):
     """Full-width strip of Console readiness pills (provider/model/assistant/
     RAG/source/tool/approval plus the retrieval-scope chip).
+
+    TASK-2154.5 (LY-03): the strip scrolls horizontally when the chips
+    outgrow the viewport instead of silently clipping them -- keyboard
+    reachability comes from focus auto-scroll (``Screen.set_focus``'s
+    ``scroll_visible``), mouse from Shift+wheel / trackpad swipe; the
+    scrollbar itself is hidden (single-row strip, tab-strip precedent).
 
     Exposes ``sync_state`` so ``ChatScreen`` can refresh the pill labels and
     counter emphasis after provider/model/source/tool/approval state changes.
@@ -260,6 +363,7 @@ class ConsoleStatusChips(Horizontal):
         scope_state: ConsoleRetrievalScopeState | None = None,
         ephemeral: bool = False,
         cost_state: ConsoleCostState | None = None,
+        run_copy: str = "",
         **kwargs: Any,
     ) -> None:
         """Initialize the strip.
@@ -287,6 +391,11 @@ class ConsoleStatusChips(Horizontal):
                 very first frame rather than waiting for a post-mount
                 ``sync_cost_state`` call. ``None`` renders hidden (non-
                 Console-native contexts have no cost to show).
+            run_copy: Active-run copy for the run chip (TASK-2154.18,
+                FB-08) -- same F1 precedent: returning to Console while a
+                background run is still streaming must render the chip on
+                the first frame, not after the next sync tick. ``""``
+                (or any non-active state) renders hidden.
             **kwargs: Additional Textual widget arguments (id/classes).
         """
         classes = kwargs.pop("classes", "")
@@ -299,6 +408,7 @@ class ConsoleStatusChips(Horizontal):
         self.scope_state = scope_state
         self.ephemeral = ephemeral
         self._cost_state = cost_state
+        self._run_chip_state: tuple[bool, str] = (bool(run_copy), run_copy)
         self.styles.height = 1
         self.styles.min_height = 1
         self.styles.max_height = 1
@@ -327,6 +437,12 @@ class ConsoleStatusChips(Horizontal):
     def compose(self) -> ComposeResult:
         # First: this is a property of the whole chat, not one setting.
         yield self._temporary_chip()
+        # TASK-2154.18 (FB-08): the active-run chip sits left-most among
+        # the transient chips so it stays visible when the strip scrolls
+        # horizontally (TASK-2154.5) -- the stable readiness chips keep
+        # their learned relative order behind it. Hidden unless a run is
+        # active (see ``sync_run_chip``).
+        yield self._run_chip()
         yield self._chip(
             self.state.provider_label,
             id="console-provider-chip",
@@ -356,12 +472,20 @@ class ConsoleStatusChips(Horizontal):
             self.state.sources_label,
             id="console-sources-chip",
             emphasis=self.state.sources_active,
+            chip_class=ConsoleSourcesChip,
         )
-        yield self._chip(
+        tools_chip = self._chip(
             self.state.tools_label,
             id="console-tools-chip",
             emphasis=self.state.tools_active,
+            chip_class=ConsoleToolsChip,
         )
+        # TASK-2154.12 (TX-04): hidden entirely at a zero tool count, the
+        # same posture as the unscoped scope chip and the None cost chip --
+        # the old "Tools: not loaded" placeholder exposed a lazy-loading
+        # implementation detail (Console UX review 2026-08).
+        tools_chip.display = self.state.tools_active
+        yield tools_chip
         yield self._chip(
             self.state.approvals_label,
             id="console-approvals-chip",
@@ -375,6 +499,68 @@ class ConsoleStatusChips(Horizontal):
         # task-4 (PR3 cost ticker): last in the strip, hidden entirely
         # when there is no cost state (see ``_cost_chip_render``).
         yield self._cost_chip()
+
+    def _run_chip(self) -> ConsoleRunChip:
+        label, tooltip, hidden = self._run_chip_render(*self._run_chip_state)
+        chip = self._chip(
+            label,
+            id="console-run-chip",
+            chip_class=ConsoleRunChip,
+        )
+        chip.tooltip = tooltip
+        chip.display = not hidden
+        return chip
+
+    @staticmethod
+    def _run_chip_render(visible: bool, copy: str) -> tuple[str, str, bool]:
+        """Pure ``(label, tooltip, hidden)`` render for the run chip.
+
+        Args:
+            visible: Whether the viewed session's run status is active
+                (the screen owns the ``CONSOLE_ACTIVE_RUN_STATUSES``
+                membership call; the widget stays display-only).
+            copy: The run's ``visible_copy`` (e.g. "Streaming response.").
+        """
+        if not visible:
+            return "", "", True
+        text = copy.strip() or "Working."
+        return (
+            f"Run: {text}",
+            f"Active run: {text} Open the Inspector for run details.",
+            False,
+        )
+
+    def sync_run_chip(self, visible: bool, copy: str) -> None:
+        """Refresh the run chip's visibility and copy (TASK-2154.18, FB-08).
+
+        Deliberately NOT folded into ``sync_state``: run state changes on
+        its own cadence (send/stop transitions and the 0.2s transcript
+        poll while a run is active), independently of
+        ``ConsoleControlState`` -- same reason ``sync_cost_state`` and
+        ``sync_scope_chip`` stand alone. Equality-guarded so the poll
+        ticks are free when nothing changed.
+
+        Args:
+            visible: Whether the viewed session's run is in an active
+                status. Terminal states hide the chip (their ambient
+                signals live elsewhere -- see ``ConsoleRunChip``).
+            copy: The run's ``visible_copy``; ignored when not visible.
+        """
+        next_state = (visible, copy if visible else "")
+        if next_state == self._run_chip_state:
+            return
+        self._run_chip_state = next_state
+        try:
+            chip = self.query_one("#console-run-chip", ConsoleRunChip)
+        except NoMatches:
+            return
+        label, tooltip, hidden = self._run_chip_render(*next_state)
+        if hidden:
+            chip.display = False
+            return
+        chip.update(label)
+        chip.tooltip = Content(tooltip)
+        chip.display = True
 
     def _temporary_chip(self) -> ConsoleTemporaryChip:
         label, tooltip, hidden = self._temporary_chip_render(self.ephemeral)
@@ -445,21 +631,23 @@ class ConsoleStatusChips(Horizontal):
         """Pure ``(label, tooltip, hidden, alert)`` render for the scope chip.
 
         ``item_count`` is always the EFFECTIVE (post-intersection) count
-        (task-13). The tooltip's breakdown widens with how many scope
-        levels are active: a single active level (conversation-only, or
-        workspace-only) reads as "conversation N items"/"workspace N
-        items"; both active levels read as the full intersection breakdown
-        ("conversation A ∩ workspace B → N").
+        (task-13). The tooltip spells the active scope levels out in words
+        (TASK-2154.12/TX-03 -- the old ``conversation A ∩ workspace B → N``
+        math notation and the raw ``scope_empty`` cause token are gone): a
+        single active level (conversation-only, or workspace-only) reads as
+        "Only searching: conversation scope (N items)"/"Only searching:
+        workspace scope (N items)"; both active levels read as the full
+        breakdown with the shared count named in words.
 
         Args:
             state: Display-state snapshot, or ``None`` (renders unscoped).
 
         Returns:
             ``label``: chip text. ``tooltip``: hover/focus text (the
-            EMPTY branch folds the cause in). ``hidden``: ``True`` when
-            unscoped (chip carries no useful information -- hidden rather
-            than shown as "everything", matching the brief). ``alert``:
-            ``True`` only for EMPTY, reusing the same
+            EMPTY branch folds the plain-language cause in). ``hidden``:
+            ``True`` when unscoped (chip carries no useful information --
+            hidden rather than shown as "everything", matching the brief).
+            ``alert``: ``True`` only for EMPTY, reusing the same
             ``console-chip-alert`` action-required styling the
             sources/tools/approvals chips use when their own count is
             active.
@@ -467,23 +655,31 @@ class ConsoleStatusChips(Horizontal):
         if state is None or (not state.is_scoped and not state.is_empty):
             return SCOPE_ROW_UNSCOPED_LABEL, "", True, False
         if state.is_empty:
-            cause = state.cause or SCOPE_REASON_EMPTY
             return (
-                "Scope: empty",
-                SCOPE_EMPTY_NOTICE_TEMPLATE.format(cause=cause),
+                "Scope: no sources",
+                scope_empty_notice(state.cause or SCOPE_REASON_EMPTY),
                 False,
                 True,
             )
         label = f"Scope: {state.item_count}"
         if state.conv_item_count is not None and state.ws_item_count is not None:
             tooltip = (
-                f"conversation {state.conv_item_count} ∩ workspace "
-                f"{state.ws_item_count} → {state.item_count}"
+                f"Only searching: conversation scope "
+                f"({state.conv_item_count} {_items_word(state.conv_item_count)}) "
+                f"and workspace scope "
+                f"({state.ws_item_count} {_items_word(state.ws_item_count)}) — "
+                f"{state.item_count} in both."
             )
         elif state.ws_item_count is not None:
-            tooltip = f"workspace {state.ws_item_count} items"
+            tooltip = (
+                f"Only searching: workspace scope "
+                f"({state.ws_item_count} {_items_word(state.ws_item_count)})."
+            )
         else:
-            tooltip = f"conversation {state.item_count} items"
+            tooltip = (
+                f"Only searching: conversation scope "
+                f"({state.item_count} {_items_word(state.item_count)})."
+            )
         return label, tooltip, False, False
 
     def sync_scope_chip(self, scope_state: ConsoleRetrievalScopeState | None) -> None:
@@ -632,6 +828,14 @@ class ConsoleStatusChips(Horizontal):
                 continue
             chip.set_class(not active, "console-chip-dim")
             chip.set_class(active, "console-chip-alert")
+        # TASK-2154.12 (TX-04): the tools chip hides at a zero count (see
+        # compose); keep its visibility in step on every sync.
+        try:
+            tools_chip = self.query_one("#console-tools-chip", Static)
+        except NoMatches:
+            pass
+        else:
+            tools_chip.display = state.tools_active
 
     @on(ConsoleApprovalsChip.ReviewRequested)
     def on_approval_review_requested(

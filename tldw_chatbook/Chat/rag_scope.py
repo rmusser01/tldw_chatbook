@@ -50,8 +50,49 @@ CONVERSATION_METADATA_SCOPE_KEY = "rag_scope"
 #: Shared copy for the caller-side EMPTY-scope short-circuit notice, used by
 #: both the native-Console chat entry point (``chat_rag_events.py``) and the
 #: Library RAG service (``library_rag_service.py``) so the two call sites
-#: never drift apart. Format with ``.format(cause=...)``.
+#: never drift apart. Format with ``.format(cause=...)`` -- always via
+#: ``scope_empty_notice`` below, never with a raw cause token.
 SCOPE_EMPTY_NOTICE_TEMPLATE = "Retrieval scope is empty ({cause}); no sources searched."
+
+#: Plain-language phrases for ``EffectiveScope.cause`` tokens (Console UX
+#: review 2026-08, TX-03): the raw tokens (``scope_empty``,
+#: ``no-workspace-overlap``, ``deleted-items``, ...) are diagnostic
+#: vocabulary and must never render user-visibly -- chip/row tooltips,
+#: notifications, and recovery cards all phrase the cause through this map.
+_SCOPE_EMPTY_CAUSE_PHRASES = {
+    "no-workspace-overlap": "the conversation and workspace scopes share no items",
+    "deleted-items": "the scoped items have been deleted",
+    "workspace-scope-unavailable": "the workspace scope could not be read",
+    SCOPE_REASON_EMPTY: "the scope matches nothing to search",
+}
+_SCOPE_EMPTY_CAUSE_FALLBACK = "the scope matches nothing to search"
+
+
+def scope_cause_phrase(cause: Any) -> str:
+    """Return the plain-language phrase for an empty-scope cause token.
+
+    Args:
+        cause: An ``EffectiveScope.cause`` value (or any loose seam value).
+
+    Returns:
+        The mapped phrase, or a generic fallback for unknown/blank causes.
+    """
+    return _SCOPE_EMPTY_CAUSE_PHRASES.get(
+        str(cause or ""), _SCOPE_EMPTY_CAUSE_FALLBACK
+    )
+
+
+def scope_empty_notice(cause: Any) -> str:
+    """Return the user-facing empty-scope notice with a plain-language cause.
+
+    Args:
+        cause: An ``EffectiveScope.cause`` value (or any loose seam value).
+
+    Returns:
+        ``SCOPE_EMPTY_NOTICE_TEMPLATE`` formatted with
+        ``scope_cause_phrase`` -- never a raw cause token.
+    """
+    return SCOPE_EMPTY_NOTICE_TEMPLATE.format(cause=scope_cause_phrase(cause))
 
 def _warn_malformed(reason: str) -> None:
     """Log a warning about malformed rag_scope payload.

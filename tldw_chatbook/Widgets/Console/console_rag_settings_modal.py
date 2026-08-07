@@ -1,9 +1,9 @@
-"""Library RAG settings: the RAG chip's enable-and-customize modal.
+"""Library search settings: the Library-search chip's enable-and-customize modal.
 
-"RAG: off" in the Console status strip is not a latent toggle -- the chip
-reads "on" once retrieved Library evidence is staged for the next send.
-This modal is where a user makes that happen: it owns the retrieval query
-(the same state the visible "Run Library RAG" actions read) and runs the
+"Library search: off" in the Console status strip is not a latent toggle --
+the chip reads "on" once retrieved Library evidence is staged for the next
+send. This modal is where a user makes that happen: it owns the search query
+(the same state the visible "Search Library" actions read) and runs the
 retrieval that stages evidence.
 """
 
@@ -100,7 +100,7 @@ def console_rag_source_toggle_label(source_type: str, selected: bool) -> str:
 
 @dataclass(frozen=True)
 class ConsoleRagSettingsResult:
-    """Outcome of the Library RAG settings modal.
+    """Outcome of the Library search settings modal.
 
     Attributes:
         query: The retrieval query as typed (the screen sanitizes it).
@@ -117,7 +117,7 @@ class ConsoleRagSettingsResult:
 
 
 class ConsoleRagSettingsModal(ModalScreen["ConsoleRagSettingsResult | None"]):
-    """Edit the Library RAG query and optionally run retrieval now."""
+    """Edit the Library search query and optionally run the search now."""
 
     DEFAULT_CSS = """
     ConsoleRagSettingsModal {
@@ -216,16 +216,16 @@ class ConsoleRagSettingsModal(ModalScreen["ConsoleRagSettingsResult | None"]):
         self._staged_title = staged_title
 
     def _status_copy(self) -> str:
-        """Return honest RAG-state copy for the top of the modal."""
+        """Return honest Library-search-state copy for the top of the modal."""
         if self._rag_active:
             staged = f" ({self._staged_title})" if self._staged_title else ""
             return (
-                f"RAG is on: retrieved Library evidence{staged} is staged "
-                "for your next send. Running again replaces it."
+                f"Library search is on: retrieved Library evidence{staged} is "
+                "staged for your next send. Running again replaces it."
             )
         return (
-            "RAG is off. It turns on once you run retrieval and Library "
-            "evidence is staged for your next send."
+            "Library search is off. It turns on once you run a search and "
+            "Library evidence is staged for your next send."
         )
 
     def _scope_summary(self) -> str:
@@ -252,7 +252,7 @@ class ConsoleRagSettingsModal(ModalScreen["ConsoleRagSettingsResult | None"]):
             The modal's child widgets.
         """
         with Vertical(id="console-rag-settings"):
-            yield Static("Library RAG", classes="console-modal-header")
+            yield Static("Library search", classes="console-modal-header")
             yield Static(
                 self._status_copy(),
                 classes="console-rag-settings-status",
@@ -260,7 +260,7 @@ class ConsoleRagSettingsModal(ModalScreen["ConsoleRagSettingsResult | None"]):
             )
             yield Input(
                 value=self._query,
-                placeholder="What should Library retrieval look for?",
+                placeholder="What should the Library search look for?",
                 id="console-rag-settings-query",
             )
             yield Static(
@@ -282,14 +282,14 @@ class ConsoleRagSettingsModal(ModalScreen["ConsoleRagSettingsResult | None"]):
                     )
             with Horizontal(classes="console-rag-settings-actions"):
                 yield Button(
-                    "Run Library RAG",
+                    "Search Library",
                     id="console-rag-settings-run",
                     variant="primary",
                     disabled=not self._can_run(self._query),
                 )
                 yield Button("Cancel", id="console-rag-settings-cancel")
             yield Static(
-                "Enter runs retrieval. Esc or a click outside closes "
+                "Enter runs the search. Esc or a click outside closes "
                 "without changes.",
                 classes="console-rag-settings-hint",
                 markup=False,

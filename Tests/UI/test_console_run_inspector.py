@@ -140,7 +140,7 @@ async def test_inspector_action_change_recomposes_widget():
             actions=(
                 ConsoleInspectorAction(
                     widget_id="console-inspector-save-chatbook",
-                    label="Save Chatbook",
+                    label="Save as Chatbook",
                     enabled=True,
                 ),
             )
