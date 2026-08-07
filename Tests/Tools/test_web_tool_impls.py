@@ -395,7 +395,14 @@ def test_fetch_pdf_too_large_message_reflects_configured_ceiling(fetch_env, monk
     not a hardcoded '20 MB' string — a caller that monkeypatches the
     constant to a non-default value must see THAT value quoted back, not
     the module's original default. Uses raw sniffable bytes (not a real
-    pymupdf PDF): the refusal fires on size alone, before any parse."""
+    pymupdf PDF): the [too-large] refusal fires on size alone, before any
+    parse. Forces _pymupdf_available() True regardless of the real
+    environment: this test is about MESSAGE RENDERING in the [too-large]
+    branch, not extraction, and sub-item (f) made that branch reachable
+    only when pymupdf is (believed) present — without this patch, a plain
+    `.[dev]` install (no pdf extra) would take the [missing-dep] branch
+    instead and this test would fail, not skip."""
+    monkeypatch.setattr(web_tool_impls, "_pymupdf_available", lambda: True)
     monkeypatch.setattr(web_tool_impls, "PDF_MAX_BYTES", 3 * 1024 * 1024)
     body = b"%PDF-1.4\n" + b"x" * (3 * 1024 * 1024 + 100)
     fetch_env.routes["http://example.com/huge3.pdf"] = _pdf_response(body)
