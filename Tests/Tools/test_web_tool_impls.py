@@ -129,6 +129,17 @@ def fetch_env(monkeypatch):
     )
     clock = _FakeClock()
     monkeypatch.setattr(web_tool_impls, "time", clock)
+    # robots.txt enforcement (task-2833) defaults to ON in shipped config,
+    # but every existing test in this module was written against a world
+    # with no robots machinery at all: with the real default, a robots
+    # pre-fetch would add transport-call entries and an extra
+    # _enforce_rate_limit hit that break exact-list/count/sleep assertions
+    # across this file (design doc, Critical 1). This is a TEST-FIXTURE
+    # default only -- the shipped config default remains true. Robots
+    # tests opt back in explicitly via their own monkeypatch.
+    monkeypatch.setattr(
+        web_tool_impls, "_webfetch_settings", lambda: {"respect_robots_txt": False}
+    )
     web_tool_impls._reset_state_for_tests()
     yield SimpleNamespace(routes=routes, calls=calls, clock=clock)
     web_tool_impls._reset_state_for_tests()
@@ -579,3 +590,185 @@ def test_fetch_short_body_under_pdf_magic_length_extracts_as_text(fetch_env):
     )
     result = web_fetch("http://example.com/short")
     assert result == "abc"
+
+
+# ---------------------------------------------------------------------------
+# robots.txt enforcement (task-2833)
+# ---------------------------------------------------------------------------
+#
+# fetch_env's own fixture default sets respect_robots_txt=False (existing-
+# suite compatibility, design doc Critical 1) -- every test below opts back
+# in explicitly via _enable_robots().
+
+def _enable_robots(monkeypatch, respect: bool = True) -> None:
+    monkeypatch.setattr(
+        web_tool_impls, "_webfetch_settings", lambda: {"respect_robots_txt": respect}
+    )
+
+
+def test_fetch_robots_disallowed_path_refused(fetch_env, monkeypatch):
+    _enable_robots(monkeypatch)
+    fetch_env.routes["http://example.com/robots.txt"] = _text_page(b"User-agent: *\nDisallow: /private\n")
+    fetch_env.routes["http://example.com/private/page"] = _text_page(b"secret")
+    with pytest.raises(LocalToolError) as exc_info:
+        web_fetch("http://example.com/private/page")
+    assert str(exc_info.value).startswith("[robots-disallowed] http://example.com/private/page")
+    assert "http://example.com/private/page" not in fetch_env.calls  # blocked before the hop
+
+
+def test_fetch_robots_allowed_path_proceeds(fetch_env, monkeypatch):
+    _enable_robots(monkeypatch)
+    fetch_env.routes["http://example.com/robots.txt"] = _text_page(b"User-agent: *\nDisallow: /private\n")
+    fetch_env.routes["http://example.com/public"] = _text_page(b"hello public")
+    assert web_fetch("http://example.com/public") == "hello public"
+
+
+def test_fetch_robots_specific_ua_beats_wildcard(fetch_env, monkeypatch):
+    """Fixture-authoring caveat (design doc Minor 6): stdlib RobotFileParser
+    is first-match-wins in FILE order, not longest-path -- irrelevant here
+    since each group has exactly one rule, but the file deliberately puts
+    the wildcard group's Disallow SECOND to prove it is our own specific
+    group (declared first) that actually governs us, not file order."""
+    _enable_robots(monkeypatch)
+    fetch_env.routes["http://example.com/robots.txt"] = _text_page(
+        b"User-agent: tldw-chatbook-web-fetch\n"
+        b"Disallow: /secret\n"
+        b"\n"
+        b"User-agent: *\n"
+        b"Disallow: /forbidden\n"
+    )
+    fetch_env.routes["http://example.com/secret"] = _text_page(b"nope")
+    fetch_env.routes["http://example.com/forbidden"] = _text_page(b"actually ours")
+    with pytest.raises(LocalToolError, match=r"\[robots-disallowed\]"):
+        web_fetch("http://example.com/secret")
+    fetch_env.clock.now += 2.0  # clear the per-domain rate-limit interval
+    # Our specific-UA group applies and does NOT disallow /forbidden -- the
+    # wildcard-only rule is never even consulted for our own user agent.
+    assert web_fetch("http://example.com/forbidden") == "actually ours"
+
+
+def test_fetch_robots_missing_route_fails_open(fetch_env, monkeypatch):
+    _enable_robots(monkeypatch)
+    fetch_env.routes["http://example.com/page"] = _text_page(b"hello")
+    # No robots.txt route registered at all -> fetch fails -> fail open.
+    assert web_fetch("http://example.com/page") == "hello"
+
+
+def test_fetch_robots_500_fails_open(fetch_env, monkeypatch):
+    _enable_robots(monkeypatch)
+    fetch_env.routes["http://example.com/robots.txt"] = httpx.Response(500)
+    fetch_env.routes["http://example.com/page"] = _text_page(b"hello")
+    assert web_fetch("http://example.com/page") == "hello"
+
+
+def test_fetch_robots_garbage_body_fails_open(fetch_env, monkeypatch):
+    _enable_robots(monkeypatch)
+    fetch_env.routes["http://example.com/robots.txt"] = _text_page(
+        b"\x00\x01 not remotely robots.txt syntax \xff\xfe"
+    )
+    fetch_env.routes["http://example.com/page"] = _text_page(b"hello")
+    assert web_fetch("http://example.com/page") == "hello"
+
+
+def test_fetch_robots_truncated_body_fails_open(fetch_env, monkeypatch):
+    """A body truncated at ROBOTS_MAX_BYTES must not be trusted (design doc
+    Minor 7): a half-file could silently drop trailing Disallow lines. This
+    robots.txt, if read in FULL, would disallow everything -- truncation
+    must still fail the fetch open."""
+    _enable_robots(monkeypatch)
+    huge = b"User-agent: *\nDisallow: /\n" + b"# padding\n" * web_tool_impls.ROBOTS_MAX_BYTES
+    assert len(huge) > web_tool_impls.ROBOTS_MAX_BYTES
+    fetch_env.routes["http://example.com/robots.txt"] = _text_page(huge)
+    fetch_env.routes["http://example.com/page"] = _text_page(b"hello")
+    assert web_fetch("http://example.com/page") == "hello"
+
+
+def test_fetch_robots_cache_not_refetched_on_second_request(fetch_env, monkeypatch):
+    _enable_robots(monkeypatch)
+    fetch_env.routes["http://example.com/robots.txt"] = _text_page(b"User-agent: *\nAllow: /\n")
+    fetch_env.routes["http://example.com/a"] = _text_page(b"page a")
+    fetch_env.routes["http://example.com/b"] = _text_page(b"page b")
+    web_fetch("http://example.com/a")
+    assert fetch_env.calls.count("http://example.com/robots.txt") == 1
+    fetch_env.clock.now += 2.0  # clear the per-domain rate-limit interval
+    web_fetch("http://example.com/b")
+    assert fetch_env.calls.count("http://example.com/robots.txt") == 1  # cached, no re-fetch
+
+
+def test_fetch_robots_cache_ttl_expiry_refetches(fetch_env, monkeypatch):
+    _enable_robots(monkeypatch)
+    fetch_env.routes["http://example.com/robots.txt"] = _text_page(b"User-agent: *\nAllow: /\n")
+    fetch_env.routes["http://example.com/a"] = _text_page(b"page a")
+    fetch_env.routes["http://example.com/b"] = _text_page(b"page b")
+    web_fetch("http://example.com/a")
+    assert fetch_env.calls.count("http://example.com/robots.txt") == 1
+    fetch_env.clock.now += web_tool_impls.ROBOTS_CACHE_TTL_SECONDS + 1
+    web_fetch("http://example.com/b")
+    assert fetch_env.calls.count("http://example.com/robots.txt") == 2  # TTL expired, re-fetched
+
+
+def test_fetch_robots_negative_cache_holds_for_ttl(fetch_env, monkeypatch):
+    _enable_robots(monkeypatch)
+    # No robots.txt route registered: the fetch fails (KeyError inside the
+    # mock handler), caught broadly, cached as None (fail open).
+    fetch_env.routes["http://example.com/a"] = _text_page(b"page a")
+    fetch_env.routes["http://example.com/b"] = _text_page(b"page b")
+    web_fetch("http://example.com/a")
+    first_attempts = fetch_env.calls.count("http://example.com/robots.txt")
+    assert first_attempts == 1
+    fetch_env.clock.now += 2.0  # well under ROBOTS_CACHE_TTL_SECONDS
+    web_fetch("http://example.com/b")
+    assert fetch_env.calls.count("http://example.com/robots.txt") == first_attempts  # negative cache held
+
+
+def test_fetch_robots_redirect_into_disallowed_path_refused_mid_chain(fetch_env, monkeypatch):
+    _enable_robots(monkeypatch)
+    fetch_env.routes["http://example.com/robots.txt"] = _text_page(b"User-agent: *\nDisallow: /private\n")
+    fetch_env.routes["http://example.com/start"] = httpx.Response(
+        302, headers={"location": "http://example.com/private/page"}
+    )
+    with pytest.raises(LocalToolError, match=r"\[robots-disallowed\]"):
+        web_fetch("http://example.com/start")
+    assert "http://example.com/private/page" not in fetch_env.calls  # blocked before the hop
+
+
+def test_fetch_robots_toggle_off_makes_no_robots_fetch(fetch_env):
+    # fetch_env's own fixture default is respect_robots_txt=False; this
+    # test proves a PRESENT, disallowing robots.txt is never even fetched
+    # while the toggle is off.
+    fetch_env.routes["http://example.com/robots.txt"] = _text_page(b"User-agent: *\nDisallow: /\n")
+    fetch_env.routes["http://example.com/page"] = _text_page(b"hello")
+    assert web_fetch("http://example.com/page") == "hello"
+    assert "http://example.com/robots.txt" not in fetch_env.calls
+
+
+def test_fetch_robots_cache_hit_rechecks_and_refuses(fetch_env, monkeypatch):
+    """Ruling 3: a cache-hit web_fetch re-checks robots the same way it
+    re-checks SSRF policy -- a cached body plus a newly-disallowing
+    robots.txt must refuse, not silently hand back the cached text."""
+    _enable_robots(monkeypatch)
+    fetch_env.routes["http://example.com/robots.txt"] = _text_page(b"User-agent: *\nAllow: /\n")
+    fetch_env.routes["http://example.com/page"] = _text_page(b"hello")
+    assert web_fetch("http://example.com/page") == "hello"
+
+    # Robots policy changes; force the next call to see it by clearing only
+    # the robots cache (the fetch/body cache stays warm and TTL-valid).
+    web_tool_impls._robots_cache.clear()
+    fetch_env.routes["http://example.com/robots.txt"] = _text_page(b"User-agent: *\nDisallow: /\n")
+    fetch_env.clock.now += 2.0  # clear the per-domain rate-limit interval
+    with pytest.raises(LocalToolError, match=r"\[robots-disallowed\]"):
+        web_fetch("http://example.com/page")
+    # The page body itself was fetched only once -- the refusal came from
+    # the CACHE-HIT path's robots re-check, not a second real fetch.
+    assert fetch_env.calls.count("http://example.com/page") == 1
+
+
+def test_fetch_robots_txt_fetch_is_itself_rate_limited(fetch_env, monkeypatch):
+    """Ruling 5: the robots.txt fetch goes through the same per-domain rate
+    limiter as any other request -- two back-to-back rate-limited requests
+    to a brand-new host (robots.txt, then the page) cost one sleep."""
+    _enable_robots(monkeypatch)
+    fetch_env.routes["http://example.com/robots.txt"] = _text_page(b"User-agent: *\nAllow: /\n")
+    fetch_env.routes["http://example.com/page"] = _text_page(b"hello")
+    web_fetch("http://example.com/page")
+    assert fetch_env.clock.sleeps == [pytest.approx(1.0)]

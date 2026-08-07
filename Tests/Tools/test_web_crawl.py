@@ -201,6 +201,17 @@ def crawl_env(monkeypatch):
     monkeypatch.setattr(web_tool_impls, "_transport", httpx.MockTransport(handler))
     clock = _FakeClock()
     monkeypatch.setattr(web_tool_impls, "time", clock)
+    # robots.txt enforcement (task-2833) defaults to ON in shipped config,
+    # but every existing test in this module was written against a world
+    # with no robots machinery at all: with the real default, a robots
+    # pre-fetch would add transport-call entries and an extra
+    # _enforce_rate_limit hit that break exact-list/count/sleep assertions
+    # across this file (design doc, Critical 1). This is a TEST-FIXTURE
+    # default only -- the shipped config default remains true. Robots
+    # tests opt back in explicitly via their own monkeypatch.
+    monkeypatch.setattr(
+        web_tool_impls, "_webfetch_settings", lambda: {"respect_robots_txt": False}
+    )
     web_tool_impls._reset_state_for_tests()
     yield SimpleNamespace(routes=routes, calls=calls, clock=clock)
     web_tool_impls._reset_state_for_tests()
@@ -1061,3 +1072,111 @@ def test_sitemap_seed_deadline_and_budget_both_hit_deadline_wins(crawl_env):
     assert out.endswith("Stopped: deadline reached.")
     page_calls = [c for c in crawl_env.calls if "/p" in c]
     assert page_calls == []  # deadline hit before the seeded pages get their own attempt
+
+
+# ---------------------------------------------------------------------------
+# robots.txt enforcement (task-2833)
+# ---------------------------------------------------------------------------
+#
+# crawl_env's own fixture default sets respect_robots_txt=False (existing-
+# suite compatibility, design doc Critical 1) -- every test below opts back
+# in explicitly via _enable_robots().
+
+def _enable_robots(monkeypatch, respect: bool = True) -> None:
+    monkeypatch.setattr(
+        web_tool_impls, "_webfetch_settings", lambda: {"respect_robots_txt": respect}
+    )
+
+
+def _robots_txt(body: bytes, status: int = 200) -> httpx.Response:
+    return httpx.Response(status, content=body, headers={"content-type": "text/plain"})
+
+
+def test_crawl_disallowed_page_skipped_and_counted(crawl_env, monkeypatch):
+    _enable_robots(monkeypatch)
+    crawl_env.routes["http://example.com/robots.txt"] = _robots_txt(b"User-agent: *\nDisallow: /private\n")
+    _site(crawl_env, {
+        "http://example.com/": ("root", ["/private", "/ok"]),
+        "http://example.com/ok": ("fine words", []),
+    })
+    out = web_crawl("http://example.com/")
+    assert "1 robots-disallowed" in out
+    assert "fine words" in out
+    assert "http://example.com/private" not in crawl_env.calls  # blocked before the hop
+
+
+def test_crawl_disallowed_child_sitemap_skipped(crawl_env, monkeypatch):
+    _enable_robots(monkeypatch)
+    crawl_env.routes["http://example.com/robots.txt"] = _robots_txt(b"User-agent: *\nDisallow: /bad.xml\n")
+    index = (
+        b'<?xml version="1.0"?>'
+        b'<sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
+        b"<sitemap><loc>http://example.com/bad.xml</loc></sitemap>"
+        b"<sitemap><loc>http://example.com/good.xml</loc></sitemap>"
+        b"</sitemapindex>"
+    )
+    good = (
+        b'<?xml version="1.0"?>'
+        b'<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
+        b"<url><loc>http://example.com/page</loc></url></urlset>"
+    )
+    crawl_env.routes["http://example.com/sitemap.xml"] = _sitemap_response(index)
+    crawl_env.routes["http://example.com/bad.xml"] = _sitemap_response(good)  # would succeed IF fetched
+    crawl_env.routes["http://example.com/good.xml"] = _sitemap_response(good)
+    _site(crawl_env, {"http://example.com/page": ("still works", [])})
+    out = web_crawl("http://example.com/", sitemap_url="http://example.com/sitemap.xml")
+    assert "still works" in out
+    assert "1 child sitemaps skipped" in out
+    assert "http://example.com/bad.xml" not in crawl_env.calls  # blocked before the hop
+
+
+def test_crawl_disallowed_start_url_returns_structured_refusal(crawl_env, monkeypatch):
+    _enable_robots(monkeypatch)
+    crawl_env.routes["http://example.com/robots.txt"] = _robots_txt(b"User-agent: *\nDisallow: /\n")
+    crawl_env.routes["http://example.com/"] = _html("root", [])
+    with pytest.raises(LocalToolError) as exc_info:
+        web_crawl("http://example.com/")
+    msg = str(exc_info.value)
+    # Double-wrapped (design doc): the disallowed seed flows through the
+    # existing unconditional start-URL wrap, same as any other seed failure.
+    assert msg.startswith("[crawl-failed] start URL could not be fetched: ")
+    assert "[robots-disallowed]" in msg
+    assert "http://example.com/" not in crawl_env.calls  # blocked before the hop
+
+
+def test_crawl_disallowed_root_sitemap_returns_structured_refusal(crawl_env, monkeypatch):
+    _enable_robots(monkeypatch)
+    crawl_env.routes["http://example.com/robots.txt"] = _robots_txt(b"User-agent: *\nDisallow: /sitemap.xml\n")
+    crawl_env.routes["http://example.com/sitemap.xml"] = _sitemap_response(
+        b'<?xml version="1.0"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"></urlset>'
+    )
+    with pytest.raises(LocalToolError) as exc_info:
+        web_crawl("http://example.com/", sitemap_url="http://example.com/sitemap.xml")
+    msg = str(exc_info.value)
+    assert msg.startswith("[crawl-failed] sitemap could not be fetched: ")
+    assert "[robots-disallowed]" in msg
+    assert "http://example.com/sitemap.xml" not in crawl_env.calls  # blocked before the hop
+
+
+def test_crawl_robots_uses_crawl_user_agent(crawl_env, monkeypatch):
+    """Disallow the web_fetch UA but allow the crawl UA -- proves web_crawl
+    checks robots.txt against _CRAWL_USER_AGENT, not _USER_AGENT."""
+    _enable_robots(monkeypatch)
+    crawl_env.routes["http://example.com/robots.txt"] = _robots_txt(
+        b"User-agent: tldw-chatbook-web-fetch\nDisallow: /\n\n"
+        b"User-agent: tldw-chatbook-web-crawl\nAllow: /\n"
+    )
+    _site(crawl_env, {"http://example.com/": ("root words", [])})
+    out = web_crawl("http://example.com/")
+    assert "root words" in out
+
+
+def test_crawl_toggle_off_makes_no_robots_fetch(crawl_env):
+    # crawl_env's own fixture default is respect_robots_txt=False; this
+    # test proves a PRESENT, fully-disallowing robots.txt is never even
+    # fetched while the toggle is off.
+    crawl_env.routes["http://example.com/robots.txt"] = _robots_txt(b"User-agent: *\nDisallow: /\n")
+    _site(crawl_env, {"http://example.com/": ("root words", [])})
+    out = web_crawl("http://example.com/")
+    assert "root words" in out
+    assert "http://example.com/robots.txt" not in crawl_env.calls
