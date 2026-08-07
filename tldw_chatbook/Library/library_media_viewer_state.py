@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import io
+import itertools
 import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -21,6 +23,20 @@ _TYPE_KEYS = ("type", "media_type")
 _MARKDOWN_MEDIA_TYPES = frozenset({"plaintext", "markdown", "obsidian_note"})
 _ATX_HEADING_RE = re.compile(r"^#{1,6}\s+\S")
 _TABLE_SEPARATOR_ROW_RE = re.compile(r"^\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)+\|?$")
+
+# task-2858 review fix: ``looks_like_markdown_content`` runs on the UI thread
+# inside ``build_library_media_viewer_state`` every time LibraryScreen opens
+# an item with ``include_content=True`` -- an unbounded ``splitlines()`` scan
+# over a large transcript/document costs a full line-list allocation plus a
+# full-content regex sweep just to pick a *default* view. These caps bound
+# that cost to a small, constant-size prefix of the content. Semantics: this
+# only changes the DEFAULT view -- a document whose first markdown marker
+# sits beyond the sniff window will now default to Raw instead of Rendered,
+# but the Raw/Rendered toggle remains available, so the content is never
+# hidden or altered, only the initial view choice is heuristic. Acceptable
+# by design.
+MAX_MARKDOWN_SNIFF_CHARS = 32_000
+MAX_MARKDOWN_SNIFF_LINES = 200
 # Match the media list's temporal field + label (library_media_state._UPDATED_KEYS)
 # so the same item reads the same "Updated: <age>" in the list and the viewer.
 _UPDATED_KEYS = ("last_modified", "ingestion_date", "date", "updated_at")
@@ -148,15 +164,24 @@ def looks_like_markdown_content(content: str) -> bool:
     count on its own -- only a separator row that also has at least one
     ``|`` reads as an actual table.
 
+    The scan is bounded to the first ``MAX_MARKDOWN_SNIFF_CHARS`` characters
+    and ``MAX_MARKDOWN_SNIFF_LINES`` lines of ``content`` (see that
+    constant's comment) -- this is a "pick a default view" heuristic, not
+    an exhaustive search, so a marker that only appears past the sniff
+    window is not found and the item defaults to Raw instead of Rendered.
+
     Args:
         content: The media item's stored content/transcript text.
 
     Returns:
-        True when ``content`` looks like markdown, else False.
+        True when ``content`` looks like markdown within the bounded
+        sniff window, else False.
     """
     if not content:
         return False
-    for line in content.splitlines():
+    sniff = content[:MAX_MARKDOWN_SNIFF_CHARS]
+    lines = itertools.islice(io.StringIO(sniff, newline=None), MAX_MARKDOWN_SNIFF_LINES)
+    for line in lines:
         stripped = line.strip()
         if not stripped:
             continue

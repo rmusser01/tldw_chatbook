@@ -5,6 +5,8 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from tldw_chatbook.Library.library_media_viewer_state import (
+    MAX_MARKDOWN_SNIFF_CHARS,
+    MAX_MARKDOWN_SNIFF_LINES,
     LibraryMediaHighlightRow,
     LibraryMediaViewerState,
     build_library_media_highlight_rows,
@@ -629,6 +631,52 @@ def test_looks_like_markdown_content_plain_prose_is_false():
 def test_looks_like_markdown_content_empty_or_none_is_false():
     assert looks_like_markdown_content("") is False
     assert looks_like_markdown_content(None) is False  # type: ignore[arg-type]
+
+
+# --- task-2858 review fix: bounded sniff (perf) -----------------------------
+
+
+def test_looks_like_markdown_content_marker_inside_char_window_is_true():
+    """A marker that lands within the first MAX_MARKDOWN_SNIFF_CHARS
+    characters is still detected, even in a large document."""
+    padding = "x" * (MAX_MARKDOWN_SNIFF_CHARS // 2)
+    content = f"{padding}\n# heading\n{padding}"
+    assert looks_like_markdown_content(content) is True
+
+
+def test_looks_like_markdown_content_marker_beyond_char_window_is_false():
+    """A marker whose FIRST occurrence sits entirely past the
+    MAX_MARKDOWN_SNIFF_CHARS sniff window is not found -- the sniff is a
+    bounded default-view heuristic, not an exhaustive scan (the Raw/
+    Rendered toggle remains available for the user to switch manually)."""
+    padding = "x" * (MAX_MARKDOWN_SNIFF_CHARS + 100)
+    content = f"{padding}\n# heading only after the sniff window\n"
+    assert looks_like_markdown_content(content) is False
+
+
+def test_looks_like_markdown_content_marker_inside_line_window_is_true():
+    """A marker on a line within the first MAX_MARKDOWN_SNIFF_LINES lines
+    is detected even when many short non-matching lines precede it, as
+    long as the char budget is not exhausted."""
+    prefix_lines = "\n".join(
+        f"plain line {i}" for i in range(MAX_MARKDOWN_SNIFF_LINES - 10)
+    )
+    content = f"{prefix_lines}\n# heading\n"
+    assert looks_like_markdown_content(content) is True
+
+
+def test_looks_like_markdown_content_marker_beyond_line_window_is_false():
+    """A marker whose FIRST occurrence sits past MAX_MARKDOWN_SNIFF_LINES
+    lines (but well within the char budget) is not found -- the line cap
+    protects against pathological many-short-lines documents that would
+    otherwise stay under the char cap while still costing an unbounded
+    per-line regex scan."""
+    prefix_lines = "\n".join(
+        f"plain line {i}" for i in range(MAX_MARKDOWN_SNIFF_LINES + 50)
+    )
+    content = f"{prefix_lines}\n# heading\n"
+    assert len(content) < MAX_MARKDOWN_SNIFF_CHARS
+    assert looks_like_markdown_content(content) is False
 
 
 def test_build_state_flags_plaintext_media_with_heading_as_markdown():

@@ -62,6 +62,12 @@ DEFAULT_MEDIA_QUALITY = "thumbnail"
 # be dead controls.
 _MEDIA_BEARING_SCOPE_KINDS = ("everything", "media")
 
+# ``format_last_export_line``'s relative-age bucket thresholds, named so the
+# 60/3600/86400 in that function read as units, not magic numbers.
+_SECONDS_PER_MINUTE = 60
+_SECONDS_PER_HOUR = 3600
+_SECONDS_PER_DAY = 86400
+
 
 def default_export_name(today: date | None = None) -> str:
     """Return the form's prefilled export name, stamped with today's date.
@@ -291,14 +297,14 @@ def format_last_export_line(
         return ""
     current = time.time() if now is None else now
     elapsed = max(0.0, current - exported_at)
-    if elapsed < 60:
+    if elapsed < _SECONDS_PER_MINUTE:
         relative = "just now"
-    elif elapsed < 3600:
-        relative = f"{int(elapsed // 60)}m ago"
-    elif elapsed < 86400:
-        relative = f"{int(elapsed // 3600)}h ago"
+    elif elapsed < _SECONDS_PER_HOUR:
+        relative = f"{int(elapsed // _SECONDS_PER_MINUTE)}m ago"
+    elif elapsed < _SECONDS_PER_DAY:
+        relative = f"{int(elapsed // _SECONDS_PER_HOUR)}h ago"
     else:
-        relative = f"{int(elapsed // 86400)}d ago"
+        relative = f"{int(elapsed // _SECONDS_PER_DAY)}d ago"
     return f"Last export: {clean_path} · {relative}"
 
 
