@@ -286,13 +286,15 @@ def build_console_controllers(screen: "ChatScreen") -> None:
                 )
             )
         ),
-        # The inline-image render cache stays screen-owned (out of scope
-        # this wave); `_close_console_session_tab` (wave-4 task 2) drops a
-        # closing tab's cached renders through this named callable rather
-        # than reaching `screen._ensure_console_image_view` itself.
-        evict_console_image_cache=(
-            lambda message_ids: screen._evict_console_image_cache(message_ids)
-        ),
+        # The inline-image cluster stays screen-owned (out of scope this
+        # wave); `_close_console_session_tab` (wave-4 task 2) drops a
+        # closing tab's cached renders through this named callable. It is
+        # the screen's EXISTING lazy accessor, deliberately not a new
+        # one-line screen method wrapping it: `chat_screen.py` is under a
+        # method-count ratchet (Tests/Architecture/test_screen_size_
+        # ratchet.py) that a convenience wrapper would push past, and the
+        # controller's body is the pre-move closure unchanged either way.
+        ensure_console_image_view=lambda: screen._ensure_console_image_view(),
     )
     #: Dictation's own state and lifecycle moved to
     #: `ConsoleDictationController` (wave-1 console decomposition,

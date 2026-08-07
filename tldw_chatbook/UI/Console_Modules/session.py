@@ -351,7 +351,7 @@ class ConsoleSessionController:
         workspace_initial_session_title: Callable[[str | None], str],
         merge_workspace_rows: Callable[[list, tuple], list],
         session_id_for_workspace_conversation: Callable[[str], str | None],
-        evict_console_image_cache: Callable[[list[str]], None],
+        ensure_console_image_view: Callable[[], tuple[Any, Any]],
     ) -> None:
         """Build the controller and bind everything its moved bodies need.
 
@@ -448,13 +448,14 @@ class ConsoleSessionController:
             session_id_for_workspace_conversation: `ConsoleWorkspace
                 Controller._console_session_id_for_workspace_conversation`
                 -- same seam, `_console_session_id_for_browser_row`.
-            evict_console_image_cache: `ChatScreen._evict_console_image_
-                cache` -- drops cached inline-image renders for a list of
-                message ids. The inline-image cluster (`_ensure_console_
-                image_view` and its lazily-built `ConsoleImageRenderCache`)
-                stays screen-owned and is out of scope this wave, so
-                `_close_console_session_tab` (wave-4 task 2) reaches it as
-                a named callable rather than through `self._screen`.
+            ensure_console_image_view: `ChatScreen._ensure_console_image_
+                view` -- returns the screen's ``(view state, render
+                cache)`` pair, building it on first ask. The inline-image
+                cluster stays screen-owned and is out of scope this wave,
+                so `_close_console_session_tab` (wave-4 task 2) reaches it
+                as a named callable rather than through `self._screen`.
+                Not DOM: the pair is plain state plus a render cache, so
+                the zero-DOM rule is untouched.
         """
         self._screen = screen
         self.app_instance = app_instance
@@ -482,7 +483,7 @@ class ConsoleSessionController:
         self._session_id_for_workspace_conversation_fn = (
             session_id_for_workspace_conversation
         )
-        self._evict_console_image_cache_fn = evict_console_image_cache
+        self._ensure_console_image_view_fn = ensure_console_image_view
 
         # This cluster's own state, moved verbatim from `ChatScreen.__init__`.
         self._console_visible_draft_session_id: str | None = None
@@ -621,11 +622,11 @@ class ConsoleSessionController:
         return self._merge_workspace_rows_fn
 
     @property
-    def _evict_console_image_cache(self) -> Any:
-        """The injected `evict_console_image_cache`. Stays on `ChatScreen`
+    def _ensure_console_image_view(self) -> Any:
+        """The injected `ensure_console_image_view`. Stays on `ChatScreen`
         (the inline-image render cache is not this cluster's state). See
         `__init__`'s docstring."""
-        return self._evict_console_image_cache_fn
+        return self._ensure_console_image_view_fn
 
     @property
     def _session_id_for_workspace_conversation(self) -> Any:
@@ -744,11 +745,11 @@ class ConsoleSessionController:
 
         Moved verbatim out of `ChatScreen.on_button_pressed`'s
         `console-close-session-tab-` branch (wave-4 task 2), the
-        third-largest of its 19. One mechanical edit: the pre-move body's
-        two-line `_evict_closing_session_images` closure -- which reached
-        `self._ensure_console_image_view()` for its cache -- is now the
-        injected one-line `_evict_console_image_cache` call at both of its
-        sites, because the inline-image cluster stays screen-owned.
+        third-largest of its 19, and byte-for-byte -- including the
+        `_evict_closing_session_images` closure, whose
+        `self._ensure_console_image_view()` is now the injected accessor
+        under the same name because the inline-image cluster stays
+        screen-owned.
 
         Args:
             session_id: The session behind the pressed ``×``, parsed by the
@@ -761,6 +762,10 @@ class ConsoleSessionController:
             messages = []
         closing_ids = [m.id for m in messages]
 
+        def _evict_closing_session_images() -> None:
+            _state, cache = self._ensure_console_image_view()
+            cache.evict_session(closing_ids)
+
         if messages:
             from ...Widgets.confirmation_dialog import ConfirmationDialog
 
@@ -769,7 +774,7 @@ class ConsoleSessionController:
                 # TASK-1281: drop the closed session's undo/redo history
                 # too -- it can never be switched back into.
                 self._console_undo_histories.pop(session_id, None)
-                self._evict_console_image_cache(closing_ids)
+                _evict_closing_session_images()
                 await self._sync_native_console_chat_ui()
 
             dialog = ConfirmationDialog(
@@ -783,7 +788,7 @@ class ConsoleSessionController:
         else:
             self._ensure_console_chat_controller().close_session(session_id)
             self._console_undo_histories.pop(session_id, None)
-            self._evict_console_image_cache(closing_ids)
+            _evict_closing_session_images()
             await self._sync_native_console_chat_ui()
 
     async def _handle_console_session_tab_press(self, session_id: str) -> None:

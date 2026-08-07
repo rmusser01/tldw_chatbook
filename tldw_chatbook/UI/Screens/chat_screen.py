@@ -3832,24 +3832,6 @@ class ChatScreen(BaseAppScreen):
             )
         return self._console_image_view_state, self._console_image_cache
 
-    def _evict_console_image_cache(self, message_ids: list[str]) -> None:
-        """Drop cached inline-image renders for a set of message ids.
-
-        The named seam `ConsoleSessionController._close_console_session_
-        tab` reaches for when a tab closes (wave-4 task 2). The inline-
-        image cluster -- `_ensure_console_image_view` and the
-        `ConsoleImageRenderCache` it builds lazily -- stays screen-owned
-        this wave, so the controller gets this one callable instead of a
-        back-door through the screen.
-
-        Args:
-            message_ids: Message ids whose cached renders are no longer
-                reachable. Building the cache is a side effect of asking
-                for it, matching the pre-move body exactly.
-        """
-        _state, cache = self._ensure_console_image_view()
-        cache.evict_session(message_ids)
-
     def _recent_console_image_messages(self, messages) -> list[Any]:
         """Delegate to `ConsoleMessageController` (wave-3 task 1) -- kept
         for the image-view cluster's own staying callers and the
