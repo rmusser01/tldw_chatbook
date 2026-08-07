@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-08-07 01:10'
-updated_date: '2026-08-07 08:31'
+updated_date: '2026-08-07 09:44'
 labels:
   - library
   - keyboard
@@ -60,82 +60,52 @@ task covers the mechanics themselves.
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Implemented all four sub-fixes for the Library keyboard story.
+ROUND 2 (post-review fixes): review verdict "Needs fixes", 3 Important findings, all addressed.
 
-**AC1 (focus on entry/return + Up/Down + Enter)**: entering a list canvas (rail-row press) or
-returning to one (every viewer/editor Back exit) focuses the primary list's first row via
-_arm_library_list_entry_focus()/_focus_library_list_entry(). Up/Down move DOM focus between
-Library list rows in place via a new module-level pure function _move_library_list_row_focus
-(filters siblings by CSS class so the Skills list's interleaved non-row Static secondary lines
-never break the walk; no wrap at boundaries). Enter already opens the focused row via Textual's
-native Button 'enter'->'press' binding -- no new code needed.
+(1+2) Settle-window timer could silently steal focus from a user who Tabbed/clicked away within
+the window (only 2 disarm call sites existed: Up/Down and the timer). Fixed: disarm is now
+interaction-driven -- on_key disarms unconditionally on ANY key (before the Input/TextArea early
+return); new on_descendant_focus disarms the instant focus lands on any widget that isn't a row
+of the armed list (catches mouse clicks, which never reach on_key). The timer's role is now only
+"bound an IDLE list's re-fire window" -- no longer what protects user navigation. Timer duration
+measured live (not guessed): two runs of the Skills "New skill -> save -> Escape" chain showed
+142ms/249ms for the chained trust-posture worker; raised LIBRARY_LIST_ENTRY_FOCUS_ARMED_SECONDS
+1.0 -> 2.0 (~8-14x measured worst case) with the measurement documented in code. New tests
+(2 real Pilot integration tests + 5 unit tests) prove: Tab-away survives a background recompose
+within the window (focus NOT stolen); 3 chained recomposes with no user input all still get
+re-focused (not narrowly tuned to the one measured case). AC1's caveat is resolved by this fix,
+not just noted -- the race it flagged no longer exists.
 
-Found and fixed a real race: _refresh_local_source_snapshot (kicked by every editor 'back to
-list' exit) is an independent @work background worker whose completion can trigger a LATER
-recompose (for Skills this chains into ANOTHER worker, the trust-posture reload) that rebuilds
-the list's row Buttons as fresh instances and silently drops the just-set focus. A single-consume
-flag lost that race (proven live, then fixed): _library_pending_list_entry_focus now stays armed
-for a bounded settle window (LIBRARY_LIST_ENTRY_FOCUS_ARMED_SECONDS=1.0s) and is re-consulted by
-compose_content() -- the one choke point every recompose passes through -- on every run, not just
-the first. Disarmed immediately the moment the user presses Up/Down (manual control). Also found
-_LIBRARY_LIST_ROW_CLASS_BY_ROW_ID needed CREATE_PROMPT/CREATE_SKILL entries alongside the four
-BROWSE_* ids: _library_selected_row_id stays CREATE_SKILL (never reassigned to BROWSE_SKILLS)
-after a freshly-created skill's editor exits back to the list, mirroring
-_library_skill_editor_active's own dual-row-id gate.
+(3) AC4 was checked without meeting its own "ANSI-attribute assertions, not something changed"
+bar -- the round-1 evidence leaned on a git-blame fact instead of a genuine capture, and the CSS
+hardening covered a different surface than the UAT's own Tab#35/Tab#40 citations. Redid it with
+the UAT's own method: scripted a full Tab walk at HEAD from a TRUE landing state (55 presses
+through nav+rail+Details-chip+into canvas: 0 identical consecutive pairs of 55) and a dedicated
+walk through the media viewer/edit form (45 presses: 0 identical pairs of 45), both fully
+byte-compared, both pasted into the report with counts. Separately captured the Author input
+focused-vs-unfocused with explicit raw ANSI bytes (border/background/text-weight all change,
+label stays readable). None of the three original claims reproduce at HEAD -- AC4's checkbox
+stands as checked on this stronger evidence; no amendment needed since nothing survived to amend
+for.
 
-**AC2 (Escape = back)**: four new check_action-gated screen-level 'escape' Bindings, following
-Task 2's exact idiom -- library_media_viewer_back, library_note_editor_back,
-library_prompt_editor_back (each: detail/viewer -> list, reusing the SAME guarded-exit method the
-'Back to list' button calls) and library_list_focus_rail (list -> rail search box, a pure focus
-hop, never navigation). The three Button.Pressed handlers were refactored to share one
-_exit_library_*_guarded() method each with their new Escape action. Footer honesty: centralized
-_register_footer_shortcuts() into compose_content() itself (every recompose) instead of chasing
-every editor/viewer entry call site -- two new footer sets, LIBRARY_DETAIL_BACK_SHORTCUTS ('esc
-back to list') and LIBRARY_LIST_SHORTCUTS ('esc focus rail').
+Also fixed (promoted Minor): _exit_library_media_viewer() ran unconditionally on Escape even
+mid-edit, unlike note/prompt's dirty-guarded exits. The media edit/delete-confirm/analysis-edit
+sub-states have NO dirty-tracking field to veto on (unlike notes/prompts/skills) -- rather than
+inventing one, Escape now steps back ONE level per sub-state, mirroring each one's own
+pre-existing Cancel button exactly (#library-media-edit-cancel / -delete-cancel /
+-analysis-cancel, all three already discard unconditionally, pre-dating this task). Strictly
+LESS aggressive than before. The always-visible "Back to list" button's own unchanged behavior
+(skips sub-states) is a deliberate, documented scope boundary, not an oversight.
 
-**AC3 (rail-focus accelerator)**: re-verified live that the pre-existing '/' screen-level
-accelerator (already footer-advertised on every non-search canvas) already satisfies this AC --
-jumps directly to the rail search box from anywhere, including from deep inside the media viewer
-after 30+ Tabs. No new key added (avoids a redundant/conflicting binding); Escape-from-list now
-converges on the SAME #library-search-input target as / and F6.
+Foreground test totals (no background waiting): test_library_shell.py 352 passed/1 failed;
+test_screen_navigation.py+test_library_skills_canvas.py+test_non_obscuring_focus_contract.py 308
+passed/1 failed; Tests/Library 1077 passed. TOTAL 1737 passed, 2 failed -- both the SAME
+pre-existing unrelated failures from round 1 (task-2860's footer bug; an untouched _forms.tcss
+Select:focus rule). A third failure appeared once under heavy combined-run load
+(test_library_shell_ingest_canvas_live_updates_without_manual_recompose, an unrelated
+media-ingest queue polling test) -- confirmed transient by re-running in isolation (passed) and
+re-running the full file alone (352 passed, only the known failure).
 
-**AC4 (invisible focus stops + readable focus)**: re-verified live at HEAD -- could not reproduce
-the specific 'Tab#35'/'Tab#40 byte-identical' claims (a 30-press Tab walk through the viewer/
-edit-form found no identical consecutive frames) or the Author-input claim (#library-media-edit-
-form Input:focus already applies correctly, confirmed live with ANSI evidence: blue border +
-bold + blue background on Tab). Layout has shifted materially since the UAT's older commit.
-Proactively hardened the four list-row classes anyway, since AC1 now makes them the primary
-keyboard-interactive surface: added .library-media-row:focus / .library-notes-row:focus /
-.library-prompt-row:focus / .library-skill-row:focus (previously relying on the generic
-*:focus{outline:solid} fallback) using the SAME background/color/text-style contract
-.library-media-row-selected already uses -- never outline:heavy, which the round-3 lesson
-documents as label-eating on 1-row compact widgets (.library-skill-row is exactly that shape).
-Verified live with ANSI evidence that labels stay fully readable when focused.
-
-**AC5 (live walkthrough)**: full keyboard-only landing->Media list(entry-focus)->item(Enter
-opens)->Escape(list, refocused, footer shows 'esc focus rail')->Escape(rail, search box focused)
-proven with capture-pane -e ANSI evidence at every hop. Also verified the Skills 'New skill ->
-save -> Escape' race-fix scenario cleanly twice (with and without diagnostic instrumentation).
-
-**Files changed**: tldw_chatbook/UI/Screens/library_screen.py (BINDINGS, footer shortcut sets,
-check_action, new predicate/action/guarded-exit methods, on_key Up/Down, compose_content
-centralization, module-level pure focus-movement function + row-id/class maps);
-tldw_chatbook/css/components/_agentic_terminal.tcss (+regenerated tldw_cli_modular.tcss) for the
-four list-row :focus rules; Docs/User_Guide/library.md (Keyboard & commands section + Verified-
-against stamp); Tests/UI/test_non_obscuring_focus_contract.py (CSS contract test),
-Tests/UI/test_screen_navigation.py (check_action/action unit tests, compose_content flag-
-consumption tests, arm/disarm timer test), Tests/UI/test_library_shell.py (Pilot-based
-focus-on-entry/arrow-movement/escape-chain integration tests for Media/Notes, pure-function test
-for the Skills interleaved-sibling case), Tests/UI/test_library_skills_canvas.py (updated the
-pre-existing footer-shortcut and skill-back tests for the new LIBRARY_LIST_SHORTCUTS/arm-timer
-behavior).
-
-**Discovered, filed as follow-up (out of scope for this task)**: task-2860 -- AppFooterStatus's
-_RESERVED_GLOBAL_KEYS filter silently strips the Library screen's OWN 'F6 next pane' hint text
-from every context that advertises it (LIBRARY_LANDING_SHORTCUTS/LIBRARY_GENERAL_SHORTCUTS/
-LIBRARY_NOTES_FILES_SHORTCUTS, and now LIBRARY_DETAIL_BACK_SHORTCUTS/LIBRARY_LIST_SHORTCUTS too),
-replacing it with the unrelated global 'F6 panes' hint. Confirmed pre-existing via direct A/B
-(still fails with this task's own footer-registration change fully reverted) -- the F6 key
-itself still works, only its Library-specific hint text is silently dropped. Does not block this
-task (the ESCAPE mechanics this task cares about are unaffected; esc isn't a reserved key).
+All temporary timing/diagnostic instrumentation removed before commit; verified via grep + clean
+py_compile.
 <!-- SECTION:NOTES:END -->

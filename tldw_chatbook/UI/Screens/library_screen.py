@@ -22,7 +22,7 @@ from textual import on, work
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
-from textual.events import Key
+from textual.events import DescendantFocus, Key
 from textual.screen import ModalScreen
 from textual.css.query import NoMatches, QueryError
 from textual.timer import Timer
@@ -388,10 +388,22 @@ LIBRARY_SNAPSHOT_CACHE_TTL_SECONDS = 5.0
 # ``self.refresh(recompose=True)``) -- a single-consume flag loses the
 # race against whichever finishes last. ``compose_content`` re-requests
 # the focus on every recompose while this window is open instead of
-# consuming the flag on first use; an explicit Up/Down (the user taking
-# manual control -- see ``on_key``) disarms it immediately, so this window
-# only matters for the brief settle period right after the transition.
-LIBRARY_LIST_ENTRY_FOCUS_ARMED_SECONDS = 1.0
+# consuming the flag on first use.
+#
+# Review round 2: user interaction (ANY key -- ``on_key``; a focus change
+# to something other than the armed list's own rows, including mouse
+# clicks -- ``on_descendant_focus``) now disarms the request IMMEDIATELY,
+# so this window is no longer what protects a user's Tab-away/click from
+# being overridden -- it only bounds how long an IDLE, still-armed list
+# keeps re-requesting focus across its own chained background workers.
+# Measured live (timestamped, two independent runs of the exact skills
+# "New skill -> save -> Escape" chain that motivates this at all): the
+# gap between the exit's own synchronous recompose and the CHAINED
+# trust-posture worker's later one was 249ms and 142ms. This constant is
+# ~4-7x that measured worst case, comfortably absorbing a slower disk/
+# keyring backend or CI machine while still resolving quickly if a truly
+# idle list somehow never settles.
+LIBRARY_LIST_ENTRY_FOCUS_ARMED_SECONDS = 2.0
 LIBRARY_NOTES_AUTOSAVE_SECONDS = 2.0
 LIBRARY_NOTE_CONTENT_MAX_CHARS = 2_000_000
 # Prompt editor body fields (details/system/user) have no dedicated cap of
@@ -1889,18 +1901,25 @@ class LibraryScreen(BaseAppScreen):
         which claims the key only while a list row genuinely has focus, so
         Up/Down are left alone everywhere else (rail rows, form Inputs, the
         command palette, etc.).
+
+        task-2856 (review round 2): ANY key disarms a pending entry-focus
+        request (``_library_pending_list_entry_focus``) the instant it is
+        pressed -- unconditionally, before the Input/TextArea early
+        return, since typing into a Tab-reached field is exactly the kind
+        of user interaction that must stop the request too. Disarming an
+        already-idle flag is a harmless no-op, so this never needs its own
+        gate. Complements ``on_descendant_focus`` (which also catches
+        mouse clicks -- see its docstring); together the two mean the
+        settle-window timer is only ever the LAST resort for a
+        still-armed, still-idle request.
         """
+        if self._library_pending_list_entry_focus:
+            self._disarm_library_list_entry_focus()
         if isinstance(self.focused, (Input, TextArea)):
             return
         if event.key in ("up", "down") and _move_library_list_row_focus(
             self.focused, event.key
         ):
-            # task-2856: the user just took manual control of list focus --
-            # disarm the entry-focus request immediately (rather than
-            # waiting out its settle window) so a still-in-flight
-            # background snapshot refresh can never yank focus back to
-            # row 0 out from under them.
-            self._disarm_library_list_entry_focus()
             event.stop()
             event.prevent_default()
             return
@@ -2394,6 +2413,17 @@ class LibraryScreen(BaseAppScreen):
         ``compose_content`` on every recompose while armed -- see that
         flag's docstring in ``__init__`` for why a single-consume flag
         is not enough) IN ADDITION TO scheduling the immediate attempt.
+
+        The settle window is a background-recompose safety net ONLY --
+        review round 2 found the timer was the sole disarm path, so a
+        user who Tabbed (or clicked) away from the list within the window
+        had their navigation silently overridden by the next background
+        recompose. ``on_key``/``on_descendant_focus`` now disarm
+        IMMEDIATELY the moment the user does anything that is not the
+        system re-focusing its own row (see both methods' docstrings), so
+        the timer's only remaining job is bounding how long an IDLE list
+        keeps re-requesting focus across its own chained background
+        workers.
         """
         self._library_pending_list_entry_focus = True
         self.call_after_refresh(self._focus_library_list_entry)
@@ -2405,11 +2435,41 @@ class LibraryScreen(BaseAppScreen):
     def _disarm_library_list_entry_focus(self) -> None:
         """End an entry-focus request's settle window (task-2856 AC1).
 
-        Fired by the timer ``_arm_library_list_entry_focus`` sets, or
-        directly by ``on_key`` the moment Up/Down gives the user manual
-        control of list focus -- whichever comes first.
+        Fired by: the timer ``_arm_library_list_entry_focus`` sets; the
+        top of ``on_key`` for ANY key while the request is armed (the
+        user doing anything at all is "taking control"; disarming an
+        already-idle flag is a harmless no-op); or ``on_descendant_focus``
+        the moment focus lands somewhere other than a row of the armed
+        list (Tab, Shift+Tab, a mouse click -- anything that is not the
+        system's own re-focus of its own row) -- whichever comes first.
         """
         self._library_pending_list_entry_focus = False
+
+    def on_descendant_focus(self, event: DescendantFocus) -> None:
+        """Disarm a pending entry-focus request on any FOREIGN focus change
+        (task-2856 review round 2).
+
+        Textual posts ``DescendantFocus`` for every focus change, including
+        the system's OWN ``_focus_library_list_entry()`` call -- that case
+        must NOT immediately disarm what it just armed, so it is excluded
+        by checking the newly-focused widget against the armed list's own
+        row class. Anything else (Tab/Shift+Tab landing elsewhere in the
+        canvas, a mouse click on a different control, `/` moving focus to
+        the rail search box) disarms: the user has taken over, and a later
+        background recompose must never yank focus back out from under
+        them. Complements the unconditional disarm at the top of
+        ``on_key`` -- this hook is what also covers mouse clicks, which
+        never reach ``on_key`` at all.
+        """
+        if not self._library_pending_list_entry_focus:
+            return
+        row_class = _LIBRARY_LIST_ROW_CLASS_BY_ROW_ID.get(
+            self._library_selected_row_id
+        )
+        widget = event.widget
+        if row_class is not None and widget is not None and widget.has_class(row_class):
+            return
+        self._disarm_library_list_entry_focus()
 
     def _focus_library_list_entry(self) -> None:
         """Focus the primary list's first row -- see ``_arm_library_list_entry_focus``.
@@ -4547,9 +4607,12 @@ class LibraryScreen(BaseAppScreen):
         # left nothing armed for the trust-posture worker's later one to
         # re-request from. Re-firing without clearing, bounded by the
         # flag's own settle-window timer (``_arm_library_list_entry_focus``)
-        # and disarmed immediately by manual Up/Down (``on_key``), covers
-        # an arbitrary-length chain of these workers instead of exactly
-        # one.
+        # and disarmed immediately by user interaction (``on_key`` /
+        # ``on_descendant_focus`` -- review round 2: the timer used to be
+        # the ONLY disarm path, so a background recompose landing after a
+        # user had already Tabbed/clicked away could yank focus back),
+        # covers an arbitrary-length chain of these workers instead of
+        # exactly one.
         if self._library_pending_list_entry_focus:
             self.call_after_refresh(self._focus_library_list_entry)
         preferences = self._library_rail_preferences()
@@ -16025,11 +16088,42 @@ class LibraryScreen(BaseAppScreen):
         self._arm_library_list_entry_focus()
 
     def action_library_media_viewer_back(self) -> None:
-        """Escape: leave the media viewer for its list (task-2856 AC2).
+        """Escape: step back ONE level in the media viewer (task-2856 AC2).
 
         ``check_action`` gates this to the media canvas genuinely showing
         its viewer sub-view, so it only ever fires there.
+
+        Review round 2: the media edit/delete-confirm/analysis-edit forms
+        have no ``_library_*_dirty`` field to guard the way the note/
+        prompt editors do (nothing marks them dirty; there is no
+        equivalent of ``_flush_library_note_save``/``_flush_library_
+        prompt_save`` to call here). Rather than inventing one, Escape
+        instead mirrors each sub-state's OWN existing Cancel affordance --
+        ``#library-media-edit-cancel`` / ``#library-media-delete-cancel``
+        / ``#library-media-analysis-cancel`` -- all three ALREADY discard
+        that one sub-state's in-progress edit unconditionally (a
+        pre-existing, pre-task-2856 UX decision) and land back on the
+        plain read-only viewer, never past it. Jumping straight to the
+        list -- ``_exit_library_media_viewer()`` -- only happens from
+        that plain viewer, with no sub-state active to discard. This
+        makes a mid-edit Escape strictly LESS aggressive than before (one
+        step, matching Cancel) rather than skipping past the sub-state
+        straight to the list the way the always-visible "‹ Back to list"
+        button does (that button's own behavior is unchanged; widening
+        ITS guard is outside this task).
         """
+        if self._library_media_editing:
+            self._library_media_editing = False
+            self.refresh(recompose=True)
+            return
+        if self._library_media_confirming_delete:
+            self._library_media_confirming_delete = False
+            self.refresh(recompose=True)
+            return
+        if self._library_media_editing_analysis:
+            self._library_media_editing_analysis = False
+            self.refresh(recompose=True)
+            return
         self._exit_library_media_viewer()
 
     @on(Button.Pressed, "#library-media-edit")

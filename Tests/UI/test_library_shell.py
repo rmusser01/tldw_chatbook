@@ -12355,6 +12355,79 @@ async def test_library_media_escape_returns_to_list_then_focuses_rail():
 
 
 @pytest.mark.asyncio
+async def test_library_media_tab_away_survives_a_background_recompose_within_the_settle_window():
+    """task-2856 review round 2: the settle-window timer used to be the
+    ONLY thing that disarmed a pending entry-focus request -- a
+    background recompose landing after the user had already Tabbed away
+    (within the window) would silently steal focus back to row 0,
+    discarding their navigation. ``on_descendant_focus`` now disarms the
+    instant Tab moves focus off the armed list's own rows, so a
+    recompose forced immediately afterward must NOT re-focus row 0."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), media=_two_media_items())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one(f"#library-row-{LIBRARY_ROW_BROWSE_MEDIA}").press()
+        await _wait_for_selector(screen, pilot, "#library-media-row-0")
+        await pilot.pause()
+
+        first_row = screen.query_one("#library-media-row-0", Button)
+        assert first_row.has_focus
+        assert screen._library_pending_list_entry_focus is True
+
+        await pilot.press("tab")
+        await pilot.pause()
+        assert not first_row.has_focus, "Tab must actually move focus off row 0"
+        assert screen._library_pending_list_entry_focus is False, (
+            "on_descendant_focus must disarm the instant focus leaves the list"
+        )
+
+        # Simulate a still-in-flight background worker's recompose landing
+        # NOW, well within the (2s) settle window -- this must NOT force
+        # focus back onto the freshly-rebuilt row 0.
+        screen.refresh(recompose=True)
+        await pilot.pause()
+        await pilot.pause()
+
+        rebuilt_first_row = screen.query_one("#library-media-row-0", Button)
+        assert not rebuilt_first_row.has_focus
+
+
+@pytest.mark.asyncio
+async def test_library_media_entry_focus_survives_three_chained_recomposes():
+    """task-2856 review round 2: an arbitrary-length chain of background
+    recomposes -- not just the two-deep chain measured live for Skills --
+    all get a re-fire as long as the settle window is open and the user
+    has not touched anything, proving the fix is not narrowly tuned to
+    exactly one extra recompose."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), media=_two_media_items())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one(f"#library-row-{LIBRARY_ROW_BROWSE_MEDIA}").press()
+        await _wait_for_selector(screen, pilot, "#library-media-row-0")
+        await pilot.pause()
+        assert screen.query_one("#library-media-row-0", Button).has_focus
+
+        for hop in range(3):
+            screen.refresh(recompose=True)
+            await pilot.pause()
+            await pilot.pause()
+            assert screen.query_one("#library-media-row-0", Button).has_focus, (
+                f"focus lost after chained recompose #{hop + 1}"
+            )
+            assert screen._library_pending_list_entry_focus is True
+
+
+@pytest.mark.asyncio
 async def test_library_notes_list_focuses_first_row_and_arrow_keys_move_it():
     """task-2856 AC1: the Notes list gets the SAME entry-focus + Up/Down
     treatment as Media -- proven independently since the two canvases

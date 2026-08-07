@@ -1854,8 +1854,9 @@ def test_check_action_gates_list_focus_rail_to_showing_list():
 
 
 def test_action_library_media_viewer_back_returns_to_list_and_refocuses_it():
-    """task-2856 AC1/AC2: Escape from the media viewer reuses the exact
-    same reset sequence as the "‹ Back to list" button
+    """task-2856 AC1/AC2: Escape from the PLAIN read-only media viewer (no
+    edit/delete-confirm/analysis sub-state active) reuses the exact same
+    reset sequence as the "‹ Back to list" button
     (``_exit_library_media_viewer``) and then re-focuses the list's first
     row, one seam for both exits."""
     from tldw_chatbook.Library.library_shell_state import LIBRARY_ROW_BROWSE_MEDIA
@@ -1868,8 +1869,9 @@ def test_action_library_media_viewer_back_returns_to_list_and_refocuses_it():
     screen = LibraryScreen(app)
     screen._library_selected_row_id = LIBRARY_ROW_BROWSE_MEDIA
     screen._library_media_view = "viewer"
-    screen._library_media_editing = True
-    screen._library_media_confirming_delete = True
+    screen._library_media_editing = False
+    screen._library_media_confirming_delete = False
+    screen._library_media_editing_analysis = False
 
     refresh_calls = []
     focus_calls = []
@@ -1884,13 +1886,57 @@ def test_action_library_media_viewer_back_returns_to_list_and_refocuses_it():
     screen.action_library_media_viewer_back()
 
     assert screen._library_media_view == "list"
-    assert screen._library_media_editing is False
-    assert screen._library_media_confirming_delete is False
     assert refresh_calls == [True]
     assert timer_calls == [
         (LIBRARY_LIST_ENTRY_FOCUS_ARMED_SECONDS, screen._disarm_library_list_entry_focus)
     ]
     assert focus_calls == [screen._focus_library_list_entry]
+
+
+@pytest.mark.parametrize(
+    "sub_state_flag",
+    [
+        "_library_media_editing",
+        "_library_media_confirming_delete",
+        "_library_media_editing_analysis",
+    ],
+)
+def test_action_library_media_viewer_back_steps_out_of_a_sub_state_first(
+    sub_state_flag: str,
+):
+    """task-2856 AC2 review round 2: the media edit/delete-confirm/
+    analysis-edit sub-states have no dirty-tracking field to veto on (
+    unlike the note/prompt editors), so Escape instead mirrors each
+    sub-state's OWN existing Cancel button -- one step back to the plain
+    viewer, NOT straight through to the list. This is strictly less
+    aggressive than jumping to the list mid-edit would be, and requires no
+    new dirty-state invention."""
+    from tldw_chatbook.Library.library_shell_state import LIBRARY_ROW_BROWSE_MEDIA
+    from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+
+    app = _build_test_app()
+    screen = LibraryScreen(app)
+    screen._library_selected_row_id = LIBRARY_ROW_BROWSE_MEDIA
+    screen._library_media_view = "viewer"
+    screen._library_media_editing = False
+    screen._library_media_confirming_delete = False
+    screen._library_media_editing_analysis = False
+    setattr(screen, sub_state_flag, True)
+
+    refresh_calls = []
+    focus_calls = []
+    screen.refresh = lambda recompose=False: refresh_calls.append(recompose)
+    screen.call_after_refresh = lambda callback: focus_calls.append(callback)
+    screen.set_timer = lambda delay, callback: None
+
+    screen.action_library_media_viewer_back()
+
+    # Still on the viewer -- Escape did NOT jump to the list.
+    assert screen._library_media_view == "viewer"
+    assert getattr(screen, sub_state_flag) is False
+    assert refresh_calls == [True]
+    # No entry-focus request armed -- the list was never re-entered.
+    assert focus_calls == []
 
 
 @pytest.mark.asyncio
@@ -2102,6 +2148,107 @@ def test_arm_library_list_entry_focus_schedules_immediate_attempt_and_settle_tim
     ]
 
     screen._disarm_library_list_entry_focus()
+    assert screen._library_pending_list_entry_focus is False
+
+
+def test_on_key_disarms_a_pending_list_entry_focus_on_any_key():
+    """task-2856 review round 2: review found the settle-window timer was
+    the ONLY disarm path, so a background recompose landing after the
+    user had already Tabbed/clicked away could silently steal focus back
+    to row 0. ``on_key`` now disarms unconditionally the instant ANY key
+    is pressed while a request is armed -- disarming an idle flag is a
+    harmless no-op, so this needs no gate on which key."""
+    from types import SimpleNamespace
+
+    from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+
+    app = _build_test_app()
+    screen = LibraryScreen(app)
+    screen._library_pending_list_entry_focus = True
+    screen.focused = None
+
+    # An arbitrary key with no other special handling in on_key.
+    screen.on_key(SimpleNamespace(key="x", character="x"))
+
+    assert screen._library_pending_list_entry_focus is False
+
+
+def test_on_key_disarm_is_a_harmless_noop_when_nothing_is_armed():
+    """The unconditional on_key disarm must never raise or misbehave when
+    there is nothing pending -- the overwhelmingly common case."""
+    from types import SimpleNamespace
+
+    from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+
+    app = _build_test_app()
+    screen = LibraryScreen(app)
+    assert screen._library_pending_list_entry_focus is False
+    screen.focused = None
+
+    screen.on_key(SimpleNamespace(key="x", character="x"))
+
+    assert screen._library_pending_list_entry_focus is False
+
+
+def test_on_descendant_focus_disarms_when_focus_leaves_the_armed_list():
+    """task-2856 review round 2: ``on_descendant_focus`` is what catches
+    focus changes ``on_key`` cannot -- a mouse click never reaches
+    ``on_key`` at all. Focus landing on any widget that is NOT a row of
+    the currently-armed list (Tab, Shift+Tab, a click elsewhere in the
+    canvas) disarms the pending request."""
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Library.library_shell_state import LIBRARY_ROW_BROWSE_MEDIA
+    from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+
+    app = _build_test_app()
+    screen = LibraryScreen(app)
+    screen._library_selected_row_id = LIBRARY_ROW_BROWSE_MEDIA
+    screen._library_pending_list_entry_focus = True
+
+    foreign_widget = SimpleNamespace(has_class=lambda name: False)
+    screen.on_descendant_focus(SimpleNamespace(widget=foreign_widget))
+
+    assert screen._library_pending_list_entry_focus is False
+
+
+def test_on_descendant_focus_does_not_disarm_for_the_systems_own_row_refocus():
+    """The system's own ``_focus_library_list_entry()`` call ALSO posts a
+    ``DescendantFocus`` (Textual posts it for every focus change,
+    including programmatic ``.focus()`` calls) -- that case must NOT
+    immediately disarm what it just armed, or the settle window would be
+    self-defeating."""
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Library.library_shell_state import LIBRARY_ROW_BROWSE_MEDIA
+    from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+
+    app = _build_test_app()
+    screen = LibraryScreen(app)
+    screen._library_selected_row_id = LIBRARY_ROW_BROWSE_MEDIA
+    screen._library_pending_list_entry_focus = True
+
+    own_row = SimpleNamespace(has_class=lambda name: name == "library-media-row")
+    screen.on_descendant_focus(SimpleNamespace(widget=own_row))
+
+    assert screen._library_pending_list_entry_focus is True
+
+
+def test_on_descendant_focus_is_a_noop_when_nothing_is_armed():
+    """The hook must never touch focus/state when no request is pending --
+    the overwhelmingly common case (every OTHER focus change on the whole
+    screen also flows through here)."""
+    from types import SimpleNamespace
+
+    from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+
+    app = _build_test_app()
+    screen = LibraryScreen(app)
+    assert screen._library_pending_list_entry_focus is False
+
+    foreign_widget = SimpleNamespace(has_class=lambda name: False)
+    screen.on_descendant_focus(SimpleNamespace(widget=foreign_widget))
+
     assert screen._library_pending_list_entry_focus is False
 
 
