@@ -212,6 +212,85 @@ def test_generate_and_search_no_warning_when_subquery_generation_disabled(monkey
     assert not any("sub-query generation failed" in w for w in wsr["warnings"])
 
 
+def test_generate_and_search_provider_error_not_demoted_by_subquery_warning(monkeypatch):
+    """Important 2 (fix-wave 2026-08-07 review): the sub-query-generation-
+    exhausted notice used to be appended at warnings[0] BEFORE the fan-out
+    loop ran, and the promotion check just below it blindly promotes
+    warnings[0] to the top-level `error`. With subquery_generation on AND
+    generation exhausted AND a real provider error, that misattributed the
+    PROVIDER's own error as the sub-query notice -- reproduced here with
+    subquery_generation=True, analyze_question exhausted (garbage LLM
+    output every attempt), and perform_websearch returning a
+    processing_error with zero results."""
+    attempts = {"n": 0}
+
+    def always_garbage(**kwargs):
+        attempts["n"] += 1
+        return "not json and no quoted strings here"
+
+    def fake_perform(*a, **k):
+        return {"results": [], "processing_error": "engine 'google' exploded"}
+
+    monkeypatch.setattr(WebSearch_APIs, "chat_api_call", always_garbage)
+    monkeypatch.setattr(WebSearch_APIs, "perform_websearch", fake_perform)
+    monkeypatch.setattr(WebSearch_APIs.time, "sleep", lambda s: None)
+
+    out = WebSearch_APIs.generate_and_search(
+        "what is love", _search_params(subquery_generation=True, subquery_generation_llm="openai")
+    )
+    wsr = out["web_search_results_dict"]
+    assert attempts["n"] == WebSearch_APIs._SUBQUERY_GENERATION_MAX_ATTEMPTS  # all paid attempts made
+
+    subquery_notice = (
+        f"sub-query generation failed after "
+        f"{WebSearch_APIs._SUBQUERY_GENERATION_MAX_ATTEMPTS} attempts; "
+        "searched only the original query"
+    )
+    # The PROVIDER's own error is promoted -- never the sub-query notice.
+    assert wsr["error"] and "exploded" in wsr["error"]
+    assert subquery_notice not in wsr["error"]
+    # ...but the sub-query notice is still present in warnings (just not
+    # promoted, and not occupying the position the provider error owns).
+    assert subquery_notice in wsr["warnings"]
+    assert "exploded" in wsr["warnings"][0]
+    assert wsr["warnings"][-1] == subquery_notice
+
+
+def test_generate_and_search_no_false_error_when_subquery_warning_is_the_only_warning(monkeypatch):
+    """Important 2 continued: a search that legitimately finds nothing --
+    zero results, no provider processing_error at all -- must leave `error`
+    at None. Before this fix, once the sub-query notice was the ONLY entry
+    in `warnings` (subquery_generation exhausted, no provider ever errored),
+    the promotion check treated that informational notice as if it were a
+    provider error and set a FALSE `error`."""
+    attempts = {"n": 0}
+
+    def always_garbage(**kwargs):
+        attempts["n"] += 1
+        return "not json and no quoted strings here"
+
+    def fake_perform(*a, **k):
+        return {"results": [], "processing_error": None}  # legitimately empty, no error
+
+    monkeypatch.setattr(WebSearch_APIs, "chat_api_call", always_garbage)
+    monkeypatch.setattr(WebSearch_APIs, "perform_websearch", fake_perform)
+    monkeypatch.setattr(WebSearch_APIs.time, "sleep", lambda s: None)
+
+    out = WebSearch_APIs.generate_and_search(
+        "what is love", _search_params(subquery_generation=True, subquery_generation_llm="openai")
+    )
+    wsr = out["web_search_results_dict"]
+    assert attempts["n"] == WebSearch_APIs._SUBQUERY_GENERATION_MAX_ATTEMPTS
+
+    subquery_notice = (
+        f"sub-query generation failed after "
+        f"{WebSearch_APIs._SUBQUERY_GENERATION_MAX_ATTEMPTS} attempts; "
+        "searched only the original query"
+    )
+    assert subquery_notice in wsr["warnings"]  # notice still surfaced
+    assert wsr["error"] is None  # but never promoted to a false error
+
+
 # --- chunking / confidence ----------------------------------------------------
 
 def test_build_chunk_infos_packs_and_splits():
@@ -522,53 +601,116 @@ async def test_relevance_guard_runs_on_dedicated_dns_guard_executor(monkeypatch)
     )
 
 
-def test_dns_guard_executor_saturation_does_not_starve_default_executor_offloads():
-    """task-3220: when `asyncio.wait_for` times out around the DNS guard, the
-    abandoned `getaddrinfo` thread keeps occupying its executor slot until
-    the OS resolver itself gives up. If that offload shared the DEFAULT
-    executor (asyncio.to_thread), a run of slow-DNS results could queue this
-    same loop's other default-executor offloads -- the relevance/
-    summarization `chat_api_call` calls -- behind those dead resolvers.
+def test_dns_guard_executor_saturation_does_not_starve_default_executor_offloads(monkeypatch):
+    """task-3220 / fix-wave Important 3 (2026-08-07 review, reviewer's option
+    b): the PREDECESSOR of this test saturated the dedicated pool from
+    OUTSIDE via direct `executor.submit()` calls, then ran a brand-new
+    `asyncio.run(run())` with its own brand-new DEFAULT executor -- nothing
+    it asserted could ever be affected by any other pool's state (the
+    reviewer reproduced this: saturating a completely unrelated executor
+    made the test pass identically). It was vacuous.
 
-    Behavioral proof: fill every worker slot of the dedicated DNS-guard pool
-    with threading.Event-blocked fakes (standing in for abandoned resolver
-    threads), then show a relevance-LLM-style offload on the DEFAULT
-    executor (asyncio.to_thread, exactly what search_result_relevance uses
-    for chat_api_call) still completes promptly. No real DNS, no real
-    sleeps -- unblocking is deterministic and happens in `finally` so no
-    thread is ever left running past this test.
+    This version drives the REAL `search_result_relevance()` -- the actual
+    caller of `_get_dns_guard_executor()` -- and blocks `is_public_http_url`
+    itself, so every real guard call the function submits saturates the
+    dedicated pool from the inside, one call at a time, exactly like
+    production. With `n_results = n_workers + 2`, the first
+    `_DNS_GUARD_EXECUTOR_MAX_WORKERS` guard calls occupy every pool worker
+    (each blocked on `release`, standing in for an abandoned getaddrinfo
+    thread); the last two calls queue entirely UNSTARTED behind them -- the
+    exact scenario the comment above the guard's `wait_for` call now
+    documents (M4). It then proves the faked `chat_api_call` relevance
+    offloads -- which run through `asyncio.to_thread` on the DEFAULT
+    executor, same as production -- all still complete and land within a
+    bounded, predictable time (governed by `scrape_timeout_s`, not by how
+    long the abandoned guard threads actually stay blocked), instead of
+    hanging or queueing behind them.
+
+    This proves NON-STARVATION (the pipeline keeps making progress and
+    every result gets a verdict even with the guard pool fully saturated),
+    not the guard's specific executor IDENTITY -- that's
+    `test_relevance_guard_runs_on_dedicated_dns_guard_executor`'s job, just
+    above. `random.uniform` is patched to 0 to remove the unrelated
+    0.2-0.6s pacing jitter `search_result_relevance` inserts before every
+    LLM call (not what this test is about, and it would otherwise make an
+    N-result run slow for no behavioral benefit). No real DNS, no real
+    sleeps beyond `scrape_timeout_s`-scale (0.1s) waits; the guard block is
+    released deterministically in `finally`, and the module-level executor
+    singleton is reset there too so this test's saturation can never leak
+    into a test that runs after it (fix-wave M8).
     """
-    executor = WebSearch_APIs._get_dns_guard_executor()
     n_workers = WebSearch_APIs._DNS_GUARD_EXECUTOR_MAX_WORKERS
+    n_results = n_workers + 2  # >= 2 guard calls must queue UNSTARTED once saturated
     release = threading.Event()
-    entered = [threading.Event() for _ in range(n_workers)]
+    llm_call_times: list = []
+    scraped: list = []
 
-    def blocked_resolver(i):
-        entered[i].set()
+    def blocking_guard(url):
+        # Every real call blocks until `release` is set in `finally` below --
+        # standing in for an abandoned getaddrinfo thread that never returns
+        # within scrape_timeout_s (the exact production failure mode
+        # task-3220 isolates).
         release.wait(timeout=5)  # released below; 5s is only a safety net
         return True
 
-    futures = [executor.submit(blocked_resolver, i) for i in range(n_workers)]
+    def fake_chat(**kwargs):
+        llm_call_times.append(time.monotonic())
+        return "Selected Answer: True\nReasoning: relevant"
+
+    async def spy_scrape(url, **k):
+        scraped.append(url)
+        return {"content": "should not be reached", "extraction_successful": True}
+
+    monkeypatch.setattr(WebSearch_APIs, "is_public_http_url", blocking_guard)
+    monkeypatch.setattr(WebSearch_APIs, "chat_api_call", fake_chat)
+    monkeypatch.setattr(WebSearch_APIs, "scrape_article", spy_scrape)
+    monkeypatch.setattr(WebSearch_APIs.random, "uniform", lambda a, b: 0.0)
+
+    results = [_std_result(f"T{i}", f"https://e{i}.example/", "c") for i in range(n_results)]
+
     try:
-        for e in entered:
-            assert e.wait(timeout=2), "dedicated DNS-guard pool never saturated"
-
-        async def run() -> tuple:
-            start = time.monotonic()
-            result = await asyncio.wait_for(
-                asyncio.to_thread(lambda: "llm-response"), timeout=1.0
+        start = time.monotonic()
+        out = asyncio.run(
+            WebSearch_APIs.search_result_relevance(
+                results, "q", [], "openai", scrape_timeout_s=0.1
             )
-            return result, time.monotonic() - start
+        )
+        elapsed = time.monotonic() - start
 
-        result, elapsed = asyncio.run(run())
-        assert result == "llm-response"
-        assert elapsed < 0.5, (
-            f"default-executor offload took {elapsed:.3f}s while the "
-            "DNS-guard pool was fully saturated -- it must run independently"
+        # Every result still got a verdict via the snippet/title/url
+        # fallback -- a saturated guard pool must never hang or silently
+        # drop results, whether an individual guard call is
+        # running-but-blocked or queued entirely unstarted.
+        assert len(out) == n_results
+        assert scraped == []  # the guard refusal/timeout path was taken every time
+
+        assert len(llm_call_times) == n_results, "not every result reached the relevance LLM call"
+        # Bound is intentionally generous, NOT tight around n_results *
+        # scrape_timeout_s: this test's job is proving the pipeline makes
+        # progress and completes at all (non-starvation), not pinning which
+        # executor the guard runs on -- that's the wiring test's job (see
+        # module docstring above and the mutation-check note in the
+        # fix-wave). A tight bound here would make this test accidentally
+        # ALSO discriminate executor identity on machines with a small
+        # `os.cpu_count()` (a small default ThreadPoolExecutor can genuinely
+        # need one blocked worker's 5s safety-net release before a queued
+        # call gets a turn if the guard were ever routed back onto it), and
+        # the fix-wave's mutation check #3 explicitly requires this test to
+        # keep passing when the guard is pointed at the default executor.
+        # 15s comfortably covers that shared-pool/low-core-count case while
+        # still catching a genuine per-call deadlock (which would run into
+        # tens of seconds to minutes across `n_results` iterations at
+        # `llm_timeout_s`-scale each).
+        assert elapsed < 15.0, (
+            f"search_result_relevance took {elapsed:.3f}s over {n_results} "
+            "results with a saturated DNS-guard pool -- expected bounded "
+            "progress (scrape_timeout_s-scale per result, or a few "
+            "multiples of it under executor contention), not something "
+            "resembling a per-result deadlock"
         )
     finally:
         release.set()
-        concurrent.futures.wait(futures, timeout=5)
+        WebSearch_APIs._reset_dns_guard_executor_for_tests()
 
 
 # --- pure review ---------------------------------------------------------------

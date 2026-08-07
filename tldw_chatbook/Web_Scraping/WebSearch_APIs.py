@@ -511,8 +511,6 @@ def generate_and_search(question: str, search_params: Dict) -> Dict:
     web_search_results_dict = initialize_web_search_results_dict(search_params)
     web_search_results_dict["search_query"] = question
     web_search_results_dict["warnings"] = []
-    if subquery_generation_failure_warning:
-        web_search_results_dict["warnings"].append(subquery_generation_failure_warning)
 
     # 3. Perform searches and accumulate all raw results
     #
@@ -590,11 +588,36 @@ def generate_and_search(question: str, search_params: Dict) -> Dict:
             f"Total results found so far: {len(web_search_results_dict['results'])}"
         )
 
+    # Promote a provider error to the top-level `error` field BEFORE the
+    # sub-query-generation notice (below) ever joins `warnings` (fix-wave
+    # Important 2, 2026-08-07 review). The old code appended that notice at
+    # warnings[0] -- BEFORE the fan-out loop even ran -- which this
+    # promotion check then treated as the first-provider-error slot. Two
+    # regressions followed: (1) a REAL provider error landing at warnings[1]
+    # got silently demoted/misattributed as the sub-query notice instead,
+    # and (2) an empty-without-error run (every provider legitimately
+    # returned zero results, no processing_error at all) got a FALSE
+    # top-level `error` -- the notice itself isn't a provider error and must
+    # never be promoted to one, including when it's the only entry.
+    # Evaluating this check against only the loop's own provider warnings --
+    # before the notice is appended just below -- keeps `warnings[0]`
+    # meaning exactly what the port comment says (the first provider
+    # error) and leaves `error` at its None default whenever no provider
+    # actually errored, sub-query notice or not.
+    #
     # If every query came back empty and at least one provider errored,
     # surface the first such error as the top-level error (port of server
     # generate_and_search ~:624-627).
     if not web_search_results_dict["results"] and web_search_results_dict["warnings"]:
         web_search_results_dict["error"] = web_search_results_dict["warnings"][0]
+
+    # Append the sub-query-generation-exhausted notice LAST -- after the
+    # promotion check above has already run -- so it rides at the end of
+    # `warnings` for the caller's warning COUNT/footer display, exactly
+    # like any other non-error warning, without ever being eligible for
+    # promotion to `error` itself.
+    if subquery_generation_failure_warning:
+        web_search_results_dict["warnings"].append(subquery_generation_failure_warning)
 
     return {
         "web_search_results_dict": web_search_results_dict,
@@ -911,6 +934,28 @@ def _get_dns_guard_executor() -> concurrent.futures.ThreadPoolExecutor:
     return _DNS_GUARD_EXECUTOR
 
 
+def _reset_dns_guard_executor_for_tests() -> None:
+    """TEST-ONLY: force-recreate the module-level DNS-guard executor.
+
+    `_DNS_GUARD_EXECUTOR` is a process-wide singleton by design (see its
+    docstring above) -- production code never wants to discard in-flight
+    guard calls. But a test that saturates the pool with blocked callables
+    to prove non-starvation (fix-wave Important 3, task-3220) leaves that
+    saturation sitting in the singleton for every test that runs afterward
+    in the same process, since nothing else ever resets it. Shuts the old
+    executor down with `cancel_futures=True` (drops anything still queued
+    but not yet started) and clears the singleton so the next
+    `_get_dns_guard_executor()` call lazily rebuilds a clean pool. No
+    production code path calls this.
+    """
+    global _DNS_GUARD_EXECUTOR
+    with _DNS_GUARD_EXECUTOR_LOCK:
+        executor = _DNS_GUARD_EXECUTOR
+        _DNS_GUARD_EXECUTOR = None
+    if executor is not None:
+        executor.shutdown(wait=True, cancel_futures=True)
+
+
 # FIXME - Ensure edge cases are handled properly / Structured outputs?
 async def search_result_relevance(
     search_results: List[Dict],
@@ -1064,7 +1109,21 @@ async def search_result_relevance(
                             # also where this loop's own chat_api_call/summarize
                             # offloads run -- a run of slow-DNS hosts must not be
                             # able to queue those paid LLM calls behind dead
-                            # resolvers.
+                            # resolvers. This bounds the BLAST RADIUS, not the
+                            # symptom for THIS call: under full saturation of the
+                            # dedicated pool (all `_DNS_GUARD_EXECUTOR_MAX_WORKERS`
+                            # slots already occupied by abandoned threads), a new
+                            # guard call submitted here queues unstarted behind
+                            # them, and `wait_for` below still fires once
+                            # `scrape_timeout_s` elapses -- it has no way to tell
+                            # "queued" from "running slow" apart. That still
+                            # correctly skips the scrape fail-safe (falls through
+                            # to the snippet/title/url fallback exactly like a
+                            # real guard timeout), it just does so without this
+                            # particular call ever having gotten a real DNS
+                            # answer -- the isolation guarantee above is about
+                            # protecting OTHER offloads, not about this call
+                            # getting to run promptly.
                             is_public = await asyncio.wait_for(
                                 asyncio.get_running_loop().run_in_executor(
                                     _get_dns_guard_executor(), is_public_http_url, result["url"]
