@@ -4,6 +4,7 @@ title: Wire RAG context injection into the native Console send path
 status: To Do
 assignee: []
 created_date: '2026-07-21 09:48'
+updated_date: '2026-08-07 14:20'
 labels:
   - rag
   - console
@@ -19,7 +20,7 @@ Verified during the RAG scope program (plan verification V4, re-confirmed by two
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Native Console sends inject RAG context when RAG is enabled, honoring conversation scope end-to-end
+- [ ] #1 Native Console sends inject RAG context only when the 'Auto-retrieve on send' toggle in the Console RAG chip modal is ON (default OFF; enablement is re-homed from the legacy sidebar checkbox to this modal toggle, persisted as a global config key); when ON, injection routes through the existing staged-evidence pipeline -- a visible 'Evidence sent · N' strip, consumed only on send -- honoring conversation scope end-to-end, never as invisible prompt injection.
 - [ ] #2 EMPTY scope short-circuits with the shared notice copy on the native path
 - [ ] #3 Legacy path behavior unchanged
 <!-- AC:END -->
