@@ -1792,6 +1792,9 @@ class PersonasScreen(BaseAppScreen):
                 profile_id=loaded.profile.profile_id,
                 display_name=loaded.profile.display_name,
                 availability=availability_by_id[loaded.profile.profile_id].state,
+                recovery_action=(
+                    availability_by_id[loaded.profile.profile_id].recovery_action
+                ),
             )
             for loaded in snapshot.loaded_profiles
         )
@@ -1818,19 +1821,24 @@ class PersonasScreen(BaseAppScreen):
                 f"{current.profile.display_name} · Unavailable · {count_copy}. "
                 "Repair the profile or remove this assignment."
             )
-        else:
-            # Follow the availability's own recovery action, not the state
-            # alone: a legacy-provider profile has no catalog to preflight,
-            # so its "unverified" is permanent and naming Refresh would
-            # promise a recovery that control can never perform (ADR-031).
-            unverified_tail = (
-                "Refresh or repair the profile; the assignment is preserved."
-                if current_availability.recovery_action == "refresh"
-                else "This provider has no catalog check; the assignment is preserved."
-            )
+        elif current_availability.recovery_action == "refresh":
+            # audio.cpp's transient "unverified" -- Refresh is a real
+            # recovery for this provider, so naming it is honest.
             status = (
                 f"{current.profile.display_name} · Unverified · {count_copy}. "
-                f"{unverified_tail}"
+                "Refresh or repair the profile; the assignment is preserved."
+            )
+        else:
+            # `recovery_action == "none"` means this provider has no
+            # catalog to preflight, so its "unverified" is permanent, not a
+            # transient glitch Refresh could resolve -- naming Refresh here
+            # would promise a recovery control can never perform (ADR-031).
+            # The state word itself also changes: bare "Unverified" would
+            # still misread as temporary even with an honest tail.
+            status = (
+                f"{current.profile.display_name} · No catalog check · "
+                f"{count_copy}. The exact selection is used as-is; the "
+                "assignment is preserved."
             )
         return CharacterTTSPresentationState(
             profiles=profiles,
