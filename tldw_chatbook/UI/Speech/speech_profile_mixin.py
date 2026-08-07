@@ -180,7 +180,60 @@ class SpeechProfileMixin:
         self,
         preset: TTSPlaygroundSelectionPreset,
     ) -> tuple[str, ProfileAvailabilityState] | None:
-        """Return bounded recovery copy when the exact preset cannot generate."""
+        """Return bounded recovery copy when the exact preset cannot generate.
+
+        TASK-2952 branch trace -- the three "unverified"-styled returns below
+        promise a refresh/retry recovery with no check on `preset`'s provider
+        class. Each was traced (and confirmed live, `test_speech_playground_
+        pane.py`) for whether that promise is a false one on the six
+        legacy-bridge providers, the way slice 2 task 3 already fixed the two
+        adjacent adoption sites in `speech_catalog_mixin.py`:
+
+        `expected_revision is None` -- requires `_profile_preview_loading`
+        False while `_profile_configuration_revision` was never set for the
+        preset's own provider. `_load_provider_catalog_worker` sets that
+        field synchronously, before any `await`, the moment it targets
+        `preset.provider_id` -- and production always targets it on the
+        pane's very first load: `initialize`'s provider selection prefers
+        `preset_provider` whenever it is registered, and both provider
+        classes are registered unconditionally
+        (`adapter_bootstrap.build_default_tts_service`,
+        `legacy_bridge.legacy_provider_specs` register all six regardless of
+        config/deps). `_profile_preset` is also set once at construction and
+        never reassigned (`init_profile_state`/`_end_profile_preset` are the
+        only writers), so there is no "preset swapped after mount" path
+        either. LEGACY-UNREACHABLE -- and audio.cpp-unreachable too, so this
+        is not a class distinction to fix. `test_adopted_preset_preview_
+        never_shows_a_null_revision_refresh` pins the invariant this relies
+        on for both classes.
+
+        `current_revision != expected_revision` -- fires when the
+        provider's registry configuration revision changes after the
+        preview loaded (a genuine settings edit on that exact provider, or
+        `mark_provider_configuration_changed`/`_mark_stale_catalog_result`
+        noticing the same drift). This is pure registry bookkeeping
+        (`TTSAdapterRegistry.configuration_revision`), not catalog content --
+        refresh re-reads the revision and re-syncs it for any provider,
+        legacy included. HONEST FOR BOTH CLASSES: confirmed live that
+        bumping a legacy provider's revision produces this exact banner, and
+        pressing Refresh resolves it into the "no catalog check" copy just
+        as it resolves audio.cpp's into its "unverified" copy
+        (`test_adopted_preset_preview_revision_mismatch_refresh_recovers_
+        for_both_classes`).
+
+        `not self._catalog_generation_allowed` -- the one live path found is
+        `_load_provider_voices_worker`'s `TTSRegistryClosedError`
+        (non-reconfiguring) branch, which forces this flag False without an
+        `_apply_controls` recompute; the generic-exception and reconfiguring
+        branches both self-heal through `_apply_catalog`/`_apply_controls`
+        before this state could be observed. `TTSRegistryClosedError` comes
+        from `TTSAdapterRegistry._closed` -- a registry-wide, one-way seal
+        (`adapter_registry.py: close()`) -- identical machinery for
+        audio.cpp and every legacy provider. No legacy-specific divergence
+        found, so no fix belongs here; pinned as a cross-class symmetry
+        check (`test_adopted_preset_preview_registry_closed_during_voice_
+        fetch_is_symmetric`).
+        """
         service = self._tts_service
         if service is None:
             return (
