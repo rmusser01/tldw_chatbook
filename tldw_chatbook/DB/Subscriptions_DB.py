@@ -1848,7 +1848,13 @@ class SubscriptionsDB(BaseDB):
 
         Returns:
             One dict per item row, joined to its subscription's name and type,
-            ordered by `created_at` descending.
+            ordered by EFFECTIVE date descending (`published_date`, falling
+            back to `created_at` when the feed supplied none -- TASK-3072).
+            The COALESCE compares stored strings, which is exact for
+            same-shape ISO and approximate across mixed offsets; the reader
+            re-sorts its displayed page precisely in Python
+            (`Subscriptions/item_dates.py`), so this clause's job is picking
+            the right PAGE, not the final row order.
 
         Raises:
             ValueError: If both `status` and `statuses` are passed.
@@ -1898,7 +1904,7 @@ class SubscriptionsDB(BaseDB):
                 FROM subscription_items i
                 JOIN subscriptions s ON i.subscription_id = s.id
                 {where_clause}
-                ORDER BY i.created_at DESC
+                ORDER BY COALESCE(i.published_date, i.created_at) DESC
                 LIMIT ?
                 """,
                 tuple(params),

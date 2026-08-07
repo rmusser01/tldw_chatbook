@@ -924,3 +924,56 @@ def test_get_flagged_items_count_is_status_agnostic(db_with_memberships):
     db.set_item_flagged(_item_id(db, "https://in.example/2"), True)  # reviewed
 
     assert db.get_flagged_items_count() == 2
+
+
+# --- TASK-3072: effective-date ordering ---------------------------------------
+
+
+def test_get_new_items_orders_by_published_date_desc(db):
+    source_id = db.add_subscription(name="Feed", type="rss", source="https://f.example/f")
+    # Fetched together (created_at ~identical), published in a different
+    # order: the list must follow PUBLISHED order, not fetch order.
+    for url, published in (
+        ("https://f.example/old", "2026-08-01T09:00:00+00:00"),
+        ("https://f.example/newest", "2026-08-07T09:00:00+00:00"),
+        ("https://f.example/middle", "2026-08-05T09:00:00+00:00"),
+    ):
+        _insert_item(db, source_id, url, url, "body")
+        with db.transaction() as conn:
+            conn.execute(
+                "UPDATE subscription_items SET published_date = ? WHERE url = ?",
+                (published, url),
+            )
+
+    rows = db.get_new_items(status=None)
+
+    assert [r["url"] for r in rows] == [
+        "https://f.example/newest",
+        "https://f.example/middle",
+        "https://f.example/old",
+    ]
+
+
+def test_get_new_items_falls_back_to_created_at_when_unpublished(db):
+    source_id = db.add_subscription(name="Feed", type="rss", source="https://f.example/f")
+    _insert_item(db, source_id, "https://f.example/dated", "dated", "body")
+    _insert_item(db, source_id, "https://f.example/undated", "undated", "body")
+    with db.transaction() as conn:
+        # The dated item was fetched BEFORE the undated one (older
+        # created_at), but published long ago: effective-date order puts the
+        # freshly fetched undated item first, not last.
+        conn.execute(
+            "UPDATE subscription_items SET published_date = ?, created_at = ? WHERE url = ?",
+            ("2026-08-01T09:00:00+00:00", "2026-08-06T09:00:00+00:00", "https://f.example/dated"),
+        )
+        conn.execute(
+            "UPDATE subscription_items SET created_at = ? WHERE url = ?",
+            ("2026-08-07T09:00:00+00:00", "https://f.example/undated"),
+        )
+
+    rows = db.get_new_items(status=None)
+
+    assert [r["url"] for r in rows] == [
+        "https://f.example/undated",
+        "https://f.example/dated",
+    ]
