@@ -1157,3 +1157,124 @@ def test_todo_write_validation_failure_does_not_fire_on_todo_change(tmp_path):
     r = p.invoke("local:todo_write", {"todos": [{"status": "pending"}]})
     assert not r.ok
     assert seen == []  # no state change -> no transcript marker
+
+
+# -- web_deep_search: gated registration (task-1356 Task 6) -----------------
+#
+# Double opt-in: absent from the catalog (and therefore from MCP exposure,
+# which reuses this same provider) unless [tools] web_deep_search_enabled is
+# explicitly true. `_default_specs` reads the gate via a MODULE-LEVEL
+# `get_cli_setting` import (not the function-local imports the other web_*
+# tools use) specifically so it is patchable here without touching real
+# config -- see local_tool_provider.py's own import block.
+
+
+def _enable_deep_search(monkeypatch):
+    monkeypatch.setattr(
+        "tldw_chatbook.Agents.local_tool_provider.get_cli_setting",
+        lambda section, key, default=None: True
+        if (section, key) == ("tools", "web_deep_search_enabled") else default,
+    )
+
+
+def test_web_deep_search_absent_by_default(tmp_path):
+    p = make_provider(root=tmp_path)
+    assert "local:web_deep_search" not in [e.id for e in p.list_catalog()]
+
+
+def test_web_deep_search_present_when_enabled(tmp_path, monkeypatch):
+    _enable_deep_search(monkeypatch)
+    p = make_provider(root=tmp_path)
+    ids = [e.id for e in p.list_catalog()]
+    assert "local:web_deep_search" in ids
+    schema = p.load_schema("local:web_deep_search")
+    assert schema.parameters["required"] == ["question"]
+    assert p.hub_tool_for("web_deep_search").tags == ()
+    desc = p.hub_tool_for("web_deep_search").description
+    assert "LLM calls" in desc  # cost shape is model-facing
+
+
+def test_web_deep_search_spec_schema(tmp_path, monkeypatch):
+    _enable_deep_search(monkeypatch)
+    p = make_provider(root=tmp_path)
+    schema = p.load_schema("local:web_deep_search")
+    props = schema.parameters["properties"]
+    assert props["question"]["type"] == "string"
+    assert props["engine"]["type"] == "string"
+    assert "duckduckgo" in props["engine"]["enum"]
+    for engine in ("exa", "serper", "yandex"):
+        assert engine in props["engine"]["enum"]
+    assert props["max_results"]["type"] == "integer"
+    for optional in ("engine", "max_results"):
+        assert optional not in schema.parameters["required"]
+
+
+def test_web_deep_search_description_states_restart_requirement(tmp_path, monkeypatch):
+    _enable_deep_search(monkeypatch)
+    p = make_provider(root=tmp_path)
+    desc = p.hub_tool_for("web_deep_search").description
+    assert "restart" in desc
+    assert "web_deep_search_enabled" in desc
+
+
+def test_web_deep_search_handler_threads_three_params(tmp_path, monkeypatch):
+    _enable_deep_search(monkeypatch)
+    seen = {}
+
+    def fake_web_deep_search(question, engine=None, max_results=None):
+        seen.update(question=question, engine=engine, max_results=max_results)
+        return "the answer"
+
+    monkeypatch.setattr(
+        "tldw_chatbook.Tools.web_tool_impls.web_deep_search", fake_web_deep_search
+    )
+    p = make_provider(root=tmp_path)
+    r = p.invoke(
+        "local:web_deep_search",
+        {"question": "why is the sky blue", "engine": "bing", "max_results": 3},
+    )
+    assert r.ok
+    assert r.content == "the answer"
+    assert seen == {"question": "why is the sky blue", "engine": "bing", "max_results": 3}
+
+
+def test_web_deep_search_handler_omits_optional_params_as_none(tmp_path, monkeypatch):
+    _enable_deep_search(monkeypatch)
+    seen = {}
+
+    def fake_web_deep_search(question, engine=None, max_results=None):
+        seen.update(question=question, engine=engine, max_results=max_results)
+        return "the answer"
+
+    monkeypatch.setattr(
+        "tldw_chatbook.Tools.web_tool_impls.web_deep_search", fake_web_deep_search
+    )
+    p = make_provider(root=tmp_path)
+    r = p.invoke("local:web_deep_search", {"question": "why is the sky blue"})
+    assert r.ok
+    assert seen == {"question": "why is the sky blue", "engine": None, "max_results": None}
+
+
+def test_web_deep_search_pinned_catalog_list_unchanged_by_default(tmp_path):
+    # Absence-by-default means the pinned default catalog (asserted verbatim
+    # in test_catalog_lists_default_specs_with_local_ids) does not grow when
+    # the gate is off -- this is a second witness at the boundary, not a
+    # replacement for that test.
+    p = make_provider(root=tmp_path)
+    assert [e.name for e in p.list_catalog()] == [
+        "fs_list", "fs_read", "fs_write", "fs_edit", "fs_patch", "fs_glob",
+        "fs_grep", "git_status", "git_diff", "git_log", "git_blame",
+        "git_branches", "web_fetch", "web_search", "web_crawl",
+    ]
+
+
+def test_timeout_for_overrides_only_web_deep_search(tmp_path, monkeypatch):
+    _enable_deep_search(monkeypatch)
+    p = make_provider(root=tmp_path)
+    assert p.timeout_for("local:web_deep_search") == 290.0
+    assert p.timeout_for("web_deep_search") == 290.0
+    assert p.timeout_for("local:web_search") is None
+    assert p.timeout_for("local:fs_list") is None
+    # A tool that doesn't even exist must not raise -- same "no override"
+    # answer as any other unrecognized name.
+    assert p.timeout_for("local:nonexistent") is None

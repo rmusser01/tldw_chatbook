@@ -10,10 +10,14 @@ through the Model Context Protocol.
 
 When `[mcp] expose_local_tools = true` is set in config.toml, the server also
 exposes the workspace-local agent tools (`fs_*`, `fs_patch`, `git_*`,
-`web_fetch`, `web_search`, `web_crawl`) to external MCP clients. Invocation
-is routed through `Agents/local_tool_provider.LocalToolProvider`'s
-permission gate (`MCP/local_server_tools.py`) — never by wrapping the tool
-cores directly.
+`web_fetch`, `web_search`, `web_crawl`, `web_deep_search` (opt-in)) to
+external MCP clients. Invocation is routed through
+`Agents/local_tool_provider.LocalToolProvider`'s permission gate
+(`MCP/local_server_tools.py`) — never by wrapping the tool cores directly.
+`web_deep_search` needs its OWN gate on top of this one: it is absent from
+the provider's spec list entirely unless `[tools]
+web_deep_search_enabled = true` (app restart required) — see
+`Agents/local_tool_provider.py`'s `_default_specs`.
 
 Permission model for external callers: there is no approval card outside the
 Console, so tools in the `ask` state fail closed with an external-appropriate
