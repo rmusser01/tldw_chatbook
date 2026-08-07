@@ -673,7 +673,7 @@ def _get_typed_value(
 def _get_int_timeout_value(
     data_dict: Dict, key: str, default: int
 ) -> int:
-    """Get an integer timeout value, rejecting booleans and malformed strings.
+    """Get an integer timeout value, rejecting booleans, non-positive values, and malformed strings.
 
     Args:
         data_dict: Configuration dictionary
@@ -681,7 +681,7 @@ def _get_int_timeout_value(
         default: Default timeout value in seconds
 
     Returns:
-        Integer timeout value, or default if conversion fails or value is boolean.
+        Integer timeout value, or default if conversion fails, value is boolean, or value is non-positive.
     """
     value = data_dict.get(key, default)
     if value is default:  # Already the default
@@ -692,7 +692,13 @@ def _get_int_timeout_value(
         )
         return default
     try:
-        return int(value)
+        timeout_int = int(value)
+        if timeout_int <= 0:
+            logger.warning(
+                f"Config key '{key}' has value '{value}' which is non-positive and not valid for timeout. Using default: {default}."
+            )
+            return default
+        return timeout_int
     except (ValueError, TypeError) as e:
         logger.warning(
             f"Config key '{key}' has value '{value}' which could not be converted to int timeout. Using default: '{default}'. Error: {e}"
@@ -3729,6 +3735,9 @@ log_unknown_models = true      # Whether to log when an unknown model is queried
 # ==========================================================
 # Deep-Search Configuration
 # ==========================================================
+[tools]
+# web_deep_search_enabled = false    # Opt-in deep-search tool; requires app restart; each call makes ~2x-results+3 LLM calls plus page fetches (real money on paid providers)
+
 [SearchSettings]
 # Deep-search (web_deep_search tool) defaults. Enable the tool itself with
 # [tools] web_deep_search_enabled = true (requires app restart; each call makes

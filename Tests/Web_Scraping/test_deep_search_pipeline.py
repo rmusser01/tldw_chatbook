@@ -8,7 +8,6 @@ import time
 import pytest
 
 from tldw_chatbook.Web_Scraping import WebSearch_APIs
-import os
 from tldw_chatbook import config as config_module
 
 
@@ -492,3 +491,57 @@ def test_search_settings_timeout_keys_malformed_value_degrades_to_default(
     assert search_settings["relevance_llm_timeout_s"] == 30
     assert search_settings["relevance_scrape_timeout_s"] == 30
     assert search_settings["deep_search_timeout_s"] == 300
+
+
+# --- Config template and non-positive timeout guards -----------------------
+
+def test_config_template_contains_tools_section():
+    """The CONFIG_TOML_CONTENT template includes the [tools] section with web_deep_search_enabled key.
+
+    Acceptance: uncommmented template contains literal 'web_deep_search_enabled'
+    (when the key is uncommented by a user, it is a valid TOML config).
+    """
+    template = config_module.CONFIG_TOML_CONTENT
+    assert "web_deep_search_enabled" in template, (
+        "CONFIG_TOML_CONTENT must include 'web_deep_search_enabled' key in the [tools] section"
+    )
+
+
+def test_non_positive_timeout_values_degrade_to_default(tmp_path, monkeypatch, caplog):
+    """Non-positive timeout values (zero and negative) degrade to defaults with warnings.
+
+    Acceptance: 0 → 30 (default), logged warning; -5 → 30 (default), logged warning.
+    """
+    import logging
+    from loguru import logger as loguru_logger
+
+    # Bridge loguru to caplog for this test
+    class PropagateHandler(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            logging.getLogger(record.name).handle(record)
+
+    handler_id = loguru_logger.add(PropagateHandler(), format="{message}")
+    try:
+        config_path = tmp_path / "config.toml"
+        config_path.write_text(
+            "[SearchSettings]\n"
+            "relevance_llm_timeout_s = 0\n"
+            "relevance_scrape_timeout_s = -5\n"
+            "deep_search_timeout_s = 100\n",
+            encoding="utf-8",
+        )
+        monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+
+        with caplog.at_level(logging.WARNING):
+            settings = config_module.load_settings(force_reload=True)
+
+        search_settings = settings["search_settings_general"]
+        # Non-positive values should degrade to defaults
+        assert search_settings["relevance_llm_timeout_s"] == 30
+        assert search_settings["relevance_scrape_timeout_s"] == 30
+        assert search_settings["deep_search_timeout_s"] == 100
+
+        # Check warnings were logged for the non-positive cases
+        assert "non-positive" in caplog.text.lower() or "not valid for timeout" in caplog.text.lower()
+    finally:
+        loguru_logger.remove(handler_id)
