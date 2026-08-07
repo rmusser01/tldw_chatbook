@@ -61,8 +61,16 @@ Two workstreams. TASK-657 (dep-gate never runs) was found already fixed
 `search_type="semantic"`. Change it to resolve the **active RAG profile**:
 
 - `default_search_mode` (profile vocabulary: `"plain"` / `"semantic"` /
-  `"hybrid"`) maps plain→`"keyword"`, semantic→`"semantic"`,
-  hybrid→`"hybrid"` and is passed to `rag_service.search`.
+  `"hybrid"`) maps semantic→`"semantic"` and hybrid→`"hybrid"` on
+  `rag_service.search`. **Plain-profile routing**: `"plain"` does NOT use the
+  engine's media-only keyword leg — a BM25 Only user in `rag` mode would get a
+  strictly worse version of the Library's own `search` mode (one guessed-path
+  seam vs four authorized, scope-aware seams). Instead, plain-profile `rag`
+  queries route through the existing four-seam `_search_keyword` path,
+  honestly labeled. The engine's keyword leg therefore runs **only as
+  hybrid's FTS leg** in P0, never as a standalone mode. This also resolves
+  the scoped+plain conflict for free (the seam path is already scope-aware,
+  so a BM25 Only profile is never silently forced onto vectors).
 - Reranking needs **no new plumbing** (`rag_factory.py:65` already sets
   `enable_reranking = profile.reranking_config is not None`; V2 applies it
   post-search). P0 verifies it and fixes the load-time hazard (below).
@@ -89,6 +97,9 @@ Constraints, each handled by disclosure rather than silence:
      RED-first test.
    - The leg covers **media only** in P0; provenance and the coverage note say
      so. Four-seam keyword coverage (notes/conversations/prompts) is P2.
+   - When "media" is not among the selected source types, hybrid **skips the
+     keyword leg** (it could only contribute rows the post-filter drops) and
+     the coverage note discloses that the search ran semantic-only.
 3. **Score-kind-aware presentation** (ship-breaking defect found in review):
    the Library match bands are calibrated for cosine similarity
    (strong ≥ 0.5, moderate ≥ 0.2 — `library_rag_state.py`), but RRF-fused
@@ -126,7 +137,10 @@ injection. Design:
   This consciously re-homes TASK-406's assumed enablement from the legacy
   sidebar checkbox; the task's AC is edited accordingly before implementation
   (per backlog rules: update the AC first, then implement).
-- When ON at send: the retrieval query is the **outgoing draft text**; scope is
+- Auto-retrieve fires only for **plain user text sends** — never for slash
+  commands, tool approvals, or regenerations.
+- When ON at send: the retrieval query is the **outgoing draft text,
+  length-capped** (cap value decided in the plan); scope is
   resolved via `resolve_effective_scope_for_chat`; retrieval runs through the
   same profile-driven Library service as Workstream A; results route through
   the **existing staged-evidence pipeline** — strip shows "Evidence sent · N",
@@ -139,9 +153,15 @@ injection. Design:
   hybrid, until P2 extends allowlists to the FTS leg.
 - EMPTY scope short-circuits with the shared notice copy (task-406 AC #2).
 - Explicit **5s timeout** with a visible "Retrieving…" strip state; on failure
-  or timeout the send proceeds without evidence plus a quiet notice. A send is
-  never blocked on retrieval. Retrieval runs in an **exclusive worker** so a
-  double-send cannot double-retrieve.
+  or timeout the send proceeds without evidence plus a quiet notice. The
+  notice distinguishes "RAG service still initializing" (first-use model
+  load can take minutes) from "retrieval failed", reusing the existing
+  recovery-state vocabulary. A send is never blocked on retrieval. Retrieval
+  runs in an **exclusive worker** so a double-send cannot double-retrieve.
+- The Console chip's existing **manual run inherits the same profile-driven
+  service**: its hardcoded `top_k=5` (chat_screen.py) is replaced by the
+  active profile's `default_top_k`, so manual and auto retrieval cannot
+  disagree about depth.
 - Legacy path untouched (task-406 AC #3).
 
 ## Non-goals (declared, with follow-ups filed)
@@ -195,3 +215,6 @@ empty, scope empty). New rules:
    as "similarity".
 5. `SimpleRAGCache` keys include search type — confirm no stale-cache hazard
    when the default mode changes.
+6. Confirm no layer (engine, Library service, UI state, Answer bundle)
+   applies similarity-scale thresholds (`score_threshold`, min-score
+   filters) to fused or reranker score kinds.
