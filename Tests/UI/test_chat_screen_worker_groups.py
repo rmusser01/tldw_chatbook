@@ -15,13 +15,45 @@ from pathlib import Path
 
 import pytest
 
-CHAT_SCREEN_PATH = (
-    Path(__file__).resolve().parents[2]
-    / "tldw_chatbook"
-    / "UI"
-    / "Screens"
-    / "chat_screen.py"
-)
+_UI_ROOT = Path(__file__).resolve().parents[2] / "tldw_chatbook" / "UI"
+CHAT_SCREEN_PATH = _UI_ROOT / "Screens" / "chat_screen.py"
+_CONSOLE_MODULES_DIR = _UI_ROOT / "Console_Modules"
+
+
+def _guarded_paths() -> list[Path]:
+    """Every file that may dispatch a Console worker.
+
+    The screen alone is no longer the answer, and assuming it was let this
+    guard erode silently. The decomposition moved Console clusters into
+    ``UI/Console_Modules/``, taking their ``run_worker`` sites with them: by
+    the wave-3 close only 2 of the 6 run-coroutine dispatch sites were still
+    in ``chat_screen.py``, and 7 exclusive-worker sites had left the scanned
+    scope entirely — while both tests below stayed green, because what
+    remained still satisfied them. A guard that shrinks with its subject
+    certifies an invariant nobody is checking.
+
+    Returns:
+        list[Path]: `chat_screen.py` plus every `Console_Modules` module.
+
+    Raises:
+        AssertionError: If either half is missing — a rename that emptied
+            this list would otherwise silently restore the blind spot.
+    """
+    assert CHAT_SCREEN_PATH.exists(), f"{CHAT_SCREEN_PATH} not found."
+    modules = sorted(
+        path
+        for path in _CONSOLE_MODULES_DIR.glob("*.py")
+        if path.name != "__init__.py"
+    )
+    assert modules, (
+        f"no modules found in {_CONSOLE_MODULES_DIR}; this guard's scope "
+        "collapsed back to the screen alone."
+    )
+    return [CHAT_SCREEN_PATH, *modules]
+
+
+def _rel(path: Path) -> str:
+    return str(path.relative_to(_UI_ROOT.parents[1]))
 
 
 def _call_name(node: ast.Call) -> str:
@@ -65,14 +97,18 @@ def test_every_exclusive_worker_on_chat_screen_names_a_group():
     """An exclusive worker without group= joins the default group and cancels
     (or is cancelled by) every other ungrouped exclusive worker on the screen
     — including the Console send worker mid-stream. Never ship one."""
-    tree = ast.parse(CHAT_SCREEN_PATH.read_text(encoding="utf-8"))
-    ungrouped = [
-        lineno for lineno, has_group in _exclusive_worker_sites(tree) if not has_group
-    ]
+    ungrouped: list[str] = []
+    for path in _guarded_paths():
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        ungrouped.extend(
+            f"{_rel(path)}:{lineno}"
+            for lineno, has_group in _exclusive_worker_sites(tree)
+            if not has_group
+        )
     assert ungrouped == [], (
         "exclusive worker (run_worker or @work) without an explicit group= at "
-        f"chat_screen.py lines {ungrouped} — these share Textual's default "
-        "worker group and silently cancel each other (see TASK-228)."
+        f"{ungrouped} — these share Textual's default worker group and "
+        "silently cancel each other (see TASK-228)."
     )
 
 
@@ -109,7 +145,6 @@ def test_console_run_and_sync_workers_use_disjoint_groups():
     a group with the run workers. The names-a-group guard alone would pass if
     someone put a sync kick into group="console-run" — and the collision this
     branch fixed would silently return."""
-    tree = ast.parse(CHAT_SCREEN_PATH.read_text(encoding="utf-8"))
     RUN_COROUTINES = {
         "_submit_console_native_draft",
         "_retry_console_message",
@@ -125,20 +160,34 @@ def test_console_run_and_sync_workers_use_disjoint_groups():
     SYNC_COROUTINE = "_sync_native_console_chat_ui"
     run_groups: set[str] = set()
     sync_groups: set[str] = set()
-    for node in ast.walk(tree):
-        if not (isinstance(node, ast.Call) and _call_name(node) == "run_worker"):
-            continue
-        if not node.args:
-            continue
-        first = node.args[0]
-        target = _call_name(first) if isinstance(first, ast.Call) else ""
-        keywords = {kw.arg: kw.value for kw in node.keywords if kw.arg}
-        group = keywords.get("group")
-        group_name = _group_family(group)
-        if target in RUN_COROUTINES:
-            run_groups.add(group_name)
-        elif target == SYNC_COROUTINE:
-            sync_groups.add(group_name)
+    seen_run_targets: set[str] = set()
+    for path in _guarded_paths():
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if not (isinstance(node, ast.Call) and _call_name(node) == "run_worker"):
+                continue
+            if not node.args:
+                continue
+            first = node.args[0]
+            target = _call_name(first) if isinstance(first, ast.Call) else ""
+            keywords = {kw.arg: kw.value for kw in node.keywords if kw.arg}
+            group = keywords.get("group")
+            group_name = _group_family(group)
+            if target in RUN_COROUTINES:
+                run_groups.add(group_name)
+                seen_run_targets.add(target)
+            elif target == SYNC_COROUTINE:
+                sync_groups.add(group_name)
+    # Every named run coroutine must actually be FOUND somewhere in scope.
+    # Without this the set above degrades gracefully as sites move out of
+    # the scanned files -- which is exactly how this guard lost 4 of its 6
+    # dispatch sites while staying green.
+    assert seen_run_targets == RUN_COROUTINES, (
+        "run-coroutine dispatch sites not found in the guarded files: "
+        f"{sorted(RUN_COROUTINES - seen_run_targets)}. Either the dispatch "
+        "moved outside chat_screen.py + UI/Console_Modules/, or it was "
+        "renamed; widen _guarded_paths() rather than trimming this set."
+    )
     assert run_groups == {"console-run"}, run_groups
     assert sync_groups == {"console-sync"}, sync_groups
     # Explicit disjointness, independent of the exact-set assertions above:

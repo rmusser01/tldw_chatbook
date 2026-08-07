@@ -59,6 +59,11 @@ def _raiser(name: str, context: str):
     return _unreached
 
 
+#: Sentinel for "this fixture deliberately has no app". Distinct from the
+#: `None` a not-yet-wired shell yields, which is the bug this separates out.
+NO_APP: Any = object()
+
+
 def stub_message_controller(
     screen: Any,
     *,
@@ -74,7 +79,8 @@ def stub_message_controller(
         context: Label used in the failure message of unwired callables, so
             a fail-loud trip names the fixture it came from.
         app_instance: Value for the controller's ``app_instance`` snapshot.
-            Defaults to the shell's own ``app_instance`` when it has one.
+            Defaults to the shell's own ``app_instance``. Pass the sentinel
+            ``NO_APP`` to assert deliberately that this fixture has no app.
         **wired: Any subset of ``MESSAGE_CONTROLLER_CALLABLES``, wired for
             real. Everything omitted raises ``AssertionError`` when called.
 
@@ -85,6 +91,15 @@ def stub_message_controller(
         TypeError: If ``wired`` names something that is not a constructor
             callable -- a typo would otherwise silently leave that seam
             raising.
+        AssertionError: If no ``app_instance`` can be resolved and ``NO_APP``
+            was not passed. The controller SNAPSHOTS this value, so a fixture
+            that attaches before its harness app exists captures ``None``
+            forever -- and every moved body reads it through
+            ``getattr(self.app_instance, ..., None)``, so the test then takes
+            a silent default branch instead of failing. That already happened
+            once (a fixture attaching the controller a line too early), and
+            it is the one silent-default hole in an otherwise fail-loud
+            factory. Making it explicit costs one argument and closes it.
     """
     unknown = set(wired) - set(MESSAGE_CONTROLLER_CALLABLES)
     if unknown:
@@ -97,13 +112,19 @@ def stub_message_controller(
         name: wired.get(name, _raiser(name, context))
         for name in MESSAGE_CONTROLLER_CALLABLES
     }
+    resolved_app = (
+        app_instance
+        if app_instance is not None
+        else getattr(screen, "app_instance", None)
+    )
+    assert resolved_app is not None, (
+        f"{context}: no app_instance to snapshot. Attach the controller AFTER "
+        "the harness app sets screen.app_instance, or pass app_instance=NO_APP "
+        "to state that this fixture deliberately has none."
+    )
     controller = ConsoleMessageController(
         screen,
-        app_instance=(
-            app_instance
-            if app_instance is not None
-            else getattr(screen, "app_instance", None)
-        ),
+        app_instance=None if resolved_app is NO_APP else resolved_app,
         **kwargs,
     )
     screen._message = controller

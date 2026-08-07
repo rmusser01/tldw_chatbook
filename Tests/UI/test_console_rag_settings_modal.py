@@ -465,7 +465,7 @@ def test_source_scope_survives_a_screen_state_round_trip():
     from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
     from tldw_chatbook.UI.Screens.chat_screen_state import TaskResumeState
 
-    from Tests.UI.console_controller_stubs import stub_message_controller
+    from Tests.UI.console_controller_stubs import NO_APP, stub_message_controller
 
     def _bare_screen(store: ConsoleChatStore) -> ChatScreen:
         screen = ChatScreen.__new__(ChatScreen)
@@ -483,6 +483,11 @@ def test_source_scope_survives_a_screen_state_round_trip():
         stub_message_controller(
             screen,
             context="test_console_rag_settings_modal._bare_screen",
+            # No harness app: this shell exercises the three rehydrate
+            # helpers, which read `app_instance` only through
+            # `getattr(..., None)`. Declared rather than inferred, so a
+            # future helper needing a real app fails loudly here.
+            app_instance=NO_APP,
         )
         return screen
 

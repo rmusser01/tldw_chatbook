@@ -30,7 +30,7 @@ from tldw_chatbook.Chat.console_chat_models import (
     GenerationVariantMeta,
     MessageAttachment,
 )
-from Tests.UI.console_controller_stubs import stub_message_controller
+from Tests.UI.console_controller_stubs import NO_APP, stub_message_controller
 from tldw_chatbook.Chat.console_image_view import ConsoleImageRowSpec
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.Widgets.Console.console_generation_card import (
@@ -60,7 +60,13 @@ def _bare_screen() -> ChatScreen:
     branch that needs one for real, rather than a silently-wrong no-op.
     """
     screen = ChatScreen.__new__(ChatScreen)
-    stub_message_controller(screen, context="test_console_generation_card._bare_screen")
+    stub_message_controller(
+        screen,
+        context="test_console_generation_card._bare_screen",
+        # No harness app -- see the sibling note in
+        # test_console_rag_settings_modal; declared, not inferred.
+        app_instance=NO_APP,
+    )
     return screen
 
 
