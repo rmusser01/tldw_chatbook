@@ -152,8 +152,8 @@ speaks by default, with what model, voice, output format, and speed — plus
 per-provider setup. The pane opens with its scope in a banner: "You are
 editing application-wide Speech & TTS defaults. The Speech Studio can keep
 separate Studio preferences without changing these values.", and an **Open
-Speech Lab** button (see Quirks before pressing it), because this pane
-deliberately does *not* talk to any server: "Settings reuses accepted in-memory observations only. Open Speech
+Speech Lab** button, because this pane deliberately does *not* talk to any
+server: "Settings reuses accepted in-memory observations only. Open Speech
 Lab to test the server or refresh models and voices." Ordinary **Save**
 "validates and persists locally. Use Speech Lab for connection tests,
 discovery, generation, and playback."
@@ -480,10 +480,6 @@ not open an editor.
   draft." — but leaving Speech & TTS raises "Unsaved global Speech & TTS
   settings" and the draft is saved or discarded, never kept (backlog
   task-2708).
-- **"Open Speech Lab" currently crashes the app.** Every Open Speech Lab
-  button on Speech & TTS lands on Lab ▸ Speech, which at the time of writing
-  crashes on mount ("DuplicateIds", reproduced 100%) — save your draft before
-  pressing it (backlog task-2610).
 - **The Scope Inspector looks truncated.** Scroll it — "▼ more — scroll the
   inspector" at the bottom means there is more below.
 
