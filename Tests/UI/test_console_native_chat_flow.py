@@ -59,7 +59,9 @@ from tldw_chatbook.UI.Screens.chat_screen import (
     ChatScreen,
 )
 import tldw_chatbook.UI.Screens.chat_screen as chat_screen_module
+import tldw_chatbook.UI.Console_Modules.message as message_module
 import tldw_chatbook.UI.Console_Modules.session as session_module
+from tldw_chatbook.UI.Console_Modules.message import ConsoleMessageController
 from tldw_chatbook.UI.Console_Modules.session import ConsoleSessionController
 from tldw_chatbook.UI.Console_Modules.workspace import ConsoleWorkspaceController
 from tldw_chatbook.UI.Screens.chat_screen_state import TaskResumeState
@@ -5572,7 +5574,7 @@ def test_console_save_as_destinations_never_show_a_literal_none_reason():
     assistant = SimpleNamespace(role=ConsoleMessageRole.ASSISTANT, content="answer")
     screen._console_active_session_is_ephemeral = lambda: True
 
-    with patch.object(chat_screen_module, "blocked_reason", lambda *a, **k: None):
+    with patch.object(message_module, "blocked_reason", lambda *a, **k: None):
         destinations = screen._console_save_as_destinations(assistant)
 
     reasons = {d.label: d.reason for d in destinations}
@@ -5618,7 +5620,7 @@ def test_console_save_as_labels_are_all_registered_in_the_ephemeral_gate():
         requested_action_ids.append(action_id)
         return real_blocked_reason(action_id, ephemeral=ephemeral)
 
-    with patch.object(chat_screen_module, "blocked_reason", spy):
+    with patch.object(message_module, "blocked_reason", spy):
         destinations = screen._console_save_as_destinations(assistant)
 
     assert requested_action_ids, (
@@ -5791,7 +5793,7 @@ async def test_console_selected_message_save_as_chatbook_registers_console_artif
     host = ConsoleHarness(app)
 
     with patch(
-        "tldw_chatbook.UI.Screens.chat_screen.resolve_console_artifact_owner_request",
+        "tldw_chatbook.UI.Console_Modules.message.resolve_console_artifact_owner_request",
         return_value=owner_request,
     ):
         async with host.run_test(size=(160, 48)) as pilot:
@@ -9604,6 +9606,69 @@ def _bare_console_screen(store: ConsoleChatStore) -> ChatScreen:
     screen._console_visible_draft_session_id = None
     screen._console_composer_or_none = lambda: None
     screen._task_resume_state = TaskResumeState()
+    # `_rehydrate_console_message_image`/`_attachments` read `self.
+    # app_instance.chachanotes_db` (best-effort; both tolerate `None`).
+    screen.app_instance = SimpleNamespace(
+        notify=lambda *a, **k: None, chachanotes_db=None
+    )
+
+    # `_restore_native_console_state`'s message-rehydration calls
+    # (`_rehydrate_console_message_image`/`_attachments`/`_generation_
+    # metadata`) and several tests using this helper directly
+    # (`_save_console_message_image`, `_console_save_as_destinations`,
+    # `_save_console_message_as_chatbook`) moved to `ConsoleMessageController`
+    # (wave-3 console decomposition, task 1). `screen._message` is built
+    # the same bare-`__new__` way `screen._session` already is above, with
+    # every constructor callable wired for real -- unlike `_bare_generation_
+    # screen` in `Tests/Chat/test_console_generation_actions.py`, this
+    # helper's callers span enough of the cluster (serialize/restore,
+    # save-as, save-image) that stubbing the "unreached" ones would just
+    # move the maintenance burden, not reduce it.
+    screen._message = ConsoleMessageController(
+        screen,
+        app_instance=screen.app_instance,
+        chat_store_accessor=lambda: screen._console_chat_store,
+        current_chat_store_accessor=lambda: screen._console_chat_store,
+        ensure_console_chat_controller=lambda: screen._ensure_console_chat_controller(),
+        current_chat_controller_accessor=lambda: getattr(
+            screen, "_console_chat_controller", None
+        ),
+        sync_native_console_chat_ui=lambda: screen._sync_native_console_chat_ui(),
+        active_session_is_ephemeral=(
+            lambda: screen._session._console_active_session_is_ephemeral()
+        ),
+        active_native_console_session=(
+            lambda: screen._session._active_native_console_session()
+        ),
+        current_console_conversation_id=(
+            lambda: screen._session._current_console_conversation_id()
+        ),
+        active_console_provider_model_display=(
+            lambda: screen._active_console_provider_model_display()
+        ),
+        console_initial_session_title_for_workspace=lambda workspace_id: "",
+        console_change_review_run_id=lambda store, message_id: None,
+        open_change_review=lambda run_id: None,
+        start_console_transcript_sync_timer=lambda: None,
+        clear_native_console_message_selection=lambda: None,
+        regenerate_console_generation_variant=(
+            lambda message_id: screen._regenerate_console_generation_variant(
+                message_id
+            )
+        ),
+        select_console_generation_variant=(
+            lambda message, direction: screen._select_console_generation_variant(
+                message, direction=direction
+            )
+        ),
+        keep_console_generation_variant=(
+            lambda message: screen._keep_console_generation_variant(message)
+        ),
+        handle_console_toggle_image_view=(
+            lambda message_id: screen._handle_console_toggle_image_view(message_id)
+        ),
+        invalidate_console_persisted_rows_cache=lambda: None,
+    )
     return screen
 
 
@@ -10575,7 +10640,7 @@ async def test_save_console_message_image_writes_file(tmp_path, monkeypatch):
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
         monkeypatch.setattr(
-            "tldw_chatbook.UI.Screens.chat_screen.get_cli_setting",
+            "tldw_chatbook.UI.Console_Modules.message.get_cli_setting",
             lambda section, key, default=None: (
                 str(tmp_path)
                 if (section, key) == ("chat.images", "save_location")
@@ -10618,7 +10683,7 @@ async def test_save_console_message_image_disambiguates_filename_collision(
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
         monkeypatch.setattr(
-            "tldw_chatbook.UI.Screens.chat_screen.get_cli_setting",
+            "tldw_chatbook.UI.Console_Modules.message.get_cli_setting",
             lambda section, key, default=None: (
                 str(tmp_path)
                 if (section, key) == ("chat.images", "save_location")
@@ -11472,7 +11537,7 @@ async def test_save_image_saves_all_attachments(tmp_path, monkeypatch):
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
         monkeypatch.setattr(
-            "tldw_chatbook.UI.Screens.chat_screen.get_cli_setting",
+            "tldw_chatbook.UI.Console_Modules.message.get_cli_setting",
             lambda section, key, default=None: (
                 str(tmp_path)
                 if (section, key) == ("chat.images", "save_location")

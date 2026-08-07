@@ -165,13 +165,17 @@ class TestSaveImageToastEscaping:
 
     @staticmethod
     def _screen_with_message(tmp_path, monkeypatch, attachment_count=1):
-        from tldw_chatbook.UI.Screens import chat_screen as chat_screen_module
+        from tldw_chatbook.UI.Console_Modules import message as message_module
+        from tldw_chatbook.UI.Console_Modules.message import ConsoleMessageController
         from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
         markup_dir = tmp_path / "sav[e]dir"
         markup_dir.mkdir()
+        # `_save_console_message_image` moved to `ConsoleMessageController`
+        # (wave-3 console decomposition, task 1) -- it reads `get_cli_
+        # setting` from ITS OWN module namespace now, not `chat_screen`'s.
         monkeypatch.setattr(
-            chat_screen_module,
+            message_module,
             "get_cli_setting",
             lambda section, key=None, default=None: str(markup_dir),
         )
@@ -199,6 +203,37 @@ class TestSaveImageToastEscaping:
         screen.app_instance = SimpleNamespace(
             notify=lambda text, **kwargs: notices.append(str(text)),
             chachanotes_db=None,
+        )
+
+        def _unreached(*_args, **_kwargs):
+            raise AssertionError(
+                "_screen_with_message: this constructor callable is not "
+                "wired for real -- only _save_console_message_image is "
+                "exercised here."
+            )
+
+        screen._message = ConsoleMessageController(
+            screen,
+            app_instance=screen.app_instance,
+            chat_store_accessor=lambda: store,
+            current_chat_store_accessor=lambda: store,
+            ensure_console_chat_controller=_unreached,
+            current_chat_controller_accessor=lambda: None,
+            sync_native_console_chat_ui=_unreached,
+            active_session_is_ephemeral=_unreached,
+            active_native_console_session=_unreached,
+            current_console_conversation_id=_unreached,
+            active_console_provider_model_display=_unreached,
+            console_initial_session_title_for_workspace=_unreached,
+            console_change_review_run_id=_unreached,
+            open_change_review=_unreached,
+            start_console_transcript_sync_timer=_unreached,
+            clear_native_console_message_selection=_unreached,
+            regenerate_console_generation_variant=_unreached,
+            select_console_generation_variant=_unreached,
+            keep_console_generation_variant=_unreached,
+            handle_console_toggle_image_view=_unreached,
+            invalidate_console_persisted_rows_cache=_unreached,
         )
         return screen, message, notices
 
