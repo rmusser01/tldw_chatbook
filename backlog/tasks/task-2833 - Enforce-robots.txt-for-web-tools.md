@@ -1,11 +1,11 @@
 ---
 id: TASK-2833
 title: Enforce robots.txt for web tools
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-08-05 06:05'
-updated_date: '2026-08-07 20:44'
+updated_date: '2026-08-07 21:43'
 labels:
   - web-tools
 dependencies:
@@ -26,6 +26,7 @@ v1 documents but does not enforce robots.txt. Add per-domain robots fetch+cache 
 
 ## Implementation Notes
 
+<!-- SECTION:NOTES:BEGIN -->
 Implemented per `Docs/superpowers/specs/2026-08-07-robots-txt-enforcement-design.md` (rulings 1-6, injection sites, error contract, and test list are binding and were followed as written).
 
 **Approach.** New module-level machinery in `tldw_chatbook/Tools/web_tool_impls.py`, beside the existing `_fetch_cache` idiom:
@@ -49,3 +50,4 @@ Implemented per `Docs/superpowers/specs/2026-08-07-robots-txt-enforcement-design
 **Follow-up filed:** task-3260 (deep-search's scrape path does not honor robots.txt — recorded non-goal in the design doc's rulings; the same inconsistency `is_public_http_url`/`scrape_article` closed for SSRF).
 
 **Modified files:** `tldw_chatbook/Tools/web_tool_impls.py`, `tldw_chatbook/config.py`, `tldw_chatbook/Agents/local_tool_provider.py`, `Tests/Tools/test_web_tool_impls.py`, `Tests/Tools/test_web_crawl.py`. **Added:** `backlog/tasks/task-3260 - Deep-search-scrape-path-ignores-robots-txt.md`.
+<!-- SECTION:NOTES:END -->
