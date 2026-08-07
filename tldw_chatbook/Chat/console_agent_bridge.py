@@ -2187,7 +2187,7 @@ class ConsoleAgentBridge:
         Returns the idle default when the conversation has no primary run
         at all -- callers should prefer ``live_snapshot`` and only fall
         back to this when it reports ``idle`` (see
-        ``ChatScreen._console_agent_section_lines``), so a truly-idle
+        ``ConsoleAgentController._console_agent_section_lines``), so a truly-idle
         conversation (never run, ever) renders identically either way.
 
         Cached per ``conversation_id`` (Task-7 discipline: the rail poll
@@ -2645,7 +2645,8 @@ class ConsoleAgentBridge:
     @staticmethod
     def _summarize(step: AgentStep) -> str:
         # Finding B: feeds only AgentLiveStep.text, which
-        # _console_agent_section_lines renders into a markup=False Static --
+        # ConsoleAgentController._console_agent_section_lines renders into a
+        # markup=False Static --
         # escaping here (a second guard on top of markup=False) produced
         # literal backslashes for bracketed text. Left raw; the transcript
         # TOOL marker path (_append_marker) is also raw, since its consumers
