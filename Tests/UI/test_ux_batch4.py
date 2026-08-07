@@ -121,11 +121,16 @@ async def test_dirty_form_escape_asks_before_discarding() -> None:
 
 
 # UX-070 -----------------------------------------------------------------
-def test_lab_default_view_is_ollama() -> None:
+def test_lab_default_view_starts_unset_until_children_exist() -> None:
+    """`active_view` deliberately starts at "" with init=False (see the
+    reactive's own comment: a real default fired the watcher before the
+    deferred body mount — ten QueryErrors per arrival). The real initial
+    view (llama-cpp since 9dd2374b5) is assigned by `_initialize_view`
+    after the children exist — pinned in test_llm_deferred_views.py."""
     from tldw_chatbook.UI.LLM_Management_Window import LLMManagementWindow
 
     window = LLMManagementWindow(None)
-    assert window.active_view == "ollama"
+    assert window.active_view == ""
 
 
 def test_ollama_prereq_reports_detection() -> None:

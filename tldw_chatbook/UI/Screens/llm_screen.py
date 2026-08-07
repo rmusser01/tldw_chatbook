@@ -1175,6 +1175,21 @@ class LLMScreen(LabScreen):
         if self._model_install_active:
             self.call_after_refresh(self._hydrate_model_install_progress)
 
+    @on(LLMManagementWindow.DeferredViewsMounted)
+    def _on_deferred_views_mounted(self) -> None:
+        """Re-run install-progress hydration once the deferred views exist.
+
+        task-2900: `on_lab_body_ready`'s single `call_after_refresh` used to
+        suffice because compose built every view synchronously; with the
+        heavy views mounted after first paint, that hydration races the
+        deferred mount and loses (its view lookups no-op). The window posts
+        this message when the views are actually queryable — the correctly
+        ordered second chance. `_hydrate_model_install_progress` is
+        idempotent and internally guarded, so running both is safe.
+        """
+        if self._model_install_active:
+            self._hydrate_model_install_progress()
+
     def _hydrate_model_install_progress(self) -> None:
         """Re-apply the last known install progress after a recompose.
 

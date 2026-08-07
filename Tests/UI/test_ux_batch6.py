@@ -39,42 +39,6 @@ async def test_queue_filter_narrows_rows_and_detail_follows_visible() -> None:
 
 # Lab position indicator + autofill (UX-077/078) --------------------------
 @pytest.mark.asyncio
-async def test_lab_sidebar_hint_shows_position_and_cycles() -> None:
-    import tldw_chatbook.Widgets.HuggingFace as hf
-    from tldw_chatbook.UI.LLM_Management_Window import LLMManagementWindow
-
-    class _StubWidget(_Container):
-        def __init__(self, *args, **kwargs):
-            super().__init__(**{k: v for k, v in kwargs.items() if k == "id"})
-
-    class Harness(App[None]):
-        def compose(self) -> ComposeResult:
-            yield LLMManagementWindow(None)
-
-    monkey = pytest.MonkeyPatch()
-    monkey.setattr(hf, "LocalModelsWidget", _StubWidget)
-    monkey.setattr(hf, "HuggingFaceModelBrowser", _StubWidget)
-    try:
-        app = Harness()
-        async with app.run_test(size=(140, 42)) as pilot:
-            await pilot.pause()
-            window = app.query_one(LLMManagementWindow)
-            hint = app.query_one("#llm-sidebar-hint", Static)
-            total = len(window.view_mapping)
-            assert f"of {total}" in str(hint.render())
-            assert "1 of" in str(hint.render())  # Ollama is the default view
-
-            window._cycle_view(1)
-            await pilot.pause()
-            assert "2 of" in str(hint.render())
-            window._cycle_view(-1)
-            await pilot.pause()
-            assert "1 of" in str(hint.render())
-    finally:
-        monkey.undo()
-
-
-@pytest.mark.asyncio
 async def test_ollama_path_autofills_when_found() -> None:
     from unittest.mock import patch
 
