@@ -247,7 +247,19 @@ class LocalToolProvider:
             self._stamps = saved
 
     def pending_gate_for(self, name: str, args: dict) -> MCPPendingCall | None:
-        """The approval payload when this call needs human gating, else None."""
+        """The approval payload when this call needs human gating, else None.
+
+        Args:
+            name: Catalog id (``local:<name>``) or bare LLM-facing tool
+                name -- same prefix tolerance as ``invoke()``.
+            args: The call's arguments, echoed into the pending payload.
+
+        Returns:
+            The ``MCPPendingCall`` to render for approval, or ``None``
+            when there is nothing to confirm (unknown tool, resolver
+            failure -- fail closed, ``invoke()`` decides the copy --
+            state no longer "ask", or a live session approval).
+        """
         # Same `local:`-prefix tolerance as invoke()/load_schema(): the
         # registry invokes by catalog id ("local:fs_list") while the review
         # hook resolves by LLM-facing name ("fs_list").
@@ -280,6 +292,18 @@ class LocalToolProvider:
         fixes: `invoke()` renders "timeout" as LOCAL_TIMEOUT_REFUSAL ("...
         do not retry"), the most costly possible false claim to hand an
         agent for a transient failure that might succeed on retry.
+
+        Args:
+            name: Bare LLM-facing tool name (prefix already stripped by
+                the caller).
+            args: The call's arguments, echoed into the pending payload.
+            hub: The tool's ``HubTool`` view for permission resolution.
+
+        Returns:
+            ``(gate, resolve_failed)`` -- ``gate`` is the pending call to
+            confirm or ``None``; ``resolve_failed`` is True ONLY when the
+            ``None`` came from ``resolve_state`` raising, never for a
+            legitimate state flip or a session approval.
         """
         try:
             state = self._resolve_state(hub)

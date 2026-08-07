@@ -105,6 +105,13 @@ def capitalize_first(text: str) -> str:
     behavior change (e.g. Unicode titlecasing edge cases) updates every
     caller identically instead of risking a fourth reimplementation
     drifting from the other three.
+
+    Args:
+        text: The clause to sentence-case; may be empty.
+
+    Returns:
+        ``text`` with only its first character uppercased -- every other
+        character byte-identical to the input; ``""`` for ``""``.
     """
     return text[:1].upper() + text[1:]
 
