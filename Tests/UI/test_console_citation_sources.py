@@ -1285,7 +1285,6 @@ def _citation_harness(
     screen._console_chat_store = _FakeStore([message])
     screen._console_citation_counts = {"assistant-1": 2}
     screen._console_citation_request_generation = 1
-    _attach_message_controller(screen)
     app = _CitationHarnessApp(
         screen,
         repository,
@@ -1293,6 +1292,12 @@ def _citation_harness(
         [message],
         {"assistant-1": 2},
     )
+    # After the harness app, not before: the controller snapshots
+    # ``app_instance``, which ``_CitationHarnessApp.__init__`` is what sets on
+    # the screen. Attaching first snapshots ``None``, and every moved method
+    # that reads it via ``getattr(..., default)`` would then silently take the
+    # default branch instead of failing loudly.
+    _attach_message_controller(screen)
     return app, screen, repository, message
 
 
