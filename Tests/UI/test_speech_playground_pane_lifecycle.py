@@ -1983,6 +1983,70 @@ async def test_exact_profile_cannot_generate_while_voice_validation_is_pending(
         assert app.query_one("#tts-generate-btn", Button).disabled is True
 
 
+# TASK-3000 (fixed): a config change arriving while an exact profile's
+# voice validation is in flight, on a request that ignores cancellation
+# and keeps running, never cleared `_profile_voice_validation_token` --
+# not in `mark_provider_configuration_changed`, not in the failed-reload
+# exception path, not in `_catalog_failure`. `_generation_readiness_
+# error`'s preset branch blocks unconditionally on that token being
+# non-None, so Generate stayed disabled forever with no way to recover
+# short of leaving and re-entering the Playground. Confirmed pre-existing
+# by task-2951's own re-review, identical against pre- and post-fix
+# task-2951 code -- a fail-*closed* gap, the opposite direction from the
+# two fail-open CRITICALs that task fixed. The retired widget's own
+# `mark_provider_configuration_changed` (`git show
+# f560217fb~1:tldw_chatbook/UI/STTS_Window.py`) detached the token
+# immediately, as soon as the change targeted the token's own provider,
+# before any reload even ran -- ported verbatim rather than inventing a
+# parallel settling path; the existing `_catalog_failure` preset branch
+# (task-2951 CRITICAL-2) already settles availability to "unverified" and
+# re-enables Generate for one warned exact attempt once the token is out
+# of the way.
+@pytest.mark.asyncio
+async def test_configuration_change_detaches_cancellation_resistant_profile_voice_gate(
+    audio_cpp_playground: FakeTTSService,
+) -> None:
+    service = audio_cpp_playground
+    request_key = ("audio_cpp", "<opaque:model>")
+    service.voice_started_by_request[request_key] = asyncio.Event()
+    service.voice_finished_by_request[request_key] = asyncio.Event()
+    service.voice_gates[request_key] = asyncio.Event()
+    service.voice_ignore_cancellation.add(request_key)
+    preset = _profile_preset(model_id=request_key[1], voice_id="[voice]")
+    app = _PaneHost(preset=preset)
+
+    async with app.run_test(size=(180, 70)) as pilot:
+        await service.voice_started_by_request[request_key].wait()
+        pane = app.query_one(SpeechPlaygroundPane)
+
+        service.revisions["audio_cpp"] = 2
+        pane.mark_provider_configuration_changed("audio_cpp", 2)
+        service.catalog_error = RuntimeError("private catalog failure")
+        pane._load_provider_catalog("audio_cpp", refresh=True)
+        await _wait_until(
+            pilot,
+            lambda: (
+                pane._profile_effective_availability == "unverified"
+                and pane._catalog_generation_allowed
+            ),
+        )
+
+        assert pane._profile_voice_validation_token is None
+        assert app.query_one("#tts-generate-btn", Button).disabled is False
+
+        pane.action_generate_tts()
+        await pilot.pause()
+
+        assert len(app.generation_events) == 1
+        assert any(
+            "unverified" in message.lower() and severity == "warning"
+            for message, severity in app.notices
+        )
+
+        service.voice_gates[request_key].set()
+        await service.voice_finished_by_request[request_key].wait()
+
+
 @pytest.mark.asyncio
 async def test_stale_catalog_downgrades_available_profile_to_warned_unverified_attempt(
     audio_cpp_playground: FakeTTSService,

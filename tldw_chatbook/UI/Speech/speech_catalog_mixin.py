@@ -1511,6 +1511,25 @@ class SpeechCatalogMixin:
             for key, value in self._voice_runtime_observed_at.items()
             if key[0] != provider_id
         }
+        # TASK-3000: an exact profile's voice validation can be in flight
+        # on a request that ignores cancellation and keeps running past
+        # the `cancel_group` calls below -- ported verbatim from the
+        # retired widget's own `mark_provider_configuration_changed`
+        # (`git show f560217fb~1:tldw_chatbook/UI/STTS_Window.py`), which
+        # detached the token right here, unconditionally, the moment a
+        # config change targeted its own provider. Without this, nothing
+        # downstream (this method's own worker cancellation, a failed
+        # catalog reload's exception path, `_catalog_failure`) ever clears
+        # it, `_generation_readiness_error`'s preset branch blocks
+        # unconditionally on it being non-None, and Generate stays
+        # disabled with no way to recover short of leaving and
+        # re-entering the Playground.
+        pending_voice_token = self._profile_voice_validation_token
+        if (
+            pending_voice_token is not None
+            and pending_voice_token.provider_id == provider_id
+        ):
+            self._profile_voice_validation_token = None
         if provider_id != self._selected_provider_id:
             return
         self.app.workers.cancel_group(self, "stts-catalog-discovery")
