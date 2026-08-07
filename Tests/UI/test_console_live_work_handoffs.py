@@ -9,6 +9,7 @@ from unittest.mock import Mock
 
 import pytest
 from textual.app import App
+from textual.widgets import Static
 
 from Tests.UI.test_destination_shells import DestinationHarness, _wait_for_selector
 from Tests.UI.app_factory import _build_test_app
@@ -433,6 +434,34 @@ def test_console_live_work_launch_contract_normalizes_defaults_and_metadata():
         "recovery": "Workflow is starting.",
         "action_label": "Open workflow run",
     }
+
+
+def test_console_setup_staged_receipt_is_empty_with_no_pending_launch():
+    """Task-2852: nothing staged means nothing to receipt."""
+    from tldw_chatbook.Chat.console_live_work import console_setup_staged_receipt
+
+    assert console_setup_staged_receipt(None) == ""
+
+
+def test_console_setup_staged_receipt_names_the_launch_source():
+    """Task-2852: the locked-Console receipt names WHAT is staged (the
+    launch's own source), so a Library handoff and a Watchlists handoff read
+    differently -- not a single generic "something is staged" line."""
+    ConsoleLiveWorkLaunch = _load_console_live_work_contract()
+    from tldw_chatbook.Chat.console_live_work import console_setup_staged_receipt
+
+    launch = ConsoleLiveWorkLaunch.from_values(
+        source="Library Search/RAG",
+        title="Incident Review",
+        payload={"result_id": "note-42:chunk-7"},
+        status="staged",
+    )
+
+    receipt = console_setup_staged_receipt(launch)
+
+    assert "Library Search/RAG" in receipt
+    assert "staged" in receipt.lower()
+    assert "finish provider setup" in receipt.lower()
 
 
 def test_open_console_for_live_work_routes_to_chat_route():
@@ -1976,6 +2005,100 @@ async def test_console_staged_launch_with_evidence_bundle_survives_screen_recrea
         # sent" line must not survive onto unrelated new evidence.
         assert screen2._console_evidence_sent_notice is None
         assert screen2._pending_console_launch_auto_open_inspector is True
+
+
+@pytest.mark.asyncio
+async def test_locked_console_shows_staged_evidence_receipt_task_2852():
+    """Task-2852 AC#2, end to end: a Library "Use in Console" handoff that
+    lands on a locked (setup-incomplete) Console must show a visible
+    receipt naming what's staged -- the original UAT repro found zero trace
+    of the selection on the blocking "Get started" overlay.
+
+    `_build_test_app()`'s synthetic config carries no `api_settings`, so a
+    fresh app here reproduces the "fresh profile with no provider" repro
+    state without any extra config wiring.
+    """
+    from tldw_chatbook.Widgets.Console.console_setup_modal import ConsoleSetupModal
+
+    ConsoleLiveWorkLaunch = _load_console_live_work_contract()
+    app = _build_test_app()
+    launch = ConsoleLiveWorkLaunch.from_values(
+        source="Library Search/RAG",
+        title="Incident Review",
+        payload={"result_id": "note-42:chunk-7"},
+        status="staged",
+        recovery="Review citations before sending.",
+        action_label="Review evidence in Console",
+    )
+    app.pending_handoffs.stage(HandoffChannel.CONSOLE_LIVE_WORK, launch)
+
+    async with app.run_test(size=(180, 40)) as pilot:
+        screen = await _wait_for_production_chat_screen(app, pilot)
+        await _wait_for_selector(screen, pilot, "#console-pending-launch-card")
+
+        modal = screen.query_one("#console-setup-modal", ConsoleSetupModal)
+        # The repro's precondition: Console really is locked here, not
+        # already past setup for some other reason (e.g. a previous test's
+        # config leaking through).
+        assert modal.is_blocking is True
+
+        notice = screen.query_one("#console-setup-modal-staged-notice", Static)
+        assert notice.display is True
+        rendered = str(notice.renderable).strip()
+        assert "Library Search/RAG" in rendered
+        assert "staged" in rendered.lower()
+        assert "finish provider setup" in rendered.lower()
+
+
+@pytest.mark.asyncio
+async def test_configured_console_staged_strip_unaffected_by_receipt_task_2852():
+    """Task-2852 AC#3 regression guard: once Console is configured, PR
+    #1320's staged-evidence strip must render exactly as before, and the
+    new locked-Console receipt (which only exists inside the setup modal's
+    blocking overlay) must stay hidden -- the fix must not touch the
+    already-shipped configured path.
+    """
+    from tldw_chatbook.Chat.console_display_state import (
+        ConsoleStagedEvidenceStripState,
+    )
+    from tldw_chatbook.Widgets.Console.console_setup_modal import ConsoleSetupModal
+
+    ConsoleLiveWorkLaunch = _load_console_live_work_contract()
+    app = _build_test_app()
+    app.app_config = {
+        "chat_defaults": {
+            "provider": "OpenAI",
+            "model": "gpt-4.1-2025-04-14",
+        },
+        "api_settings": {"openai": {"api_key": "configured-test-key"}},
+    }
+    launch = ConsoleLiveWorkLaunch.from_values(
+        source="Library Search/RAG",
+        title="Incident Review",
+        payload={"result_id": "note-42:chunk-7"},
+        status="staged",
+        recovery="Review citations before sending.",
+        action_label="Review evidence in Console",
+    )
+    app.pending_handoffs.stage(HandoffChannel.CONSOLE_LIVE_WORK, launch)
+
+    async with app.run_test(size=(180, 40)) as pilot:
+        screen = await _wait_for_production_chat_screen(app, pilot)
+        await _wait_for_selector(screen, pilot, "#console-staged-evidence-strip")
+
+        modal = screen.query_one("#console-setup-modal", ConsoleSetupModal)
+        assert modal.is_blocking is False
+
+        notice = screen.query_one("#console-setup-modal-staged-notice", Static)
+        assert notice.display is False
+
+        strip_state = screen._build_console_staged_evidence_strip_state(
+            screen._pending_console_launch_context
+        )
+        assert isinstance(strip_state, ConsoleStagedEvidenceStripState)
+        assert strip_state.visible is True
+        assert strip_state.rows
+        assert strip_state.rows[0].title == "Incident Review"
 
 
 @pytest.mark.asyncio

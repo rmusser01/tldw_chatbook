@@ -236,6 +236,12 @@ labeled **"Review evidence in Console"**; the snippet, citations, and
 source identity travel with it. See [Console: Context &
 RAG](../console/context-and-rag.md) for the staged-sources side.
 
+If Console isn't set up yet (no provider/model configured), a toast warns
+that the evidence is staged and setup is what unlocks it before you
+navigate, and Console's own locked "Get started" card shows the same
+receipt so the selection is never silently lost — see [Console: First
+run](../console.md#first-run-the-get-started-card).
+
 ### Not the same screen as "Search"
 
 A separate, older **Search** screen also exists: open the command palette
@@ -347,4 +353,8 @@ billed, a footer states what the call actually cost or says plainly when
 pricing is unknown, the query row and the mode-toggle tooltip both name
 the paid provider before you run, and RAG Answer's provider gate now
 requires a working credential — the same one Console's own readiness
-check uses — not just an endpoint name.*
+check uses — not just an endpoint name. Verified against 42b28089f —
+2026-08-06 (task-2852: live check on a fresh profile — "Use in Console"
+on a locked Console now warns before navigating and stages a visible
+receipt on the "Get started" card; a configured Console still lands on
+the unchanged staged-evidence strip).*

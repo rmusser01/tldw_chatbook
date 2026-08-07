@@ -79,6 +79,14 @@ provider**, then **Choose model**) and opens the Console Settings modal.
 The composer stays locked until a provider and model are configured; once
 they are, the empty transcript reads "Ready — type a message to begin."
 
+If you land here with a handoff already staged — e.g. from Library's
+**Use in Console** on a Search/RAG result while a provider isn't set up
+yet — the card shows an extra line under "Get started" naming what's
+staged and that finishing setup is what unlocks it (for example,
+"Library Search/RAG evidence staged — finish provider setup to use it.").
+The handoff itself is never lost: it's the same staged context the
+composer-level strip below shows once setup completes.
+
 ## Features & controls
 
 ### Control bar
@@ -234,4 +242,8 @@ a real-provider send round trip). Verified against e2c706303 — 2026-08-06
 (PR-T2, docs pass against shipped code/tests, live check pending Task 9):
 a legacy `[API] <provider>_api_key` now satisfies this screen's own
 readiness check too, and a modern `api_settings.<provider>.api_key` now
-outranks that provider's environment variable.*
+outranks that provider's environment variable. Verified against
+42b28089f — 2026-08-06 (task-2852: live check on a fresh profile — a
+Library Search/RAG handoff staged while locked now shows a receipt line
+on the Get started card, and the same handoff on a configured Console
+still lands on the unchanged staged-evidence strip).*

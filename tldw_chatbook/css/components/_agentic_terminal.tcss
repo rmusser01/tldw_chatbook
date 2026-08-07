@@ -3610,6 +3610,20 @@ ConsoleCitationSourcesModal {
     text-style: bold;
 }
 
+/* Task-2852: receipt line for a "Use in Console" handoff (e.g. Library
+   Search/RAG evidence) staged while setup is still incomplete -- without
+   this, evidence staged just before landing here was invisible under the
+   opaque setup overlay (the staged-evidence strip it lives in is part of
+   the covered workbench). height: auto (not a fixed height: 1) so a long
+   source name wraps instead of clipping, matching .console-setup-step. */
+.console-setup-modal-staged-notice {
+    height: auto;
+    min-height: 1;
+    margin: 0 0 1 0;
+    padding: 0;
+    color: $ds-status-info;
+}
+
 .console-setup-modal-action {
     width: auto;
     min-width: 12;

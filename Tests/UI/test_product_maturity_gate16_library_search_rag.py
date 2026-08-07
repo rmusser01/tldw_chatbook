@@ -2020,6 +2020,141 @@ async def test_library_search_rag_selected_result_launches_console_live_work() -
 
 
 @pytest.mark.asyncio
+async def test_library_use_in_console_warns_before_navigating_when_locked_task_2852() -> (
+    None
+):
+    """Task-2852 AC#1: "Use in Console" on a locked (setup-incomplete)
+    Console must warn BEFORE navigating, naming that evidence is staged --
+    the pre-fix UAT repro found zero receipt anywhere. `_build_test_app()`'s
+    synthetic config carries no `api_settings`, reproducing the "fresh
+    profile with no provider" repro state. The handoff still proceeds
+    (`open_console_for_live_work` is still called) -- this is advisory, not
+    a block; the receipt on Console's own locked surface is AC#2's job.
+    """
+    from tldw_chatbook.Library.library_rag_state import (
+        LIBRARY_RAG_USE_IN_CONSOLE_LOCKED_NOTICE,
+    )
+
+    app = _build_test_app()
+    _seed_library_sources(app)
+    app.library_rag_search_service = StaticLibraryRagSearchService(
+        {
+            "results": [
+                {
+                    "document_title": "Incident Review",
+                    "snippet": "Expired credential caused the incident.",
+                    "score": 0.93,
+                    "source_id": "note-42",
+                    "chunk_id": "chunk-7",
+                    "runtime_backend": "local-fts",
+                    "provenance": {"source_type": "note"},
+                }
+            ],
+        }
+    )
+    app.open_console_for_live_work = Mock()
+    app.notify = Mock()
+    host = DestinationHarness(app, "library")
+    query = "Why did the incident happen?"
+
+    async with host.run_test(size=(170, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_library_shell_ready(screen, pilot)
+
+        screen.query_one("#library-row-browse-search", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-search-rag-panel")
+        screen.query_one("#library-rag-query-input", Input).value = query
+        await _wait_for_query_ready(screen, pilot, query)
+
+        screen.query_one("#library-rag-run-query", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-rag-result-0")
+
+        screen.query_one("#library-rag-select-result-0", Button).press()
+        await _wait_for_evidence_selected(screen, pilot, "Incident Review")
+
+        # Precondition: this repro really is the locked case.
+        assert screen._console_setup_would_block() is True
+
+        screen.query_one("#library-rag-use-selected-in-console", Button).press()
+        await pilot.pause(0.1)
+
+    app.open_console_for_live_work.assert_called_once()
+    notified_messages = [
+        call.args[0] if call.args else call.kwargs.get("message")
+        for call in app.notify.call_args_list
+    ]
+    assert LIBRARY_RAG_USE_IN_CONSOLE_LOCKED_NOTICE in notified_messages
+
+
+@pytest.mark.asyncio
+async def test_library_use_in_console_configured_console_no_locked_notice_task_2852() -> (
+    None
+):
+    """Task-2852 AC#1 counterpart: once Console is actually configured, the
+    locked-Console pre-nav notice must NOT fire -- staying silent (or
+    unrelated notices only) is the normal, unremarkable path."""
+    from tldw_chatbook.Library.library_rag_state import (
+        LIBRARY_RAG_USE_IN_CONSOLE_LOCKED_NOTICE,
+    )
+
+    app = _build_test_app()
+    _seed_library_sources(app)
+    app.app_config = {
+        "chat_defaults": {
+            "provider": "OpenAI",
+            "model": "gpt-4.1-2025-04-14",
+        },
+        "api_settings": {"openai": {"api_key": "configured-test-key"}},
+    }
+    app.library_rag_search_service = StaticLibraryRagSearchService(
+        {
+            "results": [
+                {
+                    "document_title": "Incident Review",
+                    "snippet": "Expired credential caused the incident.",
+                    "score": 0.93,
+                    "source_id": "note-42",
+                    "chunk_id": "chunk-7",
+                    "runtime_backend": "local-fts",
+                    "provenance": {"source_type": "note"},
+                }
+            ],
+        }
+    )
+    app.open_console_for_live_work = Mock()
+    app.notify = Mock()
+    host = DestinationHarness(app, "library")
+    query = "Why did the incident happen?"
+
+    async with host.run_test(size=(170, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_library_shell_ready(screen, pilot)
+
+        screen.query_one("#library-row-browse-search", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-search-rag-panel")
+        screen.query_one("#library-rag-query-input", Input).value = query
+        await _wait_for_query_ready(screen, pilot, query)
+
+        screen.query_one("#library-rag-run-query", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-rag-result-0")
+
+        screen.query_one("#library-rag-select-result-0", Button).press()
+        await _wait_for_evidence_selected(screen, pilot, "Incident Review")
+
+        assert screen._console_setup_would_block() is False
+
+        screen.query_one("#library-rag-use-selected-in-console", Button).press()
+        await pilot.pause(0.1)
+
+    app.open_console_for_live_work.assert_called_once()
+    notified_messages = [
+        call.args[0] if call.args else call.kwargs.get("message")
+        for call in app.notify.call_args_list
+    ]
+    assert LIBRARY_RAG_USE_IN_CONSOLE_LOCKED_NOTICE not in notified_messages
+
+
+@pytest.mark.asyncio
 async def test_library_search_rag_selected_result_evidence_metadata() -> None:
     """``LibrarySearchRagPanel`` surfaces the row provenance badge, snippet,
     and citations for a result unconditionally (not gated on selection). The

@@ -31,6 +31,14 @@ from textual.worker import Worker
 from textual.widgets import Button, Checkbox, Collapsible, Input, Static, TextArea
 
 from ...Chat.chat_handoff_models import ChatHandoffPayload
+from ...Chat.console_onboarding_state import (
+    coerce_console_first_send_completed,
+    console_setup_is_blocking,
+)
+from ...Chat.console_session_settings import (
+    build_console_settings_readiness,
+    build_default_console_session_settings,
+)
 from ...Chatbooks.chatbook_models import ContentType
 from ...config import (
     TLDW_API_PLACEHOLDER_AUTH_TOKEN,
@@ -175,6 +183,7 @@ from ...Library.library_rag_service import (
 from ...Library.library_rag_state import (
     LIBRARY_RAG_QUERY_MAX_LENGTH,
     LIBRARY_RAG_SCOPE_TOGGLE_SOURCE_TYPES,
+    LIBRARY_RAG_USE_IN_CONSOLE_LOCKED_NOTICE,
     LIBRARY_SEARCH_HISTORY_ENTRY_MAX_CHARS,
     LIBRARY_SEARCH_HISTORY_LIMIT,
     LibraryRagPanelState,
@@ -17452,6 +17461,64 @@ class LibraryScreen(BaseAppScreen):
         event.stop()
         self._stage_library_rag_result_in_console()
 
+    def _console_setup_would_block(self) -> bool:
+        """Best-effort predict whether Console is currently locked behind setup.
+
+        Task-2852 (b): the "Use in Console" pre-navigation notice needs this
+        WITHOUT a mounted ``ChatScreen`` to ask -- Console's own setup-card
+        predicate (``ChatScreen._build_console_setup_card_state``) lives on
+        a screen this one has no handle to. Rebuilds the same readiness/
+        model/first-send inputs from ``self.app_instance.app_config`` and
+        delegates the actual branch decision to ``console_setup_is_blocking``
+        (the one source of truth `ChatScreen` itself uses), rather than a
+        second hand-rolled copy of its conditions.
+
+        Deliberately uses the plain ``app_config`` snapshot -- Library's
+        existing convention elsewhere in this screen -- rather than
+        Console's freshest-config reload
+        (``ChatScreen._provider_readiness_app_config``, task-177's
+        staleness fix): this is an advisory pre-nav hint, not the source of
+        truth. The receipt on Console's own locked surface (AC #2) always
+        reads live, corrected state, so a stale hint here costs at most a
+        mistimed toast, never a wrong receipt. Fails open (``False``) on any
+        error -- this must never spuriously block or warn on a real
+        handoff.
+
+        Returns:
+            True when landing on Console right now would show the blocking
+            first-run setup card.
+        """
+        app_config = getattr(self.app_instance, "app_config", None)
+        config: Mapping[str, Any] = (
+            app_config if isinstance(app_config, Mapping) else {}
+        )
+        try:
+            settings = build_default_console_session_settings(config)
+            readiness = build_console_settings_readiness(settings, app_config=config)
+        except Exception:
+            logger.debug(
+                "Library Console-lock pre-check failed; assuming unlocked.",
+                exc_info=True,
+            )
+            return False
+        has_model = bool(str(getattr(settings, "model", "") or "").strip())
+        console_cfg = config.get("console", {})
+        onboarding_cfg = (
+            console_cfg.get("onboarding", {})
+            if isinstance(console_cfg, Mapping)
+            else {}
+        )
+        raw_first_send = (
+            onboarding_cfg.get("first_send_completed")
+            if isinstance(onboarding_cfg, Mapping)
+            else None
+        )
+        return console_setup_is_blocking(
+            readiness=readiness,
+            has_model=has_model,
+            first_send_completed=coerce_console_first_send_completed(raw_first_send),
+        )
+
     def _stage_library_rag_result_in_console(self) -> None:
         """Stage the selected Search/RAG evidence result in Console."""
         panel_state = self._library_rag_panel_state()
@@ -17471,6 +17538,21 @@ class LibraryScreen(BaseAppScreen):
                     severity="warning",
                 )
             return
+
+        # Task-2852 (b): Console's blocking first-run setup card visually
+        # covers the whole workbench, so if we said nothing here the user's
+        # selection would silently vanish into a locked "Get started"
+        # screen. The handoff still proceeds -- the evidence really is
+        # staged, and a matching receipt appears on the locked Console
+        # surface (AC #2, `console_setup_staged_receipt`) -- this is just
+        # the immediate, pre-navigation half of that receipt.
+        if self._console_setup_would_block():
+            notify = getattr(self.app_instance, "notify", None)
+            if callable(notify):
+                notify(
+                    LIBRARY_RAG_USE_IN_CONSOLE_LOCKED_NOTICE,
+                    severity="information",
+                )
 
         opener(
             source="Library Search/RAG",

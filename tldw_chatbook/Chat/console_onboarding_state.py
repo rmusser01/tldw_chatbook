@@ -225,3 +225,43 @@ def build_console_setup_card_state(
         mode="card",
         steps=(step_one, step_two, step_three),
     )
+
+
+def console_setup_is_blocking(
+    *,
+    readiness: ConsoleSettingsReadiness,
+    has_model: bool,
+    first_send_completed: bool,
+) -> bool:
+    """Return whether a fresh Console navigation would show the blocking setup card.
+
+    Task-2852: Library's "Use in Console" pre-navigation check needs to know
+    this from OUTSIDE an active Console session -- there is no mounted
+    ``ChatScreen`` to ask, and no in-session transcript to read. Rather than
+    hand-rolling a second copy of ``build_console_setup_card_state``'s
+    branch logic, this delegates to it directly with the two fields that
+    are genuinely per-session-only (``has_messages``, ``guidance_dismissed``)
+    fixed at their "nothing has happened in this session yet" values -- the
+    persisted global ``first_send_completed`` flag already captures "has
+    Console setup ever been completed", which is what a caller outside an
+    active session actually needs.
+
+    Args:
+        readiness: Current settings readiness from
+            ``build_console_settings_readiness``.
+        has_model: Whether a model is selected for the (would-be) session.
+        first_send_completed: Persisted global first-send flag.
+
+    Returns:
+        True when the first-run setup card (``mode == "card"``) would cover
+        the Console workbench right now.
+    """
+    state = build_console_setup_card_state(
+        readiness=readiness,
+        provider_label="",
+        has_model=has_model,
+        first_send_completed=first_send_completed,
+        has_messages=False,
+        guidance_dismissed=False,
+    )
+    return state.mode == "card"

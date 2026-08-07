@@ -322,6 +322,7 @@ from ...Chat.console_live_work import (
     ConsoleLiveWorkLaunch,
     ConsoleLiveWorkSourceReadinessState,
     ConsoleLiveWorkStatusCardState,
+    console_setup_staged_receipt,
 )
 from ...Chat.console_expression_state import (
     EXPRESSION_IMAGE_STATES,
@@ -12792,6 +12793,9 @@ class ChatScreen(BaseAppScreen):
             card_state,
             action_label=action_label,
             action_tooltip=action_tooltip,
+            staged_evidence_notice=console_setup_staged_receipt(
+                self._pending_console_launch_context
+            ),
         )
         modal.sync_detected_server_action(
             build_console_detected_server_action(
