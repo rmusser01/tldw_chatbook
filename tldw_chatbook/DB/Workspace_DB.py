@@ -2,20 +2,36 @@
 
 from __future__ import annotations
 
-from contextlib import closing, contextmanager
+from contextlib import contextmanager
 from pathlib import Path
 import sqlite3
+import threading
+import time
 from typing import Iterator, Union
 
 from .base_db import BaseDB
 
 
 class WorkspaceDB(BaseDB):
-    """Database wrapper for local workspace registry state."""
+    """Database wrapper for local workspace registry state.
+
+    task-3011: connections are held per thread (the ChaChaNotes
+    `_get_thread_connection` idiom, simplified). The old `closing()`-per-use
+    shape opened a brand-new private-SQLite connection for every query —
+    1,352 of them during a single Console screen push (0.64s of first
+    paint, cProfile in task-2902's notes).
+    """
 
     _CURRENT_SCHEMA_VERSION = 2
 
+    #: Liveness-ping gate (mirrors `ChaChaNotes_DB`, task-261): pinging on
+    #: every call roughly doubles the raw statement count on query-heavy
+    #: paths, and this DB is exactly such a path (~1,350 calls per Console
+    #: push). A recently-used held connection is known-good without a ping.
+    _LIVENESS_PING_IDLE_SECONDS = 30.0
+
     def __init__(self, db_path: Union[str, Path], client_id: str = "default") -> None:
+        self._thread_local = threading.local()
         super().__init__(db_path, client_id)
 
     def _get_connection(self) -> sqlite3.Connection:
@@ -23,26 +39,65 @@ class WorkspaceDB(BaseDB):
         conn.execute("PRAGMA foreign_keys = ON")
         return conn
 
+    def _held_connection(self) -> sqlite3.Connection:
+        """Return this thread's held connection, opening or reviving it.
+
+        The liveness probe is a plain no-op statement; a connection another
+        component closed (or that SQLite invalidated) is transparently
+        replaced, mirroring `ChaChaNotes_DB._get_thread_connection`.
+        """
+        conn = getattr(self._thread_local, "conn", None)
+        if conn is not None:
+            last_used = getattr(self._thread_local, "conn_last_used", None)
+            if (
+                last_used is None
+                or (time.monotonic() - last_used)
+                >= self._LIVENESS_PING_IDLE_SECONDS
+            ):
+                try:
+                    conn.execute("SELECT 1")
+                except (sqlite3.ProgrammingError, sqlite3.OperationalError):
+                    try:
+                        conn.close()
+                    except Exception:  # noqa: BLE001 - already unusable
+                        pass
+                    conn = None
+        if conn is None:
+            conn = self._get_connection()
+            self._thread_local.conn = conn
+        self._thread_local.conn_last_used = time.monotonic()
+        return conn
+
     @contextmanager
     def connection(self) -> Iterator[sqlite3.Connection]:
-        """Open a connection with row factory and foreign keys enabled."""
+        """Yield the thread's held connection (row factory, foreign keys on)."""
 
-        with closing(self._get_connection()) as conn:
-            yield conn
+        yield self._held_connection()
 
     @contextmanager
     def transaction(self) -> Iterator[sqlite3.Connection]:
-        """Open a write transaction that rolls back on failure."""
+        """Run a write transaction on the held connection; roll back on failure."""
 
-        with closing(self._get_connection()) as conn:
-            conn.execute("BEGIN")
+        conn = self._held_connection()
+        conn.execute("BEGIN")
+        try:
+            yield conn
+        except Exception:
+            conn.rollback()
+            raise
+        else:
+            conn.commit()
+
+    def close(self) -> None:
+        """Close the current thread's held connection, if any."""
+
+        conn = getattr(self._thread_local, "conn", None)
+        self._thread_local.conn = None
+        if conn is not None:
             try:
-                yield conn
-            except Exception:
-                conn.rollback()
-                raise
-            else:
-                conn.commit()
+                conn.close()
+            except Exception:  # noqa: BLE001 - best-effort teardown
+                pass
 
     def _initialize_schema(self) -> None:
         """Initialize the local workspace registry schema."""
