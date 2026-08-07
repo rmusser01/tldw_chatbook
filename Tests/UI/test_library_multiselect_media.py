@@ -525,6 +525,7 @@ def _bulk_delete_fake(*, db, records, counts, selected_ids):
     selection.select_all(selected_ids)
     notified = []
     refresh_calls = []
+    entry_focus_arm_calls = []
     fake = SimpleNamespace(
         app_instance=SimpleNamespace(
             media_reading_scope_service=scope_service,
@@ -532,6 +533,7 @@ def _bulk_delete_fake(*, db, records, counts, selected_ids):
         ),
         _notified=notified,
         _refresh_calls=refresh_calls,
+        _entry_focus_arm_calls=entry_focus_arm_calls,
         _local_source_records={"media": tuple(records)},
         _local_source_counts=dict(counts),
         _library_media_row_selection=selection,
@@ -539,6 +541,12 @@ def _bulk_delete_fake(*, db, records, counts, selected_ids):
         _library_media_confirming_bulk_delete=True,
         is_mounted=True,
         refresh=lambda **k: refresh_calls.append(k),
+        # review round 2: pin that a full-success bulk delete re-arms
+        # keyboard entry focus (task-2856 AC1's "return to a list canvas"
+        # convention); a bare recording stub is enough here since the
+        # assertion only cares WHETHER it was called, not what it does --
+        # that behavior is already covered by task-2856's own tests.
+        _arm_library_list_entry_focus=lambda: entry_focus_arm_calls.append(True),
         _run_library_service_call=LibraryScreen._run_library_service_call,
         _source_record_id=LibraryScreen._source_record_id,
     )
@@ -609,6 +617,13 @@ async def test_delete_selection_soft_deletes_via_real_db_and_updates_records_and
     # own docstring) -- only a full ``refresh(recompose=True)`` repaints
     # it, mirroring ``_delete_library_media_item``'s own tail.
     assert fake._refresh_calls == [{"recompose": True}]
+    # review round 2: a full-success bulk delete exits Select mode --
+    # exactly the "return to a list canvas" transition task-2856 AC1's
+    # entry-focus convention targets (mirrors ``_exit_library_media_
+    # viewer``'s own tail). Without this a keyboard-only user is left
+    # with nothing focused once the confirm row's "Delete" button (which
+    # had focus) is gone from the DOM after the recompose above.
+    assert fake._entry_focus_arm_calls == [True]
 
     db.close_connection()
 
@@ -659,6 +674,11 @@ async def test_delete_selection_partial_failure_keeps_select_mode_and_warns(
     # A partial failure still touched the list/rail counts (one item DID
     # get deleted) -- the rail must still repaint, same as full success.
     assert fake._refresh_calls == [{"recompose": True}]
+    # review round 2: a partial failure keeps Select mode ACTIVE (the
+    # failed id is still checked, waiting for a retry) -- that is not a
+    # "return to a list" transition the way exiting Select mode entirely
+    # is, so entry focus must NOT be re-armed here.
+    assert fake._entry_focus_arm_calls == []
 
     db.close_connection()
 
@@ -699,3 +719,52 @@ async def test_delete_selection_service_unavailable_keeps_selection_and_warns():
     assert fake._library_media_row_selection.ids == frozenset({"1"})
     assert len(fake._notified) == 1
     assert fake._notified[0][1].get("severity") == "warning"
+
+
+@pytest.mark.asyncio
+async def test_single_item_delete_also_arms_entry_focus_on_success(tmp_path):
+    """review round 2 sibling fix: the single-item viewer delete
+    (``_delete_library_media_item``) has the IDENTICAL "return to a list
+    canvas" transition on success (``_library_media_view`` flips from
+    "viewer" to "list") that established the entry-focus convention in
+    the first place (task-2856 AC1, ``_exit_library_media_viewer``) -- it
+    was simply missed when this method was written before that
+    convention existed. Pin it fixed too, not just the bulk path."""
+    db = MediaDatabase(
+        db_path=str(tmp_path / "media.db"), client_id="task-2853-single-delete"
+    )
+    media_id, _, _ = db.add_media_with_keywords(
+        title="Solo", content="s", media_type="article", keywords=[]
+    )
+    local_service = LocalMediaReadingService(db)
+    scope_service = MediaReadingScopeService(local_service, None)
+    entry_focus_arm_calls = []
+    fake = SimpleNamespace(
+        app_instance=SimpleNamespace(media_reading_scope_service=scope_service),
+        _local_source_records={"media": ({"id": str(media_id), "title": "Solo"},)},
+        _library_media_view="viewer",
+        _library_media_detail={"id": str(media_id)},
+        _library_media_highlights=[{"id": "h1"}],
+        _library_media_editing_analysis=True,
+        _library_media_content_query="solo",
+        _library_media_content_match_index=1,
+        _selected_media_id=str(media_id),
+        _library_media_confirming_delete=True,
+        is_mounted=True,
+        refresh=lambda **k: None,
+        _run_library_service_call=LibraryScreen._run_library_service_call,
+        _source_record_id=LibraryScreen._source_record_id,
+        _entry_focus_arm_calls=entry_focus_arm_calls,
+        _arm_library_list_entry_focus=lambda: entry_focus_arm_calls.append(True),
+    )
+    fake._notify_library_media_delete_warning = types.MethodType(
+        LibraryScreen._notify_library_media_delete_warning, fake
+    )
+
+    await LibraryScreen._delete_library_media_item(fake, str(media_id))
+
+    assert db.get_media_by_id(media_id, include_trash=True)["is_trash"] in {1, True}
+    assert fake._library_media_view == "list"
+    assert fake._entry_focus_arm_calls == [True]
+
+    db.close_connection()

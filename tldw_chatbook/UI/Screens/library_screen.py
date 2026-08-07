@@ -8838,6 +8838,9 @@ class LibraryScreen(BaseAppScreen):
             )
 
         self._library_media_confirming_bulk_delete = False
+        # Only a FULL success exits Select mode -- see below for why only
+        # that path re-arms entry focus (review round 2).
+        exited_select_mode = False
         if failed:
             self._notify_library_media_delete_warning(
                 f"Could not delete {len(failed)} of {len(media_ids)} "
@@ -8846,6 +8849,7 @@ class LibraryScreen(BaseAppScreen):
         else:
             self._library_media_select_mode = False
             self._library_media_row_selection.clear()
+            exited_select_mode = True
 
         if self.is_mounted:
             # A full screen recompose, not the canvas-scoped
@@ -8860,6 +8864,21 @@ class LibraryScreen(BaseAppScreen):
             # doubly-confirmed action, not a hot path the hot-path
             # recompose guidance is aimed at.
             self.refresh(recompose=True)
+            if exited_select_mode:
+                # task-2856 AC1's convention (``_exit_library_media_
+                # viewer``'s own tail): every "return to a list canvas"
+                # exit re-focuses the list's first row so Up/Down/Enter
+                # work immediately for a keyboard-only user -- the
+                # confirm row's "Delete" button that had focus is gone
+                # from the DOM after this recompose, so without this a
+                # successful bulk delete would leave nothing focused at
+                # all (review round 2). Only on the full-success path
+                # that actually LEAVES Select mode: a partial failure
+                # keeps Select mode active, showing the same checkbox
+                # list with the failed id still checked for the user to
+                # retry -- not a "return to a list" transition the way
+                # exiting Select mode entirely is, so it does not re-arm.
+                self._arm_library_list_entry_focus()
 
     @on(Button.Pressed, "#library-media-open-viewer")
     def handle_library_media_open_viewer(self, event: Button.Pressed) -> None:
@@ -16684,6 +16703,16 @@ class LibraryScreen(BaseAppScreen):
             self._selected_media_id = ""
         if self.is_mounted:
             self.refresh(recompose=True)
+            if deleted:
+                # task-2853 review round 2: this is exactly the "back to
+                # list from viewer" transition ``_exit_library_media_
+                # viewer`` established the entry-focus convention for
+                # (task-2856 AC1) -- it was simply missed when this method
+                # was written before that convention landed. Without it, a
+                # keyboard-only user who deletes the item they are viewing
+                # is left with nothing focused, the same gap the bulk
+                # delete's own completion tail fixes just above.
+                self._arm_library_list_entry_focus()
 
     def _notify_library_media_delete_warning(self, message: str) -> None:
         """Surface a quiet warning notice for a failed media-delete attempt.

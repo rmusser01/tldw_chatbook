@@ -114,24 +114,27 @@ class LibraryMediaCanvas(RecomposeCaptureGuard, Vertical):
             action_row = Horizontal(classes="ds-toolbar")
             action_row.styles.height = "auto"
             with action_row:
-                selected_count_static = Static(
-                    f"{self.canvas.selected_count} selected",
-                    id="library-media-selected-count",
-                    markup=False,
-                )
                 # Bug found via task-2853's OWN live tmux verification
                 # (reproduced against pre-task-8 HEAD too, so it predates
-                # this task): with no explicit width, this Static's width
-                # resolves as unbounded inside the ``ds-toolbar``
-                # ``Horizontal`` -- live capture showed it claiming ~1700
-                # columns on a 170-column terminal, pushing every sibling
-                # Button entirely off-screen (invisible, though still
-                # present in the DOM -- which is why headless ``query_one``
-                # pilot tests never caught it). Pinning ``width: auto`` (the
-                # same value ``Button``'s own DEFAULT_CSS already uses)
-                # makes it hug its own text instead.
-                selected_count_static.styles.width = "auto"
-                yield selected_count_static
+                # this task, and against the Conversations canvas too, the
+                # identical pattern -- see review round 2): with no
+                # explicit width, this Static resolved as unbounded inside
+                # the ``ds-toolbar`` ``Horizontal`` -- live capture showed
+                # it claiming ~1700 columns on a 170-column terminal,
+                # pushing every sibling Button entirely off-screen
+                # (invisible, though still present in the DOM -- which is
+                # why headless ``query_one`` pilot tests never caught it).
+                # Fixed as the general rule via the shared
+                # ``library-toolbar-count`` class (css/components/
+                # _agentic_terminal.tcss), not a per-widget Python
+                # one-off, so every canvas's counter is covered by one
+                # declaration.
+                yield Static(
+                    f"{self.canvas.selected_count} selected",
+                    id="library-media-selected-count",
+                    classes="library-toolbar-count",
+                    markup=False,
+                )
                 if confirming_bulk_delete:
                     yield Button(
                         "Delete",

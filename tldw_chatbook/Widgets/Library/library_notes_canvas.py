@@ -177,9 +177,17 @@ class LibraryNotesCanvas(Vertical):
             action_row = Horizontal(classes="ds-toolbar")
             action_row.styles.height = "auto"
             with action_row:
+                # task-2853 review round 2: the SAME unbounded-width defect
+                # proved live in the Media canvas's identical counter (see
+                # library_media_canvas.py's compose()) also affects this
+                # canvas's counter -- fixed generally via the shared
+                # ``library-toolbar-count`` class (css/components/
+                # _agentic_terminal.tcss's ``width: auto``) rather than a
+                # per-canvas one-off.
                 yield Static(
                     f"{list_state.selected_count} selected",
                     id="library-notes-selected-count",
+                    classes="library-toolbar-count",
                     markup=False,
                 )
                 yield Button(

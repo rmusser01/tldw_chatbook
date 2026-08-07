@@ -3,7 +3,7 @@ from types import SimpleNamespace
 
 import pytest
 from textual.app import App
-from textual.widgets import Button
+from textual.widgets import Button, Static
 
 from tldw_chatbook.UI.Screens.library_screen import (
     LibraryScreen,
@@ -17,6 +17,16 @@ from tldw_chatbook.Library.library_conversations_state import (
 )
 from tldw_chatbook.Widgets.Library.library_conversations_canvas import (
     LibraryConversationsCanvas,
+)
+from Tests.UI.app_factory import _build_test_app
+from Tests.UI.test_library_shell import (
+    LIBRARY_TEST_SIZE,
+    LibraryHarness,
+    _active_library_screen,
+    _seed_conversations,
+    _two_conversations,
+    _wait_for_library_shell,
+    _wait_for_selector,
 )
 
 
@@ -145,3 +155,53 @@ async def test_export_selected_tooltip_follows_its_disabled_state():
         )
         assert export_btn.disabled is False
         assert "export" in str(export_btn.tooltip).lower()
+
+
+@pytest.mark.asyncio
+async def test_conversations_toolbar_count_static_stays_bounded_width_with_real_css():
+    """task-2853 review round 2: the SAME unbounded-width defect proved
+    live in the Media canvas's identical "N selected" counter (see
+    library_media_canvas.py's compose()) also affects this canvas's own
+    counter -- both are fixed by the SAME shared ``library-toolbar-count``
+    CSS class (css/components/_agentic_terminal.tcss's ``width: auto``),
+    not a per-canvas Python one-off, so one declaration covers both.
+
+    Mounts the REAL ``LibraryScreen`` with the REAL generated CSS bundle
+    (``LibraryHarness``, not a bare canvas-only ``App`` the way the other
+    tests in this file do) so the assertions below reflect the actual
+    cascade a live terminal sees -- a bare-App mount never reproduced this
+    bug (Button's own ``DEFAULT_CSS`` alone was enough to keep it
+    visible), only the full app bundle's stylesheet did. Before the fix
+    this Static's rendered region width was ~1700 columns on a
+    170-column simulated terminal and every sibling Button was pushed
+    entirely off-screen (present in the DOM, invisible on screen); this
+    pins both symptoms as regression guards.
+    """
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one("#library-row-browse-conversations").press()
+        await _wait_for_selector(screen, pilot, "#library-conversation-row-0")
+
+        screen.query_one("#library-conversations-select-toggle", Button).press()
+        count_static = await _wait_for_selector(
+            screen, pilot, "#library-conversations-selected-count"
+        )
+
+        # Bounded to its own content ("0 selected" is 10 characters) --
+        # NOT the ~1700-column runaway the unbounded-width bug produced.
+        assert count_static.region.width < 30
+
+        select_all_btn = screen.query_one(
+            "#library-conversations-select-all", Button
+        )
+        # Genuinely on-screen (within the simulated terminal's own
+        # width), not pushed past the visible viewport the way the
+        # unbounded Static's sibling Buttons were before the fix.
+        assert 0 < select_all_btn.region.x < LIBRARY_TEST_SIZE[0]
+        assert select_all_btn.region.width > 0

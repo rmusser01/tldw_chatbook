@@ -84,9 +84,17 @@ class LibraryConversationsCanvas(RecomposeCaptureGuard, Vertical):
             action_row = Horizontal(classes="ds-toolbar")
             action_row.styles.height = "auto"
             with action_row:
+                # task-2853 review round 2: the SAME unbounded-width defect
+                # proved live in the Media canvas's identical counter --
+                # see library_media_canvas.py's compose() for the live
+                # tmux evidence. Fixed via the shared
+                # ``library-toolbar-count`` class (css/components/
+                # _agentic_terminal.tcss's ``width: auto``) rather than
+                # repeating a Python-side one-off here.
                 yield Static(
                     f"{self.canvas.selected_count} selected",
                     id="library-conversations-selected-count",
+                    classes="library-toolbar-count",
                     markup=False,
                 )
                 yield Button(

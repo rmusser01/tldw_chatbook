@@ -124,4 +124,29 @@ Tests/Library/test_library_export_roundtrip.py.
 
 Concern for the controller: library_screen.py grew by ~250 net lines in this task alone,
 on top of the pre-existing ~19k-line file already flagged for a split (task-1378/1379).
+
+Review round 2 fixes (Important x2): (1) the unbounded-width toolbar-count Static bug
+was fixed only for Media as a Python one-off, leaving the byte-identical Conversations
+counter (and Notes -- same pattern, found while fixing) still broken; replaced with a
+shared `.library-toolbar-count { width: auto; }` CSS class (css/components/
+_agentic_terminal.tcss, bundle regenerated) applied to all three canvases' counters --
+one declaration, not three near-duplicate one-offs. New headless test in
+test_library_multiselect_conversations.py mounts the REAL LibraryScreen + REAL CSS
+bundle and asserts the Conversations counter's rendered region width stays bounded;
+proved it actually catches the regression via a manual RED/GREEN check (stripped the
+class, watched the test fail with the exact `1701 < 30` symptom, restored it). (2) the
+bulk-delete completion never re-armed keyboard entry focus on its full-success exit
+from Select mode, unlike `_exit_library_media_viewer`'s established task-2856 AC1
+convention -- fixed (arms only on full success; a partial failure keeps Select mode
+active, which is not a "return to a list" transition, so it does not arm). The
+identical, pre-existing gap in the single-item viewer delete (`_delete_library_media_item`)
+was fixed too rather than just flagged, since it is the exact same one-line pattern.
+Both gaps now covered by tests (bulk success arms, bulk partial-failure does not,
+single-item success arms), each verified RED before the fix.
+
+Minor (no code change, recorded per reviewer): the media-type filter cycle silently
+cancels an armed bulk-delete confirmation (routes through the same
+`_exit_library_media_select_mode` exit helper as "Done", using generic "Selection
+discarded" copy rather than delete-specific wording) -- accepted as the safest
+behavior for an armed destructive action interrupted by an unrelated control.
 <!-- SECTION:NOTES:END -->
