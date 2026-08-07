@@ -1,8 +1,7 @@
 """Which Playground controls are comparison axes and which are tuning knobs.
 
 Pure data plus one lookup, so the classification is testable without
-mounting `TTSPlaygroundWidget` -- 2,400 lines that build a TTS playground on
-compose.
+mounting the full playground UI on compose.
 
 The split is the redesign's central rule. The Playground exists to test the
 available STT/TTS options and identify which works best, so the variables a
@@ -97,9 +96,9 @@ PROVIDER_PARAMS: dict[str, tuple[str, ...]] = {
 #: readouts, the audio player, and the per-provider containers.
 #:
 #: Listed rather than derived so the rebuild can be checked for completeness.
-#: `test_the_inventory_matches_the_live_widget` diffs this against the ids
-#: the legacy `TTSPlaygroundWidget` composed before it was retired. It is a
-#: guard against silently dropping a capability while re-siting 57 controls.
+#: `test_speech_playground_completeness.py` diffs this against what
+#: `SpeechPlaygroundPane` actually mounts, per provider -- a guard against
+#: silently dropping a capability while re-siting 57 controls.
 _UNSPLIT_CONTROLS: tuple[str, ...] = (
     "tts-text-input",
     # actions

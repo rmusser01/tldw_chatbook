@@ -75,12 +75,13 @@ class SpeechCatalogMixin:
     def _tts_service_factory(self):
         """Return the TTS service, awaitable.
 
-        A hook, not a direct call. `TTSPlaygroundWidget` overrides it to
-        resolve `get_tts_service` from the `STTS_Window` module namespace,
-        which is where the existing tests monkeypatch it. Moving the code
-        here would otherwise have silently detached 12 patch sites -- the
-        catalog would quietly hit the real service and the selects would sit
-        on LOADING forever, which is exactly how this was found.
+        A hook, not a direct call, so a host can redirect where
+        `get_tts_service` resolves from without this mixin needing to know
+        about it. Moving catalog loading into a shared mixin once silently
+        detached twelve patch sites that expected to patch `get_tts_service`
+        on the `STTS_Window` module -- the catalog quietly hit the real
+        service instead and every select sat on LOADING forever, which is
+        exactly how this was found.
 
         Returns:
             An awaitable yielding the TTS service.
@@ -1033,9 +1034,8 @@ class SpeechCatalogMixin:
         keeps model/voice/format/speed and provider all in step with what
         was just written to the Selects, then repaints the row.
 
-        A no-op for hosts with no `axis_values` -- `SpeechCatalogMixin` is
-        also inherited by the legacy `TTSPlaygroundWidget`, which carries no
-        axis row and no axis model.
+        A no-op for hosts with no `axis_values` -- `SpeechCatalogMixin` makes
+        no assumption that every host carries an axis row and an axis model.
 
         Model, voice and format are each POPPED, not merely left alone, when
         the projection resolves them to nothing (e.g. a provider whose
@@ -1066,8 +1066,8 @@ class SpeechCatalogMixin:
         axis_values["tts-speed-input"] = str(controls.speed)
         # `_refresh_axis_markers` is defined only on `SpeechPlaygroundPane`;
         # reaching this line at all already required the `axis_values`
-        # getattr gate above, which is what makes calling it safe on the
-        # legacy `TTSPlaygroundWidget` host too.
+        # getattr gate above, which is what makes calling it safe on any
+        # host with no axis row.
         self._refresh_axis_markers()
 
     @staticmethod

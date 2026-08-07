@@ -19,11 +19,14 @@ from tldw_chatbook.UI.stts_playground_catalog import (
     SERVER_DEFAULT_VOICE_ID,
     CatalogRequestToken,
     controls_from_catalog,
+    controls_from_profile_preset,
     preset_has_no_catalog_check,
     profile_availability_from_catalog,
     provider_options,
     voice_id_for_request,
 )
+
+from Tests.UI.speech_playground_fixtures import _profile_preset
 
 
 def _model(
@@ -378,3 +381,68 @@ def test_preset_has_no_catalog_check_is_false_for_audio_cpp() -> None:
     )
 
     assert preset_has_no_catalog_check(preset) is False
+
+
+# --- TASK-2951 port: controls_from_profile_preset gap coverage ---
+#
+# Ported from `Tests/UI/test_stts_playground_audio_cpp.py` (the retired
+# legacy playground widget's test file). These two call `controls_from_
+# profile_preset` directly with no App/pilot, so they belong beside this
+# file's existing coverage of the same function rather than in the new
+# `test_speech_playground_pane_lifecycle.py` (which is for tests that mount
+# a pane). No widget/pane-specific behavior involved -- pure projection.
+
+
+def test_profile_preset_projection_keeps_missing_exact_values_but_blocks_generation() -> (
+    None
+):
+    """A profile whose exact model/voice are missing from the catalog must
+    still be *shown* (so the user can see what they saved), but generation
+    stays blocked.
+    """
+    preset = _profile_preset()
+
+    controls = controls_from_profile_preset(
+        _catalog(),
+        preset=preset,
+        discovered_voices=("[voice]",),
+    )
+
+    assert controls.selected_model_id == "profile/model"
+    assert "profile/model" in {value for _label, value in controls.model_options}
+    assert controls.selected_voice_id == "profile/voice"
+    assert "profile/voice" in {value for _label, value in controls.voice_options}
+    assert controls.selected_format == "wav"
+    assert controls.speed == 1.0
+    assert controls.generation_allowed is False
+    assert controls.selection_changed is False
+
+
+@pytest.mark.parametrize(
+    "model",
+    (
+        replace(_model(), formats=("mp3",)),
+        replace(_model(), omit_voice_uses_server_default=False),
+    ),
+    ids=("format-missing", "server-default-unsupported"),
+)
+def test_profile_preset_projection_blocks_incompatible_model_contract(
+    model: TTSModelInfo,
+) -> None:
+    """A profile's exact model can be *present* in the catalog and still be
+    incompatible with the persisted profile contract (wrong format list, or
+    a model that requires an explicit voice) -- either must still block
+    generation, matching `AUDIO_CPP_PROFILE_RESPONSE_FORMAT`/slice-1 rules.
+    """
+    catalog = replace(_catalog(), models=(model,))
+    preset = _profile_preset(model_id=model.model_id, voice_id=None)
+
+    controls = controls_from_profile_preset(
+        catalog,
+        preset=preset,
+        discovered_voices=None,
+    )
+
+    assert controls.selected_model_id == model.model_id
+    assert controls.selected_voice_id is SERVER_DEFAULT_VOICE_ID
+    assert controls.generation_allowed is False

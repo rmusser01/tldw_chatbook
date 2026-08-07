@@ -1,10 +1,11 @@
 """Saved TTS profiles, shared by whatever hosts the Playground controls.
 
-dev built this onto `TTSPlaygroundWidget` while the Console-grammar rebuild
-was in flight -- a profile library, and the ability to save the current
-result as a profile and preview an exact one. Retiring that widget would
-have deleted the UI half of it, so the behaviour moves here instead and the
-rebuilt pane inherits it, exactly as the catalog and synthesis paths did.
+dev built this onto the legacy playground widget while the Console-grammar
+rebuild was in flight -- a profile library, and the ability to save the
+current result as a profile and preview an exact one. Retiring that widget
+would have deleted the UI half of it, so the behaviour moves here instead
+and the rebuilt pane inherits it, exactly as the catalog and synthesis
+paths did.
 
 Ported rather than reimplemented: these are dev's methods verbatim. They
 query their controls by id, so the pane mounts the same ids
@@ -91,8 +92,8 @@ class SpeechProfileMixin:
         #: (no preset) starts True since there is nothing to apply, and a
         #: preset pane starts False until priming's own `_apply_controls`
         #: call (during `on_mount`) flips it. Set here rather than left to
-        #: `_apply_controls` alone: `TTSPlaygroundWidget.__init__` sets the
-        #: same attribute in its constructor, and this pane's preset path
+        #: `_apply_controls` alone: the legacy playground widget's
+        #: constructor set the same attribute, and this pane's preset path
         #: is production-reachable now that `STTS_Window` mounts it.
         self._profile_controls_applied = profile_preset is None
         #: Catalog revision the preview was admitted against.

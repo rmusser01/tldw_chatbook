@@ -134,3 +134,15 @@ file). This task's status stays Done as the historical record of the first
 retirement pass, which really did happen and really was reverted by a later,
 independent branch-reconciliation decision — not by a defect in this task's
 own work.
+
+### Closure (task-2951, second deletion pass)
+
+**task-2951 is Done.** `TTSPlaygroundWidget` is deleted again (3225 lines,
+`STTS_Window.py`) and this time nothing restores it: the `_playground()`
+lookup in `stts_screen.py` and both tolerant lookups in `stts_events.py`
+that used to name it are repointed at `SpeechPlaygroundPane` only. Its
+remaining 80 non-dead tests were diffed against the pane's own suite before
+deletion (3 already duplicated, 77 ported — 75 straightforwardly, 2 exposed
+a genuine, unrelated pane defect and were left `xfail(strict=True)`, filed
+as task-2970) — zero silent coverage loss. AC#4 no longer needs a
+correction footnote on dev.

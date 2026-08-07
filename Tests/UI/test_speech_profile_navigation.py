@@ -9,7 +9,7 @@ import pytest
 from textual.app import App
 from textual.widgets import Button, Select, Static
 
-from Tests.UI.test_stts_playground_audio_cpp import FakeTTSService, _resolved
+from Tests.UI.speech_playground_fixtures import FakeTTSService, _resolved
 from tldw_chatbook.TTS import STTSGeneratedAudio, TTSPlaygroundSelectionPreset
 from tldw_chatbook.UI.Screens.stts_screen import STTSScreen
 from tldw_chatbook.UI.Speech.speech_playground_pane import SpeechPlaygroundPane

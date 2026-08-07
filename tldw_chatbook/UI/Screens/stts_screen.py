@@ -119,9 +119,13 @@ class STTSScreen(LabScreen):
         ("s", "stop"),
     )
 
-    # Screen-level mirrors of TTSPlaygroundWidget.BINDINGS so the keys work
-    # from the landed state (nav bar holds initial focus; widget bindings
-    # only fire with in-window focus).
+    # Screen-level plain-letter shortcuts for the mounted playground's
+    # action_* methods (SpeechPlaybackMixin/SpeechSynthesisMixin), invoked
+    # directly via `_playground()` rather than through the pane's own
+    # BINDINGS (which use ctrl+ combos -- see speech_playground_pane.py).
+    # These exist so the keys work from the landed state: the nav rail
+    # holds initial focus, and a binding declared only on the pane would
+    # never fire without in-pane focus.
     BINDINGS = [
         Binding("g", "generate_tts", "Generate Speech", show=False),
         Binding("r", "random_text", "Random Text", show=False),
@@ -161,11 +165,17 @@ class STTSScreen(LabScreen):
         return ("stts", self.STTS_SHORTCUTS + self.LAB_FOOTER_SHORTCUTS)
 
     def _playground(self):
-        """Return the playground widget, if mounted."""
-        from ..STTS_Window import TTSPlaygroundWidget
+        """Return the mounted playground pane, if any.
+
+        ``STTSWindow._mount_view`` only ever mounts ``SpeechPlaygroundPane``
+        for the ``playground`` view (this used to query the retired legacy
+        playground widget -- TASK-2951 -- which was never mounted in
+        production, making every mirrored action below a permanent no-op).
+        """
+        from ..Speech.speech_playground_pane import SpeechPlaygroundPane
 
         try:
-            return self.query_one(TTSPlaygroundWidget)
+            return self.query_one(SpeechPlaygroundPane)
         except Exception:  # noqa: BLE001 - playground not mounted
             return None
 

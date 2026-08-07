@@ -18,7 +18,7 @@ import pytest
 from textual.app import App, ComposeResult
 from textual.widgets import Select
 
-from Tests.UI.test_stts_playground_audio_cpp import (
+from Tests.UI.speech_playground_fixtures import (
     FakeTTSService,
     _resolved,
     _wait_until,

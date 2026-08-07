@@ -38,7 +38,7 @@ from Tests.UI.test_speech_profile_navigation import (
     _playground_ready,
     _wait_until,
 )
-from Tests.UI.test_stts_playground_audio_cpp import FakeTTSService, _resolved
+from Tests.UI.speech_playground_fixtures import FakeTTSService, _resolved
 from Tests.UI.test_studio_tts_preferences import _Host, _Store
 from tldw_chatbook.app import TldwCli
 from tldw_chatbook import config as config_module
