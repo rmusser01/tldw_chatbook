@@ -1222,9 +1222,15 @@ async def test_landing_footer_advertises_the_landing_keyboard_story():
         await _wait_for_library_shell(screen, pilot)
 
         footer = screen.query_one(AppFooterStatus)
+        # (task-3022, coordinating with task-2860) The always-present-globals
+        # contract (ADR-031) means F1/Ctrl+P/Ctrl+Q still trail the screen's
+        # own hints even though the screen's own "F6 next pane" copy now
+        # covers F6 and excludes "F6 panes" from that trailing cluster --
+        # see Tests/UI/test_screen_footer_hints.py for the identical,
+        # already-updated pin on the same landing-footer string.
         assert footer.shortcut_text == (
-            "/ focus search | i import content | n new note | "
-            f"{AppFooterStatus.GLOBAL_HINTS}"
+            "/ focus search | i import content | n new note | F6 next pane | "
+            "F1 help · Ctrl+P palette · Ctrl+Q quit"
         )
 
 
@@ -9277,7 +9283,16 @@ async def test_library_shell_note_save_result_after_switch_is_discarded():
             raise AssertionError("n-2 detail never loaded.")
 
         assert screen._library_note_version == 1  # n-2's own seeded version
-        n2_meta_before = str(screen.query_one("#library-note-meta").renderable)
+        # (task-3022) The same state-then-DOM race task-699 diagnosed for
+        # the note-conflict family: ``_library_note_detail`` flips to n-2
+        # a tick before the recompose that mounts ITS OWN
+        # ``#library-note-meta`` (a fresh widget instance, not a reused
+        # one) actually lands -- polling state alone (as above) can pass
+        # while the query below still sees the old/no widget. Await the
+        # widget itself, not just the state, before reading it.
+        n2_meta_before = str(
+            (await _wait_for_selector(screen, pilot, "#library-note-meta")).renderable
+        )
         assert "saved" not in n2_meta_before
 
         # Now let the stale n-1 save resolve and give the (buggy) mutation a
@@ -9296,7 +9311,9 @@ async def test_library_shell_note_save_result_after_switch_is_discarded():
             "n-1's stale save result clobbered n-2's version: "
             f"{screen._library_note_version!r}"
         )
-        n2_meta_after = str(screen.query_one("#library-note-meta").renderable)
+        n2_meta_after = str(
+            (await _wait_for_selector(screen, pilot, "#library-note-meta")).renderable
+        )
         assert "saved" not in n2_meta_after, (
             f"n-1's stale save result leaked into n-2's meta line: {n2_meta_after!r}"
         )
@@ -9718,10 +9735,18 @@ async def test_library_shell_note_conflict_reload_discards_local_edits():
         )
 
         assert screen.query_one("#library-note-conflict-region").display is False
-        assert (
-            screen.query_one("#library-note-body", TextArea).text
-            == "Server-side content"
-        )
+        # (task-3022) Same state-then-DOM race task-699 diagnosed for the
+        # note-conflict family: the state check above (autosave idle +
+        # view "editor") can pass a tick before the recompose that mounts
+        # the freshly-reloaded editor's OWN ``#library-note-body``/
+        # ``#library-note-title`` widgets actually lands. Await the body
+        # widget itself before reading either field. (Rebase note: dev's
+        # parallel fix asserts the display-managed conflict REGION, which
+        # is the current DOM shape -- kept; the awaited body read is this
+        # branch's race fix -- also kept.)
+        body = await _wait_for_selector(screen, pilot, "#library-note-body")
+        assert isinstance(body, TextArea)
+        assert body.text == "Server-side content"
         assert (
             screen.query_one("#library-note-title", Input).value == "Server-side title"
         )
@@ -13496,7 +13521,17 @@ async def test_library_shell_notes_sync_now_calls_recording_service_with_chosen_
         else:
             raise AssertionError("Sync run never completed.")
 
-        status_widget_after = screen.query_one("#library-notes-sync-status", Static)
+        # (task-3022) Same state-then-DOM race task-699 diagnosed for the
+        # note-conflict family, a third instance of the same shape:
+        # ``_library_notes_sync_running`` flips to False a tick before the
+        # finish-of-run recompose that unmounts THIS status Static and
+        # mounts its replacement actually lands, so a bare ``query_one``
+        # right after the state-poll above can transiently find neither --
+        # ``_wait_for_selector`` polls via ``screen.query`` (an empty list,
+        # never an exception) instead of a one-shot ``query_one``.
+        status_widget_after = await _wait_for_selector(
+            screen, pilot, "#library-notes-sync-status"
+        )
         assert "done" in str(status_widget_after.renderable)
 
         # A3: the finish-of-run recompose restores "Sync now", re-enabled.

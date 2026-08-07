@@ -65,19 +65,23 @@ screen's own hint for a reserved key now always wins (shown once, with its real 
 an uncovered reserved key still gets its generic global hint; two screens/tests confirm
 genuine duplicates still collapse to one occurrence.
 
-AC#1 and AC#3: met. AC#2 (test_landing_footer_advertises_the_landing_keyboard_story):
-NOT met, by design -- that test's literal expected string has NO global-hints suffix at
-all ("... | F6 next pane", nothing after), which is incompatible with the "always-present
-globals" contract this fix (and ~10 other tests) enforce. task-3022's own note for that
-exact test says "coordinate rather than patch the assertion" -- recorded delta below for
-that task to consume:
+The "literal F6 hint in the rendered footer" criterion and the "audit other screens"
+criterion: met cleanly. The "ambient test root-cause fixed" criterion
+(test_landing_footer_advertises_the_landing_keyboard_story): its root cause is fixed, but
+the test's own literal expected string still does not match -- it has NO global-hints
+suffix at all ("... | F6 next pane", nothing after), which is incompatible with the
+"always-present globals" contract this fix (and ~10 other tests) enforce. That criterion's
+own wording carves this out as acceptable scope (root cause fixed + delta recorded, not a
+requirement that the test itself goes green here) -- task-3022's own note for that exact
+test says "coordinate rather than patch the assertion" -- recorded delta below for that
+task to consume:
   BEFORE (unmodified AppFooterStatus.py): "...n new note | F1 help · F6 panes · Ctrl+P
     palette · Ctrl+Q quit" (generic "F6 panes", screen's own copy absent).
   AFTER (this fix): "...n new note | F6 next pane | F1 help · Ctrl+P palette · Ctrl+Q
     quit" (screen's own copy present, "F6 panes" gone, but a global-hints suffix remains,
     which the test's literal string does not expect).
 
-Audit (AC#3): only three screens advertise a reserved key in their own footer hints --
+Audit (the "audit other screens" criterion): only three screens advertise a reserved key in their own footer hints --
 library_screen.py (F6), chat_screen.py/Console (F6, Shift+F6, F1, Ctrl+P), and
 personas_screen.py (F6) -- all now covered by the fix and re-verified (Console's own
 direct unit test updated). study/lab/evals/mcp/schedules/logs/settings screens do not

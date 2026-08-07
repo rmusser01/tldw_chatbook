@@ -1420,3 +1420,40 @@ state (`is_offline_mode()`), never the env var's string value: a `"1"` that arri
 late reads as success on an env-var check while the flag it was meant to control stayed
 `False`. And when closing a hole like this with a two-part fix, mutation-test each half
 independently — here, either half alone was silently insufficient.
+
+---
+
+## "Order-dependent" in the backlog is a hypothesis, not a diagnosis — a state flip is not proof the DOM caught up
+
+**TASK-3022, 2026-08-07.** The backlog described two `Tests/UI/test_library_shell.py`
+tests as "order-dependent notes-tail failures" (plus a third found during this task's
+own sweep, `test_library_shell_notes_sync_now_calls_recording_service_with_chosen_enums`).
+All three, when actually run alone, repeatedly (3/3, 3/3, and 2/3 samples respectively)
+failed with `NoMatches` on a widget query, not intermittently the way real cross-test
+pollution would present. Each had the identical shape: poll a plain/reactive attribute
+(`_library_note_detail`, `_library_notes_view` + `_library_note_autosave_state`,
+`_library_notes_sync_running`) in a `for _ in range(N): await pilot.pause(...)` loop,
+then immediately do a **one-shot** `screen.query_one(...)` on a widget the same state
+transition is supposed to (re)mount. Task-699 (2026-07-26) had already diagnosed and
+fixed the first known instance of exactly this shape in the same file; these three were
+new instances introduced by later test additions that never saw that diagnosis.
+
+**Why it happens.** The Python attribute write and the Textual recompose that renders it
+are not atomic. A handler sets `self._library_note_detail = new_value` and only later
+`await`s back into the event loop for the recompose to actually mount the widget that
+implies. A poll loop watching the ATTRIBUTE exits the instant it flips — one event-loop
+tick before the widget it implies is guaranteed to exist. Whether a given run's timing
+window is wide enough to hide this varies with machine load, which is exactly why it had
+been filed as "order-dependent" rather than diagnosed: it LOOKS like flakiness (some runs
+pass) without actually depending on any other test.
+
+**What to do.**
+1. Do not accept a backlog description of "order-dependent"/"flaky" at face value — a
+   test that fails when run completely alone, even once, is not proof of cross-test
+   pollution. Run it alone, several times, before hunting for a preceding-test trigger
+   that may not exist.
+2. Once a poll loop has established the STATE you care about, wait for the WIDGET too
+   via `_wait_for_selector` (this file's helper — polls `screen.query`, a list, so zero
+   matches is just "not yet") before reading it — never a bare `query_one` right after a
+   state-only poll, since it raises the moment the DOM lags the state by even one tick.
+   Cheap enough to apply proactively, not just after a failure is observed.
