@@ -1462,9 +1462,16 @@ async def test_console_registers_footer_workbench_shortcuts():
         # the harness's default-screen stand-in.
         footer = console.query_one(AppFooterStatus)
 
+        # task-2860: CONSOLE_WORKBENCH_SHORTCUTS advertises F6/F1/Ctrl+P
+        # itself (with Console-specific labels -- "next pane", "help",
+        # "palette"), so those now render verbatim instead of being
+        # silently dropped in favour of the generic global copies; the one
+        # reserved key Console does NOT cover (Ctrl+Q) still gets its
+        # generic global hint.
         assert footer.shortcut_text == (
-            "Shift+F6 previous pane | Enter send | Ctrl+K switch session | "
-            "Ctrl+T new tab | F1 help · F6 panes · Ctrl+P palette · Ctrl+Q quit"
+            "F6 next pane | Shift+F6 previous pane | F1 help | Enter send | "
+            "Ctrl+K switch session | Ctrl+T new tab | Ctrl+P palette | "
+            "Ctrl+Q quit"
         )
 
         await console.remove()

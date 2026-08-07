@@ -299,3 +299,10 @@ glosses/counts follow one rule across visits (LIB-15); the search box
 selects a stale query on click too, not just on a second "/" (LIB-17);
 Conversations/Flashcards/Collections fall back to a short label instead
 of a mid-word ellipsis at narrow widths (LIB-18)).*
+*Verified against dev @ 023a04a48 — 2026-08-07 (task-2860: the "F6 next
+pane" footer hint above was previously true in description only — a
+`AppFooterStatus` filter silently dropped the landing's own F6 hint and
+substituted the generic global "F6 panes" text instead. The footer now
+renders the screen's own copy, live-verified at 170 and 100 columns; at
+80 columns the whole screen-hint cluster (not just F6) already yields to
+the width ladder described above, unchanged by this fix).*

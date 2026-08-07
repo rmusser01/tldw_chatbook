@@ -35,14 +35,42 @@ class AppFooterStatus(Widget):
       progressively; nothing ever clips mid-word.
     """
 
-    GLOBAL_HINTS = "F1 help · F6 panes · Ctrl+P palette · Ctrl+Q quit"
-    GLOBAL_HINTS_COMPACT = "F1 · Ctrl+P · Ctrl+Q"
-    GLOBAL_HINTS_MIN = "Ctrl+Q"
-    DEFAULT_SHORTCUT_TEXT = GLOBAL_HINTS
+    #: (key, label) pairs backing each width tier of the app-global hint
+    #: cluster (ADR-031: f1/f6/ctrl+p/ctrl+q are app-global keys screens
+    #: must not rebind). Single source of truth for both the joined
+    #: class-level strings below (still referenced directly by several
+    #: tests/screens) and the per-key dedup in `_remaining_global_text`.
+    #: task-2860: keeping two separate representations of these four keys
+    #: in sync (a joined string here, a hardcoded key-only filter that used
+    #: to live in `set_shortcut_context`) is exactly how a screen's own F6
+    #: ("next pane") hint went silently missing -- the old filter dropped the
+    #: screen's copy unconditionally, even at compact widths where
+    #: `GLOBAL_HINTS_COMPACT` does not render F6 at all, leaving the key
+    #: advertised nowhere. The fix: the screen's context now renders
+    #: UNFILTERED (see `set_shortcut_context`), and this global half
+    #: instead excludes whichever keys the context already covers -- see
+    #: `_remaining_global_text`. A key the screen does not mention still
+    #: gets its generic global hint; a key the screen does mention shows
+    #: only the screen's own (more specific) copy, never both.
+    _GLOBAL_HINT_ITEMS_FULL = (
+        ("f1", "F1 help"),
+        ("f6", "F6 panes"),
+        ("ctrl+p", "Ctrl+P palette"),
+        ("ctrl+q", "Ctrl+Q quit"),
+    )
+    _GLOBAL_HINT_ITEMS_COMPACT = (
+        ("f1", "F1"),
+        ("ctrl+p", "Ctrl+P"),
+        ("ctrl+q", "Ctrl+Q"),
+    )
+    _GLOBAL_HINT_ITEMS_MIN = (("ctrl+q", "Ctrl+Q"),)
 
-    #: Keys owned by the app-global layer (ADR-031); context hints that
-    #: repeat them are filtered so the footer never says the same key twice.
-    _RESERVED_GLOBAL_KEYS = frozenset({"f1", "f6", "ctrl+p", "ctrl+q"})
+    GLOBAL_HINTS = " · ".join(label for _key, label in _GLOBAL_HINT_ITEMS_FULL)
+    GLOBAL_HINTS_COMPACT = " · ".join(
+        label for _key, label in _GLOBAL_HINT_ITEMS_COMPACT
+    )
+    GLOBAL_HINTS_MIN = " · ".join(label for _key, label in _GLOBAL_HINT_ITEMS_MIN)
+    DEFAULT_SHORTCUT_TEXT = GLOBAL_HINTS
 
     # Right-cluster hiding thresholds (terminal columns).
     _TOKEN_MIN_WIDTH = 110
@@ -111,6 +139,10 @@ class AppFooterStatus(Widget):
         self._shortcut_text = self.DEFAULT_SHORTCUT_TEXT
         #: Rendered screen-context hints, or ``None`` for the default footer.
         self._context_text: str | None = None
+        #: The active context's raw (unfiltered) actions -- task-2860: kept
+        #: around so `_remaining_global_text` can tell which reserved keys
+        #: the screen already covers, at whatever width tier is rendering.
+        self._context_actions: tuple[ShortcutAction, ...] = ()
         #: Source of the active shortcut context (e.g. "personas"); ``None``
         #: when the default shortcuts are shown.
         self._shortcut_source: str | None = None
@@ -192,10 +224,44 @@ class AppFooterStatus(Widget):
     def shortcut_text(self) -> str:
         return self._shortcut_text
 
+    def _remaining_global_text(self, items: tuple[tuple[str, str], ...]) -> str:
+        """Join a global-hint tier, dropping keys the screen already covers.
+
+        Args:
+            items: ``(key, label)`` pairs for one width tier (see
+                ``_GLOBAL_HINT_ITEMS_FULL``/``_COMPACT``/``_MIN``).
+
+        Returns:
+            The tier's hints, minus any whose key the active context
+            already advertises under its own (available) label -- task-2860.
+        """
+        covered = {
+            action.key.lower()
+            for action in self._context_actions
+            if action.available
+        }
+        return " · ".join(label for key, label in items if key not in covered)
+
+    @staticmethod
+    def _combine(context_text: str, globals_text: str) -> str:
+        """Join the context and global halves, tolerating an empty globals
+        half (every reserved key the tier would show is already covered by
+        the context itself)."""
+        if not globals_text:
+            return context_text
+        return f"{context_text} | {globals_text}"
+
     def _full_text(self) -> str:
-        """Screen context followed by the always-present global hints."""
+        """Screen context followed by the always-present global hints.
+
+        Any reserved global key (f1/f6/ctrl+p/ctrl+q) the context already
+        advertises under its own label is excluded from the global half
+        here instead of being dropped from the context -- see
+        ``_remaining_global_text`` (task-2860).
+        """
         if self._context_text:
-            return f"{self._context_text} | {self.GLOBAL_HINTS}"
+            remaining = self._remaining_global_text(self._GLOBAL_HINT_ITEMS_FULL)
+            return self._combine(self._context_text, remaining)
         return self.GLOBAL_HINTS
 
     def _set_shortcut_text(self, text: str) -> None:
@@ -208,17 +274,15 @@ class AppFooterStatus(Widget):
         self._reflow_footer_priority()
 
     def set_shortcut_context(self, context: ShortcutContext) -> None:
-        # Drop hints that duplicate the always-present global keys.
-        filtered_actions = tuple(
-            action
-            for action in context.actions
-            if action.key.lower() not in self._RESERVED_GLOBAL_KEYS
-        )
-        rendered = ShortcutContext(
-            source=context.source, actions=filtered_actions
-        ).render()
+        # task-2860: the context renders UNFILTERED now -- a screen's own
+        # hint for a reserved global key (e.g. F6 "next pane") is real
+        # content the user came here to discover, not noise to censor. The
+        # always-present global cluster instead excludes whatever the
+        # context already covers (see `_remaining_global_text`), so the key
+        # is still never shown twice.
+        self._context_actions = context.actions
         self._shortcut_source = context.source
-        self._context_text = rendered or None
+        self._context_text = context.render() or None
         self._set_shortcut_text(self._full_text())
 
     def set_workbench_shortcuts(
@@ -247,6 +311,7 @@ class AppFooterStatus(Widget):
             return
         self._shortcut_source = None
         self._context_text = None
+        self._context_actions = ()
         self._set_shortcut_text(self._full_text())
 
     # ------------------------------------------------------------------
@@ -286,9 +351,14 @@ class AppFooterStatus(Widget):
         between now compacts the GLOBAL half first (reusing
         ``GLOBAL_HINTS_COMPACT``, the same constant the no-context branch
         below already leans on) while the screen's own hints stay intact --
-        ordering the screen-specific keys ahead of the globals in practice,
-        without touching ``set_shortcut_context``'s reserved-key filtering
-        (task-2860's own, separate seam).
+        ordering the screen-specific keys ahead of the globals in practice.
+
+        task-2860: the global half at every tier below is built via
+        ``_remaining_global_text``, which excludes whichever reserved keys
+        (f1/f6/ctrl+p/ctrl+q) the context already advertises under its own
+        label -- so a screen's own F6 ("next pane") hint, say, survives
+        even the compact tier (whose bare ``GLOBAL_HINTS_COMPACT`` never
+        mentions F6 at all) instead of being silently dropped everywhere.
         """
         width = self.size.width
         if width <= 0:
@@ -301,10 +371,17 @@ class AppFooterStatus(Widget):
         hard_db = width >= self._DB_MIN_WIDTH
 
         if self._context_text:
-            full = f"{self._context_text} | {self.GLOBAL_HINTS}"
-            context_compact_globals = (
-                f"{self._context_text} | {self.GLOBAL_HINTS_COMPACT}"
+            full = self._combine(
+                self._context_text,
+                self._remaining_global_text(self._GLOBAL_HINT_ITEMS_FULL),
             )
+            context_compact_globals = self._combine(
+                self._context_text,
+                self._remaining_global_text(self._GLOBAL_HINT_ITEMS_COMPACT),
+            )
+            # Once the context is dropped entirely (ellipsis/compact below),
+            # there is nothing left to dedupe against -- fall back to the
+            # plain, undeduped global constants.
             ellipsis = f"… {self.GLOBAL_HINTS}"
             compact = f"… {self.GLOBAL_HINTS_COMPACT}"
         else:
