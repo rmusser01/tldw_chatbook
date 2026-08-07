@@ -28,45 +28,19 @@ from __future__ import annotations
 from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
+# task-3072: the parser LIVES in `Subscriptions/item_dates.py` now, moved
+# there so the Subscriptions layer can parse stored dates without importing
+# from `UI/` (the layer direction is UI -> Subscriptions, never the
+# reverse). Re-exported here under its original name: this module's public
+# API (`__all__`) and every caller are unchanged. See item_dates' module
+# docstring for the full rationale.
+from ...Subscriptions.item_dates import parse_stored_datetime as parse_timestamp
+
 __all__ = ["humane_timestamp", "parse_timestamp"]
 
 #: What an empty cell says. The dash every Watchlists table already used for
 #: "no value", kept so this change cannot be mistaken for a new empty state.
 EMPTY_TIMESTAMP = "-"
-
-
-def parse_timestamp(value: Any) -> datetime | None:
-    """Parse the timestamp shapes this app actually stores.
-
-    Args:
-        value: A `datetime`, a `date`, or a string. ISO-8601 with or without
-            microseconds, with a `T` or a space separator, with a `Z` suffix,
-            a numeric offset, or nothing at all.
-
-    Returns:
-        A timezone-aware `datetime` in UTC, or `None` when the value is empty
-        or cannot be read. A date with no time component is returned as
-        midnight UTC -- callers that care about the distinction should check
-        the input, not the result.
-    """
-    if value is None:
-        return None
-    if isinstance(value, datetime):
-        return value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
-    if isinstance(value, date):
-        return datetime(value.year, value.month, value.day, tzinfo=timezone.utc)
-    text = str(value).strip()
-    if not text:
-        return None
-    # `fromisoformat` accepts `Z` from 3.11, but normalizing it here keeps this
-    # working if the minimum ever moves back down, and costs one comparison.
-    if text.endswith(("Z", "z")):
-        text = f"{text[:-1]}+00:00"
-    try:
-        parsed = datetime.fromisoformat(text)
-    except ValueError:
-        return None
-    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=timezone.utc)
 
 
 def _is_date_only(value: Any) -> bool:
