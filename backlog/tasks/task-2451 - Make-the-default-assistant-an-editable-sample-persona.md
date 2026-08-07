@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-08-05 04:48'
-updated_date: '2026-08-07 06:45'
+updated_date: '2026-08-07 07:08'
 labels: []
 dependencies:
   - TASK-2450
@@ -60,4 +60,6 @@ Gates: Tests/ChaChaNotesDB/ + Tests/DB/ = 903 passed, 1 skipped (Windows-only). 
 Files: tldw_chatbook/DB/ChaChaNotes_DB.py (schema version bump, FTS5 ordering fix, _enrich_default_assistant_card_if_bare + rich/bare content constants, _migrate_from_v31_to_v32, migration_steps registration); tldw_chatbook/DB/migrations/chachanotes_v31_to_v32_default_assistant_enrichment.sql (documentation mirror, not loaded at runtime); Tests/DB/test_chachanotes_default_assistant_enrichment_migration.py (new); 5 existing test files with the version-number ripple fix.
 
 Lesson worth banking: prototype a migration's actual write path against a schema built the same way production builds it (constructor, not a hand-rolled minimal fixture) before trusting it -- a trivial single-column UPDATE with no relation to this task's content surfaced a years-old, always-crashing defect that 900+ existing green tests never exercised because nothing had ever tried to edit character id=1 as the first write after its creation.
+
+Post-Done review fix: _EDIT_CASES was missing 2 of the 15 byte-identity-gated fields (image BLOB, post_history_instructions) -- both genuinely user-editable (personas_character_editor_widget.py:796,:1265). Reviewer mutation-proved the gap by dropping each WHERE-clause comparison from production and confirming all tests stayed green. Added both cases (Tests/DB/test_chachanotes_default_assistant_enrichment_migration.py, now 30 cases), re-confirmed each mutation now fails exactly its new case, restored production unchanged. Re-ran: enrichment file + Tests/ChaChaNotesDB/ = 205 passed; Tests/DB/ = 730 passed/1 skipped; ruff clean.
 <!-- SECTION:NOTES:END -->
