@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any
 
@@ -65,6 +66,108 @@ class SettingsLibraryRagDefaults:
     # (Chat_Functions, Internal_Prompts) into this otherwise-light module;
     # kept honest by test_reranker_top_k_default_matches_reranking_config.
     reranker_top_k: int = 20
+    # task-1337 (ADR-030): global [console] toggle -- when True, Console
+    # agents get the 18 direct Library tools; when False, they fall back to
+    # the bounded Library RAG tool. Global app config, NOT profile-scoped and
+    # never serialized into per-conversation session settings; the adapter
+    # overlays the live value on load (see load_direct_library_tools).
+    direct_library_tools: bool = True
+
+
+#: Bool string forms recognised by config coercion; anything outside this set
+#: is treated as malformed and falls back to the safe default (True), unlike
+#: ``coerce_bool_setting`` which maps ANY unrecognised string to False.
+_RECOGNIZED_BOOL_STRINGS = frozenset(
+    {"true", "1", "t", "y", "yes", "false", "0", "f", "n", "no"}
+)
+
+
+def load_direct_library_tools(app_config: Mapping[str, Any] | None = None) -> bool:
+    """Read the global ``[console].direct_library_tools`` toggle.
+
+    Args:
+        app_config: Config mapping to read; when ``None``, the live CLI
+            config is loaded fresh (so a Settings save applies to the next
+            Console run without a restart).
+
+    Returns:
+        The configured boolean; ``True`` when the section/key is missing or
+        the value is malformed (direct tools are the default retrieval mode).
+    """
+    if app_config is None:
+        # Lazy import: keeps this module free of the config import chain for
+        # the adapter's headless callers.
+        from tldw_chatbook.config import get_cli_setting
+
+        raw = get_cli_setting("console", "direct_library_tools", True)
+    else:
+        console = app_config.get("console")
+        raw = (
+            console.get("direct_library_tools", True)
+            if isinstance(console, Mapping)
+            else True
+        )
+    if isinstance(raw, bool):
+        return raw
+    if isinstance(raw, str):
+        normalized = raw.strip().lower()
+        if normalized in _RECOGNIZED_BOOL_STRINGS:
+            # Route through the existing coercion (whitespace-normalized --
+            # coerce_bool_setting itself does not strip).
+            from tldw_chatbook.config import coerce_bool_setting
+
+            return coerce_bool_setting(normalized, True)
+    return True
+
+
+#: Approved visible copy for the Console agent retrieval subsection (spec
+#: section 8). Rendered below the toggle as plain text -- never a tooltip.
+CONSOLE_DIRECT_LIBRARY_TOOLS_COPY = (
+    "On: Console agents may automatically list, count, read, and lexically "
+    "search your local Library.\n"
+    "Off: Direct list, count, view, and lexical search tools are unavailable. "
+    "Console agents use Library RAG as the default retrieval method. RAG "
+    "currently covers Notes, Media, and Conversations and requires an "
+    "available, populated index.\n"
+    "Privacy: Retrieved titles, metadata, content, and RAG excerpts are "
+    "included in model requests. If you use a cloud model, this Library data "
+    "leaves your device and is handled by that provider. Use a local model if "
+    "the data must remain on-device.\n"
+    "Scope: This setting affects Console agents only. MCP Library access is "
+    "controlled separately."
+)
+
+
+def build_library_rag_save_sections(
+    app_config: Mapping[str, Any],
+    values: SettingsLibraryRagDefaults,
+) -> dict[str, dict[str, Any]]:
+    """Build config sections persisted alongside a Library/RAG profile save.
+
+    The RAG search/chunking fields themselves live in the active RAG profile
+    (written by the profile adapter); this returns the deep-merged ``console``
+    section carrying the global retrieval-mode toggle plus a verbatim copy of
+    ``AppRAGSearchConfig`` so the two-section write stays atomic and unrelated
+    keys in either section survive.
+
+    Args:
+        app_config: Existing application configuration mapping.
+        values: Validated Library/RAG defaults being saved.
+
+    Returns:
+        ``{"console": ..., "AppRAGSearchConfig": ...}`` suitable for
+        ``SettingsConfigAdapter.save_sections``.
+    """
+    console = app_config.get("console")
+    merged_console = dict(deepcopy(console)) if isinstance(console, Mapping) else {}
+    merged_console["direct_library_tools"] = bool(values.direct_library_tools)
+    rag_section = app_config.get("AppRAGSearchConfig")
+    return {
+        "console": merged_console,
+        "AppRAGSearchConfig": (
+            dict(deepcopy(rag_section)) if isinstance(rag_section, Mapping) else {}
+        ),
+    }
 
 
 def _strict_int(value: Any) -> int | None:

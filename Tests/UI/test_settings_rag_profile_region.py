@@ -1753,8 +1753,11 @@ def test_reindex_confirm_confirm_dispatches_save_and_rearms_pending_activate(
     callback(True)
 
     assert len(worker_calls) == 1
-    values, index_will_change = worker_calls[0]
+    values, index_will_change, sections = worker_calls[0]
     assert index_will_change is True
+    # task-1337: the save payload now also carries the deep-merged [console]
+    # section (direct-Library-tools toggle) alongside AppRAGSearchConfig.
+    assert sections["console"]["direct_library_tools"] is True
     assert screen._rag_profile_pending_activate == "target-profile-id"
 
 
@@ -1773,8 +1776,9 @@ def test_save_with_index_change_but_nothing_built_skips_modal_and_saves_directly
 
     assert fake_app.pushed_screens == []
     assert len(worker_calls) == 1
-    values, index_will_change = worker_calls[0]
+    values, index_will_change, sections = worker_calls[0]
     assert index_will_change is True
+    assert sections["console"]["direct_library_tools"] is True
 
 
 def test_save_then_switch_reindex_confirm_survives_a_confirm(

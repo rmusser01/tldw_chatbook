@@ -180,7 +180,9 @@ from .settings_appearance_defaults import (
     validate_appearance_defaults,
 )
 from .settings_library_rag_defaults import (
+    CONSOLE_DIRECT_LIBRARY_TOOLS_COPY,
     SettingsLibraryRagDefaults,
+    build_library_rag_save_sections,
     normalise_library_rag_chunking_method,
     normalise_library_rag_citation_style,
     normalise_library_rag_distance_metric,
@@ -813,6 +815,7 @@ _RAG_FIELD_GROUP_BY_ID: dict[str, str] = {
     "settings-library-rag-hybrid-alpha": "search",
     "settings-library-rag-score-threshold": "search",
     "settings-library-rag-include-citations": "search",
+    "settings-library-rag-direct-library-tools": "search",
     "settings-library-rag-citation-style": "search",
     "settings-library-rag-snippet-max-chars": "search",
     "settings-library-rag-max-context-size": "search",
@@ -951,6 +954,7 @@ _LIBRARY_RAG_READ_LOCK_FIELD_KEYS: tuple[str, ...] = (
 _LIBRARY_RAG_READ_LOCK_CHECKBOX_SELECTORS: tuple[str, ...] = (
     "#settings-library-rag-include-citations",
     "#settings-library-rag-enable-reranking",
+    "#settings-library-rag-direct-library-tools",
 )
 
 # Collapsible id -> the same group keys. `@on(Collapsible.Toggled)` uses this
@@ -5185,6 +5189,9 @@ class SettingsScreen(BaseAppScreen):
                 self.query_one(
                     "#settings-library-rag-include-citations", Checkbox
                 ).value = bool(values["include_citations"])
+                self.query_one(
+                    "#settings-library-rag-direct-library-tools", Checkbox
+                ).value = bool(values["direct_library_tools"])
                 for selector, key in (
                     ("#settings-library-rag-default-top-k", "default_top_k"),
                     ("#settings-library-rag-fts-top-k", "fts_top_k"),
@@ -11277,6 +11284,21 @@ class SettingsScreen(BaseAppScreen):
                     restrict=r"^[0-9]*$",
                     disabled=field_disabled,
                 )
+            # task-1337 (spec section 8): global Console retrieval-mode
+            # toggle. The full privacy/scope copy renders below the switch as
+            # plain text -- never in a tooltip.
+            yield Static("Console agent retrieval", classes="destination-section")
+            yield Checkbox(
+                "Use direct Library tools",
+                value=bool(values["direct_library_tools"]),
+                id="settings-library-rag-direct-library-tools",
+                disabled=field_disabled,
+            )
+            yield Static(
+                CONSOLE_DIRECT_LIBRARY_TOOLS_COPY,
+                id="settings-library-rag-direct-library-tools-copy",
+                classes="settings-status-row",
+            )
         with Collapsible(
             title="Embedding",
             collapsed=True,
@@ -14686,6 +14708,16 @@ class SettingsScreen(BaseAppScreen):
         self._stage_library_rag_value("include_citations", bool(event.value))
         self._mark_library_rag_settings_staged()
 
+    @on(Checkbox.Changed, "#settings-library-rag-direct-library-tools")
+    def handle_library_rag_direct_library_tools_changed(
+        self, event: Checkbox.Changed
+    ) -> None:
+        event.stop()
+        if self._library_rag_edits_suppressed():
+            return
+        self._stage_library_rag_value("direct_library_tools", bool(event.value))
+        self._mark_library_rag_settings_staged()
+
     @on(Select.Changed, "#settings-library-rag-citation-style")
     def handle_library_rag_citation_style_changed(self, event: Select.Changed) -> None:
         event.stop()
@@ -16898,13 +16930,45 @@ class SettingsScreen(BaseAppScreen):
             "#settings-library-rag-save-result", self._library_rag_result
         )
         self._rag_profile_pending_activate = pending_activate
-        self._settings_save_library_rag_worker(values, index_will_change)
+        # task-1337: build the [console]/AppRAGSearchConfig sections on the UI
+        # thread (reads the app config mapping); the worker persists them
+        # after the profile write lands.
+        sections = build_library_rag_save_sections(self._app_config_mapping(), values)
+        self._settings_save_library_rag_worker(values, index_will_change, sections)
+
+    def _persist_library_rag_save(
+        self,
+        values: SettingsLibraryRagDefaults,
+        sections: Mapping[str, Mapping[str, object]],
+    ) -> tuple[bool, str, Mapping[str, Mapping[str, object]] | None]:
+        """Persist a Library/RAG save: active profile first, config sections second.
+
+        All-or-nothing: when the profile write is refused or fails, the
+        ``[console]`` section is not written either; when the section write
+        fails, the save reports failure even though the profile landed (the
+        draft stays staged so the user can retry).
+
+        Args:
+            values: Validated Library/RAG defaults.
+            sections: Output of ``build_library_rag_save_sections``.
+
+        Returns:
+            ``(saved, reason, applied_sections)`` -- ``applied_sections`` is
+            the persisted section mapping on success, else ``None``.
+        """
+        saved, reason = save_rag_defaults_to_active_profile(values)
+        if not saved:
+            return False, reason, None
+        if not SettingsConfigAdapter().save_sections(sections):
+            return False, "config-sections-save-failed", None
+        return True, "", sections
 
     def _apply_library_rag_save_result(
         self,
         saved: bool,
         reason: str,
         index_will_change: bool = False,
+        applied_sections: Mapping[str, Mapping[str, object]] | None = None,
     ) -> None:
         # A "Save" choice from RagProfileSwitchConfirmModal defers the profile
         # switch until this save completes; consumed (and cleared) exactly
@@ -16913,6 +16977,12 @@ class SettingsScreen(BaseAppScreen):
         pending_activate = self._rag_profile_pending_activate
         self._rag_profile_pending_activate = None
         if saved:
+            if applied_sections is not None:
+                # Keep the in-memory app config in step with the persisted
+                # [console] section (same convention as Storage/Appearance).
+                self._app_config_update_target().update(
+                    copy.deepcopy(dict(applied_sections))
+                )
             self._settings_drafts.pop(SettingsCategoryId.LIBRARY_RAG, None)
             message = "Library/RAG defaults saved."
             # Task 4 (SP3), save-path trigger (a): honest re-index warning
@@ -16956,14 +17026,22 @@ class SettingsScreen(BaseAppScreen):
 
     @work(exclusive=True, thread=True)
     def _settings_save_library_rag_worker(
-        self, values: SettingsLibraryRagDefaults, index_will_change: bool = False
+        self,
+        values: SettingsLibraryRagDefaults,
+        index_will_change: bool = False,
+        sections: Mapping[str, Mapping[str, object]] | None = None,
     ) -> None:
-        saved, reason = save_rag_defaults_to_active_profile(values)
+        if sections is None:
+            sections = build_library_rag_save_sections(
+                self._app_config_mapping(), values
+            )
+        saved, reason, applied = self._persist_library_rag_save(values, sections)
         self.app.call_from_thread(
             self._apply_library_rag_save_result,
             saved,
             reason,
             index_will_change,
+            applied,
         )
 
     def _apply_storage_save_result(
