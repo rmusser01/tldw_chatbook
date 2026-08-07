@@ -987,6 +987,20 @@ def web_crawl(
     sitemapindex); ``max_depth`` is ignored and links on seeded pages are
     not expanded.
 
+    Args:
+        url: Start URL; its host (www-folded) defines the crawl scope in
+            both modes.
+        max_pages: Fetch-attempt budget, clamped to
+            [1, CRAWL_MAX_PAGES_CEILING]; garbage coerces to the default.
+        max_depth: BFS link depth from the start URL (start = 0), clamped to
+            [1, CRAWL_MAX_DEPTH_CEILING]; ignored in sitemap mode.
+        sitemap_url: Optional sitemap URL; when given, the page list is
+            seeded from the sitemap and links are not expanded.
+
+    Returns:
+        str: Numbered page list (URL, title, excerpt or type marker),
+            byte-capped, ending with the status footer described above.
+
     Raises:
         LocalToolError: [invalid-args] for a bad url/host or a blank
             sitemap_url; [crawl-failed] when the START url cannot be
@@ -1191,5 +1205,5 @@ def web_crawl(
         client.close()
 
     return _format_crawl_result(
-        pages, failed, blocked, stop_reason, children_skipped, duplicates_skipped
+        pages, failed, blocked, stop_reason, children_skipped=children_skipped, duplicates_skipped=duplicates_skipped
     )
