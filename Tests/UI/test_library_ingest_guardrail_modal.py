@@ -191,6 +191,29 @@ def _minimal_library_screen() -> LibraryScreen:
     return screen
 
 
+def test_submit_with_blank_path_warns_to_import_not_ingest():
+    """(task-2857 review) ``_resolve_ingest_source`` is reachable with a
+    blank path directly through ``_submit_library_ingest_form`` -- shared
+    by the Start button and Enter-in-path-field -- even though the UI gate
+    normally keeps Start disabled and Enter a no-op for a blank path (a
+    stale ``start_enabled`` read, or a direct call, still reaches it). The
+    warning must say "import", matching every sibling warning on this
+    form; no job is submitted."""
+    screen = _minimal_library_screen()
+    form = screen._library_ingest_form
+    form.path = ""
+
+    mock_app = MagicMock()
+    with patch.object(LibraryScreen, "app", new_callable=lambda: property(lambda self: mock_app)):
+        screen._submit_library_ingest_form()
+
+    screen._notify_library_ingest_warning.assert_called_once_with(
+        "Please choose a file to import."
+    )
+    screen.app_instance.submit_library_ingest_job.assert_not_called()
+    mock_app.push_screen.assert_not_called()
+
+
 def test_submit_with_warnings_shows_guardrail_modal(tmp_path: Path):
     pdf = tmp_path / "file.pdf"
     pdf.write_text("dummy")

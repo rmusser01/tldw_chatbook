@@ -5858,7 +5858,7 @@ class LibraryScreen(BaseAppScreen):
         service = getattr(self.app_instance, "local_chatbook_service", None)
         if service is None:
             self._marshal_library_export_failure(
-                run_id, "Chatbook export service unavailable."
+                run_id, "Bundle export service unavailable."
             )
             return
 
@@ -14228,7 +14228,7 @@ class LibraryScreen(BaseAppScreen):
         ``validate_path_simple``.
         """
         if not raw_path:
-            self._notify_library_ingest_warning("Please choose a file to ingest.")
+            self._notify_library_ingest_warning("Please choose a file to import.")
             return None
         from urllib.parse import urlparse
 

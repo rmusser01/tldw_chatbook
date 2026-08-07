@@ -24,7 +24,11 @@ from typing import Mapping
 
 from tldw_chatbook.Library.library_export_scope import ExportScope, export_scope_label
 
-# Exact copy values (binding -- see the F4 plan's Global Constraints).
+# Exact copy values. The F4 plan's Global Constraints originally pinned
+# EXPORT_HEADER_COPY/EXPORT_BUTTON_COPY to "Export chatbook" -- task-2857
+# (Library UAT 2026-08-06, LIB-10) superseded that: "chatbook" appeared
+# nowhere else in the UI, so both are "Export bundle (.zip)" now. Do not
+# revert to the F4 wording.
 EXPORT_HEADER_COPY = "Export bundle (.zip)"
 COUNTING_COPY = "Counting…"
 EMPTY_SCOPE_COPY = "Nothing to export in this scope."

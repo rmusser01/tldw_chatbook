@@ -13194,7 +13194,7 @@ async def test_library_shell_export_submit_missing_service_surfaces_error_and_re
             if (
                 screen._library_export_running is False
                 and screen._library_export_error
-                == "Chatbook export service unavailable."
+                == "Bundle export service unavailable."
             ):
                 break
             await pilot.pause(0.02)
@@ -13202,10 +13202,10 @@ async def test_library_shell_export_submit_missing_service_surfaces_error_and_re
             raise AssertionError("Export run never completed.")
         await pilot.pause()
 
-        assert screen._library_export_error == "Chatbook export service unavailable."
+        assert screen._library_export_error == "Bundle export service unavailable."
         error_widget = screen.query_one("#library-export-error-line", Static)
         assert error_widget.display is True
-        assert str(error_widget.renderable) == "Chatbook export service unavailable."
+        assert str(error_widget.renderable) == "Bundle export service unavailable."
         assert screen.query_one("#library-export-submit", Button).disabled is False
 
 

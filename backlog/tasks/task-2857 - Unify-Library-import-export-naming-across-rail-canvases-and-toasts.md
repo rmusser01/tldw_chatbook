@@ -101,6 +101,12 @@ Ingest canvas (still named "Import media" -- unchanged, already correct):
   cannot run..." -> "...this import cannot run..."; "The server refused the ingest: {exc}"
   -> "...import: {exc}"; "The server rejected the ingest: {errors[0]}" -> "...import:
   {errors[0]}"; "Could not reach the server to cancel that ingest." -> "...that import."
+- **(round 2, review finding)** `library_screen.py:14231` `_resolve_ingest_source`'s
+  blank-path warning "Please choose a file to ingest." -> "Please choose a file to
+  import." -- fires from `_submit_library_ingest_form` (shared by the Start button and
+  Enter-in-path-field); every sibling warning on this form already said "import", this
+  one was missed in the first pass. New test:
+  `test_submit_with_blank_path_warns_to_import_not_ingest`.
 
 Media browse/viewer:
 - `library_media_state.py` `LIBRARY_MEDIA_EMPTY_COPY` "No media in your Library yet. Ingest
@@ -127,6 +133,16 @@ Export canvas:
   `recovery_action` "Library ingest" -> "Library import" (rendered via
   `DestinationRecoveryState.visible_copy`'s "Recovery: …" line); `disabled_tooltip`
   "...Ingest content to index it automatically..." -> "...Import content..."
+- **(round 2, review finding)** `library_screen.py:5861` `_marshal_library_export_failure`
+  no-service-seam error "Chatbook export service unavailable." -> "Bundle export service
+  unavailable." (mirrors the "Export chatbook"->"Export bundle (.zip)" swap already applied
+  to the header/button). Renders into the visible `#library-export-error-line` Static;
+  pinned by `test_library_shell_export_submit_missing_service_surfaces_error_and_reenables`
+  (3 assertion sites updated to match).
+- **(round 2, Minor)** `library_export_state.py:27` comment above
+  `EXPORT_HEADER_COPY`/`EXPORT_BUTTON_COPY` declared the OLD "Export chatbook" values
+  "binding -- see the F4 plan's Global Constraints"; reworded to say task-2857 superseded
+  the F4 plan's wording, so a future editor consulting that plan doesn't revert the copy.
 
 ### Deliberately left unchanged (non-Library surfaces / product identifiers / dead code)
 
@@ -158,6 +174,31 @@ Export canvas:
   `IngestGuardrailModal`, `LibraryIngestCanvas`, `LibraryIngestJob`, `INGEST_DUPLICATE_
   PROGRESS_PREFIX`, route id `"ingest"` in `screen_registry._SCREEN_ALIASES`) -- identifiers,
   not UI copy, per the task's own instruction.
+- **(round 2 re-sweep)** `Widgets/Library/library_file_notes_git_panel.py` +
+  `library_file_notes_workspace.py` -- ~14 occurrences of "Chatbook" used as shorthand for
+  *this application* (e.g. "STAGED · by Chatbook", "already staged outside Chatbook") in the
+  File Notes ▸ Session Git panel. This is a DIFFERENT feature and a DIFFERENT meaning of the
+  word (the app's own name, not the export-bundle format) -- the backlog description's claim
+  that "'chatbook' appears nowhere else in the UI" is factually wrong, but renaming this is a
+  separate, much larger scope decision (what this app calls itself across an entire feature's
+  git-safety copy) that does not belong in an import/export-naming task. Left unchanged;
+  recommend a follow-up task if this bothers a future reviewer.
+- **(round 2 re-sweep)** `app.py:4403` `HomeControlResult(message="This ingest job can no
+  longer be retried.", ...)` -- same category as the already-noted "Opening Library ingest
+  job details.": a Home-screen message about a Library job, not a Library rail/canvas/toast.
+  Left unchanged for the same reason.
+- **(round 2 re-sweep)** False positives ruled out by full-text inspection, not just
+  regex: `app.py:1616` `.notify("tldw_chatbook - TUI...")` and
+  `library_local_rag_search_service.py:894/918` `pip install "tldw_chatbook[embeddings_rag]"`
+  both match only because "chatbook" is a substring of the literal PyPI package name
+  `tldw_chatbook`; `Library/server_ingest_status.py:40` `"error": IngestJobState.FAILED` is a
+  status-code dict key, not a message. None are UI labels for the Import/Export flow.
+- **(round 2 re-sweep method)** Re-swept with a Python AST-adjacent, multi-line-aware scan
+  (not single-line grep) of every `Static(`/`Button(`/`Collapsible(`/`Input(`/`.notify(`/
+  `_notify_library_*(`/`_marshal_library_export_failure(`/`mark_failed(`/`mark_skipped(`/
+  `DestinationRecoveryState(` call site in the three target trees, checking the FULL
+  (multi-line) call text rather than the line the function name appears on -- this is what
+  the first pass's line-scoped grep missed for both review findings.
 
 ### Tests
 
@@ -194,6 +235,21 @@ is a Home-screen assertion unrelated to Library; the 8th is a footer-text test m
 `AppFooterStatus.GLOBAL_HINTS` suffix another commit added. None of these fixtures were
 touched by this task. Recommend a follow-up backlog task to fix the shared fixture helper.
 
+**Round 2 (review fixes).** Added `Tests/UI/test_library_ingest_guardrail_modal.py::
+test_submit_with_blank_path_warns_to_import_not_ingest` -- calls
+`_submit_library_ingest_form()` with a blank path and asserts
+`_notify_library_ingest_warning` was called once with "Please choose a file to import.",
+no job submitted, no modal pushed. Updated the 3 assertion sites in
+`test_library_shell_export_submit_missing_service_surfaces_error_and_reenables` (the poll
+loop's break condition, the `_library_export_error` check, and the rendered
+`#library-export-error-line` Static's text) from "Chatbook export service unavailable." to
+"Bundle export service unavailable." Re-ran: the new test (1 passed), the full guardrail
+modal file (8 passed, the same 3 pre-existing failures above, unrelated), the export-error
+test alone (1 passed), the file's whole export section (`-k export`, 24 passed), and the
+combined export+ingest slice of `test_library_shell.py` + `test_library_ingest_state.py` +
+`test_library_export_execution.py` (219 passed, 3 pre-existing deselected). Zero new
+failures.
+
 ### Live verification (tmux, socket `sddT5lib<rand>`, scratch profile `/tmp/sddT5`)
 
 Walked Import end-to-end: command palette "Library: Import…" / "Open Library and import
@@ -214,4 +270,8 @@ service,library_media_state,library_shell_state}.py`, `tldw_chatbook/Widgets/Lib
 {library_ingest_canvas,library_media_canvas,library_media_viewer}.py`; the 15 test files
 listed above; `Docs/User_Guide/library.md` + `library/{import-and-export,media-and-
 conversations,notes}.md` (re-stamped `4acb17a0b`).
+
+Round 2 landed inside this same file set -- no new files: `library_screen.py` (2 more
+string fixes), `library_export_state.py` (comment), `Tests/UI/test_library_shell.py`
+(3 assertion sites) and `Tests/UI/test_library_ingest_guardrail_modal.py` (1 new test).
 <!-- SECTION:NOTES:END -->
