@@ -35,6 +35,7 @@ from tldw_chatbook.Chat.console_live_work import ConsoleLiveWorkLaunch
 from tldw_chatbook.Event_Handlers.Chat_Events.chat_rag_events import (
     LocalRagContextResult,
 )
+from tldw_chatbook.UI.Console_Modules import workspace as workspace_module
 from tldw_chatbook.UI.Screens import chat_screen as chat_screen_module
 from tldw_chatbook.Widgets.Console.console_staged_context import (
     ConsoleStagedContextTray,
@@ -716,7 +717,7 @@ def test_workspace_context_falls_back_to_one_row_for_a_bundleless_launch() -> No
         _pending_console_launch_context=launch,
         app_instance=SimpleNamespace(),
     )
-    context = chat_screen_module.ConsoleWorkspaceController._current_console_workspace_context(
+    context = workspace_module.ConsoleWorkspaceController._current_console_workspace_context(
         screen
     )
     assert len(context.staged_sources) == 1

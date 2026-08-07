@@ -31,7 +31,7 @@ from Tests.UI.test_console_dictation import (
 )
 from Tests.UI.test_console_dictation_streaming import _patch_availability
 from tldw_chatbook.Chat import console_voice_input as voice_module
-from tldw_chatbook.UI.Screens import chat_screen as chat_screen_module
+from tldw_chatbook.UI.Console_Modules import dictation as dictation_module
 from tldw_chatbook.Widgets.Console import ConsoleComposerBar
 
 
@@ -156,9 +156,9 @@ def _painted(widget) -> str:
     return widget.render_line(0).text.rstrip()
 
 
-def _session(service) -> chat_screen_module.ConsoleStreamingDictationSession:
+def _session(service) -> dictation_module.ConsoleStreamingDictationSession:
     """A real streaming session (and real controller) over a fake service."""
-    return chat_screen_module.ConsoleStreamingDictationSession(
+    return dictation_module.ConsoleStreamingDictationSession(
         on_event=lambda _session, _event: None,
         service_factory=lambda **_kwargs: service,
     )
@@ -169,7 +169,7 @@ def _install_session(monkeypatch, service) -> list:
     sessions: list = []
 
     def factory(self):
-        session = chat_screen_module.ConsoleStreamingDictationSession(
+        session = dictation_module.ConsoleStreamingDictationSession(
             on_event=self._emit_console_dictation_event,
             service_factory=lambda **_kwargs: service,
         )
@@ -177,7 +177,7 @@ def _install_session(monkeypatch, service) -> list:
         return session
 
     monkeypatch.setattr(
-        chat_screen_module.ConsoleDictationController,
+        dictation_module.ConsoleDictationController,
         "_create_console_dictation_session",
         factory,
     )

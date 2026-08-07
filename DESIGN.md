@@ -404,6 +404,27 @@ controller's constructor dependencies above; see `ConsoleInspectorRail`'s
 from current state, or have the region re-query its own DOM instead of
 caching a reference at all.
 
+**A region owns its behaviour, not its children's API — so querying a child
+widget by id is not a boundary violation.** Wave 3 extracted
+`ConsoleTranscriptRegion` and left the screen reaching the transcript's DOM two
+different ways, which looked like an unfinished migration. It is not, and the
+rule is worth stating so nobody "finishes" it. The region defines exactly three
+public behaviours — `capture_reading_state`, `restore_reading_state`,
+`note_follow_intent` — all of them about the *viewport*: scroll position and
+follow intent, which belong to the region because the region is what scrolls.
+Three screen methods reach the region for those. The other eight reach past it
+with `query_one("#console-native-transcript", ConsoleTranscript)` because they
+need the transcript widget's *own* API — appending a message, clearing a
+selection — which the region does not own and should not proxy.
+
+Routing those eight through the region would mean eight pass-through getters
+whose whole body is `return self._transcript_or_none()`. That converts an owner
+into a façade, adds a layer with no invariant behind it, and buys nothing: in
+Textual, `query_one` is transparent across compound-widget boundaries by design,
+so an id lookup that crosses into a region is idiomatic rather than a leak. The
+test is **ownership, not reachability** — ask "whose invariant is this?", and
+only route through the region when the answer is the region's.
+
 **Controller-to-controller traffic goes through named callables the screen
 wires at construction — never a back-door through screen attributes.** Wave 2
 put three controllers on one screen, and clusters genuinely reference each

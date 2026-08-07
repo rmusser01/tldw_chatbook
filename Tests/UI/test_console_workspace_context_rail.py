@@ -1303,6 +1303,58 @@ async def test_console_conversation_star_press_confirms_the_toggle():
 
 
 @pytest.mark.asyncio
+async def test_console_conversation_star_confirms_an_untitled_conversation():
+    """task-3024: an empty title must still confirm, not crash after the write.
+
+    `"".splitlines()` is `[]`, so the first-line read raised `IndexError` on an
+    untitled conversation -- and it did so AFTER the durable star write, so the
+    star landed while the user saw no confirmation and the context rail never
+    re-synced. The toast is supposed to simply omit the quoted name here, which
+    the suffix logic already handled; only the first-line read was unguarded.
+    """
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workspace-context")
+        tray = console.query_one(
+            "#console-workspace-context", ConsoleWorkspaceContextTray
+        )
+        tray.sync_state(_base_grouped_workspace_state())
+        await pilot.pause()
+
+        star = next(
+            s
+            for s in console.query(".console-conversation-star")
+            if not getattr(s, "starred", False)
+        )
+        star.conversation_title = ""
+
+        starred: list[str] = []
+
+        class _Marks:
+            def is_starred(self, conversation_id):
+                return False
+
+            def star_conversation(self, conversation_id):
+                starred.append(conversation_id)
+
+            def unstar_conversation(self, conversation_id):
+                return None
+
+        console.app_instance.conversation_local_marks_service = _Marks()
+        notes: list[str] = []
+        console.app_instance.notify = lambda message, **kwargs: notes.append(message)
+
+        await console.on_button_pressed(Button.Pressed(star))
+
+        # The durable write always landed; the confirmation is what was lost.
+        assert starred, "the star write did not happen"
+        assert notes == ["Starred."], notes
+
+
+@pytest.mark.asyncio
 async def test_console_workspace_context_preserves_duplicate_starred_workspace_row_keys() -> (
     None
 ):
@@ -2530,6 +2582,53 @@ def _composited_rows(container) -> list[str]:
     return rows
 
 
+async def _settled_composited_row(pilot, container, label_widget) -> str:
+    """The composited row `label_widget` is painted on, once layout settles.
+
+    task-3025: the original assertion read `_composited_rows(container)[0]`,
+    which is an INDEX into whatever the compositor had painted at that
+    instant. Sampled mid-layout it returned a neighbouring pair's row -- the
+    observed failure got `'Model'` where `'Conversation'` was expected -- so
+    the test failed nondeterministically (measured 1 pass / 2 fail and 2 pass
+    / 1 fail across two arms of three isolated runs each).
+
+    The rail's row ORDER is not the problem and asserting on it is not the
+    point of the caller: what matters is that a specific label and its value
+    are visually separated. So resolve the row by the label widget's own
+    identity, and wait for the paint to agree with the widget tree before
+    reading it.
+
+    Args:
+        pilot: The active Textual pilot, used to yield between polls.
+        container: The status-pair container whose x-span bounds the row.
+        label_widget: The `Static` whose painted row is wanted.
+
+    Returns:
+        str: The container-width slice of the row the label is painted on.
+
+    Raises:
+        AssertionError: If the label's own text never appears on its own
+            painted row -- that is a real paint failure, not a race, and it
+            must not be silently retried away.
+    """
+    label_text = str(label_widget.renderable).strip()
+    row_text = ""
+    for _ in range(100):
+        strips = container.screen._compositor.render_strips()
+        y = label_widget.region.y
+        region = container.region
+        if 0 <= y < len(strips):
+            painted = "".join(segment.text for segment in strips[y])
+            row_text = painted[region.x : region.x + region.width]
+            if label_text and label_text in row_text:
+                return row_text
+        await pilot.pause()
+    raise AssertionError(
+        f"label {label_text!r} never appeared on its own painted row; "
+        f"last read {row_text!r}"
+    )
+
+
 @pytest.mark.asyncio
 async def test_conversation_status_row_label_and_value_are_separate_visual_runs() -> None:
     """I1 (final review): live captures showed `Conversation—` (placeholder
@@ -2554,7 +2653,8 @@ async def test_conversation_status_row_label_and_value_are_separate_visual_runs(
         tray.sync_state(_base_grouped_workspace_state())
         await pilot.pause()
         scope_pair = console.query_one("#console-active-scope")
-        row_text = _composited_rows(scope_pair)[0]
+        scope_label = console.query_one("#console-active-scope-label", Static)
+        row_text = await _settled_composited_row(pilot, scope_pair, scope_label)
         assert "Conversation " in row_text, (
             "label fused with the placeholder value on the composited row: "
             f"{row_text!r}"
@@ -2570,7 +2670,8 @@ async def test_conversation_status_row_label_and_value_are_separate_visual_runs(
         tray.sync_state(state)
         await pilot.pause()
         scope_pair = console.query_one("#console-active-scope")
-        row_text = _composited_rows(scope_pair)[0]
+        scope_label = console.query_one("#console-active-scope-label", Static)
+        row_text = await _settled_composited_row(pilot, scope_pair, scope_label)
         assert "Conversation " in row_text, (
             "label fused with the conversation title on the composited row: "
             f"{row_text!r}"
