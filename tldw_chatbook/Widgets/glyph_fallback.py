@@ -62,13 +62,21 @@ def set_ascii_glyph_mode(enabled: bool) -> None:
     Called once at app compose from ``appearance.ascii_glyphs`` and live by
     the Settings > Appearance toggle; widgets painted before a flip keep
     their current glyphs until their next sync/render.
+
+    Args:
+        enabled: True to map every known marker to its ASCII substitute,
+            False to render the unicode glyph vocabulary as-is.
     """
     global _ASCII_MODE
     _ASCII_MODE = bool(enabled)
 
 
 def ascii_glyph_mode() -> bool:
-    """Return whether ASCII-safe glyph substitution is active."""
+    """Return whether ASCII-safe glyph substitution is active.
+
+    Returns:
+        True while ASCII mode is on, False otherwise.
+    """
     return _ASCII_MODE
 
 
@@ -77,6 +85,13 @@ def resolve_glyph(glyph: str) -> str:
 
     Unknown glyphs pass through untouched in both modes, so a glyph with no
     assigned fallback can never be swallowed by the resolver.
+
+    Args:
+        glyph: The single status-marker character to resolve.
+
+    Returns:
+        The mapped ASCII substitute while ASCII mode is on and a mapping
+        exists; ``glyph`` unchanged otherwise.
     """
     if not _ASCII_MODE:
         return glyph
@@ -89,6 +104,13 @@ def resolve_glyph_text(text: str) -> str:
     Identity when ASCII mode is off. Used for composed labels that embed a
     marker next to words ("◐ Transcribing…", "📎 2 files", "Composer ▾");
     ordinary ASCII text passes through unchanged in both modes.
+
+    Args:
+        text: The label text to resolve character by character.
+
+    Returns:
+        ``text`` with each known marker replaced by its ASCII substitute
+        while ASCII mode is on; ``text`` unchanged otherwise.
     """
     if not _ASCII_MODE:
         return text

@@ -142,7 +142,7 @@ async def _merged_model_entries_from_scope(
         # exception handler at all). Other exception types still
         # propagate to those callers.
         logger.debug(
-            "Local model catalog has no entry for provider=%s; saved models only",
+            "Local model catalog has no entry for provider={}; saved models only",
             provider,
         )
         return ()

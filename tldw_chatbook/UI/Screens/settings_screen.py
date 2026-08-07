@@ -13636,6 +13636,11 @@ class SettingsScreen(BaseAppScreen):
     def handle_appearance_smooth_scrolling_changed(
         self, event: Button.Pressed
     ) -> None:
+        """Stage the smooth-scrolling toggle and refresh its label.
+
+        Args:
+            event: The press of the smooth-scrolling toggle button.
+        """
         event.stop()
         next_value = not bool(self._appearance_setting_values()["smooth_scrolling"])
         self._stage_appearance_value("smooth_scrolling", next_value)
@@ -13644,6 +13649,11 @@ class SettingsScreen(BaseAppScreen):
 
     @on(Button.Pressed, "#settings-appearance-reduce-motion")
     def handle_appearance_reduce_motion_changed(self, event: Button.Pressed) -> None:
+        """Stage the reduce-motion toggle and refresh its label.
+
+        Args:
+            event: The press of the reduce-motion toggle button.
+        """
         event.stop()
         next_value = not bool(self._appearance_setting_values()["reduce_motion"])
         self._stage_appearance_value("reduce_motion", next_value)
@@ -13652,6 +13662,11 @@ class SettingsScreen(BaseAppScreen):
 
     @on(Button.Pressed, "#settings-appearance-ascii-glyphs")
     def handle_appearance_ascii_glyphs_changed(self, event: Button.Pressed) -> None:
+        """Stage the ASCII-glyphs toggle and apply it live process-wide.
+
+        Args:
+            event: The press of the ASCII-glyphs toggle button.
+        """
         event.stop()
         next_value = not bool(self._appearance_setting_values()["ascii_glyphs"])
         self._stage_appearance_value("ascii_glyphs", next_value)

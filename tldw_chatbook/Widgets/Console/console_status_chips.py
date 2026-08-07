@@ -223,9 +223,11 @@ class ConsoleSourcesChip(ConsoleChip):
         """Posted when the sources chip is activated from keyboard or mouse."""
 
     def action_open_inspector(self) -> None:
+        """Post ``OpenRequested`` so the host screen opens the Inspector rail."""
         self.post_message(self.OpenRequested())
 
     def _on_click(self, event: events.Click) -> None:
+        """Treat a click exactly like the Enter/Space activation."""
         self.post_message(self.OpenRequested())
 
 
@@ -250,9 +252,11 @@ class ConsoleToolsChip(ConsoleChip):
         """Posted when the tools chip is activated from keyboard or mouse."""
 
     def action_open_inspector(self) -> None:
+        """Post ``OpenRequested`` so the host screen opens the Inspector rail."""
         self.post_message(self.OpenRequested())
 
     def _on_click(self, event: events.Click) -> None:
+        """Treat a click exactly like the Enter/Space activation."""
         self.post_message(self.OpenRequested())
 
 
@@ -282,9 +286,11 @@ class ConsoleRunChip(ConsoleChip):
         """Posted when the run chip is activated from keyboard or mouse."""
 
     def action_open_inspector(self) -> None:
+        """Post ``OpenRequested`` so the host screen opens the Inspector rail."""
         self.post_message(self.OpenRequested())
 
     def _on_click(self, event: events.Click) -> None:
+        """Treat a click exactly like the Enter/Space activation."""
         self.post_message(self.OpenRequested())
 
 

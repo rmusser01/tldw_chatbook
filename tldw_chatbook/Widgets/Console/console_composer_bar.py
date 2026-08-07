@@ -300,6 +300,10 @@ class ConsoleComposerBar(Horizontal):
     #: glyph is ``GLYPH_VOICE_WORKING`` -- this used to lead with "◌", which
     #: also marks temporary session tabs; one glyph, one meaning.
     VOICE_CHIP_TRANSCRIBING_LABEL = f"{GLYPH_VOICE_WORKING} Transcribing…"
+    #: CN-05 (TASK-2154.13): the preparing fallback leads with the same
+    #: ``GLYPH_VOICE_WORKING`` marker -- "◌" means temporary session tabs,
+    #: not voice work, and the glyph must survive ASCII-fallback mode.
+    VOICE_CHIP_PREPARING_LABEL = f"{GLYPH_VOICE_WORKING} Preparing microphone…"
     FALLBACK_DRAFT_WIDTH = 80
     PASTE_TOKEN_STYLE = "bold cyan"
     PASTE_CONFIRM_STYLE = "bold black on yellow"
@@ -1416,7 +1420,8 @@ class ConsoleComposerBar(Horizontal):
             # message with the generic microphone one.
             self.set_voice_status(
                 STATE_PREPARING,
-                message=self._voice_preparing_message or "◌ Preparing microphone…",
+                message=self._voice_preparing_message
+                or resolve_glyph_text(self.VOICE_CHIP_PREPARING_LABEL),
             )
         elif state == "recording":
             if entering_recording:

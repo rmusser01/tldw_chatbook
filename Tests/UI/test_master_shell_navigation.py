@@ -435,20 +435,29 @@ def test_action_shell_destination_posts_primary_route():
 
 
 @pytest.mark.asyncio
-async def test_nav_overflow_hint_pages_to_hidden_destinations_at_100_cols():
+async def test_nav_overflow_menu_reaches_hidden_destinations_at_100_cols():
     """F-001: at 100 columns the strip clips mid-button (the review's
     "8 Workflows" -> "8" artifact) and later destinations have no click
-    path. The "More ›" affordance pages the strip right until every
-    destination has been reachable, then wraps to the start."""
+    path in the strip itself. The "More ▾" affordance opens the overflow
+    menu, where every clipped destination is listed and pressable --
+    TASK-2154.21 replaced the old paging hint with this menu so a press
+    navigates directly instead of scrolling page by page."""
 
     class TestApp(App):
+        def __init__(self):
+            super().__init__()
+            self.nav_requests: list[str] = []
+
         def compose(self):
             yield MainNavigationBar(active="home")
+
+        def on_navigate_to_screen(self, message) -> None:
+            self.nav_requests.append(message.screen_name)
 
     app = TestApp()
 
     async with app.run_test(size=(100, 30)) as pilot:
-        await pilot.pause(0.1)
+        await pilot.pause(0.5)
 
         strip = app.query_one("#nav-destination-strip")
         hint = app.query_one("#nav-overflow-hint")
@@ -467,31 +476,28 @@ async def test_nav_overflow_hint_pages_to_hidden_destinations_at_100_cols():
         settings = app.query_one("#nav-settings", Button)
         assert not visible(settings), "test premise: Settings starts off-screen"
 
-        # Page right (at most a handful of presses) until Settings fits.
-        for _ in range(6):
-            if visible(settings):
-                break
-            hint.press()
-            await pilot.pause(0.1)
-        else:
-            raise AssertionError("Settings never became reachable via More ›")
+        # One press opens the menu; the clipped destination is a row there.
+        hint.press()
+        await pilot.pause(0.5)
+        menu = app.screen_stack[-1]
+        assert menu.__class__.__name__ == "NavOverflowMenu"
+        menu_settings = menu.query_one("#nav-overflow-settings", Button)
+        assert "Settings" in str(menu_settings.label)
 
-        # Pressing past the far end wraps back to the first destinations.
-        for _ in range(6):
-            hint.press()
-            await pilot.pause(0.1)
-            if strip.scroll_offset.x == 0:
-                break
-        else:
-            raise AssertionError("More › never wrapped back to the start")
-        assert visible(app.query_one("#nav-home", Button))
+        # Pressing the row navigates exactly like the strip button would.
+        menu_settings.press()
+        await pilot.pause(0.5)
+        assert "settings" in app.nav_requests
+        assert app.screen_stack[-1].__class__.__name__ != "NavOverflowMenu"
 
 
 @pytest.mark.asyncio
-async def test_more_hint_pages_by_visible_width_and_never_overscrolls():
-    """PR #1322 review: the pager's increment must be the strip's VISIBLE
-    viewport width, not the full scrollable content width, and a press
-    must never land past the end (clamped to max_scroll_x)."""
+async def test_more_hint_never_scrolls_the_strip_so_it_cannot_overscroll():
+    """PR #1322 review: the old paging hint could land past the end of the
+    strip when its increment exceeded the remaining scroll. TASK-2154.21's
+    overflow menu removed the pager entirely -- a press opens the menu and
+    leaves the strip's scroll position untouched, so overscroll is
+    structurally impossible."""
 
     class TestApp(App):
         def compose(self):
@@ -500,28 +506,16 @@ async def test_more_hint_pages_by_visible_width_and_never_overscrolls():
     app = TestApp()
 
     async with app.run_test(size=(100, 30)) as pilot:
-        await pilot.pause(0.1)
+        await pilot.pause(0.5)
 
         strip = app.query_one("#nav-destination-strip")
         hint = app.query_one("#nav-overflow-hint", Button)
 
-        # The property the pager reads is the VIEWPORT (region minus
-        # gutter/scrollbar), not the virtual content: the content
-        # overflows it by max_scroll_x.
-        visible_width = strip.scrollable_content_region.width
-        assert visible_width == strip.region.width
-        assert strip.virtual_size.width == visible_width + strip.max_scroll_x
         assert strip.max_scroll_x > 0
+        assert strip.scroll_offset.x == 0
 
-        # One press advances by exactly min(visible width, remaining) --
-        # never past the end.
         hint.press()
-        await pilot.pause(0.1)
-        expected = min(visible_width, strip.max_scroll_x)
-        assert strip.scroll_offset.x == expected
-        assert strip.scroll_offset.x <= strip.max_scroll_x
+        await pilot.pause(0.5)
 
-        # From the end, the wrap (not another page) fires.
-        hint.press()
-        await pilot.pause(0.1)
+        assert app.screen_stack[-1].__class__.__name__ == "NavOverflowMenu"
         assert strip.scroll_offset.x == 0

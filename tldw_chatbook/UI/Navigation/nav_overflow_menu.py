@@ -10,7 +10,9 @@ documentation), a press navigating exactly like the strip button does.
 
 from __future__ import annotations
 
-from textual import on
+from typing import Any
+
+from textual import events, on
 from textual.app import ComposeResult
 from textual.containers import Vertical
 from textual.screen import ModalScreen
@@ -59,7 +61,7 @@ class NavOverflowMenu(ModalScreen[None]):
     }
     """
 
-    def __init__(self, active_destination_id: str | None = None, **kwargs) -> None:
+    def __init__(self, active_destination_id: str | None = None, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._active_destination_id = active_destination_id
 
@@ -90,7 +92,7 @@ class NavOverflowMenu(ModalScreen[None]):
         self.post_message(NavigateToScreen(route))
         self.dismiss()
 
-    def on_key(self, event) -> None:
+    def on_key(self, event: events.Key) -> None:
         if event.key == "escape":
             event.stop()
             self.dismiss()
