@@ -308,6 +308,10 @@ click a nav label, press **Ctrl+P**, or use Ctrl+5 … Ctrl+0.
   character gets used;
   [World & lore books](../../Features/World-Lore-Books-Documented.md) — the
   lore format (its walkthrough describes a retired screen; concepts only).
+- [Using OpenAI-compatible TTS servers ▸ Per-character
+  voices](../openai-compatible-tts.md#per-character-voices) — how voice
+  profiles are created (Speech Lab) and how a character's assigned voice
+  ranks against the app-wide default.
 - **There is no feature deep-dive for character cards.** Nothing else in the
   documentation covers the card format, the editor, or the import paths —
   this page is it.

@@ -1,20 +1,42 @@
 # Voice profiles beyond audio.cpp + app-wide default voice profile — design
 
 Date: 2026-08-04
-Status: Approved. **Slice 1 shipped 2026-08-06** (PR #1368 → dev `e4f7aa24e`, TASK-2450).
-**Slice 2 (§4.2's availability-honesty + P4 copy items) implemented 2026-08-06/07 on
-branch `feat/voice-profiles-slice2` (commits `7867416eb..8966edb46`, TASK-2950), pending
-merge** — legacy-provider profiles are never presented with the raw word "Unverified" or
-a refresh promise they cannot fulfill, across the profile library, Personas, and Playground
-surfaces (implemented at the presentation layer per `recovery_action`, not as a new
-`ProfileAvailabilityState`; see TASK-2950's Implementation Notes for the rationale). §4.2's
-edit-dialog provider-set expansion was already covered by slice 1. Two follow-ups filed,
-not blocking: TASK-2951 (a stale AC on the unrelated task-1266 board entry), TASK-2952
-(one untraced legacy-reachability question in the Playground preview's blocked-state copy).
-Slices 3-4: **slice 3 (default voice profile end-to-end) also shipped 2026-08-06**
-(PR #1375 → dev `e7b9ebabd`). Slice 4 remains unplanned by design — each slice is planned
-after the prior one lands, because slice 1 demonstrated how much implementation reshapes a
-plan (see the §3 correction).
+Status: **Approved. Three of four slices merged to dev; slice 4 authored,
+PR pending.**
+
+- **Slice 1** (§4.1, all seven providers) — shipped 2026-08-06, PR #1368 →
+  dev `e4f7aa24e`, TASK-2450.
+- **Slice 2** (§4.2's availability-honesty + P4 copy items) — shipped
+  2026-08-07, PR #1397 → dev `7f23e0263`, TASK-2950 — legacy-provider
+  profiles are never presented with the raw word "Unverified" or a refresh
+  promise they cannot fulfill, across the profile library, Personas, and
+  Playground surfaces (implemented at the presentation layer per
+  `recovery_action`, not as a new `ProfileAvailabilityState`; see
+  TASK-2950's Implementation Notes for the rationale). §4.2's edit-dialog
+  provider-set expansion was already covered by slice 1. Two follow-ups
+  filed, not blocking: TASK-2951 (a stale AC on the unrelated task-1266
+  board entry), TASK-2952 (one untraced legacy-reachability question in the
+  Playground preview's blocked-state copy).
+- **Slice 3** (§4.3, default voice profile end-to-end) — shipped
+  2026-08-06, PR #1375 → dev `e7b9ebabd`.
+- **Slice 4** (§4.4, cross-links + docs) — **authored on branch
+  `feat/voice-profiles-slice4` (off dev `7f23e0263`), PR pending, not yet
+  merged.** Adds the Settings ▸ Speech & TTS pointer card, a new
+  "Per-character voices" section in `Docs/User_Guide/openai-compatible-tts.md`,
+  and this status close-out. §4.4's text said "file the follow-up task for
+  the sample-persona idea (ruling 1)"; that filing happened during slice-1
+  scoping, ahead of this slice, as **TASK-2451** ("Make the default
+  assistant an editable sample persona") — noted here since §4.4 did not
+  carry the id when it was written. This bullet — and the "complete" framing
+  below — get corrected to shipped/merged in the wake of slice 4's merge
+  commit; do not treat this document as evidence the branch has landed.
+
+Slice 4 was deliberately left unplanned in this document until slice 3
+landed — each slice was planned only after the prior one shipped, because
+slice 1 demonstrated how much implementation reshapes a plan (see the §3
+correction). That held for all four: this status block is the only design
+artifact for slice 4, and no separate plan document exists for it.
+
 Owner decisions recorded: 2026-08-04 (five rulings, §2)
 Extends: ADR-023, ADR-028, ADR-037, ADR-039
 
@@ -156,6 +178,19 @@ Also verified: the admission layer is provider-agnostic — `TTS/request_admissi
 - File the follow-up task for the sample-persona idea (ruling 1), noting ADR-037's
   constraint (personas do not inherit character TTS assignments; persona runtime
   parity is TASK-617).
+
+**Implemented on `feat/voice-profiles-slice4`, 2026-08-07, PR pending
+(correcting the above against what was actually built):** the pointer card
+and User Guide items were implemented as written — the card sits in the
+panel's existing scope-banner card, right below the "Open Speech Lab"
+button it references, and the Roleplay editor's section is indeed
+literally titled "Voice & Speech" (`personas_character_tts_widget.py`),
+confirmed by reading the widget rather than assumed. The one correction:
+**the sample-persona follow-up task was already filed before this slice
+began** — as part of slice 1's scoping, not slice 4 — as **TASK-2451**
+("Make the default assistant an editable sample persona"), which does cite
+ADR-037's constraint. This bullet is a description of intent from the
+2026-08-04 design, not a task queued for slice 4 to execute.
 
 ## 5. Out of scope
 

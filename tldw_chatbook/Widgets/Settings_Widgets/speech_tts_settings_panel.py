@@ -1173,6 +1173,15 @@ class SpeechTTSSettingsPanel(Vertical):
                 compact=True,
                 tooltip="Open Speech Lab without testing or refreshing a provider.",
             )
+            yield Static(
+                "Voice profiles are managed in Lab > Speech > Voice Profiles "
+                "— open Speech Lab, above, to get there. Per-character "
+                "voices are assigned in the Roleplay character editor's "
+                "Voice & Speech section, not here.",
+                id="settings-speech-profile-surfaces-note",
+                classes="settings-detail-row",
+                markup=False,
+            )
 
         defaults = self.state.defaults
         audio_cpp_selected = defaults.provider_id == "audio_cpp"

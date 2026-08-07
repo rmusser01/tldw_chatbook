@@ -545,6 +545,27 @@ async def test_global_panel_states_scope_and_mounts_only_selected_provider() -> 
 
 
 @pytest.mark.asyncio
+async def test_scope_banner_points_to_the_two_profile_surfaces() -> None:
+    """The pointer card names where profiles actually live (task 1, slice 4).
+
+    Voice profiles are a Speech Lab concept and per-character assignment
+    lives in the Roleplay character editor (ADR-039 scope separation) --
+    neither is managed from this panel. The card is a static note, not a
+    control: it reuses the existing "Open Speech Lab" button rather than
+    adding a second, competing affordance.
+    """
+    app = _PanelHarness()
+    async with app.run_test(size=(150, 60)):
+        note = app.query_one("#settings-speech-profile-surfaces-note", Static)
+        assert str(note.renderable) == (
+            "Voice profiles are managed in Lab > Speech > Voice Profiles — "
+            "open Speech Lab, above, to get there. Per-character voices are "
+            "assigned in the Roleplay character editor's Voice & Speech "
+            "section, not here."
+        )
+
+
+@pytest.mark.asyncio
 async def test_audio_cpp_first_run_offers_only_dynamic_default_policies() -> None:
     app = _PanelHarness(state=_audio_cpp_state())
 
