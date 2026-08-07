@@ -2201,6 +2201,80 @@ def test_arm_library_list_entry_focus_schedules_immediate_attempt_and_settle_tim
     assert screen._library_pending_list_entry_focus is False
 
 
+def test_arm_library_list_entry_focus_twice_cancels_the_stale_timer_handle():
+    """Qodo review (PR #1410): ``_arm_library_list_entry_focus`` called
+    ``self.set_timer(...)`` every time it ran but never kept the returned
+    handle. Calling it twice within ``LIBRARY_LIST_ENTRY_FOCUS_ARMED_SECONDS``
+    (e.g. a rail-row press immediately followed by a chained background
+    recompose re-requesting focus) left the FIRST timer still scheduled
+    underneath the second -- if it fired later it called
+    ``_disarm_library_list_entry_focus`` and cleared the flag even though
+    the SECOND arm was still meant to be active, making the armed window
+    non-deterministic. The fix stores the handle
+    (``_library_list_entry_focus_timer``) and stops any existing one before
+    scheduling a new one, so this test pins that the stale handle is
+    actually cancelled -- not merely that the flag happens to still read
+    ``True`` a moment later (a real Textual timer must never be allowed to
+    fire once superseded, so the assertion is on ``.stop()`` having been
+    called on the STALE handle, not on sleeping past its deadline)."""
+    from tldw_chatbook.UI.Screens.library_screen import (
+        LIBRARY_LIST_ENTRY_FOCUS_ARMED_SECONDS,
+        LibraryScreen,
+    )
+
+    class _FakeTimer:
+        def __init__(self, delay, callback):
+            self.delay = delay
+            self.callback = callback
+            self.stop_calls = 0
+
+        def stop(self):
+            self.stop_calls += 1
+
+    app = _build_test_app()
+    screen = LibraryScreen(app)
+    screen.call_after_refresh = lambda callback: None
+
+    created_timers: list[_FakeTimer] = []
+
+    def fake_set_timer(delay, callback):
+        timer = _FakeTimer(delay, callback)
+        created_timers.append(timer)
+        return timer
+
+    screen.set_timer = fake_set_timer
+
+    screen._arm_library_list_entry_focus()
+    assert len(created_timers) == 1
+    first_timer = created_timers[0]
+    assert first_timer.delay == LIBRARY_LIST_ENTRY_FOCUS_ARMED_SECONDS
+    assert screen._library_list_entry_focus_timer is first_timer
+    assert first_timer.stop_calls == 0
+
+    # Re-arm before the first timer's own deadline -- e.g. a chained
+    # background recompose re-requesting focus while the first window is
+    # still open. The stale first timer must be cancelled, not left
+    # dangling alongside the new one.
+    screen._arm_library_list_entry_focus()
+    assert len(created_timers) == 2
+    second_timer = created_timers[1]
+
+    assert first_timer.stop_calls == 1, (
+        "the stale first timer must be stopped once a second arm supersedes it"
+    )
+    assert screen._library_list_entry_focus_timer is second_timer
+    assert second_timer.stop_calls == 0
+    assert screen._library_pending_list_entry_focus is True
+
+    # Disarming (whether fired by the second timer's own deadline, an
+    # interaction hook, or an explicit consumer) must stop and clear the
+    # CURRENT handle too, so nothing is left running after the flag drops.
+    screen._disarm_library_list_entry_focus()
+    assert screen._library_pending_list_entry_focus is False
+    assert second_timer.stop_calls == 1
+    assert screen._library_list_entry_focus_timer is None
+
+
 def test_on_key_disarms_a_pending_list_entry_focus_on_any_key():
     """task-2856 review round 2: review found the settle-window timer was
     the ONLY disarm path, so a background recompose landing after the

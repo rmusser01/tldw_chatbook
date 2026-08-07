@@ -1873,6 +1873,16 @@ class LibraryScreen(BaseAppScreen):
         # -- checks and consumes this flag on every run, re-requesting the
         # focus after whichever recompose turns out to be the last one.
         self._library_pending_list_entry_focus: bool = False
+        # task-2856 review (PR #1410, Qodo): the settle-window timer
+        # ``_arm_library_list_entry_focus`` schedules used to be fire-and-
+        # forget -- the ``Timer`` ``set_timer`` returns was never kept, so
+        # arming twice within ``LIBRARY_LIST_ENTRY_FOCUS_ARMED_SECONDS``
+        # left the FIRST timer still ticking underneath the second. If it
+        # fired later it disarmed a request the newer arm still intended to
+        # keep active, making the armed window non-deterministic. Storing
+        # the handle here lets ``_arm_library_list_entry_focus`` cancel any
+        # prior timer before scheduling a new one -- see both methods.
+        self._library_list_entry_focus_timer: Timer | None = None
 
     def _register_footer_shortcuts(self) -> None:
         """Register Library shortcuts via BaseAppScreen's persisting API.
@@ -2498,10 +2508,21 @@ class LibraryScreen(BaseAppScreen):
         the timer's only remaining job is bounding how long an IDLE list
         keeps re-requesting focus across its own chained background
         workers.
+
+        PR #1410 review (Qodo): re-arming before a prior timer's own
+        deadline (e.g. two "enter/return to list" seams firing back-to-
+        back) used to leave that PRIOR timer scheduled underneath this
+        one -- if it fired later it disarmed a request THIS arm still
+        intended to keep active. The stored handle
+        (``_library_list_entry_focus_timer``) is stopped here before the
+        new one is scheduled, so only the most recent arm's timer is ever
+        live.
         """
         self._library_pending_list_entry_focus = True
         self.call_after_refresh(self._focus_library_list_entry)
-        self.set_timer(
+        if self._library_list_entry_focus_timer is not None:
+            self._library_list_entry_focus_timer.stop()
+        self._library_list_entry_focus_timer = self.set_timer(
             LIBRARY_LIST_ENTRY_FOCUS_ARMED_SECONDS,
             self._disarm_library_list_entry_focus,
         )
@@ -2516,8 +2537,14 @@ class LibraryScreen(BaseAppScreen):
         the moment focus lands somewhere other than a row of the armed
         list (Tab, Shift+Tab, a mouse click -- anything that is not the
         system's own re-focus of its own row) -- whichever comes first.
+        Also stops and clears the stored timer handle (PR #1410 review)
+        so an interaction-driven disarm never leaves the settle-window
+        timer dangling behind it.
         """
         self._library_pending_list_entry_focus = False
+        if self._library_list_entry_focus_timer is not None:
+            self._library_list_entry_focus_timer.stop()
+            self._library_list_entry_focus_timer = None
 
     def on_descendant_focus(self, event: DescendantFocus) -> None:
         """Disarm a pending entry-focus request on any FOREIGN focus change
