@@ -41,6 +41,16 @@ def test_parser_survives_malformed_html():
     assert "x" in p.links
 
 
+def test_title_accumulation_bounded():
+    """An unclosed <title> followed by a huge stream of text data must not
+    grow the accumulator unboundedly — handle_data is called once per text
+    chunk, so an unclosed tag can otherwise concatenate arbitrarily much."""
+    parser = _CrawlLinkParser()
+    parser.feed("<title>" + ("x" * 100_000))
+    parser.close()
+    assert len(parser.title) <= 512
+
+
 def test_normalize_folds_www_case_and_fragment():
     assert (
         _normalize_crawl_url("HTTP://WWW.Example.COM/Path?q=1#frag")
@@ -307,6 +317,21 @@ def test_crawl_failed_page_counted_not_fatal(crawl_env):
     assert "fine" in out
 
 
+def test_crawl_ssrf_substring_in_url_not_misclassified_as_blocked(crawl_env):
+    """A same-host link whose URL text happens to CONTAIN the literal
+    substring "[ssrf]" and simply 404s must be counted as failed, not
+    blocked. The classifier must key off the message's PREFIX (which only
+    _validate_hop controls), not an unspoofable-in-name-only substring
+    search — an attacker-served URL could otherwise forge a "blocked"
+    classification for what is really an ordinary failure."""
+    _site(crawl_env, {
+        "http://example.com/": ("root", ["/x[ssrf]y"]),
+    })
+    crawl_env.routes["http://example.com/x[ssrf]y"] = httpx.Response(404)
+    out = web_crawl("http://example.com/")
+    assert "1 failed, 0 blocked" in out
+
+
 def test_crawl_start_url_failure_raises_crawl_failed(crawl_env):
     crawl_env.routes["http://example.com/"] = httpx.Response(500)
     with pytest.raises(LocalToolError, match="crawl-failed"):
@@ -336,6 +361,26 @@ def test_crawl_offhost_redirect_listed_not_expanded(crawl_env):
     out = web_crawl("http://example.com/")
     assert "http://elsewhere.com/final" in out       # listed at final URL
     assert "http://elsewhere.com/next-on-elsewhere" not in crawl_env.calls
+
+
+def test_crawl_redirect_duplicate_targets_listed_once(crawl_env):
+    """Two different same-host pages that both redirect to the SAME final
+    URL must list that final URL once, not once per redirecting source —
+    each redirect still spends its own attempt slot (the budget contract),
+    but the duplicate row must not appear in the output or the page count."""
+    _site(crawl_env, {
+        "http://example.com/": ("root", ["/one", "/two"]),
+    })
+    crawl_env.routes["http://example.com/one"] = httpx.Response(
+        302, headers={"location": "http://example.com/target"}
+    )
+    crawl_env.routes["http://example.com/two"] = httpx.Response(
+        302, headers={"location": "http://example.com/target"}
+    )
+    _site(crawl_env, {"http://example.com/target": ("target page words", [])})
+    out = web_crawl("http://example.com/")
+    assert out.count("URL: http://example.com/target") == 1
+    assert "Crawled 2 pages" in out
 
 
 def test_crawl_redirect_into_private_space_blocked(crawl_env):
@@ -478,6 +523,51 @@ def _sitemap_response(xml: bytes) -> httpx.Response:
     return httpx.Response(200, content=xml, headers={"content-type": "application/xml"})
 
 
+# NOT a module-level pytest.importorskip: see test_web_tool_impls.py's
+# requires_pymupdf comment — that would skip the whole file. Only the
+# defusedxml-specific refusal tests below need to skip when it's absent
+# (the stdlib fallback parser parses internal entities without complaint).
+try:
+    import defusedxml  # noqa: F401
+except ImportError:
+    defusedxml = None
+
+requires_defusedxml = pytest.mark.skipif(
+    defusedxml is None, reason="defusedxml not installed (websearch/ebook/subscriptions extra)"
+)
+
+_ENTITY_SITEMAP = (
+    b'<?xml version="1.0"?><!DOCTYPE urlset [<!ENTITY x "y">]>'
+    b'<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
+    b"<url><loc>http://example.com/&x;</loc></url></urlset>"
+)
+
+
+@requires_defusedxml
+def test_sitemap_entity_declaration_root_is_crawl_failed(crawl_env):
+    crawl_env.routes["http://example.com/sitemap.xml"] = _sitemap_response(_ENTITY_SITEMAP)
+    with pytest.raises(LocalToolError, match="crawl-failed"):
+        web_crawl("http://example.com/", sitemap_url="http://example.com/sitemap.xml")
+
+
+@requires_defusedxml
+def test_sitemap_entity_declaration_child_is_skipped(crawl_env):
+    index = (b'<?xml version="1.0"?>'
+             b'<sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
+             b"<sitemap><loc>http://example.com/bad.xml</loc></sitemap>"
+             b"<sitemap><loc>http://example.com/good.xml</loc></sitemap>"
+             b"</sitemapindex>")
+    good = (b'<?xml version="1.0"?>'
+            b'<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
+            b"<url><loc>http://example.com/page</loc></url></urlset>")
+    crawl_env.routes["http://example.com/sitemap.xml"] = _sitemap_response(index)
+    crawl_env.routes["http://example.com/bad.xml"] = _sitemap_response(_ENTITY_SITEMAP)
+    crawl_env.routes["http://example.com/good.xml"] = _sitemap_response(good)
+    _site(crawl_env, {"http://example.com/page": ("still works", [])})
+    out = web_crawl("http://example.com/", sitemap_url="http://example.com/sitemap.xml")
+    assert "still works" in out
+
+
 def test_sitemap_mode_seeds_pages_and_skips_expansion(crawl_env):
     xml = (
         b'<?xml version="1.0"?>'
@@ -568,6 +658,26 @@ def test_sitemap_garbage_xml_raises_crawl_failed(crawl_env):
         web_crawl("http://example.com/", sitemap_url="http://example.com/sitemap.xml")
 
 
+def test_sitemap_namespace_free_urlset_seeds_pages(crawl_env):
+    """A sitemap without the sitemaps.org XML namespace (some generators
+    emit these) must still seed pages — pre-fix, the namespaced-only
+    `.//{ns}loc` findall returns zero matches, so the crawl seeds nothing
+    and reports "sitemap exhausted" instead of the page's content."""
+    xml = b'<?xml version="1.0"?><urlset><url><loc>http://example.com/a</loc></url></urlset>'
+    crawl_env.routes["http://example.com/sitemap.xml"] = _sitemap_response(xml)
+    _site(crawl_env, {"http://example.com/a": ("alpha words", [])})
+    out = web_crawl("http://example.com/", sitemap_url="http://example.com/sitemap.xml")
+    assert "alpha words" in out
+    assert "Stopped: sitemap exhausted." in out
+
+
+def test_parse_sitemap_namespace_free_urlset():
+    xml = b'<?xml version="1.0"?><urlset><url><loc>http://example.com/a</loc></url></urlset>'
+    pages, children = _parse_sitemap(xml)
+    assert pages == ["http://example.com/a"]
+    assert children == []
+
+
 def test_sitemap_deadline_during_child_fetch_reports_deadline_reached(crawl_env):
     """The child-sitemap loop's bound check is a plain `break`, not an
     exception: if the clock crosses the deadline while fetching a child
@@ -632,6 +742,30 @@ def test_crawl_pdf_sniff_not_poisoned_into_html_branch(crawl_env, ctype):
     assert ("http://example.com/doc", web_tool_impls.FETCH_MAX_BYTES) not in web_tool_impls._fetch_cache
 
 
+def test_crawl_html_only_aborts_sniffed_pdf_despite_declared_html(crawl_env):
+    """A response DECLARED text/html but whose body sniffs as a PDF must
+    still abort the read early under html_only (crawl) mode. Pre-fix, the
+    early-break only looked at the declared content-type — since
+    "text/html" IS an HTML type, the break never fired and the crawl drained
+    the entire (potentially huge) misdeclared body instead of aborting once
+    the type is known from the sniff."""
+    def guarded_chunks():
+        yield b"%PDF-"  # >= 5 bytes: resolves the sniff to is_pdf=True this chunk
+        for i in range(3):
+            yield f"filler chunk {i}".encode()
+        raise AssertionError(
+            "crawl drained the full sniffed-PDF body under html_only=True — "
+            "the abort-after-sniff did not fire"
+        )
+
+    _site(crawl_env, {"http://example.com/": ("root", ["/doc"])})
+    crawl_env.routes["http://example.com/doc"] = httpx.Response(
+        200, content=guarded_chunks(), headers={"content-type": "text/html"}
+    )
+    out = web_crawl("http://example.com/")
+    assert "[application/pdf]" in out
+
+
 def test_crawl_nonpdf_nonhtml_marker_uses_declared_type(crawl_env):
     """The is_pdf branch must not swallow every non-HTML response into a
     hardcoded '[application/pdf]' marker: a genuinely non-PDF, non-HTML
@@ -686,3 +820,26 @@ def test_sitemap_index_caps_children_fetched(crawl_env, monkeypatch):
     web_crawl("http://example.com/", sitemap_url="http://example.com/sitemap.xml", max_pages=100)
     child_calls = [c for c in crawl_env.calls if c != "http://example.com/sitemap.xml"]
     assert len(child_calls) == 3
+
+
+def test_sitemap_child_budget_reached_stop_reason(crawl_env, monkeypatch):
+    """When the SITEMAP_MAX_CHILDREN break fires (children left unfetched),
+    the footer must say so honestly instead of claiming "sitemap exhausted"
+    — which implies every child sitemap was consulted when it was not."""
+    monkeypatch.setattr(web_tool_impls, "SITEMAP_MAX_CHILDREN", 1)
+    index = (
+        b'<?xml version="1.0"?>'
+        b'<sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
+        b"<sitemap><loc>http://example.com/s1.xml</loc></sitemap>"
+        b"<sitemap><loc>http://example.com/s2.xml</loc></sitemap>"
+        b"</sitemapindex>"
+    )
+    empty_child = (
+        b'<?xml version="1.0"?>'
+        b'<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"></urlset>'
+    )
+    crawl_env.routes["http://example.com/sitemap.xml"] = _sitemap_response(index)
+    crawl_env.routes["http://example.com/s1.xml"] = _sitemap_response(empty_child)
+    crawl_env.routes["http://example.com/s2.xml"] = _sitemap_response(empty_child)
+    out = web_crawl("http://example.com/", sitemap_url="http://example.com/sitemap.xml")
+    assert out.endswith("Stopped: sitemap child budget reached.")

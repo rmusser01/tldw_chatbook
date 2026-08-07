@@ -390,6 +390,19 @@ def test_fetch_pdf_over_ceiling_refused(fetch_env, monkeypatch):
         web_fetch("http://example.com/huge.pdf")
 
 
+def test_fetch_pdf_too_large_message_reflects_configured_ceiling(fetch_env, monkeypatch):
+    """The [too-large] message must render the number FROM PDF_MAX_BYTES,
+    not a hardcoded '20 MB' string — a caller that monkeypatches the
+    constant to a non-default value must see THAT value quoted back, not
+    the module's original default. Uses raw sniffable bytes (not a real
+    pymupdf PDF): the refusal fires on size alone, before any parse."""
+    monkeypatch.setattr(web_tool_impls, "PDF_MAX_BYTES", 3 * 1024 * 1024)
+    body = b"%PDF-1.4\n" + b"x" * (3 * 1024 * 1024 + 100)
+    fetch_env.routes["http://example.com/huge3.pdf"] = _pdf_response(body)
+    with pytest.raises(LocalToolError, match=r"too-large.*3 MB.*media ingestion"):
+        web_fetch("http://example.com/huge3.pdf")
+
+
 @requires_pymupdf
 def test_fetch_pdf_extracted_text_truncated_with_page_count(fetch_env):
     body = _make_pdf([f"page {i} " + "words " * 200 for i in range(30)])
@@ -447,6 +460,32 @@ def test_fetch_pdf_missing_dep_message(fetch_env, monkeypatch):
     fetch_env.routes["http://example.com/doc.pdf"] = _pdf_response(_make_pdf(["hi"]))
     with pytest.raises(LocalToolError, match=r"missing-dep.*tldw_chatbook\[pdf\]"):
         web_fetch("http://example.com/doc.pdf")
+
+
+def test_fetch_pdf_missing_dep_skips_20mb_download(fetch_env, monkeypatch):
+    """When pymupdf is absent, web_fetch must decide that BEFORE opening the
+    20 MB PDF read ceiling: pass pdf_max_bytes=None so the stream aborts at
+    the caller's ordinary max_bytes cap, then raise [missing-dep] — never
+    download up to 20 MB of a PDF it cannot parse anyway. Guard iterator
+    proves the byte cap actually in effect: it raises if pulled past the
+    default FETCH_MAX_BYTES cap, which only happens if the 20 MB ceiling
+    were (wrongly) still in play."""
+    monkeypatch.setattr(web_tool_impls, "_pymupdf_available", lambda: False)
+
+    def guarded_chunks():
+        # One oversized chunk, already past FETCH_MAX_BYTES: _fetch_once
+        # must break out of the read loop without pulling a second chunk.
+        yield b"%PDF-" + b"a" * (FETCH_MAX_BYTES + 5000)
+        raise AssertionError(
+            "guarded iterator pulled past the caller's byte cap — the 20 MB "
+            "PDF ceiling was used despite pymupdf being unavailable"
+        )
+
+    fetch_env.routes["http://example.com/huge.pdf"] = httpx.Response(
+        200, content=guarded_chunks(), headers={"content-type": "application/pdf"}
+    )
+    with pytest.raises(LocalToolError, match=r"missing-dep"):
+        web_fetch("http://example.com/huge.pdf")
 
 
 @requires_pymupdf

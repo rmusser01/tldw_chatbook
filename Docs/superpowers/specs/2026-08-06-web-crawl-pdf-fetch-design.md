@@ -22,7 +22,7 @@ All changes are in `tldw_chatbook/Tools/web_tool_impls.py`; no new module.
 - `_fetch_once` reads the first chunk, checks content-type header + `%PDF-` prefix.
 - PDF → read ceiling becomes `PDF_MAX_BYTES = 20 * 1024 * 1024` for this response, regardless of the caller's `max_bytes`. One request; no re-fetch, no second rate-limit hit.
 - Not PDF → the caller's capped `max_bytes` applies exactly as today.
-- A PDF whose body exceeds 20 MB → `LocalToolError("[too-large] PDF exceeds 20 MB — use media ingestion for large documents")`. Never returned truncated.
+- A PDF whose body exceeds 20 MB → `LocalToolError("[too-large] PDF exceeds 20 MB — use media ingestion for large documents")` (the number renders from `PDF_MAX_BYTES`). Never returned truncated.
 
 **Extraction (ephemeral).** `pymupdf.open(stream=body, filetype="pdf")` → per-page `page.get_text()` joined with blank lines. Nothing touches disk; nothing writes to the media DB. Import is local to the function with try/except, matching v1's trafilatura pattern.
 
@@ -82,7 +82,7 @@ Internal constants (not parameters — YAGNI): `CRAWL_DEADLINE_SECONDS = 120.0` 
 Crawled 12 pages (2 failed, 1 blocked). Stopped: page budget reached.
 ```
 
-The status footer is always present and states the stop reason (`page budget reached` / `no more links within depth` / `deadline reached` / `sitemap exhausted`).
+The status footer is always present and states the stop reason (`page budget reached` / `no more links within depth` / `deadline reached` / `sitemap exhausted` / `sitemap child budget reached` — the latter when the `SITEMAP_MAX_CHILDREN` cap left child sitemaps unfetched, so the footer doesn't claim the index was fully consulted when it wasn't).
 
 ## §3 Registration
 
