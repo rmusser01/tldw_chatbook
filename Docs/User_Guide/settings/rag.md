@@ -107,10 +107,11 @@ balance** and **Citation and snippets**: **Search mode** (`Plain keyword` /
 `Semantic` / `Hybrid`); **Default results**, **Keyword results**, **Vector
 results** (1–100 each); **Hybrid balance**, **Min score** (0.0–1.0 each);
 **Include citations**; **Citation style** (`Inline` / `Footnote` / `None`);
-**Snippet chars** (50–10000); **Context budget** (1000–1000000). Its caption is
-honest about reach — "Used by future Library-native Search/RAG and Console
-evidence handoff defaults." — so these are persisted now and consumed when
-Library runs a query, not applied to what is already on screen.
+**Snippet chars** (50–10000); **Context budget** (1000–1000000). Its caption
+confirms the reach — "Drives Library Search/RAG retrieval and Console
+evidence handoff defaults." — these are persisted here and consumed the next
+time Library or Console runs a query, not applied to what is already on
+screen.
 
 The four collapsed folds; the first three rebuild the index, **Reranking** does
 not:
