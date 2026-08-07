@@ -124,35 +124,9 @@ SETTINGS_DATABASES = (
     ("subscriptions", "Subscriptions", "tldw_cli_subscriptions"),
 )
 
-#: TASK-1995: real markdown, rendered by the About pane's Markdown widget.
-#: This text was previously Rich console markup ([bold]/[italic]/[link=…]),
-#: which Textual's Markdown does not interpret — the tags rendered literally.
-ABOUT_MARKDOWN = """\
-**tldw-chatbook** is a sophisticated Terminal User Interface (TUI) application for interacting with various Large Language Model APIs.
-
-*Features:*
-
-- Multi-provider LLM support (OpenAI, Anthropic, Google, and many more)
-- Advanced conversation management with branching
-- Character-based conversations with personality cards
-- Comprehensive note-taking with bidirectional file sync
-- Media ingestion and analysis (video, audio, documents, PDFs, e-books)
-- RAG (Retrieval-Augmented Generation) for intelligent search
-- Local LLM server management
-- Extensive customization options
-
-*License:* AGPLv3+
-
-*Links:*
-
-- GitHub: <https://github.com/rmusser01/tldw>
-- Documentation: <https://github.com/rmusser01/tldw/wiki>
-- Issues: <https://github.com/rmusser01/tldw/issues>
-
-*Created by:* rmusser01 and contributors
-
-Thank you for using tldw-chatbook! 🎉
-"""
+#: TASK-2775: the About text's canonical home is Utils/about_text (rendered by
+#: the F9 Settings screen's About category); re-exported here for back-compat.
+from tldw_chatbook.Utils.about_text import ABOUT_MARKDOWN  # noqa: E402,F401
 
 
 class ToolsSettingsWindow(Container):

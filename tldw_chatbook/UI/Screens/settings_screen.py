@@ -35,12 +35,15 @@ from textual.widgets import (
     Checkbox,
     Collapsible,
     Input,
+    Markdown,
     Rule,
     Select,
     SelectionList,
     Static,
     TextArea,
 )
+
+from tldw_chatbook.Utils.about_text import ABOUT_MARKDOWN, get_app_version
 
 from ...Chat.console_chat_models import CONSOLE_DEFAULT_MAX_PARALLEL_RUNS
 from ...Chat.console_provider_endpoints import URL_BASED_PROVIDER_KEYS
@@ -1173,6 +1176,11 @@ _INSPECTOR_GUIDANCE: dict[SettingsCategoryId, tuple[tuple[str, str], ...]] = {
             "Boundary",
             "Library owns indexing, query execution, source browse, Collections, and staging",
         ),
+    ),
+    SettingsCategoryId.ABOUT: (
+        ("Affected config", "nothing — version, license, and links are read-only"),
+        ("Recovery", "no recovery needed; links open in the system browser"),
+        ("Boundary", "informational only; no runtime or config surface"),
     ),
     SettingsCategoryId.DIAGNOSTICS: (
         (
@@ -2473,6 +2481,12 @@ class SettingsScreen(BaseAppScreen):
                 "Validate",
             ),
             SettingsCategorySummary(
+                SettingsCategoryId.ABOUT,
+                "About",
+                "Version, license, and project links.",
+                "Local",
+            ),
+            SettingsCategorySummary(
                 SettingsCategoryId.ADVANCED_CONFIG,
                 "Advanced Config",
                 "Raw TOML view and expert configuration editing.",
@@ -2541,7 +2555,10 @@ class SettingsScreen(BaseAppScreen):
                     SettingsCategoryId.PRIVACY_SECURITY,
                 ),
             ),
-            ("Troubleshooting", (SettingsCategoryId.DIAGNOSTICS,)),
+            (
+                "Troubleshooting",
+                (SettingsCategoryId.DIAGNOSTICS, SettingsCategoryId.ABOUT),
+            ),
             (
                 "Expert",
                 (
@@ -2863,6 +2880,16 @@ class SettingsScreen(BaseAppScreen):
                 boundary_copy="Diagnostics validates and reloads without mutating raw TOML.",
                 recovery_copy="Validate before reload; use Advanced Config only for expert repairs.",
                 read_only_reason="Diagnostic checks are non-destructive by design.",
+            ),
+            SettingsOwnershipRecord(
+                category=SettingsCategoryId.ABOUT,
+                owns_config_sections=("nothing",),
+                reads_runtime_state_from=("installed package metadata",),
+                writes_allowed=False,
+                runtime_owner="About",
+                boundary_copy="About shows version, license, and project links only.",
+                recovery_copy="Nothing to recover; links open in the system browser.",
+                read_only_reason="About is informational only.",
             ),
             SettingsOwnershipRecord(
                 category=SettingsCategoryId.ADVANCED_CONFIG,
@@ -4137,6 +4164,7 @@ class SettingsScreen(BaseAppScreen):
             SettingsCategoryId.OVERVIEW: "Guided edits: choose Providers or Console.",
             SettingsCategoryId.PRIVACY_SECURITY: "Guided edits: use Check Privacy.",
             SettingsCategoryId.DIAGNOSTICS: "Guided edits: use Validate/Reload.",
+            SettingsCategoryId.ABOUT: "Guided edits: read-only; links open in browser.",
             SettingsCategoryId.ADVANCED_CONFIG: "Guided edits: use Raw TOML controls.",
         }
         if category in DOMAIN_SETTINGS_CATEGORY_IDS:
@@ -11744,6 +11772,27 @@ class SettingsScreen(BaseAppScreen):
             return
         panel.apply_profile_choices(choices, unavailable=failed)
 
+    @on(Markdown.LinkClicked, "#settings-about-markdown")
+    def _handle_about_link(self, event: Markdown.LinkClicked) -> None:
+        """About links: http(s) opens the system browser with a notify (TASK-2775).
+
+        Any other scheme gets a visible warning and nothing opens — the same
+        explicit policy as the Console transcript and HF README links.
+        """
+        event.stop()
+        href = (event.href or "").strip()
+        if href.startswith(("http://", "https://")):
+            import webbrowser
+
+            webbrowser.open(href)
+            self.notify(f"Opened in browser: {href}", timeout=4)
+        else:
+            self.notify(
+                f"Link not opened (unsupported scheme): {href}",
+                severity="warning",
+                timeout=6,
+            )
+
     def _render_detail_pane(self) -> ComposeResult:
         category = SettingsCategoryId(self.active_category)
         if category is SettingsCategoryId.OVERVIEW:
@@ -12178,6 +12227,20 @@ class SettingsScreen(BaseAppScreen):
                     self._diagnostics_reload_result,
                     id="settings-diagnostics-reload-result",
                     classes="settings-status-row",
+                )
+        elif category is SettingsCategoryId.ABOUT:
+            # TASK-2775: the About surface lost its home when TASK-1346
+            # retired ToolsSettingsWindow; this is its canonical place now.
+            yield Static("About", classes="destination-section settings-column-title")
+            with Vertical(id="settings-about-card", classes="settings-focus-card"):
+                yield self._detail_row("Version", get_app_version())
+                yield self._detail_row("License", "AGPLv3+")
+                # open_links=False: clicks go through _handle_about_link so
+                # the policy (browser + notify) is explicit and testable.
+                yield Markdown(
+                    ABOUT_MARKDOWN,
+                    id="settings-about-markdown",
+                    open_links=False,
                 )
         elif category in DOMAIN_SETTINGS_CATEGORY_IDS:
             yield from self._render_domain_category_detail(category)

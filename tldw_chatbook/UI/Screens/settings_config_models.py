@@ -30,6 +30,7 @@ class SettingsCategoryId(StrEnum):
     MCP_DEFAULTS = "mcp-defaults"
     ACP_DEFAULTS = "acp-defaults"
     DIAGNOSTICS = "diagnostics"
+    ABOUT = "about"
     ADVANCED_CONFIG = "advanced-config"
     INTERNAL_PROMPTS = "internal-prompts"
     IMAGE_GENERATION = "image_generation"
