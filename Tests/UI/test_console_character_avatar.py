@@ -20,6 +20,7 @@ from textual.widgets import Static
 
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatSession, ConsoleChatStore
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+from tldw_chatbook.UI.Console_Modules.session import ConsoleSessionController
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
@@ -36,6 +37,9 @@ def _bare_console_screen(store: ConsoleChatStore) -> ChatScreen:
     """
     screen = ChatScreen.__new__(ChatScreen)
     screen._console_chat_store = store
+    screen._session = ConsoleSessionController.__new__(ConsoleSessionController)
+    screen._session._chat_store_accessor = lambda: screen._console_chat_store
+    screen._session._current_chat_store_accessor = lambda: screen._console_chat_store
     screen._console_visible_draft_session_id = None
     screen._console_composer_or_none = lambda: None
     return screen
@@ -269,7 +273,7 @@ async def console_screen_with_db_avatar_off(avatar_db):
 
 def _set_active_console_character(screen, character_id, character_name) -> None:
     """Bind the active native Console session to a character (or clear it)."""
-    session = screen._active_native_console_session()
+    session = screen._session._active_native_console_session()
     assert session is not None, "no active native Console session"
     session.character_id = character_id
     session.character_name = character_name
@@ -567,7 +571,7 @@ async def test_react_off_pins_idle_even_when_streaming(console_screen_with_db, m
     # the raw status really would say "streaming" (-> "speaking") if react
     # were on.
     controller = screen._ensure_console_chat_controller()
-    session = screen._active_native_console_session()
+    session = screen._session._active_native_console_session()
     message = controller.store.append_message(
         session.id, role=ConsoleMessageRole.ASSISTANT, content=""
     )

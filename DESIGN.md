@@ -403,3 +403,24 @@ controller's constructor dependencies above; see `ConsoleInspectorRail`'s
 `left_rail.py`) so every `compose()` call mounts a fresh instance built
 from current state, or have the region re-query its own DOM instead of
 caching a reference at all.
+
+**Controller-to-controller traffic goes through named callables the screen
+wires at construction — never a back-door through screen attributes.** Wave 2
+put three controllers on one screen, and clusters genuinely reference each
+other: sessions live inside workspace context, and dictation drives the
+hands-free loop. The temptation is for one controller to reach the other by
+reading a screen attribute (`self._screen._session`, or a live property that
+proxies to it), which reintroduces exactly the coupling the extraction removed
+and hides it behind indirection. Instead the screen owns the wiring: it builds
+both controllers, then passes each the specific callables the other exposes
+(`ConsoleSessionController`'s five seam callables into
+`ConsoleWorkspaceController`, and vice versa; the six that replaced
+`ConsoleDictationController`'s hands-free reach-backs). Two consequences worth
+stating because both cost a review round to establish. First, the lambdas must
+resolve the sibling at CALL time (`lambda: self._session.x()`), never capture
+it at construction, or whichever controller is built second is `None` at
+wiring time. Second, if a proxy property is write-only, its getter must raise
+`RuntimeError` and NOT `AttributeError` — `hasattr()` and
+`getattr(obj, name, default)` swallow `AttributeError` specifically, so a
+defensive read would silently take the default forever with nothing raised
+anywhere.

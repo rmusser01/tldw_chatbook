@@ -461,12 +461,14 @@ def test_source_scope_survives_a_screen_state_round_trip():
         ConsoleChatSession,
         ConsoleChatStore,
     )
+    from tldw_chatbook.UI.Console_Modules.session import ConsoleSessionController
     from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
     from tldw_chatbook.UI.Screens.chat_screen_state import TaskResumeState
 
     def _bare_screen(store: ConsoleChatStore) -> ChatScreen:
         screen = ChatScreen.__new__(ChatScreen)
         screen._console_chat_store = store
+        screen._session = ConsoleSessionController.__new__(ConsoleSessionController)
         screen._console_visible_draft_session_id = None
         screen._console_composer_or_none = lambda: None
         screen._task_resume_state = TaskResumeState()

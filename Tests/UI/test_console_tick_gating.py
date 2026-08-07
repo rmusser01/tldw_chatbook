@@ -261,7 +261,7 @@ async def test_console_workspace_context_legacy_alias_kick_skipped_when_state_un
         # Pin the built state to one fixed (but distinct-object-each-call)
         # value so two consecutive syncs are a genuine "state unchanged"
         # comparison rather than incidentally differing mount-time state.
-        original_build = console._build_console_workspace_context_state
+        original_build = console._workspace._build_console_workspace_context_state
 
         def pinned_build(*args, **kwargs):
             return replace(original_build(*args, **kwargs), heading="Pinned heading")
@@ -269,7 +269,7 @@ async def test_console_workspace_context_legacy_alias_kick_skipped_when_state_un
         with (
             patch.object(console, "run_worker", counting_run_worker),
             patch.object(
-                console, "_build_console_workspace_context_state", pinned_build
+                console._workspace, "_build_console_workspace_context_state", pinned_build
             ),
         ):
             console._sync_console_workspace_context()
@@ -378,7 +378,7 @@ async def test_console_streaming_message_excerpt_is_static_placeholder():
 def _pin_workspace_state(console):
     """Patch the state build to a fixed (distinct-object) value so syncs are
     a genuine "state unchanged" comparison, and count tray recomposes."""
-    original_build = console._build_console_workspace_context_state
+    original_build = console._workspace._build_console_workspace_context_state
 
     def pinned_build(*args, **kwargs):
         return replace(original_build(*args, **kwargs), heading="Pinned heading")
@@ -414,7 +414,7 @@ async def test_console_workspace_context_tray_not_recomposed_when_state_unchange
         )
         with (
             patch.object(
-                console, "_build_console_workspace_context_state", pinned_build
+                console._workspace, "_build_console_workspace_context_state", pinned_build
             ),
             patch.object(ConsoleWorkspaceContextTray, "refresh", counting_refresh),
         ):
@@ -454,7 +454,7 @@ async def test_console_workspace_context_fresh_tray_still_synced_mid_run():
         )
         with (
             patch.object(
-                console, "_build_console_workspace_context_state", pinned_build
+                console._workspace, "_build_console_workspace_context_state", pinned_build
             ),
             patch.object(ConsoleWorkspaceContextTray, "refresh", counting_refresh),
         ):

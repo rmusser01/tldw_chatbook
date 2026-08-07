@@ -53,7 +53,7 @@ async def test_rename_modal_persists_saved_conversation_title():
             active_leaf_persisted_id=None,
         )
 
-        console._open_console_session_rename_modal(session.id)
+        console._session._open_console_session_rename_modal(session.id)
         await pilot.pause()
         modal = host.screen_stack[-1]
         assert isinstance(modal, ConsoleRenameSessionModal)

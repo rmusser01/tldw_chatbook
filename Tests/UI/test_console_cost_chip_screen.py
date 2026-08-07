@@ -389,7 +389,7 @@ async def test_reverting_system_prompt_edit_with_ttl_remaining_returns_to_warm()
         )
         warm_until_before, _ = controller.cache_ttl_snapshot(session_id)
 
-        console._apply_console_session_system_prompt("You are a pirate.")
+        console._session._apply_console_session_system_prompt("You are a pirate.")
         await console._sync_native_console_chat_ui()
         await pilot.pause()
 
@@ -400,7 +400,7 @@ async def test_reverting_system_prompt_edit_with_ttl_remaining_returns_to_warm()
 
         # Revert to no override -- same session, no new send, no elapsed
         # clock beyond real test-execution time (well under the 300s TTL).
-        console._apply_console_session_system_prompt(None)
+        console._session._apply_console_session_system_prompt(None)
         await console._sync_native_console_chat_ui()
         await pilot.pause()
 
@@ -446,12 +446,12 @@ async def test_system_prompt_revert_after_genuine_ttl_lapse_still_reports_expire
             console, pilot
         )
 
-        console._apply_console_session_system_prompt("You are a pirate.")
+        console._session._apply_console_session_system_prompt("You are a pirate.")
         await console._sync_native_console_chat_ui()
         await pilot.pause()
         assert console._last_console_cost_state.alert is True
 
-        console._apply_console_session_system_prompt(None)
+        console._session._apply_console_session_system_prompt(None)
         # The deadline has genuinely lapsed by the time the revert is
         # observed -- e.g. a slow manual round trip through the editor
         # modal, exactly the real-world scenario the live verification hit.
@@ -718,7 +718,7 @@ async def test_cost_chip_state_isolated_across_session_tabs():
         console = host.screen_stack[-1]
         store = console._ensure_console_chat_store()
 
-        session_a = console._active_native_console_session()
+        session_a = console._session._active_native_console_session()
         assert session_a is not None
         await _send_and_settle(console, pilot, "hello", "priced on A")
         state_a = console._last_console_cost_state
@@ -733,15 +733,15 @@ async def test_cost_chip_state_isolated_across_session_tabs():
         # switch entry point -- proves restoring an EXISTING session's
         # state on the very first real activation isn't a ghost of
         # whatever the chip last happened to show.
-        await console._activate_native_console_session(session_a.id)
+        await console._session._activate_native_console_session(session_a.id)
         await pilot.pause()
-        assert console._active_native_console_session().id == session_a.id
+        assert console._session._active_native_console_session().id == session_a.id
         assert console._last_console_cost_state == state_a
 
         # Hop 2: A -> B -- the "switching TO B shows B's state" case.
-        await console._activate_native_console_session(session_b.id)
+        await console._session._activate_native_console_session(session_b.id)
         await pilot.pause()
-        assert console._active_native_console_session().id == session_b.id
+        assert console._session._active_native_console_session().id == session_b.id
         state_b = console._last_console_cost_state
         assert state_b is not None
         assert state_b != state_a
@@ -752,9 +752,9 @@ async def test_cost_chip_state_isolated_across_session_tabs():
         # Hop 3: B -> A again -- A's state must come back EXACTLY, not a
         # ghost of B's (e.g. a stale single shared memo instead of a
         # per-session one).
-        await console._activate_native_console_session(session_a.id)
+        await console._session._activate_native_console_session(session_a.id)
         await pilot.pause()
-        assert console._active_native_console_session().id == session_a.id
+        assert console._session._active_native_console_session().id == session_a.id
         assert console._last_console_cost_state == state_a
 
         # Fingerprint/revision memos are keyed per session and must not

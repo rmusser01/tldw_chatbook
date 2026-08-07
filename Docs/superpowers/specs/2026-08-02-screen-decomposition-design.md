@@ -188,9 +188,10 @@ of their own. That is the gap.
 |---|---|---|
 | rail + inspector | 958 / 42 | region widgets (left, context, inspector rails) — **(wave 1, done)**: `ConsoleLeftRail` (task 3) and `ConsoleInspectorRail` (task 4), in `UI/Console_Modules/left_rail.py` / `right_rail.py`. The DOM turned out to name two rails, not three — the spec's "context" rail is the left rail's own `console-context-rail-*` id family, not a separate region; see `right_rail.py`'s module docstring |
 | composer | 377 / 18 | controller — the region widget already exists (`ConsoleComposerBar` at `#console-native-composer`); the screen-side lines are orchestration (undo/redo, history navigation, action-state sync), not rendering — wave 2 |
-| workspace | 1,382 / 40 | controller |
-| session | 916 / 31 | controller |
+| workspace | 1,382 / 40 | controller — **(wave 2, done)**: `ConsoleWorkspaceController` in `UI/Console_Modules/workspace.py`. 35 of 45 moved; `on_console_workspace_conversation_search_changed` stays WHOLE on the screen (only 3 of its ~9 mutated fields are workspace state, all reached through proxy properties, so the controller stays the single source of truth without dragging a sibling browser cluster across) |
+| session | 916 / 31 | controller — **(wave 2, done)**: `ConsoleSessionController` in `UI/Console_Modules/session.py`. `_start_character_console_session` (the flagged 215-line risk centre) moved byte-identically; the real entanglement lives in `_apply_console_character_choice_async`, which is not `*session*`-named, was never in scope, and stays coherently |
 | message | 1,027 / 23 | controller |
+| hands-free | 730 / 28 | controller — **(wave 2, done)**: `ConsoleHandsFreeController` in `UI/Console_Modules/hands_free.py`. Absent from this table at plan time because the cluster hid inside dictation's orbit. PR #1350 then made hands-free a TWO-ENGINE abstraction; the controller owns the engine fork and both action entry points (they read both engines, so they are coordination), while the realtime engine stays on the screen reached via two named callables |
 | dictation | 742 / 20 | controller — **(wave 1, done)**: `ConsoleDictationController` (task 5), in `UI/Console_Modules/dictation.py` |
 | agent | 612 / 15 | controller + a region widget for its rail section |
 | character | 708 / 14 | controller + a region widget for its rail section |
@@ -218,6 +219,29 @@ is drawn at the wrong boundary; that is the review signal for this screen.
 `compose_content` (381) splits along the same region lines as the Console.
 `_list_local_source_snapshot` (263) and its siblings are data access with no region and
 become a controller.
+
+## Progress
+
+**Wave 1 (merged, PR #1345)** — geometry baseline, `UI/Console_Modules/` with the
+shared frame helper, `ConsoleLeftRail`, `ConsoleInspectorRail`,
+`ConsoleDictationController`.
+
+**Wave 2 (this branch)** — `ConsoleWorkspaceController`,
+`ConsoleHandsFreeController`, `ConsoleSessionController`.
+
+Measured against dev at the wave-2 close: `chat_screen.py` **24,195 → 20,964
+lines**, `ChatScreen` **680 → 612 methods** (−3,231 / −68). The four controllers
+plus two region widgets total 7,832 lines in `UI/Console_Modules/`. The screen is
+still large, and the success criterion remains ownership rather than a line count:
+it no longer holds those clusters' regions or state. What it legitimately keeps —
+cross-region coordination, Textual lifecycle, and the `action_*`/`@on` entry
+points Textual resolves by name — is why the method count fell by less than the
+line count.
+
+Controller discipline at the close, verified per module rather than asserted:
+**zero** `query_one`/DOM access in any of the four controllers, and `self._screen`
+uses held to 3–6 each, every one either a framework service or a documented
+sibling-state proxy.
 
 ## Migration safety
 

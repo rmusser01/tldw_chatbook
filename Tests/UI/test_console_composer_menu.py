@@ -589,10 +589,14 @@ def test_console_active_session_is_ephemeral_reads_the_active_flag():
     other caller has.
     """
     from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+    from tldw_chatbook.UI.Console_Modules.session import ConsoleSessionController
     from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
     screen = ChatScreen.__new__(ChatScreen)
     screen._console_chat_store = None
+    session = ConsoleSessionController.__new__(ConsoleSessionController)
+    session._current_chat_store_accessor = lambda: screen._console_chat_store
+    screen._session = session
     assert screen._console_active_session_is_ephemeral() is False
 
     store = ConsoleChatStore()
@@ -645,7 +649,7 @@ async def test_activate_console_session_for_workspace_keeps_temporary_chip_hones
         assert chip.display is True
 
         # "switch to an existing session in the workspace" branch.
-        console._activate_console_session_for_workspace("workspace-b")
+        console._workspace._activate_console_session_for_workspace("workspace-b")
         await pilot.pause()
         assert store.active_session_id == normal.id
         assert chip.display is False, (
@@ -653,7 +657,7 @@ async def test_activate_console_session_for_workspace_keeps_temporary_chip_hones
         )
 
         # Same branch, opposite direction.
-        console._activate_console_session_for_workspace("workspace-a")
+        console._workspace._activate_console_session_for_workspace("workspace-a")
         await pilot.pause()
         assert store.active_session_id == temp.id
         assert chip.display is True
@@ -663,7 +667,7 @@ async def test_activate_console_session_for_workspace_keeps_temporary_chip_hones
         # workspace with no existing session. `create_session` here never
         # passes `ephemeral=True`, so switching there from the ephemeral
         # session must also hide the chip.
-        console._activate_console_session_for_workspace("workspace-c")
+        console._workspace._activate_console_session_for_workspace("workspace-c")
         await pilot.pause()
         assert store.active_session_id not in (normal.id, temp.id)
         assert chip.display is False
@@ -888,7 +892,15 @@ def _bare_promote_screen(store):
     Shared by the ``_promote_console_temporary_session`` tests below: each
     one only differs in what the fake store does, and in which of the
     captured lists it inspects afterwards.
+
+    ``_promote_console_temporary_session`` moved to ``ConsoleSessionController``
+    (wave-2 console decomposition, task 3); the bare screen now also carries a
+    bare, minimally-wired ``ConsoleSessionController`` (constructed via
+    ``__new__``, bypassing its own ``__init__`` the same way the screen
+    bypasses ``ChatScreen.__init__``) so the real method under test still
+    runs against the same fakes as before.
     """
+    from tldw_chatbook.UI.Console_Modules.session import ConsoleSessionController
     from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
     screen = ChatScreen.__new__(ChatScreen)
@@ -896,12 +908,8 @@ def _bare_promote_screen(store):
     screen._ensure_console_chat_store = lambda: store
 
     chip_calls: list[bool] = []
-    screen._sync_console_temporary_chip = lambda: chip_calls.append(
-        screen._console_active_session_is_ephemeral()
-    )
 
     invalidated: list[bool] = []
-    screen._invalidate_console_persisted_rows_cache = lambda: invalidated.append(True)
 
     dispatched: list[object] = []
     screen.run_worker = lambda coroutine, **_kwargs: dispatched.append(coroutine)
@@ -913,6 +921,23 @@ def _bare_promote_screen(store):
             notifications.append((message, severity))
 
     screen.app_instance = _App()
+
+    session = ConsoleSessionController.__new__(ConsoleSessionController)
+    session._screen = screen
+    session.app_instance = screen.app_instance
+    session._chat_store_accessor = lambda: store
+    session._current_chat_store_accessor = lambda: store
+    session._sync_temporary_chip_fn = lambda: chip_calls.append(
+        session._console_active_session_is_ephemeral()
+    )
+    session._invalidate_persisted_rows_cache_fn = lambda: invalidated.append(True)
+    # Never awaited in these tests (only the coroutine OBJECT is captured
+    # and closed) -- mirrors the pre-move test, which relied on the real
+    # `ChatScreen._sync_native_console_chat_ui` bound method for the exact
+    # same reason: calling it only creates the coroutine, it never runs.
+    session._sync_native_console_chat_ui_fn = lambda: screen._sync_native_console_chat_ui()
+    screen._session = session
+
     return screen, chip_calls, invalidated, dispatched, notifications
 
 
@@ -957,7 +982,7 @@ def test_promote_console_temporary_session_saves_and_refreshes_the_chip():
         store
     )
 
-    asyncio.run(screen._promote_console_temporary_session())
+    asyncio.run(screen._session._promote_console_temporary_session())
 
     assert store.promote_calls == ["s1"], "the store's promotion must actually run"
     assert store._session.ephemeral is False, "the session must come back non-temporary"
@@ -991,7 +1016,7 @@ def test_promote_console_temporary_session_restores_temporary_state_on_failure()
         store
     )
 
-    asyncio.run(screen._promote_console_temporary_session())
+    asyncio.run(screen._session._promote_console_temporary_session())
 
     assert store._session.ephemeral is True, "must stay temporary after a failed save"
     assert chip_calls == [], "a failed save must not tell the chip to disappear"
@@ -1035,7 +1060,7 @@ def test_promote_console_temporary_session_notifies_when_already_saved():
         store
     )
 
-    asyncio.run(screen._promote_console_temporary_session())
+    asyncio.run(screen._session._promote_console_temporary_session())
 
     assert chip_calls == [False], (
         "already saved -- the chip must still be refreshed so it stops "
@@ -1071,7 +1096,7 @@ def test_promote_console_temporary_session_notifies_when_it_cannot_save():
         store
     )
 
-    asyncio.run(screen._promote_console_temporary_session())
+    asyncio.run(screen._session._promote_console_temporary_session())
 
     assert chip_calls == []
     assert invalidated == []
@@ -1089,11 +1114,15 @@ def test_save_chat_menu_choice_dispatches_to_the_promote_handler():
     """The composer-menu row for ``ACTION_SAVE_CHAT`` reaches the real save
     dispatch path (F5: now a worker-kicking wrapper, not the save coroutine
     itself)."""
+    from tldw_chatbook.UI.Console_Modules.session import ConsoleSessionController
     from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
     screen = ChatScreen.__new__(ChatScreen)
+    screen._session = ConsoleSessionController.__new__(ConsoleSessionController)
     calls: list[bool] = []
-    screen._dispatch_promote_console_temporary_session = lambda: calls.append(True)
+    screen._session._dispatch_promote_console_temporary_session = (
+        lambda: calls.append(True)
+    )
 
     screen._handle_console_composer_menu_choice(ACTION_SAVE_CHAT)
 
@@ -1118,14 +1147,18 @@ def test_prompts_menu_choice_opens_exactly_one_browse_modal():
 def test_temporary_chip_save_requested_reaches_the_promote_handler():
     """The chip's activation message (task-7) drives the same save
     dispatch path (F5: now a worker-kicking wrapper)."""
+    from tldw_chatbook.UI.Console_Modules.session import ConsoleSessionController
     from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
     from tldw_chatbook.Widgets.Console.console_status_chips import (
         ConsoleTemporaryChip,
     )
 
     screen = ChatScreen.__new__(ChatScreen)
+    screen._session = ConsoleSessionController.__new__(ConsoleSessionController)
     calls: list[bool] = []
-    screen._dispatch_promote_console_temporary_session = lambda: calls.append(True)
+    screen._session._dispatch_promote_console_temporary_session = (
+        lambda: calls.append(True)
+    )
 
     event = ConsoleTemporaryChip.SaveRequested()
     stopped: list[bool] = []
@@ -1147,14 +1180,18 @@ def test_dispatch_promote_console_temporary_session_uses_its_own_worker_group():
     already caused a real regression on this branch (Console sends silently
     cancelled by an overlapping sync kick).
     """
+    from tldw_chatbook.UI.Console_Modules.session import ConsoleSessionController
     from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
     screen = ChatScreen.__new__(ChatScreen)
     calls: list[tuple[object, dict]] = []
     screen.run_worker = lambda coroutine, **kwargs: calls.append((coroutine, kwargs))
-    screen._promote_console_temporary_session = lambda: object()
+    session = ConsoleSessionController.__new__(ConsoleSessionController)
+    session._screen = screen
+    session._promote_console_temporary_session = lambda: object()
+    screen._session = session
 
-    screen._dispatch_promote_console_temporary_session()
+    screen._session._dispatch_promote_console_temporary_session()
 
     assert len(calls) == 1
     _coroutine, kwargs = calls[0]

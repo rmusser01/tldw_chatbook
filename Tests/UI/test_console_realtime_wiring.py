@@ -40,6 +40,7 @@ from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
 
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Chat.message_metadata import MessageMetadata
+from tldw_chatbook.UI.Console_Modules import hands_free as hands_free_module
 from tldw_chatbook.UI.Screens import chat_screen as chat_screen_module
 from tldw_chatbook.Widgets.Console.console_transcript import ConsoleTranscript
 
@@ -343,12 +344,25 @@ def _patch_realtime_config(
     `api_key` included: the wiring refuses to dispatch a connect without
     one (there is nothing to authenticate with), so every mounted test
     needs a configured key even though the injected session never uses it.
+
+    `resolve_handsfree_engine`/`realtime_enabled` are pinned on `hands_free_
+    module`, not `chat_screen_module`: the engine fork that reads them moved
+    to `ConsoleHandsFreeController` (wave-2 console decomposition, task 1),
+    and it holds its own separate copy of this import -- pinning only
+    `chat_screen_module`'s (now nonexistent) copy would silently stop
+    governing the fork's actual behaviour. `acoustic_barge_in_enabled` is
+    pinned on BOTH modules: the realtime engine's own `_enter_console_
+    realtime_loop` reads `chat_screen_module`'s copy, and a pipeline
+    fallback (`_console_realtime_fallback_to_pipeline` -> `Console
+    HandsFreeController._enter_console_hands_free_pipeline_loop`) reads
+    `hands_free_module`'s separate copy -- a test exercising the fallback
+    path needs both to agree.
     """
     monkeypatch.setattr(chat_screen_module, "get_api_key", lambda _name: api_key)
     monkeypatch.setattr(
-        chat_screen_module, "resolve_handsfree_engine", lambda: engine
+        hands_free_module, "resolve_handsfree_engine", lambda: engine
     )
-    monkeypatch.setattr(chat_screen_module, "realtime_enabled", lambda: enabled)
+    monkeypatch.setattr(hands_free_module, "realtime_enabled", lambda: enabled)
     monkeypatch.setattr(chat_screen_module, "realtime_provider", lambda: provider)
     monkeypatch.setattr(chat_screen_module, "realtime_model", lambda: "gpt-realtime")
     monkeypatch.setattr(chat_screen_module, "realtime_voice", lambda: "marin")
@@ -359,6 +373,9 @@ def _patch_realtime_config(
     )
     monkeypatch.setattr(
         chat_screen_module, "acoustic_barge_in_enabled", lambda: acoustic
+    )
+    monkeypatch.setattr(
+        hands_free_module, "acoustic_barge_in_enabled", lambda: acoustic
     )
 
 
@@ -1594,13 +1611,13 @@ async def test_double_failure_toast_carries_the_install_remedy(monkeypatch):
     and the toast that reports it is the only place the user sees it."""
     _patch_realtime_config(monkeypatch)
     monkeypatch.setattr(
-        chat_screen_module.console_voice_input,
+        hands_free_module.console_voice_input,
         "probe",
-        lambda: chat_screen_module.console_voice_input.Availability(
+        lambda: hands_free_module.console_voice_input.Availability(
             ok=False,
             kind="missing-capture",
-            reason=chat_screen_module.console_voice_input.CAPTURE_REASON,
-            remedy=chat_screen_module.console_voice_input.CAPTURE_REMEDY,
+            reason=hands_free_module.console_voice_input.CAPTURE_REASON,
+            remedy=hands_free_module.console_voice_input.CAPTURE_REMEDY,
         ),
     )
     app = _build_test_app()
@@ -1675,9 +1692,9 @@ async def test_realtime_lifecycle_is_persistently_logged(monkeypatch):
     connect-failure must both be reconstructable from the log alone."""
     _patch_realtime_config(monkeypatch)
     monkeypatch.setattr(
-        chat_screen_module.console_voice_input,
+        hands_free_module.console_voice_input,
         "probe",
-        lambda: chat_screen_module.console_voice_input.Availability(
+        lambda: hands_free_module.console_voice_input.Availability(
             ok=False, kind="missing-capture", reason="No microphone.", remedy=""
         ),
     )
@@ -1869,9 +1886,9 @@ async def test_close_before_ready_fails_the_connect_instead_of_hanging(monkeypat
     """
     _patch_realtime_config(monkeypatch)
     monkeypatch.setattr(
-        chat_screen_module.console_voice_input,
+        hands_free_module.console_voice_input,
         "probe",
-        lambda: chat_screen_module.console_voice_input.Availability(
+        lambda: hands_free_module.console_voice_input.Availability(
             ok=False, kind="missing-capture", reason="No microphone.", remedy=""
         ),
     )
@@ -1916,9 +1933,9 @@ async def test_error_before_ready_fails_the_connect(monkeypatch):
     ends the dead entry a beat sooner -- and with the same reason."""
     _patch_realtime_config(monkeypatch)
     monkeypatch.setattr(
-        chat_screen_module.console_voice_input,
+        hands_free_module.console_voice_input,
         "probe",
-        lambda: chat_screen_module.console_voice_input.Availability(
+        lambda: hands_free_module.console_voice_input.Availability(
             ok=False, kind="missing-capture", reason="No microphone.", remedy=""
         ),
     )
@@ -1950,9 +1967,9 @@ async def test_ready_that_never_arrives_times_out_instead_of_hanging(monkeypatch
         chat_screen_module, "CONSOLE_REALTIME_READY_TIMEOUT_SECONDS", 0.05
     )
     monkeypatch.setattr(
-        chat_screen_module.console_voice_input,
+        hands_free_module.console_voice_input,
         "probe",
-        lambda: chat_screen_module.console_voice_input.Availability(
+        lambda: hands_free_module.console_voice_input.Availability(
             ok=False, kind="missing-capture", reason="No microphone.", remedy=""
         ),
     )

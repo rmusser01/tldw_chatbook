@@ -97,7 +97,7 @@ async def test_browser_row_click_announces_workspace_switch() -> None:
             (str(message), kwargs)
         )
 
-        console._activate_console_workspace_for_browser_row(
+        console._workspace._activate_console_workspace_for_browser_row(
             _row("workspace-local-9", "Workspace 9")
         )
         messages = [message for message, _ in notifications]
@@ -107,7 +107,7 @@ async def test_browser_row_click_announces_workspace_switch() -> None:
 
         # A row already in the active workspace must not re-announce.
         notifications.clear()
-        console._activate_console_workspace_for_browser_row(
+        console._workspace._activate_console_workspace_for_browser_row(
             _row("workspace-local-9", "Workspace 9")
         )
         assert notifications == []

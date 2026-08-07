@@ -210,11 +210,11 @@ async def test_console_system_prompt_chip_label_reflects_applied_prompt():
         await _wait_for_selector(console, pilot, "#console-system-prompt-chip")
         assert _system_prompt_chip_text(console) == CONSOLE_SYSTEM_PROMPT_LABEL_UNSET
 
-        console._apply_console_session_system_prompt("Be concise.")
+        console._session._apply_console_session_system_prompt("Be concise.")
         await pilot.pause(0.2)
         assert _system_prompt_chip_text(console) == CONSOLE_SYSTEM_PROMPT_LABEL_SET
 
-        console._apply_console_session_system_prompt(None)
+        console._session._apply_console_session_system_prompt(None)
         await pilot.pause(0.2)
         assert _system_prompt_chip_text(console) == CONSOLE_SYSTEM_PROMPT_LABEL_UNSET
 
@@ -234,7 +234,7 @@ async def test_console_system_bare_command_opens_editor_with_current_text():
         console = host.screen_stack[-1]
         baseline_depth = len(host.screen_stack)
         await _wait_for_selector(console, pilot, "#console-native-composer")
-        console._apply_console_session_system_prompt("Answer tersely.")
+        console._session._apply_console_session_system_prompt("Answer tersely.")
         await pilot.pause(0.1)
 
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
@@ -276,7 +276,7 @@ async def test_console_system_prompt_modal_apply_updates_settings_and_rail_previ
         modal.query_one(f"#{APPLY_BUTTON_ID}", Button).press()
         await pilot.pause(0.2)
 
-        settings = console._ensure_active_console_session_settings()
+        settings = console._session._ensure_active_console_session_settings()
         assert settings.system_prompt == "Be concise."
         assert _rail_system_line_text(console) == "System: Be concise."
         assert not _rail_system_line_is_dim(console)
@@ -291,7 +291,7 @@ async def test_console_system_prompt_modal_clear_resets_settings_and_rail_to_non
     async with host.run_test(size=(180, 48)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
-        console._apply_console_session_system_prompt("Be terse.")
+        console._session._apply_console_session_system_prompt("Be terse.")
         await pilot.pause(0.1)
         assert _rail_system_line_text(console) == "System: Be terse."
 
@@ -304,7 +304,7 @@ async def test_console_system_prompt_modal_clear_resets_settings_and_rail_to_non
         modal.query_one(f"#{CLEAR_BUTTON_ID}", Button).press()
         await pilot.pause(0.2)
 
-        settings = console._ensure_active_console_session_settings()
+        settings = console._session._ensure_active_console_session_settings()
         assert settings.system_prompt is None
         assert _rail_system_line_text(console) == "System: none"
         assert _rail_system_line_is_dim(console)
@@ -320,7 +320,7 @@ async def test_console_system_prompt_modal_cancel_leaves_settings_untouched():
         console = host.screen_stack[-1]
         baseline_depth = len(host.screen_stack)
         await _wait_for_selector(console, pilot, "#console-native-composer")
-        console._apply_console_session_system_prompt("Keep me.")
+        console._session._apply_console_session_system_prompt("Keep me.")
         await pilot.pause(0.1)
 
         console.run_worker(
@@ -333,7 +333,7 @@ async def test_console_system_prompt_modal_cancel_leaves_settings_untouched():
         await pilot.pause(0.2)
 
         assert len(host.screen_stack) == baseline_depth
-        settings = console._ensure_active_console_session_settings()
+        settings = console._session._ensure_active_console_session_settings()
         assert settings.system_prompt == "Keep me."
 
 
@@ -352,10 +352,10 @@ async def test_apply_console_session_system_prompt_preserves_formatting_verbatim
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
 
-        console._apply_console_session_system_prompt(formatted_prompt)
+        console._session._apply_console_session_system_prompt(formatted_prompt)
         await pilot.pause(0.1)
 
-        settings = console._ensure_active_console_session_settings()
+        settings = console._session._ensure_active_console_session_settings()
         assert settings.system_prompt == formatted_prompt
 
 
@@ -395,7 +395,7 @@ async def test_console_system_command_unique_name_applies_and_updates_rail_previ
         assert len(host.screen_stack) == baseline_depth, (
             "a unique match must not open the picker"
         )
-        settings = console._ensure_active_console_session_settings()
+        settings = console._session._ensure_active_console_session_settings()
         assert settings.system_prompt == "Answer tersely."
         assert _rail_system_line_text(console) == "System: Answer tersely."
         # Finding 2 (final review): a successful named `/system` apply must
@@ -440,7 +440,7 @@ async def test_console_system_command_unique_prefix_match_resolves(tmp_path):
         await pilot.pause(0.2)
 
         assert len(host.screen_stack) == baseline_depth
-        settings = console._ensure_active_console_session_settings()
+        settings = console._session._ensure_active_console_session_settings()
         assert settings.system_prompt == "Be terse."
 
 
@@ -475,7 +475,7 @@ async def test_console_system_command_empty_system_part_shows_exact_inline_error
         assert len(host.screen_stack) == baseline_depth, (
             "no picker/modal should open on this error"
         )
-        settings = console._ensure_active_console_session_settings()
+        settings = console._session._ensure_active_console_session_settings()
         assert settings.system_prompt is None
         assert _rail_system_line_text(console) == "System: none"
         # Finding 2 (final review): the empty-system-part ERROR path must
@@ -575,7 +575,7 @@ async def test_console_system_command_picker_selection_applies_system_prompt(tmp
         assert len(host.screen_stack) == baseline_depth, (
             "the picker must have dismissed"
         )
-        settings = console._ensure_active_console_session_settings()
+        settings = console._session._ensure_active_console_session_settings()
         assert settings.system_prompt == "Sunny system."
 
 
@@ -617,7 +617,7 @@ async def test_console_system_command_picker_escape_leaves_settings_untouched(tm
         await pilot.pause(0.2)
 
         assert len(host.screen_stack) == baseline_depth
-        settings = console._ensure_active_console_session_settings()
+        settings = console._session._ensure_active_console_session_settings()
         assert settings.system_prompt is None
 
 
@@ -734,13 +734,13 @@ async def test_console_system_prompt_apply_persists_when_conversation_already_sa
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
         store = console._ensure_console_chat_store()
-        console._ensure_active_console_session_settings()
+        console._session._ensure_active_console_session_settings()
         session_id = store.active_session_id
         fake_persistence = FakeConsolePersistence()
         store.persistence = fake_persistence
         store.persist_session_if_needed(session_id)
 
-        console._apply_console_session_system_prompt("Persisted prompt.")
+        console._session._apply_console_session_system_prompt("Persisted prompt.")
         await pilot.pause(0.1)
 
         assert fake_persistence.updated_system_prompts == [
@@ -769,7 +769,7 @@ async def test_console_system_prompt_apply_notifies_on_persistence_failure():
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
         store = console._ensure_console_chat_store()
-        console._ensure_active_console_session_settings()
+        console._session._ensure_active_console_session_settings()
         session_id = store.active_session_id
         store.persistence = FakeConsolePersistence()
         store.persist_session_if_needed(session_id)
@@ -780,10 +780,10 @@ async def test_console_system_prompt_apply_notifies_on_persistence_failure():
             notifications.append((message, severity))
         )
 
-        console._apply_console_session_system_prompt("New prompt")
+        console._session._apply_console_session_system_prompt("New prompt")
         await pilot.pause(0.1)
 
-        settings = console._ensure_active_console_session_settings()
+        settings = console._session._ensure_active_console_session_settings()
         assert settings.system_prompt == "New prompt"
         assert any(severity == "warning" for _message, severity in notifications)
 
@@ -805,7 +805,7 @@ async def test_console_context_estimate_counts_system_prompt_after_apply():
         baseline = console._active_console_settings_context_estimate()
         assert baseline.used_tokens is not None
 
-        console._apply_console_session_system_prompt(
+        console._session._apply_console_session_system_prompt(
             "Answer using formal English at all times, citing sources where possible."
         )
         await pilot.pause(0.1)

@@ -25,6 +25,7 @@ from tldw_chatbook.Chat.console_session_settings import (
     build_console_settings_summary_state,
     validate_console_session_settings,
 )
+from tldw_chatbook.UI.Console_Modules.session import ConsoleSessionController
 from tldw_chatbook.UI.Screens.chat_screen import (
     CONSOLE_PROVIDER_CONFIGURE_API_KEY_LABEL,
     ChatScreen,
@@ -836,12 +837,12 @@ def test_legacy_identity_settings_helper_ignores_unknown_keys_without_mutation()
         "user_profile_label": "Legacy B",
     }
     source_before = dict(source)
-    restored = ChatScreen._restore_console_settings(source)
+    restored = ConsoleSessionController._restore_console_settings(source)
 
     assert restored is not None
     assert source == source_before
     assert not hasattr(restored, "user_profile_label")
-    serialized = ChatScreen._serialize_console_settings(restored)
+    serialized = ConsoleSessionController._serialize_console_settings(restored)
     assert serialized is not None
     assert {"persona_label", "user_profile_label"}.isdisjoint(serialized)
 
@@ -3512,7 +3513,7 @@ def test_console_default_settings_keep_configured_model_without_legacy_model() -
     }
     screen = ChatScreen(app)
 
-    settings = screen._default_console_session_settings()
+    settings = screen._session._default_console_session_settings()
 
     assert settings.provider == "llama_cpp"
     assert settings.model == "configured-model"
@@ -3574,7 +3575,7 @@ def test_console_control_state_reads_persona_label_without_storing_it_on_session
     store = screen._ensure_console_chat_store()
     session = store.ensure_session()
     monkeypatch.setattr(
-        screen,
+        screen._session,
         "_active_native_console_session",
         lambda: SimpleNamespace(
             assistant_kind="persona",
@@ -4411,11 +4412,11 @@ def test_console_stale_default_refresh_respects_user_marked_settings() -> None:
         provider="openai", model="gpt-4o", source="user"
     )
     store.replace_session_settings(session.id, user_choice)
-    assert console._ensure_active_console_session_settings() == user_choice
+    assert console._session._ensure_active_console_session_settings() == user_choice
 
     stale_derived = ConsoleSessionSettings(provider="openai", model="gpt-4o")
     store.replace_session_settings(session.id, stale_derived)
-    refreshed = console._ensure_active_console_session_settings()
+    refreshed = console._session._ensure_active_console_session_settings()
     assert refreshed.provider == "llama_cpp"
     assert refreshed.source == "derived"
 
@@ -4449,7 +4450,7 @@ def test_console_stale_default_refresh_preserves_applied_system_prompt() -> None
     )
     store.replace_session_settings(session.id, stale_derived_with_system_prompt)
 
-    refreshed = console._ensure_active_console_session_settings()
+    refreshed = console._session._ensure_active_console_session_settings()
 
     assert refreshed.provider == "llama_cpp", (
         "the provider/model default refresh must still happen"

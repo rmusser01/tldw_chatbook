@@ -3245,7 +3245,7 @@ async def test_console_conversation_row_click_shows_loading_until_resume_finishe
             )
             return False
 
-        console._resume_console_workspace_conversation = _fake_resume
+        console._workspace._resume_console_workspace_conversation = _fake_resume
 
         await console.on_button_pressed(Button.Pressed(row))
 
@@ -3283,7 +3283,7 @@ async def test_console_conversation_row_loading_cleared_when_resume_raises() -> 
         async def _raising_resume(conversation_id, **kwargs):
             raise RuntimeError("resume boom")
 
-        console._resume_console_workspace_conversation = _raising_resume
+        console._workspace._resume_console_workspace_conversation = _raising_resume
 
         with pytest.raises(RuntimeError):
             await console.on_button_pressed(Button.Pressed(row))

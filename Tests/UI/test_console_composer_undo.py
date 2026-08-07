@@ -451,7 +451,7 @@ async def test_console_dictation_insertion_is_undoable():
         composer.move_cursor_end()
         await pilot.pause(0.1)
 
-        console._insert_console_dictation(
+        console._dictation._insert_console_dictation(
             origin_session_id=session_id, transcript="there"
         )
         assert composer.draft_text() == "hello world there"
@@ -530,7 +530,7 @@ async def test_console_undo_history_scoped_per_session_never_leaks():
         composer.focus()
         await pilot.pause()
         composer.load_draft("")
-        console._sync_console_session_draft()  # settle tracker onto A
+        console._session._sync_console_session_draft()  # settle tracker onto A
 
         for character in "hello":
             composer.insert_text(character)
@@ -538,7 +538,7 @@ async def test_console_undo_history_scoped_per_session_never_leaks():
 
         # Switch to a brand-new session B.
         session_b = store.create_session(title="Session B")
-        console._sync_console_session_draft()
+        console._session._sync_console_session_draft()
         assert store.active_session_id == session_b.id
         assert composer.draft_text() == ""
 
@@ -554,7 +554,7 @@ async def test_console_undo_history_scoped_per_session_never_leaks():
 
         # Switch back to A: its original undo entry must still be intact.
         store.switch_session(session_a.id)
-        console._sync_console_session_draft()
+        console._session._sync_console_session_draft()
         assert composer.draft_text() == "hello"
 
         console._console_composer_undo()
@@ -588,7 +588,7 @@ async def test_console_undo_during_switch_settle_window_does_not_apply_or_corrup
         composer.focus()
         await pilot.pause()
         composer.load_draft("")
-        console._sync_console_session_draft()  # settle tracker onto A
+        console._session._sync_console_session_draft()  # settle tracker onto A
 
         for character in "aaa-secret":
             composer.insert_text(character)
@@ -615,7 +615,7 @@ async def test_console_undo_during_switch_settle_window_does_not_apply_or_corrup
         # Now let the deferred swap actually run: A's real (untouched)
         # draft reaches the store as A's draft, and switching to B shows
         # B's own draft -- never A's leaked text.
-        console._sync_console_session_draft()
+        console._session._sync_console_session_draft()
         assert store.session_draft(session_a.id) == "aaa-secret MORE"
         assert composer.draft_text() == "bbb-b-own-draft"
 
@@ -634,7 +634,7 @@ async def test_console_redo_during_switch_settle_window_does_not_apply():
         composer.focus()
         await pilot.pause()
         composer.load_draft("")
-        console._sync_console_session_draft()
+        console._session._sync_console_session_draft()
 
         composer.insert_text("x")
         composer.undo()  # arm the redo stack
@@ -707,24 +707,24 @@ async def test_console_background_dictation_drops_stale_session_history():
         composer.focus()
         await pilot.pause()
         composer.load_draft("")
-        console._sync_console_session_draft()
+        console._session._sync_console_session_draft()
 
         for character in "hello":
             composer.insert_text(character)
         assert composer.draft_text() == "hello"
 
         store.create_session(title="Session B")
-        console._sync_console_session_draft()
+        console._session._sync_console_session_draft()
         assert composer.draft_text() == ""
 
         # Dictation finishes for A while B is visible -- the store-only branch.
-        console._insert_console_dictation(
+        console._dictation._insert_console_dictation(
             origin_session_id=session_a.id, transcript="dictated words"
         )
         assert store.session_draft(session_a.id) == "hello dictated words"
 
         store.switch_session(session_a.id)
-        console._sync_console_session_draft()
+        console._session._sync_console_session_draft()
         assert composer.draft_text() == "hello dictated words"
 
         # Nothing to undo: the store-only mutation isn't recorded, and the
@@ -889,7 +889,7 @@ async def test_console_refused_send_preserves_undo_history(monkeypatch):
         composer.focus()
         await pilot.pause()
         composer.load_draft("")
-        console._sync_console_session_draft()
+        console._session._sync_console_session_draft()
 
         for character in "hello":
             composer.insert_text(character)
@@ -897,7 +897,7 @@ async def test_console_refused_send_preserves_undo_history(monkeypatch):
 
         # Switch away, banking A's history.
         store.create_session(title="Session B")
-        console._sync_console_session_draft()
+        console._session._sync_console_session_draft()
         assert composer.draft_text() == ""
         assert session_a.id in console._console_undo_histories
 
@@ -916,7 +916,7 @@ async def test_console_refused_send_preserves_undo_history(monkeypatch):
         assert session_a.id in console._console_undo_histories
 
         store.switch_session(session_a.id)
-        console._sync_console_session_draft()
+        console._session._sync_console_session_draft()
         assert composer.draft_text() == "hello"
 
         console._console_composer_undo()

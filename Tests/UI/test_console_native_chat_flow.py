@@ -59,6 +59,9 @@ from tldw_chatbook.UI.Screens.chat_screen import (
     ChatScreen,
 )
 import tldw_chatbook.UI.Screens.chat_screen as chat_screen_module
+import tldw_chatbook.UI.Console_Modules.session as session_module
+from tldw_chatbook.UI.Console_Modules.session import ConsoleSessionController
+from tldw_chatbook.UI.Console_Modules.workspace import ConsoleWorkspaceController
 from tldw_chatbook.UI.Screens.chat_screen_state import TaskResumeState
 from tldw_chatbook.UI.Screens.settings_config_models import SettingsCategoryId
 from tldw_chatbook.Widgets.Console import (
@@ -214,7 +217,7 @@ def test_console_workspace_conversation_search_clear_button_stops_pending_timer(
 
 def test_console_workspace_conversation_search_selection_refresh_invalidates_token():
     source = inspect.getsource(
-        ChatScreen._refresh_console_workspace_conversation_search_after_selection
+        ConsoleWorkspaceController._refresh_console_workspace_conversation_search_after_selection
     )
     active_query_branch = source.split("if not query.strip():", 1)[1]
     before_refresh = active_query_branch.split(
@@ -1800,7 +1803,7 @@ def _console_conversation_browser_rows(console):
     always the dataclass default (``""``). Rebuilding the full context state
     is the seam that actually feeds the rendered row label.
     """
-    browser = console._build_console_workspace_context_state().conversation_browser
+    browser = console._workspace._build_console_workspace_context_state().conversation_browser
     rows = []
     for section in browser.sections:
         rows.extend(section.rows)
@@ -2032,8 +2035,8 @@ def _select_llamacpp_console(console: ChatScreen) -> None:
     llama_settings.setdefault("model", "test-model")
     console._console_control_provider = "llama_cpp"
     console._console_control_model = "test-model"
-    settings = console._ensure_active_console_session_settings()
-    console._replace_active_console_session_settings(
+    settings = console._session._ensure_active_console_session_settings()
+    console._session._replace_active_console_session_settings(
         replace(
             settings,
             provider="llama_cpp",
@@ -2364,8 +2367,8 @@ def test_console_provider_selection_carries_active_session_system_prompt():
     app = _build_test_app()
     _configure_native_ready_console(app)
     screen = ChatScreen(app)
-    settings = screen._ensure_active_console_session_settings()
-    screen._replace_active_console_session_settings(
+    settings = screen._session._ensure_active_console_session_settings()
+    screen._session._replace_active_console_session_settings(
         replace(settings, system_prompt="Answer only in French.")
     )
 
@@ -4193,7 +4196,7 @@ def _handoff_chat_screen(monkeypatch, app, store: _CharacterHandoffStore) -> Cha
         lambda self: store,
     )
     monkeypatch.setattr(
-        ChatScreen,
+        ConsoleSessionController,
         "_default_console_session_settings",
         lambda self: ConsoleSessionSettings(
             provider="anthropic",
@@ -4216,7 +4219,7 @@ def _handoff_chat_screen(monkeypatch, app, store: _CharacterHandoffStore) -> Cha
 async def _run_character_handoff(monkeypatch, runtime, payload):
     store = _CharacterHandoffStore()
     screen = _handoff_chat_screen(monkeypatch, runtime.app, store)
-    started = await screen._start_character_console_session(payload)
+    started = await screen._session._start_character_console_session(payload)
     return started, store
 
 
@@ -4241,7 +4244,7 @@ def test_character_start_handoff_requires_exact_coherent_envelope(
     payload = _character_start_handoff()
     setattr(payload, field, value)
 
-    assert chat_screen_module._character_session_identity_from_handoff(payload) is None
+    assert session_module._character_session_identity_from_handoff(payload) is None
 
 
 @pytest.mark.parametrize(
@@ -4260,7 +4263,7 @@ def test_character_start_handoff_requires_exact_coherent_metadata(
     payload = _character_start_handoff()
     payload.metadata[metadata_key] = value
 
-    assert chat_screen_module._character_session_identity_from_handoff(payload) is None
+    assert session_module._character_session_identity_from_handoff(payload) is None
 
 
 @pytest.mark.parametrize(
@@ -4284,7 +4287,7 @@ def test_character_start_handoff_requires_canonical_positive_numeric_wire_id(
 ):
     payload = _character_start_handoff(character_id=character_id)
 
-    assert chat_screen_module._character_session_identity_from_handoff(payload) is None
+    assert session_module._character_session_identity_from_handoff(payload) is None
 
 
 @pytest.mark.parametrize(
@@ -4303,7 +4306,7 @@ def test_character_start_handoff_requires_matching_record_and_target_ids(
     payload.metadata["selected_record_id"] = record_id
     payload.metadata["selected_target_id"] = target_id
 
-    assert chat_screen_module._character_session_identity_from_handoff(payload) is None
+    assert session_module._character_session_identity_from_handoff(payload) is None
 
 
 @pytest.mark.asyncio
@@ -4775,11 +4778,11 @@ async def test_server_authenticated_context_change_immediately_before_commit_abo
         )
 
     monkeypatch.setattr(
-        screen,
+        screen._session,
         "_default_console_session_settings",
         _settings_then_change_context,
     )
-    started = await screen._start_character_console_session(
+    started = await screen._session._start_character_console_session(
         _character_start_handoff(
             runtime_backend="server",
             active_server_profile_id=expected_server_id,
@@ -7988,7 +7991,7 @@ async def test_console_workspace_conversation_search_ignores_stale_workspace_res
         stale_token = console._console_workspace_conversation_search_token + 1
         console._console_workspace_conversation_search_token = stale_token
         service.set_active_workspace("ws-stale-b")
-        await console._refresh_console_workspace_conversation_search(
+        await console._workspace._refresh_console_workspace_conversation_search(
             active_workspace.workspace_id,
             "Alpha",
             stale_token,
@@ -8133,7 +8136,7 @@ async def test_console_workspace_conversation_search_uses_current_workspace_cont
         service.set_active_workspace("ws-search-b")
 
         assert (
-            console._active_console_workspace_id_for_conversation_search()
+            console._workspace._active_console_workspace_id_for_conversation_search()
             == "ws-search-b"
         )
 
@@ -8584,7 +8587,7 @@ async def test_console_resume_restores_server_character_identity_without_local_l
         console._resolve_resumed_character_name = local_lookup
 
         assert (
-            await console._resume_console_workspace_conversation("server-scoped")
+            await console._workspace._resume_console_workspace_conversation("server-scoped")
             is True
         )
         scoped = store.switch_session(store.active_session_id)
@@ -8598,7 +8601,7 @@ async def test_console_resume_restores_server_character_identity_without_local_l
         assert scoped.settings.character_label == ""
 
         assert (
-            await console._resume_console_workspace_conversation("server-unscoped")
+            await console._workspace._resume_console_workspace_conversation("server-unscoped")
             is True
         )
         unscoped = store.switch_session(store.active_session_id)
@@ -8612,7 +8615,7 @@ async def test_console_resume_restores_server_character_identity_without_local_l
         assert unscoped.settings.character_label == ""
 
         assert (
-            await console._resume_console_workspace_conversation(
+            await console._workspace._resume_console_workspace_conversation(
                 "malformed-local-scalars"
             )
             is True
@@ -8626,7 +8629,7 @@ async def test_console_resume_restores_server_character_identity_without_local_l
         assert malformed.character_ref() is None
 
         assert (
-            await console._resume_console_workspace_conversation(
+            await console._workspace._resume_console_workspace_conversation(
                 "noncanonical-local-id"
             )
             is True
@@ -8684,7 +8687,7 @@ async def test_console_resume_rejects_character_identity_without_valid_source(
         console._resolve_resumed_character_name = local_lookup
 
         assert (
-            await console._resume_console_workspace_conversation("invalid-source")
+            await console._workspace._resume_console_workspace_conversation("invalid-source")
             is True
         )
 
@@ -8729,7 +8732,7 @@ async def test_console_resume_rehydrates_local_character_name_from_local_project
         console._resolve_resumed_character_name = name_lookup
 
         assert (
-            await console._resume_console_workspace_conversation("local-character")
+            await console._workspace._resume_console_workspace_conversation("local-character")
             is True
         )
 
@@ -9075,7 +9078,7 @@ async def test_console_workspace_conversation_resume_hydrates_generation_metadat
             console = host.screen_stack[-1]
             await _wait_for_selector(console, pilot, "#console-native-transcript")
 
-            resumed = await console._resume_console_workspace_conversation(
+            resumed = await console._workspace._resume_console_workspace_conversation(
                 conversation_id
             )
             await pilot.pause()
@@ -9570,6 +9573,19 @@ def _bare_console_screen(store: ConsoleChatStore) -> ChatScreen:
     """
     screen = ChatScreen.__new__(ChatScreen)
     screen._console_chat_store = store
+    # A bare, uninitialized `ConsoleSessionController` -- `__init__` was
+    # never run, so every OTHER dependency is unset by default. Only the
+    # two chat-store accessors are wired (reading back `screen._console_
+    # chat_store`, which several tests using this helper reassign later):
+    # `_console_session_to_state`/`_console_session_from_state` (this
+    # helper's original whole point) tolerate a missing accessor via their
+    # own `getattr`/staticmethod shape, but sibling staying methods this
+    # file also drives through a bare screen (e.g. `_current_console_rail_
+    # character_id` -> `_active_native_console_session`) read `self.
+    # _console_chat_store` directly, with no such tolerance.
+    screen._session = ConsoleSessionController.__new__(ConsoleSessionController)
+    screen._session._chat_store_accessor = lambda: screen._console_chat_store
+    screen._session._current_chat_store_accessor = lambda: screen._console_chat_store
     screen._console_visible_draft_session_id = None
     screen._console_composer_or_none = lambda: None
     screen._task_resume_state = TaskResumeState()
@@ -10088,7 +10104,7 @@ async def test_console_setup_modal_retains_collapsed_layout_and_restores_expand_
         await pilot.pause()
 
         _configure_openai_missing_api_key(app)
-        console._replace_active_console_session_settings(
+        console._session._replace_active_console_session_settings(
             ConsoleSessionSettings(
                 provider="openai",
                 model="gpt-4o",
@@ -10107,7 +10123,7 @@ async def test_console_setup_modal_retains_collapsed_layout_and_restores_expand_
         assert console.check_action("expand_collapsed_console_composer", ()) is False
 
         _configure_native_ready_console(app)
-        console._replace_active_console_session_settings(
+        console._session._replace_active_console_session_settings(
             ConsoleSessionSettings(
                 provider="llama_cpp",
                 model="local-model",
@@ -11548,25 +11564,26 @@ def test_console_screen_state_round_trips_the_temporary_flag():
     from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
     screen = ChatScreen.__new__(ChatScreen)
+    screen._session = ConsoleSessionController.__new__(ConsoleSessionController)
 
     # A REAL round trip: the serializer's own output feeds the restorer.
     # Asserting on a hand-built dict would test neither half.
     temporary = ConsoleChatSession(title="Temporary chat", ephemeral=True)
-    payload = screen._console_session_to_state(temporary)
+    payload = screen._session._console_session_to_state(temporary)
     assert payload["ephemeral"] is True
-    assert screen._console_session_from_state(payload).ephemeral is True
+    assert screen._session._console_session_from_state(payload).ephemeral is True
 
     normal = ConsoleChatSession(title="Normal chat")
     assert (
-        screen._console_session_from_state(
-            screen._console_session_to_state(normal)
+        screen._session._console_session_from_state(
+            screen._session._console_session_to_state(normal)
         ).ephemeral
         is False
     )
 
     # Legacy payloads predate the key entirely.
     assert (
-        screen._console_session_from_state(
+        screen._session._console_session_from_state(
             {"id": normal.id, "title": normal.title}
         ).ephemeral
         is False

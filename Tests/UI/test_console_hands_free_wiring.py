@@ -51,6 +51,7 @@ from tldw_chatbook.Chat.console_voice_input import (
     handsfree_send_delay_seconds as real_handsfree_send_delay_seconds,
     acoustic_barge_in_enabled as real_acoustic_barge_in_enabled,
 )
+from tldw_chatbook.UI.Console_Modules import hands_free as hands_free_module
 from tldw_chatbook.UI.Screens import chat_screen as chat_screen_module
 from tldw_chatbook.Widgets.Console.console_transcript import ConsoleTranscript
 
@@ -195,7 +196,7 @@ class _HandsFreeReplyGateway(_ReadyResolutionGateway):
 def _fast_countdown(monkeypatch, seconds: float = 0.3) -> None:
     """Speed up the hands-free countdown so wiring tests don't wait 1.5s+."""
     monkeypatch.setattr(
-        chat_screen_module, "handsfree_send_delay_seconds", lambda: seconds
+        hands_free_module, "handsfree_send_delay_seconds", lambda: seconds
     )
 
 
@@ -688,7 +689,7 @@ async def test_spoken_send_mid_reply_acoustic_mode_ends_capture_and_exits(
         lambda self: fake,
     )
     monkeypatch.setattr(
-        chat_screen_module, "acoustic_barge_in_enabled", lambda: True
+        hands_free_module, "acoustic_barge_in_enabled", lambda: True
     )
     _, host = _ready_host()
 
@@ -706,7 +707,7 @@ async def test_spoken_send_mid_reply_acoustic_mode_ends_capture_and_exits(
         # (acoustic mode's own effect of `on_reply_started`), stubbing
         # `RequestStopAndSend`'s own wiring effect (a real V2 send) --
         # this test targets ONLY the mid-reply spoken-"send" reaction.
-        console._console_hands_free_request_stop_and_send = lambda: None
+        console._hands_free._console_hands_free_request_stop_and_send = lambda: None
         session.controller._begin_awaiting_reply()
         # `_begin_awaiting_reply()`'s own `CloseCapture` is real and async
         # -- `on_reply_started()`'s reopen must wait for it to actually
@@ -751,7 +752,7 @@ def test_silence_speech_posts_stop_unconditionally_even_with_nothing_in_flight()
         controller=object(), sequencer=fake_sequencer
     )
 
-    console._console_hands_free_silence_speech()
+    console._hands_free._console_hands_free_silence_speech()
 
     assert fake_sequencer.flush_calls == 1
     posted.assert_called_once()
@@ -791,7 +792,7 @@ async def test_keypress_in_speaking_silences_and_reopens_capture(monkeypatch):
         # keypress. `RequestStopAndSend`'s own wiring effect is stubbed so
         # this stays a pure unit test of the barge-in reaction, not a live
         # network send.
-        console._console_hands_free_request_stop_and_send = lambda: None
+        console._hands_free._console_hands_free_request_stop_and_send = lambda: None
         session.controller._begin_awaiting_reply()
         session.controller.on_reply_started()
         session.controller.on_first_utterance()
@@ -873,7 +874,7 @@ async def test_barge_in_and_esc_work_with_focus_off_the_composer(monkeypatch):
         console.action_toggle_console_hands_free()
         await _wait_for_mic_label(composer, pilot, "Rec ●")
         session = console._console_hands_free
-        console._console_hands_free_request_stop_and_send = lambda: None
+        console._hands_free._console_hands_free_request_stop_and_send = lambda: None
 
         def _drive_to_speaking() -> None:
             session.controller._begin_awaiting_reply()
@@ -943,7 +944,7 @@ async def test_hands_free_marshal_routes_off_thread_calls_through_call_from_thre
 
         def _from_background_thread() -> None:
             off_thread_id["id"] = threading.get_ident()
-            console._console_hands_free_marshal(_callback, "x", "y")
+            console._hands_free._console_hands_free_marshal(_callback, "x", "y")
 
         worker = threading.Thread(target=_from_background_thread)
         worker.start()
@@ -972,7 +973,7 @@ async def test_hands_free_marshal_calls_directly_when_already_on_ui_thread():
         console.app_instance.call_from_thread = marshal_calls
         direct_calls: list[tuple] = []
 
-        console._console_hands_free_marshal(
+        console._hands_free._console_hands_free_marshal(
             lambda a, b: direct_calls.append((a, b)), "x", "y"
         )
 
@@ -998,7 +999,7 @@ async def test_hands_free_marshal_fast_path_when_loop_is_off():
         console.app_instance.call_from_thread = marshal_calls
         direct_calls: list[tuple] = []
 
-        console._console_hands_free_marshal(
+        console._hands_free._console_hands_free_marshal(
             lambda a, b: direct_calls.append((a, b)), "x", "y"
         )
 
@@ -1031,7 +1032,7 @@ async def test_hands_free_marshal_swallows_call_from_thread_failure():
 
         def _from_background_thread() -> None:
             try:
-                console._console_hands_free_marshal(lambda: None)
+                console._hands_free._console_hands_free_marshal(lambda: None)
             except BaseException as exc:  # noqa: BLE001 - this IS the pin
                 raised.append(exc)
 
@@ -1067,7 +1068,7 @@ async def test_hands_free_marshal_swallows_a_raising_callback_on_the_ui_thread()
             # Called directly, on the UI thread (the test's own async
             # body -- no background thread involved), exercising the
             # UI-thread branch specifically.
-            console._console_hands_free_marshal(_raising_callback)
+            console._hands_free._console_hands_free_marshal(_raising_callback)
         except BaseException as exc:  # noqa: BLE001 - this IS the pin
             raised.append(exc)
 
@@ -1300,24 +1301,24 @@ async def test_reply_identity_same_session_new_id_claims_and_feeds():
         fed: list[str] = []
         session.sequencer.feed = fed.append
 
-        console._on_console_hands_free_delta(real.id, "first chunk. ")
+        console._hands_free._on_console_hands_free_delta(real.id, "first chunk. ")
         assert session.reply_id == real.id
         assert fed == ["first chunk. "]
 
-        console._on_console_hands_free_delta("stale-id", "must not feed")
+        console._hands_free._on_console_hands_free_delta("stale-id", "must not feed")
         assert fed == ["first chunk. "]
 
-        console._on_console_hands_free_delta(real.id, "second chunk. ")
+        console._hands_free._on_console_hands_free_delta(real.id, "second chunk. ")
         assert fed == ["first chunk. ", "second chunk. "]
 
         finished: list[Any] = []
         session.sequencer.reply_completed = lambda: finished.append("sequencer")
         session.controller.on_reply_finished = lambda: finished.append("controller")
 
-        console._on_console_hands_free_terminal("stale-id", False)
+        console._hands_free._on_console_hands_free_terminal("stale-id", False)
         assert finished == []
 
-        console._on_console_hands_free_terminal(real.id, False)
+        console._hands_free._on_console_hands_free_terminal(real.id, False)
         assert finished == ["sequencer", "controller"]
 
 
@@ -1352,7 +1353,7 @@ async def test_reply_identity_rejects_a_concurrent_background_session_reply():
         session.sequencer.feed = fed.append
 
         # The background session's reply id must not claim the slot.
-        console._on_console_hands_free_delta(
+        console._hands_free._on_console_hands_free_delta(
             background_reply.id, "Background tab reply here."
         )
         assert session.reply_id is None
@@ -1362,16 +1363,16 @@ async def test_reply_identity_rejects_a_concurrent_background_session_reply():
         real = store.append_message(
             sending_session_id, role=ConsoleMessageRole.ASSISTANT, content=""
         )
-        console._on_console_hands_free_delta(real.id, "Real reply here.")
+        console._hands_free._on_console_hands_free_delta(real.id, "Real reply here.")
         assert session.reply_id == real.id
         assert fed == ["Real reply here."]
 
         # The background reply's own completion must not resolve THIS turn.
         finished: list[Any] = []
         session.controller.on_reply_finished = lambda: finished.append("controller")
-        console._on_console_hands_free_terminal(background_reply.id, False)
+        console._hands_free._on_console_hands_free_terminal(background_reply.id, False)
         assert finished == []
-        console._on_console_hands_free_terminal(real.id, False)
+        console._hands_free._on_console_hands_free_terminal(real.id, False)
         assert finished == ["controller"]
 
 
@@ -1402,7 +1403,7 @@ async def test_reply_identity_rejects_a_stale_same_session_reply():
         )
         spoken: list[str] = []
         session.sequencer.feed = lambda text: spoken.append(text)
-        console._on_console_hands_free_delta(old_reply.id, "Old reply first sentence.")
+        console._hands_free._on_console_hands_free_delta(old_reply.id, "Old reply first sentence.")
         assert session.reply_id == old_reply.id
         assert spoken == ["Old reply first sentence."]
 
@@ -1418,7 +1419,7 @@ async def test_reply_identity_rejects_a_stale_same_session_reply():
 
         # The OLD reply's generation is still streaming its next sentence
         # -- this must NOT be claimed as turn 2's reply.
-        console._on_console_hands_free_delta(old_reply.id, "Old reply second sentence.")
+        console._hands_free._on_console_hands_free_delta(old_reply.id, "Old reply second sentence.")
         assert session.reply_id is None
         assert spoken == ["Old reply first sentence."]
 
@@ -1426,7 +1427,7 @@ async def test_reply_identity_rejects_a_stale_same_session_reply():
         new_reply = store.append_message(
             sending_session_id, role=ConsoleMessageRole.ASSISTANT, content=""
         )
-        console._on_console_hands_free_delta(new_reply.id, "New reply sentence.")
+        console._hands_free._on_console_hands_free_delta(new_reply.id, "New reply sentence.")
         assert session.reply_id == new_reply.id
         assert spoken == ["Old reply first sentence.", "New reply sentence."]
 
@@ -1491,13 +1492,13 @@ async def test_awaiting_reply_watchdog_disarms_at_row_creation_not_first_token()
         # completes the turn normally -- nothing was abandoned.
         fed: list[str] = []
         session.sequencer.feed = fed.append
-        console._on_console_hands_free_delta(real.id, "Finally, some text. ")
+        console._hands_free._on_console_hands_free_delta(real.id, "Finally, some text. ")
         assert fed == ["Finally, some text. "]
 
         finished: list[Any] = []
         session.sequencer.reply_completed = lambda: finished.append("sequencer")
         session.controller.on_reply_finished = lambda: finished.append("controller")
-        console._on_console_hands_free_terminal(real.id, False)
+        console._hands_free._on_console_hands_free_terminal(real.id, False)
         assert finished == ["sequencer", "controller"]
 
 
@@ -1524,7 +1525,7 @@ async def test_zero_content_reply_completion_still_completes_the_turn():
         session.sequencer.reply_completed = lambda: finished.append("sequencer")
         session.controller.on_reply_finished = lambda: finished.append("controller")
 
-        console._on_console_hands_free_terminal(real.id, False)
+        console._hands_free._on_console_hands_free_terminal(real.id, False)
 
         assert session.reply_id == real.id
         assert finished == ["sequencer", "controller"]
@@ -1560,7 +1561,7 @@ async def test_exit_loop_intent_emits_silence_and_close_capture_itself(monkeypat
         # Drive straight to `speaking`, stubbing `RequestStopAndSend`'s own
         # wiring effect (a real V2 send) -- this test targets ONLY the
         # `ExitLoop` handler's own teardown behavior.
-        console._console_hands_free_request_stop_and_send = lambda: None
+        console._hands_free._console_hands_free_request_stop_and_send = lambda: None
         session.controller._begin_awaiting_reply()
         session.controller.on_reply_started()
         session.controller.on_first_utterance()
@@ -1575,7 +1576,7 @@ async def test_exit_loop_intent_emits_silence_and_close_capture_itself(monkeypat
         post_message = Mock()
         console.app_instance.post_message = post_message
 
-        console._handle_console_hands_free_intent(ExitLoop())
+        console._hands_free._handle_console_hands_free_intent(ExitLoop())
 
         assert session.sequencer._inflight is False
         posted_actions = [
@@ -1605,15 +1606,15 @@ async def test_open_and_close_capture_handlers_are_idempotent_no_ops(monkeypatch
         assert console._console_dictation_state == "idle"
 
         # OpenCapture while idle starts; while ALREADY recording, no-op.
-        console._console_hands_free_open_capture()
+        console._hands_free._console_hands_free_open_capture()
         await _wait_for_mic_label(composer, pilot, "Rec ●")
-        console._console_hands_free_open_capture()
+        console._hands_free._console_hands_free_open_capture()
         await pilot.pause()
         assert fake.start_calls == 1
 
         # CloseCapture is a no-op unless genuinely `recording`.
         console._console_dictation_state = "idle"
-        console._console_hands_free_close_capture()
+        console._hands_free._console_hands_free_close_capture()
         await pilot.pause()
         assert fake.stop_calls == 0
 
@@ -1764,7 +1765,7 @@ async def test_deferred_capture_ended_is_dropped_for_a_replaced_loop():
         console._console_dictation_state = "recording"  # not idle -- blocks the poll
 
         task = asyncio.create_task(
-            console._deliver_console_hands_free_capture_ended(session_a, False)
+            console._hands_free._deliver_console_hands_free_capture_ended(session_a, False)
         )
         await asyncio.sleep(0)  # let the poll loop start and observe "not idle"
 
@@ -1791,7 +1792,7 @@ async def test_acoustic_barge_in_opens_capture_on_reply_started(monkeypatch):
         lambda self: fake,
     )
     monkeypatch.setattr(
-        chat_screen_module, "acoustic_barge_in_enabled", lambda: True
+        hands_free_module, "acoustic_barge_in_enabled", lambda: True
     )
     _, host = _ready_host()
 
@@ -1809,7 +1810,7 @@ async def test_acoustic_barge_in_opens_capture_on_reply_started(monkeypatch):
         # `RequestStopAndSend`'s own wiring effect is stubbed -- this test
         # targets ONLY acoustic mode's reopen-on-`on_reply_started` effect,
         # not a real V2 send. `CloseCapture` (real) still closes the mic.
-        console._console_hands_free_request_stop_and_send = lambda: None
+        console._hands_free._console_hands_free_request_stop_and_send = lambda: None
         session.controller._begin_awaiting_reply()
 
         deadline = time.monotonic() + _ASYNC_SETTLE_TIMEOUT
