@@ -1481,14 +1481,22 @@ def process_web_search_results(search_results: Dict, search_engine: str) -> Dict
         "processing_error": None
         ]
     """
-    # Validate input parameters. Most backends always return a dict, but the
-    # local tavily/searx backends can hand back a plain string (tavily: a
-    # request-error message; searx: its whole payload is JSON-encoded as a
-    # string) -- those are valid inputs too, deferred to the engine-specific
-    # parser below, which raises ValueError to surface them as
-    # processing_error (task-2990). Reject anything else outright.
-    if not isinstance(search_results, (dict, str)):
-        raise TypeError("search_results must be a dictionary or string")
+    # Validate input parameters. Every backend but tavily/searx always
+    # returns a dict; a string payload for those two is a valid input too
+    # (tavily: a request-error message; searx: its ENTIRE payload, success
+    # or failure, is JSON-encoded as a string), deferred to the
+    # engine-specific parser below, which raises ValueError to surface it as
+    # processing_error (task-2990). The str allowance is deliberately scoped
+    # to just these two engines: widening it for every engine would let a
+    # stray string reach e.g. parse_brave_results, whose `"query" in
+    # raw_results`-style membership checks against a str run silently and
+    # can produce zero results with no error at all -- the exact defect
+    # class this task exists to close, just relocated. Reject anything else
+    # outright.
+    if not isinstance(search_results, dict) and not (
+        isinstance(search_results, str) and search_engine.lower() in ("tavily", "searx")
+    ):
+        raise TypeError("search_results must be a dictionary")
 
     # Only a dict carries this request-echo metadata; a string payload (see
     # above) has none of it, so every field below falls back to its default.
@@ -2817,22 +2825,30 @@ def parse_searx_results(searx_search_results: "list | dict | str", web_search_re
     always returns a JSON-encoded STRING: `json.dumps(hits)` on success
     (a list of `{title, link, snippet, publishedDate}` dicts), or
     `json.dumps({"error": ...})` when nothing was found or the request
-    failed. A string is decoded first; an already-parsed list or dict is
-    also accepted defensively for direct/test callers. The decoded error
-    dict is re-raised as ValueError so its text survives the
-    `process_web_search_results` seam as `processing_error`, instead of
+    failed. A string is decoded first; an already-parsed list is also
+    accepted defensively for direct/test callers. Only a decoded list is
+    tolerated as real results -- a decoded dict never is: `{"error": ...}`
+    re-raises with that message, and any other dict (or any non-list
+    scalar) raises a generic shape error, both surfacing via the
+    `process_web_search_results` seam as `processing_error` instead of
     silently producing zero results (task-2990).
+
+    `link`/`url` and `snippet`/`content` are each read with the OR-fallback
+    pair (search_web_searx's own hits use link/snippet; a raw SearXNG API
+    hit -- as a caller might hand this parser directly -- uses url/content),
+    matching the port reference this parser was adapted from.
 
     Args:
         searx_search_results: Raw Searx response, as returned by
             `search_web_searx` -- a JSON string encoding either a list of
-            hits or an error dict, or an already-decoded list/dict.
+            hits or an error dict, or an already-decoded list.
         web_search_results_dict: Output dict; mutated in place, appending
             standardized result entries to its "results" list.
 
     Raises:
-        ValueError: when the payload is an error dict, or a string payload
-            cannot be parsed as JSON.
+        ValueError: when a string payload cannot be parsed as JSON, the
+            decoded payload is an error dict, or the decoded payload is
+            anything other than a list.
     """
     if isinstance(searx_search_results, str):
         try:
@@ -2843,15 +2859,18 @@ def parse_searx_results(searx_search_results: "list | dict | str", web_search_re
     if isinstance(searx_search_results, dict) and "error" in searx_search_results:
         raise ValueError(searx_search_results["error"])
 
+    if not isinstance(searx_search_results, list):
+        raise ValueError("Unexpected Searx payload shape: expected a list of results")
+
     if "results" not in web_search_results_dict:
         web_search_results_dict["results"] = []
 
-    items = searx_search_results if isinstance(searx_search_results, list) else []
-    for item in items:
-        snippet = item.get("snippet", "")
+    for item in searx_search_results:
+        url = item.get("link") or item.get("url") or ""
+        snippet = item.get("snippet") or item.get("content") or ""
         web_search_results_dict["results"].append({
             "title": item.get("title", ""),
-            "url": item.get("link", ""),
+            "url": url,
             "content": snippet,
             "metadata": {
                 "date_published": item.get("publishedDate", None),
