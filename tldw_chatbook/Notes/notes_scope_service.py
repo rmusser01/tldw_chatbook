@@ -770,6 +770,7 @@ class NotesScopeService:
             return self.local_notes_service.list_notes(
                 self._require_user_id(user_id),
                 limit=limit,
+                offset=offset,
             )
         if normalized_scope == ScopeType.SERVER_NOTE:
             return await self.server_service.list_server_notes(

@@ -1166,3 +1166,17 @@ async def test_scope_service_count_notes_rejects_server_and_workspace_scopes():
 
     # Neither unsupported scope should have reached the server backend.
     assert not hasattr(server, "count_calls") or server.count_calls == []
+
+
+@pytest.mark.asyncio
+async def test_scope_service_list_notes_forwards_offset_to_local_service():
+    scope_service = NotesScopeService(
+        local_notes_service=FakeLocalNotes(),
+        server_service=FakeServerNotes(),
+    )
+
+    page = await scope_service.list_notes(
+        scope=ScopeType.LOCAL_NOTE, limit=1, offset=1, user_id="user-1"
+    )
+
+    assert [note["id"] for note in page] == ["local-2"]

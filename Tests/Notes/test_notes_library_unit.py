@@ -383,5 +383,209 @@ class TestNotesInteropService(unittest.TestCase):
         )
 
 
+# ---------------------------------------------------------------------------
+# Library query seams (task-1337 plan Task 2)
+# ---------------------------------------------------------------------------
+
+
+def _make_library_notes_db():
+    return CharactersRAGDB(db_path=":memory:", client_id="library_test_client")
+
+
+def _seed_library_note(db, *, title, content=None, keywords=(), last_modified=None):
+    note_id = db.add_note(
+        title=title, content=content if content is not None else f"body for {title}"
+    )
+    for keyword in keywords:
+        keyword_id = db.add_keyword(keyword)
+        db.link_note_to_keyword(note_id, keyword_id)
+    if last_modified is not None:
+        db.execute_query(
+            "UPDATE notes SET last_modified = ?, version = version + 1 WHERE id = ?",
+            (last_modified, note_id),
+        )
+    return note_id
+
+
+def test_library_notes_page_lists_active_with_stable_order():
+    db = _make_library_notes_db()
+    try:
+        first_id = _seed_library_note(
+            db, title="First", last_modified="2026-01-01 00:00:00"
+        )
+        second_id = _seed_library_note(
+            db, title="Second", last_modified="2026-01-03 00:00:00"
+        )
+        third_id = _seed_library_note(
+            db, title="Third", last_modified="2026-01-02 00:00:00"
+        )
+        deleted_id = _seed_library_note(db, title="Deleted")
+        db.soft_delete_note(deleted_id, expected_version=1)
+
+        page_one = db.list_library_notes_page(limit=2, offset=0)
+        assert page_one["total"] == 3
+        assert [item["id"] for item in page_one["items"]] == [second_id, third_id]
+
+        page_two = db.list_library_notes_page(limit=2, offset=2)
+        assert page_two["total"] == 3
+        assert [item["id"] for item in page_two["items"]] == [first_id]
+
+        beyond = db.list_library_notes_page(limit=10, offset=50)
+        assert beyond["total"] == 3
+        assert beyond["items"] == []
+    finally:
+        db.close_connection()
+
+
+def test_library_notes_page_projection_and_keyword_cap():
+    db = _make_library_notes_db()
+    try:
+        keywords = [f"kw{index:02d}" for index in range(25)]
+        _seed_library_note(db, title="Heavy", content="secret body " * 100, keywords=keywords)
+
+        item = db.list_library_notes_page(limit=10, offset=0)["items"][0]
+        assert "content" not in item
+        assert len(item["preview"]) <= 241
+        assert len(item["keywords"]) == 20
+        assert item["keyword_total"] == 25
+        assert item["keywords_truncated"] is True
+    finally:
+        db.close_connection()
+
+
+def test_library_notes_search_exact_title_first_and_distinct_total():
+    db = _make_library_notes_db()
+    try:
+        exact_id = _seed_library_note(
+            db,
+            title="Quarterly",
+            content="nothing relevant here",
+            keywords=("quarterly", "quarterly-finance"),
+            last_modified="2026-01-01 00:00:00",
+        )
+        content_id = _seed_library_note(
+            db,
+            title="Other",
+            content="a quarterly deep dive",
+            last_modified="2026-02-01 00:00:00",
+        )
+
+        payload = db.search_library_notes_page(query="quarterly", limit=10, offset=0)
+        assert payload["total"] == 2
+        assert [item["id"] for item in payload["items"]] == [exact_id, content_id]
+        exact_item, content_item = payload["items"]
+        assert "title" in exact_item["matched_fields"]
+        assert "keywords" in exact_item["matched_fields"]
+        assert "quarterly" in exact_item["matched_keywords"]
+        assert "quarterly-finance" in exact_item["matched_keywords"]
+        assert "content" in content_item["matched_fields"]
+    finally:
+        db.close_connection()
+
+
+def test_library_notes_search_treats_wildcards_and_operators_literally():
+    db = _make_library_notes_db()
+    try:
+        target_id = _seed_library_note(db, title="100% ready_now", content="plain")
+        _seed_library_note(db, title="readyXnow decoy", content="plain decoy body")
+
+        percent = db.search_library_notes_page(query="100%", limit=10, offset=0)
+        assert [item["id"] for item in percent["items"]] == [target_id]
+
+        underscore = db.search_library_notes_page(query="ready_now", limit=10, offset=0)
+        assert [item["id"] for item in underscore["items"]] == [target_id]
+
+        for hostile in ('"unclosed', "ready OR", "AND )(", "ready*", "NEAR/1"):
+            result = db.search_library_notes_page(query=hostile, limit=10, offset=0)
+            assert isinstance(result["total"], int)
+            assert isinstance(result["items"], list)
+    finally:
+        db.close_connection()
+
+
+def test_library_notes_detail_windows_text_and_missing_returns_none():
+    db = _make_library_notes_db()
+    try:
+        content = "abcdef" * 900  # 5400 chars
+        note_id = _seed_library_note(db, title="Long read", content=content)
+
+        detail = db.get_library_note_text(note_id, start=1200, max_chars=2000)
+        assert detail is not None
+        assert detail["id"] == note_id
+        assert detail["title"] == "Long read"
+        assert detail["total_chars"] == len(content)
+        assert detail["start"] == 1200
+        assert detail["returned_chars"] == 2000
+        assert detail["has_more"] is True
+        assert detail["text"] == content[1200:3200]
+        assert "content" not in detail
+
+        tail = db.get_library_note_text(note_id, start=5000, max_chars=2000)
+        assert tail["text"] == content[5000:]
+        assert tail["has_more"] is False
+
+        assert db.get_library_note_text("no-such-id", start=0, max_chars=100) is None
+    finally:
+        db.close_connection()
+
+
+class TestLibraryNotesInteropDelegates(TestNotesInteropService):
+    """NotesInteropService delegates for the Library read seams (task-1337)."""
+
+    def test_list_library_notes_delegates_and_echoes_pagination(self):
+        self.mock_db_instance.list_library_notes_page.return_value = {
+            "items": [{"id": "n-1", "title": "One"}],
+            "total": 7,
+        }
+
+        payload = self.service.list_library_notes("user-1", limit=5, offset=10)
+
+        self.mock_db_instance.list_library_notes_page.assert_called_once_with(
+            limit=5, offset=10
+        )
+        self.assertEqual(payload["total"], 7)
+        self.assertEqual(payload["offset"], 10)
+        self.assertEqual(payload["limit"], 5)
+        self.assertEqual(payload["items"], [{"id": "n-1", "title": "One"}])
+
+    def test_search_library_notes_delegates_query_and_pagination(self):
+        self.mock_db_instance.search_library_notes_page.return_value = {
+            "items": [],
+            "total": 0,
+        }
+
+        payload = self.service.search_library_notes(
+            "user-1", query="quarterly", limit=3, offset=6
+        )
+
+        self.mock_db_instance.search_library_notes_page.assert_called_once_with(
+            query="quarterly", limit=3, offset=6
+        )
+        self.assertEqual(payload["total"], 0)
+        self.assertEqual(payload["offset"], 6)
+        self.assertEqual(payload["limit"], 3)
+
+    def test_get_library_note_text_delegates_window(self):
+        self.mock_db_instance.get_library_note_text.return_value = {
+            "id": "n-1",
+            "text": "segment",
+        }
+
+        detail = self.service.get_library_note_text(
+            "user-1", "n-1", start=120, max_chars=400
+        )
+
+        self.mock_db_instance.get_library_note_text.assert_called_once_with(
+            "n-1", start=120, max_chars=400
+        )
+        self.assertEqual(detail["text"], "segment")
+
+    def test_get_library_note_text_passes_through_missing(self):
+        self.mock_db_instance.get_library_note_text.return_value = None
+        self.assertIsNone(
+            self.service.get_library_note_text("user-1", "missing", start=0, max_chars=10)
+        )
+
+
 if __name__ == "__main__":
     unittest.main(argv=["first-arg-is-ignored"], exit=False)

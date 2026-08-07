@@ -10525,6 +10525,277 @@ UPDATE db_schema_version
         row = cursor.fetchone()
         return int(row["cnt"] if row else 0)
 
+    # ============================= Library read seams (task-1337) =========================================
+    #
+    # Additive, read-only queries backing the local Library agent tools. They
+    # mirror the Media library seams: narrow agent-safe projections (bounded
+    # preview or windowed text, never the full content unless requested
+    # through the windowed reader), exact totals read in the same
+    # transaction, and stable ordering.
+
+    _LIBRARY_NOTE_PREVIEW_CHARS = 241
+    _LIBRARY_NOTE_KEYWORD_CAP = 20
+    _LIBRARY_NOTE_FTS_TOKEN_LIMIT = 20
+
+    @staticmethod
+    def _escape_library_note_like(value: str) -> str:
+        """Escape LIKE metacharacters so user input matches literally."""
+        return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+    @classmethod
+    def _library_note_fts_query(cls, raw_query: str) -> Optional[str]:
+        """Build a safe FTS5 MATCH query from raw user text.
+
+        Tokens are extracted with a word-character regex and each is
+        double-quoted, so FTS operators in the raw input are inert. Returns
+        None when the input contains no usable tokens.
+        """
+        tokens = re.findall(r"\w+", raw_query, flags=re.UNICODE)
+        if not tokens:
+            return None
+        tokens = tokens[: cls._LIBRARY_NOTE_FTS_TOKEN_LIMIT]
+        return " ".join(f'"{token}"' for token in tokens)
+
+    def _library_keywords_for_notes(
+        self, conn: sqlite3.Connection, note_ids: List[str]
+    ) -> Dict[str, List[str]]:
+        """Fetch active keywords for a page of note ids, grouped by note id."""
+        if not note_ids:
+            return {}
+        placeholders = ",".join("?" * len(note_ids))
+        query = f"""
+            SELECT nk.note_id, k.keyword
+            FROM note_keywords nk
+            JOIN keywords k ON nk.keyword_id = k.id
+            WHERE nk.note_id IN ({placeholders}) AND k.deleted = 0
+            ORDER BY k.keyword COLLATE NOCASE
+        """
+        cursor = conn.execute(query, tuple(note_ids))
+        keywords_by_note: Dict[str, List[str]] = {}
+        for row in cursor.fetchall():
+            keywords_by_note.setdefault(row["note_id"], []).append(row["keyword"])
+        return keywords_by_note
+
+    def _library_note_item(
+        self, row: sqlite3.Row, keywords_by_note: Dict[str, List[str]]
+    ) -> Dict[str, Any]:
+        """Project a notes row into the agent-safe library item shape."""
+        all_keywords = keywords_by_note.get(row["id"], [])
+        visible = all_keywords[: self._LIBRARY_NOTE_KEYWORD_CAP]
+        return {
+            "id": row["id"],
+            "title": row["title"],
+            "created_at": row["created_at"],
+            "last_modified": row["last_modified"],
+            "version": row["version"],
+            "preview": row["preview"],
+            "keywords": visible,
+            "keyword_total": len(all_keywords),
+            "keywords_truncated": len(all_keywords) > len(visible),
+        }
+
+    def list_library_notes_page(self, *, limit: int, offset: int) -> Dict[str, Any]:
+        """Return one page of active library notes plus the exact active total.
+
+        Active means ``deleted = 0``. Ordering is stable:
+        ``last_modified DESC, rowid DESC``. The count and the page are read
+        in one transaction.
+
+        Args:
+            limit: Maximum number of items to return.
+            offset: Number of items to skip (SQL OFFSET, not Python slicing).
+
+        Returns:
+            Dict with ``items`` (agent-safe projections) and ``total``.
+
+        Raises:
+            CharactersRAGDBError: If a database error occurs.
+        """
+        try:
+            with self.transaction() as conn:
+                total = conn.execute(
+                    "SELECT COUNT(*) AS count FROM notes WHERE deleted = 0"
+                ).fetchone()["count"]
+                cursor = conn.execute(
+                    """
+                    SELECT id, title, created_at, last_modified, version,
+                           substr(content, 1, ?) AS preview
+                    FROM notes
+                    WHERE deleted = 0
+                    ORDER BY last_modified DESC, rowid DESC
+                    LIMIT ? OFFSET ?
+                    """,
+                    (self._LIBRARY_NOTE_PREVIEW_CHARS, limit, offset),
+                )
+                rows = cursor.fetchall()
+                keywords_by_note = self._library_keywords_for_notes(
+                    conn, [row["id"] for row in rows]
+                )
+            items = [self._library_note_item(row, keywords_by_note) for row in rows]
+            return {"items": items, "total": total}
+        except sqlite3.Error as e:
+            logger.error(f"Error listing library notes page: {e}")
+            raise CharactersRAGDBError(f"Failed to list library notes page: {e}") from e
+
+    def search_library_notes_page(
+        self, *, query: str, limit: int, offset: int
+    ) -> Dict[str, Any]:
+        """Search active library notes, returning one page plus exact total.
+
+        Match branches (OR, deduplicated by notes row): case-insensitive
+        exact title, title substring, content substring, FTS over
+        title/content, and keyword substring via the note_keywords relation.
+        LIKE input is escaped and FTS input is tokenized/quoted, so wildcards
+        and FTS operators in ``query`` match literally. Exact-title hits rank
+        first, then recency, then rowid.
+
+        Args:
+            query: Raw user search text.
+            limit: Maximum number of items to return.
+            offset: Number of items to skip.
+
+        Returns:
+            Dict with ``items`` (library projections plus ``matched_fields``
+            and ``matched_keywords``) and ``total``.
+
+        Raises:
+            CharactersRAGDBError: If a database error occurs.
+        """
+        like_pattern = f"%{self._escape_library_note_like(query)}%"
+        fts_query = self._library_note_fts_query(query)
+        keyword_branch = (
+            "id IN (SELECT nk.note_id FROM note_keywords nk "
+            "JOIN keywords k ON nk.keyword_id = k.id "
+            "WHERE k.deleted = 0 AND k.keyword LIKE ? ESCAPE '\\')"
+        )
+
+        branches = [
+            "LOWER(title) = LOWER(?)",
+            "title LIKE ? ESCAPE '\\'",
+            "content LIKE ? ESCAPE '\\'",
+        ]
+        params: List[Any] = [query, like_pattern, like_pattern]
+        if fts_query is not None:
+            branches.append(
+                "rowid IN (SELECT rowid FROM notes_fts WHERE notes_fts MATCH ?)"
+            )
+            params.append(fts_query)
+        branches.append(keyword_branch)
+        params.append(like_pattern)
+
+        where_clause = " OR ".join(f"({branch})" for branch in branches)
+        hit_selects = ", ".join(
+            f"({branch}) AS hit_{index}" for index, branch in enumerate(branches)
+        )
+        hit_params = list(params)
+
+        try:
+            with self.transaction() as conn:
+                total = conn.execute(
+                    f"SELECT COUNT(*) AS count FROM notes "
+                    f"WHERE deleted = 0 AND ({where_clause})",
+                    tuple(params),
+                ).fetchone()["count"]
+                cursor = conn.execute(
+                    f"""
+                    SELECT id, title, created_at, last_modified, version,
+                           substr(content, 1, ?) AS preview,
+                           {hit_selects}
+                    FROM notes
+                    WHERE deleted = 0 AND ({where_clause})
+                    ORDER BY (LOWER(title) = LOWER(?)) DESC,
+                             last_modified DESC, rowid DESC
+                    LIMIT ? OFFSET ?
+                    """,
+                    tuple(
+                        [self._LIBRARY_NOTE_PREVIEW_CHARS]
+                        + hit_params
+                        + params
+                        + [query, limit, offset]
+                    ),
+                )
+                rows = cursor.fetchall()
+                keywords_by_note = self._library_keywords_for_notes(
+                    conn, [row["id"] for row in rows]
+                )
+            lowered_query = query.lower()
+            items = []
+            for row in rows:
+                item = self._library_note_item(row, keywords_by_note)
+                matched_fields = set()
+                if row["hit_0"] or row["hit_1"]:
+                    matched_fields.add("title")
+                content_hit_indexes = [2] + ([3] if fts_query is not None else [])
+                keyword_hit_index = 4 if fts_query is not None else 3
+                if any(row[f"hit_{index}"] for index in content_hit_indexes):
+                    matched_fields.add("content")
+                if row[f"hit_{keyword_hit_index}"]:
+                    matched_fields.add("keywords")
+                item["matched_fields"] = sorted(matched_fields)
+                item["matched_keywords"] = [
+                    keyword
+                    for keyword in keywords_by_note.get(row["id"], [])
+                    if lowered_query in keyword.lower()
+                ][: self._LIBRARY_NOTE_KEYWORD_CAP]
+                items.append(item)
+            return {"items": items, "total": total}
+        except sqlite3.Error as e:
+            logger.error(f"Error searching library notes: {e}")
+            raise CharactersRAGDBError(f"Failed to search library notes: {e}") from e
+
+    def get_library_note_text(
+        self, note_id: str, *, start: int, max_chars: int
+    ) -> Optional[Dict[str, Any]]:
+        """Return a windowed text segment for one active note.
+
+        Reads only ``substr(content, start + 1, max_chars)`` and
+        ``length(content)`` — the full content is never selected.
+
+        Args:
+            note_id: The note UUID to read.
+            start: Zero-based character offset into the content.
+            max_chars: Maximum number of characters to return.
+
+        Returns:
+            Dict with metadata, ``total_chars``, ``start``,
+            ``returned_chars``, ``has_more``, and the ``text`` segment; or
+            None when no active note matches the id.
+
+        Raises:
+            CharactersRAGDBError: If a database error occurs.
+        """
+        try:
+            cursor = self.execute_query(
+                """
+                SELECT id, title, created_at, last_modified, version,
+                       length(content) AS total_chars,
+                       substr(content, ?, ?) AS text
+                FROM notes
+                WHERE id = ? AND deleted = 0
+                """,
+                (start + 1, max_chars, note_id),
+            )
+            row = cursor.fetchone()
+            if row is None:
+                return None
+            text = row["text"] or ""
+            total_chars = row["total_chars"] or 0
+            return {
+                "id": row["id"],
+                "title": row["title"],
+                "created_at": row["created_at"],
+                "last_modified": row["last_modified"],
+                "version": row["version"],
+                "total_chars": total_chars,
+                "start": start,
+                "returned_chars": len(text),
+                "has_more": start + len(text) < total_chars,
+                "text": text,
+            }
+        except sqlite3.Error as e:
+            logger.error(f"Error reading library note text: {e}")
+            raise CharactersRAGDBError(f"Failed to read library note text: {e}") from e
+
     def get_all_note_ids(self) -> List[str]:
         """Return every non-deleted note id (no page cap).
 

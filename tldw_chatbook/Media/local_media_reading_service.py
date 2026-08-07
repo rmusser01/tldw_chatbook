@@ -98,6 +98,41 @@ class LocalMediaReadingService:
     ) -> list[dict[str, Any]]:
         return [self._enrich_with_read_it_later_state(row) for row in rows]
 
+    # --- Library read seams (task-1337) ---
+
+    def list_library_media(
+        self, *, limit: int = 20, offset: int = 0
+    ) -> dict[str, Any]:
+        """Page the active local media library for agent-facing list tools."""
+        db = self._require_db()
+        payload = db.list_library_media_page(limit=limit, offset=offset)
+        return {
+            "items": payload["items"],
+            "total": payload["total"],
+            "offset": offset,
+            "limit": limit,
+        }
+
+    def search_library_media(
+        self, *, query: str, limit: int = 20, offset: int = 0
+    ) -> dict[str, Any]:
+        """Search the active local media library for agent-facing tools."""
+        db = self._require_db()
+        payload = db.search_library_media_page(query=query, limit=limit, offset=offset)
+        return {
+            "items": payload["items"],
+            "total": payload["total"],
+            "offset": offset,
+            "limit": limit,
+        }
+
+    def get_library_media_text(
+        self, media_uuid: str, *, start: int = 0, max_chars: int = 8000
+    ) -> Optional[dict[str, Any]]:
+        """Read a windowed text segment for one active media item."""
+        db = self._require_db()
+        return db.get_library_media_text(media_uuid, start=start, max_chars=max_chars)
+
     def search_media(
         self,
         *,
