@@ -415,6 +415,22 @@ def test_searx_parser_accepts_already_parsed_list():
     assert len(out["results"]) == 2
 
 
+def test_searx_parser_falls_back_to_raw_searxng_shape_keys():
+    """A pre-parsed list whose items use raw SearXNG API keys (url/content)
+    rather than search_web_searx's own hit keys (link/snippet) must still
+    populate url/content -- not silently yield "" rows (port reference's
+    `item.get("link") or item.get("url")` / `... or item.get("content")`
+    fallback pair)."""
+    out = {}
+    WebSearch_APIs.parse_searx_results(
+        [{"title": "Raw SearXNG Hit", "url": "https://raw.example/", "content": "raw content"}],
+        out,
+    )
+    assert out["results"][0]["url"] == "https://raw.example/"
+    assert out["results"][0]["content"] == "raw content"
+    assert out["results"][0]["metadata"]["snippet"] == "raw content"
+
+
 def test_searx_empty_list_tolerated():
     out = {}
     WebSearch_APIs.parse_searx_results(json.dumps([]), out)
@@ -424,6 +440,19 @@ def test_searx_empty_list_tolerated():
 def test_searx_unparseable_json_raises_value_error():
     with pytest.raises(ValueError):
         WebSearch_APIs.parse_searx_results("not json {", {})
+
+
+def test_searx_non_error_dict_raises_value_error():
+    """A decoded payload that's a dict WITHOUT an "error" key (or any other
+    non-list shape) is not silently tolerated as "no results" -- it raises,
+    matching the docstring's stated contract."""
+    with pytest.raises(ValueError, match="[Uu]nexpected"):
+        WebSearch_APIs.parse_searx_results(json.dumps({"query": "cherry cake"}), {})
+
+
+def test_searx_json_scalar_raises_value_error():
+    with pytest.raises(ValueError, match="[Uu]nexpected"):
+        WebSearch_APIs.parse_searx_results(json.dumps(None), {})
 
 
 def test_searx_error_dict_raises_and_surfaces_as_processing_error():
@@ -439,6 +468,32 @@ def test_searx_error_dict_raises_and_surfaces_as_processing_error():
     assert result["processing_error"] is not None
     assert "No information" in result["processing_error"]
     assert result["results"] == []
+
+
+# ---------------------------------------------------------------------------
+# process_web_search_results type-guard scoping (task-2990 review round)
+# ---------------------------------------------------------------------------
+
+def test_type_guard_rejects_string_payload_for_non_string_engines():
+    """The (dict, str-for-tavily/searx) type guard in
+    process_web_search_results is scoped to just those two engines -- their
+    local backends are the only ones that can hand back a string. A string
+    payload for any OTHER engine must still raise TypeError, not silently
+    reach that engine's parser: e.g. parse_brave_results does membership
+    checks like `"query" in raw_results`, which a stray string would
+    satisfy character-by-character and could silently produce zero results
+    with no error at all -- exactly the defect class this task exists to
+    close, just relocated to a different engine."""
+    with pytest.raises(TypeError, match="dictionary"):
+        WebSearch_APIs.process_web_search_results("some error text", "brave")
+
+
+def test_type_guard_still_rejects_non_dict_non_str_even_for_tavily():
+    """The str allowance is specifically `isinstance(x, str)`, not "not a
+    dict" -- None (or any other non-dict, non-str value) must still raise
+    TypeError even for tavily/searx."""
+    with pytest.raises(TypeError, match="dictionary"):
+        WebSearch_APIs.process_web_search_results(None, "tavily")
 
 
 # ---------------------------------------------------------------------------
