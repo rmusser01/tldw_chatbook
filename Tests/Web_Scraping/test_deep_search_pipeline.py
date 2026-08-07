@@ -672,3 +672,29 @@ def test_analyze_and_aggregate_offloads_aggregate_results_so_wait_for_can_fire(m
         f"wait_for did not fire near its 0.05s deadline (took {elapsed:.2f}s) -- "
         "aggregate_results is still blocking the event loop"
     )
+
+
+# --- discriminating timeout pass-through (task-1356 final review, Minor 6) ---
+
+@pytest.mark.asyncio
+async def test_analyze_and_aggregate_forwards_nondefault_relevance_llm_timeout(monkeypatch):
+    """No test previously drove a NON-default timeout through
+    analyze_and_aggregate into search_result_relevance -- a test using the
+    30s default would pass even if the forwarding at WebSearch_APIs.py
+    :596-597 were deleted (30.0 is also the fallback default). This uses 45
+    specifically so deleting that forwarding turns it red."""
+    captured = {}
+
+    async def fake_relevance(*args, **kwargs):
+        captured["llm_timeout_s"] = kwargs.get("llm_timeout_s")
+        return {}
+
+    monkeypatch.setattr(WebSearch_APIs, "search_result_relevance", fake_relevance)
+
+    wsr = {"results": [], "warnings": []}
+    sqd = {"main_goal": "q", "sub_questions": []}
+    params = {"relevance_analysis_llm": "openai", "final_answer_llm": "openai",
+              "relevance_llm_timeout_s": 45}
+
+    await WebSearch_APIs.analyze_and_aggregate(wsr, sqd, params)
+    assert captured["llm_timeout_s"] == 45
