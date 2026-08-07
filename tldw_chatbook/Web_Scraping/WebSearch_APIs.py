@@ -935,7 +935,22 @@ async def search_result_relevance(
                             # counted exactly like a scrape failure -- never an
                             # exception -- and falls through to the existing
                             # snippet/title/url fallback below.
-                            if not is_public_http_url(result["url"]):
+                            #
+                            # is_public_http_url does synchronous DNS resolution
+                            # (socket.getaddrinfo) -- its own docstring chain
+                            # (evaluate_url_policy) warns never to call that kind
+                            # of check directly from an event loop. Offload to a
+                            # worker thread and bound it with the same timeout
+                            # used for the scrape itself; a guard timeout raises
+                            # asyncio.TimeoutError, which is an Exception (unlike
+                            # CancelledError) so it falls straight into the
+                            # `except Exception` below and is handled exactly
+                            # like a scrape failure -- no separate code path.
+                            is_public = await asyncio.wait_for(
+                                asyncio.to_thread(is_public_http_url, result["url"]),
+                                timeout=scrape_timeout_s,
+                            )
+                            if not is_public:
                                 logger.warning(
                                     f"Refusing to scrape non-public URL for result "
                                     f"{result_id}: {result.get('url')!r}; falling "

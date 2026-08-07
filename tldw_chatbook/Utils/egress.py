@@ -113,13 +113,26 @@ def _config_allowed_hosts() -> frozenset:
 
 
 def _classify_ip(ip_str: str) -> str:
-    """Classify one resolved IP: "metadata" | "private" | "public"."""
+    """Classify one resolved IP: "metadata" | "private" | "public".
+
+    ``ip.is_global`` is True for multicast (e.g. ``224.0.0.1``, or
+    ``239.255.255.250`` -- a real SSDP/UPnP discovery address): the stdlib
+    only excludes multicast from ``is_private``, not from ``is_global``, so
+    without an explicit check here a multicast target would misclassify as
+    "public" and sail through both this module's own ``evaluate_url_policy``
+    (used by every ``guarded_fetch_*`` helper) and ``is_public_http_url``.
+    Multicast is never a legitimate unicast HTTP/fetch target, so blocking
+    it is strictly tightening for every consumer of this function -- caught
+    in review of task-1356's pre-scrape SSRF guard (task-1356 CRITICAL 1).
+    """
     ip = ipaddress.ip_address(ip_str)
     mapped = getattr(ip, "ipv4_mapped", None)
     if mapped is not None:
         ip = mapped
     if ip in _METADATA_IPS:
         return "metadata"
+    if ip.is_multicast:
+        return "private"
     return "public" if ip.is_global else "private"
 
 

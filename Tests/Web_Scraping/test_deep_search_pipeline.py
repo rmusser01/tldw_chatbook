@@ -1,7 +1,9 @@
 """Deep-search pipeline hardening (task-1356). Fakes live ONLY at chat_api_call /
 scrape_article / Summarization analyze — the pipeline code runs real."""
 
+import asyncio
 import json
+import time
 
 import pytest
 
@@ -294,6 +296,83 @@ async def test_relevance_refuses_private_url_scrape(monkeypatch):
     assert scraped == []                                  # never navigated
     entry = next(iter(out.values()))
     assert "metadata snippet" in entry["content"] or "Internal" in entry["content"]  # fallback kept
+
+
+@pytest.mark.asyncio
+async def test_relevance_guard_does_not_block_event_loop(monkeypatch):
+    # CRITICAL 2 (task-1356 re-review): is_public_http_url does synchronous
+    # DNS resolution (socket.getaddrinfo). Calling it directly inside this
+    # async function would stall the whole event loop for however long
+    # resolution takes -- reproduced here by monkeypatching the guard to a
+    # blocking time.sleep() standing in for a slow resolver, then proving a
+    # concurrently-scheduled heartbeat coroutine is NOT stalled: its
+    # sleep(0.01) ticks keep landing close to schedule instead of bunching
+    # up behind the guard's 0.3s sleep.
+    monkeypatch.setattr(WebSearch_APIs, "chat_api_call",
+                        _fake_chat(["Selected Answer: True\nReasoning: relevant"]))
+
+    def slow_guard(url):
+        time.sleep(0.3)
+        return True
+
+    monkeypatch.setattr(WebSearch_APIs, "is_public_http_url", slow_guard)
+
+    async def fast_scrape(url, **k):
+        return {"content": "scraped ok", "extraction_successful": True}
+
+    monkeypatch.setattr(WebSearch_APIs, "scrape_article", fast_scrape)
+    results = [_std_result("T", "https://e.example/", "c")]
+
+    gaps = []
+    stop = asyncio.Event()
+
+    async def heartbeat():
+        loop = asyncio.get_event_loop()
+        last = loop.time()
+        while not stop.is_set():
+            await asyncio.sleep(0.01)
+            now = loop.time()
+            gaps.append(now - last)
+            last = now
+
+    hb_task = asyncio.create_task(heartbeat())
+    await WebSearch_APIs.search_result_relevance(results, "q", [], "openai")
+    stop.set()
+    await hb_task
+
+    assert gaps, "heartbeat never got to run at all"
+    # A blocked loop shows one huge gap (~0.3s, the guard's sleep duration);
+    # an offloaded guard keeps every gap close to the 0.01s heartbeat interval.
+    assert max(gaps) < 0.15, f"event loop stalled: max heartbeat gap {max(gaps):.3f}s"
+
+
+@pytest.mark.asyncio
+async def test_relevance_guard_timeout_falls_back_like_scrape_failure(monkeypatch):
+    # CRITICAL 2 continued: a guard that doesn't resolve within
+    # scrape_timeout_s must be treated as a refusal -- same fallback path
+    # as a scrape failure or a private-IP refusal -- not left to hang or
+    # raise out of search_result_relevance.
+    monkeypatch.setattr(WebSearch_APIs, "chat_api_call",
+                        _fake_chat(["Selected Answer: True\nReasoning: relevant"]))
+
+    def hanging_guard(url):
+        time.sleep(1.0)
+        return True
+
+    monkeypatch.setattr(WebSearch_APIs, "is_public_http_url", hanging_guard)
+    scraped = []
+
+    async def spy_scrape(url, **k):
+        scraped.append(url)
+        return {"content": "should not happen", "extraction_successful": True}
+
+    monkeypatch.setattr(WebSearch_APIs, "scrape_article", spy_scrape)
+    results = [_std_result("Kept Title", "https://kept.example/", "snippet text")]
+    out = await WebSearch_APIs.search_result_relevance(
+        results, "q", [], "openai", scrape_timeout_s=0.05)
+    assert scraped == []                                  # never reached scrape_article
+    entry = next(iter(out.values()))
+    assert "snippet text" in entry["content"] or "Kept Title" in entry["content"]  # fallback kept
 
 
 # --- pure review ---------------------------------------------------------------

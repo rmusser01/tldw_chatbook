@@ -1179,3 +1179,13 @@ def test_is_public_http_url_allows_public(monkeypatch):
     monkeypatch.setattr(socket, "getaddrinfo",
                         lambda *a, **k: [(2, 1, 6, "", ("93.184.216.34", 80))])
     assert egress.is_public_http_url("https://example.com/page") is True
+
+
+def test_is_public_http_url_blocks_multicast(monkeypatch):
+    # CRITICAL 1 (task-1356 re-review): ipaddress.is_global is True for
+    # multicast, so without an explicit check a multicast address sails
+    # through both _classify_ip's public/private split and this function.
+    # 239.255.255.250 is a real SSDP/UPnP discovery address.
+    from tldw_chatbook.Utils import egress
+    for bad in ("http://224.0.0.1/", "http://239.255.255.250:1900/description.xml"):
+        assert egress.is_public_http_url(bad) is False, bad
