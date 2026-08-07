@@ -307,9 +307,9 @@ def _extract_text(body: bytes, content_type: str) -> str:
 
 def _pymupdf_available() -> bool:
     """Cheap availability probe (no import): the 20 MB PDF read ceiling and
-    the [missing-dep] refusal must be decided before downloading, and
-    optional_deps.check_dependency() eagerly imports the module — wrong cost
-    for the fetch hot path."""
+    the [missing-dep] refusal must be decided before the GET starts — the probe
+    chooses the read CAP; it does not skip the download itself. optional_deps.check_dependency()
+    eagerly imports the module — wrong cost for the fetch hot path."""
     return importlib.util.find_spec("pymupdf") is not None
 
 
@@ -378,10 +378,11 @@ def web_fetch(url: str, *, max_bytes: int = FETCH_MAX_BYTES) -> str:
     capped at max_bytes (default FETCH_MAX_BYTES=1 MiB).
 
     PDF detection: declared type "application/pdf" or %PDF- magic sniff.
-    Text extracted via PyMuPDF if available. When pymupdf is installed, PDFs
-    respect a 20 MB hardened ceiling (PDF_MAX_BYTES, never truncated);
-    when unavailable, PDFs are refused before download. Extracted text is
-    truncated per-page if total exceeds max_bytes; the result includes page count.
+    Text extracted via PyMuPDF if available. The 20 MB PDF ceiling applies only
+    when pymupdf is installed; when it is absent the body still downloads under
+    the ordinary ``max_bytes`` cap and the fetch is then refused with
+    ``[missing-dep]``. Extracted text is truncated per-page if total exceeds
+    max_bytes; the result includes page count.
 
     All failures raise LocalToolError with structured reasons:
         - "invalid-url", "ssrf", "redirect-limit", "timeout",

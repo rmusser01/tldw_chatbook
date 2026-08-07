@@ -58,7 +58,7 @@ Coverage and docstring polish implemented as planned, with two won't-fix rulings
 **Docstring truth:** Updated `web_fetch` docstring to document:
 - PDF detection (declared type "application/pdf" or %PDF- magic sniff) and extraction via PyMuPDF
 - The (url, max_bytes) cache key and 256-entry bound with earliest-expiry eviction
-- PDF 20 MB hardened ceiling behavior (applies when pymupdf available, never truncated; unavailable PDFs refused before download)
+- PDF 20 MB hardened ceiling behavior (applies when pymupdf available; when pymupdf is absent the body still downloads under the ordinary max_bytes cap before the [missing-dep] refusal — only the 20 MB escalation is skipped)
 - Structured error reasons: "fetch-failed", "empty-content" (extraction failures), "missing-dep", "pdf-error", "too-large"
 - Added web_crawl to the tool list in local_tool_provider.py module docstring (~line 63).
 
