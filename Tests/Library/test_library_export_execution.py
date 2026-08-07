@@ -235,7 +235,7 @@ def test_success_message_includes_creators_detail_stripped_of_redundant_prefix()
     )
 
     assert message == (
-        "Exported chatbook to /tmp/out.zip: Warning: 2 character "
+        "Exported bundle to /tmp/out.zip: Warning: 2 character "
         "dependencies are missing (3 characters auto-included)"
     )
 
@@ -248,7 +248,7 @@ def test_success_message_keeps_unrecognized_creator_message_verbatim():
         "/tmp/out.zip", {}, "ok"
     )
 
-    assert message == "Exported chatbook to /tmp/out.zip: ok"
+    assert message == "Exported bundle to /tmp/out.zip: ok"
 
 
 def test_success_message_omits_detail_segment_when_creator_message_is_empty():
@@ -256,7 +256,7 @@ def test_success_message_omits_detail_segment_when_creator_message_is_empty():
         "/tmp/out.zip", {"auto_included": [1]}, ""
     )
 
-    assert message == "Exported chatbook to /tmp/out.zip (1 characters auto-included)"
+    assert message == "Exported bundle to /tmp/out.zip (1 characters auto-included)"
 
 
 def test_success_message_does_not_duplicate_auto_included_count():
@@ -277,7 +277,7 @@ def test_success_message_does_not_duplicate_auto_included_count():
     )
 
     assert message == (
-        "Exported chatbook to /tmp/out.zip: Auto-included 3 character dependencies"
+        "Exported bundle to /tmp/out.zip: Auto-included 3 character dependencies"
     )
     # The count is stated once, not restated by a trailing suffix.
     assert "characters auto-included)" not in message

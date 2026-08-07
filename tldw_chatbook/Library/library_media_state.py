@@ -11,7 +11,7 @@ from tldw_chatbook.Workspaces.conversation_browser_state import (
 )
 
 LIBRARY_MEDIA_EMPTY_COPY = (
-    "No media in your Library yet. Ingest something to see it here."
+    "No media in your Library yet. Import something to see it here."
 )
 
 _ID_KEYS = ("id", "media_id", "uuid")
@@ -45,6 +45,10 @@ class LibraryMediaCanvasState:
     count: int
     select_mode: bool = False
     selected_count: int = 0
+    # task-2853 AC3: True while the bulk-delete confirmation ("Delete N
+    # selected items? This moves them to trash." + Delete/Cancel) should
+    # render in place of the normal select-mode toolbar row.
+    confirming_bulk_delete: bool = False
 
 
 @dataclass(frozen=True)
@@ -125,6 +129,7 @@ def build_library_media_state(
     limit: int = 75,
     select_mode: bool = False,
     selected_ids: frozenset[str] = frozenset(),
+    confirming_bulk_delete: bool = False,
 ) -> LibraryMediaCanvasState:
     """Build the Library Browse ▸ Media canvas display state.
 
@@ -250,4 +255,5 @@ def build_library_media_state(
         count=total_count,
         select_mode=select_mode,
         selected_count=selected_count,
+        confirming_bulk_delete=confirming_bulk_delete,
     )

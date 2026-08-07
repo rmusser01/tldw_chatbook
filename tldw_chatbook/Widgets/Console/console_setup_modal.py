@@ -247,6 +247,10 @@ class ConsoleSetupModal(Vertical):
         self._action_label = _DEFAULT_ACTION_LABEL
         self._action_tooltip = _DEFAULT_ACTION_TOOLTIP
         self._detected_action: ConsoleDetectedServerAction | None = None
+        # Task-2852: a receipt line for a pending "Use in Console" handoff
+        # (e.g. Library Search/RAG evidence) staged while setup is still
+        # incomplete -- see `sync_card_state`'s `staged_evidence_notice`.
+        self._staged_evidence_notice = ""
         # Hidden until a card-mode state is synced in.
         self.display = False
 
@@ -278,6 +282,14 @@ class ConsoleSetupModal(Vertical):
             )
             title.display = blocking
             yield title
+            staged_notice = Static(
+                self._staged_evidence_notice,
+                id="console-setup-modal-staged-notice",
+                classes="console-setup-modal-staged-notice",
+                markup=False,
+            )
+            staged_notice.display = blocking and bool(self._staged_evidence_notice)
+            yield staged_notice
             for index in range(1, CONSOLE_SETUP_MODAL_STEP_COUNT + 1):
                 step = self._step_at(index)
                 step_row = Static(
@@ -329,11 +341,24 @@ class ConsoleSetupModal(Vertical):
         *,
         action_label: str = "",
         action_tooltip: str = "",
+        staged_evidence_notice: str = "",
     ) -> None:
-        """Refresh steps + primary action and toggle overlay visibility in place."""
+        """Refresh steps + primary action and toggle overlay visibility in place.
+
+        Args:
+            card_state: The current first-run setup card state.
+            action_label: Primary action button label.
+            action_tooltip: Primary action button tooltip.
+            staged_evidence_notice: Task-2852 receipt line for a "Use in
+                Console" handoff staged while setup is incomplete (e.g.
+                ``"Library Search/RAG evidence staged — finish provider
+                setup to use it."``), or ``""`` when nothing is staged.
+                Only ever shown while the card is actually blocking.
+        """
         self._card_state = _coerce_card_state(card_state)
         self._action_label = action_label.strip() or _DEFAULT_ACTION_LABEL
         self._action_tooltip = action_tooltip.strip() or _DEFAULT_ACTION_TOOLTIP
+        self._staged_evidence_notice = staged_evidence_notice.strip()
         blocking = self.is_blocking
         self.display = blocking
         if not self.is_mounted:
@@ -355,6 +380,15 @@ class ConsoleSetupModal(Vertical):
                 self.query_one(selector).display = blocking
             except Exception:
                 continue
+        try:
+            staged_widget = self.query_one(
+                "#console-setup-modal-staged-notice", Static
+            )
+        except Exception:
+            pass
+        else:
+            staged_widget.update(self._staged_evidence_notice)
+            staged_widget.display = blocking and bool(self._staged_evidence_notice)
         self._sync_detected_action_button()
         try:
             action = self.query_one(f"#{CONSOLE_SETUP_MODAL_ACTION_ID}", Button)

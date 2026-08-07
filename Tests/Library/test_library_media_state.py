@@ -160,7 +160,7 @@ def test_no_records_yields_default_empty_copy():
     assert state.status_copy == ""
     assert (
         state.empty_copy
-        == "No media in your Library yet. Ingest something to see it here."
+        == "No media in your Library yet. Import something to see it here."
     )
     assert state.selected_id == ""
     assert state.preview_lines == ()
@@ -505,3 +505,19 @@ def test_active_type_absent_from_records_stays_in_type_options():
     assert state.rows == ()
     # Empty copy reflects the filtered type
     assert state.empty_copy == "No media of type 'video'."
+
+
+def test_confirming_bulk_delete_defaults_false_and_passes_through():
+    """task-2853 AC3: the bulk-delete confirm flag is a pure passthrough,
+    like ``select_mode`` -- no computation, just carried onto the state so
+    the canvas can render the confirm row in place of the normal toolbar.
+    """
+    records = [{"id": "1", "title": "A", "type": "video"}]
+
+    default_state = build_library_media_state(records, select_mode=True)
+    assert default_state.confirming_bulk_delete is False
+
+    confirming_state = build_library_media_state(
+        records, select_mode=True, confirming_bulk_delete=True
+    )
+    assert confirming_state.confirming_bulk_delete is True

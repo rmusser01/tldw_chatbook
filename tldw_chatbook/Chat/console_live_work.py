@@ -112,6 +112,35 @@ class ConsoleLiveWorkLaunch:
         )
 
 
+def console_setup_staged_receipt(launch: "ConsoleLiveWorkLaunch | None") -> str:
+    """Locked-Console receipt line for a pending live-work launch (task-2852).
+
+    Every "Use in Console" handoff (Library Search/RAG, Watchlists,
+    Schedules, Artifacts/Chatbook, Workflows, ...) funnels through this one
+    ``ConsoleLiveWorkLaunch`` shape and lands in
+    ``ChatScreen._pending_console_launch_context``. PR #1320's staged-
+    evidence strip already reads that same field to render its composer-
+    level chip -- but the blocking first-run setup modal
+    (``ConsoleSetupModal``, ``mode == "card"``) visually covers the whole
+    workbench (rail + transcript + composer) while setup is incomplete, so a
+    handoff landing on a locked Console showed nothing at all: the staged
+    context was real, just invisible under the overlay. This builds the
+    short receipt line the setup modal shows instead, from the SAME launch
+    the strip would render once setup completes, so the two can never
+    disagree about what is staged.
+
+    Args:
+        launch: The current pending Console live-work launch, or ``None``.
+
+    Returns:
+        A one-line receipt, or ``""`` when nothing is staged.
+    """
+    if launch is None:
+        return ""
+    source = str(getattr(launch, "source", "") or "").strip() or "Evidence"
+    return f"{source} evidence staged — finish provider setup to use it."
+
+
 @dataclass(frozen=True)
 class ConsoleLiveWorkStatusCardRow:
     """A stable render row for Console live-work status cards."""

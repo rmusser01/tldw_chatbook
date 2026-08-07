@@ -261,6 +261,45 @@ async def test_active_destination_primary_route_still_noops():
 
 
 @pytest.mark.asyncio
+async def test_media_folded_route_returns_to_library_primary_route():
+    """task-2851 AC#2: the Library nav button must never become a permanent
+    no-op after a Library-folded legacy route occupies the slot.
+
+    The reported bug's "sticky" half was that, after the command palette's
+    "Media & Content: Open Media Library" entry hijacked the Library tab
+    (nav bar highlighted "library", but the mounted screen was the legacy
+    ``MediaScreen``), re-selecting Library allegedly did not restore the
+    canonical ``LibraryScreen``. Re-verified live against this branch's HEAD
+    (dev has moved since the 6ffa56516 finding): the "already active" guard
+    in ``_activate_navigation_button`` already distinguishes a folded
+    subroute (``active_route="media"``) from Library's own primary route
+    (``active_route="library"``) correctly -- pressing the Library button
+    posts a real ``NavigateToScreen("library")`` rather than short-
+    circuiting as a no-op. This pins that behavior explicitly for the exact
+    route the bug named, mirroring
+    ``test_active_destination_subroute_can_return_to_primary_route`` (which
+    covers the same guard for "study").
+    """
+    events = []
+
+    class TestApp(App):
+        def compose(self):
+            yield MainNavigationBar(active="library", active_route="media")
+
+        def on_navigate_to_screen(self, message):
+            events.append(message.screen_name)
+
+    app = TestApp()
+
+    async with app.run_test(size=(180, 20)) as pilot:
+        await pilot.pause(0.1)
+        app.query_one("#nav-library", Button).press()
+        await pilot.pause(0.1)
+
+    assert events == ["library"]
+
+
+@pytest.mark.asyncio
 async def test_every_visible_master_shell_nav_destination_resolves():
     from Tests.UI.app_factory import _build_test_app
     from tldw_chatbook.UI.Navigation.shell_destinations import SHELL_DESTINATION_ORDER

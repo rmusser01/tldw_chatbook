@@ -245,9 +245,13 @@ class LibraryRail(RecomposeCaptureGuard, Vertical):
         label = f"{prefix}{escape_markup(raw_title)}{count_markup}{subtitle_markup}"
         if row.target_kind == "handoff":
             # F-011: a meta line survives ONLY where it discriminates --
-            # handoff rows leave the Library entirely for the Study screen
-            # family.
-            label += "\n    opens Study"
+            # handoff rows are a two-step trip out of Library, unlike the
+            # plain canvas rows around them. task-2854: "opens Study" was
+            # false for THIS click -- it opens a Library-local staging
+            # canvas ("Continue in Study" lives inside that canvas, one
+            # click later, and is the one that actually leaves Library for
+            # the Study screen family).
+            label += "\n    opens staging canvas"
         return label
 
     def compose(self) -> ComposeResult:

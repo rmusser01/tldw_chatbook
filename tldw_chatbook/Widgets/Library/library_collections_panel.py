@@ -4,9 +4,15 @@ from __future__ import annotations
 
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
-from textual.widgets import Button, Input, Static
+from textual.widgets import Button, Collapsible, Input, Static
 
 from ...Library.library_collections_state import LibraryCollectionsPanelState
+
+
+LIBRARY_COLLECTIONS_STATUS_LINE = (
+    "Collections hold saved items for review — adding items is coming; "
+    "you can create and name collections now."
+)
 
 
 class LibraryCollectionsPanel(Vertical):
@@ -30,10 +36,17 @@ class LibraryCollectionsPanel(Vertical):
     def _compose_collection_form(self) -> ComposeResult:
         with Vertical(id="library-collection-form"):
             yield Static("Create / Rename", classes="destination-section")
-            yield Static(
-                "Type a Collection name to enable Create.",
-                id="library-collection-form-guidance",
-            )
+            if not self.state.create_action.enabled:
+                # A single sentence replaces the three that used to repeat
+                # the same "enter a name" rule; it disappears entirely once
+                # a valid, non-duplicate name makes Create available (kept
+                # in sync in place by
+                # `_refresh_collections_panel_action_state_widgets`).
+                yield Static(
+                    self.state.create_action.disabled_reason
+                    or "Enter a Collection name to enable Create.",
+                    id="library-collection-form-guidance",
+                )
             yield Input(
                 value=self.name_value,
                 placeholder="Collection name",
@@ -43,14 +56,6 @@ class LibraryCollectionsPanel(Vertical):
                 value=self.description_value,
                 placeholder="Optional description",
                 id="library-collection-description-input",
-            )
-            yield Static(
-                "Form actions: enter a name to enable Create.",
-                id="library-collection-form-action-state",
-            )
-            yield Static(
-                "Create, Rename, and Delete stay inactive until their requirements are met.",
-                id="library-collection-form-action-boundary",
             )
             with Horizontal(id="library-collection-actions"):
                 yield Button(
@@ -106,15 +111,6 @@ class LibraryCollectionsPanel(Vertical):
                 id="library-collections-empty-next-action",
             )
             yield Static(self.state.empty_copy, id="library-collections-empty")
-            yield Static(
-                "Stored content preview",
-                id="library-collection-empty-reader-title",
-                classes="destination-section",
-            )
-            yield Static(
-                "No stored collection items are available locally yet.",
-                id="library-collection-empty-reader",
-            )
             yield Static(
                 "No Collection selected.", id="library-collection-selected-empty"
             )
@@ -177,66 +173,39 @@ class LibraryCollectionsPanel(Vertical):
                         id="library-collection-description",
                     )
                     yield Static(
-                        "Item reader readiness",
-                        id="library-collection-membership-heading",
-                        classes="destination-section",
-                    )
-                    yield Static(
-                        f"Stored item count: {selected.item_count_label}",
-                        id="library-collection-membership-count",
-                    )
-                    yield Static(
-                        f"Authority: {selected.source_authority}",
-                        id="library-collection-source-authority",
-                    )
-                    yield Static(
-                        "Content use boundary",
-                        id="library-collection-workspace-heading",
-                        classes="destination-section",
-                    )
-                    yield Static(
-                        "Browse/review remains global; active workspace controls staging and manipulation.",
-                        id="library-collection-workspace-rule",
+                        LIBRARY_COLLECTIONS_STATUS_LINE,
+                        id="library-collection-status-line",
                     )
                     yield Static("Action status", classes="destination-section")
                     yield Static(
                         "Available now: create, rename, delete records",
                         id="library-collection-local-actions",
                     )
-                    yield Static(
-                        "Blocked later: item reader, Search/RAG, Study, Console handoff, server sync",
-                        id="library-collection-deferred-actions",
-                    )
-                    yield Static(
-                        "Next: collection item adapters are required before item-level actions unlock.",
-                        id="library-collection-reader-later",
-                    )
-                    yield Static(
-                        "Write Sync Safety",
-                        id="library-collection-sync-safety-heading",
-                        classes="destination-section",
-                    )
-                    yield Static(
-                        "Review these labels before any future server write promotion.",
-                        id="library-collection-sync-safety-help",
-                    )
-                    yield Static(
-                        selected.sync_status_label, id="library-collection-sync-status"
-                    )
-                    if (
-                        selected.sync_status != "local-only"
-                        or selected.sync_status_label != "Sync: local-only"
+                    with Collapsible(
+                        title="Details",
+                        collapsed=True,
+                        id="library-collection-details",
                     ):
                         yield Static(
-                            selected.sync_status_detail,
-                            id="library-collection-sync-detail",
+                            selected.item_count_label,
+                            id="library-collection-item-count",
                         )
-                    yield Static(
-                        selected.item_count_label, id="library-collection-item-count"
-                    )
-                    yield Static(
-                        selected.updated_at_label, id="library-collection-updated-at"
-                    )
+                        yield Static(
+                            selected.sync_status_label,
+                            id="library-collection-sync-status",
+                        )
+                        if (
+                            selected.sync_status != "local-only"
+                            or selected.sync_status_label != "Sync: local-only"
+                        ):
+                            yield Static(
+                                selected.sync_status_detail,
+                                id="library-collection-sync-detail",
+                            )
+                        yield Static(
+                            selected.updated_at_label,
+                            id="library-collection-updated-at",
+                        )
 
         if self.state.status != "empty":
             yield from self._compose_collection_form()

@@ -105,7 +105,8 @@ async def test_evals_screen_composes_destination_header_in_the_workbench_shell()
     for Evals, which no longer fits that test's flat-compose_content()
     assumption (see the comment on _SIMPLE_SCREEN_ROUTES above) -- driven
     through a real running app instead, mirroring
-    test_study_screen_mounts_destination_header_and_boxes_library below.
+    test_study_screen_mounts_destination_header_and_clears_nav_highlight
+    below.
     """
     from tldw_chatbook.UI.Screens.evals_screen import EvalsScreen
 
@@ -212,7 +213,16 @@ class _StudyHarness(App):
 
 
 @pytest.mark.asyncio
-async def test_study_screen_mounts_destination_header_and_boxes_library():
+async def test_study_screen_mounts_destination_header_and_clears_nav_highlight():
+    """task-2854: unlike the other folded screens above (Media, Writing,
+    Speech, Evals, ...), whose nav bar boxes their owning destination while
+    a bare route-name header names the specific screen, Study renders NONE
+    of Library's chrome (no rail, no Library canvas) -- so boxing "Library"
+    here would falsely claim Library is still on screen (this is exactly
+    what UAT 2026-08-06 flagged). The nav bar shows no highlighted
+    destination instead, and the header carries a full "Library ▸ Study"
+    breadcrumb plus an Escape back-hint to compensate.
+    """
     app_instance = SimpleNamespace(
         current_runtime_backend="local",
         runtime_backend=None,
@@ -236,16 +246,27 @@ async def test_study_screen_mounts_destination_header_and_boxes_library():
         title = screen.query_one(
             "#study-destination-header #workbench-header-title", Static
         )
-        assert str(title.renderable) == "Study"
+        assert str(title.renderable) == "Library ▸ Study"
+        subtitle = screen.query_one(
+            "#study-destination-header #workbench-header-subtitle", Static
+        )
+        subtitle_text = str(subtitle.renderable)
+        assert "Esc" in subtitle_text
+        assert "Library" in subtitle_text
         status = screen.query_one(
             "#study-destination-header #workbench-header-status", Static
         )
         assert str(status.renderable) == "Ready"
 
-        # Folded under Library: the nav boxes Library while the header names
-        # the actual screen.
+        # No destination is boxed: Study is a completely separate screen,
+        # not a canvas Library renders, so nothing in the nav bar should
+        # claim to still be current.
         library_button = screen.query_one("#nav-library")
-        assert library_button.has_class("is-active")
+        assert not library_button.has_class("is-active")
+        assert not any(
+            button.has_class("is-active")
+            for button in screen.query(".nav-button")
+        )
 
 
 @pytest.mark.asyncio

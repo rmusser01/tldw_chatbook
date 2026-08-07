@@ -50,15 +50,15 @@ instead: **F7**, **F8**, **F9** — the nav labels say so ("F7 Lab", "F8 Logs",
 "F9 Settings"). The nav bar and the command palette (**Ctrl+P**) reach them
 too.
 
-Four more screens exist with **no nav label and no "Tab Navigation" palette
+Two more screens exist with **no nav label and no "Tab Navigation" palette
 entry**: **Study** (flashcards and quizzes — reached from
-[Library](library.md), e.g. **Continue in Study**), **Media** and **Search**
-(older standalone screens reached from Library or via the palette commands
-"Media & Content: Open Media Library" and "Quick Actions: Search All
-Content"), and **Statistics** ("Settings & Preferences: Show Database
-Stats"). Typing "study", "media", or "search" into the palette surfaces the
-**Library** command — those words are aliases for Library, not entries of
-their own.
+[Library](library.md), e.g. **Continue in Study**) and **Statistics**
+("Settings & Preferences: Show Database Stats"). Typing "study", "media", or
+"search" into the palette surfaces the **Library** command — those words are
+aliases for Library, not entries of their own. The command palette's "Media
+& Content: Open Media Library" and "Quick Actions: Search All Content"
+entries are deep links into Library's Media and Search/RAG rows, not
+separate screens.
 
 ## How-to guides
 
@@ -160,4 +160,6 @@ Full detail on runs, approvals, and tools:
   than duplicate them.
 
 —
-*Verified against dev @ 84e4b33f0 — 2026-08-06*
+*Verified against dev @ 6b6c35a4b — 2026-08-06 (TASK-2851: the legacy Media
+Library screen is retired — "Media & Content: Open Media Library" now
+deep-links into Library's Media row instead of a separate screen)*

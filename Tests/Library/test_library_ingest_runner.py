@@ -2692,7 +2692,7 @@ async def test_duplicate_content_at_different_path_resolves_existing_media_id(
             app, pilot, first_job.job_id, IngestJobState.DONE
         )
         assert first_done.media_id is not None
-        assert first_done.progress["message"].startswith("Ingested ")
+        assert first_done.progress["message"].startswith("Imported ")
 
         second_job = app.submit_library_ingest_job(source_path=str(second))
         second_done = await _wait_for_job_state(

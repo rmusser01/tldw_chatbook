@@ -51,6 +51,17 @@ LIBRARY_RAG_EMPTY_STATE_SELECTOR = "library-rag-empty-state"
 LIBRARY_RAG_USE_IN_CONSOLE_DISABLED_REASON = (
     "Run a query and select usable evidence before sending to Console."
 )
+# Task-2852: pre-navigation notice shown when "Use in Console" is pressed
+# while Console is still locked behind first-run provider setup. The
+# handoff still proceeds (evidence is genuinely staged and a matching
+# receipt appears on the locked Console surface -- see
+# `console_setup_staged_receipt` in `Chat/console_live_work.py`), so this is
+# advisory, not a block: it exists because the pre-fix UAT repro found the
+# navigation landing on a silent setup screen with zero trace of the
+# selection.
+LIBRARY_RAG_USE_IN_CONSOLE_LOCKED_NOTICE = (
+    "Library evidence staged — finish provider setup in Console to use it."
+)
 # The "#library-rag-scope-summary" strip text for the common case (every
 # available source selected). `library_rag_scope_summary` below is the ONE
 # source of truth both the panel's compose path

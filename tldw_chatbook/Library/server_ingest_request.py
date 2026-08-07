@@ -70,8 +70,14 @@ SERVER_MEDIA_TYPE_BY_LOCAL_TYPE: dict[str, str] = {
 #: Local types that are real capabilities but belong to a different server
 #: endpoint, mapped to the reason shown to the user.
 _ELSEWHERE: dict[str, str] = {
+    # task-2857 review (round 3): "rather than ingested as a media file" was
+    # plain user copy and is now "imported"; "the ingest-jobs API" stays --
+    # it names the server's actual endpoint family (``submit_ingest_jobs``/
+    # ``list_media_ingest_jobs``/``cancel_media_ingest_jobs_batch`` on
+    # ``ServerMediaReadingService``, established against a live server, not
+    # a Library UI label this task governs).
     "article": (
-        "A web page is clipped rather than ingested as a media file; that runs "
+        "A web page is clipped rather than imported as a media file; that runs "
         "through the web-clipper endpoint, not the ingest-jobs API."
     ),
 }

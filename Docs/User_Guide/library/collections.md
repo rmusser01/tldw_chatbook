@@ -2,15 +2,14 @@
 
 ## What this screen is for
 
-Collections are named containers for saved content. In the panel's own
-words: "Collections are for reading, reviewing, and reusing saved content."
-Today, though, this surface is early: you can create, rename, and delete
-Collection records, but you cannot yet put items into them or read items
-from them. The panel states its own status honestly — "Available now:
-create, rename, delete records", "Blocked later: item reader, Search/RAG,
-Study, Console handoff, server sync", and "Next: collection item adapters
-are required before item-level actions unlock." Reach for this panel now
-only to stake out named Collections ahead of those features.
+Collections are named containers for saved content. The panel's own status
+line says it plainly: "Collections hold saved items for review — adding
+items is coming; you can create and name collections now." Today, though,
+this surface is early: you can create, rename, and delete Collection
+records, but you cannot yet put items into them or read items from them
+("Available now: create, rename, delete records" is the only action-status
+line shown). Reach for this panel now only to stake out named Collections
+ahead of those features.
 
 ## Getting there
 
@@ -26,25 +25,25 @@ The canvas is titled **"Library Collections"**. Top to bottom:
 
 - **Empty state** (before your first Collection) — "No Collections yet.",
   "Create a local Collection record to start reviewing saved content.",
-  a "Stored content preview" heading with "No stored collection items are
-  available locally yet.", and "No Collection selected."
+  "No stored collection items are available locally yet. Collections are
+  for reading, reviewing, and reusing saved content." (shown once), and
+  "No Collection selected."
 - **Collections** — the list pane. Each row reads "name - N items"
   (item counts are always 0 today); hovering a row shows its sync status
   as a tooltip. When a server sync profile is present, a short read-only
   status banner appears above the list.
 - **Stored collection content** — the detail pane for the selected row:
-  "Selected: name", the description (or "No description."), then the
-  readiness headings "Item reader readiness" ("Stored item count: …",
-  "Authority: …"), "Content use boundary" ("Browse/review remains global;
-  active workspace controls staging and manipulation."), "Action status"
-  (the available/blocked/next lines quoted above), and "Write Sync Safety"
-  ("Review these labels before any future server write promotion." plus
-  the sync label), ending with an "Updated … UTC" line.
-- **Create / Rename** — the form: "Type a Collection name to enable
-  Create.", inputs "Collection name" and "Optional description", the
-  status lines "Form actions: enter a name to enable Create." and
-  "Create, Rename, and Delete stay inactive until their requirements are
-  met.", then the action buttons.
+  "Selected: name", the description (or "No description."), the plain
+  status line quoted above, "Action status" / "Available now: create,
+  rename, delete records", and a collapsed-by-default **Details**
+  disclosure (click to expand) holding the item count, the sync status
+  label, its detail sentence (when there is one), and the "Updated … UTC"
+  line.
+- **Create / Rename** — the form: inputs "Collection name" and "Optional
+  description", then the action buttons. While the typed name can't yet
+  create a Collection, a single guidance sentence appears above the name
+  field explaining why (e.g. "Enter a Collection name." or "A Collection
+  with this name already exists."); it disappears once the name is valid.
 
 ## Features & controls
 
@@ -63,8 +62,8 @@ Disabled buttons always carry their reason as a tooltip — for example
 "Select a Collection before renaming it.", or "Select a Collection before
 deleting it."
 
-**Sync labels** (shown on row tooltips and under "Write Sync Safety") are
-strictly read-only — every detail sentence ends by promising that no
+**Sync labels** (shown on row tooltips and inside the selected Collection's
+**Details** disclosure) are strictly read-only — every detail sentence ends by promising that no
 writes will be queued:
 
 | Label | Detail line |
@@ -104,9 +103,10 @@ keys live in the [guide index](../index.md).
 ## Quirks & troubleshooting
 
 - **Item-level features are not wired yet.** No item reader, no Search/RAG
-  over Collections, no Study or Console handoff, no server sync — exactly
-  as the panel's "Blocked later" line says. Item counts stay at 0 until
-  "collection item adapters" land (the panel's own "Next:" line).
+  over Collections, no Study or Console handoff, no server sync, and no
+  "Add to collection" affordance anywhere else in the app — exactly as the
+  panel's status line says ("adding items is coming"). Item counts stay
+  at 0 until that lands.
 - **Names are capped at 120 characters** ("Collection names must be 120
   characters or fewer."); descriptions are capped at 500. Duplicate names
   are refused ("A Collection with this name already exists.").
@@ -119,4 +119,7 @@ keys live in the [guide index](../index.md).
   "Failed to delete Collection."
 
 —
-*Verified against dev @ bd05a692a — 2026-07-31*
+*Verified against dev @ e3d0d2c9d — 2026-08-06 (TASK-2855: plain-language
+status line replaces the spec/roadmap block, sync-safety/internal detail
+moved behind a collapsed-by-default Details disclosure, empty-state
+message deduplicated, three enable-Create sentences collapsed into one)*

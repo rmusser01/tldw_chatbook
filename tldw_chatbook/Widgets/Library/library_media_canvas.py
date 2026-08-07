@@ -11,6 +11,8 @@ from textual.widgets import Button, Static
 
 from tldw_chatbook.Library.library_media_state import LibraryMediaCanvasState
 from tldw_chatbook.Library.library_shell_state import (
+    LIBRARY_DELETE_SELECTED_DISABLED_TOOLTIP,
+    LIBRARY_DELETE_SELECTED_TOOLTIP,
     LIBRARY_EXPORT_SELECTED_DISABLED_TOOLTIP,
     LIBRARY_EXPORT_SELECTED_TOOLTIP,
 )
@@ -92,41 +94,105 @@ class LibraryMediaCanvas(RecomposeCaptureGuard, Vertical):
         # (e.g. a background snapshot refresh emptied the list).
         select_btn.disabled = rendered_count == 0 and not select_mode
         yield select_btn
+        confirming_bulk_delete = getattr(self.canvas, "confirming_bulk_delete", False)
         if select_mode:
+            if confirming_bulk_delete:
+                # A single full-width Static above the toolbar, not inside it
+                # -- mixing a long sentence Static with the toolbar's fixed-
+                # width Buttons in one Horizontal is the known non-rendering
+                # failure mode (see LibraryMediaViewer.compose's delete-
+                # confirm copy, the same pattern this mirrors). The short
+                # "N selected" Static below is unaffected -- it is already
+                # proven to render alongside Buttons in this exact row.
+                item_word = "item" if self.canvas.selected_count == 1 else "items"
+                yield Static(
+                    f"Delete {self.canvas.selected_count} selected {item_word}? "
+                    "This moves them to trash.",
+                    id="library-media-bulk-delete-confirm-copy",
+                    markup=False,
+                )
             action_row = Horizontal(classes="ds-toolbar")
             action_row.styles.height = "auto"
             with action_row:
+                # Bug found via task-2853's OWN live tmux verification
+                # (reproduced against pre-task-8 HEAD too, so it predates
+                # this task, and against the Conversations canvas too, the
+                # identical pattern -- see review round 2): with no
+                # explicit width, this Static resolved as unbounded inside
+                # the ``ds-toolbar`` ``Horizontal`` -- live capture showed
+                # it claiming ~1700 columns on a 170-column terminal,
+                # pushing every sibling Button entirely off-screen
+                # (invisible, though still present in the DOM -- which is
+                # why headless ``query_one`` pilot tests never caught it).
+                # Fixed as the general rule via the shared
+                # ``library-toolbar-count`` class (css/components/
+                # _agentic_terminal.tcss), not a per-widget Python
+                # one-off, so every canvas's counter is covered by one
+                # declaration.
                 yield Static(
                     f"{self.canvas.selected_count} selected",
                     id="library-media-selected-count",
+                    classes="library-toolbar-count",
                     markup=False,
                 )
-                yield Button(
-                    f"Select all {rendered_count} shown",
-                    id="library-media-select-all",
-                    classes="library-canvas-action",
-                    compact=True,
-                )
-                yield Button(
-                    "Clear",
-                    id="library-media-select-clear",
-                    classes="library-canvas-action",
-                    compact=True,
-                )
-                export_selected = Button(
-                    "Export selected",
-                    id="library-media-export-selected",
-                    classes="library-canvas-action",
-                    compact=True,
-                )
-                export_selected.disabled = self.canvas.selected_count == 0
-                # F-018: a disabled action says why.
-                export_selected.tooltip = (
-                    LIBRARY_EXPORT_SELECTED_DISABLED_TOOLTIP
-                    if export_selected.disabled
-                    else LIBRARY_EXPORT_SELECTED_TOOLTIP
-                )
-                yield export_selected
+                if confirming_bulk_delete:
+                    yield Button(
+                        "Delete",
+                        id="library-media-bulk-delete-confirm",
+                        classes="library-canvas-action library-media-action-danger",
+                        compact=True,
+                    )
+                    yield Button(
+                        "Cancel",
+                        id="library-media-bulk-delete-cancel",
+                        classes="library-canvas-action",
+                        compact=True,
+                    )
+                else:
+                    yield Button(
+                        f"Select all {rendered_count} shown",
+                        id="library-media-select-all",
+                        classes="library-canvas-action",
+                        compact=True,
+                    )
+                    yield Button(
+                        "Clear",
+                        id="library-media-select-clear",
+                        classes="library-canvas-action",
+                        compact=True,
+                    )
+                    export_selected = Button(
+                        "Export selected",
+                        id="library-media-export-selected",
+                        classes="library-canvas-action",
+                        compact=True,
+                    )
+                    export_selected.disabled = self.canvas.selected_count == 0
+                    # F-018: a disabled action says why.
+                    export_selected.tooltip = (
+                        LIBRARY_EXPORT_SELECTED_DISABLED_TOOLTIP
+                        if export_selected.disabled
+                        else LIBRARY_EXPORT_SELECTED_TOOLTIP
+                    )
+                    yield export_selected
+                    # task-2853: the second real bulk action -- "Delete
+                    # selected" -- pushed to the far end (CSS margin, same
+                    # library-media-action-danger idiom the single-item
+                    # viewer's own Delete uses) so it is never adjacent to
+                    # Export selected.
+                    delete_selected = Button(
+                        "Delete selected",
+                        id="library-media-delete-selected",
+                        classes="library-canvas-action library-media-action-danger",
+                        compact=True,
+                    )
+                    delete_selected.disabled = self.canvas.selected_count == 0
+                    delete_selected.tooltip = (
+                        LIBRARY_DELETE_SELECTED_DISABLED_TOOLTIP
+                        if delete_selected.disabled
+                        else LIBRARY_DELETE_SELECTED_TOOLTIP
+                    )
+                    yield delete_selected
 
         status_text = self.canvas.status_copy or self.canvas.empty_copy
         status = Static(
@@ -169,7 +235,17 @@ class LibraryMediaCanvas(RecomposeCaptureGuard, Vertical):
 
         preview = Vertical(id="library-media-preview")
         preview.styles.height = "auto"
-        has_preview = bool(self.canvas.selected_id and self.canvas.preview_lines)
+        # task-2853 AC4: while Select mode is active, the preview must never
+        # show an item outside the current (multi-item) selection context --
+        # ``canvas.selected_id``/``preview_lines`` still carry whatever was
+        # focused before Select was entered (the UAT's "bottom preview pane
+        # meanwhile shows a previously-selected different item" finding), so
+        # the whole block is hidden entirely rather than tracking a second,
+        # separate "focused row" concept select mode has no use for.
+        has_preview = (
+            not select_mode
+            and bool(self.canvas.selected_id and self.canvas.preview_lines)
+        )
         preview.display = has_preview
         with preview:
             yield Static(
@@ -181,10 +257,10 @@ class LibraryMediaCanvas(RecomposeCaptureGuard, Vertical):
             toolbar.styles.height = "auto"
             with toolbar:
                 # Opens the selected item in the IN-LIBRARY media viewer
-                # (nav stays on Library), so the label must not promise the
-                # legacy Media manager -- that escape hatch lives on the
-                # full viewer's own action row (`#library-media-open`,
-                # `LibraryMediaViewer`), which genuinely navigates there.
+                # (nav stays on Library), distinct from the full viewer's
+                # own action row (`#library-media-open`, `LibraryMediaViewer`
+                # -- "Open in Library ▸ Media", task-2857), which posts a
+                # fresh ``NavigateToScreen`` for the "media" route.
                 yield Button(
                     "Open in viewer",
                     id="library-media-open-viewer",

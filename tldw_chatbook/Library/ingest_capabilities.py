@@ -430,7 +430,7 @@ _TYPE_GROUPS: dict[str, TypeGroupCapabilities] = {
         fields=(
             OptionField(
                 name="analyze",
-                label="Analyze after ingest",
+                label="Analyze after import",
                 type="checkbox",
                 # Off by default: analysis costs an LLM call per document at
                 # ingest time, which a user importing a folder has not asked

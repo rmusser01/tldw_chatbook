@@ -404,6 +404,45 @@ def test_research_route_resolves_to_library_screen():
     assert screen_class is LibraryScreen
 
 
+def test_media_route_resolves_to_library_screen():
+    """task-2851: the legacy standalone Media Library screen is retired.
+
+    Library already reimplements full media browsing/management as its own
+    canvas (rail row "media", ``LIBRARY_ROW_BROWSE_MEDIA``) -- the standalone
+    ``MediaScreen`` (nav: Media Types / All Media / Analysis Review /
+    Collections-Tags / Multi-Item Review) is a dead-end duplicate that used
+    to render UNDER the active Library tab highlight (the "media" legacy
+    route folds into the "library" shell destination for nav-bar purposes,
+    but its screen route pointed at a completely different screen). The
+    legacy "media" route id must resolve to ``LibraryScreen`` instead of
+    ``MediaScreen``, mirroring the "notes"/"prompts"/"skills"/"research"
+    compatibility aliases above. ``MediaScreen`` itself is not deleted --
+    its save_state/restore_state contracts stay directly exercised by their
+    own unit tests below, mirroring the "skills" precedent.
+    """
+    from tldw_chatbook.UI.Navigation.screen_registry import resolve_screen_target
+    from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+
+    _screen_name, _canonical_tab, screen_class = resolve_screen_target("media")
+    assert screen_class is LibraryScreen
+
+
+def test_no_route_reaches_the_retired_media_screen():
+    """task-2851 AC#1: nothing may still resolve to the legacy MediaScreen."""
+    from tldw_chatbook.UI.Navigation import screen_registry
+
+    for route_id in screen_registry.registered_screen_route_ids():
+        _screen_name, _canonical_tab, screen_class = (
+            screen_registry.resolve_screen_target(route_id)
+        )
+        assert screen_class is None or screen_class.__name__ != "MediaScreen", route_id
+    for alias_id in screen_registry.registered_screen_aliases():
+        _screen_name, _canonical_tab, screen_class = (
+            screen_registry.resolve_screen_target(alias_id)
+        )
+        assert screen_class is None or screen_class.__name__ != "MediaScreen", alias_id
+
+
 def test_all_master_shell_primary_routes_resolve_before_nav_exposure():
     app = _build_test_app()
     expected_routes = {
@@ -1585,6 +1624,758 @@ async def test_file_notes_mutation_admitted_during_source_flush_vetoes_switch(
     mutation.release()
 
 
+def test_check_action_gates_notes_files_back_to_active_files_mode():
+    """task-2850 AC3: the Files-mode Escape binding only fires while Files
+    mode genuinely owns the Notes canvas -- everywhere else it must behave
+    as if unbound (``check_action`` returning ``False``), exactly like the
+    sibling ``library_skill_back`` gate it shares the "escape" key with.
+    """
+    from tldw_chatbook.Library.library_shell_state import LIBRARY_ROW_BROWSE_NOTES
+    from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+
+    app = _build_test_app()
+    workspace = object()
+    screen = LibraryScreen(app, file_notes_workspace_factory=lambda: workspace)
+
+    # Default state: Database Notes, no workspace mounted -- inactive.
+    assert screen.check_action("library_notes_files_back", ()) is False
+
+    # Files mode selected but the row isn't Notes (stale source flag from a
+    # prior visit) -- still inactive, mirroring ``_file_notes_active()``.
+    screen._library_notes_source = "files"
+    screen._library_file_notes_workspace = workspace
+    assert screen.check_action("library_notes_files_back", ()) is False
+
+    # Files mode genuinely owns the Notes canvas -- active.
+    screen._library_selected_row_id = LIBRARY_ROW_BROWSE_NOTES
+    assert screen.check_action("library_notes_files_back", ()) is True
+
+    # Back to Database Notes -- inactive again.
+    screen._library_notes_source = "database"
+    assert screen.check_action("library_notes_files_back", ()) is False
+
+    # Unrelated actions are untouched by the new gate.
+    assert screen.check_action("library_rag_use_in_console", ()) is True
+
+
+@pytest.mark.asyncio
+async def test_action_library_notes_files_back_returns_to_database(
+    monkeypatch,
+    tmp_path,
+):
+    """task-2850 AC3: Escape's action reuses the SAME guarded return path as
+    the "Database" strip button (``_return_to_library_database_notes``) --
+    one seam, not a parallel key-driven shortcut that could drift from the
+    button's flush/leave-guard sequence.
+    """
+    from tldw_chatbook.Library.library_shell_state import LIBRARY_ROW_BROWSE_NOTES
+    from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+
+    app = _build_test_app()
+    owner = app.file_notes_session_owner
+    binding = owner.select_root(tmp_path / "notes")
+
+    class WorkspaceProbe:
+        async def flush_pending_work(self):
+            return not owner.mutation_active(binding)
+
+        def acquire_transition(self, kind):
+            lease = owner.try_acquire_transition(binding, kind)
+            return False if lease is None else lease.release
+
+    workspace = WorkspaceProbe()
+    screen = LibraryScreen(app, file_notes_workspace_factory=lambda: workspace)
+    screen._library_file_notes_workspace = workspace
+    screen._library_notes_source = "files"
+    screen._library_selected_row_id = LIBRARY_ROW_BROWSE_NOTES
+    recompose_calls = []
+
+    async def recompose():
+        recompose_calls.append(True)
+
+    monkeypatch.setattr(screen, "recompose", recompose)
+    footer_calls = []
+    monkeypatch.setattr(
+        screen,
+        "_register_footer_shortcuts",
+        lambda: footer_calls.append(screen._library_notes_source),
+    )
+
+    await screen.action_library_notes_files_back()
+
+    assert screen._library_notes_source == "database"
+    assert recompose_calls == [True]
+    # The footer's "esc" hint must drop the moment the source flips back,
+    # not on some later, separate recompose (task-2850).
+    assert footer_calls == ["database"]
+    after_recompose = owner.try_acquire_mutation(binding)
+    assert after_recompose is not None
+    after_recompose.release()
+
+
+def test_check_action_gates_media_viewer_back_to_active_viewer():
+    """task-2856 AC2: the media viewer's Escape binding only fires while
+    the media canvas genuinely shows its viewer sub-view -- everywhere
+    else it must behave as if unbound, the same posture every other
+    context-gated "escape" binding on this screen uses."""
+    from tldw_chatbook.Library.library_shell_state import (
+        LIBRARY_ROW_BROWSE_MEDIA,
+        LIBRARY_ROW_BROWSE_NOTES,
+    )
+    from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+
+    app = _build_test_app()
+    screen = LibraryScreen(app)
+
+    # Default state: landing, no row selected -- inactive.
+    assert screen.check_action("library_media_viewer_back", ()) is False
+
+    # Media selected but showing the LIST, not the viewer -- inactive.
+    screen._library_selected_row_id = LIBRARY_ROW_BROWSE_MEDIA
+    screen._library_media_view = "list"
+    assert screen.check_action("library_media_viewer_back", ()) is False
+
+    # Media viewer genuinely open -- active.
+    screen._library_media_view = "viewer"
+    assert screen.check_action("library_media_viewer_back", ()) is True
+
+    # A different row selected (stale view flag) -- inactive.
+    screen._library_selected_row_id = LIBRARY_ROW_BROWSE_NOTES
+    assert screen.check_action("library_media_viewer_back", ()) is False
+
+    # Unrelated actions are untouched by the new gate.
+    assert screen.check_action("library_rag_use_in_console", ()) is True
+
+
+def test_register_footer_shortcuts_distinguishes_plain_viewer_from_a_media_sub_state():
+    """task-2856 review round 3: ``LIBRARY_DETAIL_BACK_SHORTCUTS`` used to be
+    selected whenever the media canvas showed its viewer, unconditionally
+    advertising "esc back to list" -- but ``action_library_media_viewer_
+    back`` (review round 2) only steps back ONE level while an edit/
+    delete-confirm/analysis-edit sub-state is active (viewer -> plain
+    viewer, NOT viewer -> list), so a SECOND Escape is actually needed to
+    reach the list in that state. The footer must advertise a different,
+    accurate hint whenever any of the three sub-state flags is set, not
+    repeat the plain viewer's "back to list" claim."""
+    from tldw_chatbook.Library.library_shell_state import LIBRARY_ROW_BROWSE_MEDIA
+    from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+
+    app = _build_test_app()
+    screen = LibraryScreen(app)
+    screen._library_selected_row_id = LIBRARY_ROW_BROWSE_MEDIA
+    screen._library_media_view = "viewer"
+
+    # Plain read-only viewer -- no sub-state active -- Escape genuinely
+    # goes straight to the list, so "back to list" is true here.
+    screen._library_media_editing = False
+    screen._library_media_confirming_delete = False
+    screen._library_media_editing_analysis = False
+    screen._register_footer_shortcuts()
+    _source, plain_shortcuts = screen._footer_shortcut_registration
+    assert dict(plain_shortcuts)["esc"] == "back to list"
+
+    # Mid-edit sub-state active -- Escape only steps back to the plain
+    # viewer (see action_library_media_viewer_back's staged exit), so the
+    # footer must NOT repeat "back to list" here.
+    screen._library_media_editing = True
+    screen._register_footer_shortcuts()
+    _source, edit_shortcuts = screen._footer_shortcut_registration
+    assert dict(edit_shortcuts)["esc"] != "back to list"
+    assert edit_shortcuts != plain_shortcuts
+
+    # Same for the delete-confirm and analysis-edit sub-states.
+    screen._library_media_editing = False
+    screen._library_media_confirming_delete = True
+    screen._register_footer_shortcuts()
+    _source, delete_shortcuts = screen._footer_shortcut_registration
+    assert dict(delete_shortcuts)["esc"] != "back to list"
+
+    screen._library_media_confirming_delete = False
+    screen._library_media_editing_analysis = True
+    screen._register_footer_shortcuts()
+    _source, analysis_shortcuts = screen._footer_shortcut_registration
+    assert dict(analysis_shortcuts)["esc"] != "back to list"
+
+
+def test_check_action_gates_note_editor_back_to_active_editor():
+    """task-2856 AC2: the note editor's Escape binding only fires for the
+    DATABASE note editor -- Files mode (its own dedicated Escape gate) and
+    the plain list must both leave it inactive."""
+    from tldw_chatbook.Library.library_shell_state import LIBRARY_ROW_BROWSE_NOTES
+    from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+
+    app = _build_test_app()
+    screen = LibraryScreen(app)
+
+    assert screen.check_action("library_note_editor_back", ()) is False
+
+    screen._library_selected_row_id = LIBRARY_ROW_BROWSE_NOTES
+    screen._library_notes_view = "list"
+    assert screen.check_action("library_note_editor_back", ()) is False
+
+    screen._library_notes_view = "editor"
+    assert screen.check_action("library_note_editor_back", ()) is True
+
+    # Files mode never activates this gate, even mid-editor-looking state --
+    # it owns a dedicated Escape binding instead (``library_notes_files_back``).
+    screen._library_notes_source = "files"
+    assert screen.check_action("library_note_editor_back", ()) is False
+
+
+def test_check_action_gates_prompt_editor_back_to_active_editor():
+    """task-2856 AC2: the prompt editor's Escape binding fires for BOTH the
+    Browse > Prompts editor and the Create > New prompt editor -- mirroring
+    ``_library_skill_editor_active``'s dual-row-id gate, since
+    ``_enter_library_prompt_create_editor`` never reassigns
+    ``_library_selected_row_id`` away from ``LIBRARY_ROW_CREATE_PROMPT``."""
+    from tldw_chatbook.Library.library_shell_state import (
+        LIBRARY_ROW_BROWSE_PROMPTS,
+        LIBRARY_ROW_CREATE_PROMPT,
+    )
+    from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+
+    app = _build_test_app()
+    screen = LibraryScreen(app)
+
+    assert screen.check_action("library_prompt_editor_back", ()) is False
+
+    screen._library_selected_row_id = LIBRARY_ROW_BROWSE_PROMPTS
+    screen._library_prompts_view = "list"
+    assert screen.check_action("library_prompt_editor_back", ()) is False
+
+    screen._library_prompts_view = "editor"
+    assert screen.check_action("library_prompt_editor_back", ()) is True
+
+    screen._library_selected_row_id = LIBRARY_ROW_CREATE_PROMPT
+    assert screen.check_action("library_prompt_editor_back", ()) is True
+
+
+def test_check_action_gates_list_focus_rail_to_showing_list():
+    """task-2856 AC2: the "focus rail" Escape binding only fires while one
+    of the four list canvases shows its plain LIST sub-view -- viewer/
+    editor/create/sync sub-views, Files mode, the landing, and other
+    canvases (e.g. Search/RAG) must all leave it inactive."""
+    from tldw_chatbook.Library.library_shell_state import (
+        LIBRARY_ROW_BROWSE_MEDIA,
+        LIBRARY_ROW_BROWSE_NOTES,
+        LIBRARY_ROW_BROWSE_PROMPTS,
+        LIBRARY_ROW_BROWSE_SEARCH,
+        LIBRARY_ROW_BROWSE_SKILLS,
+    )
+    from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+
+    app = _build_test_app()
+    screen = LibraryScreen(app)
+
+    # Landing -- inactive.
+    assert screen.check_action("library_list_focus_rail", ()) is False
+
+    screen._library_selected_row_id = LIBRARY_ROW_BROWSE_MEDIA
+    screen._library_media_view = "list"
+    assert screen.check_action("library_list_focus_rail", ()) is True
+    screen._library_media_view = "viewer"
+    assert screen.check_action("library_list_focus_rail", ()) is False
+
+    screen._library_selected_row_id = LIBRARY_ROW_BROWSE_NOTES
+    screen._library_notes_view = "list"
+    screen._library_notes_source = "database"
+    assert screen.check_action("library_list_focus_rail", ()) is True
+    screen._library_notes_view = "editor"
+    assert screen.check_action("library_list_focus_rail", ()) is False
+    screen._library_notes_view = "list"
+    screen._library_notes_source = "files"
+    assert screen.check_action("library_list_focus_rail", ()) is False
+
+    screen._library_selected_row_id = LIBRARY_ROW_BROWSE_PROMPTS
+    screen._library_prompts_view = "list"
+    assert screen.check_action("library_list_focus_rail", ()) is True
+    screen._library_prompts_view = "editor"
+    assert screen.check_action("library_list_focus_rail", ()) is False
+
+    screen._library_selected_row_id = LIBRARY_ROW_BROWSE_SKILLS
+    screen._library_skills_view = "list"
+    assert screen.check_action("library_list_focus_rail", ()) is True
+    screen._library_skills_view = "editor"
+    assert screen.check_action("library_list_focus_rail", ()) is False
+
+    # A canvas outside the four list canvases (Search/RAG) -- inactive.
+    screen._library_selected_row_id = LIBRARY_ROW_BROWSE_SEARCH
+    assert screen.check_action("library_list_focus_rail", ()) is False
+
+
+def test_action_library_media_viewer_back_returns_to_list_and_refocuses_it():
+    """task-2856 AC1/AC2: Escape from the PLAIN read-only media viewer (no
+    edit/delete-confirm/analysis sub-state active) reuses the exact same
+    reset sequence as the "‹ Back to list" button
+    (``_exit_library_media_viewer``) and then re-focuses the list's first
+    row, one seam for both exits."""
+    from tldw_chatbook.Library.library_shell_state import LIBRARY_ROW_BROWSE_MEDIA
+    from tldw_chatbook.UI.Screens.library_screen import (
+        LIBRARY_LIST_ENTRY_FOCUS_ARMED_SECONDS,
+        LibraryScreen,
+    )
+
+    app = _build_test_app()
+    screen = LibraryScreen(app)
+    screen._library_selected_row_id = LIBRARY_ROW_BROWSE_MEDIA
+    screen._library_media_view = "viewer"
+    screen._library_media_editing = False
+    screen._library_media_confirming_delete = False
+    screen._library_media_editing_analysis = False
+
+    refresh_calls = []
+    focus_calls = []
+    timer_calls = []
+    screen.refresh = lambda recompose=False: refresh_calls.append(recompose)
+    screen.call_after_refresh = lambda callback: focus_calls.append(callback)
+    # ``_arm_library_list_entry_focus`` also arms a settle-window timer
+    # (task-2856) -- stub it out, a real ``set_timer`` needs a running
+    # event loop this synchronous test has none of.
+    screen.set_timer = lambda delay, callback: timer_calls.append((delay, callback))
+
+    screen.action_library_media_viewer_back()
+
+    assert screen._library_media_view == "list"
+    assert refresh_calls == [True]
+    assert timer_calls == [
+        (LIBRARY_LIST_ENTRY_FOCUS_ARMED_SECONDS, screen._disarm_library_list_entry_focus)
+    ]
+    assert focus_calls == [screen._focus_library_list_entry]
+
+
+@pytest.mark.parametrize(
+    "sub_state_flag",
+    [
+        "_library_media_editing",
+        "_library_media_confirming_delete",
+        "_library_media_editing_analysis",
+    ],
+)
+def test_action_library_media_viewer_back_steps_out_of_a_sub_state_first(
+    sub_state_flag: str,
+):
+    """task-2856 AC2 review round 2: the media edit/delete-confirm/
+    analysis-edit sub-states have no dirty-tracking field to veto on (
+    unlike the note/prompt editors), so Escape instead mirrors each
+    sub-state's OWN existing Cancel button -- one step back to the plain
+    viewer, NOT straight through to the list. This is strictly less
+    aggressive than jumping to the list mid-edit would be, and requires no
+    new dirty-state invention."""
+    from tldw_chatbook.Library.library_shell_state import LIBRARY_ROW_BROWSE_MEDIA
+    from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+
+    app = _build_test_app()
+    screen = LibraryScreen(app)
+    screen._library_selected_row_id = LIBRARY_ROW_BROWSE_MEDIA
+    screen._library_media_view = "viewer"
+    screen._library_media_editing = False
+    screen._library_media_confirming_delete = False
+    screen._library_media_editing_analysis = False
+    setattr(screen, sub_state_flag, True)
+
+    refresh_calls = []
+    focus_calls = []
+    screen.refresh = lambda recompose=False: refresh_calls.append(recompose)
+    screen.call_after_refresh = lambda callback: focus_calls.append(callback)
+    screen.set_timer = lambda delay, callback: None
+
+    screen.action_library_media_viewer_back()
+
+    # Still on the viewer -- Escape did NOT jump to the list.
+    assert screen._library_media_view == "viewer"
+    assert getattr(screen, sub_state_flag) is False
+    assert refresh_calls == [True]
+    # No entry-focus request armed -- the list was never re-entered.
+    assert focus_calls == []
+
+
+@pytest.mark.asyncio
+async def test_action_library_note_editor_back_honors_dirty_guard():
+    """task-2856 AC2: Escape from the note editor reuses the SAME guarded
+    exit as the "‹ Back to list" button -- a dirty edit that survives the
+    flush vetoes the exit exactly like it vetoes the button."""
+    from tldw_chatbook.Library.library_shell_state import LIBRARY_ROW_BROWSE_NOTES
+    from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+
+    app = _build_test_app()
+    screen = LibraryScreen(app)
+    screen._library_selected_row_id = LIBRARY_ROW_BROWSE_NOTES
+    screen._library_notes_source = "database"
+    screen._library_notes_view = "editor"
+    screen._library_note_dirty = True
+
+    async def flush_still_dirty():
+        return None  # leaves _library_note_dirty True, unlike a real save
+
+    screen._flush_library_note_save = flush_still_dirty
+    refresh_calls = []
+    screen.refresh = lambda recompose=False: refresh_calls.append(recompose)
+
+    await screen.action_library_note_editor_back()
+
+    assert screen._library_notes_view == "editor", "dirty veto must not exit"
+    assert refresh_calls == []
+
+    async def flush_clean():
+        screen._library_note_dirty = False
+
+    screen._flush_library_note_save = flush_clean
+    screen._refresh_local_source_snapshot = lambda: None
+    focus_calls = []
+    screen.call_after_refresh = lambda callback: focus_calls.append(callback)
+
+    await screen.action_library_note_editor_back()
+
+    assert screen._library_notes_view == "list"
+    assert refresh_calls == [True]
+    assert focus_calls == [screen._focus_library_list_entry]
+
+
+@pytest.mark.asyncio
+async def test_action_library_prompt_editor_back_honors_dirty_guard():
+    """task-2856 AC2: Escape from the prompt editor reuses the SAME
+    guarded exit as the "‹ Back to list" button."""
+    from tldw_chatbook.Library.library_shell_state import LIBRARY_ROW_BROWSE_PROMPTS
+    from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+
+    app = _build_test_app()
+    screen = LibraryScreen(app)
+    screen._library_selected_row_id = LIBRARY_ROW_BROWSE_PROMPTS
+    screen._library_prompts_view = "editor"
+
+    async def flush_fails():
+        return False
+
+    screen._flush_library_prompt_save = flush_fails
+    refresh_calls = []
+    screen.refresh = lambda recompose=False: refresh_calls.append(recompose)
+
+    await screen.action_library_prompt_editor_back()
+
+    assert screen._library_prompts_view == "editor", "a failed flush must veto"
+    assert refresh_calls == []
+
+    async def flush_ok():
+        return True
+
+    screen._flush_library_prompt_save = flush_ok
+    screen._reset_library_prompt_editor_state = (
+        lambda: setattr(screen, "_library_prompts_view", "list")
+    )
+    screen._refresh_local_source_snapshot = lambda: None
+    focus_calls = []
+    screen.call_after_refresh = lambda callback: focus_calls.append(callback)
+
+    await screen.action_library_prompt_editor_back()
+
+    assert screen._library_prompts_view == "list"
+    assert refresh_calls == [True]
+    assert focus_calls == [screen._focus_library_list_entry]
+
+
+def test_action_library_list_focus_rail_focuses_search_input(monkeypatch):
+    """task-2856 AC2/AC3: Escape from a list canvas focuses the SAME rail
+    search box `/` and F6 already target -- one converged "the rail"
+    destination across all three routes."""
+    from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+
+    app = _build_test_app()
+    screen = LibraryScreen(app)
+
+    focused_widgets = []
+
+    class _FakeInput:
+        def focus(self):
+            focused_widgets.append(self)
+
+    fake_input = _FakeInput()
+    monkeypatch.setattr(screen, "query_one", lambda *a, **k: fake_input)
+
+    screen.action_library_list_focus_rail()
+
+    assert focused_widgets == [fake_input]
+
+
+def test_compose_content_reapplies_pending_list_entry_focus_on_every_recompose():
+    """task-2856: this screen has SEVERAL independent background workers
+    that each end in their own ``self.refresh(recompose=True)`` (the
+    snapshot refresh several "back to list" exits kick off, the skills
+    trust-posture load IT chains into, per-item detail fetches, ...) -- any
+    one of them landing after an earlier recompose rebuilds the list's row
+    Buttons as fresh instances and silently drops the focus already set.
+    Reproduced live: the skill editor's Escape correctly returned to the
+    list and briefly focused its first row, but the trust-posture worker's
+    LATER recompose (a SECOND recompose after the first) still dropped it
+    -- clearing the flag on the first consumption (an earlier version of
+    this fix) lost that same race one level up. ``compose_content`` is the
+    one choke point every recompose passes through regardless of which
+    worker triggered it, so it re-fires the focus request on EVERY run
+    while the flag stays armed (cleared only by the settle-window timer or
+    an explicit Up/Down -- see ``_arm_library_list_entry_focus``), proven
+    here by draining ``compose_content`` twice in a row."""
+    from tldw_chatbook.Library.library_shell_state import LIBRARY_ROW_BROWSE_SKILLS
+    from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+
+    app = _build_test_app()
+    screen = LibraryScreen(app)
+    screen._library_selected_row_id = LIBRARY_ROW_BROWSE_SKILLS
+    screen._library_pending_list_entry_focus = True
+
+    focus_calls = []
+    screen.call_after_refresh = lambda callback: focus_calls.append(callback)
+    screen._register_footer_shortcuts = lambda: None
+    screen._library_rail_preferences = lambda: None
+
+    for _ in range(2):
+        try:
+            # compose_content is a generator; draining it (list(...)) runs
+            # the body up to its first yield, which is all the
+            # flag-consuming code (before any widget construction) needs.
+            list(screen.compose_content())
+        except Exception:
+            # A real recompose needs a live rail/canvas build this bare,
+            # unmounted screen cannot supply -- irrelevant to what this
+            # test checks (the flag-consume runs before any of that).
+            pass
+
+    assert focus_calls == [screen._focus_library_list_entry] * 2
+    assert screen._library_pending_list_entry_focus is True
+
+
+def test_compose_content_leaves_focus_alone_without_a_pending_request():
+    """The common case -- an ordinary recompose while no "enter/return to
+    list" seam has armed the flag -- must never touch focus. Without this
+    guard, EVERY recompose would yank a user who manually pressed Down
+    back to the list's first row."""
+    from tldw_chatbook.Library.library_shell_state import LIBRARY_ROW_BROWSE_SKILLS
+    from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+
+    app = _build_test_app()
+    screen = LibraryScreen(app)
+    screen._library_selected_row_id = LIBRARY_ROW_BROWSE_SKILLS
+    screen._library_pending_list_entry_focus = False
+
+    focus_calls = []
+    screen.call_after_refresh = lambda callback: focus_calls.append(callback)
+    screen._register_footer_shortcuts = lambda: None
+    screen._library_rail_preferences = lambda: None
+
+    try:
+        list(screen.compose_content())
+    except Exception:
+        pass
+
+    assert focus_calls == []
+
+
+def test_arm_library_list_entry_focus_schedules_immediate_attempt_and_settle_timer():
+    """``_arm_library_list_entry_focus`` sets the pending flag, schedules
+    the immediate ``call_after_refresh`` attempt, AND arms a bounded
+    settle-window timer (``LIBRARY_LIST_ENTRY_FOCUS_ARMED_SECONDS``) that
+    disarms the flag once no more of the chained background workers this
+    task's "back to list" exits kick off are expected to still be running
+    (task-2856)."""
+    from tldw_chatbook.UI.Screens.library_screen import (
+        LIBRARY_LIST_ENTRY_FOCUS_ARMED_SECONDS,
+        LibraryScreen,
+    )
+
+    app = _build_test_app()
+    screen = LibraryScreen(app)
+    assert screen._library_pending_list_entry_focus is False
+
+    focus_calls = []
+    timer_calls = []
+    screen.call_after_refresh = lambda callback: focus_calls.append(callback)
+    screen.set_timer = lambda delay, callback: timer_calls.append((delay, callback))
+
+    screen._arm_library_list_entry_focus()
+
+    assert screen._library_pending_list_entry_focus is True
+    assert focus_calls == [screen._focus_library_list_entry]
+    assert timer_calls == [
+        (LIBRARY_LIST_ENTRY_FOCUS_ARMED_SECONDS, screen._disarm_library_list_entry_focus)
+    ]
+
+    screen._disarm_library_list_entry_focus()
+    assert screen._library_pending_list_entry_focus is False
+
+
+def test_arm_library_list_entry_focus_twice_cancels_the_stale_timer_handle():
+    """Qodo review (PR #1410): ``_arm_library_list_entry_focus`` called
+    ``self.set_timer(...)`` every time it ran but never kept the returned
+    handle. Calling it twice within ``LIBRARY_LIST_ENTRY_FOCUS_ARMED_SECONDS``
+    (e.g. a rail-row press immediately followed by a chained background
+    recompose re-requesting focus) left the FIRST timer still scheduled
+    underneath the second -- if it fired later it called
+    ``_disarm_library_list_entry_focus`` and cleared the flag even though
+    the SECOND arm was still meant to be active, making the armed window
+    non-deterministic. The fix stores the handle
+    (``_library_list_entry_focus_timer``) and stops any existing one before
+    scheduling a new one, so this test pins that the stale handle is
+    actually cancelled -- not merely that the flag happens to still read
+    ``True`` a moment later (a real Textual timer must never be allowed to
+    fire once superseded, so the assertion is on ``.stop()`` having been
+    called on the STALE handle, not on sleeping past its deadline)."""
+    from tldw_chatbook.UI.Screens.library_screen import (
+        LIBRARY_LIST_ENTRY_FOCUS_ARMED_SECONDS,
+        LibraryScreen,
+    )
+
+    class _FakeTimer:
+        def __init__(self, delay, callback):
+            self.delay = delay
+            self.callback = callback
+            self.stop_calls = 0
+
+        def stop(self):
+            self.stop_calls += 1
+
+    app = _build_test_app()
+    screen = LibraryScreen(app)
+    screen.call_after_refresh = lambda callback: None
+
+    created_timers: list[_FakeTimer] = []
+
+    def fake_set_timer(delay, callback):
+        timer = _FakeTimer(delay, callback)
+        created_timers.append(timer)
+        return timer
+
+    screen.set_timer = fake_set_timer
+
+    screen._arm_library_list_entry_focus()
+    assert len(created_timers) == 1
+    first_timer = created_timers[0]
+    assert first_timer.delay == LIBRARY_LIST_ENTRY_FOCUS_ARMED_SECONDS
+    assert screen._library_list_entry_focus_timer is first_timer
+    assert first_timer.stop_calls == 0
+
+    # Re-arm before the first timer's own deadline -- e.g. a chained
+    # background recompose re-requesting focus while the first window is
+    # still open. The stale first timer must be cancelled, not left
+    # dangling alongside the new one.
+    screen._arm_library_list_entry_focus()
+    assert len(created_timers) == 2
+    second_timer = created_timers[1]
+
+    assert first_timer.stop_calls == 1, (
+        "the stale first timer must be stopped once a second arm supersedes it"
+    )
+    assert screen._library_list_entry_focus_timer is second_timer
+    assert second_timer.stop_calls == 0
+    assert screen._library_pending_list_entry_focus is True
+
+    # Disarming (whether fired by the second timer's own deadline, an
+    # interaction hook, or an explicit consumer) must stop and clear the
+    # CURRENT handle too, so nothing is left running after the flag drops.
+    screen._disarm_library_list_entry_focus()
+    assert screen._library_pending_list_entry_focus is False
+    assert second_timer.stop_calls == 1
+    assert screen._library_list_entry_focus_timer is None
+
+
+def test_on_key_disarms_a_pending_list_entry_focus_on_any_key():
+    """task-2856 review round 2: review found the settle-window timer was
+    the ONLY disarm path, so a background recompose landing after the
+    user had already Tabbed/clicked away could silently steal focus back
+    to row 0. ``on_key`` now disarms unconditionally the instant ANY key
+    is pressed while a request is armed -- disarming an idle flag is a
+    harmless no-op, so this needs no gate on which key."""
+    from types import SimpleNamespace
+
+    from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+
+    app = _build_test_app()
+    screen = LibraryScreen(app)
+    screen._library_pending_list_entry_focus = True
+    screen.focused = None
+
+    # An arbitrary key with no other special handling in on_key.
+    screen.on_key(SimpleNamespace(key="x", character="x"))
+
+    assert screen._library_pending_list_entry_focus is False
+
+
+def test_on_key_disarm_is_a_harmless_noop_when_nothing_is_armed():
+    """The unconditional on_key disarm must never raise or misbehave when
+    there is nothing pending -- the overwhelmingly common case."""
+    from types import SimpleNamespace
+
+    from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+
+    app = _build_test_app()
+    screen = LibraryScreen(app)
+    assert screen._library_pending_list_entry_focus is False
+    screen.focused = None
+
+    screen.on_key(SimpleNamespace(key="x", character="x"))
+
+    assert screen._library_pending_list_entry_focus is False
+
+
+def test_on_descendant_focus_disarms_when_focus_leaves_the_armed_list():
+    """task-2856 review round 2: ``on_descendant_focus`` is what catches
+    focus changes ``on_key`` cannot -- a mouse click never reaches
+    ``on_key`` at all. Focus landing on any widget that is NOT a row of
+    the currently-armed list (Tab, Shift+Tab, a click elsewhere in the
+    canvas) disarms the pending request."""
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Library.library_shell_state import LIBRARY_ROW_BROWSE_MEDIA
+    from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+
+    app = _build_test_app()
+    screen = LibraryScreen(app)
+    screen._library_selected_row_id = LIBRARY_ROW_BROWSE_MEDIA
+    screen._library_pending_list_entry_focus = True
+
+    foreign_widget = SimpleNamespace(has_class=lambda name: False)
+    screen.on_descendant_focus(SimpleNamespace(widget=foreign_widget))
+
+    assert screen._library_pending_list_entry_focus is False
+
+
+def test_on_descendant_focus_does_not_disarm_for_the_systems_own_row_refocus():
+    """The system's own ``_focus_library_list_entry()`` call ALSO posts a
+    ``DescendantFocus`` (Textual posts it for every focus change,
+    including programmatic ``.focus()`` calls) -- that case must NOT
+    immediately disarm what it just armed, or the settle window would be
+    self-defeating."""
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Library.library_shell_state import LIBRARY_ROW_BROWSE_MEDIA
+    from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+
+    app = _build_test_app()
+    screen = LibraryScreen(app)
+    screen._library_selected_row_id = LIBRARY_ROW_BROWSE_MEDIA
+    screen._library_pending_list_entry_focus = True
+
+    own_row = SimpleNamespace(has_class=lambda name: name == "library-media-row")
+    screen.on_descendant_focus(SimpleNamespace(widget=own_row))
+
+    assert screen._library_pending_list_entry_focus is True
+
+
+def test_on_descendant_focus_is_a_noop_when_nothing_is_armed():
+    """The hook must never touch focus/state when no request is pending --
+    the overwhelmingly common case (every OTHER focus change on the whole
+    screen also flows through here)."""
+    from types import SimpleNamespace
+
+    from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+
+    app = _build_test_app()
+    screen = LibraryScreen(app)
+    assert screen._library_pending_list_entry_focus is False
+
+    foreign_widget = SimpleNamespace(has_class=lambda name: False)
+    screen.on_descendant_focus(SimpleNamespace(widget=foreign_widget))
+
+    assert screen._library_pending_list_entry_focus is False
+
+
 def test_app_uses_screen_navigation_and_wires_media_services():
     app = _build_test_app()
 
@@ -2348,6 +3139,44 @@ async def test_search_route_lands_on_library_rag_canvas():
 
 
 @pytest.mark.asyncio
+async def test_study_screen_escape_returns_to_library_study_staging_canvas():
+    """task-2854 AC#3: Escape on the Study screen (reached via Library's
+    Study/Flashcards/Quizzes handoff rows -- "Continue in Study") must
+    return to Library with the Study staging canvas ("create-study" row)
+    selected. Before this fix Escape was dead on Study and the nav bar
+    falsely claimed Library was still current (see
+    ``test_study_screen_mounts_destination_header_and_clears_nav_highlight``
+    in ``test_destination_headers.py`` for that half of the fix); this
+    covers the actual round trip out.
+    """
+    app = _build_test_app()
+
+    async with app.run_test(size=(170, 48)) as pilot:
+        for _ in range(150):
+            await pilot.pause(0.02)
+            if type(app.screen).__name__ != "Screen":
+                break
+
+        app.post_message(NavigateToScreen("study"))
+        for _ in range(150):
+            await pilot.pause(0.02)
+            if type(app.screen).__name__ == "StudyScreen":
+                break
+        assert type(app.screen).__name__ == "StudyScreen"
+
+        await pilot.press("escape")
+        for _ in range(150):
+            await pilot.pause(0.02)
+            if type(app.screen).__name__ == "LibraryScreen" and app.screen.query(
+                "#library-row-create-study"
+            ):
+                break
+
+        assert type(app.screen).__name__ == "LibraryScreen"
+        assert app.screen._library_selected_row_id == "create-study"
+
+
+@pytest.mark.asyncio
 async def test_boot_with_search_default_tab_lands_on_library_rag_canvas():
     """RAG UX v2 PR-2, Task 4: booting with ``default_tab = "search"`` must
     land on Library with the Search/RAG rail row selected, not generic
@@ -2441,23 +3270,25 @@ async def test_search_all_palette_command_lands_on_library_with_honest_toast():
 
 
 @pytest.mark.asyncio
-async def test_media_screen_round_trip_restores_type_filter_and_search_term():
-    """Regression lock for the bug this task fixes: nothing seeds
-    ``MediaWindow.active_media_type`` on a screen-navigated visit except a
-    live nav-panel click (the legacy ``watch_current_tab`` ->
-    ``activate_initial_view`` path is a no-op once ``_use_screen_navigation``
-    is set). Without restoring it first, a fresh ``MediaWindow`` instance
-    every visit meant the type/search/keyword filter silently reset on every
-    single navigation away and back.
+async def test_media_route_round_trips_to_the_library_media_row():
+    """task-2851: the legacy standalone Media Library screen (nav: Media
+    Types / All Media / Analysis Review / Collections-Tags / Multi-Item
+    Review) used to render UNDER the active Library tab highlight when the
+    command palette's "Media & Content: Open Media Library" entry navigated
+    to the bare "media" route (``MediaProvider.handle_media_action
+    ("open_media")`` -> ``NavigateToScreen("media")``) -- the legacy route
+    folds into the "library" shell destination for nav-bar purposes, but its
+    own screen route pointed at a completely different, dead-end-duplicate
+    screen. "media" is now retired the same way "search" was (RAG UX v2
+    PR-1): it resolves to ``LibraryScreen`` with the Media rail row
+    selected, and -- mirroring
+    ``test_search_route_round_trips_to_the_library_rag_row`` exactly -- that
+    selection survives a round trip through another screen rather than being
+    just a first-navigation fluke of ``_LEGACY_ROUTE_LIBRARY_NAV_CONTEXT``.
     """
+    from tldw_chatbook.Library.library_shell_state import LIBRARY_ROW_BROWSE_MEDIA
+
     app = _build_test_app()
-    # search_media hits the real MediaReadingScopeService -> media_db chain,
-    # and the test fixture's media_db is None -- stub just the DB-touching
-    # call (mirroring Tests/UI/test_media_window_v2_parity.py's pattern) so
-    # this exercises the real mount/restore path without a real database.
-    app.media_reading_scope_service.search_media = AsyncMock(
-        return_value={"items": [], "total": 0}
-    )
 
     async with app.run_test(size=(170, 48)) as pilot:
         for _ in range(150):
@@ -2468,27 +3299,12 @@ async def test_media_screen_round_trip_restores_type_filter_and_search_term():
         app.post_message(NavigateToScreen("media"))
         for _ in range(150):
             await pilot.pause(0.02)
-            if type(app.screen).__name__ == "MediaScreen" and app.screen.query(
-                "#media-nav-all-media"
+            if type(app.screen).__name__ == "LibraryScreen" and app.screen.query(
+                "#library-row-browse-media"
             ):
                 break
-        assert type(app.screen).__name__ == "MediaScreen"
-
-        # Pick a type the way a real user does (there is exactly one media
-        # type in this fixture: "All Media" -> slug "all-media").
-        app.screen.query_one("#media-nav-all-media").press()
-        for _ in range(150):
-            await pilot.pause(0.02)
-            if app.screen.media_window.active_media_type:
-                break
-        assert app.screen.media_window.active_media_type == "all-media"
-
-        search_input = app.screen.query_one("#search-input", Input)
-        search_input.value = "quarterly report"
-        await pilot.pause()
-        await pilot.pause()
-
-        assert app.screen.media_window.search_panel.search_term == "quarterly report"
+        assert type(app.screen).__name__ == "LibraryScreen"
+        assert app.screen._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA
 
         app.post_message(NavigateToScreen("home"))
         for _ in range(150):
@@ -2500,26 +3316,14 @@ async def test_media_screen_round_trip_restores_type_filter_and_search_term():
         app.post_message(NavigateToScreen("media"))
         for _ in range(150):
             await pilot.pause(0.02)
-            if type(app.screen).__name__ == "MediaScreen" and app.screen.query(
-                "#search-input"
+            if type(app.screen).__name__ == "LibraryScreen" and app.screen.query(
+                "#library-row-browse-media"
             ):
                 break
 
         restored_screen = app.screen
-        assert type(restored_screen).__name__ == "MediaScreen"
-        assert restored_screen.media_window.active_media_type == "all-media"
-        for _ in range(150):
-            await pilot.pause(0.02)
-            if (
-                restored_screen.media_window.search_panel.search_term
-                == "quarterly report"
-            ):
-                break
-        assert (
-            restored_screen.media_window.search_panel.search_term == "quarterly report"
-        )
-        restored_input = restored_screen.query_one("#search-input", Input)
-        assert restored_input.value == "quarterly report"
+        assert type(restored_screen).__name__ == "LibraryScreen"
+        assert restored_screen._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA
 
 
 @pytest.mark.asyncio

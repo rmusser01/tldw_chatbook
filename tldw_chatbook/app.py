@@ -1424,7 +1424,12 @@ class MediaProvider(Provider):
         """Handle media management actions."""
         try:
             if action_id == "open_media":
-                _navigate_via_screen(self.app, TAB_MEDIA, "Opened Media Library")
+                # task-2851: "media" now aliases to Library's own Media row
+                # (screen_registry._SCREEN_ALIASES) instead of the retired
+                # standalone MediaScreen -- the toast says so, matching the
+                # "Opened Library X" wording the search_transcripts branch
+                # below already uses for its own Library-folded route.
+                _navigate_via_screen(self.app, TAB_MEDIA, "Opened Library Media")
             elif action_id == "import_new":
                 _navigate_via_screen(
                     self.app, TAB_INGEST, "Opened Import/Export for media import"
@@ -1444,9 +1449,9 @@ class LibraryIngestProvider(Provider):
 
     COMMANDS = (
         (
-            "Library: Add content…",
+            "Library: Import…",
             "open_library_ingest",
-            "Open Library and add content",
+            "Open Library and import content",
         ),
     )
 
@@ -1483,11 +1488,11 @@ class LibraryIngestProvider(Provider):
                 _navigate_via_screen(
                     self.app,
                     TAB_LIBRARY,
-                    "Opened Library to ingest content",
+                    "Opened Library to import content",
                     {LIBRARY_NAV_CONTEXT_INGEST: True},
                 )
         except Exception as e:
-            self.app.notify(f"Failed to open Library ingest: {e}", severity="error")
+            self.app.notify(f"Failed to open Library import: {e}", severity="error")
 
 
 class SetupWizardProvider(Provider):
@@ -1974,7 +1979,7 @@ class LibraryIngestQueueMixin:
                 )
                 failed = self.library_ingest_jobs.mark_failed(
                     empty_job.job_id,
-                    error="No files to ingest were found in this folder.",
+                    error="No files to import were found in this folder.",
                 )
                 return failed if failed is not None else empty_job
             first_job: LibraryIngestJob | None = None
@@ -2642,7 +2647,7 @@ class LibraryIngestQueueMixin:
             self._start_library_ingest_queue_if_idle()
         else:
             error_text = _sanitize_library_ingest_error_text(
-                str(result.get("error") or "Library ingest parsing failed.")
+                str(result.get("error") or "Library import parsing failed.")
             )
             error_detail = result.get("error_detail")
             # (task-2220 owner ruling) An unsupported file was never
@@ -2660,7 +2665,7 @@ class LibraryIngestQueueMixin:
             else:
                 self.library_ingest_jobs.mark_failed(
                     job_id,
-                    error=error_text or "Library ingest parsing failed.",
+                    error=error_text or "Library import parsing failed.",
                     permanent=bool(result.get("permanent", False)),
                     error_detail=error_detail,
                     stt_failure_provenance=result.get("stt_failure_provenance"),
@@ -2730,7 +2735,7 @@ class LibraryIngestQueueMixin:
                 continue
             self.library_ingest_jobs.mark_failed(
                 job.job_id,
-                error="Library ingest parse pool failed unexpectedly; retry to resume.",
+                error="Library import parse pool failed unexpectedly; retry to resume.",
                 permanent=False,
             )
         if self._ingest_parsed_payloads:
@@ -3019,7 +3024,7 @@ class LibraryIngestQueueMixin:
             self.library_ingest_jobs.mark_failed(
                 job_id,
                 error=(
-                    "No server backend is configured, so this ingest cannot run "
+                    "No server backend is configured, so this import cannot run "
                     "on the server. Configure one in Settings, or switch this "
                     "Library to Local."
                 ),
@@ -3034,7 +3039,7 @@ class LibraryIngestQueueMixin:
                 f"Server ingest submission failed for job {job_id}."
             )
             self.library_ingest_jobs.mark_failed(
-                job_id, error=f"The server refused the ingest: {exc}"
+                job_id, error=f"The server refused the import: {exc}"
             )
             return
 
@@ -3051,7 +3056,7 @@ class LibraryIngestQueueMixin:
         errors = _response_field(response, "errors") or []
         if errors and not jobs:
             self.library_ingest_jobs.mark_failed(
-                job_id, error=f"The server rejected the ingest: {errors[0]}"
+                job_id, error=f"The server rejected the import: {errors[0]}"
             )
             return
 
@@ -3183,7 +3188,7 @@ class LibraryIngestQueueMixin:
                 f"Failed to cancel remote ingest batch {batch_id!r}."
             )
             self.notify(
-                "Could not reach the server to cancel that ingest.",
+                "Could not reach the server to cancel that import.",
                 severity="warning",
             )
 
@@ -3466,7 +3471,7 @@ class LibraryIngestQueueMixin:
                         # the row line already identifies the file and the
                         # details surface carries the full path.
                         source_name = Path(job.source_path).name or job.source_path
-                        progress = {"message": f"Ingested {source_name}"}
+                        progress = {"message": f"Imported {source_name}"}
                     self.call_from_thread(
                         self.library_ingest_jobs.mark_done,
                         job.job_id,
@@ -6321,14 +6326,16 @@ class TldwCli(
     # ``{LIBRARY_NAV_CONTEXT_MODE: "notes"}`` for the retired standalone
     # Notes tab -- except "prompts" (the retired Personas "prompts" mode
     # chip, Task 7), "skills" (the retired standalone Skills tab, Skills
-    # sub-project Task 5), and "search" (the retired standalone Search
-    # screen, RAG UX v2 PR-1 Task 1) have no dedicated re-entry action to
+    # sub-project Task 5), "search" (the retired standalone Search
+    # screen, RAG UX v2 PR-1 Task 1), and "media" (the retired standalone
+    # Media Library screen, task-2851) have no dedicated re-entry action to
     # carry that context, so the bare alias route itself must supply it here.
     # The retired Customize screen folds into Settings > Theme.
     _LEGACY_ROUTE_LIBRARY_NAV_CONTEXT: dict[str, dict[str, str]] = {
         "prompts": {LIBRARY_NAV_CONTEXT_MODE: "prompts"},
         "skills": {LIBRARY_NAV_CONTEXT_MODE: "skills"},
         "search": {LIBRARY_NAV_CONTEXT_MODE: "search"},
+        "media": {LIBRARY_NAV_CONTEXT_MODE: "media"},
         "customize": {"category": "theme"},
     }
 
@@ -6741,10 +6748,25 @@ class TldwCli(
         # actually on the stack — otherwise the bar shows a destination that
         # never loaded AND its already-active check swallows every retry click,
         # leaving the destination unreachable until restart.
+        #
+        # task-2854: use ``nav_bar_active``, not ``screen_name`` -- a screen
+        # whose route is folded under another destination for routing/label
+        # purposes only (e.g. Study folds under Library) sets
+        # ``nav_bar_active`` to a value that clears its own nav bar's
+        # highlight instead of falsely re-claiming the owning destination
+        # (see ``BaseAppScreen.nav_bar_active``). ``screen_name`` is kept as
+        # a fallback for any screen that predates that attribute.
+        # ``nav_bar_active`` may legitimately be ``""`` (Study's case), which
+        # must still reach ``restore_active`` -- ``resolve_shell_route("")``
+        # matches no destination, so every nav button loses ``is-active``
+        # rather than the call being skipped and the stale optimistic
+        # highlight surviving.
         try:
             current_screen = self.screen
-            current_route = getattr(current_screen, "screen_name", None)
-            if isinstance(current_route, str) and current_route.strip():
+            current_route = getattr(current_screen, "nav_bar_active", None)
+            if current_route is None:
+                current_route = getattr(current_screen, "screen_name", None)
+            if isinstance(current_route, str):
                 current_screen.query_one(MainNavigationBar).restore_active(
                     current_route
                 )

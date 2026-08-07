@@ -558,6 +558,33 @@ def test_console_and_library_visible_offenders_do_not_obscure_labels():
         assert "$ds-status-error" not in block
 
 
+def test_library_list_row_focus_uses_readable_non_obscuring_contract():
+    """task-2856 AC4: the Media/Notes/Prompts/Skills list rows previously had
+    no dedicated ``:focus`` rule at all -- they fell back to the generic
+    ``*:focus{outline:solid}`` fallback (core/_reset.tcss), which is visible
+    but not the readable, non-obscuring treatment every other selected/
+    focused row in this file gets. Entering a list canvas now parks real
+    DOM focus on the FIRST of these rows (AC1) and Up/Down move it between
+    them, so a Tab/arrow stop landing on a row must be unambiguous. `outline:
+    heavy` on a 2-row compact Button eats the label (round-3 lesson) -- these
+    rules use the SAME color/background/text-style contract
+    ``.library-media-row-selected`` already uses, never an outline.
+    """
+    for label, text in (
+        ("_agentic_terminal.tcss", AGENTIC.read_text(encoding="utf-8")),
+        ("tldw_cli_modular.tcss", BUNDLE.read_text(encoding="utf-8")),
+    ):
+        for selector in (
+            ".library-media-row:focus",
+            ".library-notes-row:focus",
+            ".library-prompt-row:focus",
+            ".library-skill-row:focus",
+        ):
+            block = css_block(text, selector)
+            assert_readable_selected_state_contract(block)
+            assert "outline: none;" in block, f"{label} {selector} missing outline:none"
+
+
 def test_console_selected_message_actions_keep_clickable_hit_targets():
     for path in (AGENTIC, BUNDLE):
         text = path.read_text(encoding="utf-8")

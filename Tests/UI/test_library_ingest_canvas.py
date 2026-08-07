@@ -193,7 +193,7 @@ async def test_unsupported_files_summary_renders():
 
 @pytest.mark.asyncio
 async def test_existing_controls_are_still_present():
-    """The path input, Browse, Start ingest, and queue heading remain."""
+    """The path input, Browse, Start import, and queue heading remain."""
     state = build_library_ingest_state((), form=_default_form())
     app = _CanvasHost(state)
     async with app.run_test() as pilot:
@@ -793,7 +793,7 @@ async def test_transcribe_cpp_provider_shows_path_free_configured_picker():
 
 @pytest.mark.asyncio
 async def test_recent_ingests_section_renders_terminal_jobs():
-    """The Recent ingests collapsible lists done/failed jobs but not queued."""
+    """The Recent imports collapsible lists done/failed jobs but not queued."""
     done = LibraryIngestJob(
         job_id="ingest-job-1",
         source_path="/tmp/done.txt",
@@ -817,7 +817,7 @@ async def test_recent_ingests_section_renders_terminal_jobs():
     app = _CanvasHost(state)
     async with app.run_test() as pilot:
         recent = pilot.app.query_one("#library-ingest-recent", Collapsible)
-        assert str(recent.title) == "Recent ingests"
+        assert str(recent.title) == "Recent imports"
         assert recent.collapsed is True
         items = pilot.app.query(".library-ingest-recent-item")
         texts = [str(item.renderable) for item in items]
@@ -828,7 +828,7 @@ async def test_recent_ingests_section_renders_terminal_jobs():
 
 @pytest.mark.asyncio
 async def test_recent_ingests_section_renders_when_queue_empty():
-    """(task-2100) Recent ingests is HIDDEN when there is nothing recent --
+    """(task-2100) Recent imports is HIDDEN when there is nothing recent --
     it used to render always, and after a clear it expanded to an empty,
     unlabeled shell (round-3 critique evidence)."""
     state = build_library_ingest_state((), form=_default_form())
@@ -1315,7 +1315,7 @@ async def test_done_row_progress_line_has_no_state_prefix():
         source_path="/tmp/report.txt",
         state=IngestJobState.DONE,
         media_id=1,
-        progress={"message": "Ingested report.txt"},
+        progress={"message": "Imported report.txt"},
     )
     state = build_library_ingest_state((job,), form=_default_form())
     app = _CanvasHost(state)
@@ -1323,7 +1323,7 @@ async def test_done_row_progress_line_has_no_state_prefix():
         progress = pilot.app.query_one(
             "#library-ingest-progress-ingest-job-1", Static
         )
-        assert str(progress.renderable) == "Ingested report.txt"
+        assert str(progress.renderable) == "Imported report.txt"
 
 
 @pytest.mark.asyncio

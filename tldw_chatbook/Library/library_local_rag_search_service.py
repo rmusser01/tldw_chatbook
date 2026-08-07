@@ -934,15 +934,15 @@ def _rag_index_empty_recovery_state() -> DestinationRecoveryState:
         unavailable_what="Library RAG Answer evidence",
         why="The semantic index has no content yet",
         next_action=(
-            "Ingest content to index it automatically, run a semantic index "
+            "Import content to index it automatically, run a semantic index "
             "backfill, or switch mode to Search"
         ),
-        recovery_action="Library ingest",
+        recovery_action="Library import",
         authority_owner="Library retrieval service",
         stable_selector=LIBRARY_RAG_EMPTY_STATE_SELECTOR,
         disabled_tooltip=(
             "The semantic index has no content yet. "
-            "Ingest content to index it automatically or run a semantic index backfill."
+            "Import content to index it automatically or run a semantic index backfill."
         ),
     )
 

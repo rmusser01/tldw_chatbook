@@ -125,6 +125,70 @@ async def test_step_three_is_one_complete_line_at_default_terminal_size():
         )
 
 
+class StagedNoticeGeometryApp(App[None]):
+    """Mount the setup modal and sync a staged-evidence receipt (task-2852)."""
+
+    CSS_PATH = str(_BUNDLED_STYLESHEET)
+
+    def __init__(self, *, blocking: bool, notice: str) -> None:
+        super().__init__()
+        self._blocking = blocking
+        self._notice = notice
+
+    def compose(self) -> ComposeResult:
+        yield ConsoleSetupModal(id="console-setup-modal")
+
+    async def on_mount(self) -> None:
+        modal = self.query_one("#console-setup-modal", ConsoleSetupModal)
+        card_state = (
+            _card_state_with_step_three()
+            if self._blocking
+            else ConsoleSetupCardState(mode="quiet")
+        )
+        modal.sync_card_state(
+            card_state,
+            action_label="Configure API",
+            action_tooltip="Open provider settings.",
+            staged_evidence_notice=self._notice,
+        )
+
+
+@pytest.mark.asyncio
+async def test_staged_evidence_notice_shows_on_a_locked_console():
+    """Task-2852 AC#2: a locked Console names what's staged instead of
+    landing the handoff with zero receipt."""
+    notice = "Library Search/RAG evidence staged — finish provider setup to use it."
+    app = StagedNoticeGeometryApp(blocking=True, notice=notice)
+    async with app.run_test(size=(80, 24)):
+        widget = app.query_one("#console-setup-modal-staged-notice", Static)
+        assert widget.display is True
+        assert str(widget.renderable).strip() == notice
+
+
+@pytest.mark.asyncio
+async def test_staged_evidence_notice_hidden_when_nothing_staged():
+    """A locked Console with no pending launch shows the plain setup card,
+    not a stray empty receipt line."""
+    app = StagedNoticeGeometryApp(blocking=True, notice="")
+    async with app.run_test(size=(80, 24)):
+        widget = app.query_one("#console-setup-modal-staged-notice", Static)
+        assert widget.display is False
+
+
+@pytest.mark.asyncio
+async def test_staged_evidence_notice_hidden_once_console_is_configured():
+    """AC#3 regression guard at the widget level: once Console is no longer
+    blocking, the receipt must not leak onto the (now-hidden) card even if
+    the caller is slow to clear a stale notice string."""
+    app = StagedNoticeGeometryApp(
+        blocking=False,
+        notice="Library Search/RAG evidence staged — finish provider setup to use it.",
+    )
+    async with app.run_test(size=(80, 24)):
+        widget = app.query_one("#console-setup-modal-staged-notice", Static)
+        assert widget.display is False
+
+
 @pytest.mark.asyncio
 async def test_step_three_wraps_onto_a_second_row_on_a_narrow_terminal():
     """AC#2, rendered: once the card's max-width caps it below the full

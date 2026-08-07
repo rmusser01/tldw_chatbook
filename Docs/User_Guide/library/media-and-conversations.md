@@ -3,11 +3,11 @@
 ## What this screen is for
 
 These two Library panels are where you browse what the app has collected:
-**Media** holds everything you have ingested (documents, transcripts, web
+**Media** holds everything you have imported (documents, transcripts, web
 pages), and **Conversations** lists every chat you have had in Console. Both
 are read-mostly browsers — you come here to re-read content, search inside
 it, mark it up, and hand pieces of it to Console as context or package them
-into a chatbook. Both panels share one interaction grammar, so learning one
+into a bundle. Both panels share one interaction grammar, so learning one
 teaches you the other.
 
 ## Getting there
@@ -31,7 +31,8 @@ Both list canvases follow the same shape, top to bottom:
   "3 messages - 4h"). Hovering a row shows its full title as a tooltip.
 - **Preview block** — appears under the list once a row is selected: a few
   summary lines plus one action ("Open in viewer" for media, "Open in
-  Console" for conversations).
+  Console" for conversations). Hidden in Media while Select mode is active
+  (see below) — it never shows an item outside the current selection.
 
 Opening a media item swaps the list for the **media viewer** (pictured
 above): "‹ Back to list", the title, metadata lines, then the "Content",
@@ -43,12 +44,27 @@ above): "‹ Back to list", the title, metadata lines, then the "Content",
 
 - **"Select"** switches the list into select mode: every row gains a **☑/☐**
   checkbox, and a strip appears showing "N selected", "Select all N shown",
-  "Clear", and "Export selected". The button relabels to **"Done"** to exit;
-  entering or leaving select mode clears the selection.
+  "Clear", and "Export selected" (Media also adds "Delete selected" — see
+  below). The button relabels to **"Done"** to exit; entering or leaving
+  select mode clears the selection, and leaving with items still checked
+  shows a quiet "Selection discarded (N items)" notice so exiting is never a
+  silent no-op.
 - **"Export…"** (hidden while selecting) exports the whole current scope —
   for Media that means the current type filter — and **"Export selected"**
-  exports just the checked rows. Both open the same "Export chatbook" form,
-  covered in [import & export](import-and-export.md).
+  exports just the checked rows. Both open the same "Export bundle (.zip)"
+  form, covered in [import & export](import-and-export.md).
+
+**Media's "Delete selected"** (Media only — Conversations has no delete;
+see its own row below) is a second bulk action next to "Export selected".
+Pressing it swaps the strip for a confirmation naming the count — "Delete N
+selected items? This moves them to trash." — with "Delete" / "Cancel", the
+same in-place armed-button pattern as the media viewer's own single-item
+"Delete" (never a popup modal). Confirming moves every checked item to
+trash (the same reversible soft-delete as the viewer's Delete) and updates
+the list and the rail's "Media N" count immediately; if any item fails, the
+rest of the batch still completes and a notice names how many could not be
+deleted. Row checkboxes are frozen while the confirmation is showing, so
+the count you confirm is always the count that gets deleted.
 
 ### Media list
 
@@ -59,7 +75,7 @@ above): "‹ Back to list", the title, metadata lines, then the "Content",
 | Row press | Selects the row and shows the preview (title, "Type: …", "Updated: …"). |
 | "Open in viewer" | Opens the selected item in the media viewer. |
 
-Empty states: with nothing ingested, "No media in your Library yet. Ingest
+Empty states: with nothing imported, "No media in your Library yet. Import
 something to see it here."; with a filter that matches nothing, "No media
 of type 'pdf'."
 
@@ -74,7 +90,7 @@ of type 'pdf'."
 - **"Analysis"** — a stored analysis text you can view and edit ("Edit
   analysis", or "Add analysis" when empty; "No analysis yet." otherwise).
   This section only edits text — it never calls a model; analysis is
-  produced at ingest time (the "Analyze after ingest" option) or written by
+  produced at import time (the "Analyze after import" option) or written by
   hand here.
 - **"Highlights"** — saved quotes from this item ("No highlights yet." when
   empty). Expand the collapsed **"Add highlight"** section, fill "Quote"
@@ -88,7 +104,7 @@ of type 'pdf'."
 | "Edit" | Opens an inline form (Title, Author, URL, Keywords) with "Save" / "Cancel". |
 | "Use in Console" | Stages this item as context for your next Console message. |
 | "Read it later" ↔ "Remove from read-it-later" | Toggles the item on your read-it-later list. |
-| "Open in Media manager" | Leaves Library and jumps to the separate Media screen. |
+| "Open in Library ▸ Media" | Returns to Library's own Media surface (the separate Media screen was retired). |
 | "Delete" | Two-step: shows "Delete this media? This moves it to trash." with "Delete" / "Cancel". |
 
 ### Conversations
@@ -98,7 +114,7 @@ of type 'pdf'."
 | "Filter conversations… (Enter)" | Type and press Enter to filter by title substring (case-insensitive, over the loaded list). Status shows "2 matches for 'demo'". |
 | Row press | Selects the row and shows the preview (title, "Messages: N", "Updated: age"). |
 | "Open in Console" | Stages the conversation as **source context** in Console — see below. |
-| "Export…" / "Select" | The shared grammar; export packages conversations into a chatbook. |
+| "Export…" / "Select" | The shared grammar; export packages conversations into a bundle. |
 
 Empty state: "No conversations yet. Chat in Console and it appears here."
 There is no create, rename, or delete here — this panel treats your chats
@@ -136,11 +152,19 @@ conversation rail instead; that one resumes sessions, this one quotes them.
    conversation as source context for my next question." ready to go — edit
    or replace it, then send.
 
-### Export selected items as a chatbook
+### Export selected items as a bundle
 1. Click "Select", check the rows you want ("Select all N shown" grabs the
    whole visible list), then "Export selected".
-2. The "Export chatbook" form opens — name, destination, and options are
-   covered in [import & export](import-and-export.md).
+2. The "Export bundle (.zip)" form opens — name, destination, and options
+   are covered in [import & export](import-and-export.md).
+
+### Delete selected media items
+1. In **Media**, click "Select", check the rows you want to remove.
+2. Click "Delete selected" — the strip becomes "Delete N selected items?
+   This moves them to trash." with "Delete" / "Cancel".
+3. Click "Delete" to confirm (or "Cancel" to back out without deleting
+   anything). The rows disappear and the rail's "Media N" count drops
+   immediately; the items are trashed, not permanently destroyed.
 
 ## Keyboard & commands
 
@@ -153,7 +177,7 @@ navigation keys live in the [guide index](../index.md).
 
 - Neither panel owns any config.toml keys; media arrives via
   [import & export](import-and-export.md) (Import media, including the
-  "Analyze after ingest" and chunking options that shape what the viewer
+  "Analyze after import" and chunking options that shape what the viewer
   shows).
 - Both panels are retrieval sources for
   [Search / RAG](search-and-rag.md) — the "Media" and "Conversations"
@@ -169,8 +193,9 @@ navigation keys live in the [guide index](../index.md).
 - **Highlight colors must parse.** "Color (optional)" accepts standard
   color names or hex values (e.g. `yellow`, `#ffcc00`); anything else is
   saved but renders as plain text with no tint on the swatch.
-- **"Open in Media manager" leaves Library.** It jumps to the separate
-  Media screen — press Ctrl+3 to come back.
+- **"Open in Library ▸ Media" stays in Library.** The separate Media
+  screen it used to jump to was retired; the button now returns to
+  Library's own Media surface.
 - **Conversations shows at most 75 rows**, newest first, and the filter
   only matches within what is loaded. Very old conversations may not
   appear; find them via [Search / RAG](search-and-rag.md) instead.
@@ -198,3 +223,9 @@ handoffs delivering a real, attributed reference to the model on send is
 covered by capture round-trip tests, task-2374; the live check's own
 handoff scenario was blocked on that profile by an unrelated Library
 workspace-eligibility gate).*
+
+*Re-stamped against dev @ 4acb17a0b — 2026-08-07 (TASK-2857: "Open in
+Media manager" is now "Open in Library ▸ Media" — task-2851 had already
+retired the separate Media screen it used to jump to; "Export…"/"Export
+selected" now open the "Export bundle (.zip)" form, not "Export
+chatbook"; "Analyze after ingest" is now "Analyze after import").*

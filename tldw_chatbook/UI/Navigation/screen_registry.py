@@ -206,6 +206,23 @@ _SCREEN_ALIASES = {
     # route inventory already declared search -> library
     # (UI/Workbench/route_inventory.py).
     "search": "library",
+    # The standalone Media Library screen is retired (task-2851, Library UAT
+    # 2026-08-06): Library already reimplements full media browsing/
+    # management as its own canvas (rail row "media"). The legacy "media"
+    # route id used to resolve to a completely different real screen
+    # (``media_screen.MediaScreen``, nav: Media Types / All Media /
+    # Analysis Review / Collections-Tags / Multi-Item Review) while the
+    # shell destination model already folded "media" under the "library"
+    # destination for nav-bar highlighting purposes -- so the command
+    # palette's "Open Media Library" entry hijacked the Library tab: the
+    # nav bar showed Library active while the legacy screen's dead-end-
+    # duplicate content rendered underneath. Existing startup configs /
+    # callers using the legacy "media" route id now resolve to Library
+    # instead, mirroring the "notes"/"prompts"/"skills"/"search" aliases
+    # above. ``MediaScreen`` itself is not deleted -- its save_state/
+    # restore_state contracts stay directly exercised by their own unit
+    # tests, mirroring the "skills" precedent.
+    "media": "library",
     # The standalone Coding screen is retired (merged into Console). Legacy
     # "coding" route ids still resolve to a real screen (Console) instead of
     # erroring; the shell destination model owns the same fold.

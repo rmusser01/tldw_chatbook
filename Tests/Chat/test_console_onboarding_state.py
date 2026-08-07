@@ -9,6 +9,7 @@ from tldw_chatbook.Chat.console_onboarding_state import (
     build_console_detected_server_action,
     build_console_setup_card_state,
     coerce_console_first_send_completed,
+    console_setup_is_blocking,
 )
 from tldw_chatbook.Chat.console_session_settings import ConsoleSettingsReadiness
 from tldw_chatbook.Chat.local_server_discovery import DiscoveredLocalServer
@@ -193,3 +194,63 @@ def test_detected_server_action_drops_non_loopback_and_malformed_servers():
 
     assert build_console_detected_server_action(remote, card_mode="card") is None
     assert build_console_detected_server_action(blank, card_mode="card") is None
+
+
+# --- console_setup_is_blocking (task-2852) -----------------------------
+#
+# Library's "Use in Console" pre-navigation check has no mounted ChatScreen
+# to ask "would landing on Console right now show the blocking setup card".
+# `console_setup_is_blocking` is the one source of truth both that check and
+# (indirectly, via `build_console_setup_card_state`) the real Console screen
+# use -- these tests pin its branch outcomes against the exact same fixtures
+# `build_console_setup_card_state`'s own tests above use, so the two can
+# never silently drift apart.
+
+
+def test_setup_is_blocking_when_provider_missing():
+    assert (
+        console_setup_is_blocking(
+            readiness=_readiness("Missing key"),
+            has_model=True,
+            first_send_completed=False,
+        )
+        is True
+    )
+
+
+def test_setup_is_blocking_when_ready_but_no_model():
+    assert (
+        console_setup_is_blocking(
+            readiness=_readiness("Ready", ready=True),
+            has_model=False,
+            first_send_completed=False,
+        )
+        is True
+    )
+
+
+def test_setup_not_blocking_once_provider_and_model_ready():
+    assert (
+        console_setup_is_blocking(
+            readiness=_readiness("Ready", ready=True),
+            has_model=True,
+            first_send_completed=False,
+        )
+        is False
+    )
+
+
+def test_setup_not_blocking_once_first_send_completed():
+    """Mirrors `test_first_send_completed_is_quiet_forever`: once the
+    persisted global flag is set, an otherwise-unconfigured provider must
+    not report as blocking -- the real Console screen would show the quiet
+    empty state here, not the setup card, so a caller outside an active
+    session must agree."""
+    assert (
+        console_setup_is_blocking(
+            readiness=_readiness("Missing key"),
+            has_model=False,
+            first_send_completed=True,
+        )
+        is False
+    )

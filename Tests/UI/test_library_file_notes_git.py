@@ -54,10 +54,6 @@ from tldw_chatbook.Notes.file_notes_session_owner import (  # noqa: E402
     SessionGitStageAction,
     SessionGitStatus,
 )
-from tldw_chatbook.Library.library_shell_state import (  # noqa: E402
-    LIBRARY_ROW_BROWSE_NOTES,
-)
-from tldw_chatbook.UI.Screens.library_screen import LibraryScreen  # noqa: E402
 from tldw_chatbook.Widgets.Library.library_file_notes_git_panel import (  # noqa: E402
     LibraryFileNotesGitPanel,
     SessionGitTrustDialog,
@@ -69,7 +65,6 @@ from tldw_chatbook.Widgets.Library import (  # noqa: E402
 from tldw_chatbook.Widgets.Library.library_file_notes_workspace import (  # noqa: E402
     LibraryFileNotesWorkspace,
 )
-from Tests.UI.app_factory import _build_test_app  # noqa: E402
 
 
 def test_action_layout_tolerates_rows_not_yet_mounted(
@@ -3211,41 +3206,26 @@ async def test_repository_retrust_consumes_rejected_status_before_fresh_refresh(
         identity=FileSystemIdentity(3, 4),
     )
     replacement_release = asyncio.Event()
-    app = _build_test_app(configured_default="library")
+    # task-2850: this test targets the workspace's OWN git-trust state
+    # machine (repository re-trust after a rejected in-flight status call),
+    # not Library-shell integration -- every sibling retrust/trust test in
+    # this file already mounts through ``_WorkspaceHarness`` at its full
+    # declared width instead of the full production LibraryScreen. This one
+    # used to route through LibraryScreen too, and its literal status text
+    # assertions (e.g. "Status: CURRENT · READY") only fit because Files
+    # mode bypassed the rail/canvas frame entirely (the bug this task
+    # fixes) and got the full screen width. Now that Files mode shares that
+    # frame like every other canvas, the narrower navigator pane elides the
+    # same status text more aggressively -- exactly as it already would for
+    # any other canvas at this shared width. ``_WorkspaceHarness`` gives the
+    # workspace its own full 120 columns, matching every sibling test's
+    # actual intent (git-trust logic, not shell layout).
+    app = _WorkspaceHarness(workspace)
 
     try:
         async with app.run_test(size=(120, 40)) as pilot:
             await _wait_until(
-                pilot,
-                lambda: isinstance(app.screen, LibraryScreen),
-                "production app did not mount Library",
-            )
-            screen = app.screen
-            assert isinstance(screen, LibraryScreen)
-            screen._library_file_notes_workspace_factory = lambda: workspace
-            await _wait_until(
-                pilot,
-                lambda: (
-                    screen._library_loaded
-                    and bool(screen.query("#library-rail"))
-                ),
-                "Library shell did not load",
-            )
-            await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_NOTES)
-            await _wait_until(
-                pilot,
-                lambda: bool(screen.query("#library-notes-source-files")),
-                "Library Notes source selector did not mount",
-            )
-            screen.query_one("#library-notes-source-files", Button).press()
-            await _wait_until(
-                pilot,
-                lambda: (
-                    workspace.initialized
-                    and workspace.is_mounted
-                    and screen._library_file_notes_workspace is workspace
-                ),
-                "production Library did not mount File Notes",
+                pilot, lambda: workspace.initialized, "scan did not finish"
             )
             entry = workspace.query_one("#file-notes-session-changes", Button)
             entry.press()
@@ -4643,41 +4623,23 @@ async def test_40x20_prepare_scrolls_actions_below_a_long_linked_root(
         nested
     )
     workspace.styles.height = 14
-    app = _build_test_app(configured_default="library")
 
-    async with app.run_test(size=(40, 20)) as pilot:
-        await _wait_until(
-            pilot,
-            lambda: isinstance(app.screen, LibraryScreen),
-            "production app did not mount Library",
-        )
-        screen = app.screen
-        assert isinstance(screen, LibraryScreen)
-        screen._library_file_notes_workspace_factory = lambda: workspace
-        await _wait_until(
-            pilot,
-            lambda: (
-                screen._library_loaded
-                and bool(screen.query("#library-rail"))
-            ),
-            "Library shell did not load",
-        )
-        await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_NOTES)
-        await _wait_until(
-            pilot,
-            lambda: bool(screen.query("#library-notes-source-files")),
-            "Library Notes source selector did not mount",
-        )
-        screen.query_one("#library-notes-source-files", Button).press()
-        await _wait_until(
-            pilot,
-            lambda: (
-                workspace.initialized
-                and workspace.is_mounted
-                and screen._library_file_notes_workspace is workspace
-            ),
-            "production Library did not mount File Notes",
-        )
+    # task-2850: this test targets the WORKSPACE's own narrow-layout
+    # rendering (elided root status, single-line row heights, keyboard
+    # scrolling within its Git list surface) -- a property of the widget
+    # itself, not of Library's shell. It used to route through the full
+    # production LibraryScreen, which only tolerated 40 total columns
+    # because Files mode bypassed the rail/canvas frame entirely (the bug
+    # this task fixes). Now that Files mode shares that frame like every
+    # other canvas, 40 columns is too narrow for the frame's own rail
+    # (min-width 24) + canvas (min-width 40) split -- exactly as it already
+    # is for every other Library canvas, none of which are tested that
+    # narrow through the full shell either. ``_WorkspaceHarness`` (used by
+    # this test's siblings, e.g. ``test_40x20_actionless_prepare_surface_is_
+    # keyboard_scrollable``) mounts the workspace alone at its full 40
+    # columns, which is what this test actually needs.
+    async with _WorkspaceHarness(workspace).run_test(size=(40, 20)) as pilot:
+        await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
         root_row = workspace.query_one("#file-notes-root-row")
         root_status = workspace.query_one("#file-notes-root-status", Static)
         full_status = f"Linked — {root.resolve()}"
