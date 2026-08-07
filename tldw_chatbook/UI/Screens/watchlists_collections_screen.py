@@ -10007,6 +10007,10 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         originate from the items region. Walks the same displayed sequence
         `j`/`k` use, and hands the choice to `select_and_reveal` for the
         same reason (selection, cursor, scroll and reader stay in step).
+
+        Args:
+            event: The pane-posted request; stopped here so it cannot
+                bubble further.
         """
         event.stop()
         if self.active_section != "items":
@@ -10087,10 +10091,22 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         the user has since moved on (ingested/ignored), which
         `restore_items_new`'s `status = 'reviewed'` guard leaves alone."""
         notify = getattr(self.app_instance, "notify", None)
-        batch, self._last_mark_all_read_batch = self._last_mark_all_read_batch, []
-        restored = await self._controller.restore_items_new(
-            runtime_backend=self.runtime_backend, item_ids=batch
-        )
+        batch = list(self._last_mark_all_read_batch)
+        try:
+            restored = await self._controller.restore_items_new(
+                runtime_backend=self.runtime_backend, item_ids=batch
+            )
+        except Exception:
+            # The batch is the user's ONLY undo handle: a transient DB
+            # failure must not consume it. Keep it so `u` can be retried
+            # (Qodo review, PR #1383).
+            logger.opt(exception=True).warning(
+                "Undo mark-all-read failed; batch kept for retry."
+            )
+            if callable(notify):
+                notify("Undo failed — press u to retry.", severity="error")
+            return
+        self._last_mark_all_read_batch = []
         id_set = {int(i) for i in batch}
         for item in self._loaded_items:
             if item.get("item_id") in id_set and item.get("status") == "reviewed":

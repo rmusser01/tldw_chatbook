@@ -1037,6 +1037,10 @@ class SubscriptionsDB(BaseDB):
     # Sentinel bucket ids for the watchlists tree roots.
     UNASSIGNED_BUCKET = -1
     ALL_SOURCES_BUCKET = -2
+    # One bound parameter per id in the undo restore's IN-list, and
+    # `mark_all_read` batches are unbounded -- keep each chunk comfortably
+    # under SQLITE_MAX_VARIABLE_NUMBER (999 on older builds).
+    _RESTORE_ITEMS_CHUNK_SIZE = 500
 
     def get_watchlist_item_counts(self) -> Dict[int, Dict[str, int]]:
         """Item totals and unread counts for every watchlists tree node.
@@ -1060,8 +1064,9 @@ class SubscriptionsDB(BaseDB):
             ``-1`` is Unassigned (sources in no watchlist) and ``-2`` is All
             sources. Real watchlist ids are positive.
         """
-        rows = self.conn.execute(
-            """
+        with self.transaction() as conn:
+            rows = conn.execute(
+                """
             SELECT w.id AS bucket,
                    SUM(CASE WHEN si.id IS NOT NULL THEN 1 ELSE 0 END) AS total,
                    SUM(CASE WHEN si.status = 'new' THEN 1 ELSE 0 END) AS unread
@@ -1103,9 +1108,13 @@ class SubscriptionsDB(BaseDB):
         One grouped query, mirroring `get_watchlist_item_counts`: adding
         sources never adds round-trips. Sources with no items are absent
         (a missing key renders as no badge, which is the honest state).
+
+        Returns:
+            Mapping of source id to ``{"total": int, "unread": int}``.
         """
-        rows = self.conn.execute(
-            """
+        with self.transaction() as conn:
+            rows = conn.execute(
+                """
             SELECT subscription_id,
                    COUNT(id) AS total,
                    SUM(CASE WHEN status = 'new' THEN 1 ELSE 0 END) AS unread
@@ -2068,13 +2077,22 @@ class SubscriptionsDB(BaseDB):
         """
         if not item_ids:
             return 0
-        placeholders = ", ".join("?" for _ in item_ids)
+        # Chunked (Qodo review, PR #1383): the IN-list binds one parameter
+        # per id and `mark_all_read` batches are unbounded, so a single
+        # statement could exceed SQLite's host-parameter limit. One
+        # transaction still wraps every chunk, so a mid-batch failure
+        # rolls the whole restore back.
+        restored = 0
         with self.transaction() as conn:
-            cursor = conn.execute(
-                f"UPDATE subscription_items SET status = 'new' WHERE id IN ({placeholders}) AND status = 'reviewed'",
-                tuple(item_ids),
-            )
-            return cursor.rowcount
+            for offset in range(0, len(item_ids), self._RESTORE_ITEMS_CHUNK_SIZE):
+                chunk = item_ids[offset : offset + self._RESTORE_ITEMS_CHUNK_SIZE]
+                placeholders = ", ".join("?" for _ in chunk)
+                cursor = conn.execute(
+                    f"UPDATE subscription_items SET status = 'new' WHERE id IN ({placeholders}) AND status = 'reviewed'",
+                    tuple(chunk),
+                )
+                restored += cursor.rowcount
+        return restored
 
     # --- Briefings (spec #2 phase 1) ---
 

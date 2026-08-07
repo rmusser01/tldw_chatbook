@@ -763,6 +763,70 @@ async def test_mark_all_read_then_undo_roundtrip():
 
 
 @pytest.mark.asyncio
+async def test_undo_failure_keeps_the_batch_for_retry(monkeypatch):
+    """Qodo review (PR #1383): a failing restore must not consume the only
+    undo handle -- the batch survives so a second `u` retries it."""
+    from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
+
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+        db = app.watchlist_bundle_service._db
+        source_id = db.add_subscription(
+            name="ArXiv", type="rss", source="https://a.example/f"
+        )
+        _seed_item(db, source_id, "item 0", created_at="2026-08-06 09:00:00")
+        await screen._load_items()
+        pane = screen.query_one("#watchlists-items-pane", ItemsPane)
+        await _wait_for_items(pilot, pane)
+
+        await pilot.press("a")
+        for _ in range(60):
+            await pilot.pause()
+            if screen._last_mark_all_read_batch:
+                break
+        batch = list(screen._last_mark_all_read_batch)
+        assert batch, "precondition: `a` stored an undo batch"
+
+        app.notify = Mock()
+        original_restore = SubscriptionsDB.restore_items_new
+        state = {"calls": 0}
+
+        def fail_once(self, item_ids):
+            state["calls"] += 1
+            if state["calls"] == 1:
+                raise RuntimeError("transient DB failure")
+            return original_restore(self, item_ids)
+
+        monkeypatch.setattr(SubscriptionsDB, "restore_items_new", fail_once)
+
+        await pilot.press("u")
+        for _ in range(60):
+            await pilot.pause()
+            if state["calls"] >= 1:
+                break
+        assert state["calls"] == 1, "precondition: the failing restore ran"
+        assert screen._last_mark_all_read_batch == batch, (
+            "a failed restore must leave the undo batch intact for retry"
+        )
+        app.notify.assert_any_call("Undo failed — press u to retry.", severity="error")
+
+        await pilot.press("u")
+        for _ in range(60):
+            await pilot.pause()
+            if len(db.get_new_items(status="new", limit=10)) == 1:
+                break
+        assert len(db.get_new_items(status="new", limit=10)) == 1, (
+            "the retry must restore the batch to unread"
+        )
+        assert screen._last_mark_all_read_batch == [], (
+            "a successful restore consumes the batch"
+        )
+
+
+@pytest.mark.asyncio
 async def test_mark_all_read_scoped_to_watchlist():
     """`a` catches up the rail's current scope only — sources outside the
     scoped watchlist keep their unread items."""

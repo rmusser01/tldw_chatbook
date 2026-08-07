@@ -799,3 +799,27 @@ def test_restore_items_new_only_restores_reviewed(db_with_memberships):
     assert db.get_item_status(ingested) == "ingested"
     # An empty undo batch is a no-op, not an error.
     assert db.restore_items_new([]) == 0
+
+
+def test_restore_items_new_chunks_batches_bigger_than_the_host_parameter_limit(db_with_memberships):
+    """Qodo review (PR #1383): the undo IN-list binds one parameter per id,
+    so a batch past SQLITE_MAX_VARIABLE_NUMBER (999 on older builds) must
+    still restore in full -- chunked, inside one transaction."""
+    db, _watchlist_id, in_watchlist, _unassigned = db_with_memberships
+    extra = db._RESTORE_ITEMS_CHUNK_SIZE + 7  # forces a second chunk
+    with db.transaction() as conn:
+        for index in range(extra):
+            conn.execute(
+                "INSERT INTO subscription_items (subscription_id, url, title) "
+                "VALUES (?, ?, ?)",
+                (in_watchlist, f"https://bulk.example/{index}", f"bulk {index}"),
+            )
+    ids = db.mark_all_read(subscription_id=in_watchlist)
+    assert len(ids) > db._RESTORE_ITEMS_CHUNK_SIZE, (
+        "precondition: the batch spans more than one chunk"
+    )
+
+    restored = db.restore_items_new(ids)
+
+    assert restored == len(ids)
+    assert all(db.get_item_status(item_id) == "new" for item_id in ids)

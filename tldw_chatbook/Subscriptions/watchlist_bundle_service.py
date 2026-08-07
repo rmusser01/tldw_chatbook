@@ -368,5 +368,9 @@ class WatchlistBundleService:
         """Per-source {total, unread} for tree source badges.
 
         Thin delegation, same contract as `get_watchlist_item_counts` above.
+
+        Returns:
+            Mapping of source id to ``{"total": int, "unread": int}``;
+            sources with no items are absent.
         """
         return self._db.get_source_item_counts()
