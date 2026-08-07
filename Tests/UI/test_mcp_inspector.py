@@ -4061,6 +4061,13 @@ async def test_advanced_raw_tool_call_refusal_reads_as_blocked_not_failed():
         result = _adv_result(app)
         assert "Blocked · not run" in result
         assert "Execute Local Tool" in result
+        # Fix Round J: restored. 60f2f0f7d (round H) inserted new tests
+        # above this line and the diff re-parented it into the inserted
+        # function -- it vanished with no `-` line, caught only by the
+        # reviewer's AST assertion inventory (a per-commit COUNT sweep
+        # misses it too: the same commit added two other copies, so the
+        # file total still rose).
+        assert "Action failed" not in result
 
 
 @pytest.mark.asyncio
