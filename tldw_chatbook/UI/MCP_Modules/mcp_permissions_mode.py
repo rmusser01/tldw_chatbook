@@ -257,7 +257,8 @@ class PermRow:
 
 # `PermRow.state_label` never carries the raw resolved state (`allow`/
 # `ask`/`deny`) itself -- only the already-formatted UI word
-# (`EffectiveToolState.ui_label`, always "Allow"/"Ask"/"Off") plus an
+# (`EffectiveToolState.ui_label`, "Allow"/"Ask"/"Off" -- or "Unknown" for
+# a gate_error-origin fail-closed verdict, task-2870) plus an
 # optional trailing marker glyph. The matrix's rows (global/server/tool, all
 # built by `mcp_workbench.py`'s `_build_permission_rows()`) don't carry an
 # `EffectiveToolState` object the way `mcp_tools_mode.py`'s `_apply_filter()`

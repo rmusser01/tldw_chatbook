@@ -1,9 +1,13 @@
 ---
 id: TASK-2270
-title: Fix inspector empty-state badge staleness in Permissions/Audit/Findings detail views
-status: To Do
-assignee: []
+title: >-
+  Fix inspector empty-state badge staleness in Permissions/Audit/Findings detail
+  views
+status: Done
+assignee:
+  - '@claude'
 created_date: '2026-08-04 21:30'
+updated_date: '2026-08-07 01:27'
 labels:
   - mcp
   - ui
@@ -23,15 +27,23 @@ Rider from the PR-5 final review (same seam, honest-copy fix): when the test-gat
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
+<!-- AC:BEGIN -->
+- [x] #1 Selecting a permission row, audit entry, or finding with no server selected does not leave the empty-state badge above the populated detail.
+- [x] #2 All four detail views (Tools/Permissions/Audit/Findings) behave consistently: badge hidden while detail is displayed, restored on that view's clear path with the empty-state copy.
+- [x] #3 `update_readiness()` cannot resurrect the badge over displayed detail in any mode.
+- [x] #4 A `gate_error`-origin gate produces the honest "Permission state could not be resolved." note, never "This tool is set to Off." *(the rider — see Implementation Notes)*
+- [x] #5 Existing badge-content and Tools-mode pins keep passing; new behavior covered by additive tests per view.
+<!-- AC:END -->
 
-- [ ] Selecting a permission row, audit entry, or finding with no server selected does not leave the empty-state badge above the populated detail.
-- [ ] All four detail views (Tools/Permissions/Audit/Findings) behave consistently: badge hidden while detail is displayed, restored on that view's clear path with the empty-state copy.
-- [ ] `update_readiness()` cannot resurrect the badge over displayed detail in any mode.
-- [x] A `gate_error`-origin gate produces the honest "Permission state could not be resolved." note, never "This tool is set to Off." *(the rider — see Implementation Notes)*
-- [ ] Existing badge-content and Tools-mode pins keep passing; new behavior covered by additive tests per view.
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Single badge owner: _sync_state_badge_display() — badge displays only when NO detail view shows (tool/permission/audit/finding); every view's show/clear path funnels through it. 2. RED per view: permission row, audit entry, finding each currently leave the badge above populated detail. 3. AC3: update_readiness stays content-only; additive tests prove a readiness sync cannot resurrect the badge over any displayed detail. 4. Rider (gate_error decision note): verify satisfied-by-PR-1385 — the gate_error branch of _decision_note was proven dead and removed; the run path renders the derived unresolved copy — record evidence, no new code. 5. Mutation per new guard.
+<!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
 
+<!-- SECTION:NOTES:BEGIN -->
 **2026-08-06 (PR-T3 Task 3, commit `b1c103ff3`):** The rider (the fourth AC item
 above) shipped. `_decision_note()`'s synthetic `gate_error` origin now degrades to
 the honest `_UNKNOWN_ORIGIN_SENTENCE` ("Permission state could not be resolved.")
@@ -45,3 +57,4 @@ populated detail in the Permissions, Audit, and Findings views (AC #1–#3, #5) 
 UNTOUCHED and remains open.** PR-T3 only reached the decision-note text in the same
 seam; the badge-staleness defect itself was out of that PR's scope. This task stays
 **To Do**.
+<!-- SECTION:NOTES:END -->

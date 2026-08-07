@@ -152,4 +152,10 @@ boolean fields — live check pending Task 9). Fix round I, 2026-08-06:
 "do anything else to cancel" on the Test Tool confirm now genuinely
 covers editing the argument form (it previously did not), and a
 background section load can no longer cancel an Advanced confirm you
-armed while it loaded — only your own actions cancel, as written.*
+armed while it loaded — only your own actions cancel, as written.
+2026-08-07 (tasks 2740/2270/2870): opening Test Tool on a tool with
+only-checkbox or no arguments no longer crashes the app; the "Pick a
+server, tool, or entry…" placeholder now clears for Permissions-row,
+Audit-entry, and Finding detail exactly as it does for tool detail; and
+a permission the app could not read shows as "Unknown" (never a false
+"Off") in the matrix, the State column, and the inspector alike.*

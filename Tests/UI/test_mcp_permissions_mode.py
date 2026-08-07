@@ -710,6 +710,26 @@ def test_format_tool_state_label_marker_precedence():
     )
 
 
+def test_format_tool_state_label_gate_error_reads_unknown_not_off():
+    """task-2870: a gate_error row (resolver raised; fail-closed deny) must
+    render "Unknown" in the matrix/State column, never "Off" -- and bare,
+    with no origin marker (gate_error is synthesized, never an explicit
+    override). The severity treatment is unchanged on purpose:
+    `tool_state_kind()` still buckets the fail-closed deny as "error",
+    because the EFFECT (blocked, don't trust it) is true -- only the
+    causal label lied."""
+    from tldw_chatbook.MCP.permission_store import EffectiveToolState
+
+    gate_error = EffectiveToolState(state="deny", origin="gate_error")
+    assert format_tool_state_label(gate_error) == "Unknown"
+    assert tool_state_kind(gate_error) == "error"
+    # A genuine deny keeps its honest "Off" on the same surface.
+    assert (
+        format_tool_state_label(EffectiveToolState(state="deny", origin="tool_override"))
+        == "Off •"
+    )
+
+
 # -- T8: server-source governance listing (read-only) ---------------------
 
 

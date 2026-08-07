@@ -1544,6 +1544,40 @@ class MCPInspector(Vertical):
 
     # -- T6: tool detail view + Test Tool runner ------------------------------
 
+    def _any_detail_displayed(self) -> bool:
+        """True while any of the four detail views has content on screen.
+
+        Returns:
+            True when a tool, permission row, audit entry, or finding is
+            currently displayed; False when every detail view is cleared.
+        """
+        return (
+            self._current_tool is not None
+            or self._current_permission_tool is not None
+            or self._current_audit_entry is not None
+            or self._current_finding is not None
+        )
+
+    def _sync_state_badge_display(self) -> None:
+        """task-2270: single owner of `#mcp-inspector-state`'s DISPLAY.
+
+        The badge (empty-state copy, or the selected server's readiness --
+        whatever `update_readiness()` last wrote) shows exactly when NO
+        detail view is displayed. RAG-50 fixed this for Tools mode only,
+        with `show_tool()` writing `state.display` directly; the other
+        three detail views (`show_permission()` via
+        `_render_permission_container()`, `show_audit_entry()`,
+        `show_finding()`) never touched it and left the "Pick a server,
+        tool, or entry…" badge stacked above fully populated detail.
+        Every view's show/clear path now funnels through this method, so
+        clearing ONE view cannot resurrect the badge while another still
+        shows detail, and `update_readiness()` stays content-only (it can
+        never force the badge back over displayed detail in any mode).
+        """
+        self.query_one("#mcp-inspector-state", Static).display = (
+            not self._any_detail_displayed()
+        )
+
     async def show_tool(
         self, tool: HubTool | None, *, effective: EffectiveToolState | None = None
     ) -> None:
@@ -1580,28 +1614,23 @@ class MCPInspector(Vertical):
             self._test_run_armed = False
             container = self.query_one("#mcp-inspector-tool", Vertical)
             await container.remove_children()
-            # RAG-50: `#mcp-inspector-state` is composed once with
-            # `_EMPTY_STATE_COPY` and its CONTENT is written only by
-            # `update_readiness()`, whose only caller is fed by the
-            # selected SERVER -- this populate path has no such dependency
-            # (Tools mode can show a tool with no server selected at all),
-            # so left untouched the empty-state badge sat above fully
-            # populated tool detail. This is the seam that owns its
-            # DISPLAY: hidden the instant any tool detail is shown, restored
-            # on the clear path (`show_tool(None)` -- the same method is
-            # the clear/blank entry point; see `MCPWorkbench.
-            # _clear_tool_view()`). Content is untouched here -- still
-            # `update_readiness()`'s job -- restoring visibility just
-            # reveals whatever it last wrote (or the compose()-time
-            # `_EMPTY_STATE_COPY` if it never ran).
-            state = self.query_one("#mcp-inspector-state", Static)
+            # RAG-50 / task-2270: the empty-state badge's DISPLAY is owned
+            # by `_sync_state_badge_display()` (badge shows exactly when NO
+            # detail view is displayed -- RAG-50 fixed Tools mode alone and
+            # left the other three views stacking the badge over populated
+            # detail). The sync here runs BEFORE any await so a paint
+            # between this method's awaits can never show badge + detail
+            # together; the branch-final `_render_permission_container()`
+            # call syncs again after `_current_permission_tool` settles.
+            # Content stays `update_readiness()`'s job -- restoring
+            # visibility just reveals whatever it last wrote (or the
+            # compose()-time `_EMPTY_STATE_COPY` if it never ran).
+            self._sync_state_badge_display()
             if tool is None:
                 container.display = False
-                state.display = True
                 await self._render_permission_container(None, None)
                 return
             container.display = True
-            state.display = False
             widgets: list[Any] = [
                 Static(
                     f"{tool.name} — {tool.server_label}",
@@ -1689,9 +1718,16 @@ class MCPInspector(Vertical):
         if tool is None or effective is None:
             container.display = False
             self._current_permission_tool = None
+            # task-2270: restore the badge -- unless another detail view
+            # (tool/audit/finding) still shows content.
+            self._sync_state_badge_display()
             return
         container.display = True
         self._current_permission_tool = tool
+        # task-2270: a Permissions-matrix row selection hides the badge
+        # exactly like Tools mode does; synced before the mounts below so
+        # no paint frame shows badge + populated detail together.
+        self._sync_state_badge_display()
         widgets: list[Any] = [
             # UX batch item 8: identity line first, mirroring
             # `show_tool()`'s own `#mcp-inspector-tool-name` -- this block
@@ -1714,29 +1750,21 @@ class MCPInspector(Vertical):
             # one of `allow|ask|deny`), so `mcp-status-{kind}` always
             # resolves to one of the three classes the bundle defines.
             #
-            # Fix Round J: `origin == "gate_error"` is the synthesized
-            # fail-closed verdict (the permission RESOLVER raised, not a
-            # configured Off) -- `ui_label` maps its `state="deny"` to
-            # "Off", which stacked "Permission: Off" (a confident
+            # Fix Round J (PR #1385) found the stacked contradiction here:
+            # a gate_error verdict rendered "Permission: Off" (a confident
             # configuration claim) one line above "Permission state could
-            # not be resolved." (an admission we don't know it) -- the
-            # exact contradiction shape rounds B/D/F removed from the Test
-            # Tool body and the Advanced hatch, reassembled here by two
-            # truthful-in-isolation widgets. The label now says what is
-            # actually known ("Unknown"); the `error` status class is KEPT
-            # on purpose -- the color encodes the EFFECT (fail-closed, the
-            # tool will not run; don't trust it), which is true, while the
-            # label no longer misstates the CAUSE. The other `ui_label`
-            # renderers (Permissions matrix rows, Tools-mode State column
-            # via `format_tool_state_label()`) still print "Off ·" for
-            # gate_error rows -- that is task-2270's scope (gate_error copy
-            # across the views), not silently expanded here.
+            # not be resolved." (an admission we don't know it), and this
+            # site grew its own origin-aware label branch. task-2870 moved
+            # that ownership INTO `EffectiveToolState.ui_label` (gate_error
+            # -> "Unknown") so the matrix/State-column renderers tell the
+            # same truth -- the branch here collapsed back to the plain
+            # read, and round J's test now pins the behavior through
+            # `ui_label` like every other surface. The `error` status
+            # class is KEPT on purpose: the color encodes the EFFECT
+            # (fail-closed, the tool will not run), which is true; only
+            # the causal label lied.
             Static(
-                (
-                    "Permission: Unknown"
-                    if effective.origin == "gate_error"
-                    else f"Permission: {effective.ui_label}"
-                ),
+                f"Permission: {effective.ui_label}",
                 id="mcp-inspector-permission-state",
                 classes=f"ds-field-row mcp-status-{tool_state_kind(effective)}",
                 markup=False,
@@ -1834,9 +1862,13 @@ class MCPInspector(Vertical):
             if entry is None:
                 container.display = False
                 self._current_audit_entry = None
+                # task-2270: restore the badge unless another detail view
+                # still shows content (e.g. a finding alongside this entry).
+                self._sync_state_badge_display()
                 return
             container.display = True
             self._current_audit_entry = entry
+            self._sync_state_badge_display()  # task-2270: hide over detail
             server_key = str(entry.get("server_key") or "")
             tool_name = str(entry.get("tool_name") or "")
             detail_payload = audit_entry_detail_payload(entry)
@@ -1916,10 +1948,14 @@ class MCPInspector(Vertical):
                 container.display = False
                 self._current_finding = None
                 self._current_finding_server_key = None
+                # task-2270: restore the badge unless another detail view
+                # still shows content (e.g. the audit entry beside this).
+                self._sync_state_badge_display()
                 return
             container.display = True
             self._current_finding = finding
             self._current_finding_server_key = server_key
+            self._sync_state_badge_display()  # task-2270: hide over detail
             severity = _finding_text(finding, "severity")
             finding_type = _finding_text(finding, "finding_type", "type")
             message = _finding_text(finding, "message")
@@ -2035,12 +2071,27 @@ class MCPInspector(Vertical):
         await container.mount(panel)
         # F-056: opening the panel moves keyboard focus into it -- the
         # schema form's first control when there is one (a raw-JSON
-        # TextArea, an enum Select, or a scalar Input), the Close button
-        # otherwise. `call_after_refresh` so this lands after Textual's own
-        # mount-time focus settling instead of racing it.
-        first_control = panel.query("Input, Select, TextArea").first()
-        if first_control is None:
-            first_control = panel.query_one("#mcp-inspector-test-close", Button)
+        # TextArea, an enum Select, a Checkbox, or a scalar Input), the
+        # Close button otherwise. `call_after_refresh` so this lands after
+        # Textual's own mount-time focus settling instead of racing it.
+        #
+        # task-2740: two stacked defects made this a live CRASHER, not a
+        # focus nit -- the query omitted `Checkbox`, and `DOMQuery.first()`
+        # RAISES `NoMatches` on an empty result (it never returns None, so
+        # the old `is None` fallback to Close was dead code and the
+        # "otherwise" above never happened). Any tool whose schema renders
+        # no Input/Select/TextArea -- an all-boolean schema, or the empty
+        # `properties` the real built-in `list_characters` ships -- blew up
+        # this mount worker (default `exit_on_error`) and took the app
+        # down. The truthiness guard below is the check `DOMQuery`
+        # actually supports; the Close fallback is now reachable, and the
+        # zero-control regression test pins it.
+        controls = panel.query("Input, Select, TextArea, Checkbox")
+        first_control = (
+            controls.first()
+            if controls
+            else panel.query_one("#mcp-inspector-test-close", Button)
+        )
         self.call_after_refresh(first_control.focus)
 
     async def action_close_test_panel(self) -> None:
