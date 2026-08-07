@@ -79,6 +79,8 @@ from ...Library.library_export_state import (
     LibraryExportFormState,
     build_library_export_form_state,
     default_export_name,
+    export_button_tooltip,
+    format_last_export_line,
     next_media_quality,
     normalize_export_destination,
 )
@@ -1854,6 +1856,18 @@ class LibraryScreen(BaseAppScreen):
         # it yet in this task -- the Cancel button and navigate-away wiring
         # land in Task 5.
         self._library_export_cancel_event: threading.Event | None = None
+        # task-2858 AC#3 (LIB-12): the last successful export's destination
+        # + completion timestamp, for the durable "Last export: ..."
+        # receipt. Deliberately NOT touched by
+        # ``_reset_library_export_transient_state`` -- every OTHER export
+        # field resets on every canvas entry (a fresh form each visit is
+        # correct), but the receipt must survive leaving and re-entering
+        # the canvas within the session. Also round-tripped through
+        # ``save_state``/``restore_state`` so it survives a full navigate-
+        # away-and-back to Library too (the "persist further" half of the
+        # AC, via that already-existing seam).
+        self._library_export_last_path: str = ""
+        self._library_export_last_at: float | None = None
         # task-2856: armed by every "enter/return to a list canvas" seam
         # (``_arm_library_list_entry_focus``) right before it schedules its
         # OWN ``call_after_refresh(self._focus_library_list_entry)``. That
@@ -2258,6 +2272,11 @@ class LibraryScreen(BaseAppScreen):
         state["library_conversation_query"] = getattr(
             self, "_library_conversation_query", ""
         )
+        # task-2858 AC#3 (LIB-12): extend the receipt's durability past a
+        # full navigate-away-and-back, not just within-instance canvas
+        # switches (see the field's own ``__init__`` comment).
+        state["library_export_last_path"] = self._library_export_last_path
+        state["library_export_last_at"] = self._library_export_last_at
         return state
 
     def restore_state(self, state: dict[str, Any]) -> None:
@@ -2397,6 +2416,20 @@ class LibraryScreen(BaseAppScreen):
             conversation_query if isinstance(conversation_query, str) else "",
             "",
             max_length=200,
+        )
+        # task-2858 AC#3 (LIB-12): restore the durable export receipt
+        # (see the field's ``__init__`` comment) -- a foreign/corrupted
+        # dict degrades to "no receipt yet" rather than raising.
+        last_export_path = state.get("library_export_last_path")
+        self._library_export_last_path = (
+            last_export_path if isinstance(last_export_path, str) else ""
+        )
+        last_export_at = state.get("library_export_last_at")
+        self._library_export_last_at = (
+            float(last_export_at)
+            if isinstance(last_export_at, (int, float))
+            and not isinstance(last_export_at, bool)
+            else None
         )
 
     def _file_notes_active(self) -> bool:
@@ -6027,15 +6060,28 @@ class LibraryScreen(BaseAppScreen):
             empty_line = self.query_one("#library-export-empty-line", Static)
             empty_line.update(state.empty_scope_line)
             empty_line.display = bool(state.empty_scope_line)
-            self.query_one(
-                "#library-export-submit", Button
-            ).disabled = not state.export_enabled
+            # task-2858 AC#3 (LIB-11): the tooltip flips in place with
+            # `disabled`, same F-018 discipline as the select-mode
+            # toolbar's export/delete buttons -- otherwise the compose-
+            # time tooltip goes stale the moment counts land and this
+            # patcher is the only thing that updates `disabled` here.
+            submit_button = self.query_one("#library-export-submit", Button)
+            submit_button.disabled = not state.export_enabled
+            submit_button.tooltip = export_button_tooltip(state)
         except (NoMatches, QueryError):
             pass
 
     def _build_library_export_state(self) -> LibraryExportFormState:
         """Build the export canvas's full display state from screen fields."""
         form = self._library_export_form
+        last_export_line = (
+            format_last_export_line(
+                self._library_export_last_path, self._library_export_last_at
+            )
+            if self._library_export_last_path
+            and self._library_export_last_at is not None
+            else ""
+        )
         return build_library_export_form_state(
             scope=self._library_export_scope,
             counts=self._library_export_counts,
@@ -6047,6 +6093,7 @@ class LibraryScreen(BaseAppScreen):
             running=self._library_export_running,
             status_line=self._library_export_status,
             error_line=self._library_export_error,
+            last_export_line=last_export_line,
         )
 
     # ----- Export canvas: execution (Task 3) ------------------------------
@@ -6548,6 +6595,19 @@ class LibraryScreen(BaseAppScreen):
         away from (see ``_library_export_run_id``'s docstring) must not
         stomp ``_library_export_running``/``_error``/``_status`` or the
         canvas DOM out from under whatever the user is now looking at.
+
+        The task-2858 AC#3 (LIB-12) receipt fields
+        (``_library_export_last_path``/``_last_at``) are set here too,
+        BEFORE the staleness guard, for the identical reason the
+        notifications above are unconditional: the zip genuinely landed on
+        disk regardless of which run/canvas is currently displayed. The
+        canvas DOM patch that renders the new receipt text still only
+        happens for the live run (inside
+        ``_update_library_export_canvas_after_run``, guarded below) -- a
+        superseded run's receipt becomes visible the next time this
+        screen's export state is rebuilt (e.g. the next canvas entry or
+        the next completed run), never retroactively rewriting what the
+        user is looking at right now.
         """
         notify_message = self._build_library_export_success_message(
             path, dependency_info, message
@@ -6561,6 +6621,8 @@ class LibraryScreen(BaseAppScreen):
                     "appear under Artifacts.",
                     severity="warning",
                 )
+        self._library_export_last_path = str(path)
+        self._library_export_last_at = time.time()
         if run_id != self._library_export_run_id:
             return
         self._library_export_running = False
@@ -6625,8 +6687,9 @@ class LibraryScreen(BaseAppScreen):
         name/description ``Input`` while waiting (nothing disables those
         fields during ``running``) -- a recompose on completion would
         destroy and rebuild that ``Input`` out from under them, silently
-        dropping keyboard focus. Only the status line, the error line, and
-        the Export button's disabled gate can change here; both lines are
+        dropping keyboard focus. Only the status line, the error line, the
+        task-2858 AC#3 (LIB-12) receipt line, and the Export button's
+        disabled/tooltip gate can change here; all three lines are
         unconditionally mounted by ``LibraryExportCanvas.compose`` (display-
         toggled, never conditionally yielded) specifically so this in-place
         update always finds them, mirroring the empty-scope helper's own
@@ -6650,9 +6713,16 @@ class LibraryScreen(BaseAppScreen):
             error_widget = self.query_one("#library-export-error-line", Static)
             error_widget.update(state.error_line)
             error_widget.display = bool(state.error_line)
-            self.query_one(
-                "#library-export-submit", Button
-            ).disabled = not state.export_enabled
+            # task-2858 AC#3 (LIB-12): the durable receipt -- rendered from
+            # ``_library_export_last_path``/``_last_at``, set by
+            # ``_apply_library_export_success`` just before this runs on a
+            # genuine success completion.
+            last_export_widget = self.query_one("#library-export-last-line", Static)
+            last_export_widget.update(state.last_export_line)
+            last_export_widget.display = bool(state.last_export_line)
+            submit_button = self.query_one("#library-export-submit", Button)
+            submit_button.disabled = not state.export_enabled
+            submit_button.tooltip = export_button_tooltip(state)
             self.query_one("#library-export-cancel", Button).display = bool(
                 state.running
             )
@@ -10495,8 +10565,8 @@ class LibraryScreen(BaseAppScreen):
         )
 
     def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
-        """Gate the skill-editor, Files-mode, and list/detail Escape bindings
-        (task-424/2850/2856).
+        """Gate the skill-editor, Files-mode, list/detail Escape, and
+        Search/RAG evidence-card bindings (task-424/2850/2856/2858).
 
         Returning ``False`` deactivates the binding entirely, so Escape /
         Ctrl+S behave as if unbound anywhere else on the Library screen.
@@ -10504,6 +10574,18 @@ class LibraryScreen(BaseAppScreen):
         tries them in order and stops at the first whose ``check_action``
         passes, so each one returning ``False`` outside its own context is
         what lets the next fall through untouched.
+
+        task-2858 AC#2 (LIB-09): the three Search/RAG evidence-card
+        actions (``u``/``enter``/``o``) had NO gate here before this task
+        -- their own action bodies already no-op outside their context
+        (see ``action_library_rag_use_in_console`` and
+        ``_focused_library_rag_result_card_index``'s callers), but
+        ``check_action`` never reflected that, so ``action_show_
+        workbench_help``'s ``BINDINGS`` filter (below) would otherwise
+        keep advertising ``u`` on every non-Search canvas -- the exact
+        F1 contamination this task closes. Every action reachable from
+        ``BINDINGS`` now has an explicit branch here; see
+        ``test_library_screen_bindings_are_all_gated_or_universal``.
         """
         if action in ("library_skill_save", "library_skill_back"):
             return self._library_skill_editor_active()
@@ -10520,7 +10602,96 @@ class LibraryScreen(BaseAppScreen):
             return self._library_prompt_editor_active()
         if action == "library_list_focus_rail":
             return self._library_list_canvas_showing_list()
+        if action == "library_rag_use_in_console":
+            # Mirrors action_library_rag_use_in_console's own gate exactly
+            # (that method also accepts no focused card -- "u" stages
+            # whatever evidence is already selected -- so this cannot be
+            # narrowed to the focused-card predicate below without making
+            # the gate stricter than the action itself).
+            return self._library_selected_row_id == LIBRARY_ROW_BROWSE_SEARCH
+        if action in (
+            "library_rag_result_card_select",
+            "library_rag_result_card_open",
+        ):
+            return self._focused_library_rag_result_card_index() is not None
         return True
+
+    def action_show_workbench_help(self) -> None:
+        """F1 help: only bindings whose ``check_action`` gate currently
+        passes (task-2858 AC#2, LIB-09).
+
+        Without this override, ``app.py``'s generic fallback
+        (``App._show_generic_screen_help``, used by any screen that
+        declares no ``action_show_workbench_help`` of its own) flattens
+        this screen's raw ``BINDINGS`` list unconditionally -- it never
+        consults ``check_action`` at all, so it kept advertising the
+        skill editor's Ctrl+S/Escape, the four other context-gated
+        Escape bindings, and the Search/RAG-only ``u``/Enter/``o``
+        evidence-card keys on every OTHER Library surface too. This
+        reproduced exactly the original finding: F1 on the Media canvas
+        was titled "LibraryScreen Shortcuts" and listed "ctrl+s: Save
+        skill"/"escape: Back to skills list" while browsing media, where
+        neither key does anything.
+
+        ``app.py`` delegates F1 to the screen whenever this method
+        exists (the same seam ``SettingsScreen.action_show_workbench_
+        help`` already uses for its own per-category filtering) -- this
+        filters the same static list through ``check_action``, mirroring
+        the exact keep/drop rule Textual's own ``Screen.active_bindings``
+        uses for footer/key resolution.
+        """
+        from ..Workbench.help import (  # noqa: PLC0415 -- lazy: only needed on F1; keeps the help panel off the module import path
+            WorkbenchHelpPanel,
+            WorkbenchHelpState,
+        )
+
+        state = WorkbenchHelpState(
+            route_id="library",
+            title=f"{type(self).__name__} Shortcuts",
+            shortcuts=self._active_library_binding_shortcuts(),
+        )
+        self.app.push_screen(WorkbenchHelpPanel(state))
+
+    def _active_library_binding_shortcuts(self) -> tuple[tuple[str, str], ...]:
+        """Filter ``BINDINGS`` through ``check_action`` for the F1 panel.
+
+        Same keep/drop rule ``Screen.active_bindings`` uses: a
+        ``check_action`` result of ``False`` means genuinely inactive
+        right now (dropped); ``True`` or ``None`` both mean "keep it"
+        (``None`` is what ``check_action``'s own fallback branch would
+        return for an action with no explicit gate -- none remain on
+        this screen after task-2858, see
+        ``test_library_screen_bindings_are_all_gated_or_universal``, but
+        the same-as-Textual semantics are kept here defensively).
+        """
+        pairs: list[tuple[str, str]] = []
+        for entry in self.BINDINGS:
+            if isinstance(entry, Binding):
+                key, action, description = entry.key, entry.action, entry.description
+            elif isinstance(entry, (tuple, list)) and entry:
+                key = str(entry[0])
+                action = str(entry[1]) if len(entry) > 1 else ""
+                description = str(entry[2]) if len(entry) > 2 else ""
+            else:
+                continue
+            if not action:
+                continue
+            try:
+                gate_state = self.check_action(action, ())
+            except Exception:
+                # A screen-wide help panel must never crash the app over a
+                # single misbehaving gate -- fail open (keep the entry)
+                # rather than hide a key silently.
+                logger.debug(
+                    f"check_action raised for Library binding action "
+                    f"{action!r}; keeping it in the F1 panel.",
+                    exc_info=True,
+                )
+                gate_state = True
+            if gate_state is False:
+                continue
+            pairs.append((key, description))
+        return tuple(pairs)
 
     def action_library_skill_save(self) -> None:
         """Ctrl+S: save the open skill from anywhere in the editor (task-424)."""

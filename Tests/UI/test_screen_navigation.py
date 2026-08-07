@@ -1654,8 +1654,12 @@ def test_check_action_gates_notes_files_back_to_active_files_mode():
     screen._library_notes_source = "database"
     assert screen.check_action("library_notes_files_back", ()) is False
 
-    # Unrelated actions are untouched by the new gate.
-    assert screen.check_action("library_rag_use_in_console", ()) is True
+    # Unrelated actions are untouched by the new gate. "library_rag_use_
+    # in_console" is no longer a valid stand-in for "unrelated" -- task-2858
+    # AC#2 gates it too (see test_check_action_gates_rag_use_in_console_to_
+    # search_row below) -- so this uses a genuinely nonexistent action,
+    # which check_action's final `return True` fallback still covers.
+    assert screen.check_action("some_nonexistent_action", ()) is True
 
 
 @pytest.mark.asyncio
@@ -1743,8 +1747,10 @@ def test_check_action_gates_media_viewer_back_to_active_viewer():
     screen._library_selected_row_id = LIBRARY_ROW_BROWSE_NOTES
     assert screen.check_action("library_media_viewer_back", ()) is False
 
-    # Unrelated actions are untouched by the new gate.
-    assert screen.check_action("library_rag_use_in_console", ()) is True
+    # Unrelated actions are untouched by the new gate. "library_rag_use_
+    # in_console" is no longer a valid stand-in for "unrelated" -- task-2858
+    # AC#2 gates it too -- so this uses a genuinely nonexistent action.
+    assert screen.check_action("some_nonexistent_action", ()) is True
 
 
 def test_register_footer_shortcuts_distinguishes_plain_viewer_from_a_media_sub_state():
@@ -1901,6 +1907,165 @@ def test_check_action_gates_list_focus_rail_to_showing_list():
     # A canvas outside the four list canvases (Search/RAG) -- inactive.
     screen._library_selected_row_id = LIBRARY_ROW_BROWSE_SEARCH
     assert screen.check_action("library_list_focus_rail", ()) is False
+
+
+def test_check_action_gates_rag_use_in_console_to_search_row():
+    """task-2858 AC#2 (LIB-09): the "u" binding
+    (``library_rag_use_in_console``) had no ``check_action`` gate before
+    this task -- its OWN action body already no-ops off the Search/RAG
+    row (``if self._library_selected_row_id != LIBRARY_ROW_BROWSE_SEARCH:
+    return``), but nothing told ``check_action`` that, so F1's help panel
+    kept advertising "u" on every other Library surface (the media
+    viewer, browsing skills, etc.) -- reproducing the original finding.
+    This pins the gate to the EXACT same predicate the action itself
+    uses.
+    """
+    from tldw_chatbook.Library.library_shell_state import (
+        LIBRARY_ROW_BROWSE_MEDIA,
+        LIBRARY_ROW_BROWSE_SEARCH,
+    )
+    from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+
+    app = _build_test_app()
+    screen = LibraryScreen(app)
+
+    # Landing -- inactive.
+    assert screen.check_action("library_rag_use_in_console", ()) is False
+
+    # A different canvas (media) -- inactive, exactly LIB-09's finding.
+    screen._library_selected_row_id = LIBRARY_ROW_BROWSE_MEDIA
+    assert screen.check_action("library_rag_use_in_console", ()) is False
+
+    # Search/RAG row -- active.
+    screen._library_selected_row_id = LIBRARY_ROW_BROWSE_SEARCH
+    assert screen.check_action("library_rag_use_in_console", ()) is True
+
+
+def test_check_action_gates_rag_result_card_actions_to_focused_card():
+    """task-2858 AC#2 (LIB-09): the Enter/``o`` evidence-card actions
+    (``library_rag_result_card_select``/``_open``) had no ``check_action``
+    gate either -- both already no-op unless a
+    ``.library-rag-result-card`` widget holds focus (see
+    ``_focused_library_rag_result_card_index``), so this pins the SAME
+    predicate at the ``check_action`` layer (monkeypatched directly here
+    rather than building a real focus chain, mirroring how other
+    predicate-only gates in this suite are exercised)."""
+    from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+
+    app = _build_test_app()
+    screen = LibraryScreen(app)
+
+    screen._focused_library_rag_result_card_index = lambda: None
+    assert screen.check_action("library_rag_result_card_select", ()) is False
+    assert screen.check_action("library_rag_result_card_open", ()) is False
+
+    screen._focused_library_rag_result_card_index = lambda: 0
+    assert screen.check_action("library_rag_result_card_select", ()) is True
+    assert screen.check_action("library_rag_result_card_open", ()) is True
+
+
+def test_library_screen_bindings_are_all_gated_or_universal():
+    """task-2858 AC#2 (LIB-09): audit the FULL static ``BINDINGS`` list.
+
+    F1's help panel (``LibraryScreen.action_show_workbench_help``) now
+    filters ``BINDINGS`` through ``check_action`` -- so an action added to
+    ``BINDINGS`` in the future WITHOUT a matching ``check_action`` branch
+    would silently fall through to the default ``return True`` and leak
+    into F1 on every Library surface again, reproducing this exact
+    finding. This audits every action currently on the class: on a bare
+    (landing) screen instance -- where none of today's context-specific
+    actions legitimately apply -- each one must either be gated (``check_
+    action`` returns ``False``) or be explicitly declared universal below
+    (works identically on every surface, so ``True`` would be correct
+    even on the landing). Nothing is declared universal today; the
+    allowlist exists so a genuinely screen-wide binding could be added
+    later without failing this test for the right reason.
+    """
+    from textual.binding import Binding
+
+    from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+
+    # No LibraryScreen binding is meant to work identically on every
+    # surface today -- "/" (focus search) and F6 (next pane) are real
+    # screen-wide keys, but they are NOT Bindings (see
+    # ``LibraryScreen.on_key``/``action_focus_next_workbench_pane``'s own
+    # wiring), so they never appear in BINDINGS and are out of scope here.
+    universal_actions: frozenset[str] = frozenset()
+
+    app = _build_test_app()
+    screen = LibraryScreen(app)
+
+    actions: set[str] = set()
+    for entry in LibraryScreen.BINDINGS:
+        if isinstance(entry, Binding):
+            actions.add(entry.action)
+        elif isinstance(entry, (tuple, list)) and len(entry) > 1:
+            actions.add(str(entry[1]))
+
+    assert actions, "BINDINGS must not be empty for this audit to mean anything"
+
+    for action in sorted(actions):
+        result = screen.check_action(action, ())
+        if action in universal_actions:
+            assert result is True, (
+                f"{action!r} is declared universal but check_action "
+                f"returned {result!r} on the landing."
+            )
+        else:
+            assert result is False, (
+                f"{action!r} has no check_action gate (or its gate passes "
+                "on the bare landing) -- it will leak into F1's help "
+                "panel on every Library surface (LIB-09 contamination)."
+            )
+
+
+def test_action_show_workbench_help_filters_bindings_by_check_action(monkeypatch):
+    """task-2858 AC#2 (LIB-09): F1 on a non-skills, non-Search canvas must
+    NOT advertise the skill editor's or Search/RAG's dead keys -- the
+    original finding, reproduced live at ``6ffa56516``: F1 on the Media
+    canvas was titled "LibraryScreen Shortcuts" and listed "ctrl+s: Save
+    skill"/"escape: Back to skills list". Sets the screen to the Media
+    LIST canvas (nothing skill/Search/viewer related active) and asserts
+    the resulting help state's shortcuts include none of those dead keys.
+    """
+    from tldw_chatbook.Library.library_shell_state import LIBRARY_ROW_BROWSE_MEDIA
+    from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+    from tldw_chatbook.UI.Workbench.help import WorkbenchHelpPanel
+
+    app = _build_test_app()
+    screen = LibraryScreen(app)
+    screen._library_selected_row_id = LIBRARY_ROW_BROWSE_MEDIA
+    screen._library_media_view = "list"
+
+    pushed = []
+
+    class _FakeApp:
+        def push_screen(self, panel):
+            pushed.append(panel)
+
+    # A class-level property override (auto-reverted by monkeypatch) --
+    # mirrors test_settings_rag_profile_region.py's ``fake_app`` fixture:
+    # an un-mounted Screen's ``.app`` raises NoActiveAppError otherwise.
+    monkeypatch.setattr(
+        LibraryScreen, "app", property(lambda self: _FakeApp()), raising=False
+    )
+
+    screen.action_show_workbench_help()
+
+    assert len(pushed) == 1
+    panel = pushed[0]
+    assert isinstance(panel, WorkbenchHelpPanel)
+    keys = {key for key, _description in panel.state.shortcuts}
+    descriptions = {description for _key, description in panel.state.shortcuts}
+    # Dead on the Media list canvas -- must not appear.
+    assert "ctrl+s" not in keys
+    assert "Save skill" not in descriptions
+    assert "Back to skills list" not in descriptions
+    assert "u" not in keys
+    assert "enter" not in keys
+    assert "o" not in keys
+    # Genuinely active here: Escape moves focus to the rail (list canvas).
+    assert "escape" in keys
 
 
 def test_action_library_media_viewer_back_returns_to_list_and_refocuses_it():

@@ -19,9 +19,15 @@ from tldw_chatbook.Library.library_export_scope import ExportScope
 from tldw_chatbook.Library.library_export_state import (
     DEFAULT_MEDIA_QUALITY,
     EMPTY_SCOPE_COPY,
+    EXPORT_BUTTON_COUNTING_TOOLTIP,
+    EXPORT_BUTTON_NO_DESTINATION_TOOLTIP,
+    EXPORT_BUTTON_READY_TOOLTIP,
+    EXPORT_BUTTON_RUNNING_TOOLTIP,
     MEDIA_QUALITY_OPTIONS,
     build_library_export_form_state,
     default_export_name,
+    export_button_tooltip,
+    format_last_export_line,
     next_media_quality,
     normalize_export_destination,
 )
@@ -287,3 +293,86 @@ def test_normalize_destination_leaves_zip_suffix_untouched_case_insensitive():
     assert normalize_export_destination(PurePath("/tmp/foo.zip")) == PurePath(
         "/tmp/foo.zip"
     )
+
+
+# --- export_button_tooltip: task-2858 AC#3 (LIB-11) --------------------------
+
+
+def _state(**overrides):
+    base = dict(
+        scope=ExportScope(kind="everything"),
+        counts={"media": 1, "conversations": 0, "notes": 0},
+        name="x",
+        description="",
+        media_quality=DEFAULT_MEDIA_QUALITY,
+        destination="/tmp/out.zip",
+    )
+    base.update(overrides)
+    return build_library_export_form_state(**base)
+
+
+def test_tooltip_is_the_ready_hint_when_export_is_enabled():
+    state = _state()
+    assert state.export_enabled is True
+    assert export_button_tooltip(state) == EXPORT_BUTTON_READY_TOOLTIP
+
+
+def test_tooltip_names_running_as_the_blocker_while_running():
+    state = _state(running=True)
+    assert export_button_tooltip(state) == EXPORT_BUTTON_RUNNING_TOOLTIP
+
+
+def test_tooltip_names_counting_as_the_blocker_before_counts_land():
+    state = _state(counts=None)
+    assert export_button_tooltip(state) == EXPORT_BUTTON_COUNTING_TOOLTIP
+
+
+def test_tooltip_reuses_the_empty_scope_copy_verbatim():
+    """The disabled reason must match the on-canvas "Nothing to export in
+    this scope." line exactly -- not a second, potentially-drifting
+    string -- per task-2858 AC#3's "same predicate" requirement."""
+    state = _state(counts={"media": 0, "conversations": 0, "notes": 0})
+    assert state.empty_scope_line == EMPTY_SCOPE_COPY
+    assert export_button_tooltip(state) == EMPTY_SCOPE_COPY
+
+
+def test_tooltip_names_missing_destination_as_the_blocker():
+    state = _state(destination="")
+    assert export_button_tooltip(state) == EXPORT_BUTTON_NO_DESTINATION_TOOLTIP
+
+
+# --- format_last_export_line: task-2858 AC#3 (LIB-12) ------------------------
+
+
+def test_last_export_line_empty_before_any_export_this_session():
+    assert format_last_export_line("", 0.0, now=1000.0) == ""
+
+
+def test_last_export_line_reads_just_now_within_the_first_minute():
+    line = format_last_export_line("/tmp/out.zip", 970.0, now=1000.0)
+    assert line == "Last export: /tmp/out.zip · just now"
+
+
+def test_last_export_line_reads_minutes_ago():
+    line = format_last_export_line("/tmp/out.zip", 1000.0, now=1000.0 + 5 * 60)
+    assert line == "Last export: /tmp/out.zip · 5m ago"
+
+
+def test_last_export_line_reads_hours_ago():
+    line = format_last_export_line("/tmp/out.zip", 1000.0, now=1000.0 + 3 * 3600)
+    assert line == "Last export: /tmp/out.zip · 3h ago"
+
+
+def test_last_export_line_reads_days_ago():
+    line = format_last_export_line("/tmp/out.zip", 1000.0, now=1000.0 + 2 * 86400)
+    assert line == "Last export: /tmp/out.zip · 2d ago"
+
+
+def test_build_library_export_form_state_passes_last_export_line_through():
+    state = _state(last_export_line="Last export: /tmp/prior.zip · 1h ago")
+    assert state.last_export_line == "Last export: /tmp/prior.zip · 1h ago"
+
+
+def test_build_library_export_form_state_defaults_last_export_line_empty():
+    state = _state()
+    assert state.last_export_line == ""

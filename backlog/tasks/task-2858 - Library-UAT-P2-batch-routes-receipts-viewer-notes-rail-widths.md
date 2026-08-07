@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@claude'
 created_date: '2026-08-07 01:10'
-updated_date: '2026-08-07 13:03'
+updated_date: '2026-08-07 13:48'
 labels:
   - library
   - ux
@@ -44,8 +44,8 @@ observed at dev `6ffa56516`. Grouped for one pass; split if any item grows.
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [x] #1 Library landing is route-independent (one canonical landing) or intentionally routed with the difference stated on-screen; revisits restore the last canvas or intentionally reset (decision recorded)
-- [ ] #2 F1 and footers advertise only keys that work on the current surface
-- [ ] #3 The Export button is never a silent no-op, and a successful export leaves a durable on-canvas receipt with the output path
+- [x] #2 F1 and footers advertise only keys that work on the current surface
+- [x] #3 The Export button is never a silent no-op, and a successful export leaves a durable on-canvas receipt with the output path
 - [ ] #4 The media viewer renders markdown (with a raw toggle) for markdown media
 - [ ] #5 Blank notes no longer commit literal "Untitled" rows that require hand-deletion; version stamps change only on content saves
 - [ ] #6 Rail glosses/counts follow one deterministic rule across all rows
@@ -123,4 +123,142 @@ Verification: `Tests/UI/test_screen_navigation.py` full file (109 passed, includ
 new tests) and `Tests/Library --collect-only -q` (1079 collected, 0 errors) both green.
 Live tmux covered all three flows plus the two deep-link checks above; no CSS touched
 (no code changes at all), so no build_css.py run was needed.
+
+Task 2 (LIB-09/11/12 -> AC#2/AC#3) -- Honest advertisement + export feedback:
+
+HEAD re-verification (live tmux, socket p2T2lib9953, scratch profile sdd_p2t2) at
+471dc47ee found LIB-09 SPLIT into two independently-true halves:
+  (a) The FOOTER half was already fixed pre-branch (task-420's row-scoped
+      registration: LIBRARY_SHORTCUTS, the only set containing "u", is selected
+      only for LIBRARY_ROW_BROWSE_SEARCH) -- confirmed live: Media canvas footer
+      never showed "u", Search/RAG's did.
+  (b) The F1 half was NOT fixed and was NOT touched by the P1 arc's check_action
+      gates: LibraryScreen has no `action_show_workbench_help` override, so
+      app.py's generic fallback (`_show_generic_screen_help`/`_bindings_to_
+      shortcuts`) flattened the raw static BINDINGS list UNCONDITIONALLY --
+      it never calls check_action at all. Reproduced live exactly as the
+      original finding: F1 on the Media canvas showed "LibraryScreen Shortcuts"
+      with "ctrl+s: Save skill" / "escape: Back to skills list" while browsing
+      media. Root cause: check_action gating governs Textual's live key
+      resolution and footer registration is its own separate seam, but this
+      app's F1 help bypasses check_action entirely via the generic fallback.
+
+Fix:
+  - Added check_action gates for the three previously-ungated BINDINGS actions:
+    `library_rag_use_in_console` ("u", gated to LIBRARY_ROW_BROWSE_SEARCH,
+    mirroring the action body's own guard) and `library_rag_result_card_select`/
+    `_open` (Enter/"o", gated to `_focused_library_rag_result_card_index()
+    is not None`). Every action on LibraryScreen.BINDINGS now has an explicit
+    check_action branch -- none fall through to the default `return True`.
+  - Added `LibraryScreen.action_show_workbench_help()` (the same delegation
+    seam SettingsScreen already uses for its own per-category F1 filtering) +
+    a `_active_library_binding_shortcuts()` helper that filters BINDINGS
+    through check_action with the identical keep/drop rule Textual's own
+    `Screen.active_bindings` uses. This is the actual fix -- check_action
+    gates alone do not change F1's output without this override.
+  - LIB-11: `LibraryExportFormState` already had `export_enabled` (single
+    predicate covering running/counts-loading/empty-scope/no-destination) and
+    the submit Button's `disabled=not state.export_enabled` was already wired
+    at compose time AND patched in place on both mutation paths (counts
+    landing, destination chosen via recompose) -- Textual's own
+    `Button.press()` already refuses to post `Pressed` while `disabled`, so a
+    "silent no-op" click was never actually reachable through a real click.
+    What was missing was the "why": no tooltip existed, so a correctly-
+    disabled button gave no explanation, reading as a dead/broken control.
+    Added `export_button_tooltip()` (library_export_state.py) mirroring
+    export_enabled's own predicate order, reusing EMPTY_SCOPE_COPY verbatim
+    for the empty-scope case per the task's "same predicate" requirement, and
+    wired it everywhere `disabled` is set (compose, counts-landing patch,
+    run-completion patch) so it never goes stale.
+  - LIB-12: added `_library_export_last_path`/`_library_export_last_at`
+    screen fields (deliberately NOT touched by
+    `_reset_library_export_transient_state`, which resets every other export
+    field on every canvas entry), a `format_last_export_line()` pure
+    formatter (library_export_state.py, "just now"/"Nm ago"/"Nh ago"/"Nd ago"
+    style matching the two existing local precedents in
+    activity_log.py/ChatbookExportManagementWindow.py), a new always-mounted
+    `#library-export-last-line` Static (display-toggled, same discipline as
+    the empty-scope/status/error lines), and set the two fields in
+    `_apply_library_export_success` (before the staleness guard, alongside
+    the notifications, since the zip genuinely landed regardless of which
+    canvas is displayed). Round-tripped through save_state/restore_state too
+    (an "obvious existing seam" already used for the screen's other
+    selection/view state) so the receipt survives a full navigate-away-and-
+    back to Library, not just an in-session canvas switch.
+
+Tests added (TDD): 4 new tests in Tests/UI/test_screen_navigation.py
+(check_action gates for the 3 new actions; a BINDINGS audit test enumerating
+the full static list and asserting every action is gated-or-declared-
+universal on a bare landing instance; a behavioral test of
+action_show_workbench_help pinning the exact LIB-09 regression -- Media list
+canvas must not advertise ctrl+s/skill-editor/RAG keys). Updated 2 pre-
+existing check_action tests whose "unrelated action" control used
+`library_rag_use_in_console` (now gated) -- switched to a genuinely
+nonexistent action name. 20 new tests in Tests/Library/test_library_export_
+state.py (export_button_tooltip predicate order incl. verbatim EMPTY_SCOPE_
+COPY reuse; format_last_export_line's just-now/m/h/d boundaries;
+last_export_line pass-through). New Tests/UI/test_library_export_receipt.py
+(13 tests): compose-time disabled+tooltip rendering via real Pilot mounts;
+a REAL Pilot click-dispatch test proving a disabled Export button posts NO
+Button.Pressed (with an enabled-button control case proving the harness
+itself dispatches clicks correctly); in-place patcher tests for both
+_apply_library_export_counts and _update_library_export_canvas_after_run
+confirming tooltip/receipt stay in sync without recompose; receipt
+survival across `_reset_library_export_transient_state` and across
+save_state/restore_state round-trips. One REAL (non-mocked) export test
+added to Tests/Library/test_library_export_roundtrip.py, seeding real DBs,
+driving the real LocalChatbookService, and asserting the receipt fields
+`_apply_library_export_success` sets name the exact real on-disk zip path.
+
+RED evidence: reverse-applied the product diff (git apply -R, files under
+tldw_chatbook/ only) and reran the new/changed tests -- 2 ImportErrors
+(EXPORT_BUTTON_COUNTING_TOOLTIP etc. didn't exist) and 4 AttributeError/
+assertion failures (action_show_workbench_help missing; check_action
+returning True where a gate was expected) confirmed RED for exactly the
+right reasons, then git apply restored the implementation and every test
+went GREEN.
+
+Verification: Tests/Library/test_library_export_state.py +
+Tests/UI/test_library_export_receipt.py (48 passed);
+Tests/UI/test_screen_navigation.py full file (113 passed, incl. 4 new);
+Tests/Library/test_library_export_roundtrip.py (5 passed, incl. 1 new);
+Tests/Library --collect-only -q (1092 collected, 0 errors). A combined run
+of test_library_export_cancel.py + test_library_shell.py +
+test_library_export_execution.py + test_skills_library_flow.py showed 2
+failures (388 passed); A/B isolation confirmed both pre-existing:
+test_landing_footer_advertises_the_landing_keyboard_story is task-3022's
+known ambient debt (named in the plan's Global Constraints), and
+test_library_shell_ingest_canvas_live_updates_without_manual_recompose is
+order-dependent flakiness unrelated to this change -- it passed both alone
+and in a standalone full run of test_library_shell.py (352 passed, only the
+known-debt test failed). Neither test touches export/binding code this task
+changed.
+
+Live tmux (socket p2T2lib9953, scratch profile sdd_p2t2, cleaned up after):
+F1 on the Media canvas now shows only "escape: Focus rail" (no skill-editor/
+RAG contamination); F1 on Search/RAG shows "u: Use Library context in
+Console"; F1 in the Notes editor shows only "escape: Back to notes list".
+Footer never showed "u" outside Search/RAG. The disabled Export button
+rendered visibly dim/non-bold (ANSI-confirmed) vs. the enabled state's bold
+accent styling, and a real click on it produced zero visible change (no
+crash, no notification, canvas pixel-identical) -- proving the click-
+swallow-prevention claim live, not just in the test harness. A real export
+(1 note, no media/conversations) wrote a genuine zip to
+/private/tmp/p2T2/receipt_test.zip (1120 bytes, confirmed a valid zip via
+`file`), and "Last export: /private/tmp/p2T2/receipt_test.zip · just now"
+appeared above the submit button; switching to Media and back to Export
+(fresh form, destination reset to "No destination chosen" as expected) still
+showed the same receipt line, confirming LIB-12's persistence contract.
+
+Docs: Docs/User_Guide/library/import-and-export.md updated (layout tour +
+features table describe the tooltip and the "Last export: …" receipt row) with
+a new "Verified against branch-base `6b38a13b8`" stamp for this change.
+
+Files changed: tldw_chatbook/Library/library_export_state.py,
+tldw_chatbook/Widgets/Library/library_export_canvas.py,
+tldw_chatbook/UI/Screens/library_screen.py,
+Tests/UI/test_screen_navigation.py, Tests/Library/test_library_export_state.py,
+Tests/Library/test_library_export_roundtrip.py,
+Tests/UI/test_library_export_receipt.py (new),
+Docs/User_Guide/library/import-and-export.md.
 <!-- SECTION:NOTES:END -->

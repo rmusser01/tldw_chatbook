@@ -15,6 +15,7 @@ from tldw_chatbook.Library.library_export_state import (
     EXPORT_HEADER_COPY,
     MEDIA_QUALITY_HELPER_COPY,
     LibraryExportFormState,
+    export_button_tooltip,
 )
 
 
@@ -134,12 +135,29 @@ class LibraryExportCanvas(VerticalScroll):
         )
         error_line.display = bool(state.error_line)
         yield error_line
+        # task-2858 AC#3 (LIB-12): the durable "Last export: ..." receipt --
+        # always mounted (display-toggled), same discipline as the three
+        # quiet lines above, since the screen's in-place completion
+        # handler (``_update_library_export_canvas_after_run``) patches
+        # this widget's text after a run finishes without a recompose.
+        last_export_line = Static(
+            state.last_export_line,
+            id="library-export-last-line",
+            classes="library-export-quiet-line",
+            markup=False,
+        )
+        last_export_line.display = bool(state.last_export_line)
+        yield last_export_line
         yield Button(
             EXPORT_BUTTON_COPY,
             id="library-export-submit",
             classes="library-canvas-action",
             compact=True,
             disabled=not state.export_enabled,
+            # task-2858 AC#3 (LIB-11): "disabled controls say why" -- the
+            # tooltip always explains either what pressing Export will do
+            # or the SAME blocker ``disabled`` reflects (F-018 idiom).
+            tooltip=export_button_tooltip(state),
         )
         cancel_button = Button(
             "Cancel",
