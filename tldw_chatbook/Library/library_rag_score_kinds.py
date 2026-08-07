@@ -44,9 +44,31 @@ LIBRARY_RAG_SCORE_KINDS = frozenset(
 
 #: ``RAGService._fuse_hybrid_results``' per-leg provenance block.
 HYBRID_FUSION_METADATA_KEY = "hybrid_fusion"
+#: What a REAL reranked row carries. ``PointwiseReranker._apply_scores``
+#: (``RAG_Search/reranker.py``) is the only reranking path that REPLACES a
+#: row's score -- with the LLM's relevance score, or by default a weighted
+#: blend of it and the original similarity -- and it stamps this key while
+#: doing so. It is therefore the production signal that "this score is no
+#: longer a similarity".
+#:
+#: It matters that this is keyed on score REPLACEMENT rather than on "a
+#: reranker ran": ``PairwiseReranker`` and ``ListwiseReranker`` only
+#: REORDER results, leaving ``score`` and ``metadata`` untouched, so their
+#: rows still carry the retrieval similarity they came in with and must
+#: keep being banded. Suppressing their band would throw away a true
+#: number.
+#:
+#: The danger this closes is quiet: ``RerankingConfig.score_scale``
+#: defaults to ``(0.0, 1.0)``, so a default-configured pointwise reranker
+#: emits scores INSIDE the similarity band range -- a 0.95 relevance score
+#: would have rendered "match: strong", a cosine claim about a number that
+#: is not a cosine.
+RERANK_SCORE_METADATA_KEY = "rerank_score"
 #: ``RAG_Search/local_citation_capture.py``'s ``FINAL_SCORE_KIND_KEY`` --
-#: the canonical "what scale is the final score on" channel, and the one
-#: signal that means "this score came from the reranker".
+#: the canonical "what scale is the final score on" channel. Accepted as an
+#: additional reranker signal (it costs nothing and is the vocabulary the
+#: citation trace already speaks), but nothing in the app writes it today,
+#: which is why the ``rerank_score`` stamp above is the primary marker.
 #:
 #: Deliberately NOT read as a kind signal: the ``reranking_skipped`` /
 #: ``reranking_degraded`` tags (``enhanced_rag_service_v2.py``), which
@@ -137,9 +159,14 @@ def library_rag_result_score_kind(*candidates: Any) -> tuple[str, float | None]:
     means.
 
     Resolution order, first match wins, across `candidates` in the order
-    given: an explicit `score_kind`; the `_final_score_kind` reranker
-    channel; the presence of a `hybrid_fusion` provenance block. Anything
-    else is a plain vector similarity.
+    given: an explicit `score_kind`; the reranker markers (`rerank_score`,
+    which the pointwise reranker stamps when it replaces the score, or the
+    `_final_score_kind` channel); the presence of a `hybrid_fusion`
+    provenance block. Anything else is a plain vector similarity.
+
+    Reranking is checked BEFORE fusion because it runs after it: a hybrid
+    search whose results were then reranked carries both blocks, and the
+    later stage owns what the final score means.
 
     Args:
         *candidates: Mappings to consult in priority order (typically a
@@ -162,10 +189,14 @@ def library_rag_result_score_kind(*candidates: Any) -> tuple[str, float | None]:
 
     explicit_kind = _first(SCORE_KIND_METADATA_KEY)
     final_kind = _first(FINAL_SCORE_KIND_METADATA_KEY)
+    reranked = any(RERANK_SCORE_METADATA_KEY in mapping for mapping in mappings)
 
     if explicit_kind not in (None, ""):
         kind = normalize_library_rag_score_kind(explicit_kind)
-    elif str(final_kind or "").strip().lower() == LIBRARY_RAG_SCORE_KIND_RERANKER:
+    elif (
+        reranked
+        or str(final_kind or "").strip().lower() == LIBRARY_RAG_SCORE_KIND_RERANKER
+    ):
         kind = LIBRARY_RAG_SCORE_KIND_RERANKER
     elif any(HYBRID_FUSION_METADATA_KEY in mapping for mapping in mappings):
         # Key present with ANY value, including a malformed one: the score
@@ -191,6 +222,7 @@ def library_rag_result_score_kind(*candidates: Any) -> tuple[str, float | None]:
 __all__ = [
     "FINAL_SCORE_KIND_METADATA_KEY",
     "HYBRID_FUSION_METADATA_KEY",
+    "RERANK_SCORE_METADATA_KEY",
     "LIBRARY_RAG_SCORE_KINDS",
     "LIBRARY_RAG_SCORE_KIND_HYBRID_FUSION",
     "LIBRARY_RAG_SCORE_KIND_RERANKER",

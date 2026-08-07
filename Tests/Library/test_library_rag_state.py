@@ -1582,6 +1582,61 @@ class TestLibraryRagResultRowScoreKind:
         )
         assert row.score_kind == "reranker"
 
+    def test_the_rerank_score_stamp_is_the_production_marker(self):
+        """`_final_score_kind` is READ by `local_citation_capture` but written
+        by nothing in the app; what a real reranked row actually carries is
+        `metadata["rerank_score"]`, stamped by
+        `PointwiseReranker._apply_scores` as it replaces the score. Keying
+        on that is what makes the reranked band reachable in production."""
+        row = LibraryRagResultRow.from_result(
+            {"title": "A", "score": 7.5, "provenance": {"rerank_score": 7.5}}
+        )
+        assert row.score_kind == "reranker"
+        assert (
+            library_rag_score_suffix(
+                row.score, score_kind=row.score_kind, vector_score=row.vector_score
+            )
+            == " | reranked"
+        )
+
+    def test_a_reranked_score_inside_the_band_range_never_reads_as_strong(self):
+        """The load-bearing case. `RerankingConfig.score_scale` defaults to
+        (0.0, 1.0), so a default-configured pointwise reranker emits scores
+        INSIDE the similarity band range -- 0.83 would have rendered
+        "match: strong", a cosine claim about an LLM relevance score."""
+        row = LibraryRagResultRow.from_result(
+            {"title": "A", "score": 0.83, "provenance": {"rerank_score": 0.95}}
+        )
+        suffix = library_rag_score_suffix(
+            row.score, score_kind=row.score_kind, vector_score=row.vector_score
+        )
+        assert suffix == " | reranked"
+        assert "match:" not in suffix
+
+    def test_reranking_wins_over_a_prior_fusion_block(self):
+        """Reranking runs AFTER fusion, so a hybrid row that was then
+        reranked carries both blocks -- the later stage owns what the final
+        score means, and the row must not band on the stale vector leg."""
+        row = LibraryRagResultRow.from_result(
+            {
+                "title": "A",
+                "score": 0.95,
+                "provenance": {
+                    "rerank_score": 0.95,
+                    "hybrid_fusion": {"fts_rank": 1, "vector_rank": 1,
+                                      "fts_score": 0.001, "vector_score": 0.83},
+                },
+            }
+        )
+        assert row.score_kind == "reranker"
+        assert row.vector_score is None
+        assert (
+            library_rag_score_suffix(
+                row.score, score_kind=row.score_kind, vector_score=row.vector_score
+            )
+            == " | reranked"
+        )
+
     def test_reranking_skipped_tag_is_not_a_score_kind_signal(self):
         """Task 4's `reranking_skipped`/`reranking_degraded` tags disclose
         that reranking FAILED -- the scores on those rows are the base

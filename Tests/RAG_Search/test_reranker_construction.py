@@ -429,3 +429,101 @@ async def test_listwise_reranker_counts_total_failure():
     assert [r.id for r in reranked] == ["a", "b"]
     assert reranker.last_rerank_failures == 2
     assert reranker.last_rerank_total == 2
+
+
+def test_reranked_rows_carry_a_detectable_marker_and_never_band_as_similarity():
+    """(Task 6, coordinator follow-up) What does a REAL reranked row carry?
+
+    `PointwiseReranker._apply_scores` is the only reranking path that
+    replaces a row's score: it writes `final_score` (by default a weighted
+    blend of the original similarity and the LLM's relevance score) and
+    stamps `metadata["rerank_score"]`. That stamp is the production marker
+    -- `_final_score_kind` is READ by `local_citation_capture` but written
+    by nothing in the app.
+
+    The load-bearing consequence: `RerankingConfig.score_scale` defaults to
+    (0.0, 1.0), so a default-configured pointwise reranker emits scores
+    that sit INSIDE the similarity band range and would silently render as
+    "match: strong" -- a cosine claim about a number that is not a cosine.
+    This pins the whole path: real reranker output -> Library row -> title
+    suffix.
+    """
+    from tldw_chatbook.Library.library_rag_state import (
+        LibraryRagResultRow,
+        library_rag_score_suffix,
+    )
+    from tldw_chatbook.RAG_Search.reranker import PointwiseReranker, RerankingResult
+    from tldw_chatbook.RAG_Search.simplified.vector_store import SearchResult
+
+    reranker = PointwiseReranker(RerankingConfig())
+    original = SearchResult(
+        id="media-42", score=0.83, document="body", metadata={"source_type": "media"}
+    )
+    reranked = reranker._apply_scores(
+        [original],
+        [
+            RerankingResult(
+                original_rank=0, new_rank=0, original_score=0.83, rerank_score=0.95
+            )
+        ],
+    )[0]
+
+    # The marker the real producer writes, and a score that would otherwise
+    # band "strong" on cosine thresholds.
+    assert "rerank_score" in reranked.metadata
+    assert reranked.score >= 0.5
+
+    row = LibraryRagResultRow.from_result(
+        {
+            "title": "Incident Review",
+            "source_id": reranked.id,
+            "score": reranked.score,
+            "provenance": dict(reranked.metadata),
+        }
+    )
+    assert row.score_kind == "reranker"
+    suffix = library_rag_score_suffix(
+        row.score, score_kind=row.score_kind, vector_score=row.vector_score
+    )
+    assert suffix == " | reranked"
+    assert "match:" not in suffix
+
+
+def test_reorder_only_reranking_leaves_a_real_similarity_bandable():
+    """The converse, and why the pairwise/listwise strategies need no marker:
+    both REORDER results and never touch `score` or `metadata`, so those
+    rows still carry the retrieval similarity they came in with. Suppressing
+    their band would throw away a true number, so the marker must be
+    "the score was replaced" (`rerank_score`), not "reranking ran".
+    """
+    import inspect
+
+    from tldw_chatbook.Library.library_rag_state import (
+        LibraryRagResultRow,
+        library_rag_score_suffix,
+    )
+
+    for reranker_cls in (PairwiseReranker, ListwiseReranker):
+        source = inspect.getsource(reranker_cls)
+        assert "rerank_score" not in source, (
+            f"{reranker_cls.__name__} now writes scores -- its rows must be "
+            "detected as reranker-kind too"
+        )
+
+    untouched = LibraryRagResultRow.from_result(
+        {
+            "title": "Incident Review",
+            "source_id": "media-42",
+            "score": 0.83,
+            "provenance": {"source_type": "media"},
+        }
+    )
+    assert untouched.score_kind == "vector_similarity"
+    assert (
+        library_rag_score_suffix(
+            untouched.score,
+            score_kind=untouched.score_kind,
+            vector_score=untouched.vector_score,
+        )
+        == " | match: strong"
+    )
