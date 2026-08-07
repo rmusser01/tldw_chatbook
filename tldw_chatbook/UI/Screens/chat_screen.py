@@ -1354,13 +1354,16 @@ def _is_plain_text_send(draft_text: Any) -> bool:
 
 
 def _console_library_rag_profile_top_k() -> int:
-    """Return the ACTIVE RAG profile's result count (TASK-406).
+    """Return the ACTIVE RAG profile's result count (TASK-406/TASK-3170).
 
-    Auto-retrieval must honor the profile the user configured, the same way
-    task-5 made the Library service honor its search mode -- a hardcoded
-    count would silently ignore a profile tuned for more (or fewer)
-    results. Imported lazily: ``active_config`` pulls in the profile
-    manager, which this module has no other reason to load at import time.
+    Both Library RAG entry points on the Console -- the RAG chip's manual
+    Run and the opt-in send-path auto-retrieve -- must honor the profile
+    the user configured, the same way task-5 made the Library service
+    honor its search mode -- a hardcoded count would silently ignore a
+    profile tuned for more (or fewer) results. This is the one place both
+    call sites read that count from, so they can never drift apart again.
+    Imported lazily: ``active_config`` pulls in the profile manager, which
+    this module has no other reason to load at import time.
 
     Returns:
         The profile's ``search.default_top_k`` when it resolves to a
@@ -1374,7 +1377,7 @@ def _console_library_rag_profile_top_k() -> int:
         value = int(resolve_active_rag_config().search.default_top_k)
     except Exception as exc:
         logger.debug(
-            "Console auto-retrieve could not read the active RAG profile's "
+            "Console Library RAG could not read the active RAG profile's "
             "top_k (exception_category={}); using the fallback.",
             type(exc).__name__,
         )
@@ -12123,7 +12126,7 @@ class ChatScreen(BaseAppScreen):
             query=query,
             source_types=_console_library_rag_source_scope(self),
             mode="rag",
-            top_k=5,
+            top_k=_console_library_rag_profile_top_k(),
             include_citations=True,
         )
         self._stage_console_library_rag_launch(
