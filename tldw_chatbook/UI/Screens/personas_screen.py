@@ -842,14 +842,21 @@ class PersonasScreen(BaseAppScreen):
                     # the old bottom-docked wrapper, which let the two
                     # empty panels displace the card at 100x30 and left a
                     # dead void between them at 170x50.)
+                    # task-2725: the four heavy hidden center views (character
+                    # editor, persona editor, dictionary/lore detail — 290 of
+                    # this screen's ~494 widgets) are NOT composed here. They
+                    # mount hidden, order-anchored, as the first step of
+                    # `_load_after_mount` (`_mount_deferred_center_views`),
+                    # taking their CSS-application cost off the click→paint
+                    # critical path. `_show_center` skips absent selectors and
+                    # `_editor_or_none` returns None, so the compose→load
+                    # window is tolerated by design.
                     with VerticalScroll(id="personas-detail-stack"):
                         yield PersonasCharacterCardWidget()
-                        yield PersonasCharacterEditorWidget()
                         with Vertical(id="personas-character-attachments"):
                             yield PersonasCharacterDictionariesWidget()
                             yield PersonasCharacterWorldBooksWidget()
                         yield PersonaProfileCardWidget()
-                        yield PersonaProfileEditorWidget()
                         with Horizontal(id="personas-conversation-actions"):
                             yield Button(
                                 "Back to card", id="personas-conversation-back"
@@ -865,10 +872,6 @@ class PersonasScreen(BaseAppScreen):
                                 "Open in Library",
                                 id="personas-conversation-open-library",
                             )
-                        yield PersonasDictionaryDetailWidget(
-                            id="personas-dictionary-detail"
-                        )
-                        yield PersonasLoreDetailWidget(id="personas-lore-detail")
                         yield PersonasConversationTranscriptWidget()
                         yield Static(
                             self._mode_placeholder_text("prompts"),
@@ -1108,9 +1111,48 @@ class PersonasScreen(BaseAppScreen):
             exclusive=True,
         )
 
+    async def _mount_deferred_center_views(self) -> None:
+        """Mount the four heavy hidden center views after first paint.
+
+        task-2725: profiling showed the Roleplay switch cost is widget-mount
+        CSS application, and 290 of the detail stack's 358 widgets sit in
+        views that arrive hidden (`display: False`) anyway. Mounting them
+        here — as `_load_after_mount`'s first step, before
+        `_apply_pending_restore` and auto-select — keeps every downstream
+        query site valid while taking them off the click→paint critical
+        path. Each mounts hidden and order-anchored so the stack's document
+        (scroll) order is exactly what compose used to produce; `_show_
+        center` owns visibility from then on. Idempotent: a re-entered load
+        (e.g. runtime-source switch re-running `_load_after_mount`) skips
+        mounting.
+        """
+        try:
+            stack = self.query_one("#personas-detail-stack", VerticalScroll)
+        except QueryError:
+            return
+        if self.query(PersonasCharacterEditorWidget):
+            return
+
+        character_editor = PersonasCharacterEditorWidget()
+        persona_editor = PersonaProfileEditorWidget()
+        dictionary_detail = PersonasDictionaryDetailWidget(
+            id="personas-dictionary-detail"
+        )
+        lore_detail = PersonasLoreDetailWidget(id="personas-lore-detail")
+        for view in (character_editor, persona_editor, dictionary_detail, lore_detail):
+            view.display = False
+
+        await stack.mount(character_editor, after="#ccp-character-card-view")
+        await stack.mount(persona_editor, after="#ccp-persona-card-view")
+        await stack.mount(dictionary_detail, after="#personas-conversation-actions")
+        await stack.mount(lore_detail, after="#personas-dictionary-detail")
+
     async def _load_after_mount(self) -> None:
         """Load the character library once the screen is already on screen."""
         try:
+            # Must precede everything below: `_apply_pending_restore` and the
+            # selection sync assume the full center-view DOM (task-2725).
+            await self._mount_deferred_center_views()
             loading_manager = getattr(self, "loading_manager", None)
             setup_loading = getattr(loading_manager, "setup", None)
             if callable(setup_loading):

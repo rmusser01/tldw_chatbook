@@ -253,4 +253,4 @@ Screen-level keys only — global keys live in the [guide index](index.md).
   are live. Prompts moved out to Library and is no longer a mode here.
 
 —
-*Verified against dev @ 8b7fa5eb6 — 2026-07-31*
+*Verified against dev @ acaae68e9 + task-2725 deferred center views — 2026-08-07 (modes, selection, editor open/cancel exercised live)*
