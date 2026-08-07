@@ -357,6 +357,49 @@ def test_profile_top_k_reads_the_active_rag_config(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_in_flight_placeholder_is_staged_while_retrieval_runs(monkeypatch):
+    """The strip must show "Retrieving..." for the WHOLE retrieval window.
+
+    Review finding: every other assertion about the placeholder is a
+    *clear* assertion (`... is None` afterwards), which stays true when the
+    placeholder is never staged at all -- so deleting the only in-flight
+    signal the user gets during the <=5s window left the whole suite green.
+    This observes the staged launch from INSIDE the retrieval call, which is
+    the only moment the claim is about.
+    """
+    _enable_auto_retrieve()
+    _patch_scope(monkeypatch)
+    screen = _auto_rag_screen()
+    observed: list = []
+
+    class _StagingObservingRagService:
+        async def search(self, query, source_types, mode, **kwargs):
+            observed.append(
+                (
+                    screen._pending_console_launch_context,
+                    screen._has_staged_console_evidence(),
+                )
+            )
+            return {"runtime_backend": "local-test", "results": list(_rows(2))}
+
+    screen.app_instance.library_rag_search_service = _StagingObservingRagService()
+
+    await screen._maybe_auto_retrieve_for_send("what changed in the notes")
+
+    assert len(observed) == 1
+    in_flight, was_staged = observed[0]
+    assert in_flight is not None, "no in-flight staging while retrieval ran"
+    assert was_staged is True
+    assert in_flight.status == "searching"
+    assert in_flight.payload["query"] == "what changed in the notes"
+    assert in_flight.recovery == chat_screen_module.CONSOLE_AUTO_RAG_SEARCHING_COPY
+    # ...and the results replaced it rather than piling up a second card.
+    settled = screen._pending_console_launch_context
+    assert settled is not in_flight
+    assert settled.status == "staged"
+
+
+@pytest.mark.asyncio
 async def test_zero_results_never_leaves_a_blocking_launch_staged(monkeypatch):
     """An auto-retrieve that matched nothing must stage nothing.
 
