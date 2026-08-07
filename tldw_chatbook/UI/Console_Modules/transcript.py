@@ -138,16 +138,16 @@ class ConsoleTranscriptRegion(Vertical):
             session_surface_builder: Zero-arg callable that returns the
                 Console session surface to mount inside
                 ``#console-transcript-region``. A builder, not a pre-built
-                instance, is the point — and here the reason is sharper than
-                it was for ``ConsoleLeftRail``'s avatar: the screen CACHES
-                this widget on ``ChatScreen.console_session_surface`` and
-                hands the SAME instance back on every call, so storing it
-                here would look harmless right up until something recomposes
-                this region and ``compose()`` re-yielded a widget Textual had
-                already removed from the DOM. Calling
-                ``_ensure_console_session_surface`` fresh from ``compose()``
-                also re-applies the current background-effect settings, which
-                a stored instance would silently skip. Late-binding at CALL
+                instance, is the point — though for a reason narrower than
+                ``ConsoleLeftRail``'s avatar, and worth stating precisely so
+                nobody over-trusts it: the screen MEMOISES this widget on
+                ``ChatScreen.console_session_surface``, so a builder and a
+                stored instance would re-yield the very same object, and the
+                builder buys no protection against re-yielding a widget
+                Textual has already removed. What it does buy is the
+                re-sync: ``_ensure_console_session_surface`` re-applies the
+                current background-effect settings on every call, which a
+                stored instance would silently skip. Late-binding at CALL
                 time, matching ``ConsoleDictationController``'s constructor
                 rule (see ``dictation.py``'s module docstring).
             kwargs: Forwarded to ``Vertical``.

@@ -8088,13 +8088,20 @@ class ChatScreen(BaseAppScreen):
         stored on the screen (the same way ``_sync_console_rail_visibility``
         reaches ``ConsoleLeftRail``).
 
+        Note that ``NoMatches`` is a ``QueryError``, and so is ``WrongType``:
+        an id collision that put some other widget class at
+        ``#console-main-column`` degrades to ``None`` here rather than
+        raising. That is deliberate — every caller already handles the
+        not-yet-composed case — but it means this must never become the
+        place a shape error is expected to surface.
+
         Returns:
             The ``#console-main-column`` region widget, or ``None`` when the
             shell is not (yet) mounted.
         """
         try:
             return self.query_one("#console-main-column", ConsoleTranscriptRegion)
-        except (NoMatches, QueryError):
+        except QueryError:
             return None
 
     def _capture_console_transcript_reading_state(
