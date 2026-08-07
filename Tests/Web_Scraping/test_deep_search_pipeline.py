@@ -8,6 +8,8 @@ import time
 import pytest
 
 from tldw_chatbook.Web_Scraping import WebSearch_APIs
+import os
+from tldw_chatbook import config as config_module
 
 
 def _fake_chat(responses):
@@ -389,3 +391,104 @@ def test_review_never_blocks_on_input(monkeypatch):
         raise AssertionError("input() must never be called")
     monkeypatch.setattr(builtins, "input", no_input)
     WebSearch_APIs.review_and_select_results({"results": []})
+
+
+# --- [SearchSettings] loader (task-1356 Task 4) -------------------------------
+
+def test_search_settings_timeout_keys_with_defaults(tmp_path, monkeypatch):
+    """New timeout keys load with defaults when absent from TOML.
+
+    Acceptance: search_settings_general contains three new int keys:
+    - relevance_llm_timeout_s = 30
+    - relevance_scrape_timeout_s = 30
+    - deep_search_timeout_s = 300
+    """
+    config_path = tmp_path / "config.toml"
+    # Minimal config with no SearchSettings section
+    config_path.write_text(
+        "[general]\nusers_name = 'test'\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+
+    settings = config_module.load_settings(force_reload=True)
+
+    search_settings = settings["search_settings_general"]
+    assert search_settings["relevance_llm_timeout_s"] == 30
+    assert search_settings["relevance_scrape_timeout_s"] == 30
+    assert search_settings["deep_search_timeout_s"] == 300
+
+
+def test_search_settings_timeout_keys_from_toml(tmp_path, monkeypatch):
+    """Timeout keys load from TOML when present.
+
+    Acceptance: custom TOML values override defaults.
+    """
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        "[SearchSettings]\n"
+        "relevance_llm_timeout_s = 45\n"
+        "relevance_scrape_timeout_s = 60\n"
+        "deep_search_timeout_s = 600\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+
+    settings = config_module.load_settings(force_reload=True)
+
+    search_settings = settings["search_settings_general"]
+    assert search_settings["relevance_llm_timeout_s"] == 45
+    assert search_settings["relevance_scrape_timeout_s"] == 60
+    assert search_settings["deep_search_timeout_s"] == 600
+
+
+def test_search_settings_timeout_keys_coerce_int(tmp_path, monkeypatch):
+    """Timeout keys coerce string values to int.
+
+    Acceptance: "30" (string) → 30 (int).
+    """
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        "[SearchSettings]\n"
+        'relevance_llm_timeout_s = "45"\n'
+        'relevance_scrape_timeout_s = "60"\n'
+        'deep_search_timeout_s = "600"\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+
+    settings = config_module.load_settings(force_reload=True)
+
+    search_settings = settings["search_settings_general"]
+    assert search_settings["relevance_llm_timeout_s"] == 45
+    assert isinstance(search_settings["relevance_llm_timeout_s"], int)
+    assert search_settings["relevance_scrape_timeout_s"] == 60
+    assert isinstance(search_settings["relevance_scrape_timeout_s"], int)
+    assert search_settings["deep_search_timeout_s"] == 600
+    assert isinstance(search_settings["deep_search_timeout_s"], int)
+
+
+def test_search_settings_timeout_keys_malformed_value_degrades_to_default(
+    tmp_path, monkeypatch, caplog
+):
+    """Malformed timeout values degrade to defaults with a warning log.
+
+    Acceptance: "30s" (malformed) → 30 (default), logged warning.
+    """
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        "[SearchSettings]\n"
+        'relevance_llm_timeout_s = "30s"\n'
+        'relevance_scrape_timeout_s = true\n'
+        'deep_search_timeout_s = "300x"\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+
+    settings = config_module.load_settings(force_reload=True)
+
+    search_settings = settings["search_settings_general"]
+    # Malformed values should degrade to defaults
+    assert search_settings["relevance_llm_timeout_s"] == 30
+    assert search_settings["relevance_scrape_timeout_s"] == 30
+    assert search_settings["deep_search_timeout_s"] == 300

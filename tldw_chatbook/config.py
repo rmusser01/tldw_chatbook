@@ -670,6 +670,36 @@ def _get_typed_value(
         return default
 
 
+def _get_int_timeout_value(
+    data_dict: Dict, key: str, default: int
+) -> int:
+    """Get an integer timeout value, rejecting booleans and malformed strings.
+
+    Args:
+        data_dict: Configuration dictionary
+        key: Configuration key to lookup
+        default: Default timeout value in seconds
+
+    Returns:
+        Integer timeout value, or default if conversion fails or value is boolean.
+    """
+    value = data_dict.get(key, default)
+    if value is default:  # Already the default
+        return value
+    if isinstance(value, bool):  # Reject booleans (int(True) == 1, which is wrong)
+        logger.warning(
+            f"Config key '{key}' has boolean value {value} which is not valid for timeout. Using default: {default}."
+        )
+        return default
+    try:
+        return int(value)
+    except (ValueError, TypeError) as e:
+        logger.warning(
+            f"Config key '{key}' has value '{value}' which could not be converted to int timeout. Using default: '{default}'. Error: {e}"
+        )
+        return default
+
+
 DEFAULT_CONSOLE_PASTE_COLLAPSE_THRESHOLD = 50
 MIN_CONSOLE_PASTE_COLLAPSE_THRESHOLD = 1
 MAX_CONSOLE_PASTE_COLLAPSE_THRESHOLD = 100000
@@ -2084,6 +2114,15 @@ def load_settings(force_reload: bool = False) -> Dict:
             ),
             "final_answer_llm": _get_typed_value(
                 search_settings_section, "final_answer_llm", "openai"
+            ),
+            "relevance_llm_timeout_s": _get_int_timeout_value(
+                search_settings_section, "relevance_llm_timeout_s", 30
+            ),
+            "relevance_scrape_timeout_s": _get_int_timeout_value(
+                search_settings_section, "relevance_scrape_timeout_s", 30
+            ),
+            "deep_search_timeout_s": _get_int_timeout_value(
+                search_settings_section, "deep_search_timeout_s", 300
             ),
         },
         "search_engine_specific_settings": {  # API Keys for various search engines from 'SearchEngines' TOML table
@@ -3687,9 +3726,22 @@ log_unknown_models = true      # Whether to log when an unknown model is queried
 # default_provider = "kokoro"
 # ...
 
-# [search_settings]
-# default_provider = "google"
-# ...
+# ==========================================================
+# Deep-Search Configuration
+# ==========================================================
+[SearchSettings]
+# Deep-search (web_deep_search tool) defaults. Enable the tool itself with
+# [tools] web_deep_search_enabled = true (requires app restart; each call makes
+# ~2x-results+3 LLM calls plus page fetches -- real money on paid providers).
+# search_provider_default = "google"
+# relevance_analysis_llm = "openai"
+# final_answer_llm = "openai"
+# search_enable_subquery = false
+# search_default_max_queries = 5
+# search_result_max = 10
+# relevance_llm_timeout_s = 30
+# relevance_scrape_timeout_s = 30
+# deep_search_timeout_s = 300
 
 # ==========================================================
 # Search Engines Configuration
