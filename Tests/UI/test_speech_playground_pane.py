@@ -22,6 +22,7 @@ from Tests.UI.speech_playground_fixtures import (
 from tldw_chatbook.TTS.adapter_types import (
     TTSProviderCatalog,
     TTSProviderReconfiguringError,
+    TTSRegistryClosedError,
 )
 from tldw_chatbook.TTS.audio_player import PlaybackState
 from tldw_chatbook.TTS.playground_types import STTSGeneratedAudio
@@ -1688,3 +1689,173 @@ async def test_generic_voice_failure_status_distinguishes_no_catalog_legacy(
             assert "unverified" not in status
         assert "private upstream detail" not in status
         assert "without fallback" in status
+
+
+# --- TASK-2952: `_profile_preview_blocked_presentation` branch trace -----
+#
+# The three "unverified"-styled returns there promise refresh/retry with no
+# check on provider class. Each was traced against the registry/catalog/
+# preset lifecycle (see the docstring on `_profile_preview_blocked_
+# presentation` for the full trace) and confirmed live below.
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("provider_id", "model_id", "voice_id"),
+    _ADOPTED_PRESET_PROVIDER_CASES,
+    ids=("audio_cpp", "openai"),
+)
+async def test_adopted_preset_preview_never_shows_a_null_revision_refresh(
+    faked_service: FakeTTSService,
+    provider_id: str,
+    model_id: str,
+    voice_id: str,
+) -> None:
+    """Branch trace, `expected_revision is None`: the catalog worker sets
+    `_profile_configuration_revision` synchronously, before any `await`, the
+    moment it targets the preset's own provider -- and production always
+    targets it on the very first load, for both provider classes
+    (`_profile_preset` is fixed at construction and never swapped). So this
+    cached revision must never still be None once the preview has settled
+    out of "loading", for either class -- otherwise the "refresh or retry"
+    copy would fire off a revision this pane never actually captured.
+    """
+    preset = _profile_preset(
+        provider_id=provider_id,
+        model_id=model_id,
+        voice_id=voice_id,
+        availability="unverified",
+    )
+    app = _AxisHarness(profile_preset=preset)
+
+    async with app.run_test(size=(160, 60)) as pilot:
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        pane = app.query_one(SpeechPlaygroundPane)
+        assert not pane._profile_preview_loading
+        assert pane._profile_configuration_revision is not None, (
+            "cached configuration revision is still None after the preview "
+            "settled -- 'refresh or retry' would fire on a revision this "
+            "pane never captured"
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("provider_id", "model_id", "voice_id"),
+    _ADOPTED_PRESET_PROVIDER_CASES,
+    ids=("audio_cpp", "openai"),
+)
+async def test_adopted_preset_preview_revision_mismatch_refresh_recovers_for_both_classes(
+    faked_service: FakeTTSService,
+    provider_id: str,
+    model_id: str,
+    voice_id: str,
+) -> None:
+    """Branch trace, `current_revision != expected_revision`: pure registry
+    bookkeeping, not catalog content -- refresh re-reads the revision and
+    resolves the mismatch for ANY provider class, legacy included. Honest
+    for both; this pins that Refresh actually works for a legacy preset too.
+    """
+    preset = _profile_preset(
+        provider_id=provider_id,
+        model_id=model_id,
+        voice_id=voice_id,
+        availability="unverified",
+    )
+    app = _AxisHarness(profile_preset=preset)
+
+    async with app.run_test(size=(160, 60)) as pilot:
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        pane = app.query_one(SpeechPlaygroundPane)
+        assert pane._profile_configuration_revision == 1
+
+        # Simulate a settings edit reconfiguring this exact provider while
+        # the pane sits on the adopted preset -- the registry's revision
+        # bumps; the pane does not hear about it until it next syncs.
+        faked_service.revisions[provider_id] = 2
+        pane._sync_profile_preview_status()
+        await pilot.pause()
+
+        banner = str(
+            app.query_one("#tts-profile-preview-status", Static).renderable
+        ).lower()
+        assert "tts settings changed" in banner
+        assert "refresh models" in banner
+
+        # The real recovery path a user would take.
+        pane.query_one("#tts-refresh-catalog-btn", Button).press()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert pane._profile_configuration_revision == 2, (
+            "Refresh did not re-sync the cached configuration revision"
+        )
+        banner_after = str(
+            app.query_one("#tts-profile-preview-status", Static).renderable
+        ).lower()
+        assert "tts settings changed" not in banner_after, (
+            f"Refresh did not resolve the revision mismatch: {banner_after!r}"
+        )
+        if provider_id == "audio_cpp":
+            assert "unverified" in banner_after
+        else:
+            assert "no catalog check" in banner_after
+
+
+@pytest.mark.asyncio
+async def test_adopted_preset_preview_registry_closed_during_voice_fetch_is_symmetric(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Branch trace, `not self._catalog_generation_allowed`: the one live
+    path found is `_load_provider_voices_worker`'s `TTSRegistryClosedError`
+    (non-reconfiguring) branch, which forces this flag False without an
+    `_apply_controls` recompute. `TTSRegistryClosedError` comes from
+    `TTSAdapterRegistry._closed` -- a registry-wide, one-way seal -- so it is
+    identical machinery for audio.cpp and every legacy provider, with no
+    legacy-specific false promise to fix. Pinned as symmetry: both classes
+    must show the exact same banner from the exact same failure.
+    """
+    banners: dict[str, str] = {}
+    for provider_id, model_id, voice_id in _ADOPTED_PRESET_PROVIDER_CASES:
+        service = FakeTTSService()
+        monkeypatch.setattr(
+            SpeechPlaygroundPane,
+            "_tts_service_factory",
+            lambda self, service=service: _resolved(service),
+        )
+        monkeypatch.setattr(
+            SpeechPlaygroundPane, "_check_higgs_installation", lambda self: None
+        )
+        preset = _profile_preset(
+            provider_id=provider_id,
+            model_id=model_id,
+            voice_id=voice_id,
+            availability="available",
+        )
+        app = _AxisHarness(profile_preset=preset)
+        async with app.run_test(size=(160, 60)) as pilot:
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+
+            pane = app.query_one(SpeechPlaygroundPane)
+            catalog = pane._catalogs[provider_id]
+
+            service.voice_error = TTSRegistryClosedError("registry shutting down")
+            pane._load_provider_voices(
+                provider_id, model_id, catalog.revision, refresh=True
+            )
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+
+            banners[provider_id] = str(
+                app.query_one("#tts-profile-preview-status", Static).renderable
+            ).lower()
+
+    assert "refresh or retry" in banners["audio_cpp"]
+    assert banners["audio_cpp"] == banners["openai"], (
+        f"registry-closed banner diverged by provider class: {banners}"
+    )
