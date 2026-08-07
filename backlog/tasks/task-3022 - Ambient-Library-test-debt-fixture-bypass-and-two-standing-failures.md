@@ -30,6 +30,13 @@ Ambient test debt on dev, repeatedly re-confirmed (A/B against clean HEAD) by ev
 3. `test_shared_form_and_native_inputs_use_thin_non_semantic_focus` (`_forms.tcss`-adjacent) fails
    on unmodified dev.
 
+
+4. Newly confirmed ambient during the P2-batch arc (A/B'd on clean dev `6b38a13b8`):
+   `test_library_shell_note_save_result_after_switch_is_discarded` and
+   `test_library_shell_note_conflict_reload_discards_local_edits` in
+   `Tests/UI/test_library_shell.py` (the latter is the long-documented order-dependent
+   notes tail). Fold into the same fixture/ordering repair pass.
+
 A green run of the Library-adjacent suites currently requires knowing which failures are ambient;
 that knowledge should live in fixed tests, not session notes.
 <!-- SECTION:DESCRIPTION:END -->
