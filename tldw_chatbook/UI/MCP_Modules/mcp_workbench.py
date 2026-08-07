@@ -678,6 +678,9 @@ class MCPWorkbench(Container):
         super().__init__(**kwargs)
         self._app_instance = app_instance
         self._active_mode = "servers"
+        #: Mode requested before the deferred canvases mounted (task-2901);
+        #: replayed by `_mount_deferred_canvases`.
+        self._pending_deferred_mode: str | None = None
         self._source = "local"
         self._selected_server_key: str | None = None
         # F-054: one-shot gate for `_preselect_single_problem_on_load()` --
@@ -909,15 +912,13 @@ class MCPWorkbench(Container):
                 classes="destination-workbench-pane",
             ):
                 yield MCPServersMode(id="mcp-mode-canvas-servers")
-                yield MCPToolsMode(id="mcp-mode-canvas-tools")
-                yield MCPPermissionsMode(id="mcp-mode-canvas-permissions")
-                # T7 (MCP Hub Phase 5): Audit mode now hosts the real
-                # `MCPAuditMode` canvas too -- every `MCP_HUB_MODES` entry is
-                # now a real canvas, so the generic phase-placeholder loop
-                # this used to fall through to (T12's `.ds-info-callout`
-                # Static) is gone; it would never have executed its body
-                # again anyway.
-                yield MCPAuditMode(id="mcp-mode-canvas-audit")
+                # task-2901: Tools/Permissions/Audit (T5/T6/T7 canvases —
+                # every `MCP_HUB_MODES` entry is a real canvas) arrive
+                # hidden behind the ContentSwitcher and are NOT composed
+                # here. They mount as `_reload_guarded`'s first step
+                # (`_mount_deferred_canvases`), before `reload()` pushes
+                # data into them — off the click→paint critical path with
+                # the load pipeline's ordering intact.
             yield MCPInspector(id="mcp-hub-inspector", classes="destination-workbench-pane")
 
     def on_mount(self) -> None:
@@ -1001,9 +1002,41 @@ class MCPWorkbench(Container):
             exclusive=True,
         )
 
+    async def _mount_deferred_canvases(self) -> None:
+        """Mount the three hidden mode canvases after first paint (task-2901).
+
+        Runs as `_reload_guarded`'s first step, so every data push inside
+        `reload()` (and everything after it) sees the full canvas set —
+        the pipeline's unguarded `query_one(MCP*Mode)` sites stay valid by
+        ordering, not by luck. A mode request that lands in the narrow
+        pre-mount window is stashed by `set_mode` and replayed here.
+        Idempotent for re-entered loads.
+        """
+        try:
+            switcher = self.query_one(ContentSwitcher)
+        except QueryError:
+            return
+        if not self.query(MCPToolsMode):
+            tools = MCPToolsMode(id="mcp-mode-canvas-tools")
+            permissions = MCPPermissionsMode(id="mcp-mode-canvas-permissions")
+            audit = MCPAuditMode(id="mcp-mode-canvas-audit")
+            # ContentSwitcher hides children from its `current` WATCHER, which
+            # only fires on change — late-mounted children arrive visible, and
+            # all three canvases briefly stacking pushed the current one's
+            # content off-screen. Hide explicitly; `current = <mode>` shows
+            # the right one when a mode change lands.
+            for canvas in (tools, permissions, audit):
+                canvas.display = False
+            await switcher.mount(tools, permissions, audit)
+        pending = self._pending_deferred_mode
+        if pending is not None:
+            self._pending_deferred_mode = None
+            self.set_mode(pending)
+
     async def _reload_guarded(self) -> None:
         """Run the mount-time reload without letting a failure strand the UI."""
         try:
+            await self._mount_deferred_canvases()
             await self.reload()
         except Exception as exc:
             # `reload()` clears `is_loading` in its own `finally`, but only for
@@ -2435,6 +2468,14 @@ class MCPWorkbench(Container):
     def set_mode(self, mode: str) -> None:
         if mode not in MCP_HUB_MODES:
             mode = "servers"
+        # task-2901: `ContentSwitcher.current` raises for an id with no
+        # child. A mode request landing before the deferred canvases mount
+        # (a fast chip click in the first paint-to-load window) is stashed
+        # and replayed by `_mount_deferred_canvases` — the same stash idea
+        # `_reloading` uses for restores.
+        if not self.query(f"#mcp-mode-canvas-{mode}"):
+            self._pending_deferred_mode = mode
+            return
         mode_changed = mode != self._active_mode
         self._active_mode = mode
         self.query_one(ContentSwitcher).current = f"mcp-mode-canvas-{mode}"
