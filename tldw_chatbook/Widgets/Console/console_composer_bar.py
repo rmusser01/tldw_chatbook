@@ -41,7 +41,7 @@ from textual.app import ComposeResult
 from textual.containers import Horizontal
 from textual.content import Content
 from textual.css.query import NoMatches
-from textual.events import Click, DescendantBlur, DescendantFocus, MouseUp
+from textual.events import Click, DescendantBlur, DescendantFocus, Key, MouseUp
 from textual.geometry import Region
 from textual.widget import Widget
 from textual.widgets import Button, Input, Static
@@ -2733,6 +2733,88 @@ class ConsoleComposerBar(Horizontal):
         self._evict_to_char_budget(self._undo_stack)
         self._evict_to_char_budget(self._redo_stack)
         self._coalescing_active = False
+
+    def handle_console_key(self, event: Key) -> bool:
+        """Consume a Console key that maps onto a composer-only operation.
+
+        Decomposition wave 5: the composer already owned every operation
+        these keys invoke -- only the key->method mapping lived on
+        `ChatScreen.on_key`. The branches below are the ones that call
+        *nothing but* composer methods, so they move here verbatim; the
+        screen keeps `on_key` itself (Textual resolves it by name, and its
+        "the Console composer is the default printable text target" policy
+        is routing, not composer behaviour) along with every branch that
+        reaches past the composer -- Workbench/guidance resync, the
+        clipboard, undo/redo's store persistence, send, transcript paging.
+
+        This is NOT a Textual handler (no `on_`/`_on_` prefix, no
+        `BINDINGS`): the composer must not start consuming keys on its own
+        the moment it happens to be focused. The screen decides whether the
+        keystroke belongs to the composer at all (`_should_capture_console_
+        input`, the setup-modal guard, the hands-free/realtime loops, the
+        slash-command popup) and only then delegates here.
+
+        Args:
+            event: The key event the screen is offering to the composer.
+
+        Returns:
+            True when the key was consumed (the event has already been
+            stopped and default-prevented); False when the screen should
+            keep looking -- which includes Up/Down on a boundary row where
+            neither history recall nor caret movement had anything to do.
+        """
+        if event.key in {"ctrl+a", "super+a", "cmd+a", "meta+a"}:
+            self.select_all_draft()
+            event.stop()
+            event.prevent_default()
+            return True
+        if event.key == "left":
+            self.move_cursor_left()
+            event.stop()
+            event.prevent_default()
+            return True
+        if event.key == "right":
+            # TASK-1364: with a ghost-text suggestion visible (caret at end,
+            # live draft), Right accepts it instead of moving the caret.
+            if not self.accept_ghost_text():
+                self.move_cursor_right()
+            event.stop()
+            event.prevent_default()
+            return True
+        # Vertical caret movement differs from every neighbor above: those
+        # always consume the key (there is always somewhere to move -- even
+        # at a boundary, left/right/home/end land on a valid, if unchanged,
+        # offset). `move_cursor_up`/`move_cursor_down` instead return False
+        # on the first/last visual row, and the composer moves nothing at
+        # all -- so the event must fall through UNCONSUMED in that case,
+        # preserving whatever up/down would otherwise do on this screen
+        # (nothing today; a future transcript scroll or default focus
+        # behavior must not be silently swallowed by a no-op composer move).
+        # TASK-1364: on exactly those boundary rows, Up/Down first offer
+        # prompt-history recall (the composer gates on first/last visual row
+        # of the wrapped draft); only when recall declines does ordinary
+        # caret movement get its chance.
+        if event.key == "up":
+            if self.recall_history_previous() or self.move_cursor_up():
+                event.stop()
+                event.prevent_default()
+                return True
+        if event.key == "down":
+            if self.recall_history_next() or self.move_cursor_down():
+                event.stop()
+                event.prevent_default()
+                return True
+        if event.key == "home":
+            self.move_cursor_home()
+            event.stop()
+            event.prevent_default()
+            return True
+        if event.key == "end":
+            self.move_cursor_end()
+            event.stop()
+            event.prevent_default()
+            return True
+        return False
 
     def select_all_draft(self) -> bool:
         """Mark the full visible Console draft as selected without mutating it.
