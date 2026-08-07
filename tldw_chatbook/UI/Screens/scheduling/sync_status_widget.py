@@ -17,12 +17,18 @@ class SyncStatusWidget(Horizontal):
     #scheduling-owner-local, #scheduling-owner-server {
         width: auto;
     }
+    /* task-2723: without margins these Statics render flush against each
+       other — "Last pull: —Last push: —<error text>" read as one run. */
     #scheduling-last-pull, #scheduling-last-push {
         width: auto;
+        margin-left: 2;
     }
     #scheduling-sync-error {
         width: 1fr;
         color: $error;
+        margin-left: 2;
+        text-wrap: nowrap;
+        text-overflow: ellipsis;
     }
     #scheduling-clear-error {
         width: auto;

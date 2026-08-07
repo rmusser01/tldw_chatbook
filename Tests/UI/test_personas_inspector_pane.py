@@ -701,3 +701,33 @@ async def test_show_conversations_twice_in_same_tick_does_not_crash():
         rows = pilot.app.query(".personas-conversation-row")
         assert len(rows) == 1
         assert _row_text(rows.first(ListItem)) == "Cold trail"
+
+
+async def test_state_pushed_before_children_mount_defers_then_replays():
+    """task-2727: PersonasScreen._load_after_mount races the pane's child
+    mounting; a push landing early crashed with NoMatches and aborted the
+    screen's initial load (pending restore + auto-select silently skipped).
+    Early pushes must defer quietly and be applied once children exist."""
+    pane = PersonasInspectorPane(id="personas-inspector-pane")
+    # Selection state normally arrives via show_selection(), which needs
+    # mounted children itself — set the attributes directly to model the
+    # racing screen-side sync.
+    pane._has_selection = True
+    pane._selected_kind = "character"
+
+    # The exact call observed crashing live, issued pre-mount:
+    pane.set_console_actions_enabled(False, reason="task-2727-probe")
+
+    class LateStateApp(App):
+        def compose(self):
+            yield pane
+
+    app = LateStateApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        readiness = str(
+            pilot.app.query_one("#personas-readiness-console", Static).renderable
+        )
+        assert "task-2727-probe" in readiness, (
+            f"pre-mount push was dropped; readiness reads: {readiness!r}"
+        )

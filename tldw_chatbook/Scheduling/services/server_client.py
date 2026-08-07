@@ -35,6 +35,16 @@ class ServerClientValidationError(ServerClientError):
     """Server returned 4xx other than 404, or a local policy denied the action."""
 
 
+class ServerClientPolicyError(ServerClientValidationError):
+    """A local runtime-mode policy refused the action before any network I/O.
+
+    Subclass of :class:`ServerClientValidationError` so existing catches keep
+    working; the refined type lets consumers distinguish "not applicable in
+    this runtime mode" from a real failure — the sync engine must not persist
+    a refusal as a sync error (task-2722).
+    """
+
+
 class ServerClientServerError(ServerClientError):
     """Server returned 5xx."""
 
@@ -142,7 +152,7 @@ class SchedulingServerClient:
                 coro = method(*args, **kwargs)
                 return await asyncio.wait_for(coro, timeout=timeout)
             except PolicyDeniedError as exc:
-                raise ServerClientValidationError(str(exc)) from exc
+                raise ServerClientPolicyError(str(exc)) from exc
             except ServerClientNotFoundError:
                 raise
             except ServerClientValidationError:

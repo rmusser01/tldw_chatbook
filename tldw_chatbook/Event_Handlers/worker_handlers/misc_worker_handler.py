@@ -20,6 +20,15 @@ class MiscWorkerHandler(BaseWorkerHandler):
     HANDLED_GROUPS = {
         "ollama_api",
         "model_download",
+        # Fire-and-forget groups (task-2726): their failures are already
+        # persisted by the diagnostics hook before registry delegation, so
+        # acknowledging them here only silences the per-transition
+        # "No handler found" warning — one per tab switch for
+        # screen-navigation (TASK-1230), several at startup for the others.
+        "screen-navigation",
+        "scheduling",
+        "model-catalog-refresh",
+        "subscriptions-fts-backfill",
     }
 
     def can_handle(self, worker_name: str, worker_group: Optional[str] = None) -> bool:

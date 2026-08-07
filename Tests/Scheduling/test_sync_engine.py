@@ -825,3 +825,43 @@ async def test_pull_does_not_push_mutations_or_tombstones(tmp_path):
     assert len(pending) == 1
     tombstones = db.get_tombstones("server:1", primitive="reminder_task")
     assert len(tombstones) == 1
+
+
+@pytest.mark.asyncio
+async def test_policy_refusal_is_not_recorded_as_sync_error(tmp_path):
+    """task-2722: a runtime-mode policy refusal ("requires server mode") is a
+    not-applicable outcome, not a sync failure. The old path persisted it as a
+    standing sync error badge on local-only profiles."""
+    from tldw_chatbook.Scheduling.services.server_client import (
+        ServerClientPolicyError,
+    )
+
+    db = ScheduledTasksDB(tmp_path / "db.db")
+    server_client = AsyncMock()
+    server_client.list_reminders.side_effect = ServerClientPolicyError(
+        "notifications.reminders.list.server requires server mode."
+    )
+    engine = SyncEngine(db, server_client, owner_id="local")
+
+    await engine.pull()
+    await engine.sync_now()
+
+    state = db.get_sync_state("local") or {}
+    assert not (state.get("sync_errors") or []), (
+        f"policy refusal was recorded as a sync error: {state.get('sync_errors')}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_real_server_failure_still_records_sync_error(tmp_path):
+    """Guard for task-2722: only policy refusals are exempt — genuine server
+    failures must keep surfacing as sync errors."""
+    db = ScheduledTasksDB(tmp_path / "db.db")
+    server_client = AsyncMock()
+    server_client.list_reminders.side_effect = ServerUnavailableError("offline")
+    engine = SyncEngine(db, server_client, owner_id="server:1")
+
+    await engine.pull()
+
+    state = db.get_sync_state("server:1") or {}
+    assert state.get("sync_errors"), "real failure no longer recorded"
