@@ -816,12 +816,99 @@ async def test_unverified_legacy_profile_never_offers_a_refresh_it_cannot_perfor
 
         rows = _visible_content_rows(status)
         assert rows == (
-            "Unverified — this provider has no catalog check.",
+            "No catalog check — the exact selection is used as-is.",
             "Selected: Voice 00",
             "openai / tts-1 / alloy",
         )
         assert "refresh" not in rows[0].casefold()
         assert "retry" not in rows[0].casefold()
+        assert "unverified" not in rows[0].casefold()
+
+
+@pytest.mark.parametrize(
+    ("provider_id", "state", "recovery_action", "expected_cell"),
+    [
+        ("openai", "unverified", "none", "No catalog check"),
+        ("audio_cpp", "unverified", "refresh", "Unverified"),
+        ("audio_cpp", "available", "none", "Available"),
+        ("audio_cpp", "unavailable", "edit", "Unavailable"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_availability_cell_tells_no_catalog_check_story_for_legacy_permanent_unverified(
+    provider_id: str,
+    state: str,
+    recovery_action: str,
+    expected_cell: str,
+) -> None:
+    """The DataTable "Availability" cell must never show the raw word
+    "Unverified" for a provider whose unverified state is permanent
+    (`recovery_action == "none"`) -- it must tell the honest no-catalog-check
+    story instead. audio_cpp's transient unverified/available/unavailable
+    renderings are unchanged."""
+
+    profile = replace(_profile(0), provider_id=provider_id)
+    service = _ActionProfileService(
+        profile,
+        availability_state=state,
+        availability_recovery=recovery_action,
+    )
+    app = _STTSHost(service)
+
+    async with app.run_test(size=(150, 55)) as pilot:
+        await _open_stts_view(app, pilot, "profiles")
+        table = app.query_one("#stts-profile-table", DataTable)
+        await _wait_until(pilot, lambda: bool(service.availability_calls))
+        await _wait_until(pilot, lambda: _table_cell(table, 0, 3) != "Checking")
+
+        assert _table_cell(table, 0, 3) == expected_cell
+
+
+@pytest.mark.asyncio
+async def test_publish_page_also_renders_no_catalog_check_from_preserved_legacy_availability() -> (
+    None
+):
+    """The availability cell is filled at two sites -- `_publish_page` (from
+    preserved availability across a same-page refresh) and
+    `_publish_availability` (from a fresh observation) -- and both must go
+    through the same helper so they cannot diverge. This pins
+    `_publish_page`'s direct rendering by re-listing the identical page and
+    checking the cell BEFORE the new availability observation resolves, when
+    the cell can only have come from `_publish_page`'s preserved-availability
+    branch."""
+
+    legacy = replace(
+        _profile(0),
+        provider_id="openai",
+        model_id="tts-1",
+        voice_id="alloy",
+    )
+    service = _PipelineProfileService()
+    app = _STTSHost(service)
+    page = _page(legacy, generation=5)
+
+    async with app.run_test(size=(150, 55)) as pilot:
+        await _open_stts_view(app, pilot, "profiles")
+        await _wait_until(pilot, lambda: len(service.list_futures) == 1)
+        service.list_futures[0].set_result(page)
+        await _wait_until(pilot, lambda: len(service.availability_futures) == 1)
+        service.availability_futures[0].set_result(
+            _availability(page, state="unverified", recovery_action="none")
+        )
+        await pilot.pause()
+        table = app.query_one("#stts-profile-table", DataTable)
+        assert _table_cell(table, 0, 3) == "No catalog check"
+
+        app.query_one("#stts-profile-refresh-btn", Button).press()
+        await pilot.pause()
+        await _wait_until(pilot, lambda: len(service.list_futures) == 2)
+        service.list_futures[1].set_result(page)
+        await pilot.pause()
+
+        # The second availability observation has not resolved yet -- this
+        # cell can only have come from `_publish_page`'s direct render of
+        # the preserved availability, not from `_publish_availability`.
+        assert _table_cell(table, 0, 3) == "No catalog check"
 
 
 @pytest.mark.asyncio

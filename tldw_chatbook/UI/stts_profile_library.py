@@ -118,10 +118,21 @@ _PROFILE_UNAVAILABLE_COPY = (
     "The exact profile selection is unavailable. Refresh current capabilities "
     "or edit the persisted model and voice."
 )
+# This copy is reachable only for audio_cpp: `_require_authoritative_capability`
+# and `observe_portable_profile` (`profile_service.py`) both return early for
+# any other provider_id before ever raising `profile_unverified` or
+# `stale_configuration` -- the two error codes that route here (see
+# `profile_action_error_copy` below). Every raise site of those two codes was
+# traced (profile_service.py:1331, 1402, 2357, 2374) and each sits strictly
+# inside an `if draft.provider_id != _PROFILE_PROVIDER_ID: return`-gated
+# branch, so a legacy provider cannot reach this toast. If a future change
+# lets a legacy draft reach either raise, this copy must be branched the same
+# way the DataTable cell and detail status line are (slice 2, task 1).
 _PROFILE_UNVERIFIED_COPY = (
     "The exact profile selection could not be verified. Refresh and retry "
     "without changing persisted values."
 )
+_PROFILE_NO_CATALOG_CHECK_COPY = "No catalog check"
 PROFILE_EXPORT_COMPLETE_COPY = "Voice profile exported."
 
 
@@ -189,6 +200,25 @@ class ProfilePreviewRequested(Message):
 def _assignment_copy(count: int) -> str:
     noun = "assignment" if count == 1 else "assignments"
     return f"{count} {noun}"
+
+
+def _availability_cell_text(availability: TTSProfileAvailability | None) -> str:
+    """Render one row's "Availability" cell -- the single source both
+    `_publish_page` and `_publish_availability` call, so they cannot diverge.
+
+    `recovery_action == "none"` on an `"unverified"` availability means the
+    provider has no catalog to preflight, so the state is permanent, not a
+    transient result waiting on Refresh (`_ALLOWED_RECOVERY_ACTIONS` in
+    `profile_service.py` documents the contract). That case alone gets the
+    honest "No catalog check" copy; every other state -- including
+    audio_cpp's transient "unverified" -- keeps today's plain
+    `.state.title()` rendering.
+    """
+    if availability is None:
+        return "Checking"
+    if availability.state == "unverified" and availability.recovery_action == "none":
+        return _PROFILE_NO_CATALOG_CHECK_COPY
+    return availability.state.title()
 
 
 def profile_action_error_copy(error: BaseException) -> str:
@@ -788,7 +818,7 @@ class STTSProfileLibrary(Widget):
         with Vertical(id="stts-profile-header"):
             yield Label("Voice profiles", id="stts-profile-title")
             yield Static(
-                "Manage exact native audio.cpp model and voice selections.",
+                "Manage exact model and voice selections for every speech provider.",
                 id="stts-profile-purpose",
             )
         with Horizontal(id="stts-profile-toolbar"):
@@ -1195,9 +1225,7 @@ class STTSProfileLibrary(Widget):
                     if profile.voice_id is not None
                     else "Server default"
                 ),
-                Text(
-                    "Checking" if availability is None else availability.state.title()
-                ),
+                Text(_availability_cell_text(availability)),
                 Text(str(profile.revision)),
                 key=key,
             )
@@ -1224,7 +1252,7 @@ class STTSProfileLibrary(Widget):
             table.update_cell(
                 key,
                 self._availability_column,
-                Text(item.state.title()),
+                Text(_availability_cell_text(item)),
             )
         self._availability_configuration_revision = snapshot.configuration_revision
         self._availability_catalog_revision = snapshot.catalog_revision
@@ -1346,7 +1374,7 @@ class STTSProfileLibrary(Widget):
             status_line = (
                 "Unverified — Refresh and retry."
                 if availability.recovery_action == "refresh"
-                else "Unverified — this provider has no catalog check."
+                else "No catalog check — the exact selection is used as-is."
             )
         else:
             status_line = f"{state}."
