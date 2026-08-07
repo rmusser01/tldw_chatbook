@@ -6748,10 +6748,25 @@ class TldwCli(
         # actually on the stack — otherwise the bar shows a destination that
         # never loaded AND its already-active check swallows every retry click,
         # leaving the destination unreachable until restart.
+        #
+        # task-2854: use ``nav_bar_active``, not ``screen_name`` -- a screen
+        # whose route is folded under another destination for routing/label
+        # purposes only (e.g. Study folds under Library) sets
+        # ``nav_bar_active`` to a value that clears its own nav bar's
+        # highlight instead of falsely re-claiming the owning destination
+        # (see ``BaseAppScreen.nav_bar_active``). ``screen_name`` is kept as
+        # a fallback for any screen that predates that attribute.
+        # ``nav_bar_active`` may legitimately be ``""`` (Study's case), which
+        # must still reach ``restore_active`` -- ``resolve_shell_route("")``
+        # matches no destination, so every nav button loses ``is-active``
+        # rather than the call being skipped and the stale optimistic
+        # highlight surviving.
         try:
             current_screen = self.screen
-            current_route = getattr(current_screen, "screen_name", None)
-            if isinstance(current_route, str) and current_route.strip():
+            current_route = getattr(current_screen, "nav_bar_active", None)
+            if current_route is None:
+                current_route = getattr(current_screen, "screen_name", None)
+            if isinstance(current_route, str):
                 current_screen.query_one(MainNavigationBar).restore_active(
                     current_route
                 )

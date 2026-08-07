@@ -41,7 +41,31 @@ class _FakeOutgoingScreen:
         return self._bar
 
 
-def _wire_failing_navigation(app, monkeypatch, bar: _RecordingBar, fail_flag: dict):
+class _FakeOutgoingStudyScreen:
+    """Outgoing screen mirroring StudyScreen (task-2854): ``screen_name``
+    stays ``"study"`` (routing still folds it under Library via
+    ``resolve_shell_route``), but ``nav_bar_active`` is ``""`` so the
+    screen's own nav bar shows no highlight while it is on top -- see
+    ``BaseAppScreen.nav_bar_active`` / ``StudyScreen.__init__``.
+    """
+
+    screen_name = "study"
+    nav_bar_active = ""
+
+    def __init__(self, bar: _RecordingBar):
+        self._bar = bar
+
+    def query_one(self, _selector):
+        return self._bar
+
+
+def _wire_failing_navigation(
+    app,
+    monkeypatch,
+    bar: _RecordingBar,
+    fail_flag: dict,
+    outgoing_screen_cls=_FakeOutgoingScreen,
+):
     """Point the app at fake screens and one injected unguarded failure."""
 
     class FakeTargetScreen:
@@ -76,7 +100,7 @@ def _wire_failing_navigation(app, monkeypatch, bar: _RecordingBar, fail_flag: di
         type(app), "_current_runtime_identity", maybe_failing_identity
     )
     monkeypatch.setattr(
-        type(app), "screen", property(lambda self: _FakeOutgoingScreen(bar))
+        type(app), "screen", property(lambda self: outgoing_screen_cls(bar))
     )
     app._initial_screen_pushed = True
     return switched
@@ -104,6 +128,42 @@ async def test_escaped_navigation_exception_notifies_and_rolls_back_nav_bar(
     assert notifications, "user got no message about the failed navigation"
     assert bar.restored == ["library"], (
         "nav bar was not rolled back to the screen actually on the stack"
+    )
+
+
+@pytest.mark.asyncio
+async def test_navigation_failure_while_study_screen_on_top_does_not_box_library(
+    monkeypatch,
+):
+    """task-2854 review finding: StudyScreen clears its own nav-bar identity
+    via ``nav_bar_active = ""`` (its ``screen_name`` still folds to Library's
+    destination for routing purposes -- see ``BaseAppScreen.nav_bar_active``).
+    The failure-recovery rollback in ``_notify_navigation_failure`` must
+    consult ``nav_bar_active``, not ``screen_name``, when restoring the
+    highlight -- otherwise ``restore_active("study")`` resolves through
+    ``resolve_shell_route`` to Library's destination and re-boxes
+    "⌃3 Library" while Study is still the screen actually on the stack,
+    reintroducing the exact defect task-2854 fixed."""
+    from Tests.UI.app_factory import _build_test_app
+
+    app = _build_test_app()
+    monkeypatch.setattr(app, "notify", lambda message, **kwargs: None)
+    bar = _RecordingBar()
+    _wire_failing_navigation(
+        app,
+        monkeypatch,
+        bar,
+        {"on": True},
+        outgoing_screen_cls=_FakeOutgoingStudyScreen,
+    )
+
+    with pytest.raises(PermissionError):
+        await app.handle_screen_navigation(NavigateToScreen("chat"))
+
+    assert bar.restored == [""], (
+        f"nav bar was restored with {bar.restored!r} instead of Study's "
+        "empty nav_bar_active -- Library would get boxed while Study is "
+        "still the screen on the stack"
     )
 
 
