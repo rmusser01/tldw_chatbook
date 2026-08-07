@@ -324,6 +324,13 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
                     placeholder="Search sources...",
                     id="sources-search-input",
                     value=self.search_query,
+                    # `select_on_focus=False` is load-bearing (same as
+                    # `#items-search-input`, task-2513): Textual's default
+                    # `select_on_focus=True` makes the programmatic refocus
+                    # after a recompose select ALL text, so the user's next
+                    # keystroke REPLACES the half-typed query instead of
+                    # appending to it.
+                    select_on_focus=False,
                     compact=True,
                 )
                 # TASK-2310: UAT read this row as "All / All statuses /
@@ -923,8 +930,19 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
         re-applies `.focus()` against whatever is currently mounted, and the
         intent survives until one of them is actually confirmed.
 
-        Two cases are handled, and only these two — focus is never taken
-        from anywhere outside this pane's own create form:
+        task-3071 adds a third case ahead of these, checked first: the
+        search box (`#sources-search-input`) held focus when the teardown
+        started. `search_query` is `reactive(..., recompose=True)`, so
+        every keystroke in it rebuilds this pane, which used to destroy
+        the focused input mid-word -- only the first character of a search
+        ever landed (the exact bug `ItemsPane.recompose` fixed in
+        task-2513). Search focus is restored to the fresh input and the
+        create-form path below is skipped for that rebuild, so a still-
+        armed `_pending_create_focus` cannot yank the caret out of the box.
+
+        Two create-form cases are handled, and only these two — focus is
+        never taken from anywhere outside this pane's own create form or
+        the search box:
 
         1. The form just opened: `watch_show_create_form` armed
            `_pending_create_focus` with the first field, matching
@@ -961,6 +979,26 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
         #     `_focused_create_field_id()` is `None` and
         #     `_pending_create_focus` (armed to field 0 by
         #     `watch_show_create_form`) still supplies the target.
+        # task-3071: the search box is this pane's OTHER focusable the
+        # recompose destroys (`search_query` is `reactive(...,
+        # recompose=True)`, so every keystroke rebuilds the pane) --
+        # capture it alongside the create-form cases. `self.screen.focused`,
+        # NOT `self.app.focused`, for the same ScreenStackError reason
+        # `ItemsPane.recompose` documents.
+        try:
+            focused = self.screen.focused if self.is_mounted else None
+        except Exception:
+            focused = None
+        search_had_focus = (
+            focused is not None and focused.id == "sources-search-input"
+        )
+        # Capture whether the create form is mounted NOW, while the old DOM
+        # still exists: after the rebuild, `show_create_form` alone cannot
+        # distinguish "the form is OPENING with this recompose" (its
+        # focus-on-open must win over the search box) from "the form was
+        # already open" (an in-flight keystroke's focus must win).
+        # Qodo, PR #1418.
+        form_was_open = bool(self.query("#sources-create-form"))
         restore = self._focused_create_field_id() or self._pending_create_focus
         await super().recompose()
         # Guard explicitly after the await: the pane can be torn down while
@@ -973,8 +1011,25 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
             # The form closed (Cancel/Create) while this recompose was in
             # flight. Any focus intent still armed is for a form that no
             # longer exists -- drop it so it cannot resurface later and
-            # steal focus for an unrelated rebuild (TASK-1345).
+            # steal focus for an unrelated rebuild (TASK-1345). This runs
+            # BEFORE the search branch so a closed form's stale intent is
+            # cleared even when the search box keeps focus (Qodo, PR #1418).
             self._pending_create_focus = None
+            if search_had_focus:
+                self.call_after_refresh(self._restore_search_focus)
+            return
+        if search_had_focus and form_was_open:
+            # Typing mid-search must keep the box: refocus the fresh input
+            # and never let a still-armed create-form intent yank the caret
+            # away mid-keystroke -- the same "the user's CURRENT focus wins
+            # over a stale intent" ordering the TASK-1345 follow-up pinned
+            # for in-form fields. Gated on `form_was_open`: when THIS
+            # recompose is the one mounting the form, focus-on-open wins
+            # instead (falls through to the restore path below), so the
+            # form's auto-focus-first-field behavior survives the screen's
+            # deferred open firing while the search box happens to be
+            # focused (Qodo, PR #1418).
+            self.call_after_refresh(self._restore_search_focus)
             return
         if not restore:
             return
@@ -1006,6 +1061,22 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
         # landed -- see `_confirm_create_focus` and the docstring above.
         self._pending_create_focus = restore
         self.call_after_refresh(self._confirm_create_focus, restore)
+
+    def _restore_search_focus(self) -> None:
+        """Focus the freshly recomposed search input, caret at end of query.
+
+        The search half of `recompose()`'s focus preservation (task-3071),
+        mirroring `ItemsPane._restore_search_focus`: the input this runs
+        against is always the LIVE replacement mounted by
+        `super().recompose()`, so a missing match just means the pane was
+        torn down in between -- bail quietly.
+        """
+        try:
+            search = self.query_one("#sources-search-input", Input)
+        except NoMatches:
+            return
+        search.focus()
+        search.cursor_position = len(search.value)
 
     def _confirm_create_focus(self, target: str, attempts: int = 0) -> None:
         """Clear the sticky create-focus intent once landed -- or once the
