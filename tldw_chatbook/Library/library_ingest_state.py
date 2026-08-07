@@ -23,6 +23,7 @@ from tldw_chatbook.Workspaces.conversation_browser_state import (
     format_console_relative_age as format_batch_relative_age,
 )
 from tldw_chatbook.Library.ingest_capabilities import (
+    MULTI_PAGE_SCRAPE_METHODS,
     _is_installed as _dependency_installed,
     generic_option_default,
     get_capabilities,
@@ -71,9 +72,48 @@ QUEUE_EMPTY_COPY = "No import jobs yet."
 QUEUE_EMPTY_AFTER_ACTIVITY_COPY = "Queue is empty."
 START_QUIET_LINE_COPY = "Enter a file path to start."
 SUPPORTED_FORMATS_COPY = (
-    "Supported: PDF documents, audio/video files, e-books, plain text "
-    "files."
+    "Supported: PDF documents, Word/Office documents, audio/video files, "
+    "e-books, plain text files."
 )
+
+
+# (task-3303 AC5) The local article extractor is single-page: the multi-page
+# scrape methods (sitemap/url_level/recursive) are honored only by the server
+# clip path, so a local "sitemap" selection used to silently import ONE page.
+WEB_LOCAL_SINGLE_PAGE_NOTE = (
+    "Multi-page fetch runs on the server — this local import fetches one "
+    "page."
+)
+
+
+def build_web_scope_note(
+    ingest_backend: str, web_options: Mapping[str, Any]
+) -> str:
+    """Return the local single-page honesty note for the web options panel.
+
+    (task-3303 AC5) ``scrape_method``/``max_pages``/``max_depth`` are honored
+    only by the server clip path; the local article path fetches exactly one
+    page. When the ingest targets the local backend and a multi-page method
+    is selected, the panel must say so at the control instead of letting the
+    run silently import a single page.
+
+    Args:
+        ingest_backend: Where a new ingest will run (``"local"``/``"server"``,
+            the canvas state's ``ingest_backend``).
+        web_options: The ``web`` group's current option values from the form
+            echo (missing keys fall back to the schema defaults).
+
+    Returns:
+        :data:`WEB_LOCAL_SINGLE_PAGE_NOTE` when the note applies, else ``""``.
+    """
+    if str(ingest_backend or "local").strip().lower() == "server":
+        return ""
+    fields = {f.name: f for f in get_capabilities("web").fields}
+    default_method = getattr(fields.get("scrape_method"), "default", "individual")
+    method = str(
+        (web_options or {}).get("scrape_method") or default_method
+    ).strip()
+    return WEB_LOCAL_SINGLE_PAGE_NOTE if method in MULTI_PAGE_SCRAPE_METHODS else ""
 
 
 def validate_ingest_option_value(field: Any, value: Any) -> str:
@@ -273,6 +313,9 @@ def _retry_suffix(job: LibraryIngestJob) -> str:
 # consulted, so it is intentionally absent here.
 _TYPE_GROUP_LABELS: dict[str, tuple[str, str]] = {
     "pdf": ("PDF document", "PDF documents"),
+    # (task-3303) .doc/.docx/.odt/.rtf have their own group now -- the
+    # pre-flight used to count them as "plain text files".
+    "document": ("Word/Office document", "Word/Office documents"),
     "audio_video": ("audio/video file", "audio/video files"),
     "ebook": ("e-book", "e-books"),
     "generic": ("plain text file", "plain text files"),

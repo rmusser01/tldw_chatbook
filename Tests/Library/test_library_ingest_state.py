@@ -696,6 +696,57 @@ def test_build_type_breakdown_line_unknown_group_uses_key():
     assert line == "1 weird"
 
 
+def test_build_type_breakdown_line_document_group_has_honest_noun():
+    """(task-3303 AC1) A .docx used to pre-flight as a "plain text file"."""
+    line = build_type_breakdown_line({"document": ["/tmp/report.docx"]})
+    assert line == "1 Word/Office document"
+
+
+def test_build_type_breakdown_line_document_group_pluralizes():
+    line = build_type_breakdown_line(
+        {"document": ["/tmp/a.docx", "/tmp/b.odt", "/tmp/c.rtf"]}
+    )
+    assert line == "3 Word/Office documents"
+
+
+# --- build_web_scope_note (task-3303 AC5) ----------------------------------
+
+
+def test_web_scope_note_warns_local_multi_page_selection():
+    """A local "sitemap" import silently fetched ONE page -- say so."""
+    from tldw_chatbook.Library.library_ingest_state import build_web_scope_note
+
+    note = build_web_scope_note("local", {"scrape_method": "sitemap"})
+    assert note, "a local multi-page selection must carry the reason"
+    assert "server" in note
+    assert "one page" in note
+
+
+def test_web_scope_note_covers_every_multi_page_method():
+    from tldw_chatbook.Library.ingest_capabilities import (
+        MULTI_PAGE_SCRAPE_METHODS,
+    )
+    from tldw_chatbook.Library.library_ingest_state import build_web_scope_note
+
+    for method in MULTI_PAGE_SCRAPE_METHODS:
+        assert build_web_scope_note("local", {"scrape_method": method})
+
+
+def test_web_scope_note_silent_for_single_page_local():
+    from tldw_chatbook.Library.library_ingest_state import build_web_scope_note
+
+    assert build_web_scope_note("local", {"scrape_method": "individual"}) == ""
+    # An untouched form defaults to the single-page method.
+    assert build_web_scope_note("local", {}) == ""
+
+
+def test_web_scope_note_silent_when_targeting_the_server():
+    """Server behavior is unchanged: the clip path honors multi-page options."""
+    from tldw_chatbook.Library.library_ingest_state import build_web_scope_note
+
+    assert build_web_scope_note("server", {"scrape_method": "sitemap"}) == ""
+
+
 # --- build_estimate_line ---------------------------------------------------
 
 
@@ -1728,7 +1779,7 @@ def test_unsupported_line_names_files_and_matches_gate():
     assert blocked.start_enabled is False
     assert blocked.unsupported_line == (
         "Unsupported: x.json, y.jpg."
-        " Supported: PDF documents, audio/video files, e-books, plain text files."
+        " Supported: PDF documents, Word/Office documents, audio/video files, e-books, plain text files."
     )
 
     many = build_library_ingest_state(

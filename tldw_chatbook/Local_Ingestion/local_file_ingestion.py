@@ -673,6 +673,11 @@ def parse_local_file_for_ingest(
                 engine=options.get("pdf_engine"),
                 page_range=options.get("page_range"),
                 ocr=options.get("ocr", False),
+                # (task-3303) OCR detail; the ``or`` fallbacks mirror
+                # ``process_pdf``'s own declared defaults so a restored job
+                # without these keys behaves identically.
+                ocr_language=options.get("ocr_language") or "en",
+                ocr_backend=options.get("ocr_backend") or "auto",
                 extract_images=options.get("extract_images", False),
                 title_override=title,
                 author_override=author,
@@ -699,6 +704,11 @@ def parse_local_file_for_ingest(
                 api_name=api_name,
                 api_key=api_key,
                 chunk_options=chunk_options,
+                # (task-3303) The document group's own options; fallbacks
+                # mirror ``process_document``'s declared defaults.
+                processing_method=options.get("processing_method") or "auto",
+                enable_ocr=options.get("enable_ocr", False),
+                ocr_language=options.get("ocr_language") or "en",
             )
 
         elif file_type == "ebook":
@@ -769,7 +779,12 @@ def parse_local_file_for_ingest(
                 use_multi_level_chunking=chunk_options.get("multi_level", False),
                 chunk_language=chunk_options.get("language", "en"),
                 diarize=options.get("diarization", chunk_options.get("diarize", False)),
-                vad_use=chunk_options.get("vad_filter", False),
+                # (task-3303) The panel's VAD toggle travels as its own
+                # option; the chunk-options spelling stays as a fallback for
+                # older callers that tucked it in there.
+                vad_use=bool(
+                    options.get("vad_filter", chunk_options.get("vad_filter", False))
+                ),
                 timestamp_option=options.get("timestamps", True),
                 perform_analysis=perform_analysis,
                 api_name=api_name,
@@ -860,7 +875,12 @@ def parse_local_file_for_ingest(
                 use_multi_level_chunking=chunk_options.get("multi_level", False),
                 chunk_language=chunk_options.get("language", "en"),
                 diarize=options.get("diarization", chunk_options.get("diarize", False)),
-                vad_use=chunk_options.get("vad_filter", False),
+                # (task-3303) The panel's VAD toggle travels as its own
+                # option; the chunk-options spelling stays as a fallback for
+                # older callers that tucked it in there.
+                vad_use=bool(
+                    options.get("vad_filter", chunk_options.get("vad_filter", False))
+                ),
                 timestamp_option=options.get("timestamps", True),
                 perform_analysis=perform_analysis,
                 api_name=api_name,

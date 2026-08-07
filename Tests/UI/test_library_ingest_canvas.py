@@ -187,7 +187,7 @@ async def test_unsupported_files_summary_renders():
         # blocked submit never records.
         assert str(summary.renderable) == (
             "Unsupported: weird.xyz."
-            " Supported: PDF documents, audio/video files, e-books, plain text files."
+            " Supported: PDF documents, Word/Office documents, audio/video files, e-books, plain text files."
         )
 
 
@@ -1329,7 +1329,7 @@ async def test_unsupported_files_summary_pluralizes_correctly():
         # (task-2100) Gate-blocked (nothing importable): names only.
         assert str(summary.renderable) == (
             "Unsupported: a.xyz, b.xyz."
-            " Supported: PDF documents, audio/video files, e-books, plain text files."
+            " Supported: PDF documents, Word/Office documents, audio/video files, e-books, plain text files."
         )
 
 
@@ -1610,3 +1610,170 @@ async def test_analysis_hint_hidden_when_state_has_none():
     async with app.run_test() as pilot:
         hint = pilot.app.query_one("#library-ingest-analysis-hint", Static)
         assert hint.display is False
+
+
+# ---------------------------------------------------------------------------
+# task-3303: document panel, PDF OCR gating, AV translate gating, web honesty
+# ---------------------------------------------------------------------------
+
+
+def _preflight_for(groups: dict[str, list[str]]) -> PreflightResult:
+    return PreflightResult(
+        type_groups=groups,
+        warnings=[],
+        errors=[],
+        total_size=0,
+        truncated=False,
+        total_files=sum(len(v) for v in groups.values()),
+    )
+
+
+@pytest.mark.asyncio
+async def test_document_panel_renders_with_processing_and_ocr_controls():
+    """(task-3303 AC1) A .docx selection gets its own options panel."""
+    state = build_library_ingest_state(
+        (),
+        form=_default_form(),
+        preflight=_preflight_for({"document": ["/tmp/report.docx"]}),
+    )
+    app = _CanvasHost(state)
+    with patch(
+        "tldw_chatbook.Widgets.Library.library_ingest_canvas._is_installed",
+        return_value=True,
+    ):
+        async with app.run_test() as pilot:
+            panel = pilot.app.query_one("#type-group-document", Collapsible)
+            assert "Word/Office documents" in str(panel.title)
+            method = pilot.app.query_one(
+                "#opt-document-processing_method", Select
+            )
+            assert method.value == "auto"
+            ocr = pilot.app.query_one("#opt-document-ocr", Checkbox)
+            # Under the default "auto" method OCR is offerable (docling is
+            # "installed" in this test), and the label carries its scope.
+            assert ocr.disabled is False
+            assert "docling" in str(ocr.label)
+            language = pilot.app.query_one("#opt-document-ocr_language", Input)
+            # OCR is off, so the language field rides the gate.
+            assert language.disabled is True
+
+
+@pytest.mark.asyncio
+async def test_pdf_ocr_checkbox_inert_under_pymupdf_engine_with_reason():
+    """(task-3303 AC2) OCR under a non-OCR engine is inert, with the reason."""
+    state = build_library_ingest_state(
+        (),
+        form=_default_form(),
+        preflight=_preflight_for({"pdf": ["/tmp/a.pdf"]}),
+    )
+    app = _CanvasHost(state)
+    with patch(
+        "tldw_chatbook.Widgets.Library.library_ingest_canvas._is_installed",
+        return_value=True,
+    ):
+        async with app.run_test() as pilot:
+            ocr = pilot.app.query_one("#opt-pdf-ocr", Checkbox)
+            # Default engine is pymupdf4llm, which cannot OCR.
+            assert ocr.disabled is True
+            assert "docling or docext engines only" in str(ocr.label)
+
+
+@pytest.mark.asyncio
+async def test_pdf_ocr_checkbox_enabled_under_docling_engine():
+    form = _default_form()
+    form.type_options = {"pdf": {"pdf_engine": "docling"}}
+    state = build_library_ingest_state(
+        (),
+        form=form,
+        preflight=_preflight_for({"pdf": ["/tmp/a.pdf"]}),
+    )
+    app = _CanvasHost(state)
+    with patch(
+        "tldw_chatbook.Widgets.Library.library_ingest_canvas._is_installed",
+        return_value=True,
+    ):
+        async with app.run_test() as pilot:
+            ocr = pilot.app.query_one("#opt-pdf-ocr", Checkbox)
+            assert ocr.disabled is False
+            backend = pilot.app.query_one("#opt-pdf-ocr_backend", Select)
+            # Backend selection applies to the docext engine only.
+            assert backend.disabled is True
+
+
+@pytest.mark.asyncio
+async def test_translate_checkbox_inert_under_parakeet_provider():
+    """(task-3303 AC4) Only faster-whisper translates; parakeet renders it inert."""
+    form = _default_form()
+    form.type_options = {
+        "audio_video": {"transcription_provider": "parakeet-onnx"}
+    }
+    state = build_library_ingest_state(
+        (),
+        form=form,
+        preflight=_preflight_for({"audio_video": ["/tmp/talk.mp3"]}),
+    )
+    app = _CanvasHost(state)
+    with patch(
+        "tldw_chatbook.Widgets.Library.library_ingest_canvas._is_installed",
+        return_value=True,
+    ):
+        async with app.run_test() as pilot:
+            translate = pilot.app.query_one(
+                "#opt-audio_video-translate_to_english", Checkbox
+            )
+            assert translate.disabled is True
+            assert "faster-whisper" in str(translate.label)
+            vad = pilot.app.query_one("#opt-audio_video-vad_filter", Checkbox)
+            assert vad.disabled is False
+
+
+@pytest.mark.asyncio
+async def test_web_local_multi_page_note_visible_when_sitemap_selected():
+    """(task-3303 AC5) A local sitemap selection says it fetches one page."""
+    form = _default_form()
+    form.type_options = {"web": {"scrape_method": "sitemap"}}
+    state = build_library_ingest_state(
+        (),
+        form=form,
+        preflight=_preflight_for({"web": ["https://example.com/post"]}),
+    )
+    app = _CanvasHost(state)
+    async with app.run_test() as pilot:
+        note = pilot.app.query_one("#web-local-scope-note", Static)
+        assert note.display is True
+        assert "one page" in str(note.renderable)
+        assert "server" in str(note.renderable)
+
+
+@pytest.mark.asyncio
+async def test_web_note_hidden_for_single_page_selection():
+    form = _default_form()
+    form.type_options = {"web": {"scrape_method": "individual"}}
+    state = build_library_ingest_state(
+        (),
+        form=form,
+        preflight=_preflight_for({"web": ["https://example.com/post"]}),
+    )
+    app = _CanvasHost(state)
+    async with app.run_test() as pilot:
+        note = pilot.app.query_one("#web-local-scope-note", Static)
+        assert note.display is False
+
+
+@pytest.mark.asyncio
+async def test_web_note_hidden_when_targeting_the_server():
+    """Server behavior is unchanged: the clip path honors multi-page methods."""
+    form = _default_form()
+    form.type_options = {"web": {"scrape_method": "sitemap"}}
+    state = build_library_ingest_state(
+        (),
+        form=form,
+        runtime_source="server",
+        server_ingest_available=True,
+        ingest_backend="server",
+        preflight=_preflight_for({"web": ["https://example.com/post"]}),
+    )
+    app = _CanvasHost(state)
+    async with app.run_test() as pilot:
+        note = pilot.app.query_one("#web-local-scope-note", Static)
+        assert note.display is False

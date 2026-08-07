@@ -23,9 +23,11 @@ from tldw_chatbook.Workspaces.conversation_browser_state import (
     format_console_relative_age,
 )
 from tldw_chatbook.Library.library_ingest_state import (
+    WEB_LOCAL_SINGLE_PAGE_NOTE,
     validate_ingest_option_value,
     LibraryIngestCanvasState,
     build_intro_lines,
+    build_web_scope_note,
 )
 
 
@@ -563,9 +565,18 @@ class LibraryIngestCanvas(VerticalScroll):
 
             if field.type == "checkbox":
                 self._reported_option_values[(group, field.name)] = bool(value)
+                # (task-3303) A gated checkbox must carry its reason at the
+                # control: the label absorbs the schema hint ("Enable OCR
+                # (docling or docext engines only)"), so the inert state is
+                # explained where the user is looking, not somewhere else.
+                checkbox_label = (
+                    f"{field.label} ({field.hint})"
+                    if getattr(field, "hint", "")
+                    else field.label
+                )
                 children.append(
                     StateGlyphCheckbox(
-                        field.label,
+                        checkbox_label,
                         value=bool(value),
                         id=widget_id,
                         disabled=disabled,
@@ -595,6 +606,23 @@ class LibraryIngestCanvas(VerticalScroll):
                         allow_blank=False,
                     )
                 )
+                if group == "web" and field.name == "scrape_method":
+                    # (task-3303 AC5) Local single-page honesty, right under
+                    # the control that promises otherwise: the local article
+                    # path fetches ONE page, so a multi-page method selected
+                    # while targeting this machine must say so. Always
+                    # mounted, display-managed (select changes recompose,
+                    # but the stable structure keeps in-place updates safe).
+                    scope_note = Static(
+                        WEB_LOCAL_SINGLE_PAGE_NOTE,
+                        id="web-local-scope-note",
+                        classes="type-group-scope",
+                        markup=False,
+                    )
+                    scope_note.display = bool(
+                        build_web_scope_note(self.state.ingest_backend, values)
+                    )
+                    children.append(scope_note)
             else:
                 self._reported_option_values[(group, field.name)] = str(value)
                 # A populated Input never shows its placeholder, so

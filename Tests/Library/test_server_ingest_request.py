@@ -170,6 +170,28 @@ class TestBuildServerIngestKwargs:
         assert kwargs["ocr"] is True
         assert "transcription_model" not in kwargs
 
+    def test_document_group_options_travel_for_docx(self) -> None:
+        """(task-3303) .docx now groups as ``document``, so the document
+        panel's options ride a server submission (extras are ``allow``-ed by
+        ``MediaIngestJobSubmitRequest``); other groups' options still do not."""
+        kwargs = build_server_ingest_kwargs(
+            "/tmp/report.docx",
+            options={
+                "document": {
+                    "processing_method": "docling",
+                    "ocr": True,
+                    "ocr_language": "de",
+                },
+                "pdf": {"pdf_engine": "docling"},
+            },
+        )
+
+        assert kwargs["media_type"] == "document"
+        assert kwargs["processing_method"] == "docling"
+        assert kwargs["ocr"] is True
+        assert kwargs["ocr_language"] == "de"
+        assert "pdf_engine" not in kwargs
+
     def test_empty_source_is_refused(self) -> None:
         with pytest.raises(ServerIngestUnsupported):
             build_server_ingest_kwargs("   ", options={})

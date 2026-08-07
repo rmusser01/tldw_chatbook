@@ -2448,6 +2448,26 @@ class LibraryIngestQueueMixin:
             options["page_range"] = flat_opts.get("pages")
             options["ocr"] = flat_opts.get("ocr", flat_opts.get("enable_ocr", False))
             options["extract_images"] = flat_opts.get("extract_images", False)
+            # (task-3303) OCR detail: language + backend, with the
+            # processor's own defaults as the fallbacks. The panel gates
+            # the OCR toggle to the docling/docext engines, so a silent
+            # OCR-under-pymupdf no-op can no longer be *asked for*; the
+            # values themselves always travel (process_pdf ignores them
+            # when the parser cannot OCR).
+            options["ocr_language"] = flat_opts.get("ocr_language") or "en"
+            options["ocr_backend"] = flat_opts.get("ocr_backend") or "auto"
+        elif group == "document":
+            # (task-3303) The document group layers ON TOP of generic:
+            # ``flat_opts`` already merged generic (analyze/chunk/encoding)
+            # under these, so document files keep task-3301's chunking and
+            # analysis while gaining ``process_document``'s own knobs.
+            options["processing_method"] = (
+                flat_opts.get("processing_method") or "auto"
+            )
+            options["enable_ocr"] = flat_opts.get(
+                "ocr", flat_opts.get("enable_ocr", False)
+            )
+            options["ocr_language"] = flat_opts.get("ocr_language") or "en"
         elif group == "audio_video":
             provider = flat_opts.get("transcription_provider")
             if provider is None:
@@ -2455,6 +2475,11 @@ class LibraryIngestQueueMixin:
             target_language = flat_opts.get("translation_target_language")
             if target_language is None:
                 target_language = flat_opts.get("target_language")
+            if target_language is None and flat_opts.get("translate_to_english"):
+                # (task-3303) The panel's translate toggle. An explicit
+                # target (retry overrides, older snapshots) stays
+                # authoritative; the checkbox only fills the gap.
+                target_language = "en"
             route = resolve_batch_stt_route(
                 provider=provider,
                 language=flat_opts.get("language"),
@@ -2486,6 +2511,9 @@ class LibraryIngestQueueMixin:
             options["transcription_batch_route_resolved"] = True
             options["timestamps"] = flat_opts.get("timestamps", True)
             options["diarization"] = flat_opts.get("diarization", False)
+            # (task-3303) VAD filter -- travels as its own option; the
+            # parse worker hands it to the processors' ``vad_use``.
+            options["vad_filter"] = bool(flat_opts.get("vad_filter", False))
             failed_attempt = job.retry_source_failure_provenance
             options["transcription_context"] = {
                 "attempt_id": f"{job.job_id}-attempt-{job.retry_count + 1}",
@@ -2516,6 +2544,18 @@ class LibraryIngestQueueMixin:
             options["include_toc"] = flat_opts.get(
                 "include_toc", flat_opts.get("extract_toc", True)
             )
+            # (task-3303) The panel's chunk-method choice: the human
+            # "chapters" maps to the chunker's real ``ebook_chapters``
+            # method; the other names travel verbatim. Only meaningful when
+            # chunking is on, and never forced when untouched --
+            # ``process_ebook`` applies its own chapters default then.
+            ebook_chunk_method = str(flat_opts.get("chunk_method") or "").strip()
+            if ebook_chunk_method and options["chunk_options"] is not None:
+                options["chunk_options"]["method"] = (
+                    "ebook_chapters"
+                    if ebook_chunk_method == "chapters"
+                    else ebook_chunk_method
+                )
 
         return options
 

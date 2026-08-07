@@ -138,6 +138,9 @@ _GROUP_EXTRAS: dict[str, tuple[str, ...]] = {
     "pdf": ("pdf",),
     "audio_video": ("audio", "video", "media_processing"),
     "ebook": ("ebook",),
+    # Document ingestion's one flagged optional feature (docling) installs
+    # via the pdf extra; nothing document-specific has an extra of its own.
+    "document": (),
     "generic": (),
 }
 
@@ -297,6 +300,15 @@ def _install_hint(feature_id: str) -> dict[str, str]:
     }
 
 
+#: (task-3303) Group-specific overrides for a warning's "needed for" clause.
+#: ``_install_hint`` resolves docling through the pdf extra, whose
+#: ``unavailable_what`` says "PDF ingestion" -- accurate for the pdf group,
+#: a non sequitur beside a folder of Word documents. Keyed by
+#: ``(group, feature)``; absent pairs keep the extra's own wording.
+_GROUP_FEATURE_HINTS: dict[tuple[str, str], str] = {
+    ("document", "docling"): "scanned-document OCR",
+}
+
 #: Sentinel group returned by :func:`get_type_group` for files this app has no
 #: handler for. It is deliberately *not* a key of ``_TYPE_GROUPS``: it has no
 #: capabilities, options or tooling of its own. Callers group these files so
@@ -320,7 +332,9 @@ _TYPE_GROUPS: dict[str, TypeGroupCapabilities] = {
                 label="PDF engine",
                 type="select",
                 default="pymupdf4llm",
-                options=("pymupdf", "pymupdf4llm", "docling"),
+                # (task-3303) docext joins: a valid ``process_pdf`` parser
+                # (vision-model OCR) that had no UI path.
+                options=("pymupdf", "pymupdf4llm", "docling", "docext"),
                 depends_on="pdf_processing",
             ),
             OptionField(
@@ -329,6 +343,93 @@ _TYPE_GROUPS: dict[str, TypeGroupCapabilities] = {
                 type="checkbox",
                 default=False,
                 depends_on="pdf_processing",
+                # (task-3303) Only the docling/docext parsers OCR
+                # (``process_pdf``'s own ``ocr_supported`` flag); under the
+                # pymupdf engines the checkbox used to be an offerable
+                # silent no-op. The value gate makes it inert there, and
+                # the hint carries the reason at the control.
+                enabled_when="pdf_engine",
+                enabled_when_values=("docling", "docext"),
+                hint="docling or docext engines only",
+            ),
+            OptionField(
+                name="ocr_language",
+                label="OCR language",
+                type="text",
+                default="en",
+                depends_on="pdf_processing",
+                enabled_when="ocr",
+                hint="e.g. en, de, fr",
+            ),
+            OptionField(
+                name="ocr_backend",
+                label="OCR backend",
+                type="select",
+                default="auto",
+                # ``process_pdf`` consults this only when the parser is
+                # docext ("auto" lets it pick); the names are the OCR
+                # manager's registered backends (``OCR_Backends``).
+                options=(
+                    "auto",
+                    "docext",
+                    "tesseract",
+                    "easyocr",
+                    "paddleocr",
+                    "docling",
+                ),
+                enabled_when="pdf_engine",
+                enabled_when_values=("docext",),
+            ),
+        ),
+    ),
+    # (task-3303) Word-processor formats (.doc/.docx/.odt/.rtf) used to ride
+    # the generic panel, which called them "plain text files" and offered no
+    # path to ``process_document``'s processing-method/OCR knobs. The generic
+    # group remains their base (analyze/chunk/encoding layer under this group
+    # in ``_ingest_job_options``); this group only adds what is
+    # document-specific.
+    "document": TypeGroupCapabilities(
+        group="document",
+        label="Word/Office documents",
+        # No required features: per-format native parsers (python-docx,
+        # odfpy, striprtf) and docling are ALTERNATIVES, and docling alone
+        # can stand in for all of them -- a missing-parser failure is
+        # reported per job with the missing package named in its details.
+        required_features=(),
+        # Docling is the one feature worth flagging up front: without it the
+        # OCR toggle below is dead (scanned documents cannot be OCR'd).
+        optional_features=("docling",),
+        fields=(
+            OptionField(
+                name="processing_method",
+                label="Processing method",
+                type="select",
+                default="auto",
+                # ``process_document(processing_method=...)``: auto prefers
+                # docling when installed, else the per-format native parser.
+                options=("auto", "docling", "native"),
+            ),
+            OptionField(
+                name="ocr",
+                label="Enable OCR",
+                type="checkbox",
+                default=False,
+                # OCR only runs through docling (``process_document``:
+                # "only works with 'docling' method"); auto selects docling
+                # when it is installed, so both satisfy the gate.
+                depends_on="docling",
+                enabled_when="processing_method",
+                enabled_when_values=("auto", "docling"),
+                hint="docling method only",
+            ),
+            OptionField(
+                name="ocr_language",
+                label="OCR language",
+                type="text",
+                default="en",
+                depends_on="docling",
+                enabled_when="ocr",
+                hint="e.g. en, de, fr",
             ),
         ),
     ),
@@ -395,6 +496,22 @@ _TYPE_GROUPS: dict[str, TypeGroupCapabilities] = {
                 depends_on="audio_processing",
             ),
             OptionField(
+                # (task-3303) Maps to ``translation_target_language="en"`` in
+                # the job-option builder. Only faster-whisper translates
+                # (``resolve_batch_stt_route``), and the semantic default
+                # routes a translation request there too -- so the toggle is
+                # inert (with the reason in its hint) under the providers
+                # that would reject it outright.
+                name="translate_to_english",
+                label="Translate to English",
+                type="checkbox",
+                default=False,
+                depends_on="faster_whisper",
+                enabled_when="transcription_provider",
+                enabled_when_values=("default", "faster-whisper"),
+                hint="via faster-whisper",
+            ),
+            OptionField(
                 name="timestamps",
                 label="Include timestamps",
                 type="checkbox",
@@ -407,6 +524,15 @@ _TYPE_GROUPS: dict[str, TypeGroupCapabilities] = {
                 type="checkbox",
                 default=False,
                 depends_on="diarization",
+            ),
+            OptionField(
+                # (task-3303) ``process_audio_files(vad_use=...)`` -- skips
+                # non-speech segments during transcription.
+                name="vad_filter",
+                label="Voice activity detection (VAD) filter",
+                type="checkbox",
+                default=False,
+                depends_on="audio_processing",
             ),
         ),
     ),
@@ -422,6 +548,21 @@ _TYPE_GROUPS: dict[str, TypeGroupCapabilities] = {
                 type="select",
                 default="filtered",
                 options=("filtered", "markdown", "basic"),
+                depends_on="ebook_processing",
+            ),
+            OptionField(
+                # (task-3303) "chapters" maps to the chunker's real
+                # ``ebook_chapters`` method in the job-option builder; the
+                # other names travel verbatim (all four are methods
+                # ``Chunk_Lib.Chunker.chunk_text`` dispatches on). Untouched,
+                # no method is forced and ``process_ebook`` applies its own
+                # chapters default -- so the schema default and the
+                # processor default agree.
+                name="chunk_method",
+                label="Chunking method",
+                type="select",
+                default="chapters",
+                options=("chapters", "sentences", "words", "paragraphs"),
                 depends_on="ebook_processing",
             ),
             OptionField(
@@ -564,9 +705,9 @@ def get_type_group(path_or_url: str) -> str:
         path_or_url: Local path, or an http(s) URL.
 
     Returns:
-        One of ``pdf``, ``audio_video``, ``ebook``, ``web``, ``generic``, or
-        ``unsupported``. Unsupported file types are mapped to ``unsupported``
-        so the pre-flight summary can surface them separately.
+        One of ``pdf``, ``document``, ``audio_video``, ``ebook``, ``web``,
+        ``generic``, or ``unsupported``. Unsupported file types are mapped to
+        ``unsupported`` so the pre-flight summary can surface them separately.
     """
     try:
         file_type = detect_file_type(path_or_url)
@@ -582,6 +723,13 @@ def get_type_group(path_or_url: str) -> str:
         return "audio_video"
     if file_type == "ebook":
         return "ebook"
+    if file_type == "document":
+        # (task-3303) Word-processor formats get their own group -- they
+        # used to fall through to ``generic``, whose panel called them
+        # "plain text files" and reached none of ``process_document``'s
+        # options. Placed before the URL check for the same reason pdf/
+        # ebook are: an extension on a URL still says what the target IS.
+        return "document"
     if _is_http_url(path_or_url) and file_type in ("plaintext", "html", "xml"):
         # A bare ".html"/".htm" URL is a page to fetch, not a local file to
         # read; the extension says how it is written, not where it lives.
@@ -676,7 +824,9 @@ def get_tooling_warnings(group: str) -> list[dict[str, Any]]:
                 {
                     "feature": feature,
                     "label": _feature_label(feature, group),
-                    "hint": hint["hint"],
+                    "hint": _GROUP_FEATURE_HINTS.get(
+                        (group, feature), hint["hint"]
+                    ),
                     "command": hint["command"],
                 }
             )

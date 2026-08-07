@@ -272,6 +272,211 @@ class TestIngestJobOptions:
         assert options["transcription_precision"] == "int8"
         assert options["transcription_local_files_only"] is True
 
+    def test_document_group_options(self) -> None:
+        """(task-3303 AC1) The document branch feeds ``process_document``."""
+        app = _minimal_app()
+        job = _make_job(
+            source_path="/tmp/report.docx",
+            ingest_options={
+                "generic": {"chunk": True, "chunk_size": 800, "chunk_overlap": 80},
+                "document": {
+                    "processing_method": "docling",
+                    "ocr": True,
+                    "ocr_language": "de",
+                },
+            },
+        )
+        options = app._ingest_job_options(job)
+
+        assert options["processing_method"] == "docling"
+        assert options["enable_ocr"] is True
+        assert options["ocr_language"] == "de"
+        # The generic base group still applies to document files: analyze/
+        # chunk/size travel exactly as they did when documents rode the
+        # generic panel (task-3301's layering).
+        assert options["chunk_options"] == {
+            "size": 800,
+            "max_size": 800,
+            "overlap": 80,
+        }
+
+    def test_document_group_defaults_without_snapshot(self) -> None:
+        app = _minimal_app()
+        job = _make_job(source_path="/tmp/report.odt")
+
+        options = app._ingest_job_options(job)
+
+        assert options["processing_method"] == "auto"
+        assert options["enable_ocr"] is False
+        assert options["ocr_language"] == "en"
+
+    def test_pdf_ocr_language_and_backend_travel(self) -> None:
+        """(task-3303 AC2) OCR language/backend reach the pdf options."""
+        app = _minimal_app()
+        job = _make_job(
+            source_path="/tmp/test.pdf",
+            ingest_options={
+                "pdf": {
+                    "pdf_engine": "docext",
+                    "ocr": True,
+                    "ocr_language": "fr",
+                    "ocr_backend": "tesseract",
+                },
+            },
+        )
+        options = app._ingest_job_options(job)
+
+        assert options["pdf_engine"] == "docext"
+        assert options["ocr"] is True
+        assert options["ocr_language"] == "fr"
+        assert options["ocr_backend"] == "tesseract"
+
+    def test_pdf_ocr_detail_defaults(self) -> None:
+        app = _minimal_app()
+        job = _make_job(source_path="/tmp/test.pdf")
+
+        options = app._ingest_job_options(job)
+
+        assert options["ocr_language"] == "en"
+        assert options["ocr_backend"] == "auto"
+
+    def test_ebook_chapters_choice_maps_to_ebook_chapters_method(self) -> None:
+        """(task-3303 AC3) The human "chapters" choice becomes the real method."""
+        app = _minimal_app()
+        job = _make_job(
+            source_path="/tmp/book.epub",
+            ingest_options={
+                "generic": {"chunk": True, "chunk_size": 1000},
+                "ebook": {"chunk_method": "chapters"},
+            },
+        )
+        options = app._ingest_job_options(job)
+
+        assert options["chunk_options"]["method"] == "ebook_chapters"
+
+    def test_ebook_sentences_choice_travels_verbatim(self) -> None:
+        app = _minimal_app()
+        job = _make_job(
+            source_path="/tmp/book.epub",
+            ingest_options={
+                "generic": {"chunk": True},
+                "ebook": {"chunk_method": "sentences"},
+            },
+        )
+        options = app._ingest_job_options(job)
+
+        assert options["chunk_options"]["method"] == "sentences"
+
+    def test_ebook_untouched_method_leaves_processor_default(self) -> None:
+        """No selection -> no forced method: ``process_ebook`` defaults to
+        chapters on its own (verified against Book_Ingestion_Lib's
+        ``setdefault("method", "ebook_chapters")``)."""
+        app = _minimal_app()
+        job = _make_job(
+            source_path="/tmp/book.epub",
+            ingest_options={"generic": {"chunk": True}},
+        )
+        options = app._ingest_job_options(job)
+
+        assert options["chunk_options"] is not None
+        assert "method" not in options["chunk_options"]
+
+    def test_ebook_method_ignored_when_chunking_off(self) -> None:
+        app = _minimal_app()
+        job = _make_job(
+            source_path="/tmp/book.epub",
+            ingest_options={
+                "generic": {"chunk": False},
+                "ebook": {"chunk_method": "chapters"},
+            },
+        )
+        options = app._ingest_job_options(job)
+
+        assert options["chunk_options"] is None
+
+    def test_translate_to_english_maps_to_target_language(self) -> None:
+        """(task-3303 AC4) The translate toggle becomes target_language=en."""
+        app = _minimal_app()
+        job = _make_job(
+            source_path="/tmp/test.mp3",
+            ingest_options={
+                "audio_video": {
+                    "transcription_provider": "faster-whisper",
+                    "translate_to_english": True,
+                },
+            },
+        )
+        options = app._ingest_job_options(job)
+
+        assert options["translation_target_language"] == "en"
+        assert options["transcription_provider"] == "faster-whisper"
+
+    def test_translate_under_default_provider_routes_to_faster_whisper(
+        self,
+    ) -> None:
+        """Only faster-whisper translates; the semantic default must route
+        there rather than to Parakeet when translation is requested."""
+        app = _minimal_app()
+        job = _make_job(
+            source_path="/tmp/test.mp3",
+            ingest_options={
+                "audio_video": {"translate_to_english": True},
+            },
+        )
+        options = app._ingest_job_options(job)
+
+        assert options["transcription_provider"] == "faster-whisper"
+        assert options["translation_target_language"] == "en"
+
+    def test_translate_off_sets_no_target_language(self) -> None:
+        app = _minimal_app()
+        job = _make_job(
+            source_path="/tmp/test.mp3",
+            ingest_options={
+                "audio_video": {"translate_to_english": False},
+            },
+        )
+        options = app._ingest_job_options(job)
+
+        assert options["translation_target_language"] is None
+
+    def test_explicit_target_language_wins_over_translate_checkbox(self) -> None:
+        """An explicit target (retry overrides, older snapshots) stays
+        authoritative; the checkbox only fills the gap."""
+        app = _minimal_app()
+        job = _make_job(
+            source_path="/tmp/test.mp3",
+            ingest_options={
+                "audio_video": {
+                    "transcription_provider": "faster-whisper",
+                    "translation_target_language": "en",
+                    "translate_to_english": False,
+                },
+            },
+        )
+        options = app._ingest_job_options(job)
+
+        assert options["translation_target_language"] == "en"
+
+    def test_vad_filter_travels(self) -> None:
+        """(task-3303 AC4) The VAD toggle reaches the transcription options."""
+        app = _minimal_app()
+        job = _make_job(
+            source_path="/tmp/test.mp3",
+            ingest_options={"audio_video": {"vad_filter": True}},
+        )
+        options = app._ingest_job_options(job)
+
+        assert options["vad_filter"] is True
+
+    def test_vad_filter_defaults_off(self) -> None:
+        app = _minimal_app()
+        job = _make_job(source_path="/tmp/test.mp3")
+
+        options = app._ingest_job_options(job)
+
+        assert options["vad_filter"] is False
+
     def test_faster_whisper_preserves_normalized_translation_target(self) -> None:
         app = _minimal_app()
         job = _make_job(

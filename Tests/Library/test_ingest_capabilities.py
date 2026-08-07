@@ -43,7 +43,13 @@ def _clear_installed_probe_cache():
         ("/tmp/notes.md", "generic"),
         ("/tmp/spreadsheet.csv", "generic"),
         ("/tmp/page.html", "generic"),
-        ("/tmp/document.docx", "generic"),
+        # (task-3303) Word-processor formats get their own group: the generic
+        # panel called a .docx a "plain text file" and had no path to
+        # ``process_document``'s OCR options.
+        ("/tmp/document.docx", "document"),
+        ("/tmp/document.doc", "document"),
+        ("/tmp/notes.odt", "document"),
+        ("/tmp/letter.rtf", "document"),
     ],
 )
 def test_get_type_group_maps_extensions(path: str, expected_group: str) -> None:
@@ -101,7 +107,11 @@ def test_the_canvas_and_the_pipeline_agree_on_what_a_url_is() -> None:
         "web": {"article"},
         "pdf": {"pdf", "article"},
         "ebook": {"ebook", "article"},
-        "generic": {"document", "plaintext", "html", "xml", "article"},
+        # A .docx URL groups as a document (the extension wins, like pdf/epub)
+        # while the pipeline fetches it as an article -- same compatibility
+        # allowance the pdf/ebook rows above already make.
+        "document": {"document", "article"},
+        "generic": {"plaintext", "html", "xml", "article"},
     }
     for url in (
         "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
@@ -122,7 +132,7 @@ def test_get_capabilities_pdf() -> None:
     assert isinstance(caps, TypeGroupCapabilities)
     assert caps.group == "pdf"
     assert caps.required_features == ("pdf_processing",)
-    assert caps.field_names == ("pdf_engine", "ocr")
+    assert caps.field_names == ("pdf_engine", "ocr", "ocr_language", "ocr_backend")
 
     engine_field = caps.fields[0]
     assert isinstance(engine_field, OptionField)
@@ -131,6 +141,98 @@ def test_get_capabilities_pdf() -> None:
     assert engine_field.default == "pymupdf4llm"
     assert "pymupdf" in engine_field.options
     assert "docling" in engine_field.options
+    # (task-3303) docext is a valid ``process_pdf`` engine with no UI path.
+    assert "docext" in engine_field.options
+
+
+def test_pdf_ocr_toggle_is_gated_to_ocr_capable_engines() -> None:
+    """(task-3303 AC2) Enable-OCR under pymupdf engines was a silent no-op.
+
+    ``process_pdf`` only OCRs under the docling/docext parsers; the checkbox
+    must be inert (with the reason in its label hint) under any other engine.
+    """
+    caps = get_capabilities("pdf")
+    ocr_field = next(f for f in caps.fields if f.name == "ocr")
+    assert ocr_field.enabled_when == "pdf_engine"
+    assert set(ocr_field.enabled_when_values) == {"docling", "docext"}
+    assert ocr_field.hint, "the inert state must carry its reason at the control"
+
+
+def test_pdf_ocr_detail_fields() -> None:
+    """(task-3303 AC2) OCR language rides the OCR toggle; backend rides docext."""
+    caps = get_capabilities("pdf")
+    language_field = next(f for f in caps.fields if f.name == "ocr_language")
+    assert language_field.type == "text"
+    assert language_field.default == "en"
+    assert language_field.enabled_when == "ocr"
+
+    backend_field = next(f for f in caps.fields if f.name == "ocr_backend")
+    assert backend_field.type == "select"
+    assert backend_field.default == "auto"
+    assert "docext" in backend_field.options
+    # ``process_pdf`` consults ocr_backend only when the parser is docext.
+    assert backend_field.enabled_when == "pdf_engine"
+    assert backend_field.enabled_when_values == ("docext",)
+
+
+def test_get_capabilities_document() -> None:
+    """(task-3303 AC1) The document group exposes ``process_document``'s knobs."""
+    caps = get_capabilities("document")
+    assert caps.group == "document"
+    assert caps.field_names == ("processing_method", "ocr", "ocr_language")
+
+    method_field = next(f for f in caps.fields if f.name == "processing_method")
+    assert method_field.type == "select"
+    assert method_field.default == "auto"
+    assert set(method_field.options) == {"auto", "docling", "native"}
+
+    ocr_field = next(f for f in caps.fields if f.name == "ocr")
+    assert ocr_field.type == "checkbox"
+    assert ocr_field.default is False
+    # OCR only works through docling (``process_document`` docstring), which
+    # the auto method selects when installed.
+    assert ocr_field.enabled_when == "processing_method"
+    assert set(ocr_field.enabled_when_values) == {"auto", "docling"}
+    assert ocr_field.depends_on == "docling"
+    assert ocr_field.hint, "the inert state must carry its reason at the control"
+
+    language_field = next(f for f in caps.fields if f.name == "ocr_language")
+    assert language_field.type == "text"
+    assert language_field.default == "en"
+    assert language_field.enabled_when == "ocr"
+
+
+def test_ebook_chunk_method_field() -> None:
+    """(task-3303 AC3) Chapter chunking is choosable from the ebook panel."""
+    caps = get_capabilities("ebook")
+    method_field = next(f for f in caps.fields if f.name == "chunk_method")
+    assert method_field.type == "select"
+    assert method_field.default == "chapters"
+    assert set(method_field.options) == {
+        "chapters",
+        "sentences",
+        "words",
+        "paragraphs",
+    }
+
+
+def test_audio_video_translation_and_vad_fields() -> None:
+    """(task-3303 AC4) Translate-to-English and VAD are real fields."""
+    caps = get_capabilities("audio_video")
+    translate_field = next(
+        f for f in caps.fields if f.name == "translate_to_english"
+    )
+    assert translate_field.type == "checkbox"
+    assert translate_field.default is False
+    # Only faster-whisper translates (``resolve_batch_stt_route``); the
+    # semantic default routes a translation request to faster-whisper too.
+    assert translate_field.enabled_when == "transcription_provider"
+    assert set(translate_field.enabled_when_values) == {"default", "faster-whisper"}
+    assert translate_field.hint
+
+    vad_field = next(f for f in caps.fields if f.name == "vad_filter")
+    assert vad_field.type == "checkbox"
+    assert vad_field.default is False
 
 
 def test_get_capabilities_audio_video() -> None:
@@ -144,8 +246,10 @@ def test_get_capabilities_audio_video() -> None:
         "transcription_precision",
         "transcription_model",
         "language",
+        "translate_to_english",
         "timestamps",
         "diarization",
+        "vad_filter",
     )
 
     provider_field = next(f for f in caps.fields if f.name == "transcription_provider")
@@ -218,7 +322,7 @@ def test_get_capabilities_ebook() -> None:
     caps = get_capabilities("ebook")
     assert caps.group == "ebook"
     assert caps.required_features == ("ebook_processing",)
-    assert caps.field_names == ("extraction_method", "include_toc")
+    assert caps.field_names == ("extraction_method", "chunk_method", "include_toc")
 
     converter_field = next(f for f in caps.fields if f.name == "extraction_method")
     assert converter_field.options == ("filtered", "markdown", "basic")
@@ -257,6 +361,21 @@ def test_get_tooling_warnings_empty_when_all_installed() -> None:
         warnings = get_tooling_warnings("audio_video")
 
     assert warnings == []
+
+
+def test_document_docling_warning_names_ocr_not_pdf_ingestion() -> None:
+    """(task-3303) Docling resolves through the pdf extra, whose blurb says
+    "PDF ingestion" -- a non sequitur beside a folder of Word documents."""
+    with patch(
+        "tldw_chatbook.Library.ingest_capabilities._is_installed",
+        return_value=False,
+    ):
+        warnings = get_tooling_warnings("document")
+
+    assert [w["feature"] for w in warnings] == ["docling"]
+    assert "PDF" not in warnings[0]["hint"]
+    assert "OCR" in warnings[0]["hint"]
+    assert warnings[0]["command"], "the recovery command must survive the override"
 
 
 def test_get_tooling_warnings_generic_never_warns() -> None:
