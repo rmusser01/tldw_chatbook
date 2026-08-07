@@ -11829,7 +11829,7 @@ class ChatScreen(BaseAppScreen):
             self._active_dictionaries_summary = (
                 summary if isinstance(summary, dict) else {"dictionaries": []}
             )
-        self._sync_console_control_bar()
+        self._request_console_control_bar_sync()
 
     async def _refresh_active_dictionaries_summary_if_scope_changed(self) -> None:
         """Recompute the "what's in play" summary only when the active
@@ -11901,7 +11901,7 @@ class ChatScreen(BaseAppScreen):
         db = getattr(self.app_instance, "chachanotes_db", None)
         if not conversation_id or db is None:
             self._active_world_books_summary = {"world_books": []}
-            self._sync_console_control_bar()
+            self._request_console_control_bar_sync()
             return
         try:
             from ...Character_Chat.world_info_resolver import (
@@ -11919,7 +11919,7 @@ class ChatScreen(BaseAppScreen):
         self._active_world_books_summary = (
             summary if isinstance(summary, dict) else {"world_books": []}
         )
-        self._sync_console_control_bar()
+        self._request_console_control_bar_sync()
 
     async def _refresh_active_world_books_summary_if_scope_changed(self) -> None:
         """Recompute the world-book summary only when the scope changed."""
@@ -13174,7 +13174,7 @@ class ChatScreen(BaseAppScreen):
             self.call_later(self._apply_console_live_work_card_swap)
         self._sync_console_staged_evidence_strip()
         self._sync_console_staged_context_tray()
-        self._sync_console_control_bar()
+        self._request_console_control_bar_sync()
         self._sync_console_workspace_context()
         self._sync_console_settings_summary()
         self._sync_console_mode_bar()
@@ -19058,6 +19058,27 @@ class ChatScreen(BaseAppScreen):
             return self.query_one("#console-compact-model-bar", CompactModelBar)
         except QueryError:
             return None
+
+    def _request_console_control_bar_sync(self) -> None:
+        """Coalesce control-bar syncs into one trailing run (task-3010).
+
+        Every direct caller of `_sync_console_control_bar` was individually
+        justified (mount hooks, session activation, restore, watchers), but
+        nothing deduplicated them: one screen push executed the ~47ms sync
+        14 times — 0.65s of a ~1.2s settled push (cProfile in the task).
+        Requests landing before the trailing run fires fold into it; the
+        run always computes fresh state, so the last-writer semantics every
+        caller relied on are preserved.
+        """
+        if getattr(self, "_console_control_bar_sync_scheduled", False):
+            return
+        self._console_control_bar_sync_scheduled = True
+        self.call_after_refresh(self._run_coalesced_control_bar_sync)
+
+    def _run_coalesced_control_bar_sync(self) -> None:
+        """Execute one coalesced control-bar sync (task-3010)."""
+        self._console_control_bar_sync_scheduled = False
+        self._sync_console_control_bar()
 
     def _sync_console_control_bar(
         self,
