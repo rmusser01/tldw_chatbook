@@ -2740,11 +2740,11 @@ class UnifiedMCPControlPlaneService:
             # fell straight into the genuine-deny copy/token below, telling
             # the user (and the audit row) a confident, false fact about
             # their configuration -- indistinguishable from a real
-            # user-configured deny. This is the third occurrence of the
-            # exact pattern fix round B (task-2536) removed from the Test
-            # Tool panel's blocked-result body, and fix round D polished
-            # further; `mcp_workbench._resolve_test_gate()` already branches
-            # on this same `origin` for the same reason.
+            # user-configured deny. Repeats the exact pattern fix round B
+            # (task-2536) removed from the Test Tool panel's blocked-result
+            # body, and fix round D polished further;
+            # `mcp_workbench._resolve_test_gate()` already branches on this
+            # same `origin` for the same reason.
             is_gate_error = state.origin == "gate_error"
             blocked_message = (
                 _ADVANCED_EXECUTE_GATE_ERROR_MESSAGE

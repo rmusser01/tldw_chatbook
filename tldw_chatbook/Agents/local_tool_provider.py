@@ -34,9 +34,9 @@ LOCAL_KILL_SWITCH_REFUSAL = "blocked — local tools are switched off"
 # Fix Round H (PR-T3 review), Item 1. `_verdict_for()`'s permission-resolver
 # `except` used to collapse a RAISE into the SAME "deny" verdict as a
 # genuine configured Off -- which then rendered `LOCAL_DENY_REFUSAL`, a
-# confident, false claim about the tool's configuration. This is the sixth
-# recurrence of the exact pattern earlier rounds already removed from the
-# Test Tool panel (`mcp_workbench._TOOL_TEST_BLOCKED_UNKNOWN_TEXT`) and the
+# confident, false claim about the tool's configuration. A recurrence of
+# the exact pattern earlier rounds already removed from the Test Tool
+# panel (`mcp_workbench._TOOL_TEST_BLOCKED_UNKNOWN_TEXT`) and the
 # Advanced hatch (`unified_control_plane_service._ADVANCED_EXECUTE_GATE_
 # ERROR_MESSAGE`) -- except THIS string reaches a MODEL, not a human: an
 # agent told its tool is "set to Off" will relay that as fact and stop
