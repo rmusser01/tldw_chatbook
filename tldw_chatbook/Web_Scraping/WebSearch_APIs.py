@@ -38,6 +38,7 @@ Main Functions:
 
 # Imports
 import asyncio
+import base64
 import json
 from html import unescape
 import pytest
@@ -65,6 +66,18 @@ except ImportError:
     LXML_AVAILABLE = False
     _Element = None
     document_fromstring = None
+
+# Handle optional defusedxml (Yandex XML parsing)
+try:
+    import defusedxml.ElementTree as _yandex_ET
+except ImportError:
+    import xml.etree.ElementTree as _yandex_ET
+
+    logger.warning(
+        "defusedxml not available, using standard xml.etree for Yandex result parsing. "
+        "Install defusedxml for better security."
+    )
+
 #
 # Local Imports
 from tldw_chatbook.Web_Scraping.Article_Extractor_Lib import scrape_article
@@ -1220,7 +1233,7 @@ def perform_websearch(
             )
 
         elif search_engine.lower() == "yandex":
-            web_search_results = search_web_yandex()
+            web_search_results = search_web_yandex(search_query, result_count)
 
         else:
             return f"Error: Invalid Search Engine Name {search_engine}"
@@ -3009,16 +3022,87 @@ def test_parse_tavily_results():
 # https://yandex.cloud/en/docs/search-api/quickstart/
 # https://yandex.cloud/en/docs/search-api/concepts/response
 # https://github.com/yandex-cloud/cloudapi/blob/master/yandex/cloud/searchapi/v2/search_query.proto
-def search_web_yandex():
-    pass
+def search_web_yandex(search_query, result_count=None):
+    """Query Yandex Cloud Search API v2 (synchronous REST) and return raw JSON.
 
+    The response wraps a base64-encoded XML document in "rawData"
+    (proto: yandex/cloud/searchapi/v2/search_service.proto — WebSearchService.Search,
+    POST /v2/web/search). Decoding and parsing live in parse_yandex_results so
+    process_web_search_results' try/except is the single error seam.
 
-def test_search_yandex():
-    pass
+    Args:
+        search_query: The query string.
+        result_count: Unused by the request (Yandex returns its default page,
+            ~10 groups; the agent layer trims client-side) — accepted for
+            dispatch-signature parity.
+
+    Returns:
+        dict: Raw response JSON ({"rawData": "<base64 XML>"}).
+
+    Raises:
+        ValueError: when the API key or folder id is not configured.
+        requests.exceptions.HTTPError: on non-2xx responses.
+    """
+    yandex_api_key = loaded_config_data["search_engines"].get("yandex_search_api_key", "")
+    if not yandex_api_key:
+        raise ValueError("Please provide a valid Yandex Search API key ([search_engines] yandex_search_api_key)")
+    folder_id = loaded_config_data["search_engines"].get("yandex_search_folder_id", "")
+    if not folder_id:
+        raise ValueError("Please provide the Yandex Cloud folder id ([search_engines] yandex_search_folder_id)")
+    headers = {"Authorization": f"Api-Key {yandex_api_key}", "Content-Type": "application/json"}
+    payload = {
+        "query": {"searchType": "SEARCH_TYPE_COM", "queryText": search_query},
+        "folderId": folder_id,
+        "responseFormat": "FORMAT_XML",
+    }
+    response = requests.post(
+        "https://searchapi.api.cloud.yandex.net/v2/web/search", headers=headers, json=payload
+    )
+    response.raise_for_status()
+    return response.json()
 
 
 def parse_yandex_results(yandex_search_results, web_search_results_dict):
-    pass
+    """Decode rawData base64 XML and parse docs into the standardized shape.
+
+    Raises on an in-XML <error> element (quota/auth/malformed-query arrive
+    inside HTTP 200): a quota error must never render as "No results found"
+    for a query that was never searched (spec 2026-08-06 §2). The raise is
+    caught by process_web_search_results and lands in processing_error.
+    """
+    if "results" not in web_search_results_dict:
+        web_search_results_dict["results"] = []
+    raw_b64 = (yandex_search_results or {}).get("rawData", "")
+    if not raw_b64:
+        raise ValueError("Yandex response had no rawData field")
+    xml_bytes = base64.b64decode(raw_b64)
+    root = _yandex_ET.fromstring(xml_bytes)
+    error_el = root.find(".//error")
+    if error_el is not None:
+        code = error_el.get("code", "?")
+        text = "".join(error_el.itertext()).strip()
+        raise ValueError(f"Yandex API error (code {code}): {text}")
+    for doc in root.findall(".//group/doc"):
+        url_el = doc.find("url")
+        title_el = doc.find("title")
+        passages = [
+            " ".join("".join(p.itertext()).split())
+            for p in doc.findall(".//passage")
+        ]
+        content = " ".join(passages).strip()
+        web_search_results_dict["results"].append({
+            "title": "".join(title_el.itertext()).strip() if title_el is not None else "",
+            "url": url_el.text.strip() if url_el is not None and url_el.text else "",
+            "content": content,
+            "metadata": {
+                "date_published": None,
+                "author": None,
+                "source": None,
+                "language": None,
+                "relevance_score": None,
+                "snippet": content or None,
+            },
+        })
 
 
 #

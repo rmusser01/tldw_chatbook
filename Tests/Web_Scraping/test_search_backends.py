@@ -170,3 +170,102 @@ def test_exa_end_to_end_through_process(monkeypatch):
     result = WebSearch_APIs.process_web_search_results(raw, "exa")
     assert result["processing_error"] is None
     assert len(result["results"]) == 2
+
+
+# ---------------------------------------------------------------------------
+# Yandex
+# ---------------------------------------------------------------------------
+
+_YANDEX_XML = b"""<?xml version="1.0" encoding="utf-8"?>
+<yandexsearch version="1.0">
+  <response date="20260806T000000">
+    <results>
+      <grouping>
+        <group>
+          <doc>
+            <url>https://ya-one.example/</url>
+            <title>Ya <hlword>One</hlword> Title</title>
+            <passages>
+              <passage>First <hlword>passage</hlword> text.</passage>
+              <passage>Second passage.</passage>
+            </passages>
+          </doc>
+        </group>
+        <group>
+          <doc>
+            <url>https://ya-two.example/</url>
+            <title>Ya Two</title>
+          </doc>
+        </group>
+      </grouping>
+    </results>
+  </response>
+</yandexsearch>"""
+
+_YANDEX_ERROR_XML = b"""<?xml version="1.0" encoding="utf-8"?>
+<yandexsearch version="1.0">
+  <response><error code="32">Quota exhausted for this key</error></response>
+</yandexsearch>"""
+
+
+def _yandex_payload(xml_bytes):
+    return {"rawData": base64.b64encode(xml_bytes).decode("ascii")}
+
+
+def test_yandex_request_shape(monkeypatch):
+    _set_key(monkeypatch, "yandex_search_api_key", "test-ya-key")
+    _set_key(monkeypatch, "yandex_search_folder_id", "test-folder")
+    fake = _patch_requests(monkeypatch, _yandex_payload(_YANDEX_XML))
+    WebSearch_APIs.search_web_yandex("cherry cake", 5)
+    call = fake.calls[0]
+    assert call["url"] == "https://searchapi.api.cloud.yandex.net/v2/web/search"
+    assert call["headers"]["Authorization"] == "Api-Key test-ya-key"
+    body = call.get("json") or json.loads(call["data"])
+    assert body == {
+        "query": {"searchType": "SEARCH_TYPE_COM", "queryText": "cherry cake"},
+        "folderId": "test-folder",
+        "responseFormat": "FORMAT_XML",
+    }
+
+
+def test_yandex_missing_key_or_folder_raises(monkeypatch):
+    _patch_requests(monkeypatch, _yandex_payload(_YANDEX_XML))
+    _set_key(monkeypatch, "yandex_search_api_key", "")
+    _set_key(monkeypatch, "yandex_search_folder_id", "test-folder")
+    with pytest.raises(ValueError, match="[Yy]andex"):
+        WebSearch_APIs.search_web_yandex("q", 5)
+    _set_key(monkeypatch, "yandex_search_api_key", "test-ya-key")
+    _set_key(monkeypatch, "yandex_search_folder_id", "")
+    with pytest.raises(ValueError, match="folder"):
+        WebSearch_APIs.search_web_yandex("q", 5)
+
+
+def test_yandex_parser_flattens_hlwords_and_passages():
+    out = {}
+    WebSearch_APIs.parse_yandex_results(_yandex_payload(_YANDEX_XML), out)
+    assert len(out["results"]) == 2
+    first, second = out["results"]
+    assert first["url"] == "https://ya-one.example/"
+    assert first["title"] == "Ya One Title"                # hlword flattened
+    assert first["content"] == "First passage text. Second passage."
+    assert first["metadata"]["snippet"] == "First passage text. Second passage."
+    assert second["content"] == ""                          # passage-less doc tolerated
+
+
+def test_yandex_error_through_process_sets_processing_error():
+    """In-XML <error> (quota/auth inside HTTP 200) must surface via the
+    processing_error seam — never a silent empty result list."""
+    result = WebSearch_APIs.process_web_search_results(_yandex_payload(_YANDEX_ERROR_XML), "yandex")
+    assert result["processing_error"] is not None
+    assert "32" in result["processing_error"] or "Quota" in result["processing_error"]
+    assert result["results"] == []
+
+
+def test_yandex_end_to_end_through_process(monkeypatch):
+    _set_key(monkeypatch, "yandex_search_api_key", "test-ya-key")
+    _set_key(monkeypatch, "yandex_search_folder_id", "test-folder")
+    _patch_requests(monkeypatch, _yandex_payload(_YANDEX_XML))
+    raw = WebSearch_APIs.search_web_yandex("q", 5)
+    result = WebSearch_APIs.process_web_search_results(raw, "yandex")
+    assert result["processing_error"] is None
+    assert [r["url"] for r in result["results"]] == ["https://ya-one.example/", "https://ya-two.example/"]
