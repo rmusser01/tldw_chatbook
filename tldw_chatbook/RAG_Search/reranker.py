@@ -83,6 +83,28 @@ class BaseReranker(ABC):
         self.config = config
         self._cache = {} if config.cache_results else None
         self._settings = load_settings()
+        # Per-rerank() call outcome: how many of the `total` per-result (or
+        # per-comparison) scoring attempts failed during the MOST RECENT
+        # `rerank()` invocation. A raising `rerank()` is handled by the
+        # caller's try/except (EnhancedRAGServiceV2.search); this is the
+        # separate, silent failure mode where `rerank()` returns normally
+        # but the underlying per-result LLM calls mostly/entirely failed
+        # (e.g. every call exhausting retries under a missing provider
+        # credential) and the result is an unchanged ordering that looks
+        # identical to "nothing needed reranking" (task-3170 P0 review
+        # finding). Every `rerank()` return path must call
+        # `_record_rerank_outcome` so a caller reading these right after
+        # `await reranker.rerank(...)` never sees a stale value from a
+        # previous call.
+        self.last_rerank_failures: int = 0
+        self.last_rerank_total: int = 0
+
+    def _record_rerank_outcome(self, failed: int, total: int) -> None:
+        """Record how many of `total` scoring attempts failed in the rerank()
+        call that just completed. See `last_rerank_failures` for why this
+        exists."""
+        self.last_rerank_failures = failed
+        self.last_rerank_total = total
 
     @abstractmethod
     async def rerank(
@@ -234,6 +256,7 @@ class PointwiseReranker(BaseReranker):
     ) -> List[Union[SearchResult, SearchResultWithCitations]]:
         """Rerank results using pointwise scoring."""
         if not results:
+            self._record_rerank_outcome(0, 0)
             return results
 
         # Limit to top K results
@@ -247,6 +270,7 @@ class PointwiseReranker(BaseReranker):
             if cache_key in self._cache:
                 log_counter("reranker_cache_hit", labels={"strategy": "pointwise"})
                 cached_scores = self._cache[cache_key]
+                self._record_rerank_outcome(0, len(results_to_rerank))
                 return (
                     self._apply_scores(results_to_rerank, cached_scores)
                     + remaining_results
@@ -269,8 +293,10 @@ class PointwiseReranker(BaseReranker):
 
         # Handle errors and compile results
         reranking_results = []
+        failed_count = 0
         for i, score_result in enumerate(all_scores):
             if isinstance(score_result, Exception):
+                failed_count += 1
                 logger.error(f"Failed to score result {i}: {score_result}")
                 # Keep original score on failure
                 reranking_results.append(
@@ -283,6 +309,12 @@ class PointwiseReranker(BaseReranker):
                 )
             else:
                 reranking_results.append(score_result)
+
+        # This is the ONLY place a caller can tell "rerank() returned
+        # normally but silently scored nothing" apart from "rerank()
+        # returned normally because everything genuinely scored" -- both
+        # look identical (an unchanged/near-unchanged ordering) without it.
+        self._record_rerank_outcome(failed_count, len(results_to_rerank))
 
         # Cache results if enabled
         if self._cache is not None and cache_key:
@@ -438,6 +470,15 @@ class PairwiseReranker(BaseReranker):
             self.config.scoring_prompt_template = get_internal_prompt(
                 "rag_reranker.pairwise_template"
             )
+        # Per-comparison counters for the CURRENT rerank() call, read by
+        # _compare_pair() during the merge-sort recursion and rolled up into
+        # last_rerank_failures/last_rerank_total (see BaseReranker) once
+        # rerank() returns. There's no single "per-result" score here
+        # (pairwise reranking is comparison-based), so a "failure" is a
+        # comparison whose LLM call raised and fell back to the original
+        # scores instead.
+        self._pairwise_comparisons_failed = 0
+        self._pairwise_comparisons_total = 0
 
     @timeit("reranker_pairwise")
     async def rerank(
@@ -448,14 +489,22 @@ class PairwiseReranker(BaseReranker):
     ) -> List[Union[SearchResult, SearchResultWithCitations]]:
         """Rerank using pairwise comparisons with tournament-style ranking."""
         if len(results) <= 1:
+            self._record_rerank_outcome(0, 0)
             return results
 
         # Limit to top K
         results_to_rerank = results[: self.config.top_k_to_rerank]
         remaining_results = results[self.config.top_k_to_rerank :]
 
+        self._pairwise_comparisons_failed = 0
+        self._pairwise_comparisons_total = 0
+
         # Perform tournament-style comparisons
         reranked = await self._tournament_rank(query, results_to_rerank)
+
+        self._record_rerank_outcome(
+            self._pairwise_comparisons_failed, self._pairwise_comparisons_total
+        )
 
         log_counter(
             "reranker_pairwise_complete", labels={"results": len(results_to_rerank)}
@@ -527,6 +576,7 @@ class PairwiseReranker(BaseReranker):
             reasoning=reasoning_part,
         )
 
+        self._pairwise_comparisons_total += 1
         try:
             response = await self._call_llm(prompt)
             result_json = json.loads(response)
@@ -538,6 +588,7 @@ class PairwiseReranker(BaseReranker):
 
         except Exception as e:
             logger.error(f"Pairwise comparison failed: {e}")
+            self._pairwise_comparisons_failed += 1
             # Fall back to original scores
             return result1.score > result2.score
 
@@ -567,6 +618,7 @@ class ListwiseReranker(BaseReranker):
     ) -> List[Union[SearchResult, SearchResultWithCitations]]:
         """Rerank all results together."""
         if len(results) <= 1:
+            self._record_rerank_outcome(0, 0)
             return results
 
         # Limit to top K
@@ -601,6 +653,13 @@ class ListwiseReranker(BaseReranker):
             # Validate ranking
             if not self._validate_ranking(ranking, len(results_to_rerank)):
                 logger.warning("Invalid ranking returned, using original order")
+                # No individual result was scored (the whole ranking is
+                # discarded), so this counts as a total failure -- same
+                # "returned normally but scored nothing" shape as the except
+                # branch below.
+                self._record_rerank_outcome(
+                    len(results_to_rerank), len(results_to_rerank)
+                )
                 return results
 
             # Reorder results
@@ -608,10 +667,13 @@ class ListwiseReranker(BaseReranker):
 
             log_counter("reranker_listwise_complete")
 
+            self._record_rerank_outcome(0, len(results_to_rerank))
+
             return reranked + remaining_results
 
         except Exception as e:
             logger.error(f"Listwise reranking failed: {e}")
+            self._record_rerank_outcome(len(results_to_rerank), len(results_to_rerank))
             return results
 
     def _validate_ranking(self, ranking: List[int], expected_length: int) -> bool:

@@ -9,6 +9,7 @@ This extends the Phase 1 enhanced RAG service with:
 
 import asyncio
 import time
+from dataclasses import replace
 from typing import Any, Collection, Dict, List, Literal, Mapping, Optional, Tuple, Union
 
 from loguru import logger
@@ -31,6 +32,34 @@ from ..config_profiles import (
     ConfigProfileManager,
 )
 from .data_models import IndexingResult
+
+
+def _tag_first_result(
+    results: List[Union[SearchResult, SearchResultWithCitations]],
+    key: str,
+    value: str,
+) -> List[Union[SearchResult, SearchResultWithCitations]]:
+    """Return a NEW results list whose first element carries `metadata[key]
+    = value`, without mutating the original first result object or the
+    original list.
+
+    `results` here may be the EXACT objects `RAGService.search()`'s cache
+    is holding by reference (see the `cache.put_async`/`cache.get_async`
+    call sites in rag_service.py) -- caching stores the list and its
+    `SearchResult`/`SearchResultWithCitations` elements by reference, not by
+    copy. An in-place `results[0].metadata[key] = value` mutation there
+    would poison the cached entry for up to `cache_ttl` seconds (3600s by
+    default), regardless of whether a LATER search for the same query
+    reranks successfully or has reranking disabled entirely -- the stale
+    tag would still be sitting on the shared object (task-3170 P0 review
+    finding). Building a new list with a new first-element copy sidesteps
+    this: the original object's metadata dict is only ever read
+    (`**results[0].metadata`), never written.
+    """
+    if not results:
+        return results
+    tagged_first = replace(results[0], metadata={**results[0].metadata, key: value})
+    return [tagged_first] + list(results[1:])
 
 
 class EnhancedRAGServiceV2(EnhancedRAGService):
@@ -258,22 +287,39 @@ class EnhancedRAGServiceV2(EnhancedRAGService):
                 # Use experiment profile's reranking config if available
                 if experiment_profile and experiment_profile.reranking_config:
                     # Create temporary reranker with experiment config
-                    temp_reranker = create_reranker_from_config(
+                    active_reranker = create_reranker_from_config(
                         experiment_profile.reranking_config
                     )
-                    results = await temp_reranker.rerank(query, results)
                 else:
-                    results = await self.reranker.rerank(query, results)
+                    active_reranker = self.reranker
+                results = await active_reranker.rerank(query, results)
 
                 rerank_time = time.time() - rerank_start
                 log_histogram("rag_reranking_time", rerank_time)
                 logger.debug(f"Reranking completed in {rerank_time:.3f}s")
+
+                # rerank() can return NORMALLY while having silently scored
+                # nothing (or almost nothing) -- e.g. every per-result LLM
+                # call exhausting retries under a missing provider
+                # credential -- which looks identical to "nothing needed
+                # reranking" (an unchanged ordering, no exception) unless
+                # disclosed here. See BaseReranker.last_rerank_failures.
+                failed = getattr(active_reranker, "last_rerank_failures", 0)
+                total = getattr(active_reranker, "last_rerank_total", 0)
+                if failed:
+                    logger.warning(
+                        f"Reranking degraded: {failed}/{total} scorings failed"
+                    )
+                    results = _tag_first_result(
+                        results,
+                        "reranking_degraded",
+                        f"{failed}/{total} scorings failed",
+                    )
             except Exception as exc:
                 logger.warning(
                     f"Reranking failed ({exc}); returning unreranked results"
                 )
-                if results:
-                    results[0].metadata["reranking_skipped"] = str(exc)
+                results = _tag_first_result(results, "reranking_skipped", str(exc))
 
         # Record experiment metrics if active
         if self._current_experiment and user_id:
