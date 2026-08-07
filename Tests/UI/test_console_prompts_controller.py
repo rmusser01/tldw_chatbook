@@ -14,10 +14,17 @@ behaviour that must survive the move unchanged:
 * the `/system` editor's save-to-Library outcome copy;
 * the Library "Use in Console" staged-insert handoff;
 * the lazily-created shared prompt-history store.
+
+The final section pins the extraction's own contract: the controller is
+wired in `ChatScreen.__init__`, owns zero DOM, and every screen-level name
+a staying caller or a pre-existing test reaches by is still a real
+delegation onto it.
 """
 
 from __future__ import annotations
 
+import ast
+import inspect
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
@@ -26,6 +33,7 @@ from textual.app import App
 
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
 
+from tldw_chatbook.UI.Console_Modules.prompts import ConsolePromptsController
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.Widgets.Console import ConsoleComposerBar, ConsolePromptsModal
 from tldw_chatbook.Widgets.Console.console_prompts_modal import ConsolePromptsResult
@@ -280,21 +288,25 @@ async def test_prompt_search_filters_recipes_and_uses_a_prefix_fts_query() -> No
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-shell")
 
-        records = await console._console_prompt_search("Summ")
+        records = await console._prompts._console_prompt_search("Summ")
 
         assert records == []
         assert service.search_calls[-1]["fts_match_query"] == '"Summ"*'
-        assert await console._resolve_console_prompt_by_name("Summ") is None
+        assert (
+            await console._prompts._resolve_console_prompt_by_name("Summ") is None
+        )
 
 
 def test_recipe_records_are_never_executable() -> None:
-    assert ChatScreen._is_recipe_prompt_record({"artifact_type": "Recipe"}) is True
-    assert ChatScreen._is_recipe_prompt_record({"artifact_type": "prompt"}) is False
-    assert ChatScreen._is_recipe_prompt_record({}) is False
+    is_recipe = ConsolePromptsController._is_recipe_prompt_record
+    assert is_recipe({"artifact_type": "Recipe"}) is True
+    assert is_recipe({"artifact_type": "prompt"}) is False
+    assert is_recipe({}) is False
 
 
 def test_prompt_prefix_fts_query_escapes_embedded_quotes() -> None:
-    assert ChatScreen._console_prompt_prefix_fts_query('a"b') == '"a""b"*'
+    prefix_query = ConsolePromptsController._console_prompt_prefix_fts_query
+    assert prefix_query('a"b') == '"a""b"*'
 
 
 # ---------------------------------------------------------------------------
@@ -315,22 +327,26 @@ async def test_system_prompt_save_to_library_reports_create_and_collision() -> N
         await _wait_for_selector(console, pilot, "#console-shell")
 
         assert (
-            await console._save_console_system_prompt_to_library("", "body")
+            await console._prompts._save_console_system_prompt_to_library("", "body")
             == "Enter a name to save this system prompt to Library."
         )
         assert (
-            await console._save_console_system_prompt_to_library("Name", "  ")
+            await console._prompts._save_console_system_prompt_to_library(
+                "Name", "  "
+            )
             == "Enter a system prompt to save."
         )
         assert (
-            await console._save_console_system_prompt_to_library("Fresh", "Be terse.")
+            await console._prompts._save_console_system_prompt_to_library(
+                "Fresh", "Be terse."
+            )
             == "Saved."
         )
         assert service.saved[-1]["name"] == "Fresh"
         assert service.saved[-1]["system_prompt"] == "Be terse."
 
         service.existing = {"name": "Fresh", "id": 1}
-        outcome = await console._save_console_system_prompt_to_library(
+        outcome = await console._prompts._save_console_system_prompt_to_library(
             "Fresh", "Be terse."
         )
         assert "already in use" in outcome
@@ -407,3 +423,78 @@ async def test_library_prompt_insert_handoff_is_blocked_before_setup_completes()
             HandoffChannel.CONSOLE_PROMPT_INSERT
         )
         assert notify.called
+
+
+# ---------------------------------------------------------------------------
+# The extraction's own contract (wave-3 console decomposition, task 3)
+# ---------------------------------------------------------------------------
+
+
+def test_prompts_controller_is_wired_in_chat_screen_init() -> None:
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+
+    screen = ChatScreen(app)
+
+    assert isinstance(screen._prompts, ConsolePromptsController)
+    assert screen._prompts._screen is screen
+    assert screen._prompts.app_instance is app
+
+
+def test_prompts_controller_owns_no_dom() -> None:
+    """A controller owns behaviour and state, and zero pixels: no `query_one`
+    /`query` anywhere in the module, matching every existing controller."""
+    source = inspect.getsource(
+        __import__(
+            "tldw_chatbook.UI.Console_Modules.prompts", fromlist=["prompts"]
+        )
+    )
+    tree = ast.parse(source)
+    dom_calls = [
+        node.func.attr
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr in {"query", "query_one", "query_exactly_one"}
+    ]
+
+    assert dom_calls == []
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "_open_console_prompts_modal",
+        "_ensure_console_prompt_history",
+        "_console_command_insert_prompt",
+        "_console_command_apply_system",
+        "_open_console_system_prompt_editor",
+        "_consume_pending_console_prompt_insert",
+    ],
+)
+def test_screen_keeps_a_real_delegation_for_every_outside_caller(name: str) -> None:
+    """These six are reached from outside the cluster -- by a staying screen
+    method, by Textual's `action_*` resolution, by the command-registry dict,
+    or by a pre-existing test that replaces the exact screen attribute. Each
+    must stay a thin forwarder onto the controller, never a re-implementation
+    and never absent."""
+    method = getattr(ChatScreen, name)
+    body = inspect.getsource(method)
+
+    assert "self._prompts." + name in body
+    assert len(body.splitlines()) <= 4
+
+
+def test_moved_methods_are_gone_from_the_screen() -> None:
+    """The seven with no outside caller left no residue at all."""
+    for name in (
+        "_is_recipe_prompt_record",
+        "_console_prompt_prefix_fts_query",
+        "_console_prompt_search",
+        "_resolve_console_prompt_by_name",
+        "_open_console_prompt_picker_for_insert",
+        "_open_console_prompt_picker_for_apply_system",
+        "_save_console_system_prompt_to_library",
+    ):
+        assert not hasattr(ChatScreen, name), name
+        assert hasattr(ConsolePromptsController, name), name

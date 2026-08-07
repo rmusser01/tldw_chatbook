@@ -37,6 +37,12 @@ SCREEN_STATE_STORE_PATH = (
 )
 HANDOFF_STORE_PATH = PRODUCTION_ROOT / "UI" / "Navigation" / "pending_handoff_store.py"
 CHAT_SCREEN_PATH = PRODUCTION_ROOT / "UI" / "Screens" / "chat_screen.py"
+#: The Console prompt cluster moved off `ChatScreen` in the wave-3
+#: decomposition (task 3); the screen keeps only a thin delegation, so the
+#: real `_consume_pending_console_prompt_insert` body lives here now.
+CONSOLE_PROMPTS_PATH = (
+    PRODUCTION_ROOT / "UI" / "Console_Modules" / "prompts.py"
+)
 CHAT_SCREEN_STATE_PATH = PRODUCTION_ROOT / "UI" / "Screens" / "chat_screen_state.py"
 MEDIA_WINDOW_PATH = PRODUCTION_ROOT / "UI" / "MediaWindow_v2.py"
 MEDIA_SCREEN_PATH = PRODUCTION_ROOT / "UI" / "Screens" / "media_screen.py"
@@ -2161,6 +2167,9 @@ def test_handoff_exception_logs_are_metadata_only() -> None:
     study_class = _class_definition(STUDY_SCREEN_PATH, "StudyScreen")
     artifacts_class = _class_definition(ARTIFACTS_SCREEN_PATH, "ArtifactsScreen")
     acp_class = _class_definition(ACP_SCREEN_PATH, "ACPScreen")
+    prompts_class = _class_definition(
+        CONSOLE_PROMPTS_PATH, "ConsolePromptsController"
+    )
     methods = (
         (APP_PATH, _method_definition(app_class, "_stage_handoff")),
         (
@@ -2168,8 +2177,10 @@ def test_handoff_exception_logs_are_metadata_only() -> None:
             _method_definition(chat_class, "_consume_pending_console_launch"),
         ),
         (
-            CHAT_SCREEN_PATH,
-            _method_definition(chat_class, "_consume_pending_console_prompt_insert"),
+            CONSOLE_PROMPTS_PATH,
+            _method_definition(
+                prompts_class, "_consume_pending_console_prompt_insert"
+            ),
         ),
         (
             CHAT_SCREEN_PATH,

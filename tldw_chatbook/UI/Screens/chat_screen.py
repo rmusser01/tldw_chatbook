@@ -15,7 +15,6 @@ import time
 from types import SimpleNamespace
 from typing import Any, Dict, Iterable, Literal, Optional, TYPE_CHECKING
 from urllib.parse import urlparse
-import uuid
 
 import toml
 from loguru import logger
@@ -71,6 +70,7 @@ from ..Console_Modules.hands_free import (
 )
 from ..Console_Modules.left_rail import ConsoleLeftRail
 from ..Console_Modules.message import ConsoleMessageController
+from ..Console_Modules.prompts import ConsolePromptsController
 from ..Console_Modules.right_rail import ConsoleInspectorRail
 from ..Console_Modules.transcript import (
     ConsoleTranscriptRegion,
@@ -87,7 +87,7 @@ from ..Console_Modules.session import (
 from ...Chat.chat_persistence_service import ChatPersistenceService
 from ...Chat.citation_trace_repository import ActiveCitationTraceState
 from ...Chat.console_chat_controller import ConsoleChatController
-from ...Chat.prompt_history import PromptHistory, default_prompt_history_path
+from ...Chat.prompt_history import PromptHistory
 from ...Chat.console_cost_tracker import (
     ConsoleCacheState,
     ConsoleCostRowTotals,
@@ -211,10 +211,7 @@ from ...Chat.console_provider_gateway import (
     ConsoleProviderGateway,
     normalize_llamacpp_base_url,
 )
-from ...Chat.console_provider_endpoints import (
-    first_configured_endpoint,
-    safe_endpoint_display,
-)
+from ...Chat.console_provider_endpoints import first_configured_endpoint
 
 from ...Chat.console_voice_input import (
     NO_CAPTURE_MESSAGE,
@@ -365,7 +362,6 @@ from ...config import (
     save_setting_to_cli_config,
     save_settings_to_cli_config,
 )
-from ...Library.library_prompts_state import classify_prompt_save_error
 from ...Library.library_rag_service import (
     LibraryRagSearchOutcome,
     LibraryRagSearchRequest,
@@ -469,23 +465,6 @@ from ...Widgets.Console.console_composer_menu_modal import (
     ACTION_UNDO_PROMPT_IMPROVEMENT,
     ConsoleComposerMenuModal,
 )
-from ...Widgets.Console.console_prompt_improve_view import (
-    ConsolePromptImprovementContext,
-)
-from ...Widgets.Console.console_prompts_modal import (
-    ConsolePromptsApplyOutcome,
-    ConsolePromptsModal,
-    ConsolePromptsResult,
-    ConsoleRecipeApplyGuard,
-    ConsoleSavedPromptApplyGuard,
-)
-from ...Prompt_Management.prompt_artifact_codec import decode_prompt_artifact
-from ...Prompt_Management.prompt_improvement_models import (
-    PromptImprovementRequestSnapshot,
-    fingerprint_block_definition,
-    fingerprint_text,
-)
-from ...Prompt_Management.prompt_improvement_service import PromptImprovementService
 from ...Widgets.Console.console_generate_image_modal import (
     ConsoleGenerateImageModal,
 )
@@ -494,14 +473,9 @@ from ...Widgets.Console.console_model_popover import (
     CONSOLE_POPOVER_OPEN_FULL_SETTINGS,
     ConsoleModelPopover,
 )
-from ...Widgets.Console.console_prompt_picker_modal import (
-    MODE_APPLY_SYSTEM as CONSOLE_PROMPT_PICKER_MODE_APPLY_SYSTEM,
-    ConsolePromptPickerModal,
-)
 from ...Widgets.Console.console_run_log_modal import ConsoleRunLogModal
 from ...Widgets.Console.console_skill_picker_modal import ConsoleSkillPickerModal
 from ...Widgets.Console.console_style_picker_modal import ConsoleStylePickerModal
-from ...Widgets.Console.console_system_prompt_modal import ConsoleSystemPromptModal
 from ...Widgets.Console.console_setup_modal import (
     CONSOLE_SETUP_MODAL_DETECTED_WORKBENCH_ACTION,
 )
@@ -576,20 +550,6 @@ CONSOLE_FOCUS_FRAME_COLOR = "#0178D4"
 CONSOLE_FOCUS_FRAME_BORDER = ("solid", CONSOLE_FOCUS_FRAME_COLOR)
 CONSOLE_START_HERE_COPY = ""
 CONSOLE_ACTION_HINTS_COPY = ""
-# Mirrors `library_screen.LIBRARY_PROMPT_SAVE_STATUS_COPY` verbatim: the
-# Console `/system` editor's "Save to Library" action is always a brand-new
-# prompt CREATE (never an update to an existing one, unlike the Library
-# prompt editor's own save flow), but the outcome copy the user sees must
-# read identically either way -- duplicated here rather than imported across
-# screens to avoid a Screen-to-Screen import.
-CONSOLE_SYSTEM_PROMPT_SAVE_STATUS_COPY = {
-    "ok": "Saved.",
-    "name-in-use": "Name already in use — pick another or open the existing prompt.",
-    "soft-deleted-name": "A deleted prompt holds this name — restore it or choose another.",
-    "error": "Couldn't save this prompt. Try again.",
-}
-CONSOLE_SYSTEM_PROMPT_NO_SYSTEM_PART_TEMPLATE = 'Prompt "{name}" has no system part.'
-# "Absent" bucket of the untrusted-refuse copy (Task 7's SKILL_UNTRUSTED_REFUSE):
 # a typed skill name that matches nothing at all -- not a trusted candidate,
 # not even a needs-review one.
 CONSOLE_SKILL_RUN_REFUSE_REASON_ABSENT = "no matching skill"
@@ -2095,7 +2055,7 @@ class ChatScreen(BaseAppScreen):
         if self._console_setup_modal_blocking():
             return
         self.run_worker(
-            self._open_console_prompt_picker_for_insert(""),
+            self._prompts._open_console_prompt_picker_for_insert(""),
             exclusive=False,
         )
 
@@ -2817,6 +2777,89 @@ class ChatScreen(BaseAppScreen):
                 lambda: self._invalidate_console_persisted_rows_cache()
             ),
         )
+        #: The prompt cluster -- Prompt Library modal, `/prompt` + `/system`
+        #: resolution and their pickers, the system-prompt editor and its
+        #: save-to-Library flow, the Library staged-insert handoff, and the
+        #: shared prompt-history store (wave-3 console decomposition, task
+        #: 3). Every dependency below is a LATE-BINDING lambda, never a
+        #: bound method: eleven of the eighteen are replaced by name on the
+        #: screen instance somewhere in the pre-existing suite, and a
+        #: constructor snapshot would silently stop observing every one of
+        #: those. See `Console_Modules/prompts.py`'s `__init__` docstring
+        #: for the per-parameter rationale.
+        self._prompts = ConsolePromptsController(
+            self,
+            app_instance=self.app_instance,
+            composer_accessor=lambda: self._console_composer_or_none(),
+            chat_store_accessor=lambda: self._ensure_console_chat_store(),
+            # Session <-> prompts seam (design spec: "a named callable
+            # between them; design it deliberately, never a back-door
+            # through the screen"). `self._session` was constructed above;
+            # Python resolves it at CALL time inside these lambdas, so
+            # construction order does not matter.
+            ensure_active_console_session_settings=(
+                lambda: self._session._ensure_active_console_session_settings()
+            ),
+            apply_console_session_system_prompt=(
+                lambda system_prompt: (
+                    self._session._apply_console_session_system_prompt(system_prompt)
+                )
+            ),
+            sync_console_session_draft=(
+                lambda: self._session._sync_console_session_draft()
+            ),
+            active_console_provider_model_display=(
+                lambda: self._active_console_provider_model_display()
+            ),
+            build_console_provider_selection=(
+                lambda: self._build_console_provider_selection()
+            ),
+            ensure_console_provider_gateway=(
+                lambda: self._ensure_console_provider_gateway()
+            ),
+            console_provider_blocker_copy=(
+                lambda: self._console_provider_blocker_copy()
+            ),
+            # A bare-attribute READ, not a call: the modal opener hands
+            # this straight to `ConsolePromptsModal(configure_provider=...)`
+            # without calling it, so the accessor must return the screen's
+            # current attribute rather than a wrapper around it -- that is
+            # what keeps `test_console_workbench_contract.py`'s
+            # `console._open_console_provider_recovery = AsyncMock()`
+            # reaching the modal exactly as it did pre-move.
+            open_console_provider_recovery_accessor=(
+                lambda: self._open_console_provider_recovery
+            ),
+            console_setup_blocked_reason=(
+                lambda: self._console_setup_blocked_reason()
+            ),
+            focus_console_composer_if_needed=(
+                lambda **kwargs: self._focus_console_composer_if_needed(**kwargs)
+            ),
+            # DOM-touching, so it stays on the screen (`query_one` on the
+            # native composer) -- and six pre-existing test sites replace it
+            # there by name.
+            insert_prompt_text_into_composer=(
+                lambda text, *, replace: self._insert_prompt_text_into_composer(
+                    text, replace=replace
+                )
+            ),
+            clear_console_composer_draft=(
+                lambda: self._clear_console_composer_draft()
+            ),
+            append_native_console_system_message=(
+                lambda text: self._append_native_console_system_message(text)
+            ),
+            sync_console_chat_core_state=(
+                lambda: self._sync_console_chat_core_state()
+            ),
+            sync_console_rail_system_line=(
+                lambda: self._sync_console_rail_system_line()
+            ),
+            sync_console_settings_summary=(
+                lambda: self._sync_console_settings_summary()
+            ),
+        )
         #: The realtime (V4) hands-free loop's live session, or None when
         #: that loop is not running. Mutually exclusive with
         #: `_console_hands_free` by construction: the engine fork in
@@ -2830,7 +2873,6 @@ class ChatScreen(BaseAppScreen):
         #: see `_teardown_console_realtime_loop`.
         self._console_realtime_close_worker: Any | None = None
         self._console_provider_gateway: Any | None = None
-        self._console_prompt_history: Any | None = None
         self._console_chat_controller: ConsoleChatController | None = None
         self._console_command_registry: ConsoleCommandRegistry = (
             default_console_registry()
@@ -4508,25 +4550,8 @@ class ChatScreen(BaseAppScreen):
         return self._console_provider_gateway
 
     def _ensure_console_prompt_history(self) -> PromptHistory:
-        """Return the shared JSONL prompt-history store (TASK-1364).
-
-        One instance feeds both the composer (ghost text, Up/Down recall)
-        and the controller (recording accepted sends). Creation is lazy and
-        IO-free -- the store self-loads on first awaited use, and the
-        composer kicks a background `load()` on mount so ghost text works on
-        the first keystroke. `console_prompt_history_factory` on the app is
-        the test seam, mirroring `console_provider_gateway_factory`.
-        """
-        history = getattr(self, "_console_prompt_history", None)
-        if history is None:
-            factory = getattr(self.app_instance, "console_prompt_history_factory", None)
-            history = (
-                factory()
-                if callable(factory)
-                else PromptHistory(default_prompt_history_path())
-            )
-            self._console_prompt_history = history
-        return history
+        """Delegate to `ConsolePromptsController` (wave-3 console decomposition, task 3)."""
+        return self._prompts._ensure_console_prompt_history()
 
     def _ensure_console_chat_controller(self) -> ConsoleChatController:
         """Return the native Console chat controller with fresh selection state."""
@@ -5245,402 +5270,8 @@ class ChatScreen(BaseAppScreen):
             )
 
     def _open_console_prompts_modal(self) -> None:
-        """Open the source-aware Prompt Library without changing the draft."""
-        service = getattr(self.app_instance, "prompt_scope_service", None)
-        composer = self._console_composer_or_none()
-        if composer is None:
-            return
-        settings = self._session._ensure_active_console_session_settings()
-        store = self._ensure_console_chat_store()
-        session_id = store.active_session_id
-        if session_id is None:
-            return
-        composer_snapshot = composer.capture_draft_snapshot()
-        current_system = str(settings.system_prompt or "")
-        current_system_fingerprint = fingerprint_text(current_system)
-        provider_display, model_display, _settings = (
-            self._active_console_provider_model_display()
-        )
-        opening_selection = self._build_console_provider_selection()
-        gateway = self._ensure_console_provider_gateway()
-        improvement_service = PromptImprovementService(gateway=gateway)
-        pinned_improvement_resolution: Any | None = None
-        improvement_context = ConsolePromptImprovementContext(
-            session_id=session_id,
-            composer_snapshot=composer_snapshot,
-            current_user_projection=None,
-            current_system_prompt=current_system,
-            current_system_fingerprint=current_system_fingerprint,
-            provider_label=str(provider_display or "Not configured"),
-            model_label=str(model_display or "Not configured"),
-            endpoint_label=(
-                safe_endpoint_display(opening_selection.base_url)
-                or "Resolve on Improve"
-            ),
-            model_unavailable_reason=self._console_provider_blocker_copy(),
-        )
-
-        async def capabilities(source: str) -> Any:
-            method = getattr(service, "get_capabilities", None)
-            if not callable(method):
-                raise ValueError(f"{source.title()} Prompt source is unavailable.")
-            return await method(mode=source)
-
-        async def list_page(source: str, page: int) -> Any:
-            method = getattr(service, "list_prompts", None)
-            if not callable(method):
-                raise ValueError(f"{source.title()} Prompt source is unavailable.")
-            return await method(mode=source, page=page, per_page=10)
-
-        async def search(source: str, query: str) -> Any:
-            method = getattr(service, "search_prompts", None)
-            if not callable(method):
-                raise ValueError(f"{source.title()} Prompt search is unavailable.")
-            return await method(mode=source, query=query, limit=25)
-
-        async def detail(source: str, identifier: str) -> Any:
-            method = getattr(service, "get_prompt", None)
-            if not callable(method):
-                raise ValueError(f"{source.title()} Prompt source is unavailable.")
-            return await method(mode=source, prompt_identifier=identifier)
-
-        async def save(**payload: Any) -> Any:
-            method = getattr(service, "save_prompt", None)
-            if not callable(method):
-                raise ValueError("The selected Prompt source cannot save.")
-            source = str(payload.pop("source", "local"))
-            return await method(mode=source, **payload)
-
-        def _active_system_fingerprint() -> str:
-            live_settings = self._session._ensure_active_console_session_settings()
-            return fingerprint_text(str(live_settings.system_prompt or ""))
-
-        def _resolution_identity(resolution: Any) -> tuple[str, str, str, str, str]:
-            return (
-                str(getattr(resolution, "provider", "")),
-                str(getattr(resolution, "model", "")),
-                str(getattr(resolution, "base_url", "")),
-                str(getattr(resolution, "readiness_key", "")),
-                str(getattr(resolution, "execution_key", "")),
-            )
-
-        async def activate_improvement_context() -> Any:
-            """Pin and disclose the exact target before any model path can run."""
-
-            nonlocal pinned_improvement_resolution
-            if store.active_session_id != session_id:
-                raise ValueError("The active Console session changed.")
-            if _active_system_fingerprint() != current_system_fingerprint:
-                raise ValueError("The Console System prompt changed.")
-            projection = None
-            projection_blocker = ""
-            try:
-                projection = composer.project_snapshot_for_model(
-                    composer_snapshot,
-                    request_nonce=f"prompt-preview-{uuid.uuid4().hex}",
-                )
-            except ValueError:
-                projection_blocker = (
-                    "Model improvement is unavailable because the draft contains "
-                    "reserved protected-placeholder text. Remove or rename that "
-                    "literal token, then reopen Improve."
-                )
-            try:
-                resolution = await gateway.resolve_for_send(
-                    self._build_console_provider_selection()
-                )
-            except Exception:
-                pinned_improvement_resolution = None
-                return replace(
-                    improvement_context,
-                    current_user_projection=projection,
-                    endpoint_label="Unavailable",
-                    model_unavailable_reason=(
-                        projection_blocker
-                        or "Prompt improvement could not resolve the current provider "
-                        "target. Review Console provider settings and reopen Improve."
-                    ),
-                )
-            pinned_improvement_resolution = resolution
-            blocker = projection_blocker
-            if not blocker and (
-                not resolution.ready or not str(resolution.model or "").strip()
-            ):
-                blocker = str(
-                    resolution.visible_copy
-                    or "Choose a ready provider and model, then reopen Improve."
-                )
-            return replace(
-                improvement_context,
-                current_user_projection=projection,
-                provider_label=str(resolution.provider or "Not configured"),
-                model_label=str(resolution.model or "Not configured"),
-                endpoint_label=(
-                    safe_endpoint_display(resolution.base_url)
-                    or "Provider default"
-                ),
-                model_unavailable_reason=blocker,
-                pinned_resolution=resolution,
-            )
-
-        async def capture_manual_resolution() -> Any:
-            """Capture the effective target once for a later model-free Apply."""
-
-            nonlocal pinned_improvement_resolution
-            if pinned_improvement_resolution is None:
-                pinned_improvement_resolution = await gateway.resolve_for_send(
-                    self._build_console_provider_selection()
-                )
-            return pinned_improvement_resolution
-
-        async def build_improvement_snapshot(**values: Any) -> Any:
-            if store.active_session_id != session_id:
-                raise ValueError("The active Console session changed.")
-            if _active_system_fingerprint() != current_system_fingerprint:
-                raise ValueError("The Console System prompt changed.")
-            request_id = str(values["request_id"])
-            projection = composer.project_snapshot_for_model(
-                composer_snapshot,
-                request_nonce=request_id,
-            )
-            composer.validate_improvement(composer_snapshot, projection.text)
-            pinned_resolution = pinned_improvement_resolution
-            if pinned_resolution is None:
-                raise ValueError(
-                    "The provider target is no longer pinned. Reopen Improve to refresh disclosure."
-                )
-            live_resolution = await gateway.resolve_for_send(
-                self._build_console_provider_selection()
-            )
-            if _resolution_identity(live_resolution) != _resolution_identity(
-                pinned_resolution
-            ):
-                raise ValueError(
-                    "The provider, model, or endpoint changed. Reopen Improve to refresh disclosure."
-                )
-            if not pinned_resolution.ready or not str(
-                pinned_resolution.model or ""
-            ).strip():
-                raise ValueError(
-                    pinned_resolution.visible_copy or "Provider is unavailable."
-                )
-            include_system = bool(values.get("include_system"))
-            recipe_definition = values.get("recipe_definition")
-            return PromptImprovementRequestSnapshot(
-                request_id=request_id,
-                mode=values["mode"],
-                session_id=session_id,
-                composer_snapshot=composer_snapshot,
-                projection=projection,
-                system_prompt=current_system if include_system else None,
-                system_fingerprint=(
-                    current_system_fingerprint if include_system else None
-                ),
-                resolution=pinned_resolution,
-                provider_label=pinned_resolution.provider,
-                model_label=str(pinned_resolution.model),
-                recipe_source=values.get("recipe_source"),
-                recipe_source_id=values.get("recipe_source_id"),
-                recipe_version=values.get("recipe_version"),
-                recipe_definition=recipe_definition,
-                recipe_fingerprint=(
-                    fingerprint_block_definition(recipe_definition)
-                    if recipe_definition is not None
-                    else None
-                ),
-            )
-
-        def validate_improvement(captured: Any, text: str) -> None:
-            snapshot = getattr(captured, "composer_snapshot", composer_snapshot)
-            composer.validate_improvement(snapshot, text)
-
-        async def validate_saved_recipe(captured: Any) -> None:
-            recipe_source_id = str(
-                getattr(captured, "recipe_source_id", "") or ""
-            )
-            if not recipe_source_id or recipe_source_id.startswith("builtin:"):
-                return
-            source = getattr(captured, "recipe_source", None)
-            if source not in {"local", "server"}:
-                raise ValueError("The selected Recipe source changed.")
-            latest = await detail(source, recipe_source_id)
-            if not isinstance(latest, Mapping):
-                raise ValueError("The selected Recipe is no longer available.")
-            latest_identity = (
-                latest.get("source_id") or latest.get("id") or latest.get("uuid")
-            )
-            if str(latest_identity or "") != recipe_source_id:
-                raise ValueError("The selected Recipe identity changed.")
-            latest_version = latest.get("version", latest.get("optimistic_version"))
-            if latest_version != getattr(captured, "recipe_version", None):
-                raise ValueError("The selected Recipe version changed.")
-            decoded = decode_prompt_artifact(latest)
-            if decoded.artifact_type != "recipe" or decoded.definition is None:
-                raise ValueError("The selected Recipe is no longer compatible.")
-            if fingerprint_block_definition(decoded.definition) != getattr(
-                captured, "recipe_fingerprint", None
-            ):
-                raise ValueError("The selected Recipe changed.")
-
-        async def validate_saved_prompt(captured: Any) -> None:
-            if not isinstance(captured, ConsoleSavedPromptApplyGuard):
-                return
-            latest = await detail(captured.source, captured.prompt_source_id)
-            if not isinstance(latest, Mapping):
-                raise ValueError("The selected Prompt is no longer available.")
-            latest_identity = (
-                latest.get("source_id") or latest.get("id") or latest.get("uuid")
-            )
-            if str(latest_identity or "") != captured.prompt_source_id:
-                raise ValueError("The selected Prompt identity changed.")
-            latest_version = latest.get("version", latest.get("optimistic_version"))
-            if latest_version != captured.prompt_version:
-                raise ValueError("The selected Prompt version changed.")
-            decoded = decode_prompt_artifact(latest)
-            if decoded.artifact_type != "prompt" or decoded.definition is None:
-                raise ValueError("The selected Prompt is no longer compatible.")
-            if fingerprint_block_definition(decoded.definition) != captured.prompt_fingerprint:
-                raise ValueError("The selected Prompt changed.")
-
-        async def record_applied_usage(captured: Any) -> None:
-            if not isinstance(
-                captured, ConsoleSavedPromptApplyGuard
-            ) or not captured.record_usage:
-                return
-            recorder = getattr(service, "record_prompt_usage", None)
-            if not callable(recorder):
-                return
-            try:
-                await recorder(
-                    mode=captured.source,
-                    prompt_identifier=captured.prompt_source_id,
-                )
-            except Exception:
-                self.app_instance.notify(
-                    "The prompt was applied, but Library usage could not be recorded.",
-                    severity="warning",
-                )
-
-        async def apply_improvement_result(
-            result: ConsolePromptsResult, captured: Any
-        ) -> ConsolePromptsApplyOutcome:
-            if store.active_session_id != session_id:
-                return ConsolePromptsApplyOutcome(
-                    "stale", "The active Console session changed."
-                )
-            if _active_system_fingerprint() != current_system_fingerprint:
-                return ConsolePromptsApplyOutcome(
-                    "stale", "The Console System prompt changed."
-                )
-            if isinstance(captured, PromptImprovementRequestSnapshot):
-                live_resolution = await gateway.resolve_for_send(
-                    self._build_console_provider_selection()
-                )
-                if _resolution_identity(live_resolution) != _resolution_identity(
-                    captured.resolution
-                ):
-                    return ConsolePromptsApplyOutcome(
-                        "stale", "The provider, model, or endpoint changed."
-                    )
-            elif isinstance(
-                captured, (ConsoleRecipeApplyGuard, ConsoleSavedPromptApplyGuard)
-            ):
-                captured_resolution = captured.provider_resolution
-                if captured_resolution is None:
-                    return ConsolePromptsApplyOutcome(
-                        "stale",
-                        "The provider target was not captured. Reopen the Prompt and retry.",
-                    )
-                live_resolution = await gateway.resolve_for_send(
-                    self._build_console_provider_selection()
-                )
-                if _resolution_identity(live_resolution) != _resolution_identity(
-                    captured_resolution
-                ):
-                    return ConsolePromptsApplyOutcome(
-                        "stale", "The provider, model, or endpoint changed."
-                    )
-            try:
-                await validate_saved_recipe(captured)
-                await validate_saved_prompt(captured)
-                if result.apply_user:
-                    if result.user_text is None:
-                        raise ValueError("The reviewed User prompt is missing.")
-                    composer.validate_improvement(
-                        result.composer_snapshot, result.user_text
-                    )
-                elif composer.capture_draft_snapshot() != result.composer_snapshot:
-                    raise ValueError("The Console draft changed.")
-            except Exception:
-                return ConsolePromptsApplyOutcome(
-                    "stale",
-                    "The draft or Recipe changed. Review the working copy and retry.",
-                )
-
-            if result.apply_user and result.user_text is not None:
-                composer.apply_improvement(
-                    result.composer_snapshot,
-                    result.user_text,
-                )
-                store.set_session_draft(session_id, composer.draft_text())
-            persisted = True
-            if result.apply_system:
-                _session, persisted = store.set_session_system_prompt(
-                    session_id, result.system_text
-                )
-                self._sync_console_chat_core_state()
-                self._sync_console_rail_system_line()
-                self._sync_console_settings_summary()
-            await record_applied_usage(captured)
-            if not persisted:
-                return ConsolePromptsApplyOutcome("persistence_failed")
-            return ConsolePromptsApplyOutcome("applied")
-
-        async def retry_improvement_persistence(
-            result: ConsolePromptsResult,
-        ) -> ConsolePromptsApplyOutcome:
-            if store.active_session_id != session_id or not result.apply_system:
-                return ConsolePromptsApplyOutcome(
-                    "stale", "The active Console session changed."
-                )
-            live_settings = self._session._ensure_active_console_session_settings()
-            if str(live_settings.system_prompt or "") != str(result.system_text or ""):
-                return ConsolePromptsApplyOutcome(
-                    "stale", "The live System prompt changed."
-                )
-            _session, persisted = store.set_session_system_prompt(
-                session_id, result.system_text
-            )
-            self._sync_console_chat_core_state()
-            self._sync_console_rail_system_line()
-            self._sync_console_settings_summary()
-            return ConsolePromptsApplyOutcome(
-                "applied" if persisted else "persistence_failed"
-            )
-
-        def restore_focus(_result: ConsolePromptsResult | None) -> None:
-            self._focus_console_composer_if_needed(force=True)
-
-        self.app.push_screen(
-            ConsolePromptsModal(
-                capabilities=capabilities,
-                list_page=list_page,
-                search=search,
-                detail=detail,
-                save=save,
-                improve_unavailable_reason=self._console_provider_blocker_copy(),
-                configure_provider=self._open_console_provider_recovery,
-                improvement_context=improvement_context,
-                activate_improvement_context=activate_improvement_context,
-                capture_manual_resolution=capture_manual_resolution,
-                build_improvement_snapshot=build_improvement_snapshot,
-                improve=improvement_service.improve,
-                validate_improvement=validate_improvement,
-                apply_improvement_result=apply_improvement_result,
-                retry_improvement_persistence=retry_improvement_persistence,
-            ),
-            callback=restore_focus,
-        )
+        """Delegate to `ConsolePromptsController` (wave-3 console decomposition, task 3)."""
+        self._prompts._open_console_prompts_modal()
 
 
     @on(ConsoleTemporaryChip.SaveRequested)
@@ -15645,163 +15276,9 @@ class ChatScreen(BaseAppScreen):
             return
         await handler(parse)
 
-    # Bounded prompt-search page size for `/prompt` resolution and the
-    # picker's own search callable -- mirrors Task 11's picker contract
-    # (PromptScopeService.search_prompts, FTS-ranked, <= 25 rows).
-    _CONSOLE_PROMPT_SEARCH_LIMIT = 25
-
-    _LIBRARY_PROMPT_INSERT_BLOCKED_COPY = "Finish provider setup to insert prompts."
-    _RECIPE_EXECUTION_BLOCKED_COPY = (
-        "Recipes cannot be applied directly. Open Prompts and edit the Recipe "
-        "as an unsaved Prompt copy first."
-    )
-
-    @staticmethod
-    def _is_recipe_prompt_record(record: Mapping[str, Any]) -> bool:
-        """Return whether a normalized or raw record is a non-executable Recipe."""
-        return str(record.get("artifact_type") or "prompt").casefold() == "recipe"
-
     async def _console_command_insert_prompt(self, parse: CommandParse) -> None:
-        """Resolve and insert a saved prompt's ``user_prompt`` for `/prompt`.
-
-        Resolution order (brief): exact case-insensitive name match over a
-        bounded search page; else a unique case-insensitive name-prefix
-        match over that same page; else (no args, 0 matches, or an
-        ambiguous 2+ match at either stage) open the picker prefilled with
-        the typed args. A resolved match REPLACES the composer draft
-        wholesale (the draft IS the `/prompt ...` command being replaced by
-        its result) via paste semantics, so an oversized body still
-        collapses to a token exactly like a real paste would.
-        """
-        query = parse.args.strip()
-        resolved = await self._resolve_console_prompt_by_name(query) if query else None
-        if resolved is not None:
-            if self._is_recipe_prompt_record(resolved):
-                await self._append_native_console_system_message(
-                    self._RECIPE_EXECUTION_BLOCKED_COPY
-                )
-                return
-            self._insert_prompt_text_into_composer(
-                str(resolved.get("user_prompt") or ""), replace=True
-            )
-            return
-        await self._open_console_prompt_picker_for_insert(query)
-
-    @staticmethod
-    def _console_prompt_prefix_fts_query(text: str) -> str:
-        """Build an FTS5 phrase-prefix MATCH expression for ``text``.
-
-        Plain FTS5 MATCH requires a full token, which would defeat both the
-        `/prompt` prefix-match resolution stage (a query like "Summ" would
-        never match a stored name "Summarize") and a picker that is supposed
-        to filter results as the user is still mid-word. Quoting the whole
-        query as a phrase with a trailing ``*`` makes FTS5 match names whose
-        tokens *start with* the typed text instead -- a prefix match trivially
-        covers an exact match too, so one query shape serves both. Embedded
-        quotes are doubled per FTS5 string-literal escaping (mirrors
-        ``library_fts_query._quote_fts_term``), so user text can never break
-        out of the quoted phrase to inject MATCH operators.
-        """
-        escaped = text.replace('"', '""')
-        return f'"{escaped}"*'
-
-    async def _console_prompt_search(self, query: str) -> list:
-        """Bounded FTS prompt search bound to the active scope service.
-
-        Shared by `/prompt` resolution and the picker's ``prompt_search``
-        callable so both always read a fresh page rather than any cached
-        boot-time snapshot.
-        """
-        service = getattr(self.app_instance, "prompt_scope_service", None)
-        search_prompts = getattr(service, "search_prompts", None)
-        if not callable(search_prompts):
-            return []
-        stripped_query = query.strip()
-        fts_kwargs = (
-            {"fts_match_query": self._console_prompt_prefix_fts_query(stripped_query)}
-            if stripped_query
-            else {}
-        )
-        try:
-            records = await search_prompts(
-                mode="local",
-                query=query,
-                limit=self._CONSOLE_PROMPT_SEARCH_LIMIT,
-                **fts_kwargs,
-            )
-            return [
-                record
-                for record in records
-                if isinstance(record, Mapping)
-                and not self._is_recipe_prompt_record(record)
-            ]
-        except Exception:
-            logger.opt(exception=True).warning(
-                f"Console prompt search failed for query {query!r}."
-            )
-            return []
-
-    async def _resolve_console_prompt_by_name(
-        self, query: str
-    ) -> Optional[Mapping[str, Any]]:
-        """Resolve `/prompt <name>` to a single prompt record, or ``None``.
-
-        ``None`` means the caller should fall back to the picker: no
-        candidates, an ambiguous (2+) exact case-insensitive name match, or
-        no/ambiguous unique prefix match either.
-        """
-        candidates = [
-            record
-            for record in await self._console_prompt_search(query)
-            if isinstance(record, Mapping) and not self._is_recipe_prompt_record(record)
-        ]
-        normalized_query = query.strip().casefold()
-        exact_matches = [
-            record
-            for record in candidates
-            if str(record.get("name") or "").strip().casefold() == normalized_query
-        ]
-        if len(exact_matches) == 1:
-            return exact_matches[0]
-        if len(exact_matches) > 1:
-            return None
-        prefix_matches = [
-            record
-            for record in candidates
-            if str(record.get("name") or "")
-            .strip()
-            .casefold()
-            .startswith(normalized_query)
-        ]
-        if len(prefix_matches) == 1:
-            return prefix_matches[0]
-        return None
-
-    async def _open_console_prompt_picker_for_insert(self, initial_query: str) -> None:
-        """Open the prompt picker for `/prompt`, inserting whatever is chosen."""
-
-        def _apply_picker_choice(record: Optional[Mapping[str, Any]]) -> None:
-            self._focus_console_composer_if_needed(force=True)
-            if record is None:
-                return
-            if self._is_recipe_prompt_record(record):
-                self.app_instance.notify(
-                    self._RECIPE_EXECUTION_BLOCKED_COPY,
-                    severity="warning",
-                )
-                return
-            self._insert_prompt_text_into_composer(
-                str(record.get("user_prompt") or ""), replace=True
-            )
-
-        self.app.push_screen(
-            ConsolePromptPickerModal(
-                mode="insert",
-                initial_query=initial_query,
-                prompt_search=self._console_prompt_search,
-            ),
-            callback=_apply_picker_choice,
-        )
+        """Delegate to `ConsolePromptsController` (wave-3 console decomposition, task 3)."""
+        await self._prompts._console_command_insert_prompt(parse)
 
     async def _open_console_style_picker_for_insert(self) -> None:
         """Open the image-style picker, inserting whatever style is chosen."""
@@ -15906,124 +15383,12 @@ class ChatScreen(BaseAppScreen):
         return True
 
     async def _consume_pending_console_prompt_insert(self) -> None:
-        """Consume a Library "Use in Console" staged prompt body, if any.
-
-        Mirrors ``_consume_pending_chat_handoff``'s stage-then-consume
-        shape, but the staged payload is a bare string appended into the
-        composer -- never a ``ChatHandoffPayload``. Gated on the same
-        first-run provider/model setup readiness the composer's own Send
-        button uses: unlike the in-composer `/prompt` command (which Task
-        10 deliberately lets run even while Send is blocked, since
-        composing is not sending), this cross-screen hop is an unattended
-        action the user did not consciously type into this composer, so a
-        blocked first-run state gets an honest toast instead of a silent
-        insert -- the draft is left untouched and nothing about the source
-        Library prompt is touched either.
-        """
-        store = self.app_instance.pending_handoffs
-        claim = store.claim(HandoffChannel.CONSOLE_PROMPT_INSERT)
-        if claim is None:
-            return
-        text = claim.value
-        if not text.strip():
-            store.acknowledge(claim)
-            return
-        if self._console_setup_blocked_reason():
-            # A persistent state, not a mount-timing race -- always safe to
-            # consume+notify here regardless of whether the composer widget
-            # itself has finished mounting yet.
-            store.acknowledge(claim)
-            self.app_instance.notify(
-                self._LIBRARY_PROMPT_INSERT_BLOCKED_COPY,
-                severity="warning",
-            )
-            return
-        # Settle the active-session draft tracking BEFORE inserting so this
-        # consumption is self-guarding no matter which lifecycle hook
-        # (`on_mount`, `on_screen_resume`, or any other resume-adjacent path)
-        # scheduled it. If a session switch races ahead of us,
-        # `_console_visible_draft_session_id` can be stale relative to the
-        # store's active session; a *later* `_sync_native_console_chat_ui`
-        # pass would then unconditionally reload the composer from that
-        # newly-active session's stored draft, silently discarding the
-        # insert below (the pending field is already cleared once the
-        # insert lands, so there is no retry). Calling this here -- and
-        # nowhere between here and the insert, so the two run atomically
-        # within this event-loop turn -- settles the tracker onto the
-        # current active session first, so any subsequent sync pass takes
-        # the no-op fast path instead of clobbering what we're about to
-        # insert.
-        try:
-            self._session._sync_console_session_draft()
-            inserted = self._insert_prompt_text_into_composer(text, replace=False)
-        except asyncio.CancelledError:
-            store.release(claim)
-            raise
-        except Exception as exc:
-            store.release(claim)
-            logger.warning(
-                "Console prompt handoff transfer failed "
-                "(channel={}, revision={}, exception_category={})",
-                claim.channel.value,
-                claim.revision,
-                type(exc).__name__,
-            )
-            return
-        # A missing composer is transient. Release the exact claim so a later
-        # mount/resume can retry without disturbing any newer replacement.
-        if not inserted:
-            store.release(claim)
-            return
-        store.acknowledge(claim)
-        self._focus_console_composer_if_needed(force=True)
+        """Delegate to `ConsolePromptsController` (wave-3 console decomposition, task 3)."""
+        await self._prompts._consume_pending_console_prompt_insert()
 
     async def _console_command_apply_system(self, parse: CommandParse) -> None:
-        """Resolve and apply a saved prompt's ``system_prompt`` for `/system`.
-
-        Bare `/system` (no args) opens the system prompt editor modal seeded
-        with the active session's current system prompt. With args,
-        resolution mirrors `/prompt` (Task 12): exact case-insensitive name
-        match over a bounded search page, else a unique case-insensitive
-        name-prefix match; a resolved match with a blank ``system_prompt``
-        shows an inline transcript error (the session is left unchanged,
-        and the draft is deliberately left in place so the user can correct
-        it) rather than silently clearing it, since that is very likely not
-        what the user meant by naming that specific prompt. A resolved match
-        WITH a system part applies it and clears the `/system <name>`
-        command text from the composer -- mirrors `/prompt`'s successful
-        insert always replacing its own draft (Task 12) -- so a handled
-        command never leaves its own invocation text behind. 0 or 2+
-        matches at either stage fall back to the apply-system picker mode
-        (Task 11), prefilled with the typed args.
-        """
-        args = parse.args.strip()
-        if not args:
-            await self._open_console_system_prompt_editor()
-            return
-        resolved = await self._resolve_console_prompt_by_name(args)
-        if resolved is not None:
-            if self._is_recipe_prompt_record(resolved):
-                await self._append_native_console_system_message(
-                    self._RECIPE_EXECUTION_BLOCKED_COPY
-                )
-                return
-            # Blank check only via strip(); the applied value below is the
-            # raw prompt text so leading/trailing whitespace and internal
-            # formatting survive verbatim.
-            raw_system_prompt = resolved.get("system_prompt")
-            system_prompt = (
-                raw_system_prompt if isinstance(raw_system_prompt, str) else ""
-            )
-            if not system_prompt.strip():
-                name = str(resolved.get("name") or args)
-                await self._append_native_console_system_message(
-                    CONSOLE_SYSTEM_PROMPT_NO_SYSTEM_PART_TEMPLATE.format(name=name)
-                )
-                return
-            self._session._apply_console_session_system_prompt(system_prompt)
-            self._clear_console_composer_draft()
-            return
-        await self._open_console_prompt_picker_for_apply_system(args)
+        """Delegate to `ConsolePromptsController` (wave-3 console decomposition, task 3)."""
+        await self._prompts._console_command_apply_system(parse)
 
     async def _console_command_prefill(self, parse: CommandParse) -> None:
         """Arm, pin, clear, or report the Console response prefill (`/prefill`).
@@ -16657,134 +16022,10 @@ class ChatScreen(BaseAppScreen):
             composer.clear_draft()
             self._sync_console_command_popup()
 
-    async def _open_console_prompt_picker_for_apply_system(
-        self, initial_query: str
-    ) -> None:
-        """Open the prompt picker in apply-system mode for `/system`.
-
-        Rows without a ``system_prompt`` render dimmed and refuse selection
-        (``ConsolePromptPickerModal``'s own ``MODE_APPLY_SYSTEM`` behavior,
-        Task 11) -- this caller only needs to apply whatever record the
-        picker actually dismisses with.
-        """
-
-        def _apply_picker_choice(record: Optional[Mapping[str, Any]]) -> None:
-            self._focus_console_composer_if_needed(force=True)
-            if record is None:
-                return
-            if self._is_recipe_prompt_record(record):
-                self.app_instance.notify(
-                    self._RECIPE_EXECUTION_BLOCKED_COPY,
-                    severity="warning",
-                )
-                return
-            # Blank check only via strip(); the applied value is the raw
-            # prompt text so formatting survives verbatim.
-            raw_system_prompt = record.get("system_prompt")
-            system_prompt = (
-                raw_system_prompt if isinstance(raw_system_prompt, str) else ""
-            )
-            if not system_prompt.strip():
-                return
-            self._session._apply_console_session_system_prompt(system_prompt)
-
-        self.app.push_screen(
-            ConsolePromptPickerModal(
-                mode=CONSOLE_PROMPT_PICKER_MODE_APPLY_SYSTEM,
-                initial_query=initial_query,
-                prompt_search=self._console_prompt_search,
-            ),
-            callback=_apply_picker_choice,
-        )
-
 
     async def _open_console_system_prompt_editor(self) -> None:
-        """Open the system prompt editor modal for the active Console session."""
-        settings = self._session._ensure_active_console_session_settings()
-
-        def _apply_modal_result(result: Optional[str]) -> None:
-            self._focus_console_composer_if_needed(force=True)
-            if result is None:
-                return
-            self._session._apply_console_session_system_prompt(result)
-
-        self.app.push_screen(
-            ConsoleSystemPromptModal(
-                system_prompt=settings.system_prompt,
-                save_to_library=self._save_console_system_prompt_to_library,
-            ),
-            callback=_apply_modal_result,
-        )
-
-    async def _save_console_system_prompt_to_library(self, name: str, text: str) -> str:
-        """Save the system-prompt editor's text as a brand-new Library prompt.
-
-        Always a CREATE (the Console `/system` editor never edits an
-        existing Library prompt): pre-checks the name for a collision the
-        same way ``library_screen._save_library_prompt``'s own create path
-        does, so a genuine duplicate is classified via
-        ``classify_prompt_save_error`` -- with ``exc=None`` and a manually
-        built message -- rather than racing the DB's raw ``ConflictError``,
-        and reports the SAME outcome copy that screen's own save flow shows.
-
-        Args:
-            name: Name for the new Library prompt.
-            text: The prompt's ``system_prompt`` body (the modal's current
-                editor text).
-
-        Returns:
-            User-facing outcome copy to display inline in the modal.
-        """
-        name = name.strip()
-        if not name:
-            return "Enter a name to save this system prompt to Library."
-        text = text.strip()
-        if not text:
-            return "Enter a system prompt to save."
-        service = getattr(self.app_instance, "prompt_scope_service", None)
-        get_prompt = getattr(service, "get_prompt", None)
-        save_prompt = getattr(service, "save_prompt", None)
-        if not callable(get_prompt) or not callable(save_prompt):
-            return CONSOLE_SYSTEM_PROMPT_SAVE_STATUS_COPY["error"]
-        try:
-            candidate = await get_prompt(
-                mode="local", prompt_identifier=name, include_deleted=True
-            )
-        except Exception:
-            candidate = None
-        if isinstance(candidate, Mapping) and candidate:
-            if candidate.get("deleted"):
-                outcome = classify_prompt_save_error(
-                    None, f"Prompt '{name}' exists but is soft-deleted.", None
-                )
-            else:
-                outcome = classify_prompt_save_error(
-                    None, f"Prompt '{name}' already exists.", None
-                )
-            return CONSOLE_SYSTEM_PROMPT_SAVE_STATUS_COPY.get(
-                outcome, CONSOLE_SYSTEM_PROMPT_SAVE_STATUS_COPY["error"]
-            )
-        try:
-            result = await save_prompt(
-                mode="local", name=name, system_prompt=text, user_prompt=""
-            )
-        except Exception as exc:
-            logger.opt(exception=True).warning(
-                f"Console system-prompt save-to-library failed for name {name!r}."
-            )
-            outcome = classify_prompt_save_error(None, str(exc), exc)
-            return CONSOLE_SYSTEM_PROMPT_SAVE_STATUS_COPY.get(
-                outcome, CONSOLE_SYSTEM_PROMPT_SAVE_STATUS_COPY["error"]
-            )
-        result_id = (
-            result.get("local_id")
-            if isinstance(result, Mapping)
-            else (1 if result else None)
-        )
-        outcome = classify_prompt_save_error(result_id, "", None)
-        return CONSOLE_SYSTEM_PROMPT_SAVE_STATUS_COPY.get(
-            outcome, CONSOLE_SYSTEM_PROMPT_SAVE_STATUS_COPY["error"]
-        )
+        """Delegate to `ConsolePromptsController` (wave-3 console decomposition, task 3)."""
+        await self._prompts._open_console_system_prompt_editor()
 
     # ------------------------------------------------------------------
     # Task 9 (Skills spec, Phase 2), reshaped by the `$`-mention migration
