@@ -38,9 +38,9 @@ Main Functions:
 
 # Imports
 import asyncio
+import base64
 import json
 from html import unescape
-import pytest
 import random
 import re
 import time
@@ -65,6 +65,7 @@ except ImportError:
     LXML_AVAILABLE = False
     _Element = None
     document_fromstring = None
+
 #
 # Local Imports
 from tldw_chatbook.Web_Scraping.Article_Extractor_Lib import scrape_article
@@ -80,6 +81,17 @@ from tldw_chatbook.Internal_Prompts import render_internal_prompt
 from loguru import logger
 from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram
 from tldw_chatbook.config import load_settings
+
+# Handle optional defusedxml (Yandex XML parsing)
+try:
+    import defusedxml.ElementTree as _yandex_ET
+except ImportError:
+    import xml.etree.ElementTree as _yandex_ET
+
+    logger.warning(
+        "defusedxml not available, using standard xml.etree for Yandex result parsing. "
+        "Install defusedxml for better security."
+    )
 
 
 # Common error handling and retry mechanisms
@@ -564,42 +576,6 @@ async def analyze_and_aggregate(
     }
 
 
-@pytest.mark.asyncio
-async def test_perplexity_pipeline():
-    # Phase 1: Generate sub-queries and perform web searches
-    search_params = {
-        "engine": "google",
-        "content_country": "countryUS",
-        "search_lang": "en",
-        "output_lang": "en",
-        "result_count": 10,
-        "date_range": None,
-        "safesearch": "active",
-        "site_blacklist": ["spam-site.com"],
-        "exactTerms": None,
-        "excludeTerms": None,
-        "filter": None,
-        "geolocation": None,
-        "search_result_language": None,
-        "sort_results_by": None,
-        "subquery_generation": True,
-        "subquery_generation_llm": "openai",
-        "relevance_analysis_llm": "openai",
-        "final_answer_llm": "openai",
-    }
-    phase1_results = generate_and_search(
-        "What is the capital of France?", search_params
-    )
-    # Review the results here if needed
-    # Phase 2: Analyze relevance and aggregate final answer
-    phase2_results = await analyze_and_aggregate(
-        phase1_results["web_search_results_dict"],
-        phase1_results["sub_query_dict"],
-        search_params,
-    )
-    logger.info(phase2_results["final_answer"])
-
-
 ######################### Question Analysis #########################
 #
 #
@@ -1056,8 +1032,11 @@ def perform_websearch(
         - brave: Brave Search API
         - duckduckgo: DuckDuckGo (HTML scraping)
         - kagi: Kagi Search API
+        - exa: Exa Search API
+        - serper: Serper (Google Search proxy) API
         - tavily: Tavily Search API
         - searx: SearX instance
+        - yandex: Yandex Cloud Search API v2
     """
     start_time = time.time()
 
@@ -1196,8 +1175,13 @@ def perform_websearch(
         elif search_engine.lower() == "kagi":
             web_search_results = search_web_kagi(search_query, content_country)
 
+        elif search_engine.lower() == "exa":
+            web_search_results = search_web_exa(search_query, result_count)
+
         elif search_engine.lower() == "serper":
-            web_search_results = search_web_serper()
+            web_search_results = search_web_serper(
+                search_query, content_country, search_lang, result_count
+            )
 
         elif search_engine.lower() == "tavily":
             web_search_results = search_web_tavily(
@@ -1215,7 +1199,7 @@ def perform_websearch(
             )
 
         elif search_engine.lower() == "yandex":
-            web_search_results = search_web_yandex()
+            web_search_results = search_web_yandex(search_query, result_count)
 
         else:
             return f"Error: Invalid Search Engine Name {search_engine}"
@@ -1534,6 +1518,8 @@ def process_web_search_results(search_results: Dict, search_engine: str) -> Dict
             parse_brave_results(search_results, web_search_results_dict)
         elif search_engine.lower() == "duckduckgo":
             parse_duckduckgo_results(search_results, web_search_results_dict)
+        elif search_engine.lower() == "exa":
+            parse_exa_results(search_results, web_search_results_dict)
         elif search_engine.lower() == "google":
             parse_google_results(search_results, web_search_results_dict)
         elif search_engine.lower() == "kagi":
@@ -2826,16 +2812,139 @@ def test_parse_searx_results():
 ######################### Serper.dev Search #########################
 #
 # https://github.com/YassKhazzan/openperplex_backend_os/blob/main/sources_searcher.py
-def search_web_serper():
-    pass
+def search_web_serper(
+    search_query: str,
+    content_country: Optional[str] = None,
+    search_lang: Optional[str] = None,
+    result_count: Optional[int] = None,
+) -> dict:
+    """Query the Serper google-search API and return its raw JSON.
+
+    Args:
+        search_query: The query string.
+        content_country: 2-letter country code for `gl` (lowercased; default "us").
+        search_lang: Interface language for `hl` (default "en").
+        result_count: Number of organic results (default 10).
+
+    Returns:
+        dict: Raw Serper response JSON (organic results under "organic").
+
+    Raises:
+        ValueError: when no Serper API key is configured.
+        requests.exceptions.HTTPError: on non-2xx responses.
+    """
+    serper_api_key = loaded_config_data["search_engines"].get("serper_search_api_key", "")
+    if not serper_api_key:
+        raise ValueError("Please provide a valid Serper API key ([SearchEngines] serper_search_api_key)")
+    headers = {"X-API-KEY": serper_api_key, "Content-Type": "application/json"}
+    payload = {
+        "q": search_query,
+        "gl": (content_country or "us").lower(),
+        "hl": search_lang or "en",
+        "num": int(result_count) if result_count else 10,
+    }
+    response = requests.post("https://google.serper.dev/search", headers=headers, json=payload)
+    response.raise_for_status()
+    return response.json()
 
 
-def test_search_serper():
-    pass
+def parse_serper_results(serper_search_results: dict, web_search_results_dict: dict) -> None:
+    """Parse Serper organic results into the standardized shape.
+
+    answerBox/knowledgeGraph blocks are deliberately ignored — organic web
+    results only, like every sibling parser (spec 2026-08-06 §2). `position`
+    is stored as-is under metadata.position; relevance_score stays None
+    (mapping rank into a "relevance" field would invert its meaning).
+
+    Args:
+        serper_search_results: Raw Serper response JSON, as returned by
+            `search_web_serper` (organic results under "organic").
+        web_search_results_dict: Output dict; mutated in place, appending
+            standardized result entries to its "results" list.
+    """
+    if "results" not in web_search_results_dict:
+        web_search_results_dict["results"] = []
+    for result in (serper_search_results or {}).get("organic", []):
+        web_search_results_dict["results"].append({
+            "title": result.get("title", ""),
+            "url": result.get("link", ""),
+            "content": result.get("snippet", ""),
+            "metadata": {
+                "date_published": result.get("date", None),
+                "author": None,
+                "source": None,
+                "language": None,
+                "relevance_score": None,
+                "position": result.get("position", None),
+                "snippet": result.get("snippet", None),
+            },
+        })
 
 
-def parse_serper_results(serper_search_results, web_search_results_dict):
-    pass
+######################### Exa Search #########################
+#
+# https://exa.ai/docs/reference/search
+def search_web_exa(search_query: str, result_count: Optional[int] = None) -> dict:
+    """Query the Exa search API and return its raw JSON.
+
+    Requests `contents.highlights` — billed as contents retrieval on top of
+    the search call; a deliberate paid trade for snippet text (spec
+    2026-08-06 §2), since a result without a snippet is nearly useless to
+    the model.
+
+    Args:
+        search_query: The query string.
+        result_count: numResults (default 10).
+
+    Returns:
+        dict: Raw Exa response JSON (results under "results").
+
+    Raises:
+        ValueError: when no Exa API key is configured.
+        requests.exceptions.HTTPError: on non-2xx responses.
+    """
+    exa_api_key = loaded_config_data["search_engines"].get("exa_search_api_key", "")
+    if not exa_api_key:
+        raise ValueError("Please provide a valid Exa API key ([SearchEngines] exa_search_api_key)")
+    headers = {"x-api-key": exa_api_key, "Content-Type": "application/json"}
+    payload = {
+        "query": search_query,
+        "numResults": int(result_count) if result_count else 10,
+        "type": "auto",
+        "contents": {"highlights": True},
+    }
+    response = requests.post("https://api.exa.ai/search", headers=headers, json=payload)
+    response.raise_for_status()
+    return response.json()
+
+
+def parse_exa_results(exa_search_results: dict, web_search_results_dict: dict) -> None:
+    """Parse Exa results into the standardized shape (first highlight = snippet).
+
+    Args:
+        exa_search_results: Raw Exa response JSON, as returned by
+            `search_web_exa` (results under "results").
+        web_search_results_dict: Output dict; mutated in place, appending
+            standardized result entries to its "results" list.
+    """
+    if "results" not in web_search_results_dict:
+        web_search_results_dict["results"] = []
+    for result in (exa_search_results or {}).get("results", []):
+        highlights = result.get("highlights") or []
+        snippet = highlights[0] if highlights else ""
+        web_search_results_dict["results"].append({
+            "title": result.get("title", ""),
+            "url": result.get("url", ""),
+            "content": snippet,
+            "metadata": {
+                "date_published": result.get("publishedDate", None),
+                "author": result.get("author", None),
+                "source": None,
+                "language": None,
+                "relevance_score": None,
+                "snippet": snippet or None,
+            },
+        })
 
 
 ######################### Tavily Search #########################
@@ -2897,16 +3006,97 @@ def test_parse_tavily_results():
 # https://yandex.cloud/en/docs/search-api/quickstart/
 # https://yandex.cloud/en/docs/search-api/concepts/response
 # https://github.com/yandex-cloud/cloudapi/blob/master/yandex/cloud/searchapi/v2/search_query.proto
-def search_web_yandex():
-    pass
+def search_web_yandex(search_query: str, result_count: Optional[int] = None) -> dict:
+    """Query Yandex Cloud Search API v2 (synchronous REST) and return raw JSON.
+
+    The response wraps a base64-encoded XML document in "rawData"
+    (proto: yandex/cloud/searchapi/v2/search_service.proto — WebSearchService.Search,
+    POST /v2/web/search). Decoding and parsing live in parse_yandex_results so
+    process_web_search_results' try/except is the single error seam.
+
+    Args:
+        search_query: The query string.
+        result_count: Unused by the request (Yandex returns its default page,
+            ~10 groups; the agent layer trims client-side) — accepted for
+            dispatch-signature parity.
+
+    Returns:
+        dict: Raw response JSON ({"rawData": "<base64 XML>"}).
+
+    Raises:
+        ValueError: when the API key or folder id is not configured.
+        requests.exceptions.HTTPError: on non-2xx responses.
+    """
+    yandex_api_key = loaded_config_data["search_engines"].get("yandex_search_api_key", "")
+    if not yandex_api_key:
+        raise ValueError("Please provide a valid Yandex Search API key ([SearchEngines] yandex_search_api_key)")
+    folder_id = loaded_config_data["search_engines"].get("yandex_search_folder_id", "")
+    if not folder_id:
+        raise ValueError("Please provide the Yandex Cloud folder id ([SearchEngines] yandex_search_folder_id)")
+    headers = {"Authorization": f"Api-Key {yandex_api_key}", "Content-Type": "application/json"}
+    payload = {
+        "query": {"searchType": "SEARCH_TYPE_COM", "queryText": search_query},
+        "folderId": folder_id,
+        "responseFormat": "FORMAT_XML",
+    }
+    response = requests.post(
+        "https://searchapi.api.cloud.yandex.net/v2/web/search", headers=headers, json=payload
+    )
+    response.raise_for_status()
+    return response.json()
 
 
-def test_search_yandex():
-    pass
+def parse_yandex_results(yandex_search_results: dict, web_search_results_dict: dict) -> None:
+    """Decode rawData base64 XML and parse docs into the standardized shape.
 
+    Raises on an in-XML <error> element (quota/auth/malformed-query arrive
+    inside HTTP 200): a quota error must never render as "No results found"
+    for a query that was never searched (spec 2026-08-06 §2). The raise is
+    caught by process_web_search_results and lands in processing_error.
 
-def parse_yandex_results(yandex_search_results, web_search_results_dict):
-    pass
+    Args:
+        yandex_search_results: Raw Yandex response JSON, as returned by
+            `search_web_yandex` ({"rawData": "<base64 XML>"}).
+        web_search_results_dict: Output dict; mutated in place, appending
+            standardized result entries to its "results" list.
+
+    Raises:
+        ValueError: when rawData is missing, or the decoded XML contains
+            an <error> element (quota/auth/malformed-query).
+    """
+    if "results" not in web_search_results_dict:
+        web_search_results_dict["results"] = []
+    raw_b64 = (yandex_search_results or {}).get("rawData", "")
+    if not raw_b64:
+        raise ValueError("Yandex response had no rawData field")
+    xml_bytes = base64.b64decode(raw_b64)
+    root = _yandex_ET.fromstring(xml_bytes)
+    error_el = root.find(".//error")
+    if error_el is not None:
+        code = error_el.get("code", "?")
+        text = "".join(error_el.itertext()).strip()
+        raise ValueError(f"Yandex API error (code {code}): {text}")
+    for doc in root.findall(".//group/doc"):
+        url_el = doc.find("url")
+        title_el = doc.find("title")
+        passages = [
+            " ".join("".join(p.itertext()).split())
+            for p in doc.findall(".//passage")
+        ]
+        content = " ".join(passages).strip()
+        web_search_results_dict["results"].append({
+            "title": "".join(title_el.itertext()).strip() if title_el is not None else "",
+            "url": url_el.text.strip() if url_el is not None and url_el.text else "",
+            "content": content,
+            "metadata": {
+                "date_published": None,
+                "author": None,
+                "source": None,
+                "language": None,
+                "relevance_score": None,
+                "snippet": content or None,
+            },
+        })
 
 
 #

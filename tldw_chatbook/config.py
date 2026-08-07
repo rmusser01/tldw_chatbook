@@ -2182,8 +2182,17 @@ def load_settings(force_reload: bool = False) -> Dict:
             "tavily_search_api_key": _get_typed_value(
                 search_engines_section, "tavily_search_api_key", ""
             ),
+            "serper_search_api_key": _get_typed_value(
+                search_engines_section, "serper_search_api_key", ""
+            ),
+            "exa_search_api_key": _get_typed_value(
+                search_engines_section, "exa_search_api_key", ""
+            ),
             "yandex_search_api_key": _get_typed_value(
                 search_engines_section, "yandex_search_api_key", ""
+            ),
+            "yandex_search_folder_id": _get_typed_value(
+                search_engines_section, "yandex_search_folder_id", ""
             ),
         },
         # NOTE: the former "prompts_strings" loader was removed once the
@@ -3693,6 +3702,14 @@ brave_search_api_key = ""
 brave_search_ai_api_key = ""
 kagi_search_api_key = ""
 tavily_search_api_key = ""
+# Serper (google.serper.dev) API key
+serper_search_api_key = ""
+# Exa (exa.ai) API key
+exa_search_api_key = ""
+# Yandex Cloud Search API key
+yandex_search_api_key = ""
+# Yandex Cloud folder id for Search API v2
+yandex_search_folder_id = ""
 
 # API URLs
 bing_search_api_url = "https://api.bing.microsoft.com/v7.0/search"

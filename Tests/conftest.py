@@ -931,6 +931,12 @@ def pytest_addoption(parser):
         default=False,
         help="Run tests requiring optional dependencies",
     )
+    parser.addoption(
+        "--run-live",
+        action="store_true",
+        default=False,
+        help="Run tests that call real paid external APIs (requires key files + TLDW_LIVE_SEARCH_TESTS=1)",
+    )
 
 
 def pytest_collection_modifyitems(config, items):
@@ -949,3 +955,9 @@ def pytest_collection_modifyitems(config, items):
         for item in items:
             if "optional" in item.keywords:
                 item.add_marker(skip_optional)
+
+    if not config.getoption("--run-live"):
+        skip_live = pytest.mark.skip(reason="Need --run-live option to run")
+        for item in items:
+            if "live" in item.keywords:
+                item.add_marker(skip_live)

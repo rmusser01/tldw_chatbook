@@ -18,6 +18,7 @@ LOCAL_SUPPORTED_WEBSEARCH_ENGINES = {
     "bing",
     "brave",
     "duckduckgo",
+    "exa",
     "google",
     "kagi",
     "searx",
