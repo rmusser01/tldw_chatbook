@@ -13735,7 +13735,8 @@ class ChatScreen(BaseAppScreen):
 
     def on_mount(self) -> None:
         """Initialize the native Console screen."""
-        super().on_mount()
+        # No super().on_mount(): the dispatcher already invokes
+        # BaseAppScreen.on_mount separately for this Mount event.
 
         self._notify_console_fleet_teardown_if_any()
 

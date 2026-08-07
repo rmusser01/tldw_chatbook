@@ -2610,7 +2610,7 @@ class SetupWizardContainer(WizardContainer):
         # dismissing the screen twice -- see those methods' docstrings.
         self._finalized = False
 
-    def on_mount(self) -> None:
+    def _post_mount_hook(self) -> None:
         """TASK-1499: base on_mount renders the progress row from the FULL
         step list; rebuild it immediately so the initial render honors the
         quick-track default (4 dots, "Step 1 of 4") instead of front-loading
@@ -2620,17 +2620,25 @@ class SetupWizardContainer(WizardContainer):
         ``__init__``, before any step has actually composed -- a step's
         ``compose_failed`` flag can only be known once its own compose()
         has actually run, which Textual does while mounting this
-        container's children, i.e. by the time ``super().on_mount()``
-        (BaseWizard.on_mount, which calls ``show_step(0)`` and therefore
-        forces the children through their mount/compose pipeline) returns
-        here. Calling ``_refresh_active_ids()`` -- rather than
-        ``_rebuild_progress()`` directly -- re-derives ``active_ids``
-        against the now-accurate ``compose_failed`` flags before the very
-        first progress/nav render, instead of leaving a step that failed to
-        compose counted and shown until some later event (track selection,
-        a key being entered) happens to trigger a refresh.
+        container's children, i.e. by the time ``WizardContainer.on_mount``
+        (which calls ``show_step(0)`` and therefore forces the children
+        through their mount/compose pipeline) calls this hook. Calling
+        ``_refresh_active_ids()`` -- rather than ``_rebuild_progress()``
+        directly -- re-derives ``active_ids`` against the now-accurate
+        ``compose_failed`` flags before the very first progress/nav render,
+        instead of leaving a step that failed to compose counted and shown
+        until some later event (track selection, a key being entered)
+        happens to trigger a refresh.
+
+        TASK-2710: overrides ``WizardContainer._post_mount_hook`` instead of
+        defining its own ``on_mount()`` that calls ``super().on_mount()`` --
+        Textual's dispatcher already invokes ``WizardContainer.on_mount``
+        separately for this Mount event, so the old ``super().on_mount()``
+        call ran ``show_step(0)`` (and the duplicate validation timer) a
+        second time, sandwiched around this method's own work. The hook
+        preserves the intended ordering (this logic runs once, strictly
+        after the base's initialization) without the duplicate execution.
         """
-        super().on_mount()
         self._refresh_active_ids()
         self.update_progress()
 

@@ -2253,7 +2253,8 @@ class SettingsScreen(BaseAppScreen):
         self.app.push_screen(WorkbenchHelpPanel(state))
 
     def on_mount(self) -> None:
-        super().on_mount()
+        # No super().on_mount(): the dispatcher already invokes
+        # BaseAppScreen.on_mount separately for this Mount event.
         self._register_footer_shortcuts()
         self._sync_responsive_workbench()
         self._queue_sync_rows_refresh()

@@ -78,8 +78,17 @@ class TooltipMixin:
         self._tooltip_text = tooltip
 
     def on_mount(self) -> None:
-        """Create tooltip on mount if text provided."""
-        super().on_mount()
+        """Create tooltip on mount if text provided.
+
+        No super().on_mount(): this mixin's own class is what Textual's
+        dispatcher looks up by name, so any on_mount a concrete widget mixes
+        this into is *already* invoked separately for the same Mount event
+        (see BaseAppScreen.on_mount's docstring for the general contract).
+        Calling super().on_mount() here would either double-run that
+        sibling's on_mount, or raise AttributeError if nothing else in the
+        MRO defines one -- TooltipMixin is currently unused, so neither has
+        surfaced yet, but a future consumer would hit it immediately.
+        """
         if self._tooltip_text:
             self._create_tooltip()
 

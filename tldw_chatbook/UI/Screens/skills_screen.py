@@ -318,7 +318,8 @@ class SkillsScreen(BaseAppScreen):
         self._active_trust_review: dict[str, Any] | None = None
 
     def on_mount(self) -> None:
-        super().on_mount()
+        # No super().on_mount(): the dispatcher already invokes
+        # BaseAppScreen.on_mount separately for this Mount event.
         self._refresh_local_skills_context()
 
     @work(exclusive=True)

@@ -178,7 +178,8 @@ class SchedulesWorkbench(BaseAppScreen):
         )
 
     def on_mount(self) -> None:
-        super().on_mount()
+        # No super().on_mount(): the dispatcher already invokes
+        # BaseAppScreen.on_mount separately for this Mount event.
         self._sync_responsive_workbench()
         self._register_footer_shortcuts()
         self._refresh_owner_select()
