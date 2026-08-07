@@ -10,6 +10,7 @@ from .library_tool_contract import (
     LibraryToolDescriptor,
     LibraryToolError,
 )
+from .local_library_tool_service import LocalLibraryToolService
 
 __all__ = [
     "LIBRARY_TOOL_DESCRIPTORS",
@@ -18,4 +19,5 @@ __all__ = [
     "LibraryToolDescriptor",
     "LibraryToolError",
     "LocalLibraryCollectionsService",
+    "LocalLibraryToolService",
 ]
