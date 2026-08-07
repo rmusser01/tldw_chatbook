@@ -2812,7 +2812,12 @@ def test_parse_searx_results():
 ######################### Serper.dev Search #########################
 #
 # https://github.com/YassKhazzan/openperplex_backend_os/blob/main/sources_searcher.py
-def search_web_serper(search_query, content_country=None, search_lang=None, result_count=None):
+def search_web_serper(
+    search_query: str,
+    content_country: Optional[str] = None,
+    search_lang: Optional[str] = None,
+    result_count: Optional[int] = None,
+) -> dict:
     """Query the Serper google-search API and return its raw JSON.
 
     Args:
@@ -2843,13 +2848,19 @@ def search_web_serper(search_query, content_country=None, search_lang=None, resu
     return response.json()
 
 
-def parse_serper_results(serper_search_results, web_search_results_dict):
+def parse_serper_results(serper_search_results: dict, web_search_results_dict: dict) -> None:
     """Parse Serper organic results into the standardized shape.
 
     answerBox/knowledgeGraph blocks are deliberately ignored — organic web
     results only, like every sibling parser (spec 2026-08-06 §2). `position`
     is stored as-is under metadata.position; relevance_score stays None
     (mapping rank into a "relevance" field would invert its meaning).
+
+    Args:
+        serper_search_results: Raw Serper response JSON, as returned by
+            `search_web_serper` (organic results under "organic").
+        web_search_results_dict: Output dict; mutated in place, appending
+            standardized result entries to its "results" list.
     """
     if "results" not in web_search_results_dict:
         web_search_results_dict["results"] = []
@@ -2873,7 +2884,7 @@ def parse_serper_results(serper_search_results, web_search_results_dict):
 ######################### Exa Search #########################
 #
 # https://exa.ai/docs/reference/search
-def search_web_exa(search_query, result_count=None):
+def search_web_exa(search_query: str, result_count: Optional[int] = None) -> dict:
     """Query the Exa search API and return its raw JSON.
 
     Requests `contents.highlights` — billed as contents retrieval on top of
@@ -2907,8 +2918,15 @@ def search_web_exa(search_query, result_count=None):
     return response.json()
 
 
-def parse_exa_results(exa_search_results, web_search_results_dict):
-    """Parse Exa results into the standardized shape (first highlight = snippet)."""
+def parse_exa_results(exa_search_results: dict, web_search_results_dict: dict) -> None:
+    """Parse Exa results into the standardized shape (first highlight = snippet).
+
+    Args:
+        exa_search_results: Raw Exa response JSON, as returned by
+            `search_web_exa` (results under "results").
+        web_search_results_dict: Output dict; mutated in place, appending
+            standardized result entries to its "results" list.
+    """
     if "results" not in web_search_results_dict:
         web_search_results_dict["results"] = []
     for result in (exa_search_results or {}).get("results", []):
@@ -2988,7 +3006,7 @@ def test_parse_tavily_results():
 # https://yandex.cloud/en/docs/search-api/quickstart/
 # https://yandex.cloud/en/docs/search-api/concepts/response
 # https://github.com/yandex-cloud/cloudapi/blob/master/yandex/cloud/searchapi/v2/search_query.proto
-def search_web_yandex(search_query, result_count=None):
+def search_web_yandex(search_query: str, result_count: Optional[int] = None) -> dict:
     """Query Yandex Cloud Search API v2 (synchronous REST) and return raw JSON.
 
     The response wraps a base64-encoded XML document in "rawData"
@@ -3028,13 +3046,23 @@ def search_web_yandex(search_query, result_count=None):
     return response.json()
 
 
-def parse_yandex_results(yandex_search_results, web_search_results_dict):
+def parse_yandex_results(yandex_search_results: dict, web_search_results_dict: dict) -> None:
     """Decode rawData base64 XML and parse docs into the standardized shape.
 
     Raises on an in-XML <error> element (quota/auth/malformed-query arrive
     inside HTTP 200): a quota error must never render as "No results found"
     for a query that was never searched (spec 2026-08-06 §2). The raise is
     caught by process_web_search_results and lands in processing_error.
+
+    Args:
+        yandex_search_results: Raw Yandex response JSON, as returned by
+            `search_web_yandex` ({"rawData": "<base64 XML>"}).
+        web_search_results_dict: Output dict; mutated in place, appending
+            standardized result entries to its "results" list.
+
+    Raises:
+        ValueError: when rawData is missing, or the decoded XML contains
+            an <error> element (quota/auth/malformed-query).
     """
     if "results" not in web_search_results_dict:
         web_search_results_dict["results"] = []

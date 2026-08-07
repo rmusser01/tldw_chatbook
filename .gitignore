@@ -206,7 +206,8 @@ List.txt
 *.ckpt
 /higgs-audio/
 
-# Local credential scratch files (repository root only)
+# Local credential scratch files (ignored at any depth; the two legacy
+# entries below are root-anchored)
 /openai-api-key.txt
 /moonshot-api-key.txt
 *-api-key.txt

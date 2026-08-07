@@ -396,6 +396,7 @@ def test_agent_enum_engines_all_dispatchable():
 # ---------------------------------------------------------------------------
 
 import os
+import sys
 from pathlib import Path
 
 # Key files at the checkout root are covered by the tracked .gitignore rules
@@ -412,17 +413,70 @@ def _key_file(name):
     return p.read_text().strip() if p.exists() else ""
 
 
-def _live_gate(*key_names):
-    """Double-gated marker: env flag first (short-circuit), then file existence.
+# ---------------------------------------------------------------------------
+# _usable_key pins (RED-first: the gate runs at import/decoration time, so an
+# in-test env-flag monkeypatch can't retrigger it -- unit-test the predicate
+# directly instead of the decorator machinery, and never touch a real key.)
+# ---------------------------------------------------------------------------
 
-    Returns pytest.mark.skip if env flag off or files missing; pytest.mark.live otherwise.
-    This marker is then subject to the --run-live CLI backstop in conftest.
+def test_usable_key_missing_file_is_unusable(tmp_path, monkeypatch):
+    monkeypatch.setattr(sys.modules[__name__], "_REPO_ROOT", tmp_path)
+    assert _usable_key("does-not-exist.txt") is False
+
+
+def test_usable_key_empty_file_is_unusable(tmp_path, monkeypatch):
+    monkeypatch.setattr(sys.modules[__name__], "_REPO_ROOT", tmp_path)
+    (tmp_path / "empty-key.txt").write_text("")
+    assert _usable_key("empty-key.txt") is False
+
+
+def test_usable_key_whitespace_only_file_is_unusable(tmp_path, monkeypatch):
+    monkeypatch.setattr(sys.modules[__name__], "_REPO_ROOT", tmp_path)
+    (tmp_path / "whitespace-key.txt").write_text("   \n\t  \n")
+    assert _usable_key("whitespace-key.txt") is False
+
+
+def test_usable_key_unreadable_binary_file_is_unusable(tmp_path, monkeypatch):
+    monkeypatch.setattr(sys.modules[__name__], "_REPO_ROOT", tmp_path)
+    # Invalid UTF-8 byte sequence: read_text() raises UnicodeDecodeError,
+    # which _usable_key must treat as "unusable", not let propagate.
+    (tmp_path / "binary-key.txt").write_bytes(b"\xff\xfe\x00\x01\x02\xfd\x80\x81")
+    assert _usable_key("binary-key.txt") is False
+
+
+def test_usable_key_normal_content_is_usable(tmp_path, monkeypatch):
+    monkeypatch.setattr(sys.modules[__name__], "_REPO_ROOT", tmp_path)
+    (tmp_path / "real-key.txt").write_text("sk-not-a-real-key\n")
+    assert _usable_key("real-key.txt") is True
+
+
+def _usable_key(name):
+    """True if the key file exists, is readable as text, and has non-blank
+    content after stripping whitespace.
+
+    A guarded read: only ever called from inside `_live_gate` after the
+    `_LIVE_ENABLED` short-circuit, so this never runs on an ordinary test
+    pass. Unreadable content (invalid encoding, OS-level read error) is
+    treated the same as a missing file -- never lets the exception escape.
+    """
+    try:
+        return bool(_key_file(name))
+    except (OSError, UnicodeDecodeError):
+        return False
+
+
+def _live_gate(*key_names):
+    """Double-gated marker: env flag first (short-circuit), then usable-key check.
+
+    Returns pytest.mark.skip if env flag off or any key file is missing,
+    empty/whitespace-only, or unreadable; pytest.mark.live otherwise. This
+    marker is then subject to the --run-live CLI backstop in conftest.
     """
     if not _LIVE_ENABLED:
         return pytest.mark.skip(reason="TLDW_LIVE_SEARCH_TESTS != 1")
-    missing = [n for n in key_names if not (_REPO_ROOT / n).exists()]
+    missing = [n for n in key_names if not _usable_key(n)]
     if missing:
-        return pytest.mark.skip(reason=f"missing key file(s): {', '.join(missing)}")
+        return pytest.mark.skip(reason=f"missing/unusable key file(s): {', '.join(missing)}")
     return pytest.mark.live
 
 
