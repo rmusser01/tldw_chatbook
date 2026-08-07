@@ -1197,7 +1197,9 @@ def perform_websearch(
             web_search_results = search_web_kagi(search_query, content_country)
 
         elif search_engine.lower() == "serper":
-            web_search_results = search_web_serper()
+            web_search_results = search_web_serper(
+                search_query, content_country, search_lang, result_count
+            )
 
         elif search_engine.lower() == "tavily":
             web_search_results = search_web_tavily(
@@ -2826,16 +2828,62 @@ def test_parse_searx_results():
 ######################### Serper.dev Search #########################
 #
 # https://github.com/YassKhazzan/openperplex_backend_os/blob/main/sources_searcher.py
-def search_web_serper():
-    pass
+def search_web_serper(search_query, content_country=None, search_lang=None, result_count=None):
+    """Query the Serper google-search API and return its raw JSON.
 
+    Args:
+        search_query: The query string.
+        content_country: 2-letter country code for `gl` (lowercased; default "us").
+        search_lang: Interface language for `hl` (default "en").
+        result_count: Number of organic results (default 10).
 
-def test_search_serper():
-    pass
+    Returns:
+        dict: Raw Serper response JSON (organic results under "organic").
+
+    Raises:
+        ValueError: when no Serper API key is configured.
+        requests.exceptions.HTTPError: on non-2xx responses.
+    """
+    serper_api_key = loaded_config_data["search_engines"].get("serper_search_api_key", "")
+    if not serper_api_key:
+        raise ValueError("Please provide a valid Serper API key ([search_engines] serper_search_api_key)")
+    headers = {"X-API-KEY": serper_api_key, "Content-Type": "application/json"}
+    payload = {
+        "q": search_query,
+        "gl": (content_country or "us").lower(),
+        "hl": search_lang or "en",
+        "num": int(result_count) if result_count else 10,
+    }
+    response = requests.post("https://google.serper.dev/search", headers=headers, json=payload)
+    response.raise_for_status()
+    return response.json()
 
 
 def parse_serper_results(serper_search_results, web_search_results_dict):
-    pass
+    """Parse Serper organic results into the standardized shape.
+
+    answerBox/knowledgeGraph blocks are deliberately ignored — organic web
+    results only, like every sibling parser (spec 2026-08-06 §2). `position`
+    is stored as-is under metadata.position; relevance_score stays None
+    (mapping rank into a "relevance" field would invert its meaning).
+    """
+    if "results" not in web_search_results_dict:
+        web_search_results_dict["results"] = []
+    for result in (serper_search_results or {}).get("organic", []):
+        web_search_results_dict["results"].append({
+            "title": result.get("title", ""),
+            "url": result.get("link", ""),
+            "content": result.get("snippet", ""),
+            "metadata": {
+                "date_published": result.get("date", None),
+                "author": None,
+                "source": None,
+                "language": None,
+                "relevance_score": None,
+                "position": result.get("position", None),
+                "snippet": result.get("snippet", None),
+            },
+        })
 
 
 ######################### Tavily Search #########################
