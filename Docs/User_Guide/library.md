@@ -21,15 +21,19 @@ pages:
 
 ## Getting there
 
-- Press **Ctrl+3** from anywhere, or click **Library** in the nav bar.
-- **Ctrl+P** → "Switch to Library" in the command palette.
+- Press **Ctrl+3** from anywhere, or click **⌃3 Library** in the nav bar.
+- **Ctrl+P** → "Tab Navigation: Switch to Library" in the command palette.
 - Old destination names still find it: the five retired screens —
   **notes**, **prompts**, **skills**, **ingest**, and **research** — now
   live inside Library, and typing any of them into the palette routes
   here. (Typing **media**, **search**, or **study** also surfaces the
-  Library command, but those three still exist as their own screens with
-  their own palette entries.) The palette also offers "Library — Skills",
-  which lands directly on the Skills row.
+  Library command — those words are aliases for it, and picking the hit
+  lands on Library. The Media and Search screens still exist behind their
+  own named commands, "Media & Content: Open Media Library" and "Quick
+  Actions: Search All Content"; Study has no palette command at all — reach
+  it from Library's hand-off buttons.) The palette also offers
+  "Tab Navigation: Library — Skills", which lands directly on the Skills
+  row.
 
 ## Layout tour
 
@@ -137,7 +141,9 @@ Collapsed by default; click the **Details** header to open it.
 
 ### Study, Flashcards & Quizzes hand-offs
 
-**Study is its own screen** — reach it any time via **Ctrl+P** → "Study".
+**Study is its own screen**, but it has no nav label and no palette
+command — typing "study" into the palette surfaces *Library*. The hand-off
+buttons below (and **Continue in Study**) are the way in.
 The three Create rows in Library don't host study content; each shows a
 small hand-off canvas that snapshots your Library sources and opens Study
 with them. Their purpose lines:

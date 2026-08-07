@@ -11,8 +11,8 @@ Mixed | Local/Server". This screen was previously called "Subscriptions."
 
 ## Getting there
 
-- Click **Watchlists** in the nav bar, or press **Ctrl+P** → "Switch to
-  Watchlists". (Or press **Ctrl+6** from anywhere.)
+- Press **Ctrl+6**, click **⌃6 Watchlists** in the nav bar, or press
+  **Ctrl+P** → "Tab Navigation: Switch to Watchlists".
 
 ## Exporting briefings and podcast feeds
 

@@ -239,7 +239,9 @@ RAG](../console/context-and-rag.md) for the staged-sources side.
 ### Not the same screen as "Search"
 
 A separate, older **Search** screen also exists: open the command palette
-(**Ctrl+P**) and pick **"Search"** ("Search and RAG over your library.").
+(**Ctrl+P**) and pick **"Quick Actions: Search All Content"** (typing
+"search" alone surfaces the *Library* command — that word is an alias for
+Library, not this screen's entry).
 It has **Search / Saved / History / Maintenance** tabs; the **Maintenance**
 tab is where semantic *indexing* is managed ("Start Indexing", index
 statistics). The Library canvas on this page searches; it does not manage

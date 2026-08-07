@@ -19,8 +19,9 @@ The details live on three child pages:
 
 ## Getting there
 
-- Press **Ctrl+5** from anywhere, or click **5 Roleplay** in the nav bar.
-- **Ctrl+P** → "Switch to Roleplay & Chat Dictionaries". Four more palette
+- Press **Ctrl+5** from anywhere, or click **⌃5 Roleplay** in the nav bar.
+- **Ctrl+P** → "Tab Navigation: Switch to Roleplay & Chat Dictionaries".
+  Four more palette
   entries land here too: "Character/Persona Management: Create New
   Character", "Character/Persona Management: Show All Characters",
   "Character/Persona Management: Open Character Tab", and "Quick Actions:

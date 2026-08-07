@@ -12,5 +12,6 @@ evaluation runs) are reached from within that screen.
 
 ## Getting there
 
-- Click **Lab** in the nav bar, or press **Ctrl+P** → "Switch to Lab".
+- Press **F7**, click **F7 Lab** in the nav bar, or press **Ctrl+P** →
+  "Tab Navigation: Switch to Lab".
   There is no hotkey digit for Lab.

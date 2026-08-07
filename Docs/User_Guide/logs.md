@@ -10,5 +10,6 @@ Logs shows application logs and diagnostics (on-screen subtitle:
 
 ## Getting there
 
-- Click **Logs** in the nav bar, or press **Ctrl+P** → "Switch to Logs".
+- Press **F8**, click **F8 Logs** in the nav bar, or press **Ctrl+P** →
+  "Tab Navigation: Switch to Logs".
   There is no hotkey digit for Logs.

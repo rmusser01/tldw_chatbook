@@ -14,7 +14,7 @@ only to stake out named Collections ahead of those features.
 
 ## Getting there
 
-Press **Ctrl+3** (or click "Library" in the nav bar, or **Ctrl+P** →
+Press **Ctrl+3** (or click **⌃3 Library** in the nav bar, or **Ctrl+P** →
 "Library"), then in the left rail's **Browse** section click
 **Collections**. The rail row shows the current count.
 

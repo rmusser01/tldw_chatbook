@@ -152,8 +152,8 @@ speaks by default, with what model, voice, output format, and speed — plus
 per-provider setup. The pane opens with its scope in a banner: "You are
 editing application-wide Speech & TTS defaults. The Speech Studio can keep
 separate Studio preferences without changing these values.", and an **Open
-Speech Lab** button (see Quirks before pressing it), because this pane
-deliberately does *not* talk to any server: "Settings reuses accepted in-memory observations only. Open Speech
+Speech Lab** button, because this pane deliberately does *not* talk to any
+server: "Settings reuses accepted in-memory observations only. Open Speech
 Lab to test the server or refresh models and voices." Ordinary **Save**
 "validates and persists locally. Use Speech Lab for connection tests,
 discovery, generation, and playback."
@@ -336,14 +336,14 @@ a note on what would have to exist before Settings could own a default.
 
 | Category | Owner destination | What is still missing |
 |---|---|---|
-| **Artifacts** (view) | [Artifacts](artifacts.md) | Export/default controls wait on a persisted preference contract. |
+| **Artifacts** (view) | [Artifacts](artifacts.md) 🚧 | Export/default controls wait on a persisted preference contract. |
 | **Roleplay** (view) | [Roleplay & Chat Dictionaries](roleplay-chat-dictionaries.md) | Display/browsing preferences only — never which user profile is active. |
 | **Skills** (view) | Skills — now [Library ▸ Skills](library/skills.md) | Defaults wait on a persisted import/attach policy. |
-| **Schedules** (view) | [Schedules](schedules.md) | Waits on a dedicated settings adapter. |
-| **Watchlists** (view) | [Watchlists](watchlists.md) | Waits on persisted polling/notification settings. |
-| **Workflows** (view) | [Workflows](workflows.md) | Waits on a persisted execution-safety contract. |
-| **MCP Defaults** (view) | [MCP](mcp.md) | Server-first defaults only; tools stay in MCP. |
-| **ACP Defaults** (view) | [ACP](acp.md) | Waits on a persisted runtime/session preference contract. |
+| **Schedules** (view) | [Schedules](schedules.md) 🚧 | Waits on a dedicated settings adapter. |
+| **Watchlists** (view) | [Watchlists](watchlists.md) 🚧 | Waits on persisted polling/notification settings. |
+| **Workflows** (view) | [Workflows](workflows.md) 🚧 | Waits on a persisted execution-safety contract. |
+| **MCP Defaults** (view) | [MCP](mcp.md) 🚧 | Server-first defaults only; tools stay in MCP. |
+| **ACP Defaults** (view) | [ACP](acp.md) 🚧 | Waits on a persisted runtime/session preference contract. |
 
 ## Common tasks
 
@@ -480,10 +480,6 @@ not open an editor.
   draft." — but leaving Speech & TTS raises "Unsaved global Speech & TTS
   settings" and the draft is saved or discarded, never kept (backlog
   task-2708).
-- **"Open Speech Lab" currently crashes the app.** Every Open Speech Lab
-  button on Speech & TTS lands on Lab ▸ Speech, which at the time of writing
-  crashes on mount ("DuplicateIds", reproduced 100%) — save your draft before
-  pressing it (backlog task-2610).
 - **The Scope Inspector looks truncated.** Scroll it — "▼ more — scroll the
   inspector" at the bottom means there is more below.
 

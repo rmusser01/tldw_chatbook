@@ -10,8 +10,9 @@ start with the [Console overview](../console.md).
 
 ## Getting there
 
-Press **Ctrl+2**, click "Console" in the nav bar, or use **Ctrl+P** →
-"Switch to Console". Once a provider and model are configured (the
+Press **Ctrl+2**, click **⌃2 Console** in the nav bar, or use **Ctrl+P** →
+"Tab Navigation: Switch to Console". Once a provider and model are
+configured (the
 [Console overview](../console.md) covers setup), the composer at the bottom
 of the screen is ready — its placeholder reads "Ask, command, or paste
 task...".
