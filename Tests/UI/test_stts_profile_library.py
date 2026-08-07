@@ -18,6 +18,7 @@ from textual.widgets import Button, DataTable, Input, Static, TextArea
 from tldw_chatbook.TTS import (
     LoadedTTSProfile,
     ProfileRepositoryError,
+    ProfileServiceError,
     STTSGeneratedAudio,
     TTSGenerationProfile,
     TTSPlaygroundSelectionPreset,
@@ -264,6 +265,7 @@ class _ActionProfileService:
             tuple[LoadedTTSProfile, TTSProfileAvailability]
         ] = []
         self.assignment_total = 0
+        self.create_error: BaseException | None = None
         self.update_error: BaseException | None = None
         self.duplicate_error: BaseException | None = None
         self.delete_error: BaseException | None = None
@@ -306,6 +308,8 @@ class _ActionProfileService:
         artifact: STTSGeneratedAudio,
     ) -> LoadedTTSProfile:
         self.create_calls.append((display_name, artifact))
+        if self.create_error is not None:
+            raise self.create_error
         return self.created_result
 
     async def update_profile(
@@ -2314,6 +2318,47 @@ async def test_create_from_artifact_handoff_preserves_the_exact_artifact() -> No
         assert service.create_calls[0][1] is artifact
         assert result is service.created_result
         assert "must never enter profile UI copy" not in _status_copy(app)
+
+
+@pytest.mark.asyncio
+async def test_create_from_artifact_maps_stale_configuration_to_honest_copy_for_any_provider() -> (
+    None
+):
+    """`create_from_artifact` checks the exact provider's configuration
+    revision with NO provider gate (`profile_service.py`'s
+    `_require_configuration_revision` call at the top of
+    `create_from_artifact`), so `stale_configuration` is reachable for a
+    legacy provider here -- unlike every other action on this widget, whose
+    `profile_unverified`/`stale_configuration` raises are all gated behind
+    `provider_id != _PROFILE_PROVIDER_ID: return`. The two live callers
+    (`STTS_Window.py`, `speech_profile_mixin.py`) already special-case this
+    code with provider-agnostic copy instead of falling through to the
+    "Refresh and retry" toast, which only makes sense for audio_cpp; this
+    widget method must do the same, not launder a legacy staleness failure
+    into a promise of a capability check that provider never gets."""
+
+    legacy = replace(
+        _profile(0),
+        provider_id="openai",
+        model_id="tts-1",
+        voice_id="alloy",
+    )
+    service = _ActionProfileService(legacy)
+    service.create_error = ProfileServiceError("stale_configuration")
+    artifact = _artifact()
+    app = _ActionHost(service)
+
+    async with app.run_test(size=(150, 55)) as pilot:
+        library, _selected = await _select_action_profile(app, pilot)
+        result = await library.create_from_artifact("Saved artifact", artifact)
+
+        assert result is None
+        assert service.create_calls == [("Saved artifact", artifact)]
+        status = _status_copy(app)
+        assert status == profile_library_module._PROFILE_RESULT_STALE_COPY
+        assert status != profile_library_module._PROFILE_UNVERIFIED_COPY
+        assert "verified" not in status.casefold()
+        assert "refresh" not in status.casefold()
 
 
 @pytest.mark.asyncio
