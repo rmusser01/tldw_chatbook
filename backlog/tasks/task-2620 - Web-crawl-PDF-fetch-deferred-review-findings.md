@@ -79,6 +79,6 @@ Coverage and docstring polish implemented as planned, with two won't-fix rulings
 - Foreign-namespace (neither sitemaps.org-namespaced nor bare/namespace-less) sitemaps still parse to zero locs — this collapses into the already-accepted parse-zero-locs case (the spec asked for namespace-less support specifically, not arbitrary foreign namespaces). Won't-fix.
 - The `[too-large]` PDF message's "N MB" copy can render "0 MB" under integer-division truncation — reachable only via a test that monkeypatches `PDF_MAX_BYTES` to well under 1 MB; not reachable with the real module constant. Won't-fix.
 
-Follow-up **task-2870** files the won't-fix items above for future re-ruling or fix.
+Follow-up **task-2910** files the won't-fix items above for future re-ruling or fix.
 
 All test files pass (100 tests green, `Tests/Tools/test_web_crawl.py` + `Tests/Tools/test_web_tool_impls.py`).

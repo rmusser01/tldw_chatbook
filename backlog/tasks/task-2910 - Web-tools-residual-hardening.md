@@ -1,5 +1,5 @@
 ---
-id: TASK-2870
+id: TASK-2910
 title: Web-tools residual hardening
 status: To Do
 assignee: []
@@ -28,3 +28,9 @@ task-2620's final review round (2026-08-06) re-triaged the web-tools v2 (`web_cr
 <!-- AC:BEGIN -->
 - [ ] #1 Each residual fixed or re-ruled in this task's notes
 <!-- AC:END -->
+
+## Additional residuals (final fix-wave re-review, 2026-08-06)
+
+6. `budget_truncated` false-positive: the seed's max_pages check runs BEFORE the host/dup filters, so trailing candidates that take() would discard anyway flip the flag — footer says "page budget reached" when the truth is "sitemap exhausted". Conservative direction (under-claims completeness; invites a pointless higher-max_pages retry). Verified fix: reorder the cap check after the host+seen filters (re-reviewer confirmed against all shipped tests); same shape in the child loop's break when remaining children are all off-host.
+7. `children_skipped` counts deadline-expired child fetches (`_CrawlDeadline`) but the _SitemapSeed docstring and spec enumerate only fetch-error/oversized/parse-refusal — complete the enumerations.
+8. web_crawl's attempt-invariant docstring sentence describes only the redirect-lands-on-listed case; the mirror (a plain fetch of a URL an earlier redirect already listed) is the commoner row-less attempt.
