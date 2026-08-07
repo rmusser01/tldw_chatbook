@@ -43,9 +43,10 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 
 #: path -> (class name, max lines, max methods in that class).
 #: LOWER these when a decomposition wave lands. Never raise them.
-#: Baselines recorded 2026-08-06, immediately after wave 2 merged (PR #1381).
+#: Lowered 2026-08-06 at the wave-3 close (message + transcript + prompts):
+#: 20,964/612 -> 18,904/598. First recorded immediately after wave 2 (PR #1381).
 _BUDGETS: dict[str, tuple[str, int, int]] = {
-    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 20964, 612),
+    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 18904, 598),
 }
 
 
