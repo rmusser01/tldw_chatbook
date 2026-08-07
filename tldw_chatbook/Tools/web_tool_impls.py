@@ -371,23 +371,25 @@ def web_fetch(url: str, *, max_bytes: int = FETCH_MAX_BYTES) -> str:
 
     SSRF-guarded per hop (validate_outbound_url), redirect-capped,
     rate-limited per domain, cached in-memory by (url, max_bytes) key
-    (256-entry LRU, FETCH_CACHE_TTL_SECONDS expiry).
+    (256-entry bound, earliest-expiry eviction, FETCH_CACHE_TTL_SECONDS expiry).
 
     HTML/plain-text extracted via trafilatura with fallback tag-strip;
     script/style tags removed. Result ends with a truncation marker when
     capped at max_bytes (default FETCH_MAX_BYTES=1 MiB).
 
-    PDF detection (by file magic, not declared type): text extracted via
-    PyMuPDF if available; PDFs always respect a 20 MB hardened ceiling
-    (PDF_MAX_BYTES). Truncation of extracted text is applied per-page if
-    the total exceeds max_bytes; the result includes page count.
+    PDF detection: declared type "application/pdf" or %PDF- magic sniff.
+    Text extracted via PyMuPDF if available. When pymupdf is installed, PDFs
+    respect a 20 MB hardened ceiling (PDF_MAX_BYTES, never truncated);
+    when unavailable, PDFs are refused before download. Extracted text is
+    truncated per-page if total exceeds max_bytes; the result includes page count.
 
     All failures raise LocalToolError with structured reasons:
         - "invalid-url", "ssrf", "redirect-limit", "timeout",
-          "http-<status>", "rate-limited" (general fetch)
+          "http-<status>", "rate-limited", "fetch-failed" (general fetch)
+        - "empty-content" (unextractable HTML/text/PDF)
         - "missing-dep" (PDF requires pymupdf extra)
         - "pdf-error" (PyMuPDF extraction or encryption failure)
-        - "too-large" (PDF exceeds 20 MB ceiling, never truncated)
+        - "too-large" (PDF exceeds 20 MB ceiling when pymupdf available)
 
     Raises:
         LocalToolError: on invalid/SSRF URLs, redirect overflow, timeouts,

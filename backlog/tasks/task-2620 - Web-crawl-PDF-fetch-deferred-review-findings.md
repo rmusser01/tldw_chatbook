@@ -56,10 +56,10 @@ Coverage and docstring polish implemented as planned, with two won't-fix rulings
 - **(c) Between-hops deadline coverage** (`test_crawl_deadline_stops_during_redirect_hop`): exercises the `_CrawlDeadline` raise/catch path by advancing the fake clock past CRAWL_DEADLINE_SECONDS during a redirect handler. Verifies the redirect target is never fetched and "deadline reached" is reported.
 
 **Docstring truth:** Updated `web_fetch` docstring to document:
-- PDF detection (by file magic, not declared type) and extraction via PyMuPDF
-- The (url, max_bytes) cache key and 256-entry LRU bound
-- PDF 20 MB hardened ceiling behavior (never truncated)
-- Structured error reasons: "missing-dep", "pdf-error", "too-large" for PDF failures
+- PDF detection (declared type "application/pdf" or %PDF- magic sniff) and extraction via PyMuPDF
+- The (url, max_bytes) cache key and 256-entry bound with earliest-expiry eviction
+- PDF 20 MB hardened ceiling behavior (applies when pymupdf available, never truncated; unavailable PDFs refused before download)
+- Structured error reasons: "fetch-failed", "empty-content" (extraction failures), "missing-dep", "pdf-error", "too-large"
 - Added web_crawl to the tool list in local_tool_provider.py module docstring (~line 63).
 
 **Won't-fix rulings** (safe to defer, recorded per task scope):
@@ -72,4 +72,4 @@ Coverage and docstring polish implemented as planned, with two won't-fix rulings
 - Foreign-namespace sitemaps still yield zero locs (spec asked for namespace-less only)
 - Sibling seed break can leave children unfetched, reporting "sitemap exhausted" when not truly exhausted
 
-All test files pass (184 tests green).
+All test files pass (186 tests green).
