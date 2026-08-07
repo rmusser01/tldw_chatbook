@@ -98,6 +98,28 @@ class LibraryRailRow:
     # rail renders a dim "(…)" placeholder (one count policy: placeholder
     # while loading, count when known, no suffix when the source is off).
     count_loading: bool = False
+    # LIB-15: True for a row whose count is not fetched yet but WILL be
+    # (e.g. Collections, whose count only loads on first canvas visit --
+    # see ``count_loading``'s own docstring for why it is NOT used for this
+    # row: showing a "(…)" placeholder before any fetch has even started
+    # would misrepresent an idle row as actively loading). Distinct from a
+    # row like Search/RAG, whose ``count`` is ``None`` FOREVER by design
+    # (an "off" source, not a pending one) -- without this flag the two
+    # cases are indistinguishable from ``count``/``count_known`` alone.
+    # ``_row_label``'s gloss-fit check reserves a stable minimum width for
+    # this row's eventual count so the gloss's visibility does not flip the
+    # instant the count arrives (the observed "Collections — item sets" ->
+    # "(0)", gloss silently dropping on the SAME terminal width just
+    # because the count went from absent to a single digit).
+    count_pending: bool = False
+    # LIB-18: an abbreviated fallback for a single-word ``title`` that would
+    # otherwise need a mid-word ellipsis cut at the rail's real minimum
+    # width (120/100/80 columns all pin the rail to the same ~17-cell row
+    # budget via its own ``min_width``). Empty for every row whose title
+    # already fits comfortably. Used INSTEAD OF ellipsizing the full title
+    # when the full title does not fit but ``short_title`` does -- never
+    # itself further truncated except as an absolute last resort.
+    short_title: str = ""
 
 
 @dataclass(frozen=True)
@@ -189,6 +211,12 @@ def build_library_shell_state(
             count=state.conversations_count,
             count_known=state.conversations_known,
             count_loading=state.counts_loading,
+            # LIB-18: "Conversations" (13 cells) does not fit the rail's
+            # real ~17-cell row budget alongside a count without ellipsis-
+            # cutting mid-word ("Conversa..."). "Chats" is the app's own
+            # existing short label for this concept (see workspace.py's
+            # DEFAULT_WORKSPACE_ID label and conversation_browser_state.py).
+            short_title="Chats",
         ),
         LibraryRailRow(
             row_id=LIBRARY_ROW_BROWSE_NOTES,
@@ -240,6 +268,18 @@ def build_library_shell_state(
             count=state.collections_count,
             count_known=state.collections_known,
             subtitle="item sets",
+            # LIB-15: Collections' count is fetched lazily (on first canvas
+            # visit), unlike every other counts_loading row -- flagging it
+            # pending (rather than "off", Search/RAG's case) lets the
+            # gloss-fit check reserve stable width for the count that is
+            # coming, so the gloss does not silently drop the instant the
+            # count arrives at the same terminal width.
+            count_pending=True,
+            # LIB-18: "Collections" (11 cells) fits the ~17-cell row budget
+            # only while its count stays single-digit; "Sets" (matching
+            # this row's own "item sets" gloss) is the fallback once a
+            # longer count would otherwise force a mid-word cut.
+            short_title="Sets",
         ),
         LibraryRailRow(
             row_id=LIBRARY_ROW_BROWSE_SEARCH,
@@ -319,6 +359,12 @@ def build_library_shell_state(
                 else ""
             ),
             count_loading=state.counts_loading,
+            # LIB-18: "Flashcards" (10 cells) plus its own longer
+            # " due: N" count display (vs. the default " (N)") leaves less
+            # budget than any other row -- "Cards" is the common shorthand
+            # (matches Anki's own terminology) and reads fine paired with
+            # the row's own "due: N" suffix for context.
+            short_title="Cards",
         ),
         LibraryRailRow(
             row_id="create-quizzes",

@@ -69,7 +69,11 @@ it tallies), the "Export name" and "Description (optional)" fields, a
 "quality: … ▸" button with the helper "original copies full media files
 into the zip" (shown only when media is in scope), "Choose destination…"
 above "No destination chosen", and the "Export bundle (.zip)" submit
-button. A "Cancel" button appears while an export is running.
+button. A "Cancel" button appears while an export is running. Once an
+export finishes, a "Last export: <path> · <relative time>" line appears
+above the submit button and stays there — it updates in place after each
+further export and survives switching to another rail row and back, for
+the rest of the session.
 
 ## Features & controls
 
@@ -96,8 +100,9 @@ individually and show up as ✗ rows you can retry after installing.
 | "Export name" | Pre-filled "Library export 2026-07-31" (today's date); becomes the bundle's display name. |
 | "quality: thumbnail ▸" | Cycles thumbnail → compressed → original. Only "original" copies full media files into the zip; the others keep the package small. |
 | "Choose destination…" | Opens "Choose Export Destination". Whatever you pick is normalized to end in `.zip`; if that file already exists, an "Overwrites <name>" note appears (informational — exporting proceeds and replaces it). |
-| "Export bundle (.zip)" | Enabled once counting has finished, the scope is non-empty, and a destination is chosen. "Nothing to export in this scope." appears when the scope is empty. |
+| "Export bundle (.zip)" | Enabled once counting has finished, the scope is non-empty, and a destination is chosen. "Nothing to export in this scope." appears when the scope is empty; either way, hovering the button always shows a tooltip naming the same reason it's disabled (or "Write the bundle to the chosen destination." once it's ready) — a disabled press can never look like it silently did nothing. |
 | "Cancel" | Visible only while an export is running; stops it. |
+| "Last export: …" | Appears after the first successful export this session; names the exact path written and how long ago, and stays until the next successful export replaces it. |
 
 ## Common tasks
 
@@ -184,3 +189,9 @@ button/canvas title/Start button/completion toast all read "Import…" /
 / "Import media" / "Start ingest" / "Ingest finished"; the Export form
 reads "Export bundle (.zip)" everywhere it used to say "Export chatbook";
 option labels and dialogs say "import" instead of "ingest" throughout)*
+
+*Verified against dev @ 6b38a13b8 — 2026-08-07 (task-2858 AC#3:
+the Export button's disabled state now always carries an explaining
+tooltip, and a successful export leaves the durable "Last export: …"
+line described above — previously an empty-scope/no-destination press
+had no tooltip and a successful export left the canvas unchanged)*

@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import io
+import itertools
+import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Mapping, Sequence
@@ -12,6 +15,28 @@ from tldw_chatbook.Workspaces.conversation_browser_state import (
 
 _ID_KEYS = ("id", "media_id", "uuid")
 _TYPE_KEYS = ("type", "media_type")
+# local_file_ingestion.py maps BOTH .md/.markdown and .txt/.rst/.csv/.log to
+# the single "plaintext" media type, and Obsidian imports use
+# "obsidian_note" -- neither type alone proves the content is markdown, so
+# LIB-13's "Rendered by default" decision also requires a content sniff
+# (``looks_like_markdown_content``) before defaulting to the rendered view.
+_MARKDOWN_MEDIA_TYPES = frozenset({"plaintext", "markdown", "obsidian_note"})
+_ATX_HEADING_RE = re.compile(r"^#{1,6}\s+\S")
+_TABLE_SEPARATOR_ROW_RE = re.compile(r"^\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)+\|?$")
+
+# task-2858 review fix: ``looks_like_markdown_content`` runs on the UI thread
+# inside ``build_library_media_viewer_state`` every time LibraryScreen opens
+# an item with ``include_content=True`` -- an unbounded ``splitlines()`` scan
+# over a large transcript/document costs a full line-list allocation plus a
+# full-content regex sweep just to pick a *default* view. These caps bound
+# that cost to a small, constant-size prefix of the content. Semantics: this
+# only changes the DEFAULT view -- a document whose first markdown marker
+# sits beyond the sniff window will now default to Raw instead of Rendered,
+# but the Raw/Rendered toggle remains available, so the content is never
+# hidden or altered, only the initial view choice is heuristic. Acceptable
+# by design.
+MAX_MARKDOWN_SNIFF_CHARS = 32_000
+MAX_MARKDOWN_SNIFF_LINES = 200
 # Match the media list's temporal field + label (library_media_state._UPDATED_KEYS)
 # so the same item reads the same "Updated: <age>" in the list and the viewer.
 _UPDATED_KEYS = ("last_modified", "ingestion_date", "date", "updated_at")
@@ -65,6 +90,14 @@ class LibraryMediaViewerState:
         read_later: Whether the item is currently saved for read-it-later,
             sourced from the detail's ``is_read_it_later`` flag (as set by
             ``LocalMediaReadingService._enrich_with_read_it_later_state``).
+        media_type: The raw type string (``type``/``media_type`` on the
+            detail), or "unknown" when absent -- the same value shown on
+            the "Type: ..." metadata line.
+        is_markdown: Whether the Content section should default to the
+            Rendered (Markdown) view rather than Raw -- true only when
+            ``media_type`` is one of the types local ingestion can
+            plausibly tag a markdown file with AND ``content`` actually
+            contains markdown syntax (see ``looks_like_markdown_content``).
     """
 
     media_id: str
@@ -77,6 +110,8 @@ class LibraryMediaViewerState:
     version: int | None
     edit_fields: dict[str, str]
     read_later: bool
+    media_type: str
+    is_markdown: bool
 
 
 def _text(value: Any) -> str:
@@ -118,6 +153,57 @@ def _version(detail: Mapping[str, Any]) -> int | None:
         return None
 
 
+def looks_like_markdown_content(content: str) -> bool:
+    """Return True when ``content`` contains at least one line of real markdown syntax.
+
+    Narrows the ambiguous ``"plaintext"``/``"obsidian_note"`` media types
+    (which cover genuinely-markdown files alongside plain .txt/.csv/.log)
+    down to the files LIB-13 is actually about: an ATX heading (``# ...``
+    through ``###### ...``), a fenced code block, or a GFM table separator
+    row (e.g. ``| --- | --- |``). A bare ``---`` thematic break does not
+    count on its own -- only a separator row that also has at least one
+    ``|`` reads as an actual table.
+
+    The scan is bounded to the first ``MAX_MARKDOWN_SNIFF_CHARS`` characters
+    and ``MAX_MARKDOWN_SNIFF_LINES`` lines of ``content`` (see that
+    constant's comment) -- this is a "pick a default view" heuristic, not
+    an exhaustive search, so a marker that only appears past the sniff
+    window is not found and the item defaults to Raw instead of Rendered.
+
+    Args:
+        content: The media item's stored content/transcript text.
+
+    Returns:
+        True when ``content`` looks like markdown within the bounded
+        sniff window, else False.
+    """
+    if not content:
+        return False
+    sniff = content[:MAX_MARKDOWN_SNIFF_CHARS]
+    lines = itertools.islice(io.StringIO(sniff, newline=None), MAX_MARKDOWN_SNIFF_LINES)
+    for line in lines:
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if _ATX_HEADING_RE.match(stripped):
+            return True
+        if stripped.startswith("```"):
+            return True
+        if _TABLE_SEPARATOR_ROW_RE.match(stripped):
+            return True
+    return False
+
+
+def _is_markdown_media(media_type: str, content: str) -> bool:
+    """Combine the media-type allowlist with the content sniff (see
+    ``looks_like_markdown_content``) into the single "default to Rendered"
+    decision.
+    """
+    if media_type.strip().lower() not in _MARKDOWN_MEDIA_TYPES:
+        return False
+    return looks_like_markdown_content(content)
+
+
 def _empty_state() -> LibraryMediaViewerState:
     return LibraryMediaViewerState(
         media_id="",
@@ -130,6 +216,8 @@ def _empty_state() -> LibraryMediaViewerState:
         version=None,
         edit_fields=dict(_EMPTY_EDIT_FIELDS),
         read_later=False,
+        media_type="",
+        is_markdown=False,
     )
 
 
@@ -243,6 +331,8 @@ def build_library_media_viewer_state(
             "keywords": keywords_text,
         },
         read_later=read_later,
+        media_type=media_type,
+        is_markdown=_is_markdown_media(media_type, content),
     )
 
 

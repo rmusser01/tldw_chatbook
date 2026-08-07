@@ -5,11 +5,14 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from tldw_chatbook.Library.library_media_viewer_state import (
+    MAX_MARKDOWN_SNIFF_CHARS,
+    MAX_MARKDOWN_SNIFF_LINES,
     LibraryMediaHighlightRow,
     LibraryMediaViewerState,
     build_library_media_highlight_rows,
     build_library_media_viewer_state,
     find_content_matches,
+    looks_like_markdown_content,
 )
 
 NOW = datetime(2026, 7, 6, 12, 0, tzinfo=timezone.utc)
@@ -596,3 +599,153 @@ def test_arrival_note_renders_first_in_metadata_lines():
         {"id": "m1", "title": "Report", "type": "document"}
     )
     assert plain.metadata_lines[0].startswith("Type:")
+
+
+# --- LIB-13: markdown-typed-media detection (Task 3) -----------------------
+
+
+def test_looks_like_markdown_content_detects_atx_heading():
+    assert looks_like_markdown_content("# Setup\n\nSome body text.") is True
+
+
+def test_looks_like_markdown_content_detects_gfm_table_separator_row():
+    content = "| Col A | Col B |\n| --- | --- |\n| 1 | 2 |"
+    assert looks_like_markdown_content(content) is True
+
+
+def test_looks_like_markdown_content_detects_fenced_code_block():
+    assert looks_like_markdown_content("```python\nprint('hi')\n```") is True
+
+
+def test_looks_like_markdown_content_bare_thematic_break_is_not_a_table():
+    """A lone ``---`` (a thematic break/front-matter fence) has no pipe, so
+    it must not be mistaken for a GFM table separator row."""
+    assert looks_like_markdown_content("above\n---\nbelow") is False
+
+
+def test_looks_like_markdown_content_plain_prose_is_false():
+    content = "Just a plain paragraph.\nAnother line, no markdown syntax here."
+    assert looks_like_markdown_content(content) is False
+
+
+def test_looks_like_markdown_content_empty_or_none_is_false():
+    assert looks_like_markdown_content("") is False
+    assert looks_like_markdown_content(None) is False  # type: ignore[arg-type]
+
+
+# --- task-2858 review fix: bounded sniff (perf) -----------------------------
+
+
+def test_looks_like_markdown_content_marker_inside_char_window_is_true():
+    """A marker that lands within the first MAX_MARKDOWN_SNIFF_CHARS
+    characters is still detected, even in a large document."""
+    padding = "x" * (MAX_MARKDOWN_SNIFF_CHARS // 2)
+    content = f"{padding}\n# heading\n{padding}"
+    assert looks_like_markdown_content(content) is True
+
+
+def test_looks_like_markdown_content_marker_beyond_char_window_is_false():
+    """A marker whose FIRST occurrence sits entirely past the
+    MAX_MARKDOWN_SNIFF_CHARS sniff window is not found -- the sniff is a
+    bounded default-view heuristic, not an exhaustive scan (the Raw/
+    Rendered toggle remains available for the user to switch manually)."""
+    padding = "x" * (MAX_MARKDOWN_SNIFF_CHARS + 100)
+    content = f"{padding}\n# heading only after the sniff window\n"
+    assert looks_like_markdown_content(content) is False
+
+
+def test_looks_like_markdown_content_marker_inside_line_window_is_true():
+    """A marker on a line within the first MAX_MARKDOWN_SNIFF_LINES lines
+    is detected even when many short non-matching lines precede it, as
+    long as the char budget is not exhausted."""
+    prefix_lines = "\n".join(
+        f"plain line {i}" for i in range(MAX_MARKDOWN_SNIFF_LINES - 10)
+    )
+    content = f"{prefix_lines}\n# heading\n"
+    assert looks_like_markdown_content(content) is True
+
+
+def test_looks_like_markdown_content_marker_beyond_line_window_is_false():
+    """A marker whose FIRST occurrence sits past MAX_MARKDOWN_SNIFF_LINES
+    lines (but well within the char budget) is not found -- the line cap
+    protects against pathological many-short-lines documents that would
+    otherwise stay under the char cap while still costing an unbounded
+    per-line regex scan."""
+    prefix_lines = "\n".join(
+        f"plain line {i}" for i in range(MAX_MARKDOWN_SNIFF_LINES + 50)
+    )
+    content = f"{prefix_lines}\n# heading\n"
+    assert len(content) < MAX_MARKDOWN_SNIFF_CHARS
+    assert looks_like_markdown_content(content) is False
+
+
+def test_build_state_flags_plaintext_media_with_heading_as_markdown():
+    """LIB-13 repro: a ``.md`` file ingested as ``media_type="plaintext"``
+    (the type local ingestion maps BOTH .md and .txt to) with a real
+    heading must be flagged markdown."""
+    state = build_library_media_viewer_state(
+        {
+            "id": "m1",
+            "title": "Setup Guide",
+            "type": "plaintext",
+            "content": "# Setup\n\n| A | B |\n| --- | --- |\n| 1 | 2 |",
+        }
+    )
+    assert state.media_type == "plaintext"
+    assert state.is_markdown is True
+
+
+def test_build_state_does_not_flag_plaintext_media_without_markdown_syntax():
+    """A ``.txt``/``.csv``/``.log`` file also carries ``media_type="plaintext"``
+    but has no markdown syntax -- must default to Raw, not Rendered."""
+    state = build_library_media_viewer_state(
+        {
+            "id": "m1",
+            "title": "Notes.txt",
+            "type": "plaintext",
+            "content": "Just a plain note.\nNothing special here.",
+        }
+    )
+    assert state.media_type == "plaintext"
+    assert state.is_markdown is False
+
+
+def test_build_state_obsidian_note_with_heading_is_markdown():
+    state = build_library_media_viewer_state(
+        {
+            "id": "m1",
+            "title": "My Obsidian Note",
+            "type": "obsidian_note",
+            "content": "# My Obsidian Note\n\nBody text.",
+        }
+    )
+    assert state.is_markdown is True
+
+
+def test_build_state_non_markdown_type_never_flagged_even_with_heading_syntax():
+    """A video/pdf/audio item whose transcript happens to contain a line
+    starting with ``#`` (e.g. a hashtag) must never default to Rendered --
+    the media-type allowlist gates the content sniff."""
+    state = build_library_media_viewer_state(
+        {
+            "id": "m1",
+            "title": "Interview",
+            "type": "audio",
+            "content": "# trending topic mentioned in the interview",
+        }
+    )
+    assert state.media_type == "audio"
+    assert state.is_markdown is False
+
+
+def test_build_state_missing_content_is_never_markdown():
+    state = build_library_media_viewer_state(
+        {"id": "m1", "title": "Empty", "type": "plaintext"}
+    )
+    assert state.is_markdown is False
+
+
+def test_empty_state_is_markdown_false_and_media_type_empty():
+    state = build_library_media_viewer_state(None)
+    assert state.is_markdown is False
+    assert state.media_type == ""

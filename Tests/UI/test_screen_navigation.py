@@ -1654,8 +1654,12 @@ def test_check_action_gates_notes_files_back_to_active_files_mode():
     screen._library_notes_source = "database"
     assert screen.check_action("library_notes_files_back", ()) is False
 
-    # Unrelated actions are untouched by the new gate.
-    assert screen.check_action("library_rag_use_in_console", ()) is True
+    # Unrelated actions are untouched by the new gate. "library_rag_use_
+    # in_console" is no longer a valid stand-in for "unrelated" -- task-2858
+    # AC#2 gates it too (see test_check_action_gates_rag_use_in_console_to_
+    # search_row below) -- so this uses a genuinely nonexistent action,
+    # which check_action's final `return True` fallback still covers.
+    assert screen.check_action("some_nonexistent_action", ()) is True
 
 
 @pytest.mark.asyncio
@@ -1743,8 +1747,10 @@ def test_check_action_gates_media_viewer_back_to_active_viewer():
     screen._library_selected_row_id = LIBRARY_ROW_BROWSE_NOTES
     assert screen.check_action("library_media_viewer_back", ()) is False
 
-    # Unrelated actions are untouched by the new gate.
-    assert screen.check_action("library_rag_use_in_console", ()) is True
+    # Unrelated actions are untouched by the new gate. "library_rag_use_
+    # in_console" is no longer a valid stand-in for "unrelated" -- task-2858
+    # AC#2 gates it too -- so this uses a genuinely nonexistent action.
+    assert screen.check_action("some_nonexistent_action", ()) is True
 
 
 def test_register_footer_shortcuts_distinguishes_plain_viewer_from_a_media_sub_state():
@@ -1901,6 +1907,220 @@ def test_check_action_gates_list_focus_rail_to_showing_list():
     # A canvas outside the four list canvases (Search/RAG) -- inactive.
     screen._library_selected_row_id = LIBRARY_ROW_BROWSE_SEARCH
     assert screen.check_action("library_list_focus_rail", ()) is False
+
+
+def test_check_action_gates_rag_use_in_console_to_search_row():
+    """task-2858 AC#2 (LIB-09): the "u" binding
+    (``library_rag_use_in_console``) had no ``check_action`` gate before
+    this task -- its OWN action body already no-ops off the Search/RAG
+    row (``if self._library_selected_row_id != LIBRARY_ROW_BROWSE_SEARCH:
+    return``), but nothing told ``check_action`` that, so F1's help panel
+    kept advertising "u" on every other Library surface (the media
+    viewer, browsing skills, etc.) -- reproducing the original finding.
+    This pins the gate to the EXACT same predicate the action itself
+    uses.
+    """
+    from tldw_chatbook.Library.library_shell_state import (
+        LIBRARY_ROW_BROWSE_MEDIA,
+        LIBRARY_ROW_BROWSE_SEARCH,
+    )
+    from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+
+    app = _build_test_app()
+    screen = LibraryScreen(app)
+
+    # Landing -- inactive.
+    assert screen.check_action("library_rag_use_in_console", ()) is False
+
+    # A different canvas (media) -- inactive, exactly LIB-09's finding.
+    screen._library_selected_row_id = LIBRARY_ROW_BROWSE_MEDIA
+    assert screen.check_action("library_rag_use_in_console", ()) is False
+
+    # Search/RAG row -- active.
+    screen._library_selected_row_id = LIBRARY_ROW_BROWSE_SEARCH
+    assert screen.check_action("library_rag_use_in_console", ()) is True
+
+
+def test_check_action_gates_rag_result_card_actions_to_focused_card():
+    """task-2858 AC#2 (LIB-09): the Enter/``o`` evidence-card actions
+    (``library_rag_result_card_select``/``_open``) had no ``check_action``
+    gate either -- both already no-op unless a
+    ``.library-rag-result-card`` widget holds focus (see
+    ``_focused_library_rag_result_card_index``), so this pins the SAME
+    predicate at the ``check_action`` layer (monkeypatched directly here
+    rather than building a real focus chain, mirroring how other
+    predicate-only gates in this suite are exercised)."""
+    from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+
+    app = _build_test_app()
+    screen = LibraryScreen(app)
+
+    screen._focused_library_rag_result_card_index = lambda: None
+    assert screen.check_action("library_rag_result_card_select", ()) is False
+    assert screen.check_action("library_rag_result_card_open", ()) is False
+
+    screen._focused_library_rag_result_card_index = lambda: 0
+    assert screen.check_action("library_rag_result_card_select", ()) is True
+    assert screen.check_action("library_rag_result_card_open", ()) is True
+
+
+def test_library_screen_bindings_are_all_gated_or_universal():
+    """task-2858 AC#2 (LIB-09): audit the FULL static ``BINDINGS`` list.
+
+    F1's help panel (``LibraryScreen.action_show_workbench_help``) now
+    filters ``BINDINGS`` through ``check_action`` -- so an action added to
+    ``BINDINGS`` in the future WITHOUT a matching ``check_action`` branch
+    would silently fall through to the default ``return True`` and leak
+    into F1 on every Library surface again, reproducing this exact
+    finding. This audits every action currently on the class: on a bare
+    (landing) screen instance -- where none of today's context-specific
+    actions legitimately apply -- each one must either be gated (``check_
+    action`` returns ``False``) or be explicitly declared universal below
+    (works identically on every surface, so ``True`` would be correct
+    even on the landing). Nothing is declared universal today; the
+    allowlist exists so a genuinely screen-wide binding could be added
+    later without failing this test for the right reason.
+    """
+    from textual.binding import Binding
+
+    from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+
+    # No LibraryScreen binding is meant to work identically on every
+    # surface today -- "/" (focus search) and F6 (next pane) are real
+    # screen-wide keys, but they are NOT Bindings (see
+    # ``LibraryScreen.on_key``/``action_focus_next_workbench_pane``'s own
+    # wiring), so they never appear in BINDINGS and are out of scope here.
+    universal_actions: frozenset[str] = frozenset()
+
+    app = _build_test_app()
+    screen = LibraryScreen(app)
+
+    actions: set[str] = set()
+    for entry in LibraryScreen.BINDINGS:
+        if isinstance(entry, Binding):
+            actions.add(entry.action)
+        elif isinstance(entry, (tuple, list)) and len(entry) > 1:
+            actions.add(str(entry[1]))
+
+    assert actions, "BINDINGS must not be empty for this audit to mean anything"
+
+    for action in sorted(actions):
+        result = screen.check_action(action, ())
+        if action in universal_actions:
+            assert result is True, (
+                f"{action!r} is declared universal but check_action "
+                f"returned {result!r} on the landing."
+            )
+        else:
+            assert result is False, (
+                f"{action!r} has no check_action gate (or its gate passes "
+                "on the bare landing) -- it will leak into F1's help "
+                "panel on every Library surface (LIB-09 contamination)."
+            )
+
+
+def test_action_show_workbench_help_filters_bindings_by_check_action(monkeypatch):
+    """task-2858 AC#2 (LIB-09): F1 on a non-skills, non-Search canvas must
+    NOT advertise the skill editor's or Search/RAG's dead keys -- the
+    original finding, reproduced live at ``6ffa56516``: F1 on the Media
+    canvas was titled "LibraryScreen Shortcuts" and listed "ctrl+s: Save
+    skill"/"escape: Back to skills list". Sets the screen to the Media
+    LIST canvas (nothing skill/Search/viewer related active) and asserts
+    the resulting help state's shortcuts include none of those dead keys.
+    """
+    from tldw_chatbook.Library.library_shell_state import LIBRARY_ROW_BROWSE_MEDIA
+    from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+    from tldw_chatbook.UI.Workbench.help import WorkbenchHelpPanel
+
+    app = _build_test_app()
+    screen = LibraryScreen(app)
+    screen._library_selected_row_id = LIBRARY_ROW_BROWSE_MEDIA
+    screen._library_media_view = "list"
+
+    pushed = []
+
+    class _FakeApp:
+        def push_screen(self, panel):
+            pushed.append(panel)
+
+    # A class-level property override (auto-reverted by monkeypatch) --
+    # mirrors test_settings_rag_profile_region.py's ``fake_app`` fixture:
+    # an un-mounted Screen's ``.app`` raises NoActiveAppError otherwise.
+    monkeypatch.setattr(
+        LibraryScreen, "app", property(lambda self: _FakeApp()), raising=False
+    )
+
+    screen.action_show_workbench_help()
+
+    assert len(pushed) == 1
+    panel = pushed[0]
+    assert isinstance(panel, WorkbenchHelpPanel)
+    keys = {key for key, _description in panel.state.shortcuts}
+    descriptions = {description for _key, description in panel.state.shortcuts}
+    # Dead on the Media list canvas -- must not appear.
+    assert "ctrl+s" not in keys
+    assert "Save skill" not in descriptions
+    assert "Back to skills list" not in descriptions
+    assert "u" not in keys
+    assert "enter" not in keys
+    assert "o" not in keys
+    # Genuinely active here: Escape moves focus to the rail (list canvas).
+    assert "escape" in keys
+
+
+def test_action_show_workbench_help_includes_landing_footer_keys(monkeypatch):
+    """task-2858 review (Important #1): F1 on the Library LANDING (and every
+    other surface whose real keyboard story is on_key/footer-set wiring,
+    never a ``Binding``) must not render an EMPTY panel.
+
+    Before this fix ``action_show_workbench_help`` only listed check_action-
+    filtered ``BINDINGS`` entries -- and ``test_library_screen_bindings_are_
+    all_gated_or_universal`` above pins that EVERY ``BINDINGS`` action gates
+    ``False`` on the bare landing, so the panel rendered a title and a Close
+    button and nothing else. Yet the landing footer teaches four real keys
+    (``/``, ``i``, ``n``, F6 -- ``LIBRARY_LANDING_SHORTCUTS``,
+    ``_register_footer_shortcuts``) that never reach a ``Binding`` (``/``
+    and the hub accelerators are ``on_key`` wiring; F6 is the app-global
+    pane-cycle key). F1 must now include that same per-mode footer set, so
+    the landing's F1 is never empty and matches what the footer already
+    teaches -- including F6, which task-2860's reserved-global filtering
+    drops from the FOOTER's compact rendering but must still reach F1 (F1
+    is not subject to that filter, mirroring how
+    ``SettingsScreen.action_show_workbench_help`` reads its per-category
+    shortcuts directly rather than through the footer widget).
+    """
+    from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+    from tldw_chatbook.UI.Workbench.help import WorkbenchHelpPanel
+
+    app = _build_test_app()
+    screen = LibraryScreen(app)
+    # Landing: no row selected (the default -- see LibraryScreen.__init__).
+    assert screen._library_selected_row_id == ""
+
+    pushed = []
+
+    class _FakeApp:
+        def push_screen(self, panel):
+            pushed.append(panel)
+
+    monkeypatch.setattr(
+        LibraryScreen, "app", property(lambda self: _FakeApp()), raising=False
+    )
+
+    screen.action_show_workbench_help()
+
+    assert len(pushed) == 1
+    panel = pushed[0]
+    assert isinstance(panel, WorkbenchHelpPanel)
+    assert panel.state.shortcuts, "F1 must not be empty on the Library landing"
+    keys = {key for key, _description in panel.state.shortcuts}
+    # LIBRARY_LANDING_SHORTCUTS -- the exact keys the landing footer teaches.
+    assert "/" in keys
+    assert "i" in keys
+    assert "n" in keys
+    assert "F6" in keys
+    # Minor #2 (same review): the title must not leak the raw class name.
+    assert panel.state.title == "Library Shortcuts"
 
 
 def test_action_library_media_viewer_back_returns_to_list_and_refocuses_it():
@@ -3860,3 +4080,125 @@ async def test_broken_screen_content_degrades_instead_of_killing_a_running_app()
         await pilot.press("tab")
         await pilot.pause()
         assert app.is_running, "app must stay responsive after the failed compose"
+
+
+# --- task-2858 (LIB-03 -> AC#1): entry routing + canvas restoration -------
+#
+# Direction (recorded in the task's Implementation Notes): EXPLICIT deep
+# links (e.g. "Library: Import...", the "media"/"search" legacy alias
+# routes) keep landing their own labeled canvas -- their own command text
+# states the destination. GENERIC entries (bare ``NavigateToScreen("library")``
+# with no nav-context -- the nav-bar tab button's and the "Switch to
+# Library" palette command's own shape) land ONE canonical surface: the
+# hub on a first visit, or the last-visited canvas on a revisit
+# (restore-over-reset -- a workbench should not lose your place). These
+# three pilot round trips pin that contract directly against the real
+# navigation orchestration (``TldwCli.handle_screen_navigation`` /
+# ``ScreenStateStore`` / ``LibraryScreen.save_state``/``restore_state``/
+# ``apply_navigation_context``) rather than re-deriving it, matching
+# ``test_rapid_tab_switch_storm_leaves_no_zombie_widgets``'s real-screen
+# harness pattern immediately above.
+async def _wait_for_initial_screen(pilot) -> None:
+    """Poll until the app's own startup navigation has pushed a real screen.
+
+    Waiting on ``app.screen``'s type alone races ``_push_initial_screen``:
+    the app already composes a real (non-generic ``Screen``) instance while
+    the splash screen closes, but ``handle_screen_navigation`` silently
+    ignores every request until ``_initial_screen_pushed`` flips True (see
+    ``_handle_screen_navigation_locked``'s startup guard) -- a direct
+    ``await app.handle_screen_navigation(...)`` issued in that window is
+    dropped with no error and no way to retry.
+    """
+    app = pilot.app
+    for _ in range(150):
+        await pilot.pause(0.02)
+        if getattr(app, "_initial_screen_pushed", False):
+            return
+    raise AssertionError("app never finished pushing its initial screen")
+
+
+@pytest.mark.asyncio
+async def test_generic_library_entry_lands_hub_on_first_visit():
+    """A GENERIC Library entry with no prior visit in this session lands the
+    hub/landing canvas (``_library_selected_row_id == ""``), never a
+    specific canvas by accident.
+    """
+    app = _build_test_app()
+
+    async with app.run_test(size=(160, 40)) as pilot:
+        await _wait_for_initial_screen(pilot)
+
+        await app.handle_screen_navigation(NavigateToScreen("library"))
+
+        assert type(app.screen).__name__ == "LibraryScreen"
+        assert app.screen._library_selected_row_id == ""
+
+
+@pytest.mark.asyncio
+async def test_deep_link_library_route_lands_its_canvas_over_restored_state():
+    """An EXPLICIT deep link (mirroring ``LibraryIngestProvider``'s
+    "Library: Import..." palette command, which supplies
+    ``{LIBRARY_NAV_CONTEXT_INGEST: True}``) must land its own labeled canvas
+    even when a DIFFERENT canvas was left behind by a prior visit -- deep
+    links state their own destination, so the generic-entry restore-over-
+    reset rule does not apply to them.
+    """
+    from tldw_chatbook.Constants import LIBRARY_NAV_CONTEXT_INGEST
+    from tldw_chatbook.Library.library_shell_state import (
+        LIBRARY_ROW_BROWSE_MEDIA,
+        LIBRARY_ROW_INGEST_MEDIA,
+    )
+
+    app = _build_test_app()
+
+    async with app.run_test(size=(160, 40)) as pilot:
+        await _wait_for_initial_screen(pilot)
+
+        # A prior visit lands on Media (the "media" legacy alias route --
+        # mirrors "Media & Content: Open Media Library").
+        await app.handle_screen_navigation(NavigateToScreen("media"))
+        assert app.screen._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA
+
+        # Leave -- this is what persists that Media selection as the
+        # "last-visited" canvas under the canonical "library" route.
+        await app.handle_screen_navigation(NavigateToScreen("home"))
+        assert type(app.screen).__name__ == "HomeScreen"
+
+        # The explicit deep link must land Import, not the restored Media row.
+        await app.handle_screen_navigation(
+            NavigateToScreen("library", {LIBRARY_NAV_CONTEXT_INGEST: True})
+        )
+
+        assert type(app.screen).__name__ == "LibraryScreen"
+        assert app.screen._library_selected_row_id == LIBRARY_ROW_INGEST_MEDIA
+
+
+@pytest.mark.asyncio
+async def test_generic_reentry_restores_last_visited_library_canvas():
+    """Core LIB-03 round trip: visit Search/RAG, leave to Home, then
+    re-enter Library GENERICALLY (bare ``NavigateToScreen``, no context --
+    the nav-bar tab button's own shape) -- the Search/RAG canvas must be
+    RESTORED, not reset back to the hub or any other canvas.
+    """
+    from tldw_chatbook.Library.library_shell_state import LIBRARY_ROW_BROWSE_SEARCH
+
+    app = _build_test_app()
+
+    async with app.run_test(size=(160, 40)) as pilot:
+        await _wait_for_initial_screen(pilot)
+
+        # Deep-link into Search/RAG (the "search" legacy alias route --
+        # mirrors "Media & Content: Search Transcripts").
+        await app.handle_screen_navigation(NavigateToScreen("search"))
+        assert type(app.screen).__name__ == "LibraryScreen"
+        assert app.screen._library_selected_row_id == LIBRARY_ROW_BROWSE_SEARCH
+
+        # Leave.
+        await app.handle_screen_navigation(NavigateToScreen("home"))
+        assert type(app.screen).__name__ == "HomeScreen"
+
+        # Generic re-entry must restore Search/RAG.
+        await app.handle_screen_navigation(NavigateToScreen("library"))
+
+        assert type(app.screen).__name__ == "LibraryScreen"
+        assert app.screen._library_selected_row_id == LIBRARY_ROW_BROWSE_SEARCH

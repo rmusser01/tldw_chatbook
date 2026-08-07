@@ -65,6 +65,20 @@ class LibraryNotesCanvas(Vertical):
             confirmation affordance -- a quiet explanatory line plus
             Delete/Cancel actions -- in place of the normal action row.
             Mirrors ``LibraryMediaViewer.confirming_delete``.
+        title_placeholder_only: When ``True`` (editor mode only), the title
+            ``Input`` renders empty with an "Untitled" placeholder instead
+            of a literal editable "Untitled" value -- LIB-14's fix for a
+            just-created, never-touched "Blank note": with a literal
+            ``value="Untitled"``, typing right after opening the note
+            landed after the existing text instead of replacing it (e.g.
+            "UntitledAtlas follow-ups"). An empty value with a placeholder
+            sidesteps the ambiguity entirely -- there is no text to land
+            after. The screen sets this only while the open note is still
+            its own pristine "Blank note" (the same condition that also
+            arms it for GC-on-exit -- see
+            ``_library_note_pending_blank_gc_id``); it never applies to a
+            note whose title happens to equal the word "Untitled" by the
+            user's own choice.
     """
 
     def __init__(
@@ -79,6 +93,7 @@ class LibraryNotesCanvas(Vertical):
         conflict: bool = False,
         confirming_delete: bool = False,
         sync_state: LibraryNotesSyncState | None = None,
+        title_placeholder_only: bool = False,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
@@ -91,6 +106,7 @@ class LibraryNotesCanvas(Vertical):
         self.conflict = conflict
         self.confirming_delete = confirming_delete
         self.sync_state = sync_state
+        self.title_placeholder_only = title_placeholder_only
         self.styles.width = "1fr"
         self.styles.min_width = 40
 
@@ -114,6 +130,17 @@ class LibraryNotesCanvas(Vertical):
             list_state.header_copy,
             id="library-notes-header",
             classes="destination-section",
+            markup=False,
+        )
+        # LIB-19: Database mode (this view), Files mode, and the Sync
+        # sub-canvas are three distinct folder-notes concepts that were
+        # never related to each other anywhere in the UI -- one placement
+        # sentence per surface, cross-referencing the other two.
+        yield Static(
+            "These notes live in the Library's own database — for notes "
+            "that live in a folder on disk, switch to Files, or use Sync "
+            "to mirror one in.",
+            id="library-notes-database-purpose",
             markup=False,
         )
         yield Input(
@@ -278,7 +305,8 @@ class LibraryNotesCanvas(Vertical):
             compact=True,
         )
         yield Input(
-            value=editor_state.title,
+            value="" if self.title_placeholder_only else editor_state.title,
+            placeholder="Untitled" if self.title_placeholder_only else "",
             id="library-note-title",
         )
         if self.preview:
@@ -488,8 +516,14 @@ class LibraryNotesCanvas(Vertical):
             classes="destination-section",
             markup=False,
         )
+        # LIB-19: relates this surface to Database mode and Files mode --
+        # see library_notes_canvas.py's _compose_list and
+        # library_file_notes_workspace.py's compose() for their own
+        # placement sentences.
         yield Static(
-            "Mirror notes between a folder on disk and the Library.",
+            "Mirror notes between a folder on disk and the Library — "
+            "unlike Files mode, which edits that folder directly without "
+            "mirroring it in.",
             id="library-notes-sync-purpose",
             markup=False,
         )

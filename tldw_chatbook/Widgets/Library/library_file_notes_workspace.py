@@ -368,6 +368,20 @@ class LibraryFileNotesWorkspace(Vertical):
         max-height: 1;
     }
 
+    /* LIB-19: placement sentence relating Files mode to Database/Sync --
+       same muted one-line treatment as #library-notes-database-purpose
+       and #library-notes-sync-purpose (library_notes_canvas.py /
+       css/components/_agentic_terminal.tcss). */
+    #file-notes-purpose {
+        width: 100%;
+        height: 1;
+        min-height: 1;
+        max-height: 1;
+        color: $text-muted;
+        text-wrap: nowrap;
+        overflow: hidden hidden;
+    }
+
     #file-notes-root-status {
         width: 1fr;
         height: 1;
@@ -749,6 +763,15 @@ class LibraryFileNotesWorkspace(Vertical):
         return self.query_one("#file-notes-editor-pane").display
 
     def compose(self) -> ComposeResult:
+        # LIB-19: Database mode, Files mode (this surface), and the Sync
+        # sub-canvas are three folder-notes concepts never related to each
+        # other anywhere in the UI -- one placement sentence per surface.
+        yield Static(
+            "Files mode edits a folder directly — unlike Sync, which "
+            "mirrors a folder into the Library.",
+            id="file-notes-purpose",
+            markup=False,
+        )
         with Horizontal(id="file-notes-root-row"):
             root_status = Static(
                 "Choose a notes folder.",

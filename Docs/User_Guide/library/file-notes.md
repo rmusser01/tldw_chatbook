@@ -6,7 +6,11 @@ File Notes edits ordinary files that live in a folder you choose on disk —
 what you see in the editor is exactly what's in the file, and saves write
 straight back to it. It is a separate system from [Database notes](notes.md):
 nothing here is stored in the Library database, there are no templates or
-autosync, and no "Use in Console" handoff. Reach for it when your notes are a
+autosync, and no "Use in Console" handoff. This is also the key difference
+from the Database side's Notes sync panel: Sync *mirrors* a folder's notes
+into the Library database (a copy lives in both places), while Files mode
+edits that folder directly with nothing mirrored anywhere. Reach for it
+when your notes are a
 folder of Markdown files (a wiki, a repo's docs, an Obsidian vault) and you
 want to read, edit, search, and — if the folder is a Git repository — stage
 and commit this session's edits, then publish that exact Chatbook-created
@@ -295,3 +299,6 @@ not available.
 *Verified against dev @ e3d0d2c9d — 2026-08-07 (TASK-2850: Files mode
 stays inside the Library rail/canvas frame instead of replacing the whole
 shell; Escape returns to Database)*
+*Verified against dev @ 6b38a13b8 — 2026-08-07 (task-2858 Task 4, LIB-19:
+Files mode's canvas now states in-app how it differs from Sync — edits the
+folder directly, versus Sync's mirror-into-the-Library behavior).*

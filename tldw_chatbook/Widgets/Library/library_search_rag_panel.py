@@ -8,7 +8,7 @@ from rich.markup import escape as escape_markup
 
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
-from textual.widgets import Button, Collapsible, Input, Static
+from textual.widgets import Button, Collapsible, Static
 from textual.widget import Widget
 
 from ...Chat.cost_display import build_provenance_line
@@ -34,6 +34,7 @@ from ...Library.library_rag_state import (
     library_rag_scope_summary,
     searching_status_line,
 )
+from .library_rail import SelectAllOnFocusingClickInput
 
 
 class LibrarySearchRagPanel(VerticalScroll):
@@ -58,7 +59,12 @@ class LibrarySearchRagPanel(VerticalScroll):
                 id="library-rag-mode-toggle",
                 tooltip=_mode_toggle_tooltip(self.state),
             )
-            yield Input(
+            # LIB-17: this box is prefilled with the last-run query on every
+            # rebuild -- SelectAllOnFocusingClickInput extends the rail
+            # search box's own click-select-all fix here so a click-then-
+            # type on a stale query replaces it instead of inserting at the
+            # click position.
+            yield SelectAllOnFocusingClickInput(
                 value=self.state.query_state.query,
                 placeholder="Ask or search Library sources",
                 id="library-rag-query-input",

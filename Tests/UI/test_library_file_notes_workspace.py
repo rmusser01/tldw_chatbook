@@ -290,6 +290,25 @@ def _root_transition_workspace(tmp_path: Path):
 
 
 @pytest.mark.asyncio
+async def test_files_mode_carries_a_placement_sentence_relating_it_to_sync(
+    tmp_path: Path,
+) -> None:
+    """LIB-19: Database mode, Files mode (this surface), and the Sync
+    sub-canvas were never related to each other anywhere in the UI --
+    Files mode's own placement sentence names Sync and states the actual
+    behavioral difference (edits the folder directly vs. mirrors it in)."""
+    replica = FileNotesReplica(":memory:")
+    workspace = LibraryFileNotesWorkspace(root=None, replica=replica)
+    async with _WorkspaceHarness(workspace).run_test() as pilot:
+        await pilot.pause()
+        purpose = _static_text(workspace, "#file-notes-purpose")
+        assert "Files mode" in purpose
+        assert "directly" in purpose
+        assert "Sync" in purpose
+    replica.close()
+
+
+@pytest.mark.asyncio
 async def test_empty_offline_and_persisted_root_states(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

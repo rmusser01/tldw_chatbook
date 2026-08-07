@@ -79,6 +79,8 @@ from ...Library.library_export_state import (
     LibraryExportFormState,
     build_library_export_form_state,
     default_export_name,
+    export_button_tooltip,
+    format_last_export_line,
     next_media_quality,
     normalize_export_destination,
 )
@@ -1590,6 +1592,13 @@ class LibraryScreen(BaseAppScreen):
         self._library_media_editing_analysis: bool = False
         self._library_media_content_query: str = ""
         self._library_media_content_match_index: int = 0
+        # LIB-13: "rendered" (Markdown, via the same render path Notes
+        # Preview uses) or "raw" (plain/highlighted text). Reseeded per
+        # item by ``_refresh_library_media_detail`` from the freshly built
+        # viewer state's ``is_markdown`` (rendered default for markdown
+        # media, raw for everything else); the toggle handlers below flip
+        # it in place without touching the default-selection logic.
+        self._library_media_content_mode: str = "raw"
         self._library_notes_view: str = "list"
         self._library_notes_select_mode: bool = False
         self._library_notes_row_selection = RowSelection("notes")
@@ -1731,6 +1740,49 @@ class LibraryScreen(BaseAppScreen):
         # autosave even though the user never typed anything. Re-armed via
         # ``call_after_refresh`` after every notes-editor (re)compose.
         self._library_note_editor_armed: bool = False
+        # LIB-14: display-only flag for a note created via "Blank note"
+        # that has not been touched YET -- cleared on the FIRST real edit
+        # (``_mark_library_note_dirty``) or an explicit Save. Drives ONLY
+        # the title Input's placeholder-vs-value rendering (see
+        # ``LibraryNotesCanvas``'s ``title_placeholder_only``): while this
+        # is set for the open note, the title Input shows empty with an
+        # "Untitled" placeholder instead of a literal editable "Untitled"
+        # value -- the fix for typing landing at the cursor's end and
+        # producing e.g. "UntitledAtlas follow-ups". Deliberately NOT used
+        # to decide GC-vs-save at exit (see ``_library_note_session_blank_id``
+        # below) -- clearing on the first keystroke is correct for "stop
+        # showing the placeholder" but wrong for "should this be GC'd",
+        # since a user can type then delete everything back to empty
+        # (review round 1, task-2858 T3): that sequence must still GC, so
+        # the GC decision needs a flag that survives edits.
+        self._library_note_pending_blank_gc_id: str | None = None
+        # LIB-14 (review round 1 fix): the id of a note created via "Blank
+        # note" THIS SESSION, tracked for the whole session regardless of
+        # intermediate edits -- unlike ``_library_note_pending_blank_gc_id``
+        # above, ``_mark_library_note_dirty`` never clears this. Read by
+        # ``_flush_library_note_save`` to decide GC-vs-save at exit: when
+        # the note being flushed IS this session's blank AND its FINAL live
+        # state (title/body/keywords, read fresh, never the stale detail)
+        # is empty, the row is GC'd even if it was typed into and emptied
+        # out again mid-session (dirty=True) -- covering "type then delete
+        # everything" the same as "never touched", which the narrower
+        # dirty-gated check above could not. A PRE-EXISTING note the user
+        # empties out is never a session blank (this is only ever set by
+        # the "Blank note" create path), so it still saves via the normal
+        # branch -- the scope guard is structural, not a runtime check.
+        # Cleared by: an explicit Save (the user's own "keep it" act,
+        # regardless of emptiness -- mirrors ``_library_note_pending_blank_
+        # gc_id``'s existing Save-press exemption), or a full editor
+        # reset/note switch (``_reset_library_note_editor_state``, the
+        # note-row-selection and note_id-deep-link switch sites).
+        # Deliberately NOT cleared by autosave persisting non-empty content
+        # mid-session: an autosave is not a deliberate "keep this" signal
+        # the way an explicit Save press is, so a session blank that got
+        # autosaved with real text and was then emptied out again before
+        # exit must still GC -- the row is session-created and finally
+        # empty, which is exactly the row AC#5 forbids, regardless of what
+        # happened to it in between.
+        self._library_note_session_blank_id: str | None = None
         # Notes sync panel state. Seeded from config lazily on first entry
         # into sync mode (``_ensure_library_notes_sync_config_loaded``), not
         # here in __init__, so tests/screens that never open the sync panel
@@ -1854,6 +1906,18 @@ class LibraryScreen(BaseAppScreen):
         # it yet in this task -- the Cancel button and navigate-away wiring
         # land in Task 5.
         self._library_export_cancel_event: threading.Event | None = None
+        # task-2858 AC#3 (LIB-12): the last successful export's destination
+        # + completion timestamp, for the durable "Last export: ..."
+        # receipt. Deliberately NOT touched by
+        # ``_reset_library_export_transient_state`` -- every OTHER export
+        # field resets on every canvas entry (a fresh form each visit is
+        # correct), but the receipt must survive leaving and re-entering
+        # the canvas within the session. Also round-tripped through
+        # ``save_state``/``restore_state`` so it survives a full navigate-
+        # away-and-back to Library too (the "persist further" half of the
+        # AC, via that already-existing seam).
+        self._library_export_last_path: str = ""
+        self._library_export_last_at: float | None = None
         # task-2856: armed by every "enter/return to a list canvas" seam
         # (``_arm_library_list_entry_focus``) right before it schedules its
         # OWN ``call_after_refresh(self._focus_library_list_entry)``. That
@@ -1884,13 +1948,21 @@ class LibraryScreen(BaseAppScreen):
         # prior timer before scheduling a new one -- see both methods.
         self._library_list_entry_focus_timer: Timer | None = None
 
-    def _register_footer_shortcuts(self) -> None:
-        """Register Library shortcuts via BaseAppScreen's persisting API.
+    def _library_footer_shortcuts_for_current_state(
+        self,
+    ) -> tuple[tuple[str, str], ...]:
+        """The per-mode shortcut set for whichever Library surface is live.
 
-        Persistence matters here: the destination-switch failsafes call
-        ``screen.refresh(recompose=True)``, which replaces the footer widget;
-        the registration must survive that.
-        """
+        Shared by ``_register_footer_shortcuts`` (the footer) and
+        ``action_show_workbench_help`` (F1) -- task-2858 review (Important
+        #1): before this extraction, F1 only listed check_action-filtered
+        ``BINDINGS`` entries, but `/`, the landing's `i`/`n` hub
+        accelerators, and F6 are ``on_key``/app-global wiring, never
+        ``Binding``s, so F1 never learned about them and rendered an empty
+        panel on the landing (and every other on_key-only surface). Both
+        call sites now read the exact same selection, so the footer and F1
+        can never disagree about what is genuinely active.
+
         # task-420: the "u"/evidence actions hard-gate on the Search/RAG
         # row, so advertising them screen-wide made them dead shortcuts
         # everywhere else -- they register only where they work,
@@ -1911,21 +1983,17 @@ class LibraryScreen(BaseAppScreen):
         # back one level (see ``action_library_media_viewer_back``), not to
         # the list, so it gets its own honest hint instead of inheriting
         # the plain viewer's "back to list" (see
-        # ``_library_media_viewer_substate_active``). This method is ALSO
-        # called from ``compose_content`` on every recompose (not just at
-        # the transition call sites above), so a sub-view entered from ANY
-        # of the editor/viewer's several call sites (see
-        # ``_library_note_editor_active`` etc.) can never leave the footer
-        # stale the way an easily-missed per-call-site registration could.
+        # ``_library_media_viewer_substate_active``).
+        """
         if self._library_selected_row_id == LIBRARY_ROW_BROWSE_SEARCH:
-            shortcuts = self.LIBRARY_SHORTCUTS
-        elif not self._library_selected_row_id:
-            shortcuts = self.LIBRARY_LANDING_SHORTCUTS
-        elif self._file_notes_active():
-            shortcuts = self.LIBRARY_NOTES_FILES_SHORTCUTS
-        elif self._library_media_viewer_substate_active():
-            shortcuts = self.LIBRARY_MEDIA_SUBSTATE_BACK_SHORTCUTS
-        elif (
+            return self.LIBRARY_SHORTCUTS
+        if not self._library_selected_row_id:
+            return self.LIBRARY_LANDING_SHORTCUTS
+        if self._file_notes_active():
+            return self.LIBRARY_NOTES_FILES_SHORTCUTS
+        if self._library_media_viewer_substate_active():
+            return self.LIBRARY_MEDIA_SUBSTATE_BACK_SHORTCUTS
+        if (
             (
                 self._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA
                 and self._library_media_view == "viewer"
@@ -1933,11 +2001,24 @@ class LibraryScreen(BaseAppScreen):
             or self._library_note_editor_active()
             or self._library_prompt_editor_active()
         ):
-            shortcuts = self.LIBRARY_DETAIL_BACK_SHORTCUTS
-        elif self._library_list_canvas_showing_list():
-            shortcuts = self.LIBRARY_LIST_SHORTCUTS
-        else:
-            shortcuts = self.LIBRARY_GENERAL_SHORTCUTS
+            return self.LIBRARY_DETAIL_BACK_SHORTCUTS
+        if self._library_list_canvas_showing_list():
+            return self.LIBRARY_LIST_SHORTCUTS
+        return self.LIBRARY_GENERAL_SHORTCUTS
+
+    def _register_footer_shortcuts(self) -> None:
+        """Register Library shortcuts via BaseAppScreen's persisting API.
+
+        Persistence matters here: the destination-switch failsafes call
+        ``screen.refresh(recompose=True)``, which replaces the footer widget;
+        the registration must survive that. This method is ALSO called from
+        ``compose_content`` on every recompose (not just at the transition
+        call sites elsewhere in this class), so a sub-view entered from ANY
+        of the editor/viewer's several call sites (see
+        ``_library_note_editor_active`` etc.) can never leave the footer
+        stale the way an easily-missed per-call-site registration could.
+        """
+        shortcuts = self._library_footer_shortcuts_for_current_state()
         self.register_footer_shortcuts(source="library", shortcuts=shortcuts)
 
     def on_key(self, event: Key) -> None:
@@ -2258,6 +2339,11 @@ class LibraryScreen(BaseAppScreen):
         state["library_conversation_query"] = getattr(
             self, "_library_conversation_query", ""
         )
+        # task-2858 AC#3 (LIB-12): extend the receipt's durability past a
+        # full navigate-away-and-back, not just within-instance canvas
+        # switches (see the field's own ``__init__`` comment).
+        state["library_export_last_path"] = self._library_export_last_path
+        state["library_export_last_at"] = self._library_export_last_at
         return state
 
     def restore_state(self, state: dict[str, Any]) -> None:
@@ -2397,6 +2483,20 @@ class LibraryScreen(BaseAppScreen):
             conversation_query if isinstance(conversation_query, str) else "",
             "",
             max_length=200,
+        )
+        # task-2858 AC#3 (LIB-12): restore the durable export receipt
+        # (see the field's ``__init__`` comment) -- a foreign/corrupted
+        # dict degrades to "no receipt yet" rather than raising.
+        last_export_path = state.get("library_export_last_path")
+        self._library_export_last_path = (
+            last_export_path if isinstance(last_export_path, str) else ""
+        )
+        last_export_at = state.get("library_export_last_at")
+        self._library_export_last_at = (
+            float(last_export_at)
+            if isinstance(last_export_at, (int, float))
+            and not isinstance(last_export_at, bool)
+            else None
         )
 
     def _file_notes_active(self) -> bool:
@@ -2839,6 +2939,12 @@ class LibraryScreen(BaseAppScreen):
             self._library_note_preview = False
             self._library_note_preview_snapshot = None
             self._library_note_editor_armed = False
+            # LIB-14: a deep link always lands on a note by explicit id
+            # (never "Blank note"), so neither flag ever applies to it --
+            # clear both defensively in case a still-open session blank
+            # from a DIFFERENT note is left behind by this jump.
+            self._library_note_pending_blank_gc_id = None
+            self._library_note_session_blank_id = None
             if self.is_mounted:
                 self.run_worker(
                     self._refresh_library_note_detail(note_id),
@@ -4848,6 +4954,7 @@ class LibraryScreen(BaseAppScreen):
                             editing_analysis=self._library_media_editing_analysis,
                             content_query=self._library_media_content_query,
                             content_match_index=self._library_media_content_match_index,
+                            content_mode=self._library_media_content_mode,
                             id="library-media-viewer",
                         )
                 elif shell.canvas_kind == "media":
@@ -4916,6 +5023,11 @@ class LibraryScreen(BaseAppScreen):
                             editor_state=editor_state,
                             confirming_delete=self._library_note_confirming_delete,
                             preview=self._library_note_preview,
+                            title_placeholder_only=(
+                                self._library_note_pending_blank_gc_id is not None
+                                and self._library_note_pending_blank_gc_id
+                                == self._selected_note_id
+                            ),
                             id="library-notes-canvas",
                         )
                 elif (
@@ -5507,6 +5619,18 @@ class LibraryScreen(BaseAppScreen):
             return
         self._library_media_detail = detail if isinstance(detail, Mapping) else None
         self._library_media_highlights = highlights
+        # LIB-13: default the content view per item, from the just-fetched
+        # detail's own is_markdown -- computed here (once, at load) rather
+        # than on every recompose, so a later Rendered<->Raw toggle press
+        # is never silently reset back to the default by an unrelated
+        # recompose (mirrors the note editor's ``_library_note_preview``
+        # not being re-derived on every render).
+        self._library_media_content_mode = (
+            "rendered"
+            if isinstance(self._library_media_detail, Mapping)
+            and build_library_media_viewer_state(self._library_media_detail).is_markdown
+            else "raw"
+        )
         if (
             self._library_media_detail is None
             and media_id == self._selected_media_id
@@ -5730,6 +5854,15 @@ class LibraryScreen(BaseAppScreen):
         self._library_note_preview = False
         self._library_note_preview_snapshot = None
         self._library_note_editor_armed = False
+        # Defense in depth: the normal exit path is ``_flush_library_note_
+        # save`` (which GCs a still-pending blank note and clears both
+        # flags itself, before this reset ever runs); this catches the
+        # other "note is gone" fallback paths that reach this reset
+        # without going through that flush first, and every full editor
+        # exit generally, so neither flag can outlive the editor session
+        # it was armed for.
+        self._library_note_pending_blank_gc_id = None
+        self._library_note_session_blank_id = None
         if self._library_notes_autosave_timer is not None:
             self._library_notes_autosave_timer.stop()
             self._library_notes_autosave_timer = None
@@ -6027,15 +6160,28 @@ class LibraryScreen(BaseAppScreen):
             empty_line = self.query_one("#library-export-empty-line", Static)
             empty_line.update(state.empty_scope_line)
             empty_line.display = bool(state.empty_scope_line)
-            self.query_one(
-                "#library-export-submit", Button
-            ).disabled = not state.export_enabled
+            # task-2858 AC#3 (LIB-11): the tooltip flips in place with
+            # `disabled`, same F-018 discipline as the select-mode
+            # toolbar's export/delete buttons -- otherwise the compose-
+            # time tooltip goes stale the moment counts land and this
+            # patcher is the only thing that updates `disabled` here.
+            submit_button = self.query_one("#library-export-submit", Button)
+            submit_button.disabled = not state.export_enabled
+            submit_button.tooltip = export_button_tooltip(state)
         except (NoMatches, QueryError):
             pass
 
     def _build_library_export_state(self) -> LibraryExportFormState:
         """Build the export canvas's full display state from screen fields."""
         form = self._library_export_form
+        last_export_line = (
+            format_last_export_line(
+                self._library_export_last_path, self._library_export_last_at
+            )
+            if self._library_export_last_path
+            and self._library_export_last_at is not None
+            else ""
+        )
         return build_library_export_form_state(
             scope=self._library_export_scope,
             counts=self._library_export_counts,
@@ -6047,6 +6193,7 @@ class LibraryScreen(BaseAppScreen):
             running=self._library_export_running,
             status_line=self._library_export_status,
             error_line=self._library_export_error,
+            last_export_line=last_export_line,
         )
 
     # ----- Export canvas: execution (Task 3) ------------------------------
@@ -6548,6 +6695,19 @@ class LibraryScreen(BaseAppScreen):
         away from (see ``_library_export_run_id``'s docstring) must not
         stomp ``_library_export_running``/``_error``/``_status`` or the
         canvas DOM out from under whatever the user is now looking at.
+
+        The task-2858 AC#3 (LIB-12) receipt fields
+        (``_library_export_last_path``/``_last_at``) are set here too,
+        BEFORE the staleness guard, for the identical reason the
+        notifications above are unconditional: the zip genuinely landed on
+        disk regardless of which run/canvas is currently displayed. The
+        canvas DOM patch that renders the new receipt text still only
+        happens for the live run (inside
+        ``_update_library_export_canvas_after_run``, guarded below) -- a
+        superseded run's receipt becomes visible the next time this
+        screen's export state is rebuilt (e.g. the next canvas entry or
+        the next completed run), never retroactively rewriting what the
+        user is looking at right now.
         """
         notify_message = self._build_library_export_success_message(
             path, dependency_info, message
@@ -6561,6 +6721,8 @@ class LibraryScreen(BaseAppScreen):
                     "appear under Artifacts.",
                     severity="warning",
                 )
+        self._library_export_last_path = str(path)
+        self._library_export_last_at = time.time()
         if run_id != self._library_export_run_id:
             return
         self._library_export_running = False
@@ -6625,8 +6787,9 @@ class LibraryScreen(BaseAppScreen):
         name/description ``Input`` while waiting (nothing disables those
         fields during ``running``) -- a recompose on completion would
         destroy and rebuild that ``Input`` out from under them, silently
-        dropping keyboard focus. Only the status line, the error line, and
-        the Export button's disabled gate can change here; both lines are
+        dropping keyboard focus. Only the status line, the error line, the
+        task-2858 AC#3 (LIB-12) receipt line, and the Export button's
+        disabled/tooltip gate can change here; all three lines are
         unconditionally mounted by ``LibraryExportCanvas.compose`` (display-
         toggled, never conditionally yielded) specifically so this in-place
         update always finds them, mirroring the empty-scope helper's own
@@ -6650,9 +6813,16 @@ class LibraryScreen(BaseAppScreen):
             error_widget = self.query_one("#library-export-error-line", Static)
             error_widget.update(state.error_line)
             error_widget.display = bool(state.error_line)
-            self.query_one(
-                "#library-export-submit", Button
-            ).disabled = not state.export_enabled
+            # task-2858 AC#3 (LIB-12): the durable receipt -- rendered from
+            # ``_library_export_last_path``/``_last_at``, set by
+            # ``_apply_library_export_success`` just before this runs on a
+            # genuine success completion.
+            last_export_widget = self.query_one("#library-export-last-line", Static)
+            last_export_widget.update(state.last_export_line)
+            last_export_widget.display = bool(state.last_export_line)
+            submit_button = self.query_one("#library-export-submit", Button)
+            submit_button.disabled = not state.export_enabled
+            submit_button.tooltip = export_button_tooltip(state)
             self.query_one("#library-export-cancel", Button).display = bool(
                 state.running
             )
@@ -7227,6 +7397,17 @@ class LibraryScreen(BaseAppScreen):
         if not self._library_note_editor_armed:
             return
         self._library_note_dirty = True
+        # LIB-14: a real edit (this is only reached once armed, i.e. never
+        # for the mount-time phantom Input/TextArea.Changed) stops the
+        # title Input from showing the "Untitled" placeholder on the next
+        # recompose -- no recompose is forced here, matching this method's
+        # existing silent (no per-keystroke recompose) discipline; the
+        # mounted Input already shows whatever the user is typing
+        # regardless of this flag. Deliberately does NOT clear
+        # ``_library_note_session_blank_id`` -- that flag's whole purpose
+        # is to survive edits so a later "typed then deleted everything"
+        # exit still GCs (see that flag's own docstring).
+        self._library_note_pending_blank_gc_id = None
         if self._library_note_autosave_state == "conflict":
             return
         if self._library_notes_autosave_timer is not None:
@@ -7279,6 +7460,13 @@ class LibraryScreen(BaseAppScreen):
     def handle_library_note_save(self, event: Button.Pressed) -> None:
         """Explicitly save the open note, bypassing the autosave debounce."""
         event.stop()
+        # LIB-14: an explicit Save is the user's own deliberate "keep it"
+        # act, even if the note is still blank -- never GC a note the user
+        # just told the app to save (unlike autosave, which is not a
+        # deliberate signal -- see ``_library_note_session_blank_id``'s
+        # docstring for why autosave alone must NOT clear it).
+        self._library_note_pending_blank_gc_id = None
+        self._library_note_session_blank_id = None
         if self._library_notes_autosave_timer is not None:
             self._library_notes_autosave_timer.stop()
             self._library_notes_autosave_timer = None
@@ -7356,7 +7544,13 @@ class LibraryScreen(BaseAppScreen):
             return
         raw_title, raw_content, raw_keywords_text = fields
 
-        title = self._sanitize_media_field(raw_title, max_length=300)
+        # LIB-14: the title Input can now render genuinely empty (see
+        # ``title_placeholder_only``) for a pristine "Blank note" the user
+        # tabs/clicks past without typing a title -- a note otherwise
+        # always has a non-blank title, so an empty save falls back to the
+        # same "Untitled" default the create seam itself uses, rather than
+        # persisting a blank one.
+        title = self._sanitize_media_field(raw_title, max_length=300) or "Untitled"
         content = self._sanitize_note_content(
             raw_content, max_length=LIBRARY_NOTE_CONTENT_MAX_CHARS
         )
@@ -7505,6 +7699,19 @@ class LibraryScreen(BaseAppScreen):
         flag, so the re-check below usually short-circuits; the inline save
         only runs when edits genuinely remain, and then against the bumped
         version.
+
+        LIB-14 (AC#5): this is also the single choke point every editor-exit
+        path already awaits before tearing the editor down, so it doubles
+        as the GC point for this session's "Blank note" whenever it ends
+        up empty -- see ``_gc_pending_blank_note``. The GC check runs
+        BEFORE the dirty check below and is gated on final live emptiness,
+        not on ``_library_note_dirty``, so it covers both a note that was
+        never touched (never dirty) AND one that was typed into and then
+        emptied back out again (dirty, but finally empty) -- the latter
+        being the case the first version of this fix (dirty-gated) missed.
+        A real in-progress edit that leaves genuine content behind is
+        never at risk of being mistaken for GC-eligible, since the
+        emptiness check reads the live fields, not the dirty flag.
         """
         if self._library_notes_autosave_timer is not None:
             self._library_notes_autosave_timer.stop()
@@ -7517,9 +7724,134 @@ class LibraryScreen(BaseAppScreen):
                     logger.opt(exception=True).debug(
                         "In-flight note-save worker errored while flushing; continuing.",
                     )
+        # LIB-14 (review round 1 fix, task-2858 T3): decide GC-vs-save on
+        # this session's blank note (if any is open) from its FINAL live
+        # state, not from ``_library_note_dirty`` -- a dirty-gated check
+        # would route "typed then deleted everything back to empty"
+        # through the save branch below, persisting exactly the stray
+        # "Untitled" row AC#5 forbids. Reading live fields (never the
+        # stale ``_library_note_detail``) covers both "never touched"
+        # (fields are trivially empty) and "typed then emptied" (fields
+        # are empty again after edits) with the ONE check -- no separate
+        # not-dirty branch is needed any more. The scope guard is
+        # structural: ``_library_note_session_blank_id`` is only ever set
+        # by the "Blank note" create path, so a pre-existing note that the
+        # user empties out never matches here and always falls through to
+        # the normal save branch.
+        if (
+            self._library_note_session_blank_id
+            and self._library_note_session_blank_id == self._selected_note_id
+        ):
+            fields = self._read_library_note_editor_fields()
+            if fields is not None:
+                raw_title, raw_content, raw_keywords_text = fields
+                # "Effectively empty" = title, body, AND keywords all blank
+                # -- keywords count too (a user-provided tag on an
+                # otherwise-blank note is still user content worth
+                # keeping, not noise). The title Input never actually
+                # holds the literal string "Untitled" unless the user
+                # typed it themselves (LIB-14a renders it as an empty
+                # value + a placeholder, never a real value) -- so a
+                # plain ``.strip()`` emptiness check already captures
+                # "still showing the placeholder" with no separate
+                # "Untitled"-string special case needed.
+                if (
+                    not raw_title.strip()
+                    and not raw_content.strip()
+                    and not raw_keywords_text.strip()
+                ):
+                    await self._gc_pending_blank_note()
+                    return
         if not self._library_note_dirty:
             return
         await self._save_library_note(explicit=False)
+
+    async def _gc_pending_blank_note(self) -> None:
+        """Delete this session's now-empty "Blank note" row before it is left behind (LIB-14).
+
+        "Blank note" still commits its DB row immediately on click (the
+        create-note seam has no create-on-first-edit branch -- see the
+        AC#5 decision recorded on task-2858); this is the smaller-diff
+        alternative the task allows instead: whenever the editor is left
+        with this session's blank note in an effectively-empty final state
+        (title/body/keywords all blank -- see the caller,
+        ``_flush_library_note_save``, which covers both "never touched"
+        and "typed then deleted everything"), the row is quietly removed
+        here rather than surviving as a permanent literal "Untitled" row
+        the user has to find and delete by hand.
+
+        Reads ``_library_note_session_blank_id`` (not the narrower,
+        edit-cleared ``_library_note_pending_blank_gc_id``) so this still
+        fires after the note was typed into and then emptied out again --
+        which, unlike the "never touched" case, may well have gone
+        through one or more real autosaves in between (deliberately: see
+        that flag's own docstring on why autosave alone must not exempt a
+        session blank from GC). Each of those autosaves bumps the row's
+        real DB version, so the delete below sends
+        ``self._library_note_version`` (the screen's own up-to-date
+        tracking of it, updated by every successful save) rather than a
+        hardcoded 1 -- an earlier version of this fix hardcoded 1 and the
+        delete silently failed on a version mismatch whenever a
+        mid-session autosave had already bumped the row past v1 (found by
+        the dedicated autosave-then-empty test). Falls back to 1 only for
+        the genuinely-never-saved case, where ``_library_note_version`` is
+        still ``None``. Best-effort: any failure (including a version
+        conflict from a still-possible concurrent EXTERNAL change) is
+        swallowed -- GC must never block the exit it runs inside, and the
+        worst case on failure is the pre-existing behavior (the row
+        survives), not a new regression. On success, kicks the same full
+        local-source snapshot reload the create/delete flows already use,
+        so the notes list/rail
+        count drop the now-gone row on the next recompose instead of a
+        stale one lingering in the cached snapshot -- exclusive within its
+        own worker group (``library_source_snapshot``), so a caller that
+        also queues its own refresh right after this returns (e.g.
+        ``_exit_library_note_editor_guarded``) simply supersedes this one
+        rather than running both.
+
+        Also clears ``_library_note_dirty`` unconditionally (review round
+        1 fix): the caller, ``_flush_library_note_save``, is reached via
+        the "typed then deleted everything" path with ``_library_note_
+        dirty`` still ``True`` -- every exit seam (e.g.
+        ``_exit_library_note_editor_guarded``) vetoes on that flag, so
+        without clearing it here a successful GC would still leave the
+        editor stuck open. Cleared regardless of whether the delete call
+        itself succeeds, matching "GC must never block the exit it runs
+        inside": on the rare failure path the row survives with its
+        pre-exit content (the emptied edit is not separately persisted
+        either), but the user is never trapped in the editor over it.
+        """
+        note_id = self._library_note_session_blank_id
+        # The row's current version -- NOT hardcoded to 1 -- since a
+        # mid-session autosave (deliberately still possible before GC;
+        # see the docstring above) may already have bumped it past its
+        # initial create-time version.
+        current_version = self._library_note_version or 1
+        self._library_note_session_blank_id = None
+        self._library_note_pending_blank_gc_id = None
+        self._library_note_dirty = False
+        if not note_id:
+            return
+        service = getattr(self.app_instance, "notes_scope_service", None)
+        delete_note = getattr(service, "delete_note", None)
+        if not callable(delete_note):
+            return
+        try:
+            deleted = await self._run_library_service_call(
+                delete_note,
+                scope="local_note",
+                note_id=note_id,
+                version=current_version,
+                user_id=self._library_notes_user_id(),
+                isolate_in_worker=True,
+            )
+        except Exception:
+            logger.opt(exception=True).debug(
+                f"Could not GC untouched blank note {note_id!r}; leaving it in place."
+            )
+            return
+        if deleted:
+            self._refresh_local_source_snapshot()
 
     async def _resolve_library_note_conflict(self, *, overwrite: bool) -> None:
         """Resolve a shown save conflict via the Overwrite or Reload action.
@@ -8417,6 +8749,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_media_editing_analysis = False
         self._library_media_content_query = ""
         self._library_media_content_match_index = 0
+        self._library_media_content_mode = "raw"
         self._library_notes_filter = ""
         self._library_notes_filter_records = None
         self._reset_library_note_editor_state()
@@ -8947,6 +9280,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_media_editing_analysis = False
         self._library_media_content_query = ""
         self._library_media_content_match_index = 0
+        self._library_media_content_mode = "raw"
         if media_id:
             # Exclusive in its own group so rapidly switching rows cancels the
             # previous in-flight detail fetch instead of letting a slower older
@@ -10495,8 +10829,8 @@ class LibraryScreen(BaseAppScreen):
         )
 
     def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
-        """Gate the skill-editor, Files-mode, and list/detail Escape bindings
-        (task-424/2850/2856).
+        """Gate the skill-editor, Files-mode, list/detail Escape, and
+        Search/RAG evidence-card bindings (task-424/2850/2856/2858).
 
         Returning ``False`` deactivates the binding entirely, so Escape /
         Ctrl+S behave as if unbound anywhere else on the Library screen.
@@ -10504,6 +10838,18 @@ class LibraryScreen(BaseAppScreen):
         tries them in order and stops at the first whose ``check_action``
         passes, so each one returning ``False`` outside its own context is
         what lets the next fall through untouched.
+
+        task-2858 AC#2 (LIB-09): the three Search/RAG evidence-card
+        actions (``u``/``enter``/``o``) had NO gate here before this task
+        -- their own action bodies already no-op outside their context
+        (see ``action_library_rag_use_in_console`` and
+        ``_focused_library_rag_result_card_index``'s callers), but
+        ``check_action`` never reflected that, so ``action_show_
+        workbench_help``'s ``BINDINGS`` filter (below) would otherwise
+        keep advertising ``u`` on every non-Search canvas -- the exact
+        F1 contamination this task closes. Every action reachable from
+        ``BINDINGS`` now has an explicit branch here; see
+        ``test_library_screen_bindings_are_all_gated_or_universal``.
         """
         if action in ("library_skill_save", "library_skill_back"):
             return self._library_skill_editor_active()
@@ -10520,7 +10866,121 @@ class LibraryScreen(BaseAppScreen):
             return self._library_prompt_editor_active()
         if action == "library_list_focus_rail":
             return self._library_list_canvas_showing_list()
+        if action == "library_rag_use_in_console":
+            # Mirrors action_library_rag_use_in_console's own gate exactly
+            # (that method also accepts no focused card -- "u" stages
+            # whatever evidence is already selected -- so this cannot be
+            # narrowed to the focused-card predicate below without making
+            # the gate stricter than the action itself).
+            return self._library_selected_row_id == LIBRARY_ROW_BROWSE_SEARCH
+        if action in (
+            "library_rag_result_card_select",
+            "library_rag_result_card_open",
+        ):
+            return self._focused_library_rag_result_card_index() is not None
         return True
+
+    def action_show_workbench_help(self) -> None:
+        """F1 help: the live per-mode footer set plus any ``check_action``-
+        gated ``BINDINGS`` extras (task-2858 AC#2/LIB-09; review Important
+        #1).
+
+        Without this override, ``app.py``'s generic fallback
+        (``App._show_generic_screen_help``, used by any screen that
+        declares no ``action_show_workbench_help`` of its own) flattens
+        this screen's raw ``BINDINGS`` list unconditionally -- it never
+        consults ``check_action`` at all, so it kept advertising the
+        skill editor's Ctrl+S/Escape, the four other context-gated
+        Escape bindings, and the Search/RAG-only ``u``/Enter/``o``
+        evidence-card keys on every OTHER Library surface too. This
+        reproduced exactly the original finding: F1 on the Media canvas
+        was titled "LibraryScreen Shortcuts" and listed "ctrl+s: Save
+        skill"/"escape: Back to skills list" while browsing media, where
+        neither key does anything.
+
+        Filtering ``BINDINGS`` through ``check_action`` alone was not
+        enough, though: the keys the footer actually teaches on most
+        Library surfaces (``/`` focus-search, the landing's ``i``/``n``
+        hub accelerators, F6 pane-cycle -- ``LIBRARY_LANDING_SHORTCUTS``
+        and its five siblings) are ``on_key``/app-global wiring, never
+        ``Binding``s, so they never reached this filter and F1 rendered
+        an EMPTY panel (title + Close button only) on the landing and
+        every other on_key-only surface. This now starts from
+        ``_library_footer_shortcuts_for_current_state`` -- the exact
+        per-mode set ``_register_footer_shortcuts`` selects for the
+        footer, so F1 and the footer can never disagree -- and appends
+        whatever ``check_action``-gated ``BINDINGS`` extras are active
+        right now, mirroring the keep/drop rule Textual's own
+        ``Screen.active_bindings`` uses for footer/key resolution.
+        Deliberately NOT run through ``AppFooterStatus``'s reserved-
+        global-key filter (the footer drops F6 there because the global
+        hint cluster already covers it, and further compacts that
+        cluster below F6 at narrow widths -- LIB-18): F1 is the
+        discoverability fallback for exactly that narrow-width case, so
+        it must show F6 even where the footer currently cannot
+        (``SettingsScreen.action_show_workbench_help`` reads its own
+        per-category shortcuts the same direct way, bypassing the footer
+        widget entirely).
+        """
+        from ..Workbench.help import (  # noqa: PLC0415 -- lazy: only needed on F1; keeps the help panel off the module import path
+            WorkbenchHelpPanel,
+            WorkbenchHelpState,
+        )
+
+        footer_shortcuts = self._library_footer_shortcuts_for_current_state()
+        seen_keys = {key for key, _description in footer_shortcuts}
+        binding_extras = tuple(
+            pair
+            for pair in self._active_library_binding_shortcuts()
+            if pair[0] not in seen_keys
+        )
+        state = WorkbenchHelpState(
+            route_id="library",
+            title="Library Shortcuts",
+            shortcuts=footer_shortcuts + binding_extras,
+        )
+        self.app.push_screen(WorkbenchHelpPanel(state))
+
+    def _active_library_binding_shortcuts(self) -> tuple[tuple[str, str], ...]:
+        """Filter ``BINDINGS`` through ``check_action`` for the F1 panel.
+
+        Same keep/drop rule ``Screen.active_bindings`` uses: a
+        ``check_action`` result of ``False`` means genuinely inactive
+        right now (dropped); ``True`` or ``None`` both mean "keep it"
+        (``None`` is what ``check_action``'s own fallback branch would
+        return for an action with no explicit gate -- none remain on
+        this screen after task-2858, see
+        ``test_library_screen_bindings_are_all_gated_or_universal``, but
+        the same-as-Textual semantics are kept here defensively).
+        """
+        pairs: list[tuple[str, str]] = []
+        for entry in self.BINDINGS:
+            if isinstance(entry, Binding):
+                key, action, description = entry.key, entry.action, entry.description
+            elif isinstance(entry, (tuple, list)) and entry:
+                key = str(entry[0])
+                action = str(entry[1]) if len(entry) > 1 else ""
+                description = str(entry[2]) if len(entry) > 2 else ""
+            else:
+                continue
+            if not action:
+                continue
+            try:
+                gate_state = self.check_action(action, ())
+            except Exception:
+                # A screen-wide help panel must never crash the app over a
+                # single misbehaving gate -- fail open (keep the entry)
+                # rather than hide a key silently.
+                logger.debug(
+                    f"check_action raised for Library binding action "
+                    f"{action!r}; keeping it in the F1 panel.",
+                    exc_info=True,
+                )
+                gate_state = True
+            if gate_state is False:
+                continue
+            pairs.append((key, description))
+        return tuple(pairs)
 
     def action_library_skill_save(self) -> None:
         """Ctrl+S: save the open skill from anywhere in the editor (task-424)."""
@@ -15865,6 +16325,15 @@ class LibraryScreen(BaseAppScreen):
         self._library_note_preview = False
         self._library_note_preview_snapshot = None
         self._library_note_editor_armed = False
+        # LIB-14: switching to a (possibly different) note by row press --
+        # the flush above already resolved the PREVIOUS note's own
+        # save-vs-GC decision by id equality before this reassigns
+        # ``_selected_note_id``, but clear both flags explicitly here too
+        # (rather than relying solely on the id-equality guard elsewhere
+        # never matching a future note) so neither can read as "this note"
+        # for whatever gets opened next.
+        self._library_note_pending_blank_gc_id = None
+        self._library_note_session_blank_id = None
         if note_id:
             # Exclusive in its own group so rapidly switching rows cancels the
             # previous in-flight detail fetch instead of letting a slower older
@@ -15965,6 +16434,12 @@ class LibraryScreen(BaseAppScreen):
         edit saved during this editor visit from the DB's own truth -- the
         immediate recompose below renders the save-time in-memory patch
         (see ``_save_library_note``), and the refetch then confirms it.
+        When the flush above just GC'd a now-empty session blank
+        (``_gc_pending_blank_note``), that already queued the identical
+        refetch on success -- harmless, not a double-fetch: both calls
+        target the same ``@work(exclusive=True, group="library_source_
+        snapshot")`` worker, so this second call simply supersedes
+        (cancels-and-restarts) the first rather than running both.
 
         Returns:
             ``True`` when the editor was exited; ``False`` on a dirty veto.
@@ -16008,6 +16483,14 @@ class LibraryScreen(BaseAppScreen):
             event: Button press event emitted by the editor's "Delete" action.
         """
         event.stop()
+        # LIB-14: the user is now explicitly managing this note's deletion
+        # themselves via the normal confirm-then-delete flow below -- clear
+        # any pending blank-note GC state first so ``_flush_library_note_
+        # save`` (called next) does not delete it out from under that flow
+        # (which would otherwise make the confirm button's own delete call
+        # fail against an already-gone row and surface a spurious warning).
+        self._library_note_pending_blank_gc_id = None
+        self._library_note_session_blank_id = None
         await self._flush_library_note_save()
         if self._library_note_dirty:
             return
@@ -16185,7 +16668,7 @@ class LibraryScreen(BaseAppScreen):
         """
         event.stop()
         self.run_worker(
-            self._create_library_note(title="Untitled", content=""),
+            self._create_library_note(title="Untitled", content="", blank=True),
             exclusive=True,
             group="library_note_create",
         )
@@ -16277,7 +16760,12 @@ class LibraryScreen(BaseAppScreen):
         return title, content
 
     async def _create_library_note(
-        self, *, title: str, content: str, keywords: list[str] | None = None
+        self,
+        *,
+        title: str,
+        content: str,
+        keywords: list[str] | None = None,
+        blank: bool = False,
     ) -> None:
         """Create a new local note from the in-canvas Create view and open it.
 
@@ -16303,6 +16791,15 @@ class LibraryScreen(BaseAppScreen):
         Args:
             title: The note's title (already resolved; not yet sanitized).
             content: The note's body (already resolved; not yet sanitized).
+            blank: Whether this is the "Blank note" creation path (as
+                opposed to a template row, which already carries real
+                content the user likely wants kept even unedited). LIB-14:
+                the row still commits immediately either way (this seam has
+                no create-on-first-edit branch -- see the AC#5 decision in
+                ``_flush_library_note_save``/``_gc_pending_blank_note``),
+                but a blank-note row that is never touched is armed for
+                quiet deletion on exit instead of surviving as a permanent
+                literal "Untitled" row.
         """
         sanitized_title = self._sanitize_media_field(title, max_length=300)
         sanitized_content = self._sanitize_note_content(
@@ -16353,6 +16850,8 @@ class LibraryScreen(BaseAppScreen):
         self._library_note_preview = False
         self._library_note_preview_snapshot = None
         self._library_note_editor_armed = False
+        self._library_note_pending_blank_gc_id = created_id if blank else None
+        self._library_note_session_blank_id = created_id if blank else None
         self._library_notes_filter = ""
         self._library_notes_filter_records = None
         # Reuses the same full local-source reload the initial mount load
@@ -16405,6 +16904,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_media_editing_analysis = False
         self._library_media_content_query = ""
         self._library_media_content_match_index = 0
+        self._library_media_content_mode = "raw"
         self.refresh(recompose=True)
         # task-2856 AC1: every "back to list" exit re-focuses the list's
         # first row so Up/Down/Enter work immediately.
@@ -16728,6 +17228,7 @@ class LibraryScreen(BaseAppScreen):
             self._library_media_editing_analysis = False
             self._library_media_content_query = ""
             self._library_media_content_match_index = 0
+            self._library_media_content_mode = "raw"
             self._selected_media_id = ""
         if self.is_mounted:
             self.refresh(recompose=True)
@@ -16955,6 +17456,44 @@ class LibraryScreen(BaseAppScreen):
             self.query_one("#library-media-content-search", Input).focus()
         except (NoMatches, QueryError):
             pass
+
+    @on(Button.Pressed, "#library-media-content-mode-rendered")
+    def handle_library_media_content_mode_rendered(self, event: Button.Pressed) -> None:
+        """Switch the open media item's Content section to the Rendered (Markdown) view.
+
+        Args:
+            event: Button press event emitted by the toggle strip's
+                "Rendered" action.
+        """
+        event.stop()
+        self._set_library_media_content_mode("rendered")
+
+    @on(Button.Pressed, "#library-media-content-mode-raw")
+    def handle_library_media_content_mode_raw(self, event: Button.Pressed) -> None:
+        """Switch the open media item's Content section to the Raw text view.
+
+        Args:
+            event: Button press event emitted by the toggle strip's "Raw"
+                action.
+        """
+        event.stop()
+        self._set_library_media_content_mode("raw")
+
+    def _set_library_media_content_mode(self, mode: str) -> None:
+        """Shared Rendered/Raw toggle: no-op when already in ``mode``.
+
+        A plain screen-state flip + recompose -- unlike the note editor's
+        Preview toggle, there is nothing to save here (the media viewer has
+        no editable body while browsing), so there is no write for this to
+        accidentally trigger.
+
+        Args:
+            mode: ``"rendered"`` or ``"raw"``.
+        """
+        if self._library_media_view != "viewer" or self._library_media_content_mode == mode:
+            return
+        self._library_media_content_mode = mode
+        self.refresh(recompose=True)
 
     @on(Button.Pressed, "#library-media-content-search-next")
     def handle_library_media_content_search_next(self, event: Button.Pressed) -> None:
@@ -18200,6 +18739,7 @@ class LibraryScreen(BaseAppScreen):
             self._library_media_editing_analysis = False
             self._library_media_content_query = ""
             self._library_media_content_match_index = 0
+            self._library_media_content_mode = "raw"
             self.run_worker(
                 self._refresh_library_media_detail(record_id),
                 exclusive=True,

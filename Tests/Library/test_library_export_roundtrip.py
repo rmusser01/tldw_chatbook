@@ -19,8 +19,10 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 import zipfile
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -386,3 +388,82 @@ def test_library_export_roundtrip_unwritable_destination_fails_with_no_registry_
 
     listed = asyncio.run(service.list_chatbooks())
     assert listed == []
+
+
+def test_library_export_success_records_a_durable_receipt_with_the_real_path(
+    tmp_path,
+):
+    """task-2858 AC#3 (LIB-12): a successful export must leave a durable
+    on-canvas receipt naming the REAL output path -- not a placeholder or
+    a mocked service double. Runs the actual ``LocalChatbookService`` end
+    to end (same seeded DBs / same static execution helpers as the other
+    round-trip tests in this file) so the receipt is asserted against a
+    path a real zip was genuinely written to on disk, then drives the
+    real ``LibraryScreen._apply_library_export_success`` completion
+    handler (the ``SimpleNamespace`` unbound-method pattern already
+    established in ``test_library_export_cancel.py``) and checks the
+    receipt fields it records.
+    """
+    seeded = _seed_source_dbs(tmp_path)
+
+    scope = ExportScope(kind="notes")
+    selections = resolve_export_selections(
+        scope, seeded["media_db"], seeded["chachanotes_db"]
+    )
+    destination = tmp_path / "receipt.zip"
+    payload = LibraryScreen._build_library_export_payload(
+        name="Receipt Export",
+        description="",
+        selections=selections,
+        destination=str(destination),
+        media_quality="thumbnail",
+    )
+
+    service = LocalChatbookService(
+        seeded["db_paths"], registry_path=tmp_path / "chatbooks.json"
+    )
+    outcome = LibraryScreen._run_library_export_via_service(
+        service, payload, name="Receipt Export", description=""
+    )
+
+    assert outcome["success"] is True, outcome["message"]
+    export_path = Path(outcome["path"])
+    assert export_path.exists()  # the zip is REALLY on disk, not mocked
+    assert export_path == destination
+
+    notified: list[tuple[str, str]] = []
+    update_calls: list[str] = []
+    fake = SimpleNamespace(
+        _library_export_run_id=1,
+        _library_export_last_path="",
+        _library_export_last_at=None,
+        app_instance=SimpleNamespace(
+            notify=lambda message, severity="information", **kw: notified.append(
+                (message, severity)
+            )
+        ),
+        _build_library_export_success_message=(
+            LibraryScreen._build_library_export_success_message
+        ),
+        _update_library_export_canvas_after_run=lambda: update_calls.append("update"),
+    )
+
+    before = time.time()
+    LibraryScreen._apply_library_export_success(
+        fake,
+        1,
+        outcome["path"],
+        outcome["dependency_info"],
+        bool(outcome["registry_recorded"]),
+        outcome["message"],
+    )
+    after = time.time()
+
+    # The receipt names the REAL path the real service wrote to.
+    assert fake._library_export_last_path == outcome["path"]
+    assert fake._library_export_last_path == str(destination)
+    # A real, recent timestamp -- not a placeholder/zero value.
+    assert before <= fake._library_export_last_at <= after
+    # The current (non-superseded) run's canvas DOM update still ran.
+    assert update_calls == ["update"]
+    assert notified  # the success notification also fired

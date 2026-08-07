@@ -33,13 +33,18 @@ under the rail's "Create" section.
 - **Notes sync panel** — opens from the toolbar's "Sync" button: folder,
   direction, conflict policy, auto-sync, and an activity log.
 
-### Database vs. Files
+### Database vs. Files vs. Sync
 
-The strip above the canvas switches between two different notes worlds.
-**Database** (this page) keeps notes inside the Library itself. **Files**
-swaps the whole canvas for the File Notes workspace, which edits plain
-files under a folder you choose and has its own Session Git panel — see
-[File notes](file-notes.md).
+Three different notes worlds meet here, and each surface now says so in
+place: the strip above the canvas switches between two of them.
+**Database** (this page) keeps notes inside the Library itself — its own
+placement line points to Files or Sync for notes that live in a folder on
+disk. **Files** swaps the whole canvas for the File Notes workspace, which
+edits plain files under a folder you choose directly and has its own
+Session Git panel — see [File notes](file-notes.md). **Sync** (opened from
+this page's toolbar, below) is the third: it mirrors a folder's notes INTO
+the Library's database, unlike Files mode, which edits that folder
+directly without mirroring it in.
 
 ## Features & controls
 
@@ -79,11 +84,15 @@ pick **Overwrite** or **Reload**.
 
 ### New note view
 
-"Blank note" creates an empty note and drops you in the editor. The
-"From a template" list pre-fills title, body, and keywords; each row shows
-the template name with the title the note will get. Available templates:
-Brainstorming session, Bug report, Code review, Daily journal entry,
-Meeting notes, Project planning, Research notes, Todo list.
+"Blank note" drops you straight into the editor with an empty title (shown
+as an "Untitled" placeholder — just start typing) and an empty body. If you
+leave again via "‹ Back to list" without typing anything, the blank note is
+quietly discarded rather than left behind as a stray "Untitled" row; typing
+anything, or pressing "Save", keeps it. The "From a template" list
+pre-fills title, body, and keywords instead; each row shows the template
+name with the title the note will get. Available templates: Brainstorming
+session, Bug report, Code review, Daily journal entry, Meeting notes,
+Project planning, Research notes, Todo list.
 
 ### Notes sync panel
 
@@ -178,6 +187,13 @@ click-driven. Global navigation keys live in the [guide index](../index.md).
 *Verified against c2cbb8081 — 2026-08-04 (PR-T1: "Use in Console"
 delivering the note's real content on send is covered by capture
 round-trip tests, task-2374).*
+*Verified against dev @ 6b38a13b8 — 2026-08-07 (task-2858 Task 3, LIB-14:
+"Blank note" no longer leaves a stray "Untitled" row if abandoned
+untouched, and the title shows an "Untitled" placeholder instead of
+literal editable text).*
+*Verified against dev @ 6b38a13b8 — 2026-08-07 (task-2858 Task 4, LIB-19:
+Database mode, Files mode, and the Sync panel each now carry a one-line
+placement sentence in-app relating them to each other).*
 
 *Re-stamped against dev @ 4acb17a0b — 2026-08-07 (TASK-2857: "Export…"
 now opens the "Export bundle (.zip)" canvas, not "Export chatbook").*

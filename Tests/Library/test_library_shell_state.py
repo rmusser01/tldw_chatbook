@@ -161,6 +161,62 @@ def test_jargon_rows_carry_plain_language_subtitles():
     assert subtitles["ingest-export"] == ""
 
 
+def test_collections_row_is_count_pending_not_count_loading():
+    """LIB-15: Collections is neither "loading" (F-014's dim placeholder,
+    which would misrepresent an idle row as actively fetching) nor "off"
+    (Search/RAG's permanent no-count case) -- it is ``count_pending``, a
+    distinct state the gloss-fit rule uses to reserve stable width for the
+    count that has not arrived yet. This must hold regardless of
+    ``counts_loading`` (Collections' own fetch is a separate, lazy,
+    first-visit-triggered lifecycle)."""
+    for counts_loading in (True, False):
+        shell = build_library_shell_state(
+            LibraryShellInput(counts_loading=counts_loading)
+        )
+        rows = {
+            row.row_id: row for section in shell.sections for row in section.rows
+        }
+        collections = rows["browse-collections"]
+        assert collections.count_pending is True
+        assert collections.count_loading is False
+        # Every other row never flags count_pending -- Collections is the
+        # sole exception this state exists for.
+        for row_id, row in rows.items():
+            if row_id == "browse-collections":
+                continue
+            assert row.count_pending is False, row_id
+
+
+def test_short_title_fallbacks_are_set_for_the_rows_that_need_them():
+    """LIB-18: rows whose title risks a mid-word ellipsis cut at the
+    rail's real minimum width (Conversations/Flashcards/Collections) carry
+    a ``short_title`` fallback; every other row's title is short enough
+    that it does not need one."""
+    shell = build_library_shell_state(LibraryShellInput())
+    rows = {
+        row.row_id: row for section in shell.sections for row in section.rows
+    }
+    assert rows["browse-conversations"].short_title == "Chats"
+    assert rows["browse-collections"].short_title == "Sets"
+    assert rows["create-flashcards"].short_title == "Cards"
+    no_short_title_ids = {
+        "browse-media",
+        "browse-notes",
+        LIBRARY_ROW_BROWSE_PROMPTS,
+        LIBRARY_ROW_BROWSE_SKILLS,
+        "browse-search",
+        "create-note",
+        LIBRARY_ROW_CREATE_PROMPT,
+        LIBRARY_ROW_CREATE_SKILL,
+        "create-study",
+        "create-quizzes",
+        "ingest-import-media",
+        LIBRARY_ROW_INGEST_EXPORT,
+    }
+    for row_id in no_short_title_ids:
+        assert rows[row_id].short_title == "", row_id
+
+
 def test_counts_loading_marks_snapshot_backed_rows_but_not_collections():
     """F-014: while the source snapshot is in flight, every row whose count
     rides that snapshot shows the loading placeholder. Collections is the

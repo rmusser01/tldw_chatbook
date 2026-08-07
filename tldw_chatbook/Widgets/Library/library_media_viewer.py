@@ -8,17 +8,29 @@ from rich.color import Color
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
-from textual.widgets import Button, Collapsible, Input, Static, TextArea
+from textual.widgets import Button, Collapsible, Input, Markdown, Static, TextArea
 
 from tldw_chatbook.Library.library_media_viewer_state import (
     LibraryMediaHighlightRow,
     LibraryMediaViewerState,
     find_content_matches,
 )
+from tldw_chatbook.Utils.markdown_parsing import front_matter_parser_factory
 
 
 class LibraryMediaViewer(Vertical):
     """Render the full Library media item: metadata, content, and actions.
+
+    DEFAULT_CSS pins the Rendered|Raw toggle's "|" separator to a width of
+    1 -- a bare ``Static`` has no width rule of its own (only
+    ``height: auto``), so it inherits Textual's base ``1fr`` default and
+    silently expands to consume the Horizontal's remaining space, pushing
+    the "Raw" button off past the right edge of the screen (found live in
+    a 170-column terminal: the button existed in the DOM with a correct
+    label -- passing an existence/label-only query -- while its region was
+    ``x=184`` against a 170-column screen, entirely off-screen). Mirrors
+    ``LibraryScreen``'s own ``#library-notes-source-separator`` rule for
+    the "Database | Files" strip this toggle's shape was modeled on.
 
     Attributes:
         viewer: Current media viewer display state.
@@ -35,6 +47,21 @@ class LibraryMediaViewer(Vertical):
         content_match_index: Index into ``find_content_matches``' result
             for the currently focused match (wrapped mod the match count
             by the screen before it is passed in here).
+        content_mode: ``"rendered"`` shows ``viewer.content`` through the
+            same ``Markdown`` render path Notes Preview uses (LIB-13);
+            ``"raw"`` shows the plain/highlighted text ``Static`` (the
+            pre-existing behavior). Only meaningful -- and only offered as
+            a toggle -- when ``viewer.is_markdown`` is true; the screen is
+            responsible for defaulting this per item and never showing
+            ``"rendered"`` for a non-markdown item.
+    """
+
+    DEFAULT_CSS = """
+    LibraryMediaViewer #library-media-content-mode-separator {
+        width: 1;
+        min-width: 1;
+        max-width: 1;
+    }
     """
 
     def __init__(
@@ -47,6 +74,7 @@ class LibraryMediaViewer(Vertical):
         editing_analysis: bool = False,
         content_query: str = "",
         content_match_index: int = 0,
+        content_mode: str = "raw",
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
@@ -57,6 +85,7 @@ class LibraryMediaViewer(Vertical):
         self.editing_analysis = editing_analysis
         self.content_query = content_query
         self.content_match_index = content_match_index
+        self.content_mode = content_mode
         # Fill the (already 13fr) canvas host, not an independent 13fr: an `fr`
         # width here breaks width:100% child resolution so long lines (analysis
         # summary, a long URL) clip instead of wrapping. 1fr fills the same
@@ -71,8 +100,13 @@ class LibraryMediaViewer(Vertical):
         ``Button``) stacked full-width in this ``Vertical`` — horizontal rows
         that mix a ``1fr`` sibling with a fixed-width widget are the known
         non-rendering failure mode, so every row here is either a single
-        full-width widget or the plain ``ds-toolbar`` action row (already
-        proven to render by the conversations/media list canvases).
+        full-width widget, the plain ``ds-toolbar`` action row (already
+        proven to render by the conversations/media list canvases), or the
+        Rendered|Raw toggle strip (``_compose_content_mode_toggle``) — a
+        THIRD instance of that exact failure mode was found live while
+        building it (a bare ``Static`` separator with no width rule of its
+        own silently inherits Textual's base ``1fr`` default), fixed via
+        this class's ``DEFAULT_CSS`` pinning that one widget's width to 1.
 
         Returns:
             ComposeResult for the media viewer canvas.
@@ -101,13 +135,27 @@ class LibraryMediaViewer(Vertical):
             id="library-media-viewer-content-title",
             classes="destination-section",
         )
+        yield from self._compose_content_mode_toggle()
         yield from self._compose_content_search()
         with VerticalScroll(id="library-media-viewer-content"):
-            yield Static(
-                self._content_renderable(),
-                id="library-media-viewer-content-text",
-                markup=False,
-            )
+            if self.viewer.is_markdown and self.content_mode == "rendered":
+                # LIB-13: the SAME render path Notes Preview uses
+                # (``library_notes_canvas.py``'s ``_compose_editor``) --
+                # reused verbatim, not a second markdown pipeline.
+                # ``Markdown`` parses and escapes internally (never Rich
+                # markup), so this stays the same terminal-escaping path
+                # the raw ``Static`` branch below uses for its own content.
+                yield Markdown(
+                    self.viewer.content or "No stored content.",
+                    id="library-media-viewer-content-markdown",
+                    parser_factory=front_matter_parser_factory(),
+                )
+            else:
+                yield Static(
+                    self._content_renderable(),
+                    id="library-media-viewer-content-text",
+                    markup=False,
+                )
         yield from self._compose_analysis()
 
         yield from self._compose_highlights()
@@ -189,6 +237,44 @@ class LibraryMediaViewer(Vertical):
                     compact=True,
                 )
 
+    def _compose_content_mode_toggle(self) -> ComposeResult:
+        """Render the Rendered|Raw content-view toggle for markdown-typed media.
+
+        Only rendered when ``self.viewer.is_markdown`` is true -- a
+        non-markdown item never offers a toggle and always shows the plain
+        Raw view (no behavior change from before LIB-13). Mirrors the
+        screen's own "Database (selected) | Files" source-strip idiom
+        exactly (``library_screen.py``'s notes-source strip): a plain
+        ``Horizontal`` of two compact, unstyled ``Button``s with a "|"
+        ``Static`` separator, each label suffixed "(selected)" for the
+        active mode -- the state-in-text idiom, not a color/class alone,
+        so the current mode reads correctly even without extra CSS.
+
+        Returns:
+            ComposeResult for the toggle strip, or nothing for non-markdown
+            media.
+        """
+        if not self.viewer.is_markdown:
+            return
+        with Horizontal(id="library-media-content-mode-strip"):
+            rendered_selected = self.content_mode == "rendered"
+            rendered_button = Button(
+                "Rendered (selected)" if rendered_selected else "Rendered",
+                id="library-media-content-mode-rendered",
+                compact=True,
+            )
+            rendered_button.set_class(rendered_selected, "-selected")
+            yield rendered_button
+            yield Static("|", id="library-media-content-mode-separator", markup=False)
+            raw_selected = not rendered_selected
+            raw_button = Button(
+                "Raw (selected)" if raw_selected else "Raw",
+                id="library-media-content-mode-raw",
+                compact=True,
+            )
+            raw_button.set_class(raw_selected, "-selected")
+            yield raw_button
+
     def _compose_content_search(self) -> ComposeResult:
         """Render the in-content search box, and its status/prev-next only while active.
 
@@ -203,13 +289,25 @@ class LibraryMediaViewer(Vertical):
         rule on ``compose`` above (never mix a ``1fr`` sibling with a
         fixed-width widget in one ``Horizontal``).
 
+        The search always matches against the RAW stored text (never the
+        rendered Markdown's visual output) regardless of which content
+        view is showing -- LIB-13's decision. When a Rendered|Raw toggle
+        is offered, the placeholder says so explicitly so a search made
+        while viewing Rendered is never mistaken for searching the
+        on-screen (rendered) text.
+
         Returns:
             ComposeResult for the content search row and, when a query is
             active, the status line and prev/next action toolbar.
         """
+        placeholder = (
+            "Search content (raw text)…"
+            if self.viewer.is_markdown
+            else "Search content…"
+        )
         yield Input(
             value=self.content_query,
-            placeholder="Search content…",
+            placeholder=placeholder,
             id="library-media-content-search",
         )
         if not self.content_query:

@@ -17,6 +17,7 @@ arguments, never performs I/O itself.
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
@@ -38,6 +39,18 @@ DESTINATION_PLACEHOLDER_COPY = "No destination chosen"
 EXPORT_BUTTON_COPY = "Export bundle (.zip)"
 SERVER_DISABLED_TOOLTIP_COPY = "Export packages local content only."
 
+# task-2858 AC#3 (LIB-11): the Export button's tooltip always names either
+# what pressing it will do (ready) or the SAME blocker its disabled state
+# reflects -- house style is "disabled controls say why" (see the
+# select-mode toolbar's export/delete tooltips, F-018). The empty-scope
+# case deliberately reuses ``EMPTY_SCOPE_COPY`` verbatim (see
+# ``export_button_tooltip``) rather than a second string that could drift
+# from the on-canvas line already stating it.
+EXPORT_BUTTON_READY_TOOLTIP = "Write the bundle to the chosen destination."
+EXPORT_BUTTON_RUNNING_TOOLTIP = "An export is already running."
+EXPORT_BUTTON_COUNTING_TOOLTIP = "Waiting for item counts before exporting."
+EXPORT_BUTTON_NO_DESTINATION_TOOLTIP = "Choose a destination before exporting."
+
 # The creator's own quality options (thumbnail/compressed/original); default
 # is the cheapest one, matching the design spec.
 MEDIA_QUALITY_OPTIONS = ("thumbnail", "compressed", "original")
@@ -48,6 +61,12 @@ DEFAULT_MEDIA_QUALITY = "thumbnail"
 # conversations/notes-only scopes never touch media, so those rows would
 # be dead controls.
 _MEDIA_BEARING_SCOPE_KINDS = ("everything", "media")
+
+# ``format_last_export_line``'s relative-age bucket thresholds, named so the
+# 60/3600/86400 in that function read as units, not magic numbers.
+_SECONDS_PER_MINUTE = 60
+_SECONDS_PER_HOUR = 3600
+_SECONDS_PER_DAY = 86400
 
 
 def default_export_name(today: date | None = None) -> str:
@@ -108,6 +127,14 @@ class LibraryExportFormState:
             chosen (already ``.zip``-normalized) destination already
             exists on disk, else ``""``. Purely informational -- pressing
             Export proceeds and overwrites; this is not a blocking gate.
+        last_export_line: task-2858 AC#3 (LIB-12): the durable
+            ``"Last export: <path> · <relative time>"`` receipt for the
+            most recent successful export THIS SESSION, or ``""`` before
+            any export has completed. Built by ``format_last_export_line``
+            from screen-owned state that survives
+            ``_reset_library_export_transient_state`` -- unlike every
+            other field above, this is NOT derived from the current
+            scope/form.
     """
 
     scope: ExportScope
@@ -124,6 +151,7 @@ class LibraryExportFormState:
     show_media_fields: bool = True
     empty_scope_line: str = ""
     overwrite_line: str = ""
+    last_export_line: str = ""
 
 
 def build_library_export_form_state(
@@ -138,6 +166,7 @@ def build_library_export_form_state(
     running: bool = False,
     status_line: str = "",
     error_line: str = "",
+    last_export_line: str = "",
 ) -> LibraryExportFormState:
     """Build the export canvas's full display state.
 
@@ -158,6 +187,9 @@ def build_library_export_form_state(
         running: Whether an export is currently executing.
         status_line: The in-progress status line (Task 3).
         error_line: The last failure's message, if any.
+        last_export_line: The durable receipt line (task-2858 AC#3,
+            LIB-12), already formatted by ``format_last_export_line`` --
+            this function only passes it through.
 
     Returns:
         The canvas's full display state.
@@ -194,7 +226,86 @@ def build_library_export_form_state(
         show_media_fields=show_media_fields,
         empty_scope_line=empty_scope_line,
         overwrite_line=overwrite_line,
+        last_export_line=last_export_line,
     )
+
+
+def export_button_tooltip(state: LibraryExportFormState) -> str:
+    """Return the Export button's tooltip: why it's disabled, or the ready hint.
+
+    task-2858 AC#3 (LIB-11): "disabled controls say why" -- mirrors
+    ``export_enabled``'s own predicate order (running -> counts still
+    loading -> empty scope -> no destination) so the tooltip always names
+    the ACTUAL current blocker instead of a generic "can't click this".
+    The empty-scope branch reuses ``state.empty_scope_line`` (== exactly
+    ``EMPTY_SCOPE_COPY`` whenever counts have landed at zero) verbatim, so
+    the tooltip can never drift from the on-canvas line stating the same
+    fact.
+
+    Args:
+        state: The canvas's full display state.
+
+    Returns:
+        A non-empty tooltip string in every case -- the button always
+        explains either what it will do or what is blocking it.
+    """
+    if state.export_enabled:
+        return EXPORT_BUTTON_READY_TOOLTIP
+    if state.running:
+        return EXPORT_BUTTON_RUNNING_TOOLTIP
+    if state.counts_loading:
+        return EXPORT_BUTTON_COUNTING_TOOLTIP
+    if state.empty_scope_line:
+        return state.empty_scope_line
+    if not state.destination.strip():
+        return EXPORT_BUTTON_NO_DESTINATION_TOOLTIP
+    # Defensive only: export_enabled mirrors this exact predicate chain,
+    # so every False case is covered above -- this is unreachable in
+    # practice, but a silently blank tooltip would be worse than a
+    # slightly-generic fallback if the two predicates ever drift.
+    return EMPTY_SCOPE_COPY
+
+
+def format_last_export_line(
+    path: str, exported_at: float, *, now: float | None = None
+) -> str:
+    """Return the durable "Last export: <path> · <relative time>" receipt line.
+
+    task-2858 AC#3 (LIB-12): a successful export used to leave the canvas
+    pixel-identical -- no on-screen sign the zip was ever written. The
+    caller (the screen) records ``path``/``exported_at`` in state that
+    survives ``_reset_library_export_transient_state``, so this line
+    reappears every time the export canvas is (re)composed for the rest
+    of the session, not just immediately after the run that produced it.
+
+    Args:
+        path: The destination path a successful export wrote to this
+            session, or ``""`` if nothing has been exported yet.
+        exported_at: ``time.time()`` epoch seconds when that export
+            completed.
+        now: ``time.time()`` epoch seconds to measure "ago" against;
+            defaults to the real current time. Exposed so tests can pin
+            it instead of depending on wall-clock time (mirrors
+            ``default_export_name``'s ``today`` parameter).
+
+    Returns:
+        ``""`` when ``path`` is empty; otherwise the formatted receipt,
+        e.g. ``"Last export: /tmp/out.zip · 2m ago"``.
+    """
+    clean_path = str(path or "").strip()
+    if not clean_path:
+        return ""
+    current = time.time() if now is None else now
+    elapsed = max(0.0, current - exported_at)
+    if elapsed < _SECONDS_PER_MINUTE:
+        relative = "just now"
+    elif elapsed < _SECONDS_PER_HOUR:
+        relative = f"{int(elapsed // _SECONDS_PER_MINUTE)}m ago"
+    elif elapsed < _SECONDS_PER_DAY:
+        relative = f"{int(elapsed // _SECONDS_PER_HOUR)}h ago"
+    else:
+        relative = f"{int(elapsed // _SECONDS_PER_DAY)}d ago"
+    return f"Last export: {clean_path} · {relative}"
 
 
 def next_media_quality(current: str) -> str:

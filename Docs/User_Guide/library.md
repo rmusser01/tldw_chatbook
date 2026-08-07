@@ -47,17 +47,22 @@ pages:
   - the **Search Library…** box — submitting it lands on the
     Search / RAG canvas and runs your query (an empty submit just opens
     the canvas). Press **/** anywhere outside a text field to jump
-    straight into this box; pressing **/** again inside it selects the
-    whole query so the next keystroke replaces it;
+    straight into this box; pressing **/** again inside it — or clicking
+    into it when it still holds a query from before — selects the whole
+    query, so the very next keystroke replaces it instead of landing
+    wherever you clicked;
   - four sections — **Browse** (Media, Conversations, Notes, Prompts,
     Skills, Collections, Search / RAG), **Create** (New note, New prompt,
     New skill), **Study** (Study decks, Flashcards, Quizzes), and
     **Import / Export** (Import…, Export). Each row is one line: the
     title with its count, plus a dim plain-language gloss on the jargon
-    rows (e.g. "Search / RAG — find all"). On narrow terminals
-    the gloss drops rather than truncating into fragments, and the title
-    ellipsizes, so the count
-    always stays visible. The three Study rows are hand-offs (they are a
+    rows (e.g. "Search / RAG — find all"), shown consistently across
+    visits — a row's gloss never flickers on or off just because its
+    count arrived. On narrow terminals the gloss drops first; a handful
+    of rows (Conversations, Flashcards, Collections) then fall back to a
+    short label ("Chats", "Cards", "Sets") instead of an ellipsis, so no
+    row label ever cuts off mid-word and the count always stays visible.
+    The three Study rows are hand-offs (they are a
     two-step trip out of Library), so they group under their own section
     and add a second "opens staging canvas" line — that click opens a
     Library-local staging canvas, not the Study screen itself; **Continue
@@ -289,3 +294,8 @@ footer; TASK-2856 re-critique round 3: the media viewer's Edit/Delete/Edit
 analysis sub-states now document their own graduated two-Escape behavior
 and footer hint ("back a step") instead of implying a single Escape
 reaches the list from any viewer sub-state)*
+*Verified against dev @ 6b38a13b8 — 2026-08-07 (task-2858 Task 4: rail
+glosses/counts follow one rule across visits (LIB-15); the search box
+selects a stale query on click too, not just on a second "/" (LIB-17);
+Conversations/Flashcards/Collections fall back to a short label instead
+of a mid-word ellipsis at narrow widths (LIB-18)).*
