@@ -993,7 +993,9 @@ def _default_specs(
             description=(
                 "Fetch a web page and return its extracted text; PDFs are "
                 "text-extracted too (up to 20 MB, ephemeral — nothing is "
-                "ingested). SSRF-guarded (public http(s) only), "
+                "ingested). Images, ZIP archives, and audio return compact "
+                "metadata (format/size/listing), not contents. "
+                "SSRF-guarded (public http(s) only), "
                 "redirect-capped, byte-capped, cached. Honors robots.txt "
                 "(configurable)."
             ),
