@@ -693,6 +693,62 @@ class ChatConversationService:
         }
         return {"items": items, "pagination": pagination}
 
+    # --- Library read seams (task-1337, plan Task 4) ---
+    #
+    # Thin, agent-facing delegates over the additive DB library read seams.
+    # RAG context lives in a JSON sidecar adjunct store owned by this
+    # service; library reads never join it, so message responses always
+    # carry ``include_rag_context: False``.
+
+    def list_library_conversations(
+        self, *, limit: int = 20, offset: int = 0
+    ) -> dict[str, Any]:
+        """Page active local conversations for Library agent tools."""
+        payload = self.db.list_library_conversations_page(limit=limit, offset=offset)
+        return {
+            "items": payload["items"],
+            "total": payload["total"],
+            "offset": offset,
+            "limit": limit,
+        }
+
+    def search_library_conversations(
+        self, *, query: str, limit: int = 20, offset: int = 0
+    ) -> dict[str, Any]:
+        """Search active local conversations for Library agent tools."""
+        payload = self.db.search_library_conversations_page(
+            query=query, limit=limit, offset=offset
+        )
+        return {
+            "items": payload["items"],
+            "total": payload["total"],
+            "offset": offset,
+            "limit": limit,
+        }
+
+    def get_library_conversation_messages(
+        self,
+        conversation_id: str,
+        *,
+        message_offset: int = 0,
+        message_limit: int = 20,
+        max_chars: int = 8000,
+        message_id: str | None = None,
+        char_start: int = 0,
+    ) -> dict[str, Any] | None:
+        """Read a text-only, windowed message page for one active conversation.
+
+        Returns None when no active conversation matches ``conversation_id``.
+        """
+        return self.db.get_library_conversation_messages(
+            conversation_id,
+            message_offset=message_offset,
+            message_limit=message_limit,
+            max_chars=max_chars,
+            message_id=message_id,
+            char_start=char_start,
+        )
+
     def get_conversation_tree(
         self,
         conversation_id: str,
