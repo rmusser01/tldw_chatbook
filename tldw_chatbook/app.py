@@ -339,6 +339,7 @@ from .ACP_Interop.runtime_session import ACPRuntimeSessionState
 from tldw_chatbook.Widgets.Chat_Widgets.chat_message import ChatMessage
 from tldw_chatbook.Widgets.Chat_Widgets.chat_message_enhanced import ChatMessageEnhanced
 from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
+from tldw_chatbook.Widgets.glyph_fallback import set_ascii_glyph_mode
 from .Widgets.AppFooterStatus import AppFooterStatus
 from .Widgets.splash_screen import SplashScreen
 from .LLM_Calls.LLM_API_Calls import (
@@ -6167,6 +6168,11 @@ class TldwCli(
         logging.debug("App composing UI...")
         log_counter("ui_compose_started", 1, documentation="UI composition started")
 
+        # TASK-2154.19 (AC-01): ASCII-safe status-marker mode for narrow-font
+        # terminals. Resolved once at compose so every glyph-production point
+        # downstream reads the same module state.
+        set_ascii_glyph_mode(get_cli_setting("appearance", "ascii_glyphs", False))
+
         # Check if splash screen is enabled
         splash_enabled = get_cli_setting("splash_screen", "enabled", True)
         logging.info(f"Splash screen enabled: {splash_enabled}")
@@ -6176,6 +6182,10 @@ class TldwCli(
             splash_skip = get_cli_setting("splash_screen", "skip_on_keypress", True)
             splash_progress = get_cli_setting("splash_screen", "show_progress", True)
             splash_card = get_cli_setting("splash_screen", "card_selection", "random")
+            # TASK-2154.10 (AC-04): vestibular-accessible static splash.
+            splash_reduced_motion = get_cli_setting(
+                "appearance", "reduce_motion", False
+            )
             logging.info(
                 f"Creating splash screen - duration: {splash_duration}, card: {splash_card}"
             )
@@ -6186,6 +6196,7 @@ class TldwCli(
                 duration=splash_duration,
                 skip_on_keypress=splash_skip,
                 show_progress=splash_progress,
+                reduced_motion=splash_reduced_motion,
                 id="app-splash-screen",
             )
             self.splash_screen_active = True

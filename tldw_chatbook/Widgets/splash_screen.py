@@ -58,6 +58,7 @@ class SplashScreen(Container):
         duration: float = 1.5,
         skip_on_keypress: bool = True,
         show_progress: bool = True,
+        reduced_motion: bool = False,
         **kwargs,
     ) -> None:
         """Initialize the splash screen.
@@ -67,6 +68,8 @@ class SplashScreen(Container):
             duration: How long to display the splash screen
             skip_on_keypress: Whether to allow skipping with a keypress
             show_progress: Whether to show progress bar
+            reduced_motion: TASK-2154.10 (AC-04): render the chosen card's
+                static content instead of playing its animation effect.
         """
         # Ensure we have proper classes set
         if "classes" not in kwargs:
@@ -80,6 +83,7 @@ class SplashScreen(Container):
         self.duration = duration
         self.skip_on_keypress = skip_on_keypress
         self.show_progress = show_progress
+        self.reduced_motion = bool(reduced_motion)
 
         # Animation state
         self.start_time = time.time()
@@ -320,6 +324,15 @@ class SplashScreen(Container):
             display.update(content)
 
         elif card_type == "animated":
+            if self.reduced_motion:
+                # TASK-2154.10 (AC-04): render the SAME card's static content
+                # instead of playing its effect -- branding and readability
+                # survive, motion does not.
+                logger.info(
+                    f"Reduced motion: rendering '{self.card_name}' statically"
+                )
+                self._display_static_fallback()
+                return
             # Start animation
             self._start_animation()
 

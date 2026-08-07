@@ -66,6 +66,7 @@ from ...Chat.console_display_state import (
     ConsoleStagedContextState,
 )
 from ...Chat.console_glyphs import GLYPH_COLLAPSE_RIGHT
+from ...Widgets.glyph_fallback import resolve_glyph
 from ...Chat.console_session_settings import ConsoleSettingsSummaryState
 from ...Widgets.Console import (
     ConsoleRetrievalScopeRow,
@@ -169,7 +170,7 @@ class ConsoleInspectorRail(Vertical):
             rail_label.styles.width = "1fr"
             yield rail_label
             collapse_button = Button(
-                GLYPH_COLLAPSE_RIGHT,
+                resolve_glyph(GLYPH_COLLAPSE_RIGHT),
                 id="console-inspector-rail-collapse",
                 classes="console-rail-collapse-button",
                 compact=True,

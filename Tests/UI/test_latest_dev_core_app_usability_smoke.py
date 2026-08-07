@@ -41,7 +41,7 @@ BROKEN_TEXT_PATTERNS = (
 )
 CORE_FIRST_USE_ROUTES = (
     (TAB_HOME, TAB_HOME, "HomeScreen", ("Home", "Set up Console model")),
-    (TAB_CHAT, TAB_CHAT, "ChatScreen", ("Console", "Transcript / Event Stream")),
+    (TAB_CHAT, TAB_CHAT, "ChatScreen", ("Console", "Conversation")),
     (TAB_LIBRARY, TAB_LIBRARY, "LibraryScreen", ("Library", "Search / RAG")),
     # The standalone Skills tab is retired (Skills sub-project Task 5): the
     # legacy "skills" route now re-points into Library with the Skills rail
@@ -238,12 +238,12 @@ async def test_latest_dev_library_to_console_staged_context_smoke() -> None:
             )
             await _wait_until(
                 pilot,
-                lambda: "Sources: 1 staged" in _content_text(app),
+                lambda: "Sources: 1" in _content_text(app),
                 context="staged source count",
             )
 
             text = _content_text(app)
-            assert "RAG: on" in text
+            assert "Library search: on" in text
             assert "Live work: Transcript chunk: Agentic terminal design" in text
             assert "Evidence: 1/1 available" in text
 

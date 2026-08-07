@@ -177,6 +177,12 @@ class MainNavigationBar(Container):
         background: $surface;
         text-style: bold;
     }
+
+    .nav-overflow-hint:focus {
+        background: $surface;
+        color: $text;
+        text-style: bold underline;
+    }
     """
 
     def __init__(self, active: str = "chat", active_route: str | None = None, **kwargs):
@@ -215,24 +221,19 @@ class MainNavigationBar(Container):
                 if destination.destination_id == self.active_destination_id:
                     button.add_class("is-active")
                 yield button
-        # Docked outside the scrollable strip so the affordance stays at the
-        # right edge exactly when the destinations overflow. F-001: it is a
-        # real control now, not just a hint -- pressing it pages the strip
-        # right (wrapping at the far end) so every destination stays
-        # mouse/keyboard-reachable at narrow widths, and it hides when all
-        # destinations fit instead of crowding the edge. When the bar has
-        # the cells to spare, its label spells out the F-key legend for the
-        # overflow destinations (`_HINT_WIDE`); otherwise "More ›".
+        # Docked outside the scrollable strip so the affordance stays visible
+        # at the right edge exactly when the destinations overflow -- and ONLY
+        # then: when every destination fits (e.g. 140 cols, where the buttons
+        # need 134 cells) the button hides so it never re-clips the strip
+        # itself (NV-01, TASK-2154.21; the old 14-cell static hint is what
+        # truncated "Settings" to "Set").
         overflow_hint = Button(
-            "More ›",
-            id="nav-overflow-hint",
-            classes="nav-overflow-hint",
-            compact=True,
-            tooltip="Show more destinations (Ctrl+P for the full list)",
+            "More ▾", id="nav-overflow-hint", classes="nav-overflow-hint", compact=True
         )
-        # Hidden until `_sync_overflow_hint` (post-layout) knows whether the
-        # strip actually overflows -- never a flash of affordance chrome on
-        # a bar where every destination fits.
+        overflow_hint.tooltip = "All destinations"
+        # Hidden until `_refresh_overflow_hint_visibility` (post-layout) knows
+        # whether the strip actually overflows -- never a flash of affordance
+        # chrome on a bar where every destination fits.
         overflow_hint.display = False
         yield overflow_hint
 
@@ -243,86 +244,69 @@ class MainNavigationBar(Container):
         self.call_after_refresh(self._update_overflow_hints)
         self.call_after_refresh(self._scroll_active_destination_into_view)
         self.set_interval(0.5, self._update_overflow_hints)
-
-    #: Overflow hint label by available width: the full F-key legend when the
-    #: bar is wide enough to spare the cells, the compact affordance otherwise.
-    _HINT_WIDE = "F7 Lab · F8 Logs · F9 Settings · More ›"
-    _HINT_NARROW = "More ›"
+        # The strip's virtual_size only settles once its scrollable content
+        # has laid out, which is AFTER the first call_after_refresh tick (an
+        # early check measures a zero-width region and pins the hint visible).
+        # Re-check on short timers and on every later resize.
+        self.set_timer(0.05, self._refresh_overflow_hint_visibility)
+        self.set_timer(0.25, self._refresh_overflow_hint_visibility)
 
     def _update_overflow_hints(self) -> None:
-        """Toggle the ‹ / More indicators and their text from real state."""
+        """Toggle the ‹ indicator from real scroll state."""
         # Skip while the screen/tab is inactive so hidden tabs burn no CPU.
         if not self.is_attached or not self.screen.is_active:
             return
         try:
             strip = self.query_one("#nav-destination-strip", Horizontal)
             left_hint = self.query_one("#nav-overflow-hint-left", Static)
-            right_hint = self.query_one("#nav-overflow-hint", Button)
         except Exception:
             return
         try:
-            max_scroll_x = strip.max_scroll_x
             scroll_x = strip.scroll_x
         except Exception:
             return
         # Left hint tracks position (more destinations hidden on the left);
-        # the right hint marks that overflow exists at all — the palette
-        # offers every destination regardless of scroll position.
+        # the right affordance's visibility is width-driven, re-evaluated by
+        # `_refresh_overflow_hint_visibility` (NV-01 reclaimable-space math).
         left_hint.display = scroll_x > 0
-        new_right = max_scroll_x > 0
-        right_hint.display = new_right
-        if new_right:
-            wide_text = self.size.width >= 110
-            right_hint.label = self._HINT_WIDE if wide_text else self._HINT_NARROW
+        self._refresh_overflow_hint_visibility()
         # Layout settles asynchronously (hint toggles change the strip's
         # width, fonts finish, etc.), so keep the active destination pinned
         # every tick instead of only when a hint changed state — the call is
         # idempotent and cheap.
         self.call_after_refresh(self._scroll_active_destination_into_view)
-        self.call_after_refresh(self._sync_overflow_hint)
 
     def on_resize(self) -> None:
         """Re-sync the overflow affordance when the bar's width changes.
 
-        The strip's overflow (``max_scroll_x``) is a function of the bar's
-        rendered width, so every resize re-evaluates whether the
-        "More ›" control shows (F-001).
+        The strip's overflow is a function of the bar's rendered width, so
+        every resize re-evaluates whether the "More ▾" control shows.
         """
-        self._sync_overflow_hint()
+        self.call_after_refresh(self._update_overflow_hints)
+        self.call_after_refresh(self._refresh_overflow_hint_visibility)
 
-    def _sync_overflow_hint(self) -> None:
-        """Show the "More ›" affordance exactly when the strip overflows."""
+    def _refresh_overflow_hint_visibility(self) -> None:
+        """Show the overflow menu button only when the strip actually clips.
+
+        Hiding the button widens the strip by the button's own width, so the
+        check adds that reclaimable space back when the button is displayed --
+        otherwise the hint would only ever hide at widths where the strip
+        already fits WITH the hint still docked (>=145 cols instead of 134).
+        """
         try:
             strip = self.query_one("#nav-destination-strip", Horizontal)
             hint = self.query_one("#nav-overflow-hint", Button)
         except Exception:
             return
-        hint.display = strip.max_scroll_x > 0
-
-    @on(Button.Pressed, "#nav-overflow-hint")
-    def _page_destination_overflow(self, event: Button.Pressed) -> None:
-        """Page the strip right; at the far end, wrap back to the start."""
-        event.stop()
-        try:
-            strip = self.query_one("#nav-destination-strip", Horizontal)
-        except Exception:
+        strip_virtual = strip.virtual_size.width
+        strip_width = strip.region.width
+        if strip_virtual == 0 or strip_width == 0:
+            # Layout has not settled yet (a zero-width virtual size would
+            # wrongly read as "everything fits" and hide the button); keep
+            # the current state and let the next timer/resize re-check.
             return
-        max_scroll = strip.max_scroll_x
-        if max_scroll <= 0:
-            return
-        if strip.scroll_offset.x >= max_scroll - 1:
-            # Already at the far end: wrap so the control keeps working.
-            strip.scroll_to(x=0, animate=False)
-            return
-        visible_width = max(strip.scrollable_content_region.width, 1)
-        # NOTE: `scrollable_content_region` reads like "the full scrollable
-        # content" but is the VISIBLE viewport (region minus gutter and
-        # scrollbar) -- the correct page increment. The virtual content is
-        # wider by exactly max_scroll (PR #1322 review).
-        strip.scroll_to(
-            x=min(strip.scroll_offset.x + visible_width, max_scroll),
-            animate=False,
-        )
+        reclaimable = hint.outer_size.width if hint.display else 0
+        hint.display = strip_virtual > strip_width + reclaimable
 
     def _scroll_active_destination_into_view(self) -> None:
         """Bring the active destination's button into the strip's visible scroll window."""
@@ -337,6 +321,18 @@ class MainNavigationBar(Container):
             strip.scroll_to_widget(button, animate=False)
         except Exception:
             return
+
+    @on(Button.Pressed, "#nav-overflow-hint")
+    def handle_overflow_hint(self, event: Button.Pressed) -> None:
+        """Open the overflow menu listing every destination (NV-01)."""
+        event.stop()
+        # Local import: nav_overflow_menu imports NavigateToScreen/nav_button_label
+        # from this module, so a top-level import here would be circular.
+        from .nav_overflow_menu import NavOverflowMenu
+
+        self.app.push_screen(
+            NavOverflowMenu(active_destination_id=self.active_destination_id)
+        )
 
     @on(Button.Pressed, ".nav-button")
     def handle_navigation(self, event: Button.Pressed) -> None:

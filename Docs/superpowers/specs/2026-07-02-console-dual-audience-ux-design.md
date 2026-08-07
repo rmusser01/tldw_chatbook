@@ -49,6 +49,8 @@ The rail becomes **four fixed, collapsible sections**, top to bottom:
 - **Model**: two-line summary (`provider / model`, then sampling/context/streaming). Enter/click opens the quick model popover (§3); a `Configure` affordance opens the full settings modal.
 - **Details**: collapsed-by-default disclosure absorbing Storage, Sync, File tools, Server handoff, and the Handoff reference list. Nothing is removed — it is demoted.
 
+**Section set reconciled 2026-08-06 (UX review DR-02).** The implemented rail sections are `session / model / details / agent / character` (`CONSOLE_RAIL_SECTION_IDS` in `Chat/console_rail_state.py`): the Context section's staged-context sources moved to the Inspector rail, an Agent section (fleet/run state) and an optional Character section were added. Later specs and plans that enumerate Session/Context/Model/Details (e.g. the 2026-07-18 sidebar redesign) are historical on this point — this paragraph is the governing IA.
+
 **Conversation list fixes:**
 
 - **Auto-titling.** When the first user message is persisted to a conversation that still has a default `Chat N` name, the conversation title is set to the first message truncated to ~30 characters. Explicit renames are never overwritten (default-name pattern check).
@@ -86,11 +88,12 @@ Principle: **the composer is home base; every frequent action is one binding awa
 **Overlays:**
 
 - **Ctrl+K — Session switcher.** Fuzzy-find across conversations and workspaces, recent-first, built on the existing grouped-search service and workspace switcher modal. Enter opens in the current tab; Ctrl+Enter opens in a new tab; F2 renames in place.
-- **Ctrl+M — Model popover.** Provider column ▸ model column, arrow-key driven, with a compact temperature/streaming row. Enter applies to the current session; `Full settings…` opens the existing settings modal.
+- **Alt+M — Model popover** (binding reconciled 2026-08-06, UX review DR-01). Provider column ▸ model column, arrow-key driven, with a compact temperature/streaming row. Enter applies to the current session; `Full settings…` opens the existing settings modal. *This spec originally bound `Ctrl+M`; per §3's own conflict rule below, `Ctrl+M` is indistinguishable from Enter in terminals, so the implementation and user guide ship `Alt+M`. The spec now matches the implementation.*
 
 **Navigation and message actions:**
 
 - F6/Shift+F6 pane cycling retained. **Escape from any pane returns focus to the composer.**
+- Tab/Shift+Tab cycle **within the focused pane only** (UX review 2026-08, AC-02): the composer+control-bar cluster, each rail, and the transcript+chips region are separate Tab cycles; the app-level nav bar is no longer crossed mid-Console. F6/Shift+F6 remain the way to move between panes.
 - Transcript focused: up/down selects messages; the existing message-action row becomes keyboard-driven — `c` copy, `e` edit, `r` regenerate.
 - Tab strip: Ctrl+T new tab; Alt+1…9 jump to tab N.
 - Exact keys are verified against terminal/Textual conflicts at implementation time (e.g., Ctrl+W is off-limits: delete-word in inputs). Conflicted bindings get alternates; the *actions* are fixed.
@@ -117,7 +120,7 @@ Four rules, applied consistently and mirrored in both stylesheet files (`css/com
 | `Chat/console_display_state.py` (extend) | Conversation row display: titles, relative timestamps, ordering |
 | `Widgets/Console/console_setup_card.py` (new) | Setup card; renders from provider-readiness state, emits button events |
 | `Widgets/Console/console_session_switcher_modal.py` (new) | Ctrl+K fuzzy switcher; generalizes the existing workspace switcher over the grouped-search service |
-| `Widgets/Console/console_model_popover.py` (new) | Ctrl+M popover; delegates persistence to existing session-settings machinery |
+| `Widgets/Console/console_model_popover.py` (new) | Alt+M popover; delegates persistence to existing session-settings machinery |
 | `UI/Screens/chat_screen.py` | Bindings, rail composition, footer hints, palette registration — orchestration only |
 
 **Data-flow decisions:**

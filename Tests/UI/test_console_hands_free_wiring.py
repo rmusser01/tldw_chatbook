@@ -223,7 +223,7 @@ async def test_key_binding_starts_loop_from_idle_and_opens_capture(monkeypatch):
         assert console._console_hands_free is None
 
         console.action_toggle_console_hands_free()
-        await _wait_for_mic_label(composer, pilot, "Rec ●")
+        await _wait_for_mic_label(composer, pilot, "Dictating")
 
         assert console._console_hands_free is not None
         assert console._console_hands_free.controller.state == "listening"
@@ -246,7 +246,7 @@ async def test_spoken_hands_free_command_adopts_live_capture_as_first_turn(
         )
 
         await pilot.click("#console-dictation")
-        await _wait_for_mic_label(composer, pilot, "Rec ●")
+        await _wait_for_mic_label(composer, pilot, "Dictating")
         assert console._console_hands_free is None
 
         service.emit_final("Console, hands free.")
@@ -256,7 +256,7 @@ async def test_spoken_hands_free_command_adopts_live_capture_as_first_turn(
         assert console._console_hands_free.controller.state == "listening"
         # The capture that was already open is adopted, not restarted.
         assert service.stop_calls == 0
-        assert str(composer.query_one("#console-dictation", Button).label) == "Rec ●"
+        assert str(composer.query_one("#console-dictation", Button).label) == "Dictating"
 
 
 # ---------------------------------------------------------------------------
@@ -295,7 +295,7 @@ async def test_countdown_chip_painted_and_two_stage_send_drives_real_flow(
         store = console._ensure_console_chat_store()
 
         await pilot.click("#console-dictation")
-        await _wait_for_mic_label(composer, pilot, "Rec ●")
+        await _wait_for_mic_label(composer, pilot, "Dictating")
         console.action_toggle_console_hands_free()
         await pilot.pause()
         assert console._console_hands_free is not None
@@ -351,7 +351,7 @@ async def test_countdown_chip_painted_and_two_stage_send_drives_real_flow(
         ):
             await pilot.pause(0.02)
         assert console._console_hands_free.controller.state == "listening"
-        await _wait_for_mic_label(composer, pilot, "Rec ●")
+        await _wait_for_mic_label(composer, pilot, "Dictating")
 
         # A completed assistant message actually landed in the store.
         session_id = store.active_session_id
@@ -381,7 +381,7 @@ async def test_countdown_cancel_restores_the_chip(monkeypatch):
             "#console-native-composer", chat_screen_module.ConsoleComposerBar
         )
         await pilot.click("#console-dictation")
-        await _wait_for_mic_label(composer, pilot, "Rec ●")
+        await _wait_for_mic_label(composer, pilot, "Dictating")
         console.action_toggle_console_hands_free()
         await pilot.pause()
         session = console._console_hands_free
@@ -430,7 +430,7 @@ async def test_segment_no_final_consumes_latch_so_the_next_real_final_still_arms
             "#console-native-composer", chat_screen_module.ConsoleComposerBar
         )
         await pilot.click("#console-dictation")
-        await _wait_for_mic_label(composer, pilot, "Rec ●")
+        await _wait_for_mic_label(composer, pilot, "Dictating")
         console.action_toggle_console_hands_free()
         await pilot.pause()
         session = console._console_hands_free
@@ -479,7 +479,7 @@ async def test_spoken_feedback_false_still_speaks_reply(monkeypatch):
         )
 
         await pilot.click("#console-dictation")
-        await _wait_for_mic_label(composer, pilot, "Rec ●")
+        await _wait_for_mic_label(composer, pilot, "Dictating")
         console.action_toggle_console_hands_free()
         await pilot.pause()
 
@@ -546,7 +546,7 @@ async def test_two_sequential_replies_both_drain_through_the_real_wiring(
             "#console-native-composer", chat_screen_module.ConsoleComposerBar
         )
         await pilot.click("#console-dictation")
-        await _wait_for_mic_label(composer, pilot, "Rec ●")
+        await _wait_for_mic_label(composer, pilot, "Dictating")
         console.action_toggle_console_hands_free()
         await pilot.pause()
 
@@ -559,7 +559,7 @@ async def test_two_sequential_replies_both_drain_through_the_real_wiring(
             and console._console_hands_free.controller.state == "listening",
             pilot,
         )
-        await _wait_for_mic_label(composer, pilot, "Rec ●")
+        await _wait_for_mic_label(composer, pilot, "Dictating")
 
         gateway.reply_text = "Reply two sentence. "
         service.emit_final("turn two")
@@ -573,7 +573,7 @@ async def test_two_sequential_replies_both_drain_through_the_real_wiring(
             and console._console_hands_free.controller.state == "listening",
             pilot,
         )
-        await _wait_for_mic_label(composer, pilot, "Rec ●")
+        await _wait_for_mic_label(composer, pilot, "Dictating")
         assert console._console_hands_free.sequencer.drained
 
 
@@ -607,7 +607,7 @@ async def test_spoken_send_mid_loop_drives_a_real_send_and_speaks_the_reply(
             "#console-native-composer", chat_screen_module.ConsoleComposerBar
         )
         await pilot.click("#console-dictation")
-        await _wait_for_mic_label(composer, pilot, "Rec ●")
+        await _wait_for_mic_label(composer, pilot, "Dictating")
         console.action_toggle_console_hands_free()
         await pilot.pause()
         assert console._console_hands_free.controller.state == "listening"
@@ -653,7 +653,7 @@ async def test_discard_mid_loop_exits_cleanly_instead_of_desyncing(monkeypatch):
             "#console-native-composer", chat_screen_module.ConsoleComposerBar
         )
         await pilot.click("#console-dictation")
-        await _wait_for_mic_label(composer, pilot, "Rec ●")
+        await _wait_for_mic_label(composer, pilot, "Dictating")
         console.action_toggle_console_hands_free()
         await pilot.pause()
         assert console._console_hands_free is not None
@@ -664,12 +664,12 @@ async def test_discard_mid_loop_exits_cleanly_instead_of_desyncing(monkeypatch):
         await pilot.pause()
 
         await _wait_for(lambda: console._console_hands_free is None, pilot)
-        await _wait_for_mic_label(composer, pilot, "Mic")
+        await _wait_for_mic_label(composer, pilot, "Dictate")
         # The loop is genuinely gone, not desynced -- pressing the mic
         # button again does an ordinary one-shot start, proving the
         # dictation state machine (and the hands-free bookkeeping) agree.
         await pilot.click("#console-dictation")
-        await _wait_for_mic_label(composer, pilot, "Rec ●")
+        await _wait_for_mic_label(composer, pilot, "Dictating")
         assert console._console_hands_free is None
 
 
@@ -699,7 +699,7 @@ async def test_spoken_send_mid_reply_acoustic_mode_ends_capture_and_exits(
             "#console-native-composer", chat_screen_module.ConsoleComposerBar
         )
         console.action_toggle_console_hands_free()
-        await _wait_for_mic_label(composer, pilot, "Rec ●")
+        await _wait_for_mic_label(composer, pilot, "Dictating")
         session = console._console_hands_free
         assert session.controller._acoustic_barge_in is True
 
@@ -715,7 +715,7 @@ async def test_spoken_send_mid_reply_acoustic_mode_ends_capture_and_exits(
         # no-ops (same ordering B2 already established).
         await _wait_for(lambda: console._console_dictation_state == "idle", pilot)
         session.controller.on_reply_started()
-        await _wait_for_mic_label(composer, pilot, "Rec ●")
+        await _wait_for_mic_label(composer, pilot, "Dictating")
         assert session.controller.state == "awaiting_reply"
 
         console._handle_console_dictation_event(
@@ -726,7 +726,7 @@ async def test_spoken_send_mid_reply_acoustic_mode_ends_capture_and_exits(
         await pilot.pause()
 
         await _wait_for(lambda: console._console_hands_free is None, pilot)
-        await _wait_for_mic_label(composer, pilot, "Mic")
+        await _wait_for_mic_label(composer, pilot, "Dictate")
 
 
 def test_silence_speech_posts_stop_unconditionally_even_with_nothing_in_flight():
@@ -782,7 +782,7 @@ async def test_keypress_in_speaking_silences_and_reopens_capture(monkeypatch):
         )
 
         console.action_toggle_console_hands_free()
-        await _wait_for_mic_label(composer, pilot, "Rec ●")
+        await _wait_for_mic_label(composer, pilot, "Dictating")
         session = console._console_hands_free
         assert session is not None
 
@@ -828,12 +828,12 @@ async def test_esc_exits_loop_and_restores_normal_esc_semantics(monkeypatch):
         )
 
         console.action_toggle_console_hands_free()
-        await _wait_for_mic_label(composer, pilot, "Rec ●")
+        await _wait_for_mic_label(composer, pilot, "Dictating")
         assert console._console_hands_free is not None
 
         await pilot.press("escape")
         await pilot.pause()
-        await _wait_for_mic_label(composer, pilot, "Mic")
+        await _wait_for_mic_label(composer, pilot, "Dictate")
 
         assert console._console_hands_free is None
         assert fake.stop_calls == 1
@@ -872,7 +872,7 @@ async def test_barge_in_and_esc_work_with_focus_off_the_composer(monkeypatch):
             "#console-native-composer", chat_screen_module.ConsoleComposerBar
         )
         console.action_toggle_console_hands_free()
-        await _wait_for_mic_label(composer, pilot, "Rec ●")
+        await _wait_for_mic_label(composer, pilot, "Dictating")
         session = console._console_hands_free
         console._hands_free._console_hands_free_request_stop_and_send = lambda: None
 
@@ -1189,7 +1189,7 @@ async def test_typed_enter_during_listening_sends_normally_once(monkeypatch):
         )
 
         console.action_toggle_console_hands_free()
-        await _wait_for_mic_label(composer, pilot, "Rec ●")
+        await _wait_for_mic_label(composer, pilot, "Dictating")
         assert console._console_hands_free.controller.state == "listening"
 
         await pilot.press("t", "y", "p", "e", "d")
@@ -1239,7 +1239,7 @@ async def test_typed_enter_cancels_an_armed_countdown_first(monkeypatch):
         )
 
         console.action_toggle_console_hands_free()
-        await _wait_for_mic_label(composer, pilot, "Rec ●")
+        await _wait_for_mic_label(composer, pilot, "Dictating")
         session = console._console_hands_free
         session.controller.on_voice_final()
         assert session.controller.state == "countdown"
@@ -1555,7 +1555,7 @@ async def test_exit_loop_intent_emits_silence_and_close_capture_itself(monkeypat
             "#console-native-composer", chat_screen_module.ConsoleComposerBar
         )
         console.action_toggle_console_hands_free()
-        await _wait_for_mic_label(composer, pilot, "Rec ●")
+        await _wait_for_mic_label(composer, pilot, "Dictating")
         session = console._console_hands_free
 
         # Drive straight to `speaking`, stubbing `RequestStopAndSend`'s own
@@ -1584,7 +1584,7 @@ async def test_exit_loop_intent_emits_silence_and_close_capture_itself(monkeypat
         ]
         assert "stop" in posted_actions
         assert console._console_hands_free is None
-        await _wait_for_mic_label(composer, pilot, "Mic")
+        await _wait_for_mic_label(composer, pilot, "Dictate")
         assert fake.stop_calls == 1
 
 
@@ -1607,7 +1607,7 @@ async def test_open_and_close_capture_handlers_are_idempotent_no_ops(monkeypatch
 
         # OpenCapture while idle starts; while ALREADY recording, no-op.
         console._hands_free._console_hands_free_open_capture()
-        await _wait_for_mic_label(composer, pilot, "Rec ●")
+        await _wait_for_mic_label(composer, pilot, "Dictating")
         console._hands_free._console_hands_free_open_capture()
         await pilot.pause()
         assert fake.start_calls == 1
@@ -1657,7 +1657,7 @@ async def test_two_consecutive_empty_limits_really_reopen_then_really_exit(
         )
 
         await pilot.click("#console-dictation")
-        await _wait_for_mic_label(composer, pilot, "Rec ●")
+        await _wait_for_mic_label(composer, pilot, "Dictating")
         console.action_toggle_console_hands_free()
         await pilot.pause()
         assert console._console_hands_free is not None
@@ -1667,7 +1667,7 @@ async def test_two_consecutive_empty_limits_really_reopen_then_really_exit(
         # call). Must reopen for one more turn.
         console._dictation._handle_console_dictation_limit()
         await _wait_for(lambda: service.start_calls == 2, pilot)
-        await _wait_for_mic_label(composer, pilot, "Rec ●")
+        await _wait_for_mic_label(composer, pilot, "Dictating")
         assert console._console_hands_free is not None
         assert console._console_hands_free.controller.state == "listening"
 
@@ -1677,7 +1677,7 @@ async def test_two_consecutive_empty_limits_really_reopen_then_really_exit(
         await _wait_for(lambda: console._console_hands_free is None, pilot)
         await pilot.pause(0.2)
         assert service.start_calls == 2  # no third reopen
-        await _wait_for_mic_label(composer, pilot, "Mic")
+        await _wait_for_mic_label(composer, pilot, "Dictate")
 
 
 @pytest.mark.asyncio
@@ -1705,7 +1705,7 @@ async def test_empty_limit_with_segments_reopen_pending_reply_still_speaks(
             "#console-native-composer", chat_screen_module.ConsoleComposerBar
         )
         await pilot.click("#console-dictation")
-        await _wait_for_mic_label(composer, pilot, "Rec ●")
+        await _wait_for_mic_label(composer, pilot, "Dictating")
         console.action_toggle_console_hands_free()
         await pilot.pause()
 
@@ -1803,7 +1803,7 @@ async def test_acoustic_barge_in_opens_capture_on_reply_started(monkeypatch):
         )
 
         console.action_toggle_console_hands_free()
-        await _wait_for_mic_label(composer, pilot, "Rec ●")
+        await _wait_for_mic_label(composer, pilot, "Dictating")
         session = console._console_hands_free
         assert session.controller._acoustic_barge_in is True
 
@@ -1827,7 +1827,7 @@ async def test_acoustic_barge_in_opens_capture_on_reply_started(monkeypatch):
         # Acoustic mode reopens the mic the instant generation starts,
         # rather than waiting for the reply to drain.
         assert fake.start_calls == 2
-        await _wait_for_mic_label(composer, pilot, "Rec ●")
+        await _wait_for_mic_label(composer, pilot, "Dictating")
 
 
 # ---------------------------------------------------------------------------

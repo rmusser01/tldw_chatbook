@@ -5,6 +5,7 @@ from tldw_chatbook.Chat.console_display_state import (
     ConsoleStagedContextState,
 )
 from tldw_chatbook.Chat.console_rail_state import (
+    CONSOLE_RAIL_LEFT_OPEN_EXPLICIT_KEY,
     ConsoleRailPreferences,
     _INACTIVE_STAGED_SUMMARIES,
     _normalized_inactive_text,
@@ -13,6 +14,7 @@ from tldw_chatbook.Chat.console_rail_state import (
     build_console_rail_preference_key,
     build_console_rail_state,
     coerce_console_rail_preferences,
+    console_rail_left_open_explicit,
     serialize_console_rail_preferences,
 )
 
@@ -467,7 +469,33 @@ def test_console_rail_state_routes_staged_context_to_inspector_badge():
     assert state.right_badge == "2 staged"
 
 
-def test_console_rail_state_compact_width_collapses_right_rail_effectively():
+def test_console_rail_state_compact_width_collapses_right_rail_by_default():
+    """The 150-col compact collapse is the responsive DEFAULT (TASK-2154.2):
+    with no explicit toggle stored, the right rail renders closed below the
+    threshold exactly as before."""
+    key = build_console_rail_preference_key(
+        workspace_id="workspace-1",
+        session_id="session-1",
+    )
+
+    for no_explicit_toggle in (None, {}, {"left_open": True}, {"right_open": False}):
+        state = build_console_rail_state(
+            preference_key=key,
+            stored_preferences=no_explicit_toggle,
+            available_columns=120,
+        )
+
+        assert state.left_open is True
+        assert state.right_open is False
+        assert state.right_forced_collapsed is True
+        assert state.right_compact_override is False
+        assert state.compact_override is False
+
+
+def test_console_rail_state_compact_width_honors_explicit_right_open():
+    """TASK-2154.2 (LY-11): an explicit right_open=True is honored below the
+    150-col threshold -- the force rule is the default, not a hard block --
+    and the compact override flags report it for the min-width waiver."""
     key = build_console_rail_preference_key(
         workspace_id="workspace-1",
         session_id="session-1",
@@ -480,9 +508,219 @@ def test_console_rail_state_compact_width_collapses_right_rail_effectively():
     )
 
     assert state.left_open is True
-    assert state.right_open is False
+    assert state.right_open is True
     assert state.preferred_right_open is True
-    assert state.right_forced_collapsed is True
+    assert state.right_forced_collapsed is False
+    assert state.right_compact_override is True
+    assert state.left_compact_override is False
+    assert state.compact_override is True
+
+
+def test_console_rail_state_narrow_width_collapses_left_rail_by_default():
+    """TASK-2154.1 (LY-08) + TASK-2154.2: below 100 cols the left rail
+    force-collapses as the responsive default while the user has never
+    explicitly toggled it; the (absent) stored preference stays untouched.
+
+    A stored ``left_open`` value WITHOUT the explicit-toggle marker (e.g. a
+    legacy full-payload write from toggling the OTHER rail) must keep the
+    collapse: every write serializes all keys, so key presence alone can
+    never mark explicitness (the 2026-08-05 UAT regression this guards).
+    """
+    key = build_console_rail_preference_key(
+        workspace_id="workspace-1",
+        session_id="session-1",
+    )
+
+    for no_explicit_toggle in (
+        None,
+        {},
+        {"left_open": True},
+        {"right_open": True},
+        {"left_open": True, "left_open_explicit": False},
+    ):
+        state = build_console_rail_state(
+            preference_key=key,
+            stored_preferences=no_explicit_toggle,
+            available_columns=90,
+        )
+
+        assert state.left_open is False
+        assert state.left_forced_collapsed is True
+        assert state.preferred_left_open is True
+        assert state.left_compact_override is False
+        assert state.single_pane is False
+
+
+def test_console_rail_state_narrow_width_honors_explicit_left_open():
+    """TASK-2154.2: a marker-flagged explicit left_open=True is honored
+    below 100 cols -- the left default is OPEN, so only the marker written
+    alongside the toggle gesture can tell this apart from the
+    never-toggled (or legacy full-payload) default above."""
+    key = build_console_rail_preference_key(
+        workspace_id="workspace-1",
+        session_id="session-1",
+    )
+
+    state = build_console_rail_state(
+        preference_key=key,
+        stored_preferences={"left_open": True, "left_open_explicit": True},
+        available_columns=90,
+    )
+
+    assert state.left_open is True
+    assert state.left_forced_collapsed is False
+    assert state.preferred_left_open is True
+    assert state.left_compact_override is True
+    assert state.compact_override is True
+    assert state.single_pane is False
+
+
+def test_console_rail_state_left_rail_not_collapsed_at_or_above_threshold():
+    key = build_console_rail_preference_key(
+        workspace_id="workspace-1",
+        session_id="session-1",
+    )
+
+    state = build_console_rail_state(
+        preference_key=key,
+        stored_preferences={"left_open": True},
+        available_columns=100,
+    )
+
+    assert state.left_open is True
+    assert state.left_forced_collapsed is False
+    assert state.single_pane is False
+
+
+def test_console_rail_state_single_pane_below_84_columns():
+    """TASK-2154.1 (LY-09): below 84 cols the workspace drops to one pane.
+
+    TASK-2154.2: the left force-collapse still applies to the never-toggled
+    default; an explicitly opened rail is honored even in single-pane mode
+    (handles stay hidden -- the rail's own collapse button is the way back).
+    """
+    key = build_console_rail_preference_key(
+        workspace_id="workspace-1",
+        session_id="session-1",
+    )
+
+    state = build_console_rail_state(
+        preference_key=key,
+        available_columns=60,
+    )
+
+    assert state.single_pane is True
+    assert state.left_open is False
+    assert state.left_forced_collapsed is True
+    assert state.compact_override is False
+
+    explicit = build_console_rail_state(
+        preference_key=key,
+        stored_preferences={
+            "left_open": True,
+            "left_open_explicit": True,
+            "right_open": True,
+        },
+        available_columns=60,
+    )
+
+    assert explicit.single_pane is True
+    assert explicit.left_open is True
+    assert explicit.right_open is True
+    assert explicit.left_forced_collapsed is False
+    assert explicit.right_forced_collapsed is False
+    assert explicit.left_compact_override is True
+    assert explicit.right_compact_override is True
+    assert explicit.compact_override is True
+
+
+def test_console_rail_state_no_responsive_overrides_without_width():
+    key = build_console_rail_preference_key(
+        workspace_id="workspace-1",
+        session_id="session-1",
+    )
+
+    state = build_console_rail_state(
+        preference_key=key,
+        stored_preferences={"left_open": True, "right_open": True},
+    )
+
+    assert state.left_open is True
+    assert state.right_open is True
+    assert state.left_forced_collapsed is False
+    assert state.right_forced_collapsed is False
+    assert state.left_compact_override is False
+    assert state.right_compact_override is False
+    assert state.compact_override is False
+    assert state.single_pane is False
+
+
+def test_console_rail_left_open_explicit_marker_helper():
+    """The explicit-toggle marker is the ONLY thing the helper reads, and
+    it tolerates legacy/hand-edited payloads."""
+    assert CONSOLE_RAIL_LEFT_OPEN_EXPLICIT_KEY == "left_open_explicit"
+    assert console_rail_left_open_explicit(None) is False
+    assert console_rail_left_open_explicit("bad") is False
+    assert console_rail_left_open_explicit({}) is False
+    assert console_rail_left_open_explicit({"left_open": True}) is False
+    assert (
+        console_rail_left_open_explicit({"left_open_explicit": True}) is True
+    )
+    assert (
+        console_rail_left_open_explicit({"left_open_explicit": "true"}) is True
+    )
+    assert (
+        console_rail_left_open_explicit({"left_open_explicit": 0}) is False
+    )
+
+
+def test_console_rail_width_band_buckets():
+    from tldw_chatbook.Chat.console_rail_state import console_rail_width_band
+
+    assert console_rail_width_band(None) == "standard"
+    assert console_rail_width_band(60) == "single-pane"
+    assert console_rail_width_band(83) == "single-pane"
+    assert console_rail_width_band(84) == "narrow"
+    assert console_rail_width_band(99) == "narrow"
+    assert console_rail_width_band(100) == "standard"
+    assert console_rail_width_band(160) == "standard"
+
+
+def test_console_rail_state_wide_default_layout_unchanged():
+    """TASK-2154.2 AC: the 160-col default (left open, right closed) is
+    untouched by the explicit-toggle override semantics."""
+    key = build_console_rail_preference_key(
+        workspace_id="workspace-1",
+        session_id="session-1",
+    )
+
+    state = build_console_rail_state(preference_key=key, available_columns=160)
+
+    assert state.left_open is True
+    assert state.right_open is False
+    assert state.left_forced_collapsed is False
+    assert state.right_forced_collapsed is False
+    assert state.compact_override is False
+
+
+def test_console_rail_state_explicit_right_open_at_threshold_renders_standard():
+    """At/above 150 cols an explicit right_open=True is a STANDARD open:
+    no force-collapse and no compact override (min widths stay 56/34)."""
+    key = build_console_rail_preference_key(
+        workspace_id="workspace-1",
+        session_id="session-1",
+    )
+
+    state = build_console_rail_state(
+        preference_key=key,
+        stored_preferences={"right_open": True},
+        available_columns=150,
+    )
+
+    assert state.right_open is True
+    assert state.right_forced_collapsed is False
+    assert state.right_compact_override is False
+    assert state.compact_override is False
 
 
 def test_console_rail_section_defaults():

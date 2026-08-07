@@ -115,7 +115,7 @@ The **Mic** button walks through four states:
 | **Mic** | Idle | Starts dictation |
 | **Mic…** | Preparing the speech model | Cancels ("Dictation cancelled.") |
 | **Rec ●** | Recording | Stops and transcribes |
-| **STT…** | Transcribing | Disabled — wait for the text |
+| **Text…** | Transcribing | Disabled — wait for the text |
 
 A status chip beside the draft tracks progress: "◌ Preparing microphone…",
 then `● 0:07` with the latest recognized words while recording, then

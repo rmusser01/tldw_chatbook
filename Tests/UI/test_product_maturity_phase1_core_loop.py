@@ -150,7 +150,7 @@ async def test_search_rag_result_stages_context_into_console_core_loop() -> None
             await _wait_until(
                 pilot,
                 lambda: (
-                    "Sources: 1 staged"
+                    "Sources: 1"
                     in str(
                         app.screen.query_one(
                             "#console-sources-label", Static
@@ -163,7 +163,7 @@ async def test_search_rag_result_stages_context_into_console_core_loop() -> None
             screen_text = "\n".join(
                 str(widget.renderable) for widget in app.screen.query(Static)
             )
-            assert "RAG: on" in screen_text
+            assert "Library search: on" in screen_text
             assert "Live work: Transcript chunk: Agentic terminal design" in screen_text
             assert "Evidence: 1/1 available" in screen_text
 

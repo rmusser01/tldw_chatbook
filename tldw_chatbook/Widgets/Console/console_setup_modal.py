@@ -33,10 +33,12 @@ from typing import Any
 from rich.markup import escape as escape_markup
 from textual.app import ComposeResult
 from textual.containers import Vertical
+from textual.events import Key
 from textual.timer import Timer
 from textual.widgets import Button, Static
 
 from tldw_chatbook.Chat.console_onboarding_state import (
+    CONSOLE_SETUP_CARD_SUBTITLE,
     CONSOLE_SETUP_CARD_TITLE,
     ConsoleDetectedServerAction,
     ConsoleSetupCardState,
@@ -52,6 +54,13 @@ CONSOLE_SETUP_MODAL_DETECTED_WORKBENCH_ACTION = "use-detected-local-server"
 CONSOLE_SETUP_MODAL_BACKDROP_ID = "console-setup-modal-snow"
 _DEFAULT_ACTION_LABEL = "Choose model"
 _DEFAULT_ACTION_TOOLTIP = "Choose the provider and model for this Console session."
+
+#: TASK-2154.8 (FR-09): one informational toast per blocking episode when the
+#: user types while the composer is locked. Not per keystroke -- a toast on
+#: every letter would be spam; one per episode makes the lock perceivable.
+_TYPING_LOCKED_HINT = (
+    "Typing is locked until setup finishes — press Enter to continue setup."
+)
 
 # Snow tuning: modest density (~1 flake per 30-50 cells), gentle tick cadence
 # (0.15-0.25s), varied fall speed + a little horizontal wobble so the field
@@ -104,12 +113,22 @@ class ConsoleSetupBackdrop(Static):
     }
     """
 
-    def __init__(self, *, rng: random.Random | None = None, **kwargs: Any) -> None:
+    def __init__(
+        self,
+        *,
+        rng: random.Random | None = None,
+        reduced_motion: bool = False,
+        **kwargs: Any,
+    ) -> None:
         kwargs.setdefault("id", CONSOLE_SETUP_MODAL_BACKDROP_ID)
         classes = kwargs.pop("classes", "")
         kwargs["classes"] = f"console-setup-modal-backdrop-snow {classes}".strip()
         super().__init__(**kwargs)
         self._rng = rng if rng is not None else random.Random()
+        #: TASK-2154.10 (AC-04): when True the flake field renders one static
+        #: frame per resize and the tick timer never runs -- a static dim with
+        #: the same layout instead of a full-screen animation.
+        self.reduced_motion = reduced_motion
         self._flakes: list[_SnowFlake] = []
         self._field_width = 0
         self._field_height = 0
@@ -146,6 +165,13 @@ class ConsoleSetupBackdrop(Static):
 
     def resume_snow(self) -> None:
         """Resume the tick timer -- called while the modal is blocking."""
+        if self.reduced_motion:
+            # TASK-2154.10 (AC-04): never arm the tick under reduced motion;
+            # the flake field stays on its last statically rendered frame.
+            self._snow_should_run = False
+            if self._snow_timer is not None:
+                self._snow_timer.pause()
+            return
         self._snow_should_run = True
         if self._snow_timer is not None:
             self._snow_timer.resume()
@@ -251,6 +277,11 @@ class ConsoleSetupModal(Vertical):
         # (e.g. Library Search/RAG evidence) staged while setup is still
         # incomplete -- see `sync_card_state`'s `staged_evidence_notice`.
         self._staged_evidence_notice = ""
+        #: FR-09 (TASK-2154.8): whether the typing-locked toast already fired
+        #: for the current blocking episode; re-arms when the block lifts.
+        self._typing_hint_shown = False
+        #: TASK-2154.10 (AC-04): freeze the snow backdrop on a static frame.
+        self._reduced_motion = False
         # Hidden until a card-mode state is synced in.
         self.display = False
 
@@ -258,6 +289,25 @@ class ConsoleSetupModal(Vertical):
     def detected_server_action(self) -> ConsoleDetectedServerAction | None:
         """Return the currently offered detected-local-server action."""
         return self._detected_action
+
+    @property
+    def reduced_motion(self) -> bool:
+        """Whether the snow backdrop renders statically (no animation)."""
+        return self._reduced_motion
+
+    @reduced_motion.setter
+    def reduced_motion(self, value: bool) -> None:
+        """Set reduced motion, propagating to the mounted backdrop if any."""
+        self._reduced_motion = bool(value)
+        if not self.is_mounted:
+            return
+        try:
+            backdrop = self.query_one(
+                f"#{CONSOLE_SETUP_MODAL_BACKDROP_ID}", ConsoleSetupBackdrop
+            )
+        except Exception:
+            return
+        backdrop.reduced_motion = self._reduced_motion
 
     @property
     def is_blocking(self) -> bool:
@@ -282,6 +332,16 @@ class ConsoleSetupModal(Vertical):
             )
             title.display = blocking
             yield title
+            # FR-10 (TASK-2154.8): plain-language explainer so the steps below
+            # ("Connect a provider…") land for a first-time user.
+            subtitle = Static(
+                CONSOLE_SETUP_CARD_SUBTITLE,
+                id="console-setup-modal-subtitle",
+                classes="console-setup-modal-subtitle",
+                markup=False,
+            )
+            subtitle.display = blocking
+            yield subtitle
             staged_notice = Static(
                 self._staged_evidence_notice,
                 id="console-setup-modal-staged-notice",
@@ -330,7 +390,10 @@ class ConsoleSetupModal(Vertical):
             )
         except Exception:
             return
+        backdrop.reduced_motion = self._reduced_motion
         if self.is_blocking:
+            # resume_snow() itself is a no-op under reduced motion; the static
+            # frame from the last resize stays up either way.
             backdrop.resume_snow()
         else:
             backdrop.pause_snow()
@@ -360,6 +423,10 @@ class ConsoleSetupModal(Vertical):
         self._action_tooltip = action_tooltip.strip() or _DEFAULT_ACTION_TOOLTIP
         self._staged_evidence_notice = staged_evidence_notice.strip()
         blocking = self.is_blocking
+        if not blocking:
+            # FR-09 (TASK-2154.8): block lifted -- re-arm the typing toast for
+            # the next blocking episode.
+            self._typing_hint_shown = False
         self.display = blocking
         if not self.is_mounted:
             return
@@ -375,7 +442,11 @@ class ConsoleSetupModal(Vertical):
             # Own display must track blocking so hidden-modal content does not
             # leak into visible-text scrapes while the overlay is dismissed.
             widget.display = blocking
-        for selector in ("#console-setup-modal-title", "#console-setup-modal-card"):
+        for selector in (
+            "#console-setup-modal-title",
+            "#console-setup-modal-subtitle",
+            "#console-setup-modal-card",
+        ):
             try:
                 self.query_one(selector).display = blocking
             except Exception:
@@ -449,6 +520,31 @@ class ConsoleSetupModal(Vertical):
             self.query_one(f"#{CONSOLE_SETUP_MODAL_ACTION_ID}", Button).focus()
         except Exception:
             return
+
+    def on_key(self, event: Key) -> None:
+        """Surface visible feedback when the user types while setup locks the composer.
+
+        FR-09 (TASK-2154.8): with the workbench covered, printable keystrokes
+        used to vanish silently (focus sits on the card's action button, which
+        ignores them). While blocking, consume printable character keys -- this
+        also keeps the screen's transcript j/k/c/e/r bindings inert under the
+        overlay -- and raise one informational toast per blocking episode.
+        Enter/Tab/Escape and other non-printables pass through untouched.
+        """
+        if not self.is_blocking:
+            return
+        character = event.character
+        if not character or not character.isprintable():
+            return
+        event.stop()
+        event.prevent_default()
+        if self._typing_hint_shown:
+            return
+        self._typing_hint_shown = True
+        try:
+            self.app.notify(_TYPING_LOCKED_HINT, severity="information")
+        except Exception:  # pragma: no cover - notify must never break key handling
+            pass
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         """Route card actions through the owning Workbench screen."""

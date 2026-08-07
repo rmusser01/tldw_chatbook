@@ -90,13 +90,12 @@ def _assert_console_density_evidence(svg: str) -> None:
     assert normalized_svg.count("Provider:") == 1
     assert normalized_svg.count("Model:") == 1
     assert normalized_svg.count("Assistant:") == 1
-    assert "RAG:" in normalized_svg
+    assert "Library search:" in normalized_svg
     assert "Sources:" in normalized_svg
-    assert "Tools:" in normalized_svg
     assert "Approvals:" in normalized_svg
     assert "Settings" in normalized_svg
     assert "Attach" in normalized_svg
-    assert "Library RAG" in normalized_svg
+    assert "Search Library" in normalized_svg
     assert "Model: not selected" in normalized_svg
     assert "Send disabled" not in normalized_svg
     assert "Setup required" not in normalized_svg
@@ -109,7 +108,7 @@ def _assert_console_inspector_evidence(svg: str) -> None:
     assert "Run recipe" in normalized_svg
     assert "Blocked impact" in normalized_svg
     assert "Next action" in normalized_svg
-    assert "Choose model" in normalized_svg
+    assert "Choose provider" in normalized_svg
     assert "Provider: blocked" in normalized_svg
     assert "Send disabled" not in normalized_svg
     assert "Setup required" not in normalized_svg

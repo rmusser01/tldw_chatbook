@@ -18,6 +18,8 @@ from tldw_chatbook.Widgets.Console.console_status_chips import (
     ConsoleChip,
     ConsoleModelChip,
     ConsoleRagChip,
+    ConsoleSourcesChip,
+    ConsoleToolsChip,
 )
 
 _CSS = (
@@ -49,9 +51,9 @@ def test_assistant_chip_is_an_action_chip():
 
 @pytest.mark.unit
 def test_rag_chip_is_an_action_chip():
-    """The RAG chip opens the Library RAG settings modal (user request
-    2026-08-01): "RAG: off" must be an entry point into enabling it, not
-    an inert status label."""
+    """The Library-search chip opens the Library search settings modal (user
+    request 2026-08-01): "Library search: off" must be an entry point into
+    enabling it, not an inert status label."""
     for action in ("enter", "space"):
         assert any(
             binding.key == action for binding in ConsoleRagChip.BINDINGS
@@ -61,12 +63,26 @@ def test_rag_chip_is_an_action_chip():
 
 
 @pytest.mark.unit
+def test_sources_and_tools_chips_are_action_chips():
+    """TASK-2154.2 (DS-06): the Sources and Tools chips must be activatable,
+    not inert focus traps -- below 150 cols they are the only route to the
+    Inspector's staged-sources tray and tool rows."""
+    for chip in (ConsoleSourcesChip, ConsoleToolsChip):
+        for action in ("enter", "space"):
+            assert any(
+                binding.key == action for binding in chip.BINDINGS
+            ), (chip.__name__, action)
+        assert issubclass(chip, ConsoleChip)
+        assert hasattr(chip, "OpenRequested")
+
+
+@pytest.mark.unit
 def test_chip_width_fits_25_chars_of_model_name():
     """task-1671: the ask was 25 chars of the model NAME, not 25 cells.
 
     "Model: " costs 7 cells and padding 2, so the cap must be 34 for the
     name itself to reach 25. Chips are ``width: auto``, so a higher cap
-    never widens short chips like "RAG: off".
+    never widens short chips like "Library search: off".
     """
     block = _CSS.read_text(encoding="utf-8").split(".console-control-chip {", 1)[1]
     block = block.split("}", 1)[0]
@@ -113,6 +129,8 @@ def test_screen_subscribes_to_both_new_chip_messages():
         ("_console_model_chip_activated", ConsoleModelChip),
         ("_console_assistant_chip_activated", ConsoleAssistantChip),
         ("_console_rag_chip_activated", ConsoleRagChip),
+        ("_console_sources_chip_activated", ConsoleSourcesChip),
+        ("_console_tools_chip_activated", ConsoleToolsChip),
     ):
         handler = getattr(ChatScreen, handler_name, None)
         assert handler is not None, handler_name

@@ -3002,17 +3002,11 @@ async def test_main_navigation_copy_and_order():
         assert nav_buttons[0].id == "nav-home"
         assert nav_buttons[1].id == "nav-console"
         assert nav_buttons[-1].id == "nav-settings"
-        # F-001: the "More ›" affordance is conditional -- it shows only when
-        # the strip actually overflows, carrying the F-key legend when the
-        # bar has the cells to spare ("More ›" otherwise).
-        overflow_hint = app.query_one("#nav-overflow-hint")
-        if overflow_hint.display:
-            assert str(overflow_hint.label).strip() in (
-                MainNavigationBar._HINT_WIDE,
-                MainNavigationBar._HINT_NARROW,
-            )
-        else:
-            assert str(overflow_hint.label).strip() == "More ›"
+        # TASK-2154.21 (NV-01): the static hint is now the overflow menu's
+        # compact button (hidden at widths where nothing clips).
+        hint = app.query_one("#nav-overflow-hint", Button)
+        assert str(hint.label) == "More ▾"
+        assert hint.tooltip == "All destinations"
 
 
 @pytest.mark.asyncio
@@ -4202,3 +4196,86 @@ async def test_generic_reentry_restores_last_visited_library_canvas():
 
         assert type(app.screen).__name__ == "LibraryScreen"
         assert app.screen._library_selected_row_id == LIBRARY_ROW_BROWSE_SEARCH
+
+
+@pytest.mark.asyncio
+async def test_nav_bar_no_destination_truncates_at_160_cols():
+    """NV-01 (TASK-2154.21): the strip fits all 13 destinations at 160 cols.
+
+    The hotkey-prefixed labels (``⌃1 Home`` … ``F9 Settings``) need ~153
+    cells, so the everything-fits threshold sits between 150 and 160; 160
+    gives a clean margin.
+    """
+    from tldw_chatbook.UI.Navigation.shell_destinations import SHELL_DESTINATION_ORDER
+
+    class TestApp(App):
+        def compose(self):
+            yield MainNavigationBar(active="chat")
+
+    app = TestApp()
+    async with app.run_test(size=(160, 40)) as pilot:
+        await pilot.pause(0.5)
+        nav = pilot.app.query_one(MainNavigationBar)
+        strip = nav.query_one("#nav-destination-strip")
+        hint = nav.query_one("#nav-overflow-hint", Button)
+
+        # Everything fits, so the overflow affordance hides instead of
+        # re-clipping the strip (the old 14-cell static hint is what cut
+        # "Settings" down to "Set").
+        assert not hint.display
+        assert strip.virtual_size.width <= strip.region.width
+        strip_right = strip.region.x + strip.region.width
+        for destination in SHELL_DESTINATION_ORDER:
+            button = nav.query_one(f"#nav-{destination.destination_id}")
+            assert button.region.x >= strip.region.x
+            assert button.region.x + button.region.width <= strip_right, (
+                f"{destination.destination_id} clips at 160 cols: {button.region}"
+            )
+
+
+@pytest.mark.asyncio
+async def test_nav_bar_overflow_menu_reaches_undigitized_destinations():
+    """NV-01 (TASK-2154.21): clipped destinations live in the overflow menu."""
+    from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
+
+    class TestApp(App):
+        def __init__(self):
+            super().__init__()
+            self.nav_requests: list[str] = []
+
+        def compose(self):
+            yield MainNavigationBar(active="chat")
+
+        def on_navigate_to_screen(self, message: NavigateToScreen) -> None:
+            self.nav_requests.append(message.screen_name)
+
+    app = TestApp()
+    async with app.run_test(size=(110, 32)) as pilot:
+        await pilot.pause(0.5)
+        nav = pilot.app.query_one(MainNavigationBar)
+        hint = nav.query_one("#nav-overflow-hint", Button)
+        assert hint.display, "overflow affordance must show when the strip clips"
+
+        hint.press()
+        await pilot.pause(0.5)
+        menu = pilot.app.screen_stack[-1]
+        assert menu.__class__.__name__ == "NavOverflowMenu"
+
+        # The undigitized destinations are listed with their F-key labels
+        # (Lab/Logs/Settings), hotkey prefixes survive on the first ten, and
+        # the active one is marked.
+        assert str(menu.query_one("#nav-overflow-lab", Button).label) == "F7 Lab"
+        assert str(menu.query_one("#nav-overflow-logs", Button).label) == "F8 Logs"
+        assert str(menu.query_one("#nav-overflow-settings", Button).label) == "F9 Settings"
+        assert str(menu.query_one("#nav-overflow-home", Button).label).startswith("⌃1 Home")
+        assert "(current)" in str(
+            menu.query_one("#nav-overflow-console", Button).label
+        )
+
+        menu.query_one("#nav-overflow-logs", Button).press()
+        await pilot.pause(0.5)
+
+        assert "logs" in app.nav_requests
+        assert (
+            pilot.app.screen_stack[-1].__class__.__name__ != "NavOverflowMenu"
+        )

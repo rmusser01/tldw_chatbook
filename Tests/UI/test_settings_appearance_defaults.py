@@ -114,6 +114,8 @@ def test_validate_appearance_defaults_rejects_invalid_values():
         ({"density": "spacious"}, "Density"),
         ({"animations_enabled": "yes"}, "Animations"),
         ({"smooth_scrolling": "yes"}, "Smooth scrolling"),
+        ({"reduce_motion": "yes"}, "Reduce motion"),
+        ({"ascii_glyphs": "yes"}, "ASCII glyphs"),
     )
 
     for overrides, expected_message in invalid_values:
@@ -161,6 +163,8 @@ def test_build_appearance_save_sections_preserves_unrelated_config():
             "density": "comfortable",
             "animations_enabled": False,
             "smooth_scrolling": False,
+            "reduce_motion": False,
+            "ascii_glyphs": False,
         },
     }
 
@@ -175,3 +179,43 @@ def test_appearance_defaults_public_functions_use_google_style_docstrings():
         assert doc is not None
         assert "Args:" in doc
         assert "Returns:" in doc
+
+
+def test_load_appearance_defaults_reduce_motion_defaults_off_and_coerces():
+    # Absent key (older config files): animations keep their legacy behavior.
+    assert load_appearance_defaults({}).reduce_motion is False
+
+    assert (
+        load_appearance_defaults({"appearance": {"reduce_motion": "true"}}).reduce_motion
+        is True
+    )
+    assert (
+        load_appearance_defaults({"appearance": {"reduce_motion": 1}}).reduce_motion
+        is True
+    )
+    assert (
+        load_appearance_defaults(
+            {"appearance": {"reduce_motion": object()}}
+        ).reduce_motion
+        is False
+    )
+
+
+def test_load_appearance_defaults_ascii_glyphs_defaults_off_and_coerces():
+    # Absent key (older config files): unicode glyph set stays the default.
+    assert load_appearance_defaults({}).ascii_glyphs is False
+
+    assert (
+        load_appearance_defaults({"appearance": {"ascii_glyphs": "true"}}).ascii_glyphs
+        is True
+    )
+    assert (
+        load_appearance_defaults({"appearance": {"ascii_glyphs": 1}}).ascii_glyphs
+        is True
+    )
+    assert (
+        load_appearance_defaults(
+            {"appearance": {"ascii_glyphs": object()}}
+        ).ascii_glyphs
+        is False
+    )

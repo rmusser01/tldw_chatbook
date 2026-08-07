@@ -113,8 +113,8 @@ everything. The Inspector's retrieval-scope row has three states:
 - **Scope: N items** + **Edit** and **Clear** — a scope is active; a
   **Scope: N** chip also appears in the status strip above the composer
   (click it to reopen the picker).
-- **Scope: empty** (alert-styled, + **Narrow…**) — the configured scope
-  resolves to nothing (e.g. conversation and workspace scopes don't
+- **Scope: no sources** (alert-styled, + **Narrow…**) — the configured
+  scope resolves to nothing (e.g. conversation and workspace scopes don't
   overlap), so retrieval over it would return zero items.
 
 **Narrow…**, **Edit**, and the chip open the **Narrow RAG scope —
@@ -130,9 +130,10 @@ Scope exists at two levels. The left rail's **RAG Scope** button sets a
 **workspace-level** scope ("Narrow RAG retrieval to items in this
 workspace"); a conversation's scope then narrows *within* it — items
 outside are suffixed "— outside workspace scope", and the effective scope
-is the intersection (chip tooltip: `conversation 2 ∩ workspace 5 → 2`).
+is the intersection (chip tooltip: "Only searching: conversation scope (2
+items) and workspace scope (5 items) — 2 in both.").
 
-### Staged sources & Library RAG
+### Staged sources & Library search
 
 The Inspector's **Sources** tray lists context staged for the run, one
 row per source with a status word (ready / running / blocked / muted);
@@ -152,14 +153,14 @@ that gap is also still open (task-2375).
 
 To gather evidence *before* sending, use the Inspector's **Live work
 sources** card: type a question into "Ask Library sources before sending"
-and press **Run Library RAG** (also a control-bar action). It searches
+and press **Search Library** (also a control-bar action). It searches
 your Library and stages what it finds.
 
 Which *kinds* of sources it searches is shown on that card's **Sources:**
 line — by default "Sources: Notes, Media, Conversations (Prompts off)" —
-and is editable: the **RAG** chip (or **Run Library RAG** with nothing
-typed) opens the **Library RAG** settings modal, which carries the query
-box plus a toggle per source kind (**✓ Notes**, **○ Media**,
+and is editable: the **Library search** chip (or **Search Library** with
+nothing typed) opens the **Library search** settings modal, which carries
+the query box plus a toggle per source kind (**✓ Notes**, **○ Media**,
 **✓ Conversations**, **○ Prompts**). Running keeps the edited selection
 (it also survives leaving and returning to Console); **Cancel** discards
 it. Run stays disabled until there is both a query and at least one
@@ -254,7 +255,7 @@ Inspector shows what's in play:
 | r / Escape (in the viewer) | Refresh the snapshot / close |
 | `/prompt [name]` | Replace the draft with a saved prompt (picker when ambiguous) |
 | `/system [name]` | Edit the session system prompt, or apply a saved prompt's system part |
-| `/prefill [pin\|clear] [text]` | Arm, pin, clear, or report the response prefill |
+| `/prefill [pin\|clear] [text]` | Set, pin, clear, or report the start of the assistant's reply |
 
 Mistyping a command shows the full list: "Unknown command /… — available:
 /prompt, /system, /skills, /prefill, /generate-image, /rewind. Press
@@ -279,8 +280,8 @@ Enter again to send as text."
   confirmation and the viewer's Response Prefill fold both say so.
 - **A one-shot prefill can't literally start with `pin `** (or be exactly
   `clear`) — those parse as subcommands. Rephrase, or pin then clear.
-- **"Scope: empty" means zero-result retrieval.** The alert-styled state
-  warns before you send into it — **Clear** or **Edit** the scope.
+- **"Scope: no sources" means zero-result retrieval.** The alert-styled
+  state warns before you send into it — **Clear** or **Edit** the scope.
 - **The viewer's token count is a draft-derived estimate** — a guide, not
   a billing meter.
 

@@ -19,6 +19,7 @@ from tldw_chatbook.Chat.console_glyphs import (
     GLYPH_COLLAPSED,
     GLYPH_EXPANDED,
 )
+from tldw_chatbook.Widgets.glyph_fallback import resolve_glyph
 from tldw_chatbook.Workspaces.conversation_browser_state import (
     console_conversation_status_detail,
     CONSOLE_DEFAULT_CONVERSATION_DETAIL,
@@ -452,7 +453,10 @@ class ConsoleWorkspaceStatusPair(Horizontal):
             markup=False,
         )
         value_widget.styles.width = "1fr"
-        value_widget.styles.min_width = 0
+        # Rail IA spec section 8: the value column enforces a 10-cell floor so
+        # it never collapses to a single character at the rail's minimum width
+        # (TASK-2154.3 -- it was 0, letting the value shrink to 3-6 cells).
+        value_widget.styles.min_width = 10
         # TASK-384: at narrow rail widths the value column shrinks to a few cells
         # and a value like "Default" word-wrapped into a "Def / aul / t" letter
         # stack. Truncate the whole token with an ellipsis on one line instead,
@@ -720,6 +724,20 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
            pass just because a row was added/removed and the scrollbar
            toggled. Do not remove that CSS without re-auditing this
            single-pass assumption.
+        3. TASK-2154.3: when a fit pass lands mid-recompose (its own relabel
+           pass just rebuilt the children), every child's virtual height
+           still reads 0, so the loop below computes a 1-row "content"
+           height. Latching that shrunk the tray to one row until the next
+           unrelated fit pass -- observed deterministically at a 30-col
+           rail (the left rail's new TASK-2154.3 minimum) as the Details
+           section overlapping the conversation list. With two or more
+           children a settled layout ALWAYS yields a bottom of at least 2
+           (the tray composes four or more children unconditionally), so a
+           bottom of exactly 1 means "not laid out yet": defer one more
+           pass instead of latching. Termination is guaranteed because a
+           displayed tray's children are laid out within the pending
+           refresh, and a hidden one already returned above on
+           ``region.height <= 0``.
 
         Returns:
             None.
@@ -744,6 +762,14 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
                 content_bottom,
                 child_virtual.y + child_virtual.height,
             )
+
+        if content_bottom == 1 and len(self.children) > 1:
+            # Mid-recompose: no child has a laid-out height yet (see point 3
+            # in the docstring). Defer one more pass rather than latch a
+            # bogus one-row height.
+            if self.is_mounted and self.display:
+                self.call_after_refresh(self._fit_height_to_content)
+            return
 
         target_height = max(1, content_bottom - content_top)
         # When the tray is nested inside a collapsible left-rail section body,
@@ -952,13 +978,27 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
             id="console-workspace-action-row",
             classes="console-workspace-action-row",
         ):
-            yield Button(
+            switch_button = Button(
                 "Switch",
                 id="console-change-workspace",
                 classes="console-workspace-action",
                 compact=True,
                 disabled=not self.state.change_workspace_enabled,
             )
+            # TASK-2154.3 (LY-06): the block reason used to render as an
+            # always-on Static under the buttons, so "Add another workspace
+            # before switching." read as an error before the user had
+            # expressed any intent. The reason now lives on the disabled
+            # button's tooltip -- visible exactly when the user reaches for
+            # the control it justifies (Textual renders tooltips for
+            # disabled widgets). Genuine workspace-service failures still
+            # surface proactively through `recovery_copy` below.
+            if (
+                not self.state.change_workspace_enabled
+                and self.state.change_workspace_recovery
+            ):
+                switch_button.tooltip = self.state.change_workspace_recovery
+            yield switch_button
             yield Button(
                 "New",
                 id="console-new-workspace",
@@ -1230,7 +1270,7 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
             )
             yield title
             toggle = Button(
-                GLYPH_COLLAPSED if section.collapsed else GLYPH_EXPANDED,
+                resolve_glyph(GLYPH_COLLAPSED if section.collapsed else GLYPH_EXPANDED),
                 id=f"console-conversation-browser-section-toggle-{section.section_id}",
                 classes=(
                     "console-workspace-action console-workspace-conversations-toggle"
@@ -1290,7 +1330,7 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
             )
             yield title
             toggle = Button(
-                GLYPH_COLLAPSED if group.collapsed else GLYPH_EXPANDED,
+                resolve_glyph(GLYPH_COLLAPSED if group.collapsed else GLYPH_EXPANDED),
                 id=f"console-conversation-browser-group-toggle-{index}",
                 classes=(
                     "console-workspace-action console-workspace-conversations-toggle"

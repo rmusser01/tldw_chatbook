@@ -16,6 +16,10 @@ DEFAULT_FONT_SIZE = 12
 DEFAULT_DENSITY = "normal"
 DEFAULT_ANIMATIONS_ENABLED = True
 DEFAULT_SMOOTH_SCROLLING = True
+# TASK-2154.10 (AC-04): static-frame rendering for splash + setup backdrop.
+DEFAULT_REDUCE_MOTION = False
+# TASK-2154.19 (AC-01): ASCII-safe status markers for narrow-font terminals.
+DEFAULT_ASCII_GLYPHS = False
 SUPPORTED_DENSITIES = frozenset({"compact", "normal", "comfortable"})
 MIN_PALETTE_THEME_LIMIT = 0
 MAX_PALETTE_THEME_LIMIT = 100
@@ -34,6 +38,8 @@ class SettingsAppearanceDefaults:
     density: str = DEFAULT_DENSITY
     animations_enabled: bool = DEFAULT_ANIMATIONS_ENABLED
     smooth_scrolling: bool = DEFAULT_SMOOTH_SCROLLING
+    reduce_motion: bool = DEFAULT_REDUCE_MOTION
+    ascii_glyphs: bool = DEFAULT_ASCII_GLYPHS
 
 
 def _mapping_child(parent: Mapping[str, Any], key: str) -> Mapping[str, Any]:
@@ -135,6 +141,14 @@ def load_appearance_defaults(
             appearance.get("smooth_scrolling", DEFAULT_SMOOTH_SCROLLING),
             DEFAULT_SMOOTH_SCROLLING,
         ),
+        reduce_motion=_coerce_bool(
+            appearance.get("reduce_motion", DEFAULT_REDUCE_MOTION),
+            DEFAULT_REDUCE_MOTION,
+        ),
+        ascii_glyphs=_coerce_bool(
+            appearance.get("ascii_glyphs", DEFAULT_ASCII_GLYPHS),
+            DEFAULT_ASCII_GLYPHS,
+        ),
     )
 
 
@@ -188,6 +202,16 @@ def validate_appearance_defaults(
             False,
             "Smooth scrolling must be enabled or disabled.",
         )
+    if _strict_bool(values.reduce_motion) is None:
+        return SettingsValidationResult(
+            False,
+            "Reduce motion must be enabled or disabled.",
+        )
+    if _strict_bool(values.ascii_glyphs) is None:
+        return SettingsValidationResult(
+            False,
+            "ASCII glyphs must be enabled or disabled.",
+        )
     return SettingsValidationResult(True, "Appearance defaults are valid.")
 
 
@@ -220,6 +244,8 @@ def build_appearance_save_sections(
             "density": str(values.density).strip().lower(),
             "animations_enabled": bool(values.animations_enabled),
             "smooth_scrolling": bool(values.smooth_scrolling),
+            "reduce_motion": bool(values.reduce_motion),
+            "ascii_glyphs": bool(values.ascii_glyphs),
         }
     )
 

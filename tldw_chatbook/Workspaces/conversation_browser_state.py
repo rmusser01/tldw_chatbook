@@ -47,6 +47,13 @@ _CONSOLE_CONVERSATION_STATUS_DETAIL = {
 #: differentiator worth the vertical space.
 CONSOLE_DEFAULT_CONVERSATION_DETAIL = "saved chat"
 
+#: Display label for the synthetic non-workspace bucket (global/default rows).
+#: ChatScreen._console_browser_workspace_label assigns it as the
+#: ``workspace_label`` of rows that belong to no real workspace, and the
+#: browser's flat global section uses it as its header label. Named once here
+#: so ``_selected_summary`` can recognize the bucket (TASK-2154.3, LY-05).
+_CHATS_BUCKET_LABEL = "Chats"
+
 
 def console_conversation_status_detail(status: str) -> str:
     """Return the shared friendly state label for a conversation row status.
@@ -407,14 +414,21 @@ def build_console_conversation_browser_state(
         workspace_rows_by_group.setdefault(group_id, []).append(row)
         workspace_labels.setdefault(group_id, row.workspace_label or workspace_id)
 
+    sorted_starred_rows = _sort_starred_rows(starred_rows)
     starred_section = _build_row_section(
         section_id="starred",
         label="Starred",
-        rows=_sort_starred_rows(starred_rows),
+        rows=sorted_starred_rows,
+        # TASK-2154.3 (LY-04): an empty section default-collapses to a quiet
+        # single-line header (same default Chats already used) instead of
+        # announcing "No starred conversations." before any user intent.
+        # Expanding it still shows the empty copy; an active query
+        # force-expands only when the section has matches (see
+        # `_build_row_section`).
         preference_collapsed=_resolve_collapsed(
             preferences,
             "section:starred",
-            default_collapsed=False,
+            default_collapsed=not bool(sorted_starred_rows),
         ),
         query_active=query_active,
         group_row_limit=safe_group_row_limit,
@@ -433,11 +447,13 @@ def build_console_conversation_browser_state(
     workspaces_preference_collapsed = _resolve_collapsed(
         preferences,
         "section:workspaces",
-        default_collapsed=False,
+        # TASK-2154.3 (LY-04): same empty-default-collapse as Starred/Chats.
+        default_collapsed=not bool(workspace_groups),
     )
-    workspaces_collapsed = workspaces_preference_collapsed and not (
-        query_active and bool(workspace_groups)
-    )
+    # TASK-2154.3 (LY-04): an active query always expands the section, so a
+    # no-match search keeps "No workspace conversations." as its feedback
+    # (the pre-2154.3 default did the same by never default-collapsing).
+    workspaces_collapsed = workspaces_preference_collapsed and not query_active
     workspaces_section = ConsoleConversationBrowserSection(
         section_id="workspaces",
         label="Workspaces",
@@ -464,7 +480,7 @@ def build_console_conversation_browser_state(
     )
     chats_section = _build_row_section(
         section_id="chats",
-        label="Chats",
+        label=_CHATS_BUCKET_LABEL,
         rows=chat_input_rows,
         preference_collapsed=chat_preference_collapsed,
         query_active=query_active,
@@ -593,8 +609,21 @@ def _build_row_section(
 # stays free of a Chat-layer model import -- `run_marker` is threaded as an
 # already-resolved string end to end (see `ConsoleConversationBrowserRow.
 # run_marker`'s docstring), so the glyph strings are the only vocabulary
-# this layer needs.
-_RUN_MARKER_URGENCY = {"◆": 0, "●": 1, "✗": 2, "✓": 3}
+# this layer needs. TASK-2154.19 (AC-01): the pipeline carries whichever
+# vocabulary the producer resolved, so the ASCII-safe substitutes
+# (`Widgets/glyph_fallback.py`) are mirrored here as literals under the
+# same no-import discipline -- in ASCII mode a group header must still
+# borrow its most urgent marker rather than fall to the bottom of the sort.
+_RUN_MARKER_URGENCY = {
+    "◆": 0,
+    "●": 1,
+    "✗": 2,
+    "✓": 3,
+    "[!]": 0,
+    "[*]": 1,
+    "[X]": 2,
+    "[x]": 3,
+}
 
 
 class RunMarkerBearer(Protocol):
@@ -829,7 +858,16 @@ def _selected_summary(rows: tuple[ConsoleConversationBrowserInputRow, ...]) -> s
     selected = next((row for row in rows if row.selected), None)
     if selected is None:
         return ""
-    if selected.title and selected.workspace_label:
+    # TASK-2154.3 (LY-05): the synthetic "Chats" bucket label (global/default
+    # rows) made the summary read "<title> - Chats" directly above the
+    # collapsible "Chats" group listing the same row -- two list metaphors
+    # for one thing. Real workspace labels still disambiguate; the bucket
+    # label only repeats what the group header already says.
+    if (
+        selected.title
+        and selected.workspace_label
+        and selected.workspace_label != _CHATS_BUCKET_LABEL
+    ):
         return f"{selected.title} - {selected.workspace_label}"
     return selected.title or selected.workspace_label
 

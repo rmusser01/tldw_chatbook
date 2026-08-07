@@ -6,6 +6,7 @@ from textual.containers import Vertical
 from textual.widgets import Static
 
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
+from Tests.UI.test_console_native_chat_flow import ConsoleNavigationHarness
 
 from tldw_chatbook.Chat.console_chat_models import ConsoleRunState, ConsoleRunStatus
 from tldw_chatbook.Chat.console_display_state import (
@@ -17,6 +18,7 @@ from tldw_chatbook.Chat.console_onboarding_state import (
     ConsoleSetupCardState,
     ConsoleSetupStep,
 )
+from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 from tldw_chatbook.UI.Screens.chat_screen import (
     CONSOLE_FOCUS_TARGETS_BY_PANE,
     CONSOLE_PROVIDER_CONFIGURE_API_KEY_LABEL,
@@ -258,7 +260,7 @@ async def test_console_has_one_canonical_visible_state_action_strip():
             if _is_displayed(child)
         )
         assert action_text.count("Settings") == 1
-        assert action_text.count("Library RAG") == 1
+        assert action_text.count("Search Library") == 1
         # Pills moved out of the control bar into their own strip.
         assert "Provider:" not in action_text
         chips = console.query_one("#console-status-chips")
@@ -307,7 +309,6 @@ async def test_console_control_bar_renders_visible_state_chips():
             "#console-assistant-chip",
             "#console-rag-chip",
             "#console-sources-chip",
-            "#console-tools-chip",
             "#console-approvals-chip",
         )
         # Chips now live in the #console-status-chips strip above the composer,
@@ -318,6 +319,11 @@ async def test_console_control_bar_renders_visible_state_chips():
             assert _is_displayed(chip), selector
             visible_chip_text.append(_widget_text(chip))
 
+        # TX-04 (TASK-2154.12): the tools chip HIDES at a zero tool count
+        # instead of showing the "not loaded" lazy-loading placeholder.
+        tools_chip = console.query_one("#console-tools-chip")
+        assert not _is_displayed(tools_chip)
+
         assert any("Provider:" in text for text in visible_chip_text)
         assert any("Model:" in text for text in visible_chip_text)
         assert [text for text in visible_chip_text if "Assistant:" in text] == [
@@ -325,9 +331,8 @@ async def test_console_control_bar_renders_visible_state_chips():
         ]
         assert not console.query("#console-character-chip")
         assert not console.query("#console-persona-chip")
-        assert any("RAG:" in text for text in visible_chip_text)
+        assert any("Library search:" in text for text in visible_chip_text)
         assert any("Sources:" in text for text in visible_chip_text)
-        assert any("Tools:" in text for text in visible_chip_text)
         assert any("Approvals:" in text for text in visible_chip_text)
 
 
@@ -623,7 +628,9 @@ async def test_console_blocked_inspector_explains_impact_and_next_action():
         )
         assert "Blocked" in visible_text
         assert "Send is blocked" in visible_text
-        assert "Choose model" in visible_text
+        # TASK-2154.7 (FR-05): the provider blocker (missing API key) is the
+        # first incomplete step now, so the next action is the provider fix.
+        assert "Set up provider" in visible_text
 
 
 @pytest.mark.asyncio
@@ -679,7 +686,9 @@ async def test_console_composer_keeps_primary_actions_and_setup_card_recovery_vi
         assert _is_displayed(modal)
         card_action = console.query_one("#console-setup-modal-action")
         assert _is_displayed(card_action)
-        assert "Choose model" in _widget_text(card_action)
+        # TASK-2154.7 (FR-05): the action matches the first incomplete step —
+        # with the provider missing an API key that is the provider fix.
+        assert "Set up provider" in _widget_text(card_action)
         visible_draft = console.query_one("#console-command-visible-text")
         assert visible_draft.region.width >= 32
 
@@ -700,15 +709,30 @@ async def test_console_composer_keeps_disabled_reason_outside_input_row():
         await _wait_for_selector(console, pilot, "#console-shell")
 
         reason = console.query_one("#console-send-disabled-reason")
-        assert not _is_displayed(reason)
         visible_draft = console.query_one("#console-command-visible-text")
-        assert visible_draft.region.width >= 32
         actions = console.query_one("#console-composer-actions")
         send = console.query_one("#console-send-message")
+
+        # TASK-2154.6 (FR-04): the reason strip now RENDERS while setup
+        # blocks -- but still outside the input row's budget: it sits on the
+        # same single row between the 1fr draft (which yields the cells) and
+        # the fixed-width actions row, never adding height or overlapping
+        # either neighbor.
+        # TASK-2154.12: with an empty OpenAI key the real blocker is the
+        # missing API key, and the strip now says so (it used to mis-name
+        # "choose a model" by matching "model" inside "Providers & Models").
+        assert _is_displayed(reason)
+        assert reason.renderable.plain == "Send blocked — add an API key to continue"
+        assert reason.region.height <= 1
+        assert reason.region.y == send.region.y
+        assert visible_draft.region.width >= 20
         assert actions.region.y == send.region.y
         assert visible_draft.region.x < actions.region.x
-        assert visible_draft.region.x + visible_draft.region.width <= actions.region.x
-        assert "model" in (send.tooltip or "").lower()
+        assert (
+            visible_draft.region.x + visible_draft.region.width <= reason.region.x
+        )
+        assert reason.region.x + reason.region.width <= actions.region.x + 1
+        assert "api key" in (send.tooltip or "").lower()
         assert "nowrap" in str(reason.styles.text_wrap)
 
 
@@ -736,7 +760,9 @@ async def test_console_empty_transcript_exposes_beginner_activation_actions():
         assert "Send your first message" in _widget_text(
             console.query_one("#console-setup-step-3")
         )
-        assert "Choose model" in _widget_text(
+        # TASK-2154.7 (FR-05): with no provider selected at all, the action is
+        # the provider step, not the model step.
+        assert "Choose provider" in _widget_text(
             console.query_one("#console-setup-modal-action")
         )
         # The modal carries no attach/RAG affordances; those stay on the control bar.
@@ -768,7 +794,9 @@ async def test_console_ready_empty_transcript_exposes_activation_panel_copy():
 
 
 @pytest.mark.asyncio
-async def test_console_empty_transcript_choose_model_opens_settings():
+async def test_console_empty_transcript_setup_action_opens_settings():
+    # TASK-2154.7 (FR-05): with the provider missing an API key, the card's
+    # action is the provider fix and routes to the app Settings screen.
     app = _build_test_app()
     app.app_config = {
         "chat_defaults": {"provider": "OpenAI", "model": ""},
@@ -776,7 +804,7 @@ async def test_console_empty_transcript_choose_model_opens_settings():
     }
     app.chat_api_provider_value = "OpenAI"
     app.chat_api_model_value = ""
-    host = ConsoleHarness(app)
+    host = ConsoleNavigationHarness(app)
 
     async with host.run_test(size=(120, 40)) as pilot:
         console = host.screen_stack[-1]
@@ -786,9 +814,11 @@ async def test_console_empty_transcript_choose_model_opens_settings():
         await pilot.click("#console-setup-modal-action")
         await pilot.pause()
 
-        assert host.screen.query("#console-settings-modal") or host.screen.query(
-            "#settings-screen"
-        )
+    assert [
+        message.screen_name
+        for message in host.navigation_messages
+        if isinstance(message, NavigateToScreen)
+    ] == ["settings"]
 
 
 @pytest.mark.asyncio
@@ -943,12 +973,12 @@ def test_console_workbench_state_exposes_core_actions_visibly():
     assert {
         "Settings",
         "Attach context",
-        "Run Library RAG",
+        "Search Library",
         "Help",
     } <= action_labels
-    # Save Chatbook is deliberately absent: it left the top strip for the
+    # Save as Chatbook is deliberately absent: it left the top strip for the
     # ☰ composer menu and the Inspector's Artifacts row.
-    assert "Save Chatbook" not in action_labels
+    assert "Save as Chatbook" not in action_labels
     assert tuple(actions) == (
         "new-tab",
         "settings",
@@ -1060,6 +1090,18 @@ def test_console_disabled_reason_copy_prefers_setup_blocker():
             "Provider setup needed: verify local runtime",
             "Send blocked — finish provider setup to continue",
         ),
+        # TASK-2154.12: the REAL blocker copy points at the "Providers &
+        # Models" settings screen -- a "model"-first substring match named
+        # the wrong blocker ("choose a model") for missing-key and
+        # missing-endpoint states.
+        (
+            "Add API key in Settings > Providers & Models before sending.",
+            "Send blocked — add an API key to continue",
+        ),
+        (
+            "Save provider endpoint in Settings > Providers & Models before sending.",
+            "Send blocked — configure the endpoint to continue",
+        ),
     ),
 )
 def test_console_disabled_reason_copy_maps_setup_blockers(
@@ -1161,7 +1203,9 @@ async def test_console_setup_card_carries_blocked_send_guidance_instead_of_banne
 
 
 @pytest.mark.asyncio
-async def test_console_setup_card_choose_model_action_is_visible_and_primary_recovery():
+async def test_console_setup_card_provider_action_is_visible_and_primary_recovery():
+    # TASK-2154.7 (FR-05): with the provider missing an API key, the primary
+    # recovery action is the provider fix, not the model picker.
     app = _build_test_app()
     app.app_config = {
         "chat_defaults": {"provider": "OpenAI", "model": ""},
@@ -1179,12 +1223,14 @@ async def test_console_setup_card_choose_model_action_is_visible_and_primary_rec
         assert not _is_displayed(recovery)
         action = console.query_one("#console-setup-modal-action")
         assert _is_displayed(action)
-        assert str(action.label) == "Choose model"
+        assert str(action.label) == CONSOLE_PROVIDER_CONFIGURE_API_KEY_LABEL
         assert action.disabled is False
 
 
 @pytest.mark.asyncio
 async def test_console_setup_card_recovery_action_button_is_visible_and_actionable():
+    # TASK-2154.7 (FR-05): the action now resolves the provider blocker first,
+    # so clicking it routes to the app Settings screen.
     app = _build_test_app()
     app.app_config = {
         "chat_defaults": {"provider": "OpenAI", "model": ""},
@@ -1192,7 +1238,7 @@ async def test_console_setup_card_recovery_action_button_is_visible_and_actionab
     }
     app.chat_api_provider_value = "OpenAI"
     app.chat_api_model_value = ""
-    host = ConsoleHarness(app)
+    host = ConsoleNavigationHarness(app)
 
     async with host.run_test(size=(120, 40)) as pilot:
         console = host.screen_stack[-1]
@@ -1206,9 +1252,11 @@ async def test_console_setup_card_recovery_action_button_is_visible_and_actionab
         await pilot.click("#console-setup-modal-action")
         await pilot.pause()
 
-        assert host.screen.query("#console-settings-modal") or host.screen.query(
-            "#settings-screen"
-        )
+    assert [
+        message.screen_name
+        for message in host.navigation_messages
+        if isinstance(message, NavigateToScreen)
+    ] == ["settings"]
 
 
 @pytest.mark.asyncio
@@ -1395,7 +1443,7 @@ async def test_console_f1_help_lists_visible_actions():
         body = str(host.screen.query_one("#workbench-help-body").renderable)
         assert "Settings" in body
         assert "Attach context" in body
-        assert "Run Library RAG" in body
+        assert "Search Library" in body
         assert "F6" in body
         assert "next pane" in body
         assert "Ctrl+P" in body

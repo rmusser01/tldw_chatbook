@@ -151,8 +151,7 @@ def _visual_chrome_ready(app: TldwCli, destination_id: str) -> bool:
     try:
         nav_bar = app.screen.query_one(MainNavigationBar)
         nav_ids = tuple(
-            button.id.removeprefix("nav-")
-            for button in nav_bar.query("Button.nav-button")
+            button.id.removeprefix("nav-") for button in nav_bar.query(".nav-button")
         )
         if nav_ids != TOP_LEVEL_DESTINATION_IDS:
             return False
@@ -186,24 +185,11 @@ async def _assert_visual_snapshot_is_healthy(
     app: TldwCli, destination_id: str, size_label: str, pilot
 ) -> None:
     nav_bar = app.screen.query_one(MainNavigationBar)
-    nav_ids = tuple(
-        button.id.removeprefix("nav-") for button in nav_bar.query("Button.nav-button")
-    )
+    nav_ids = tuple(button.id.removeprefix("nav-") for button in nav_bar.query(".nav-button"))
     assert nav_ids == TOP_LEVEL_DESTINATION_IDS
     assert nav_bar.query_one(f"#nav-{destination_id}", Button).has_class("is-active")
-    # F-001: the "More ›" affordance is on duty exactly when the strip
-    # overflows, hidden when every destination fits. Polled: navigation
-    # composes a fresh bar per visit, and its post-layout display sync
-    # lands a tick after the body does.
-    await _wait_until(
-        pilot,
-        lambda: app.screen.query_one("#nav-overflow-hint").display
-        == (app.screen.query_one("#nav-destination-strip").max_scroll_x > 0),
-        context=f"{size_label}:{destination_id}:overflow-hint",
-    )
     overflow_hint = app.screen.query_one("#nav-overflow-hint", Button)
-    assert "More" in str(overflow_hint.label)
-    assert "Ctrl+P" in str(overflow_hint.tooltip)
+    assert str(overflow_hint.label).strip() == "More ▾"
     _assert_destination_body_mounted(app, destination_id, size_label)
 
     text = _screen_text(app)

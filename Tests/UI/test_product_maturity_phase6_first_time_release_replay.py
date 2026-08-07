@@ -161,7 +161,12 @@ async def test_release_first_time_replay_exposes_home_console_library_and_setup(
             assert "Console needs a working model before live AI tasks." in home_text
             assert "Needs Attention" in home_text
             assert "Set up Console model" in home_text
-            assert "Ctrl+P" in home_text
+            # NV-01 (TASK-2154.21): at 140 cols every destination fits, so
+            # the overflow affordance hides instead of docking over the strip.
+            await _wait_until(
+                pilot,
+                lambda: app.screen.query_one("#nav-overflow-hint").display is False,
+            )
 
             for button_id, current_tab, screen_name, required_copy in (
                 (

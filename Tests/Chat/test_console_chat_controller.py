@@ -1604,12 +1604,94 @@ def test_describe_stream_failure_classifies_common_errors():
             self.response = SimpleNamespace(status_code=502)
 
     assert "HTTP 502" in describe_stream_failure(FakeHTTPStatusError())
-    # str(exc) alone was empty in the live failure ("[failed]"); the class
-    # name must always be present so the copy is never blank.
+    # str(exc) alone was empty in the live failure ("[failed]"); the copy must
+    # never be blank. FB-06 (task-2154.16): the generic fallback is a plain
+    # category -- the exception class name must NOT reach user copy.
     empty_detail = describe_stream_failure(RuntimeError())
-    assert empty_detail == "RuntimeError error"
+    assert empty_detail == "unexpected provider error"
     with_detail = describe_stream_failure(RuntimeError("llama.cpp stream failed"))
-    assert with_detail == "RuntimeError error (llama.cpp stream failed)"
+    assert with_detail == "unexpected provider error (llama.cpp stream failed)"
+
+
+def test_describe_stream_failure_never_leaks_exception_class_names():
+    """FB-06 (task-2154.16): generic Exception subclasses map to a plain
+    category; useful detail (connection refused, URL) is preserved."""
+    from tldw_chatbook.Chat.console_chat_controller import describe_stream_failure
+
+    class LlamaCppSDKError(Exception):
+        """Stand-in for a provider SDK's own error type."""
+
+    for exc in (
+        RuntimeError("Connection refused: llama.cpp server not reachable at http://127.0.0.1:9099"),
+        ValueError("bad chunk encoding"),
+        LlamaCppSDKError("weird sdk state"),
+    ):
+        copy = describe_stream_failure(exc)
+        assert type(exc).__name__ not in copy
+        assert copy.startswith("unexpected provider error")
+        # The actionable detail survives the sanitization.
+        assert str(exc) in copy
+
+    # Empty-detail generic exceptions still produce non-empty copy.
+    for exc in (RuntimeError(), ValueError(), LlamaCppSDKError()):
+        assert describe_stream_failure(exc) == "unexpected provider error"
+
+
+@pytest.mark.asyncio
+async def test_active_session_stream_failure_fires_failure_toast_once():
+    """FB-05 (task-2154.16): the VIEWED session's stream failure raises an
+    ambient toast carrying the same copy as the transcript system row."""
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(
+        store=store, provider_gateway=FailingStreamingGateway()
+    )
+    toasts: list[str] = []
+    controller.notify_run_failure = toasts.append
+
+    result = await controller.submit_draft("hello")
+
+    assert result.accepted is True
+    system_row = store.messages_for_session(store.active_session_id)[-1]
+    assert system_row.role is ConsoleMessageRole.SYSTEM
+    assert toasts == [system_row.content]
+    assert toasts[0].startswith("Provider stream failed:")
+
+
+@pytest.mark.asyncio
+async def test_active_session_failure_toast_not_refired_on_terminal_restamp():
+    """FB-05 once-guard: re-stamping an already-terminal FAILED status must
+    not re-toast (mirrors notify_run_outcome's transition guard)."""
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(
+        store=store, provider_gateway=FailingStreamingGateway()
+    )
+    toasts: list[str] = []
+    controller.notify_run_failure = toasts.append
+    await controller.submit_draft("hello")
+    assert len(toasts) == 1
+
+    controller._set_run_state(
+        ConsoleRunState(ConsoleRunStatus.FAILED, "Provider stream failed: restamp"),
+        session_id=store.active_session_id,
+    )
+    assert len(toasts) == 1
+
+
+@pytest.mark.asyncio
+async def test_active_session_success_stays_silent():
+    """FB-05 scope: only failures toast on the viewed session (FB-07's
+    positive-feedback gap is task-2154.17, not this one)."""
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(
+        store=store, provider_gateway=StreamingGateway()
+    )
+    toasts: list[str] = []
+    controller.notify_run_failure = toasts.append
+
+    result = await controller.submit_draft("hello")
+
+    assert result.accepted is True
+    assert toasts == []
 
 
 @pytest.mark.asyncio

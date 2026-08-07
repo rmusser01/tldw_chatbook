@@ -79,6 +79,28 @@ after the fact** over raising inside code that catches broadly.
 
 ---
 
+## A new widget in a shared row needs geometry assertions, not just display/text
+
+**The trap.** You add a small widget to an existing `Horizontal` row and assert it
+displays with the right text. Textual's default `Widget`/`Static` width is `1fr`, so
+the new child quietly claims the entire row and pushes every sibling off the screen
+edge. Display and text assertions stay green — they never look at positions.
+
+**What happened.** TASK-2154.1 added `#console-compact-status-marker` as the first
+child of the Console control-bar action row. Six new Pilot tests passed (marker
+visible, correct label, rails behave), but the 80x24 UAT screenshot showed **every
+control button gone**: the bare `Static` took the row's full 78 cells and the buttons
+laid out at x=79+, off-screen. One line — `marker.styles.width = "auto"` — fixed it;
+a regression test asserting each button's `region` stays inside the screen locks it,
+and was itself mutation-checked by deleting the width line (it fails: `x=90 + 16 > 90`).
+
+**What to do.** When you mount anything into a laid-out row/column you do not own,
+assert the **neighbours' geometry** (`region.x + region.width <= screen width`), not
+only your widget's `display`. If your widget is a `Static`, set `width = "auto"`
+explicitly unless you actually want it to eat the row.
+
+---
+
 ## Passing the suites a change touches is not passing the suites it can reach
 
 **The trap.** You run the tests near your edit. The breakage is somewhere that merely
@@ -891,3 +913,151 @@ one.
    and ordering varies for reasons that have nothing to do with your diff. When
    you find one, ask whether the *product's* ordering is guaranteed before you
    "fix" the test to match whatever it did today.
+## A fixed `pilot.pause()` before querying a worker-mounted widget is an ordering landmine (2026-08-05)
+
+**Incident.** TASK-2154.3 added one event-loop turn to the Console left rail's
+settling path (a mid-recompose fit-pass defer in
+`ConsoleWorkspaceContextTray._fit_height_to_content`). Every targeted suite stayed
+green, but at FILE level
+`test_console_workspace_many_conversations_keep_lower_status_reachable` failed with
+`NoMatches: '#console-new-workspace-conversation'` — and passed standalone, and the
+whole file passed on HEAD. Bisecting showed ANY preceding pilot test (not just the
+ones the diff touched) tripped it: on a warm event loop the legacy-alias mount chain
+(`call_after_refresh` → `run_worker` → `await mount()`) lands one turn later than the
+test's single fixed `await pilot.pause()`. A scratch test with a polling wait proved
+the button still mounts promptly — pure test-timing fragility, no production
+regression — so the fix was one `_wait_for_selector(...)` line in the test, not a
+production change.
+
+**What to do.** Never query a control that mounts through an async worker
+(`run_worker`/`call_after_refresh` chains, e.g. ChatScreen's out-of-band legacy
+aliases) after a fixed pause; poll for it like every other async-mounted widget.
+When a test fails only at file level, bisect pairs (predecessor + victim) on your
+tree AND on HEAD before touching production code — the pair run on HEAD (green) vs
+your tree (red) separated "my change added a turn" from "the test never mounted" in
+two 5-second runs, and a generous-timeout scratch replica answered the only question
+that mattered: does the widget eventually appear at all?
+
+---
+
+## A keyboard funnel through `Button.press()` dies silently when the button gains a real disabled state
+
+**The trap.** A key handler that "clicks" a button via `Button.press()` inherits
+Textual's guard: `press()` returns early when `self.disabled or not self.display`
+(Textual 8.x), posting no `Pressed` message and raising nothing. The moment that
+button gains a genuine `disabled=True` state, the keyboard path stops reaching the
+handler — no error, no test failure unless a test drives the *key*, and any
+side-effect the key path performed first (stash, arming flags) is left stranded.
+
+**What happened.** TASK-2154.6 gave the Console Send button a real disabled state
+(FR-04). The Enter hotkey in `ChatScreen.on_key` captured the draft into a pending
+stash and then routed through `query_one("#console-send-message").press()`. With
+Send disabled (blocked/empty draft) the press no-opped: the blocked-attempt
+feedback (toast + transcript system row) never fired, the stash stayed pending,
+and the *next* Enter was swallowed as a duplicate of the stranded one. Only a
+from-source read of `Button.press()` surfaced it; every existing test pressed the
+button directly, so nothing else would have caught it.
+
+**What to do.** Before adding `disabled=True` to any button, grep for
+`.press()` and `pilot.click` on its id across both production and test code —
+those callers silently change behavior. A keyboard funnel that must keep working
+while the button is disabled needs an explicit branch that dispatches the same
+handler directly (the Console voice-send path's synthesized
+`handle_...(Button.Pressed(button))` pattern), plus a test that drives the *key*
+in the disabled state.
+
+---
+
+## A keyword `-k` suite deselects behavior-affected tests whose names lack the keywords (2026-08-05)
+
+**Incident.** TASK-2154.7 changed the Console provider-recovery resolution
+(which blocker wins: provider vs model). The task's prescribed verification was
+`pytest Tests/ -k "onboarding or setup_card or setup_modal or readiness"` —
+it reported 3 failures. The full run of every file that calls the changed
+helpers reported **6**: `test_console_empty_transcript_choose_model_opens_settings`,
+`test_console_blocked_inspector_explains_impact_and_next_action`, and
+`test_console_empty_transcript_exposes_beginner_activation_actions` assert the
+same card action/inspector copy but share no substring with any filter keyword,
+so `-k` silently deselected them. One more
+(`test_console_add_api_key_recovery_tolerates_missing_session_settings`) only
+surfaced by grepping Tests/ for callers of the changed functions — it
+monkeypatches the display helper to return `settings=None`, a defensive
+contract the rewrite had to keep.
+
+**What to do.** A `-k` filter matches test *names*, not behavior. Before
+trusting it as a completion gate, `Grep` Tests/ for every function you
+changed (`_console_provider_recovery_action`, `_build_console_setup_card_state`,
+...) and run the full files that reference them — renamed or
+indirectly-exercised callers are exactly where stale expectations hide.
+
+---
+
+## Classifying user copy by loose substring invents the blocker you name first
+
+**Incident.** TASK-2154.12. `build_console_disabled_reason` mapped the
+setup-blocker sentence onto a short "Send blocked — …" reason with ordered
+substring checks, `"model"` first. The real missing-API-key copy is "Add API
+key in Settings > **Providers & Models** before sending." — which contains
+"model" as a substring of the settings screen's name, so the Console spent
+weeks telling users to "choose a model" when the actual blocker was a missing
+key (and the missing-endpoint copy hit the same trap). The parametrized
+mapping tests never caught it because they fed clean synthetic strings
+("Provider setup needed: OpenAI missing API key") that share no wording with
+the strings production actually emits; the mis-mapping only surfaced in a
+live UAT walkthrough of the reason strip.
+
+**What to do.** When tests parametrize a classifier over free text, include
+the **verbatim production strings** as cases (grep the producers, paste them
+in) — synthetic inputs exercise the branches you designed, not the text you
+ship. And when substring-matching user-facing copy, match the most specific
+phrase first and treat UI names ("Providers & Models") as false-positive
+carriers for every keyword they happen to contain.
+
+---
+
+## Textual BINDINGS on a child are preempted by an ancestor's `on_key` that stops the event
+
+**Incident.** TASK-2154.11 made the Console transcript's jump-to-latest pill
+(`ConsoleTranscriptJumpPill`, a child of `ConsoleTranscript`) keyboard
+activatable by adding `BINDINGS = [Binding("enter", ...), Binding("space", ...)]`.
+The pilot test pressing `enter` on the focused pill kept failing: the action
+never fired. Key events bubble from the focused widget up the DOM *before*
+App-level binding dispatch (`App._on_key` -> `_check_bindings` over
+`focused.ancestors_with_self`) ever runs, and `ConsoleTranscript.on_key`
+stops `enter` mid-bubble — so the pill's binding table was consulted nowhere.
+The widget-level `key_<name>`/`on_key` path is the only dispatch guaranteed
+to reach a focused child first.
+
+**What to do.** When making a child widget key-activatable inside a parent
+that has its own `on_key` handler (transcripts, lists, message rows),
+intercept the key in the child's own `on_key` (stop + prevent_default), the
+idiom `ConsoleTranscriptActionButton.on_key` already uses — do not rely on
+the child's `BINDINGS`, and write the pilot key-press test first: it is the
+only thing that reliably exposes the preemption.
+
+
+---
+
+## A button's region width proves nothing about whether its label renders
+
+**Incident.** TASK-2154.14 (DS-01) relabeled the Console composer's `☰`
+button to `Menu`, widening it 4 -> 6 cells. `button.region.width` and
+`content_region.width` (6 and 4) both said the 4-cell label fit, and every
+geometry assertion was green — but the painted UAT capture read `Me`.
+Textual 8's `Button` reserves `line-pad: 1` (one column each side of every
+rendered line) *inside* the content region, on top of padding, so the real
+label budget is `region - padding - 2`. The trap compounds: `line-pad: 0`
+is rejected by the TCSS parser (`_process_integer` errors on a literal `0`,
+and the stylesheet loses every rule after the bad one — the generated
+bundle documents an earlier collision), so the pad can only be cleared
+inline (`button.styles.line_pad = 0`, which parses fine). The existing
+`region.width == 14` pin on the neighboring `Composer ▾` toggle had encoded
+the same +2 chrome without naming it; tightening that button to 12 only
+worked *because* the pad was cleared.
+
+**What to do.** When budgeting a Textual button label, verify with
+`button.render_line(0).text` or a painted SVG/text capture — never with
+region arithmetic alone. If a label needs its button's full content width,
+set `styles.line_pad = 0` in Python (the CSS form does not parse) and
+record the budget math in a comment, the way `_bounded_button` call sites
+in `console_composer_bar.py` now do.

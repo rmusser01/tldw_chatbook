@@ -52,6 +52,55 @@ class ConsoleSaveDestination:
     reason: str = ""
 
 
+#: task-2154.14 (DS-01): legend segments for the row under a selected
+#: message, naming each glyph-only button in words so the meaning is on
+#: screen instead of behind a tooltip. Text-labeled buttons (Save as...,
+#: Full output, Review, Try, keep) already name themselves and are omitted.
+#: The key hints (c/e/r) mirror ConsoleTranscript.BINDINGS.
+ACTION_GUIDE_SEGMENTS: tuple[tuple[str, str], ...] = (
+    ("copy", "c Copy"),
+    ("speak", "🔊 Speak"),
+    ("speak-stop", "⏹ Stop speech"),
+    ("edit", "e Edit"),
+    ("regenerate", "r ♻ Regenerate"),
+    ("continue", "---> Continue"),
+    ("feedback", "👍/👎 Rate"),
+    ("delete", "🗑 Delete"),
+    ("variant-previous", "</> Variants"),
+)
+
+
+def action_row_guide(actions: list[ConsoleMessageAction]) -> str:
+    """Build the always-visible legend for a selected message's action row.
+
+    The legend is derived from the row's ACTUAL actions, in button order, so
+    a row without Speak never names a 🔊 the user cannot see and the
+    speak-stop swap reads "⏹ Stop speech" instead of pointing at a 🔊 that
+    is not there. Only glyph-only buttons need naming (DS-01); the key
+    hints and j/k/Esc framing come from task-362's static guide, which this
+    replaces.
+
+    Args:
+        actions: The row's actions as returned by
+            ``ConsoleMessageActionService.available_actions`` (``feedback``
+            still grouped as one entry).
+
+    Returns:
+        The one-line guide, e.g. ``Guide: j/k select · c Copy · 🔊 Speak ·
+        e Edit · r ♻ Regenerate · ---> Continue · 👍/👎 Rate · 🗑 Delete ·
+        Esc clear``.
+    """
+    segments_by_id = dict(ACTION_GUIDE_SEGMENTS)
+    parts: list[str] = []
+    for action in actions:
+        segment = segments_by_id.get(action.action_id)
+        if segment is not None and segment not in parts:
+            parts.append(segment)
+    if not parts:
+        return "Guide: j/k select · Esc clear"
+    return f"Guide: j/k select · {' · '.join(parts)} · Esc clear"
+
+
 class ConsoleMessageActionService:
     """Resolve and dispatch safe Console selected-message actions."""
 
@@ -91,7 +140,7 @@ class ConsoleMessageActionService:
     )
     _KEEP_ACTION: tuple[tuple[str, str], ...] = (("keep", "keep"),)
     _SPEAK_STOP_ACTION: tuple[str, str] = ("speak-stop", "⏹")
-    _FAILED_RETRY_ACTIONS: tuple[tuple[str, str], ...] = (("retry", "Try"),)
+    _FAILED_RETRY_ACTIONS: tuple[tuple[str, str], ...] = (("retry", "Retry"),)
     _IMAGE_VIEW_ACTIONS: tuple[tuple[str, str], ...] = (("toggle-image-view", "View"),)
     _SAVE_IMAGE_ACTIONS: tuple[tuple[str, str], ...] = (("save-image", "Save Image"),)
     _VIEW_ORIGINAL_ATTEMPT_ACTION: tuple[tuple[str, str], ...] = (
@@ -280,6 +329,14 @@ class ConsoleMessageActionService:
     def plain_action_row(self, message: ConsoleChatMessage) -> str:
         """Return a terminal-readable action row for plain transcript exports."""
         return " ".join(self.plain_action_labels(message))
+
+    def plain_action_guide(self, message: ConsoleChatMessage) -> str:
+        """Return the action-row legend for plain transcript exports.
+
+        Same un-keyworded ``available_actions`` call as ``plain_action_row``,
+        so an export's legend names exactly the glyphs its action row shows.
+        """
+        return action_row_guide(self.available_actions(message))
 
     @classmethod
     def expand_plain_action_labels(

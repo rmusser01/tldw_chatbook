@@ -37,11 +37,13 @@ from tldw_chatbook.Chat.console_image_view import (
 from tldw_chatbook.Chat.console_message_actions import (
     ConsoleMessageAction,
     ConsoleMessageActionService,
+    action_row_guide,
 )
 from tldw_chatbook.Chat.console_onboarding_state import (
     CONSOLE_QUIET_EMPTY_COPY,
     ConsoleSetupCardState,
 )
+from tldw_chatbook.UI.Workbench.workbench_widgets import WorkbenchActionRequested
 from tldw_chatbook.Widgets.Console.console_generation_card import (
     ConsoleGenerationCard,
     ConsoleGenerationCardSpec,
@@ -59,6 +61,11 @@ CONSOLE_GENERATING_PLACEHOLDER = "Generating…"
 #: (``UI/Chat_Modules/chat_log_pruning.py`` on feat/toad-ui-improvements).
 DEFAULT_PRUNE_HIGH_WATERMARK = 20000
 DEFAULT_PRUNE_LOW_WATERMARK = 12000
+#: task-2154.16 (FB-01): a failed assistant row with no partial content used
+#: to render as the bare token ``[failed]``. It now shows this placeholder
+#: (dimmed) with the state carried by a separate dim status line. Same copy
+#: as the agent runtime's persisted empty-final-text fallback.
+CONSOLE_FAILED_EMPTY_PLACEHOLDER = "No response was generated."
 #: SP2 /rewind: render-derived (never a tree node) one-line banner shown above
 #: the boundary message when "summarize up to here" is in effect.
 CONSOLE_SUMMARY_BANNER_COPY = (
@@ -70,10 +77,9 @@ EMPTY_TRANSCRIPT_PROVIDER_ACTION_TOOLTIP = (
 )
 # TASK-362 AC#2: the guide names the single-key shortcuts (j/k/c/e/r/Esc), which
 # were otherwise undiscoverable anywhere in the app, alongside the icon meanings.
-SELECTED_MESSAGE_ACTION_GUIDE = (
-    "Guide: j/k select · c Copy · e Edit · r Regenerate ♻ · "
-    "---> Continue · 👍/👎 Rate · 🗑 Delete · Esc clear"
-)
+# task-2154.14 (DS-01): the static line was replaced by `action_row_guide()`,
+# which names the row's glyph-only buttons in words derived from the row's own
+# actions -- see the "action-help" row in `_transcript_rows` and `to_plain_text`.
 _ACTION_TOOLTIPS = {
     "copy": "Copy this message to the clipboard.",
     "speak": "Speak this message aloud using text-to-speech.",
@@ -161,16 +167,45 @@ def _message_body(message: ConsoleChatMessage) -> str:
         # has no content; show a visible generating state instead of an empty
         # row (local models can take 30-90s to first token).
         return CONSOLE_GENERATING_PLACEHOLDER
-    if message.role is not ConsoleMessageRole.USER and message.status in {
-        "streaming",
-        "stopped",
-        "failed",
-    }:
-        # streaming/stopped/failed are assistant-response states; a USER row only
-        # carries "failed" via the TASK-457(a) send-blocked echo, where the
-        # SYSTEM block-row already explains it — so keep the user's text clean.
-        return f"{content} [{message.status}]".strip()
+    if (
+        message.role is not ConsoleMessageRole.USER
+        and message.status == "failed"
+        and not content.strip()
+    ):
+        # task-2154.16 (FB-01): an empty failed row rendered as the bare
+        # token "[failed]" -- meaningless. Show a placeholder instead; the
+        # dim status line (`_message_status_line`) carries the state.
+        # Render-only: stored content stays empty, and `skip_failed`/retry
+        # semantics key off `status`, never this text. The USER-role gate
+        # matches the old suffix's: a failed USER echo (TASK-457(a)
+        # send-blocked) keeps the user's own text, explained by the SYSTEM
+        # block-row.
+        return CONSOLE_FAILED_EMPTY_PLACEHOLDER
+    # task-2154.16 (FB-01): the raw "[streaming]"/"[stopped]"/"[failed]"
+    # tokens are gone from message content -- the state renders as a dim
+    # status line appended by `_message_render_text`/`to_plain_text`.
     return content
+
+
+#: Status lines for assistant-response states (FB-01); rendered dim under
+#: the body in place of the old "[status]" content token.
+_MESSAGE_STATUS_LINES = {
+    "streaming": "Streaming…",
+    "stopped": "Stopped",
+    "failed": "Failed",
+}
+
+
+def _message_status_line(message: ConsoleChatMessage) -> str:
+    """Return the status line for an in-flight/terminal response row, or "".
+
+    Same role gate as the old "[status]" suffix: a USER row only carries
+    "failed" via the TASK-457(a) send-blocked echo, where the SYSTEM
+    block-row already explains it -- so user text never grows a status line.
+    """
+    if message.role is ConsoleMessageRole.USER:
+        return ""
+    return _MESSAGE_STATUS_LINES.get(message.status, "")
 
 
 def _citation_notice(message: ConsoleChatMessage) -> str:
@@ -197,6 +232,11 @@ def _citation_notice(message: ConsoleChatMessage) -> str:
 def _is_generating_placeholder_body(message: ConsoleChatMessage, body: str) -> bool:
     """Return True when the rendered body is the pre-first-token placeholder."""
     return message.status == "streaming" and body == CONSOLE_GENERATING_PLACEHOLDER
+
+
+def _is_failed_placeholder_body(message: ConsoleChatMessage, body: str) -> bool:
+    """Return True when the rendered body is the empty-failed placeholder."""
+    return message.status == "failed" and body == CONSOLE_FAILED_EMPTY_PLACEHOLDER
 
 
 def _human_size(size: int) -> str:
@@ -371,7 +411,9 @@ def _message_render_text(message: ConsoleChatMessage, *, selected: bool) -> Cont
     if chips:
         chip_lines = "\n".join(chips)
         body = f"{body}\n{chip_lines}" if body else chip_lines
-    if _is_generating_placeholder_body(message, body):
+    if _is_generating_placeholder_body(message, body) or _is_failed_placeholder_body(
+        message, body
+    ):
         body_segments: list = [(body, "dim")]
     elif message.role is ConsoleMessageRole.ASSISTANT:
         # TASK-372: render assistant markdown (headings/**bold**/`code`) with
@@ -385,6 +427,11 @@ def _message_render_text(message: ConsoleChatMessage, *, selected: bool) -> Cont
     citation_notice = _citation_notice(message)
     if citation_notice:
         body_segments.extend(("\n", (citation_notice, "dim")))
+    status_line = _message_status_line(message)
+    if status_line and not _is_generating_placeholder_body(message, body):
+        # The "Generating…" placeholder already implies streaming -- doubling
+        # it with a "Streaming…" status line reads as noise, not signal.
+        body_segments.extend(("\n", (status_line, "dim")))
     separator = "  " if not selected and "\n" not in body and len(body) <= 120 else "\n"
     return Content.assemble((role_label, "dim"), separator, *body_segments)
 
@@ -460,11 +507,13 @@ def _assistant_markdown_header(message: ConsoleChatMessage) -> Content:
     suffix = ""
     if message.status == "streaming":
         body = _assistant_markdown_body(message)
+        # task-2154.16 (FB-01): same wording as the plain renderer's dim
+        # status line -- never the raw "[streaming]" content token.
         suffix = (
-            f"  {CONSOLE_GENERATING_PLACEHOLDER}" if not body.strip() else "  [streaming]"
+            f"  {CONSOLE_GENERATING_PLACEHOLDER}" if not body.strip() else "  Streaming…"
         )
     elif message.status in {"stopped", "failed"}:
-        suffix = f"  [{message.status}]"
+        suffix = f"  {_MESSAGE_STATUS_LINES[message.status]}"
     return Content.assemble((f"{role_label}{suffix}", "dim"))
 
 
@@ -761,6 +810,11 @@ class ConsoleTranscriptActionButton(Button):
 class ConsoleTranscriptEmptyPanel(RecomposeCaptureGuard, Vertical):
     """Actionable Console transcript empty state, driven by a setup card state."""
 
+    #: TASK-2154.8 (FR-03): in-panel recovery action id; routes through the
+    #: same ``WorkbenchActionRequested("provider-recovery")`` channel as the
+    #: blocking setup modal's primary action.
+    PROVIDER_ACTION_ID = "console-empty-provider-action"
+
     def __init__(
         self,
         card_state: ConsoleSetupCardState,
@@ -776,18 +830,46 @@ class ConsoleTranscriptEmptyPanel(RecomposeCaptureGuard, Vertical):
         self.provider_action_label = provider_action_label
         self.provider_action_tooltip = provider_action_tooltip
 
+    def _provider_action_visible(self) -> bool:
+        """Return whether the recovery action should render in the panel.
+
+        The action is offered only when the screen synced in a concrete
+        recovery label (provider blocked) AND the blocking setup modal is not
+        already covering the transcript (``mode == "card"``) -- rendering a
+        second, unreachable button under the overlay would be noise.
+        """
+        return bool(self.provider_action_label.strip()) and self.card_state.mode != "card"
+
     def compose(self) -> ComposeResult:
         # The blocking setup card (title + numbered steps + primary action) now
         # lives in ``ConsoleSetupModal``; while setup is incomplete
         # (``mode == "card"``) this in-transcript panel shows only the quiet
         # empty line, dimmed under the overlay. ``ready_line``/``quiet`` render
-        # as before.
+        # as before. TASK-2154.8 (FR-03): a quiet/ready empty state with a
+        # blocked provider also offers the provider recovery action in place,
+        # so a fresh session after a broken/removed provider is not a dead end.
         body = Static(
             self.card_state.body_copy or CONSOLE_QUIET_EMPTY_COPY,
             id="console-empty-body",
             classes="console-transcript-empty-body console-transcript-empty-state",
         )
         yield body
+        if self._provider_action_visible():
+            action = Button(
+                self.provider_action_label,
+                id=self.PROVIDER_ACTION_ID,
+                classes="console-empty-provider-action",
+                compact=True,
+            )
+            action.tooltip = self.provider_action_tooltip
+            yield action
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        """Route the in-panel recovery action through the owning screen."""
+        if event.button.id != self.PROVIDER_ACTION_ID:
+            return
+        event.stop()
+        self.post_message(WorkbenchActionRequested("provider-recovery"))
 
     def sync_card_state(
         self,
@@ -826,7 +908,25 @@ class ConsoleTranscriptJumpPill(Static):
     the content grows below the fold with no signal. This pill sits docked at the
     transcript bottom, states whether the run is streaming / stopped / ready, and
     on click re-attaches follow and jumps to the newest content.
+
+    TASK-2154.11 (DS-05): keyboard-focusable and Enter/Space-activatable --
+    it joins the transcript region's Tab cycle whenever it is visible (it is
+    ``display: none`` while hidden, which drops it from the focus chain on
+    its own). Activation goes through ``on_key`` (the same pattern as
+    ``ConsoleTranscriptActionButton`` above), NOT BINDINGS: a Key event
+    bubbles from the focused pill up to ``ConsoleTranscript.on_key``, which
+    stops ``enter`` before App-level binding dispatch would ever consult the
+    pill's own bindings.
     """
+
+    can_focus = True
+
+    def on_key(self, event: Key) -> None:
+        """Activate on Enter/Space before the transcript's on_key can claim it."""
+        if event.key in ("enter", "space"):
+            self.action_jump_to_latest()
+            event.stop()
+            event.prevent_default()
 
     def on_click(self, event: Click) -> None:
         """Jump the parent transcript to its newest content.
@@ -836,9 +936,24 @@ class ConsoleTranscriptJumpPill(Static):
                 transcript's message-selection handler.
         """
         event.stop()
+        self._activate(refocus_transcript=False)
+
+    def action_jump_to_latest(self) -> None:
+        """Keyboard activation (Enter/Space): jump, then focus the transcript.
+
+        The jump hides the pill itself (``jump_to_latest`` sets
+        ``display = False``), so keyboard focus must move somewhere explicit
+        -- the transcript it just scrolled is the natural post-jump context.
+        """
+        self._activate(refocus_transcript=True)
+
+    def _activate(self, *, refocus_transcript: bool) -> None:
+        """Jump the parent transcript to its newest content."""
         transcript = self.parent
         if isinstance(transcript, ConsoleTranscript):
             transcript.jump_to_latest()
+            if refocus_transcript:
+                transcript.focus()
 
 
 class ConsoleTranscript(VerticalScroll):
@@ -901,8 +1016,10 @@ class ConsoleTranscript(VerticalScroll):
         self._empty_card_state = ConsoleSetupCardState(
             mode="quiet", body_copy=CONSOLE_QUIET_EMPTY_COPY
         )
-        self.empty_state_action_label = EMPTY_TRANSCRIPT_PROVIDER_ACTION_LABEL
-        self.empty_state_action_tooltip = EMPTY_TRANSCRIPT_PROVIDER_ACTION_TOOLTIP
+        # TASK-2154.8 (FR-03): empty means "no recovery action offered". The
+        # screen syncs a concrete label only while the provider is blocked.
+        self.empty_state_action_label = ""
+        self.empty_state_action_tooltip = ""
         self._row_widgets: dict[str, Widget] = {}
         self._row_signatures: dict[str, tuple] = {}
         self._row_build_counts: dict[str, int] = {}
@@ -1187,14 +1304,15 @@ class ConsoleTranscript(VerticalScroll):
         provider_action_label: str = "",
         provider_action_tooltip: str = "",
     ) -> None:
-        """Refresh the empty transcript state while preserving message exports."""
+        """Refresh the empty transcript state while preserving message exports.
+
+        TASK-2154.8 (FR-03): an empty ``provider_action_label`` now means "no
+        recovery action to offer" (provider ready) and is stored as-is; the
+        empty panel only renders the action button for a non-empty label.
+        """
         next_card_state = _coerce_card_state(card_state)
-        next_action_label = (
-            provider_action_label.strip() or EMPTY_TRANSCRIPT_PROVIDER_ACTION_LABEL
-        )
-        next_action_tooltip = (
-            provider_action_tooltip.strip() or EMPTY_TRANSCRIPT_PROVIDER_ACTION_TOOLTIP
-        )
+        next_action_label = provider_action_label.strip()
+        next_action_tooltip = provider_action_tooltip.strip()
         if (
             self._empty_card_state == next_card_state
             and self.empty_state_action_label == next_action_label
@@ -1486,9 +1604,14 @@ class ConsoleTranscript(VerticalScroll):
                     _message_body(message),
                 ]
             )
+            status_line = _message_status_line(message)
+            if status_line and not _is_generating_placeholder_body(
+                message, _message_body(message)
+            ):
+                lines.append(status_line)
             if message.id == self.selected_message_id:
                 lines.append(self._plain_action_row(message))
-                lines.append(SELECTED_MESSAGE_ACTION_GUIDE)
+                lines.append(ConsoleMessageActionService().plain_action_guide(message))
         if self._messages:
             lines.append(rule)
         return "\n".join(lines)
@@ -1804,12 +1927,18 @@ class ConsoleTranscript(VerticalScroll):
                         message=message,
                     )
                 )
+                # DS-01: the legend under the buttons names this row's
+                # glyph-only actions in words, so its text must join the
+                # signature -- a static guide would survive a speak -> ⏹
+                # swap or a variant set appearing and name glyphs the row
+                # no longer shows.
+                guide = self._action_guide(message)
                 rows.append(
                     _TranscriptRow(
                         key=f"action-help:{message.id}",
                         kind="action-help",
-                        signature=("action-help", SELECTED_MESSAGE_ACTION_GUIDE),
-                        renderable=SELECTED_MESSAGE_ACTION_GUIDE,
+                        signature=("action-help", guide),
+                        renderable=guide,
                     )
                 )
         if self._messages:
@@ -2295,6 +2424,26 @@ class ConsoleTranscript(VerticalScroll):
                 )
             )
         return ("actions", message.id, tuple(actions))
+
+    def _action_guide(self, message: ConsoleChatMessage) -> str:
+        """Return the legend naming ``message``'s glyph-only action buttons.
+
+        Reads the same ``available_actions`` inputs as ``_action_row``/
+        ``_action_row_signature`` so the guide always describes the buttons
+        actually mounted beside it (DS-01).
+        """
+        return action_row_guide(
+            ConsoleMessageActionService().available_actions(
+                message,
+                speaking_message_id=self._console_tts_speaking_message_id(),
+                original_attempt_available=bool(
+                    message.citation_presentation
+                    and message.citation_presentation.original_attempt_available
+                ),
+                ephemeral=self._console_ephemeral_active(),
+                **self._generation_action_kwargs(message),
+            )
+        )
 
     def _action_row(self, message: ConsoleChatMessage) -> Horizontal:
         buttons: list[Button] = []

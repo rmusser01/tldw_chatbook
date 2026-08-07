@@ -216,9 +216,9 @@ async def test_console_core_loop_exposes_agentic_shell_regions():
         assert len(console.query("#chat-window")) == 0
         text = _visible_text(console)
         assert "Console" in text
-        assert "Transcript / Event Stream" in text
+        assert "Conversation" in text
         assert "Sources" in text
-        assert "Choose model" in text or "Open Settings" in text
+        assert "Choose provider" in text or "Open Settings" in text
         assert "Inspector" in text
 
 

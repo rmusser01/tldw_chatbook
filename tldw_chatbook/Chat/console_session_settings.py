@@ -569,6 +569,16 @@ def build_console_settings_readiness(
     provider_supported = provider_key in supported_keys
     native_send_supported = provider_key in send_capable_keys and readiness.ready
 
+    if not provider_key:
+        # An unset provider is not an unsupported one: the template below
+        # would interpolate the empty key as "'' is not available in Console
+        # yet" (FR-07). Use the canonical no-provider readiness copy instead.
+        return ConsoleSettingsReadiness(
+            label="Unknown",
+            detail=readiness.user_message,
+            native_send_supported=False,
+        )
+
     if not provider_supported:
         return ConsoleSettingsReadiness(
             label="Unknown",

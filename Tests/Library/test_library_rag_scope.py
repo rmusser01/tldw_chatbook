@@ -1,5 +1,5 @@
 """Tests for task-6: caller-passed RAG retrieval scope in
-``LibraryLocalRagSearchService`` (Console "Run Library RAG").
+``LibraryLocalRagSearchService`` (Console "Search Library").
 
 Covers Backend B of the ``rag-scope-narrowing`` program: the Library
 service accepts an optional, caller-resolved ``EffectiveScope`` and never
@@ -780,9 +780,11 @@ async def test_console_scope_resolution_short_circuits_on_empty_scope(tmp_path):
     assert outcome.status == "empty"
     assert outcome.recovery_state is not None
     assert (
-        "Retrieval scope is empty (deleted-items); no sources searched."
-        in outcome.recovery_state.why
+        "Retrieval scope is empty (the scoped items have been deleted); "
+        "no sources searched." in outcome.recovery_state.why
     )
+    # TX-03: the raw cause token never renders.
+    assert "deleted-items" not in outcome.recovery_state.why
     assert scoped_request.scope is None
 
 

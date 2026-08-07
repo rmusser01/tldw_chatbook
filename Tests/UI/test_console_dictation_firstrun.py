@@ -359,7 +359,7 @@ async def test_a_slow_first_run_shows_the_preparing_message_not_a_frozen_button(
             assert transcriber.entered.is_set()
             assert service.calls == [], "capture opened before the model was ready"
             # ...and the user is being told why, in text that actually paints.
-            assert painted == f"◌ {voice_module.WARMUP_MESSAGE_FIRST_RUN}"
+            assert painted == f"◐ {voice_module.WARMUP_MESSAGE_FIRST_RUN}"
             # Not cut off mid-sentence: the painted line ends where the string
             # ends, and the chip is one row so there is no second line.
             assert painted.endswith("…")
@@ -377,12 +377,12 @@ async def test_a_slow_first_run_shows_the_preparing_message_not_a_frozen_button(
 
             # The button is pressable, so the download is escapable.
             mic = composer.query_one("#console-dictation", Button)
-            assert str(mic.label) == "Mic…"
+            assert str(mic.label) == "Dictate…"
             assert mic.disabled is False
             assert "cancel" in str(mic.tooltip).lower()
 
             gate.set()
-            await _wait_for_mic_label(composer, pilot, "Rec ●")
+            await _wait_for_mic_label(composer, pilot, "Dictating")
             assert service.calls == ["start_dictation"]
     finally:
         gate.set()
@@ -393,7 +393,7 @@ async def test_an_unrelated_ui_refresh_cannot_wipe_the_preparing_message(monkeyp
     """Every control-bar refresh calls `sync_dictation_state("starting")`.
 
     Changing a provider, collapsing a rail, most action-state refreshes: any of
-    them used to rewrite the chip back to "◌ Preparing microphone…" in the
+    them used to rewrite the chip back to "◐ Preparing microphone…" in the
     middle of the multi-minute window this message exists for -- and that
     replacement is also false, since nothing is preparing a microphone.
     """
@@ -423,7 +423,7 @@ async def test_an_unrelated_ui_refresh_cannot_wipe_the_preparing_message(monkeyp
             assert service.calls == [], "the warm-up finished too early to test this"
 
             gate.set()
-            await _wait_for_mic_label(composer, pilot, "Rec ●")
+            await _wait_for_mic_label(composer, pilot, "Dictating")
             # And once recording really starts, the stale notice is gone.
             assert "speech model" not in _painted(chip)
     finally:
@@ -463,7 +463,7 @@ async def test_cancelling_a_long_first_run_returns_to_idle_without_an_error(
             # nothing while `pilot.click` still reports success.
             await pilot.pause(0.5)
             assert await pilot.click("#console-dictation")
-            await _wait_for_mic_label(composer, pilot, "Mic")
+            await _wait_for_mic_label(composer, pilot, "Dictate")
 
             assert console._console_dictation_state == "idle"
             assert console._console_dictation_session is None
@@ -518,7 +518,7 @@ async def test_a_warm_up_failure_degrades_the_capture_instead_of_blocking_it(
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
 
         await pilot.click("#console-dictation")
-        await _wait_for_mic_label(composer, pilot, "Rec ●")
+        await _wait_for_mic_label(composer, pilot, "Dictating")
 
         # The capture went ahead.
         assert service.calls == ["start_dictation"]
@@ -561,7 +561,7 @@ async def test_a_transcriber_that_cannot_be_built_blocks_the_capture(monkeypatch
         deadline = time.monotonic() + 4
         while time.monotonic() < deadline and not notify.call_args_list:
             await pilot.pause(0.01)
-        await _wait_for_mic_label(composer, pilot, "Mic")
+        await _wait_for_mic_label(composer, pilot, "Dictate")
 
         messages = [str(call.args[0]) for call in notify.call_args_list]
         assert len(messages) == 1

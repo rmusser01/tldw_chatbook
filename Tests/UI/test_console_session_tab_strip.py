@@ -127,7 +127,9 @@ async def test_tab_tooltip_decodes_marker_meaning(
         tab = app.query_one("#console-session-tab-s2", Button)
         tooltip = _rendered_tooltip(tab)
         if expected_fragment is None:
-            assert tooltip == "Switch to Console tab: Session 2."
+            assert tooltip == (
+                "Switch to Console tab: Session 2. Middle-click closes the tab."
+            )
         else:
             assert expected_fragment in tooltip
 
@@ -158,7 +160,7 @@ async def test_tab_tooltip_escapes_markup_in_title() -> None:
         tab = app.query_one("#console-session-tab-s1", Button)
         assert _rendered_tooltip(tab) == (
             "Active Console tab: [red]Alarm[/red] — waiting for approval."
-            " Click again to rename."
+            " Click again to rename. Middle-click closes the tab."
         )
 
 

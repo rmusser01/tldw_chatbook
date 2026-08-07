@@ -82,6 +82,36 @@ async def test_status_chips_sync_updates_labels_and_emphasis():
 
 
 @pytest.mark.asyncio
+async def test_tools_chip_hides_at_zero_count_and_shows_when_tools_ready():
+    """TX-04 (TASK-2154.12): the tools chip must not render the lazy-loading
+    detail -- it hides entirely at a zero tool count (same posture as the
+    unscoped scope chip) and appears once tools are actually counted."""
+    app = _ChipsApp(_state(tools_label="Tools: —", tools_active=False))
+    async with app.run_test(size=(160, 6)) as pilot:
+        await pilot.pause()
+        tools_chip = app.query_one("#console-tools-chip")
+        assert tools_chip.display is False
+
+        chips = app.query_one("#console-status-chips", ConsoleStatusChips)
+        chips.sync_state(_state(tools_label="Tools: 3 ready", tools_active=True))
+        await pilot.pause()
+        assert tools_chip.display is True
+        assert "3 ready" in str(tools_chip.render())
+
+        chips.sync_state(_state(tools_label="Tools: —", tools_active=False))
+        await pilot.pause()
+        assert tools_chip.display is False
+
+
+@pytest.mark.asyncio
+async def test_tools_chip_shown_at_compose_when_tools_ready():
+    app = _ChipsApp(_state(tools_label="Tools: 10 ready", tools_active=True))
+    async with app.run_test(size=(160, 6)) as pilot:
+        await pilot.pause()
+        assert app.query_one("#console-tools-chip").display is True
+
+
+@pytest.mark.asyncio
 async def test_approvals_chip_posts_review_requested():
     app = _ChipsApp(_state())
     async with app.run_test(size=(160, 6)) as pilot:
@@ -176,3 +206,109 @@ async def test_assistant_tooltip_renders_malformed_markup_literally(after_sync):
         tooltip = app.screen.get_child_by_type(Tooltip)
         assert tooltip.display is True
         assert "Persona: [bold]Guide[/red]" in str(tooltip.render())
+
+
+class _RunChipsApp(_ChipsApp):
+    """Chips app variant that passes the FB-08 run-copy constructor arg."""
+
+    def __init__(self, state: ConsoleControlState, *, run_copy: str = "") -> None:
+        super().__init__(state)
+        self._run_copy = run_copy
+
+    def compose(self) -> ComposeResult:
+        yield ConsoleStatusChips(
+            self._state, run_copy=self._run_copy, id="console-status-chips"
+        )
+
+
+@pytest.mark.asyncio
+async def test_run_chip_hidden_until_run_active_then_shows_and_hides():
+    """FB-08 (TASK-2154.18): the run chip is the persistent visible home
+    for active-run copy -- hidden at idle, "Run: {copy}" while active,
+    hidden again once the run leaves an active status; repeat poll ticks
+    with unchanged state are equality-guarded no-ops."""
+    app = _RunChipsApp(_state())
+    async with app.run_test(size=(160, 6)) as pilot:
+        await pilot.pause()
+        chip = app.query_one("#console-run-chip")
+        assert chip.display is False
+
+        chips = app.query_one("#console-status-chips", ConsoleStatusChips)
+        chips.sync_run_chip(True, "Streaming response.")
+        await pilot.pause()
+        assert chip.display is True
+        assert str(chip.render()) == "Run: Streaming response."
+
+        chips.sync_run_chip(True, "Streaming response.")
+        await pilot.pause()
+        assert chip.display is True
+
+        chips.sync_run_chip(False, "")
+        await pilot.pause()
+        assert chip.display is False
+
+
+@pytest.mark.asyncio
+async def test_run_chip_renders_on_first_frame_when_run_already_active():
+    """FB-08 (TASK-2154.18): returning to Console while a background run
+    is still active must render the chip at compose time (the F1
+    first-frame precedent), not only after a post-mount sync tick."""
+    app = _RunChipsApp(_state(), run_copy="Agent running.")
+    async with app.run_test(size=(160, 6)) as pilot:
+        await pilot.pause()
+        chip = app.query_one("#console-run-chip")
+        assert chip.display is True
+        assert str(chip.render()) == "Run: Agent running."
+
+
+@pytest.mark.asyncio
+async def test_run_chip_tracks_active_run_state_via_mode_bar_sync():
+    """FB-08 (TASK-2154.18) integration: with a live Console, an active
+    run status renders the chip through ``_sync_console_mode_bar`` (the
+    sync that runs on send/stop transitions and every 0.2s poll tick); a
+    terminal status hides it again even though terminal copy lingers --
+    the active-only contract (terminal outcomes toast instead)."""
+    from Tests.UI.test_console_native_chat_flow import (
+        _configure_native_ready_console,
+    )
+    from Tests.UI.test_destination_shells import (
+        _build_test_app,
+        _wait_for_selector,
+    )
+    from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
+        ConsoleHarness,
+    )
+    from tldw_chatbook.Chat.console_chat_models import (
+        ConsoleRunState,
+        ConsoleRunStatus,
+    )
+
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-status-chips")
+        store = console._ensure_console_chat_store()
+        store.ensure_session()
+        chip = console.query_one("#console-run-chip")
+        assert chip.display is False
+
+        controller = console._ensure_console_chat_controller()
+        controller._set_run_state(
+            ConsoleRunState(ConsoleRunStatus.STREAMING, "Streaming response.")
+        )
+        console._sync_console_mode_bar()
+        await pilot.pause()
+        assert chip.display is True
+        assert str(chip.render()) == "Run: Streaming response."
+
+        # Terminal statuses hide the chip even with lingering copy --
+        # their ambient signal is the task-2154.16/.17 toast pair.
+        controller._set_run_state(
+            ConsoleRunState(ConsoleRunStatus.COMPLETED, "Response complete.")
+        )
+        console._sync_console_mode_bar()
+        await pilot.pause()
+        assert chip.display is False

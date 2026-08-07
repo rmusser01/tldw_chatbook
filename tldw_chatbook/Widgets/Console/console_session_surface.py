@@ -20,6 +20,7 @@ from tldw_chatbook.Chat.console_chat_models import (
 )
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatSession
 from tldw_chatbook.Chat.console_glyphs import GLYPH_CLOSE, GLYPH_TEMPORARY
+from tldw_chatbook.Widgets.glyph_fallback import resolve_glyph
 from tldw_chatbook.Chat.console_onboarding_state import ConsoleSetupCardState
 from tldw_chatbook.Utils.console_background_effects import (
     ConsoleBackgroundEffectSettings,
@@ -47,7 +48,7 @@ CONSOLE_NEW_TAB_BUTTON_WIDTH = 13
 CONSOLE_NEW_TAB_BUTTON_HEIGHT = 1
 CONSOLE_SESSION_TAB_DISPLAY_CHARS = 19
 CONSOLE_SESSION_TAB_WIDTH = 21
-CONSOLE_TRANSCRIPT_TITLE = "Transcript / Event Stream"
+CONSOLE_TRANSCRIPT_TITLE = "Conversation"
 #: Fleet-UX expert review F2 (task-1232): one-time coach-mark row mounted
 #: under the tab strip, hidden until `show_fleet_coachmark` reveals it.
 CONSOLE_FLEET_COACHMARK_DISMISS_WIDTH = 3
@@ -84,14 +85,26 @@ def _session_tab_tooltip(
     """
     meaning = CONSOLE_RUN_MARKER_MEANINGS.get(marker, "")
     tail = f" — {meaning}." if meaning else "."
+    # DS-04 (TASK-2154.15): the middle-click close accelerator is surfaced
+    # here in the tab tooltip; it is documented nowhere else in the UI.
     if active:
-        text = f"Active Console tab: {session.title}{tail} Click again to rename."
+        text = (
+            f"Active Console tab: {session.title}{tail} Click again to rename."
+            " Middle-click closes the tab."
+        )
     else:
-        text = f"Switch to Console tab: {session.title}{tail}"
+        text = (
+            f"Switch to Console tab: {session.title}{tail}"
+            " Middle-click closes the tab."
+        )
     if session.ephemeral:
         # The ◌ glyph carries no meaning on its own; this is where it is
-        # decoded, exactly like the run-marker meanings above.
-        text = f"{text} Temporary — not saved locally."
+        # decoded, exactly like the run-marker meanings above. CN-02
+        # (TASK-2154.13): the decode phrase is byte-for-byte the chip's
+        # ``TEMPORARY_LABEL`` ("Temporary — not saved") so the concept has
+        # ONE short name; the "not saved locally" scope sentence stays in
+        # the chip's own tooltip.
+        text = f"{text} Temporary — not saved."
     return _escape_markup(text)
 
 
@@ -201,7 +214,7 @@ class ConsoleSessionSurface(Vertical):
         text = Static("", id="console-fleet-coachmark-text")
         text.styles.width = "1fr"
         dismiss = Button(
-            GLYPH_CLOSE,
+            resolve_glyph(GLYPH_CLOSE),
             id="console-fleet-coachmark-dismiss",
             compact=True,
         )
@@ -348,13 +361,13 @@ class ConsoleSessionSurface(Vertical):
         than one replacing the other.
         """
         label = cls._display_title(title)
-        glyph = CONSOLE_RUN_MARKER_GLYPHS.get(marker, "")
+        glyph = resolve_glyph(CONSOLE_RUN_MARKER_GLYPHS.get(marker, ""))
         if glyph:
             label = f"{glyph} {label}"
         # Presentation only: never written into session.title, which
         # promotion saves verbatim.
         if ephemeral:
-            label = f"{GLYPH_TEMPORARY} {label}"
+            label = f"{resolve_glyph(GLYPH_TEMPORARY)} {label}"
         return label
 
     @staticmethod
@@ -382,7 +395,7 @@ class ConsoleSessionSurface(Vertical):
     def _build_close_tab_button(self, session: ConsoleChatSession) -> Button:
         """Build the compact close control for a Console session tab."""
         close_button = Button(
-            GLYPH_CLOSE,
+            resolve_glyph(GLYPH_CLOSE),
             id=f"console-close-session-tab-{session.id}",
             classes="console-session-close-button",
             compact=True,
@@ -533,12 +546,39 @@ class ConsoleSessionSurface(Vertical):
                 # schedule the scroll with.
                 pass
 
-    def _scroll_active_tab_into_view(self, session_id: str) -> None:
-        """Bring the active tab into the strip's visible scroll window."""
+    def _scroll_active_tab_into_view(
+        self, session_id: str, *, _attempts: int = 20
+    ) -> None:
+        """Bring the active tab into the strip's visible scroll window.
+
+        TASK-2154.4: freshly mounted tabs still have a zero region when the
+        ``call_after_refresh`` scheduled from ``sync_sessions`` fires, and
+        ``scroll_to_widget`` on a zero region is a silent no-op. Frame-based
+        retries do not help either: the sync storm after a session switch
+        keeps re-mounting the strip, so the tab's region stays zero across
+        several refresh cycles and the active tab never scrolled into view
+        once the strip overflowed (real-app behavior; the surface-level unit
+        test laid out fast enough to mask it). Retry on a wall-clock timer
+        until the tab is laid out, bounded so a detached/removed tab cannot
+        reschedule forever (20 x 50ms = 1s worst case).
+        """
         try:
             tab_strip = self.query_one("#console-native-tab-strip", HorizontalScroll)
             tab = tab_strip.query_one(f"#console-session-tab-{session_id}", Button)
         except Exception:
+            return
+        if tab.region.width == 0:
+            if _attempts > 0:
+                try:
+                    self.set_timer(
+                        0.05,
+                        lambda: self._scroll_active_tab_into_view(
+                            session_id, _attempts=_attempts - 1
+                        ),
+                    )
+                except Exception:
+                    # Same best-effort rationale as the call site below.
+                    pass
             return
         try:
             tab_strip.scroll_to_widget(tab, animate=False)

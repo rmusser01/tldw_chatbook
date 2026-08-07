@@ -131,8 +131,20 @@ class ConsoleCommandPopup(Widget):
             )
             return
         anchor = composer.region
+        # DS-09 (TASK-2154.15): anchor the bottom edge above the status chip
+        # strip rather than the composer when the strip is visible, so the
+        # open popup covers transcript rows (the conventional autocomplete
+        # trade-off) instead of wiping the chips mid-composition.
+        bottom_y = anchor.y
+        try:
+            chips = self.screen.query_one("#console-status-chips")
+        except NoMatches:
+            pass
+        else:
+            if chips.display and chips.region.height > 0:
+                bottom_y = chips.region.y
         origin = self.parent.content_region
         x = anchor.x - origin.x
-        y = anchor.y - origin.y - self._desired_height
+        y = bottom_y - origin.y - self._desired_height
         self.styles.offset = (max(x, 0), max(y, 0))
         self.styles.width = max(anchor.width, MIN_WIDTH)

@@ -155,7 +155,6 @@ async def test_clean_run_tab_order_reaches_nav_and_primary_setup_action(
             assert focus_ids == [*expected_focus_ids, "home-primary-action"]
             nav_hint = app.screen.query_one("#nav-overflow-hint", Button)
             assert "More" in str(nav_hint.label)
-            assert "Ctrl+P" in str(nav_hint.tooltip)
 
 
 @pytest.mark.asyncio

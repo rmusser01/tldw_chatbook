@@ -206,6 +206,8 @@ from ...Chat.console_chat_models import (
     MessageAttachment,
     derive_console_session_title,
 )
+from ...Chat.console_glyphs import GLYPH_VOICE_WORKING
+from ...Widgets.glyph_fallback import resolve_glyph
 from ...Chat.console_session_settings import (
     ConsoleSessionSettings,
     ConsoleSettingsContextEstimate,
@@ -356,6 +358,7 @@ from ...Chat.console_paste_attach import (
     looks_attachable,
 )
 from ...Chat.console_rail_state import (
+    CONSOLE_RAIL_LEFT_OPEN_EXPLICIT_KEY,
     CONSOLE_RAIL_SECTION_IDS,
     ConsoleRailPreferences,
     ConsoleRailState,
@@ -363,6 +366,8 @@ from ...Chat.console_rail_state import (
     build_console_rail_state,
     coerce_console_rail_preferences,
     collect_prunable_console_rail_keys,
+    console_rail_left_open_explicit,
+    console_rail_width_band,
     serialize_console_rail_preferences,
 )
 from ...config import (
@@ -459,10 +464,13 @@ from ...Widgets.Console.console_status_chips import (
     ConsoleAssistantChip,
     ConsoleCostChip,
     ConsoleRagChip,
+    ConsoleRunChip,
     ConsoleScopeChip,
+    ConsoleSourcesChip,
     ConsoleStatusChips,
     ConsoleSystemPromptChip,
     ConsoleTemporaryChip,
+    ConsoleToolsChip,
 )
 from ...Widgets.Console.console_retrieval_scope_row import (
     ROW_ID as CONSOLE_RETRIEVAL_SCOPE_ROW_ID,
@@ -477,7 +485,6 @@ from ...Widgets.Console.console_composer_menu_modal import (
     ACTION_GENERATE_IMAGE,
     ACTION_ATTACH_CONTEXT,
     ACTION_IMPERSONATE,
-    ACTION_NARRATE_CONVERSATION,
     ACTION_PROMPTS,
     ACTION_SAVE_CHATBOOK,
     ACTION_UNDO_PROMPT_IMPROVEMENT,
@@ -664,6 +671,34 @@ CONSOLE_FOCUS_TARGETS_BY_PANE = {
     ),
     "console-right-rail": ("console-inspector-rail-collapse", "console-right-rail"),
     "console-native-composer": ("console-native-composer",),
+}
+#: TASK-2154.11 (AC-02): Tab/Shift+Tab cycle WITHIN the focused widget's
+#: Console region instead of walking the app-level focus chain (which dragged
+#: the tour through all 15 nav buttons between the composer and the control
+#: bar). Each tuple is one region's root ids; the union of their subtrees is
+#: the region's Tab cycle. F6/Shift+F6 remain the way to move BETWEEN panes.
+#: The control bar pairs with the composer (the Console's two command
+#: surfaces) so its buttons stay keyboard-reachable; the status chips pair
+#: with the transcript region they annotate; each rail handle pairs with its
+#: rail so a collapsed rail's open button still cycles sanely. Hidden panes
+#: (display:none rails/handles) drop out of Textual's focus chain on their
+#: own, so no explicit hidden-pane handling is needed here.
+CONSOLE_TAB_REGIONS: tuple[tuple[str, ...], ...] = (
+    ("console-control-bar", "console-native-composer"),
+    ("console-context-rail-handle", "console-left-rail"),
+    ("console-transcript-region", "console-status-chips"),
+    ("console-inspector-rail-handle", "console-right-rail"),
+)
+#: TASK-2154.11: widgets that live BETWEEN the four F6 panes in the shell --
+#: the control bar, the status chips, and each collapsed rail's handle -- map
+#: to their logical pane (the same pairing as CONSOLE_TAB_REGIONS) so F6 from
+#: one of them continues the pane cycle from that pane instead of restarting
+#: at the first pane ("focus not in a pane" -> visible[0]).
+CONSOLE_FOCUS_PANE_FOR_WIDGET = {
+    "console-control-bar": "console-native-composer",
+    "console-status-chips": "console-transcript-surface",
+    "console-context-rail-handle": "console-left-rail",
+    "console-inspector-rail-handle": "console-right-rail",
 }
 
 
@@ -994,6 +1029,15 @@ CONSOLE_WORKBENCH_SHORTCUTS = (
     ("Ctrl+P", "palette"),
 )
 
+#: TASK-2154.8 (FR-06): while the first-run setup modal locks the composer,
+#: advertising "Enter send" is a lie -- Enter activates the focused setup-card
+#: action instead. The blocked variant hides the send hint and names the real
+#: action. `_register_console_footer_shortcuts` swaps between the two.
+CONSOLE_WORKBENCH_SHORTCUTS_SETUP_BLOCKED = tuple(
+    ("Enter", "continue setup") if pair == ("Enter", "send") else pair
+    for pair in CONSOLE_WORKBENCH_SHORTCUTS
+)
+
 #: TASK-362: the full Console keyboard vocabulary for the F1 help panel, grouped
 #: by surface. The flat CONSOLE_WORKBENCH_SHORTCUTS above stays the compact
 #: footer set; the transcript j/k/c/e/r keys, F2, Shift+Enter and Alt+M were
@@ -1004,6 +1048,8 @@ CONSOLE_WORKBENCH_SHORTCUT_GROUPS = (
         (
             ("F6", "next pane"),
             ("Shift+F6", "previous pane"),
+            # TASK-2154.11 (AC-02): Tab is pane-local now; F6 is the way out.
+            ("Tab / Shift+Tab", "cycle within the current pane"),
             ("Escape", "return to the composer"),
         ),
     ),
@@ -1031,7 +1077,7 @@ CONSOLE_WORKBENCH_SHORTCUT_GROUPS = (
             ),
             ("Alt+V", "paste an image from the clipboard"),
             (
-                "Attach",
+                "Attach file",
                 f"attach files — up to {MAX_PENDING_ATTACHMENTS} per message",
             ),
             ("Paste / drop path", "paste or drop a file path to attach it"),
@@ -1064,6 +1110,19 @@ CONSOLE_WORKBENCH_SHORTCUT_GROUPS = (
             ("Alt+1..9", "jump to tab 1-9"),
             ("Ctrl+T", "new tab (new agent)"),
             ("Ctrl+K", "switch session"),
+        ),
+    ),
+    (
+        # TASK-2154.20 (AC-03): on default macOS terminals Option is not Meta,
+        # so Alt+M/W/V/1..9 type composed characters instead of firing these
+        # bindings (Alt+H already moved to Ctrl+Shift+H for exactly this). The
+        # reliable non-Alt paths: every Alt action has a Ctrl+P palette entry,
+        # and Ctrl+K's session switcher covers the Alt+1..9 tab jumps.
+        "macOS terminals",
+        (
+            ("Alt chords", "type composed characters when Option is not Meta"),
+            ("Ctrl+P", "palette lists every Alt action — the reliable path"),
+            ("Ctrl+K", "session switching (covers the Alt+1..9 tab jumps)"),
         ),
     ),
 )
@@ -1519,28 +1578,53 @@ class ChatScreen(BaseAppScreen):
         self._set_console_composer_collapsed(False)
 
     def action_focus_next(self) -> None:
-        """Move focus to the next widget, trapping Tab inside a blocking modal.
+        """Move focus to the next widget within the focused Console region.
 
         An open slash-command popup claims Tab first: the highlighted
         suggestion is accepted into the draft instead of moving focus.
         While the Console setup modal is blocking the workbench, this keeps
         focus cycling within the modal's own focusables instead of letting
         Tab tunnel into rail/transcript/composer controls hidden beneath it.
+
+        TASK-2154.11 (AC-02): past those two traps, Tab cycles within the
+        focused widget's Console region (``CONSOLE_TAB_REGIONS``) rather than
+        the whole app focus chain, so the tour no longer crosses all 15
+        app-nav buttons mid-Console; F6/Shift+F6 move between panes. Focus
+        sitting in app chrome (a clicked nav button) keeps the default
+        app-wide chain so the nav bar stays keyboard-traversable once
+        entered; with nothing focused at all, Tab lands on the composer --
+        the Console's keyboard home base.
         """
         if self._accept_console_command_popup():
             return
         if self._focus_console_setup_modal_if_blocking():
             return
-        self.focus_next()
+        focused = self.app.focused
+        if focused is None:
+            self._focus_console_workbench_target("console-native-composer")
+            return
+        selector = self._console_tab_region_selector(focused)
+        if selector is None:
+            self.focus_next()
+            return
+        self.focus_next(selector)
 
     def action_focus_previous(self) -> None:
-        """Move focus to the previous widget, trapping Shift+Tab inside a blocking modal.
+        """Move focus to the previous widget within the focused Console region.
 
         Mirrors ``action_focus_next`` for the reverse direction.
         """
         if self._focus_console_setup_modal_if_blocking():
             return
-        self.focus_previous()
+        focused = self.app.focused
+        if focused is None:
+            self._focus_console_workbench_target("console-native-composer")
+            return
+        selector = self._console_tab_region_selector(focused)
+        if selector is None:
+            self.focus_previous()
+            return
+        self.focus_previous(selector)
 
     async def handle_model_catalog_refreshed(self, event) -> None:
         """Re-merge options when startup refresh updated the active provider.
@@ -1742,6 +1826,9 @@ class ChatScreen(BaseAppScreen):
                 exclusive=True,
                 group="console-sync",
             )
+            # FB-07 (TASK-2154.17): the save used to apply with no positive
+            # confirmation at all (a dismiss returns None and skips this).
+            self.app_instance.notify("Console settings saved.", severity="success")
 
         self.app.push_screen(modal, callback=_apply_modal_result)
 
@@ -1875,8 +1962,43 @@ class ChatScreen(BaseAppScreen):
             current_id = getattr(current, "id", None)
             if current_id in CONSOLE_FOCUS_REGISTRY.pane_order:
                 return str(current_id)
+            # TASK-2154.11: between-pane widgets (control bar, chips, rail
+            # handles) count as their logical pane -- checked AFTER the pane
+            # roots so a real pane always wins for its own subtree.
+            mapped = CONSOLE_FOCUS_PANE_FOR_WIDGET.get(current_id or "")
+            if mapped is not None:
+                return mapped
             current = getattr(current, "parent", None)
         return None
+
+    def _console_tab_region_selector(self, focused: object | None) -> str | None:
+        """Return a CSS selector scoping Tab to the focused widget's region.
+
+        TASK-2154.11 (AC-02): walks the focused widget's ancestor chain for a
+        ``CONSOLE_TAB_REGIONS`` root; on a match, returns a selector union of
+        that region's roots and their descendants, which Textual's
+        ``Screen.focus_next``/``focus_previous`` use to filter the focus
+        chain -- so Tab wraps within the region and never crosses into
+        app-level chrome. Returns None when focus sits outside every Console
+        region (nav bar, footer, header), where the default chain applies.
+        """
+        region_roots: tuple[str, ...] | None = None
+        current = focused
+        while current is not None:
+            current_id = getattr(current, "id", None)
+            if current_id is not None:
+                for roots in CONSOLE_TAB_REGIONS:
+                    if current_id in roots:
+                        region_roots = roots
+                        break
+            if region_roots is not None:
+                break
+            current = getattr(current, "parent", None)
+        if region_roots is None:
+            return None
+        return ", ".join(
+            selector for root in region_roots for selector in (f"#{root}", f"#{root} *")
+        )
 
     def _focus_console_workbench_target(self, widget_id: str) -> None:
         """Focus a visible Console Workbench target if it is available."""
@@ -1952,10 +2074,18 @@ class ChatScreen(BaseAppScreen):
         (TASK-259: `_stage_console_library_rag_launch` no longer recomposes
         the screen, but the fallback path and future recompose sources keep
         this persisting registration load-bearing.)
+
+        TASK-2154.8 (FR-06): while the setup modal locks the composer, the
+        blocked variant is registered instead -- the "Enter send" hint is
+        replaced by "Enter continue setup", which is what Enter actually does
+        with focus on the setup card's primary action.
         """
-        self.register_footer_shortcuts(
-            source="console", shortcuts=CONSOLE_WORKBENCH_SHORTCUTS
+        shortcuts = (
+            CONSOLE_WORKBENCH_SHORTCUTS_SETUP_BLOCKED
+            if self._console_setup_modal_blocking()
+            else CONSOLE_WORKBENCH_SHORTCUTS
         )
+        self.register_footer_shortcuts(source="console", shortcuts=shortcuts)
 
     def _clear_console_footer_shortcuts(self) -> None:
         """Clear Console Workbench shortcuts from this screen's own footer."""
@@ -2462,6 +2592,10 @@ class ChatScreen(BaseAppScreen):
         self._console_cost_fp_revisions: dict[str, int] = {}
         self._console_cost_break_reasons: dict[str, str | None] = {}
         self._last_console_rail_state: ConsoleRailState | None = None
+        # TASK-2154.1: last width band seen by the resize hook; a rebuild of
+        # the (expensive) effective rail state only happens when the band
+        # actually changes, not on every pixel of a resize drag.
+        self._last_console_workspace_width_band: str | None = None
         self._console_guidance_dismissed = False
         self._console_first_send_completed_cached: bool | None = None
         # Fleet-UX expert review F2 (task-1232): one-time coach-mark shown
@@ -3332,16 +3466,23 @@ class ChatScreen(BaseAppScreen):
             model=selected_model,
             base_url=selection.base_url,
         )
+        readiness = build_console_settings_readiness(
+            effective_settings,
+            app_config=self._provider_readiness_app_config(),
+        )
         if not _has_selected_text(selected_model):
+            if not readiness.native_send_supported:
+                # Provider is the real first blocker (FR-05): surface its
+                # readiness instead of the model sentinel so the setup card
+                # steps and the recovery action resolve the same first
+                # incomplete step. The "Missing model" sentinel below now
+                # strictly means provider-ready + model-missing.
+                return effective_settings, readiness
             return effective_settings, ConsoleSettingsReadiness(
                 label="Missing model",
                 detail="Select a model before sending.",
                 native_send_supported=False,
             )
-        readiness = build_console_settings_readiness(
-            effective_settings,
-            app_config=self._provider_readiness_app_config(),
-        )
         model_warning = self._console_model_capability_warning(
             effective_settings.provider,
             selected_model,
@@ -3755,6 +3896,13 @@ class ChatScreen(BaseAppScreen):
         # `_set_run_state`'s once-guarded non-active terminal branch.
         self._console_chat_controller.notify_run_outcome = (
             self._notify_console_run_outcome
+        )
+        # task-2154.16 (FB-05): UI-thread bridge target for the ACTIVE
+        # session's own run failing -- one error toast carrying the run's
+        # visible copy, invoked directly from `_set_run_state`'s
+        # once-guarded active-session FAILED branch.
+        self._console_chat_controller.notify_run_failure = (
+            self._notify_console_run_failure
         )
         self._console_chat_controller.set_pending_skill_install = (
             self._set_console_pending_skill_install
@@ -4443,12 +4591,6 @@ class ChatScreen(BaseAppScreen):
             self.run_worker(self._open_console_generate_image_modal(), exclusive=False)
         elif action_id == ACTION_GENERATE_CAPTION:
             self._insert_console_caption_prompt()
-        elif action_id == ACTION_NARRATE_CONVERSATION:
-            # Placeholder by request: per-speaker narration is not built yet.
-            self.app.notify(
-                "Narrate Entire Conversation is not implemented yet.",
-                severity="information",
-            )
         elif action_id == ACTION_IMPERSONATE:
             self.run_worker(
                 self._run_console_impersonate(),
@@ -7716,9 +7858,54 @@ class ChatScreen(BaseAppScreen):
     def _console_rag_chip_activated(
         self, event: ConsoleRagChip.OpenRequested
     ) -> None:
-        """Open Library RAG settings from the RAG chip."""
+        """Open Library search settings from the Library-search chip."""
         event.stop()
         self._open_console_rag_settings()
+
+    @on(ConsoleSourcesChip.OpenRequested)
+    def _console_sources_chip_activated(
+        self, event: ConsoleSourcesChip.OpenRequested
+    ) -> None:
+        """Open the Inspector rail at the staged-sources tray (DS-06/LY-11).
+
+        Below 150 cols the Inspector is the ONLY surface for staged
+        sources; the compact-collapse override (TASK-2154.2) makes this
+        work at every width, exactly like the rail handle.
+        """
+        event.stop()
+        self._reveal_console_inspector_rail()
+
+    @on(ConsoleToolsChip.OpenRequested)
+    def _console_tools_chip_activated(
+        self, event: ConsoleToolsChip.OpenRequested
+    ) -> None:
+        """Open the Inspector rail at the run inspector's tool rows (DS-06)."""
+        event.stop()
+        self._reveal_console_inspector_rail()
+
+    @on(ConsoleRunChip.OpenRequested)
+    def _console_run_chip_activated(
+        self, event: ConsoleRunChip.OpenRequested
+    ) -> None:
+        """Open the Inspector rail at the live run rows (FB-08)."""
+        event.stop()
+        self._reveal_console_inspector_rail()
+
+    def _reveal_console_inspector_rail(self) -> None:
+        """Open the Inspector rail at any width and focus it.
+
+        TASK-2154.2 (DS-06): the chips' shared reveal path. Opening goes
+        through the same preference seam as the rail handle, so the
+        compact-collapse override honors it below 150 cols too. Focusing
+        the rail afterwards means activation produces visible feedback
+        even when the rail was already open (the focus frame repaints).
+        """
+        self._set_console_rail_preference(right_open=True)
+        try:
+            rail = self.query_one("#console-right-rail")
+        except QueryError:
+            return
+        rail.focus()
 
     @on(ConsoleCostChip.ConsoleCostChipPressed)
     def _console_cost_chip_activated(
@@ -7754,13 +7941,13 @@ class ChatScreen(BaseAppScreen):
         self.app.push_screen(ConsoleCostModal(rows, totals))
 
     def _open_console_rag_settings(self) -> None:
-        """Open the Library RAG settings modal, prefilled with the best query.
+        """Open the Library search settings modal, prefilled with the best query.
 
-        The prefill prefers the query already set through any RAG surface;
-        with none set, it falls back to the composer draft -- the text the
-        user is about to send is usually exactly what retrieval should look
-        for, and it was the missing link when "Run Library RAG" demanded a
-        query while the composer visibly held one.
+        The prefill prefers the query already set through any Library-search
+        surface; with none set, it falls back to the composer draft -- the
+        text the user is about to send is usually exactly what the search
+        should look for, and it was the missing link when "Search Library"
+        demanded a query while the composer visibly held one.
         """
         prefill = self._console_library_rag_query
         if not prefill:
@@ -7774,8 +7961,8 @@ class ChatScreen(BaseAppScreen):
             ConsoleRagSettingsModal(
                 query=prefill,
                 source_types=_console_library_rag_source_scope(self),
-                # Matches the chip exactly: the chip's "RAG: on" derives from
-                # this same pending-launch source test.
+                # Matches the chip exactly: the chip's "Library search: on"
+                # derives from this same pending-launch source test.
                 rag_active=_source_mentions_rag(
                     pending.source if pending else None
                 ),
@@ -8604,7 +8791,9 @@ class ChatScreen(BaseAppScreen):
             # like TASK-717 threaded `openable` (input row -> normalize ->
             # display row -> row label).
             run_marker = (
-                CONSOLE_RUN_MARKER_GLYPHS.get(controller.run_marker_for(session.id), "")
+                resolve_glyph(
+                    CONSOLE_RUN_MARKER_GLYPHS.get(controller.run_marker_for(session.id), "")
+                )
                 if controller is not None
                 else ""
             )
@@ -9683,8 +9872,15 @@ class ChatScreen(BaseAppScreen):
         staged_context_state: ConsoleStagedContextState,
         inspector_state: ConsoleInspectorState,
         workspace_context_state: ConsoleWorkspaceContextState,
+        available_columns: int | None = None,
     ) -> ConsoleRailState:
-        """Build the effective Console rail state for the current composition."""
+        """Build the effective Console rail state for the current composition.
+
+        Args:
+            available_columns: Optional width override for the responsive
+                rules; the live-resize hook passes the event's width so the
+                build never depends on widget-size update ordering.
+        """
         workspace_context = self._workspace._current_console_workspace_context()
         active_session_id = (
             self._console_chat_store.active_session_id
@@ -9722,7 +9918,11 @@ class ChatScreen(BaseAppScreen):
             tool_count=self._console_tool_count(),
             approval_count=self._console_pending_approval_count(),
             can_save_chatbook=inspector_state.can_save_chatbook,
-            available_columns=self._console_rail_available_columns(),
+            available_columns=(
+                available_columns
+                if available_columns is not None
+                else self._console_rail_available_columns()
+            ),
         )
         if self._should_open_standard_width_inspector(
             rail_state=rail_state,
@@ -9820,11 +10020,20 @@ class ChatScreen(BaseAppScreen):
                 continue
             handle.sync_state(label, badge)
 
+        # TASK-2154.1: mirrors the compose-time rules -- single-pane mode
+        # hides both handles and waives the main column's min-width so the
+        # transcript keeps the full grid width at any terminal size.
         targets = (
             ("#console-left-rail", rail_state.left_open),
-            ("#console-context-rail-handle", not rail_state.left_open),
+            (
+                "#console-context-rail-handle",
+                not rail_state.left_open and not rail_state.single_pane,
+            ),
             ("#console-right-rail", rail_state.right_open),
-            ("#console-inspector-rail-handle", not rail_state.right_open),
+            (
+                "#console-inspector-rail-handle",
+                not rail_state.right_open and not rail_state.single_pane,
+            ),
         )
         for selector, visible in targets:
             try:
@@ -9834,6 +10043,19 @@ class ChatScreen(BaseAppScreen):
             widget.styles.display = "block" if visible else "none"
             widget.display = visible
             self._sync_console_rail_descendant_visibility(widget, visible)
+
+        try:
+            main_column = self.query_one("#console-main-column")
+        except QueryError:
+            pass
+        else:
+            # TASK-2154.2: the min-width waiver also applies when a rail is
+            # open below its compact-collapse threshold by explicit toggle
+            # (compact_override), so the honored rail can never overflow the
+            # grid -- mirrors the compose-time rule.
+            main_column.styles.min_width = (
+                0 if rail_state.single_pane or rail_state.compact_override else 56
+            )
 
         self.refresh(layout=True)
 
@@ -9865,7 +10087,9 @@ class ChatScreen(BaseAppScreen):
             child.display = False
             child.styles.display = "none"
 
-    def _current_console_rail_state(self) -> ConsoleRailState:
+    def _current_console_rail_state(
+        self, *, available_columns: int | None = None
+    ) -> ConsoleRailState:
         """Build the current effective rail state from mounted Console context."""
         pending_launch = self._pending_console_launch_context
         staged_context_state = self._build_console_staged_context_state(pending_launch)
@@ -9875,6 +10099,7 @@ class ChatScreen(BaseAppScreen):
             staged_context_state=staged_context_state,
             inspector_state=inspector_state,
             workspace_context_state=workspace_context_state,
+            available_columns=available_columns,
         )
         rail_state = self._apply_pending_launch_inspector_auto_open(
             rail_state, pending_launch
@@ -9901,9 +10126,8 @@ class ChatScreen(BaseAppScreen):
             preference_key.fallback_value,
         )
         rail_state_config = self._console_rail_state_config()
-        current = coerce_console_rail_preferences(
-            rail_state_config.get(preference_key.value)
-        )
+        prior_stored = rail_state_config.get(preference_key.value)
+        current = coerce_console_rail_preferences(prior_stored)
         changes: dict[str, bool] = {}
         if left_open is not None:
             changes["left_open"] = bool(left_open)
@@ -9913,13 +10137,28 @@ class ChatScreen(BaseAppScreen):
             if section_id in CONSOLE_RAIL_SECTION_IDS:
                 changes[f"{section_id}_open"] = bool(section_open)
         next_preferences = replace(current, **changes)
-        if next_preferences != current:
-            rail_state_config[preference_key.value] = (
-                serialize_console_rail_preferences(next_preferences)
-            )
-            self._persist_console_rail_preferences(
+        # TASK-2154.2 (LY-11, ADR-042): an explicit rail toggle writes
+        # through even when the coerced value is unchanged. Otherwise "open
+        # the left rail" below 100 cols persisted nothing -- the default is
+        # already left_open=True -- and the force-collapse rule (see
+        # build_console_rail_state) kept the rail hidden: the exact silent
+        # no-op this task removes. Because every write serializes the FULL
+        # payload, the left rail's explicitness cannot be read back from
+        # key presence; a dedicated marker records the gesture (the right
+        # rail's closed default is distinguishable by value, so it needs
+        # none). The marker is also preserved across later writes that did
+        # not touch the left rail (e.g. a section toggle re-serializing the
+        # payload). The augmented dict goes to both the in-memory config
+        # and the persisted file so the two never disagree.
+        explicit_rail_toggle = left_open is not None or right_open is not None
+        if next_preferences != current or explicit_rail_toggle:
+            serialized = serialize_console_rail_preferences(next_preferences)
+            if left_open is not None or console_rail_left_open_explicit(prior_stored):
+                serialized[CONSOLE_RAIL_LEFT_OPEN_EXPLICIT_KEY] = True
+            rail_state_config[preference_key.value] = serialized
+            self._save_console_rail_preferences(
                 preference_key.value,
-                next_preferences,
+                serialized,
                 notify_on_failure=notify_on_failure,
             )
         if right_open is not None:
@@ -11080,9 +11319,9 @@ class ChatScreen(BaseAppScreen):
             if not value:
                 return "0"
             first_token = value.split(maxsplit=1)[0]
-            # Fleet-UX expert review F7 (task-1234): `tools_label` can now
-            # read "Tools: not loaded" (ConsoleControlState.from_values, a
-            # neutral placeholder at a zero count) instead of always
+            # Fleet-UX expert review F7 (task-1234): `tools_label` can read
+            # "Tools: —" (ConsoleControlState.from_values' neutral
+            # placeholder at a zero count) instead of always
             # "Tools: N ready" -- naively taking the first word rendered
             # this compact summary as the nonsensical "Tools not". Any
             # non-numeric first token falls back to the same neutral dash
@@ -11141,19 +11380,25 @@ class ChatScreen(BaseAppScreen):
 
     def _console_provider_blocker_copy(self) -> str:
         """Return concise Console recovery copy for provider/model setup gaps."""
-        provider, model, settings = self._active_console_provider_model_display()
-        if not _has_selected_text(provider):
+        provider, _model, settings = self._active_console_provider_model_display()
+        session_provider = str(getattr(settings, "provider", "") or "").strip()
+        if not session_provider and settings is None:
+            # Tolerate missing session settings: fall back to the display
+            # provider rather than reporting no provider at all.
+            session_provider = provider_config_key(provider)
+        if not session_provider:
             return "Provider setup needed: choose a provider"
-        if not _has_selected_text(model):
-            return "Provider setup needed: choose a model"
 
         _effective_settings, settings_readiness = (
             self._active_console_settings_readiness()
         )
         if settings_readiness.native_send_supported:
             return ""
+        if settings_readiness.label == "Missing model":
+            # Provider is send-ready; the model is the only remaining gap.
+            return "Provider setup needed: choose a model"
         provider_readiness = get_provider_readiness(
-            (settings.provider if settings is not None else None) or provider,
+            session_provider or provider,
             self._provider_readiness_app_config(),
         )
         if provider_readiness.reason == "Missing API key":
@@ -11205,8 +11450,13 @@ class ChatScreen(BaseAppScreen):
 
     def _console_provider_recovery_field(self) -> str:
         """Return the Settings Providers & Models field targeted by recovery."""
-        provider, model, settings = self._active_console_provider_model_display()
-        if not _has_selected_text(provider) or not _has_selected_text(model):
+        provider, _model, settings = self._active_console_provider_model_display()
+        session_provider = str(getattr(settings, "provider", "") or "").strip()
+        if not session_provider and settings is None:
+            # Tolerate missing session settings: fall back to the display
+            # provider rather than reporting no provider at all.
+            session_provider = provider_config_key(provider)
+        if not session_provider:
             return ""
 
         _effective_settings, settings_readiness = (
@@ -11214,31 +11464,34 @@ class ChatScreen(BaseAppScreen):
         )
         if settings_readiness.native_send_supported:
             return ""
+        if settings_readiness.label == "Missing model":
+            # Choosing a model is a Console Settings action, not a Providers
+            # & Models field fix.
+            return ""
 
         provider_readiness = get_provider_readiness(
-            (settings.provider if settings is not None else None) or provider,
+            session_provider or provider,
             self._provider_readiness_app_config(),
         )
         if provider_readiness.reason == "Missing API key":
             return "api_key"
-        if settings_readiness.label == "Endpoint not saved":
+        if settings_readiness.label in {"Endpoint not saved", "Invalid URL"}:
             return "endpoint"
         return ""
 
     def _console_provider_recovery_action(self) -> tuple[str, str, str]:
         """Return the label, target, and tooltip for Console provider recovery."""
-        provider, model, settings = self._active_console_provider_model_display()
-        if not _has_selected_text(provider):
+        provider, _model, settings = self._active_console_provider_model_display()
+        session_provider = str(getattr(settings, "provider", "") or "").strip()
+        if not session_provider and settings is None:
+            # Tolerate missing session settings: fall back to the display
+            # provider rather than reporting no provider at all.
+            session_provider = provider_config_key(provider)
+        if not session_provider:
             return (
                 "Choose provider",
                 "console",
                 "Choose a provider for this Console session",
-            )
-        if not _has_selected_text(model):
-            return (
-                "Choose model",
-                "console",
-                "Choose a model for this Console session",
             )
 
         _effective_settings, settings_readiness = (
@@ -11246,9 +11499,15 @@ class ChatScreen(BaseAppScreen):
         )
         if settings_readiness.native_send_supported:
             return ("Open Settings", "hidden", "Open provider settings")
+        if settings_readiness.label == "Missing model":
+            return (
+                "Choose model",
+                "console",
+                "Choose a model for this Console session",
+            )
 
         provider_readiness = get_provider_readiness(
-            (settings.provider if settings is not None else None) or provider,
+            session_provider or provider,
             self._provider_readiness_app_config(),
         )
         display_name = provider_display_name(provider_config_key(provider))
@@ -11258,11 +11517,17 @@ class ChatScreen(BaseAppScreen):
                 "settings",
                 f"Configure {display_name} API and API key in Settings",
             )
-        if settings_readiness.label == "Endpoint not saved":
+        if settings_readiness.label in {"Endpoint not saved", "Invalid URL"}:
             return (
                 "Configure endpoint",
                 "settings",
                 f"Save the {display_name} endpoint in Settings",
+            )
+        if settings_readiness.label == "Unknown":
+            return (
+                "Choose provider",
+                "console",
+                "Choose a supported provider for this Console session",
             )
         return ("Review settings", "console", "Review this Console session's settings")
 
@@ -11270,7 +11535,14 @@ class ChatScreen(BaseAppScreen):
 
     def _build_console_setup_card_state(self) -> ConsoleSetupCardState:
         """Build the empty-transcript onboarding state from current readiness."""
-        settings, readiness = self._active_console_settings_readiness()
+        settings, _display_readiness = self._active_console_settings_readiness()
+        # The card steps must reflect raw provider readiness (FR-05): the
+        # screen-level readiness collapses provider-ready + model-missing to a
+        # "Missing model" sentinel, which would wrongly re-activate step 1.
+        readiness = build_console_settings_readiness(
+            settings,
+            app_config=self._provider_readiness_app_config(),
+        )
         has_model = _has_selected_text(getattr(settings, "model", None))
         return build_console_setup_card_state(
             readiness=readiness,
@@ -11337,13 +11609,20 @@ class ChatScreen(BaseAppScreen):
         action_label, _action_target, action_tooltip = (
             self._console_provider_recovery_action()
         )
-        empty_action_label, empty_action_tooltip = (
-            self._console_empty_recovery_action_copy(
-                blocker_copy,
-                provider_action_label=action_label if blocker_copy else "",
-                provider_action_tooltip=action_tooltip if blocker_copy else "",
+        if blocker_copy:
+            empty_action_label, empty_action_tooltip = (
+                self._console_empty_recovery_action_copy(
+                    blocker_copy,
+                    provider_action_label=action_label,
+                    provider_action_tooltip=action_tooltip,
+                )
             )
-        )
+        else:
+            # TASK-2154.8 (FR-03): no blocker -> the empty transcript offers no
+            # recovery action (it would dead-end as a misleading "Choose model"
+            # button when nothing is broken). The setup modal keeps its own
+            # default-label fallback, so card mode is unaffected.
+            empty_action_label, empty_action_tooltip = "", ""
 
         card_state = self._build_console_setup_card_state()
         try:
@@ -11375,6 +11654,11 @@ class ChatScreen(BaseAppScreen):
             modal = self.query_one("#console-setup-modal", ConsoleSetupModal)
         except QueryError:
             return
+        # TASK-2154.10 (AC-04): vestibular-accessible static backdrop when the
+        # user opts into reduced motion; refreshed with every guidance sync.
+        modal.reduced_motion = bool(
+            get_cli_setting("appearance", "reduce_motion", False)
+        )
         modal.sync_card_state(
             card_state,
             action_label=action_label,
@@ -11489,6 +11773,10 @@ class ChatScreen(BaseAppScreen):
 
     def _apply_console_setup_block(self, blocking: bool) -> None:
         """Disable composer focus/typing while the setup modal is up."""
+        # FR-06 (TASK-2154.8): the footer hints must track the block state on
+        # every transition, including before the composer query below can
+        # early-return (e.g. mid-recompose).
+        self._register_console_footer_shortcuts()
         try:
             composer = self.query_one("#console-native-composer", ConsoleComposerBar)
         except QueryError:
@@ -11572,7 +11860,7 @@ class ChatScreen(BaseAppScreen):
                 id="console-library-rag-query-input",
             ),
             Button(
-                "Run Library RAG",
+                "Search Library",
                 id="console-run-library-rag",
                 disabled=not query_ready,
                 classes="destination-action-button",
@@ -11983,7 +12271,7 @@ class ChatScreen(BaseAppScreen):
                 },
                 status=outcome.status or "blocked",
                 recovery=recovery_copy,
-                action_label="Resolve Library RAG setup",
+                action_label="Resolve Library search setup",
             )
         )
 
@@ -12098,7 +12386,9 @@ class ChatScreen(BaseAppScreen):
                 left_handle.styles.width = 13
                 left_handle.styles.min_width = 13
                 left_handle.styles.max_width = 13
-                if rail_state.left_open:
+                if rail_state.left_open or rail_state.single_pane:
+                    # TASK-2154.1: single-pane mode hides both handles -- the
+                    # transcript is the only pane left to point at.
                     left_handle.styles.display = "none"
                 yield self._frame_console_region(left_handle)
 
@@ -12168,7 +12458,21 @@ class ChatScreen(BaseAppScreen):
                 left_rail.styles.width = "3fr"
                 # Compact contract: left rail + main column + the collapsed
                 # inspector handle (11) must fit a 100-column terminal.
-                left_rail.styles.min_width = 24
+                # TASK-2154.1 (LY-08/LY-09): below 100 columns the rail state
+                # force-collapses the left rail instead (rendering override;
+                # see console_rail_state), and below
+                # CONSOLE_SINGLE_PANE_COLUMNS the grid drops to the
+                # single-pane fallback handled at `main_column` below.
+                # TASK-2154.2: that collapse is the responsive default; an
+                # explicit user toggle is honored below 100 cols too, with
+                # the main min-width waiver keeping the grid solvable.
+                # TASK-2154.3 (LY-01/LY-07): min-width 24 was below the rail
+                # content's intrinsic width (12-col label + 10-col value +
+                # 7 cells of border/gutter/padding chrome), so every Session
+                # row clipped mid-word at 100-160 cols where the 3fr share
+                # (18-27) is min-bound. 30 keeps the content whole and the
+                # compact contract still resolves: 30 + 56 + 11 + 2 = 99.
+                left_rail.styles.min_width = 30
                 if not rail_state.left_open:
                     left_rail.styles.display = "none"
                 yield self._frame_console_region(left_rail)
@@ -12186,7 +12490,21 @@ class ChatScreen(BaseAppScreen):
                     ),
                 )
                 main_column.styles.width = "13fr"
-                main_column.styles.min_width = 56
+                # TASK-2154.1 (LY-09): in single-pane mode the min-width
+                # guarantee is waived so the transcript renders at ANY width
+                # (60x18 included) instead of overflowing out of the grid;
+                # the handles are hidden, so nothing else competes for the
+                # row. At/above CONSOLE_SINGLE_PANE_COLUMNS the 56-column
+                # contract holds: handles (13+11) + 56 + grid frame (2) = 82,
+                # which is exactly what the 84-column threshold protects.
+                # TASK-2154.2 (LY-11): the waiver also holds while a rail is
+                # open below its compact-collapse threshold by explicit user
+                # toggle (compact_override) -- the user chose the rail over
+                # transcript width, and the waived minimum keeps the grid
+                # solvable at any width (rails keep their own mins 24/34).
+                main_column.styles.min_width = (
+                    0 if rail_state.single_pane or rail_state.compact_override else 56
+                )
                 main_column.styles.min_height = 0
                 yield main_column
 
@@ -12242,7 +12560,7 @@ class ChatScreen(BaseAppScreen):
                 right_handle.styles.width = 11
                 right_handle.styles.min_width = 11
                 right_handle.styles.max_width = 11
-                if rail_state.right_open:
+                if rail_state.right_open or rail_state.single_pane:
                     right_handle.styles.display = "none"
                 yield self._frame_console_region(right_handle, variant="quiet")
             # task-5 (PR3 cost ticker): same F1 precedent as the ephemeral
@@ -12265,6 +12583,10 @@ class ChatScreen(BaseAppScreen):
                 # restore_state) never make.
                 ephemeral=self._console_active_session_is_ephemeral(),
                 cost_state=initial_cost_state,
+                # FB-08 (TASK-2154.18): same first-frame precedent for the
+                # run chip -- returning to Console while a background run
+                # is still active must show it before the next sync tick.
+                run_copy=self._console_active_run_copy(),
                 id="console-status-chips",
                 classes="ds-panel",
             )
@@ -13528,6 +13850,24 @@ class ChatScreen(BaseAppScreen):
             return ""
         return run_state.visible_copy or run_state.status.value
 
+    def _console_active_run_copy(self) -> str:
+        """Return the viewed session's active-run copy, or "" when not active.
+
+        TASK-2154.18 (FB-08): unlike ``_native_run_status_copy`` -- which
+        reports ANY non-IDLE status, including lingering terminal copy --
+        this is gated on ``CONSOLE_ACTIVE_RUN_STATUSES``, the run chip's
+        visibility contract. Falls back to the status value when a
+        transition set no visible copy.
+        """
+        controller = self._console_chat_controller
+        run_state = controller.run_state if controller is not None else None
+        if (
+            run_state is None
+            or run_state.status not in CONSOLE_ACTIVE_RUN_STATUSES
+        ):
+            return ""
+        return run_state.visible_copy or run_state.status.value
+
     def _sync_console_mode_bar(self) -> None:
         try:
             mode_bar = self.query_one("#console-mode-bar", Static)
@@ -13540,6 +13880,22 @@ class ChatScreen(BaseAppScreen):
         if run_status := self._native_run_status_copy():
             mode_copy = f"{mode_copy} | Run: {run_status}"
         mode_bar.update(mode_copy)
+        # TASK-2154.18 (FB-08): the mode bar itself is a hidden compat
+        # static -- the run chip in the status strip is run copy's
+        # persistent VISIBLE home. This sync runs on send/stop
+        # transitions and on every 0.2s transcript-poll tick while a run
+        # is active, so the chip tracks VALIDATING -> STREAMING ->
+        # terminal within a tick; the widget's own equality guard keeps
+        # unchanged ticks free. Active statuses only: terminal outcomes
+        # already toast (task-2154.16/.17) and mark the tab.
+        try:
+            status_chips = self.query_one(
+                "#console-status-chips", ConsoleStatusChips
+            )
+        except QueryError:
+            return
+        active_run_copy = self._console_active_run_copy()
+        status_chips.sync_run_chip(bool(active_run_copy), active_run_copy)
 
     async def _sync_native_console_chat_ui(self) -> None:
         """Refresh visible Console-native state after send/stop transitions."""
@@ -13979,7 +14335,7 @@ class ChatScreen(BaseAppScreen):
             evidence_state = build_console_evidence_display_state(pending_launch)
             if evidence_state is None or evidence_state.available_count == 0:
                 return (
-                    "Console send blocked: Library Search/RAG has no available evidence. "
+                    "Console send blocked: Library search has no available evidence. "
                     "Review source authority before sending."
                 )
         _readiness_settings, readiness = self._active_console_settings_readiness()
@@ -14386,7 +14742,7 @@ class ChatScreen(BaseAppScreen):
         await self._prompts._console_command_apply_system(parse)
 
     async def _console_command_prefill(self, parse: CommandParse) -> None:
-        """Arm, pin, clear, or report the Console response prefill (`/prefill`).
+        """Set, pin, clear, or report the Console response prefill (`/prefill`).
 
         One-shot (`/prefill <text>`) applies to the next normal send only
         and wins over pinned; `/prefill pin <text>` applies to every
@@ -15644,6 +16000,13 @@ class ChatScreen(BaseAppScreen):
                 self.app_instance, "open_console_live_work_primary_action", None
             )
             if callable(handler) and bool(handler(launch)):
+                # FB-07 (TASK-2154.17): the handoff used to succeed silently.
+                # The artifact already exists (the button is gated on a
+                # completed live-work launch), so confirm before navigation.
+                self.app_instance.notify(
+                    "Saved — opening the artifact in Artifacts.",
+                    severity="success",
+                )
                 return
         self.app_instance.notify(
             "No Chatbook artifact is available to save yet.",
@@ -16115,6 +16478,9 @@ class ChatScreen(BaseAppScreen):
             )
         except QueryError:
             pass
+        # TASK-2154.1 (LY-10): the header (and its status badge) is hidden in
+        # compact-height mode, so keep the control-bar marker mirroring it.
+        self._sync_console_compact_status_marker()
         try:
             self.query_one("#console-workbench-mode-strip", ModeStrip).sync_modes(
                 workbench_state.modes
@@ -16417,6 +16783,84 @@ class ChatScreen(BaseAppScreen):
             return
         compact = event.size.height < CONSOLE_COMPACT_HEIGHT_ROWS
         shell.set_class(compact, "-console-compact")
+        # TASK-2154.1 (LY-10): the compact class just hid/showed the header
+        # badge, so the control-bar stand-in must follow immediately instead
+        # of waiting for the next workbench sync.
+        self._sync_console_compact_status_marker()
+
+    def _sync_console_compact_status_marker(self) -> None:
+        """Mirror the header status badge into the control bar when compact.
+
+        TASK-2154.1 (LY-10): below CONSOLE_COMPACT_HEIGHT_ROWS the
+        `-console-compact` rule hides #console-workbench-header -- including
+        the Ready/Running/Blocked badge, the only persistent status identity.
+        #console-compact-status-marker (first child of the always-visible
+        control-bar action row) shows the same label and `status-*` class
+        for exactly as long as the header is hidden. Visibility is driven
+        from Python (not CSS) so harness apps without the full stylesheet
+        behave identically.
+        """
+        try:
+            shell = self.query_one("#console-shell")
+            marker = self.query_one("#console-compact-status-marker", Static)
+        except QueryError:
+            return
+        if not shell.has_class("-console-compact"):
+            if marker.display:
+                marker.styles.display = "none"
+                marker.display = False
+            marker._console_compact_status_applied = None
+            return
+        try:
+            header = self.query_one("#console-workbench-header", DestinationHeader)
+            badge = header.query_one("#workbench-header-status", Static)
+        except QueryError:
+            return
+        status = header.state.status
+        badge_text = getattr(badge.renderable, "plain", str(badge.renderable))
+        applied = getattr(marker, "_console_compact_status_applied", None)
+        if applied == (status, badge_text, True):
+            return
+        marker.update(badge_text)
+        marker.tooltip = f"Console status: {badge_text}" if badge_text else None
+        for candidate in (
+            "ready",
+            "running",
+            "blocked",
+            "error",
+            "paused",
+            "empty",
+            "loading",
+        ):
+            marker.set_class(candidate == status, f"status-{candidate}")
+        marker.styles.display = "block"
+        marker.display = True
+        marker._console_compact_status_applied = (status, badge_text, True)
+
+    @on(Resize)
+    def _adapt_console_workspace_to_width(self, event: Resize) -> None:
+        """Re-evaluate the width-driven rail rules on live terminal resizes.
+
+        TASK-2154.1 (LY-08/LY-09): available_columns feeds
+        build_console_rail_state only when rail state is (re)built -- at
+        compose or on a console sync tick -- and a pure terminal resize
+        triggers neither, so without this hook crossing the 100/84-column
+        thresholds mid-session left the grid in its stale (possibly broken)
+        layout until some unrelated state change happened to rebuild it.
+        Guarded on the width BAND so a resize drag does not rebuild the
+        (store-reading) effective rail state on every event.
+        """
+        band = console_rail_width_band(event.size.width)
+        if band == self._last_console_workspace_width_band:
+            return
+        self._last_console_workspace_width_band = band
+        try:
+            self.query_one("#console-workspace-grid")
+        except QueryError:
+            return
+        self._sync_console_rail_visibility_if_changed(
+            self._current_console_rail_state(available_columns=event.size.width)
+        )
 
     @on(DescendantFocus)
     def _paint_console_rail_focus_frame(self, event: DescendantFocus) -> None:
@@ -16650,11 +17094,27 @@ class ChatScreen(BaseAppScreen):
                     "Console send is unavailable.", severity="error"
                 )
                 return
-            if send_button.disabled or not send_button.display:
+            if send_button.disabled:
+                # TASK-2154.6 (FR-04): Send is now genuinely disabled
+                # while blocked/empty, and `Button.press()` is a no-op
+                # on a disabled control — a plain press here would
+                # silently kill the Enter hotkey's blocked-attempt
+                # feedback (toast + transcript system row) and strand
+                # the pending stash (the next Enter would then be
+                # swallowed as a duplicate above). Dispatch the same
+                # handler a press reaches, exactly as the voice-send
+                # path already does for its synthesized press.
+                self.run_worker(
+                    self.handle_console_send_message(
+                        Button.Pressed(send_button)
+                    )
+                )
+                return
+            if not send_button.display:
                 # Task 4 (D2 fix wave): Textual 8.2.7's `Button.press()`
                 # returns immediately -- without posting `Button.Pressed` --
-                # when the button is `disabled` or not `display`ed (which is
-                # also `False` while the button is being pruned, e.g. any
+                # when the button is not `display`ed (which is also `False`
+                # while the button is being pruned, e.g. any
                 # `refresh(recompose=True)` mid-keypress). Without this
                 # check, `_console_pending_send_stash` above is set and
                 # never consumed (the Pressed handler that would clear it
@@ -17271,6 +17731,23 @@ class ChatScreen(BaseAppScreen):
         )
         verb = "finished" if status is ConsoleRunStatus.COMPLETED else "failed"
         self.app_instance.notify(f"Agent in {session_title} ({workspace_name}) {verb}.")
+
+    def _notify_console_run_failure(self, visible_copy: str) -> None:
+        """task-2154.16 (FB-05): one error toast for the VIEWED session's run
+        failing.
+
+        UI-thread bridge target for ``ConsoleChatController.
+        notify_run_failure``, invoked directly from ``_set_run_state``'s
+        once-guarded active-session FAILED branch (same main-loop guarantee
+        as ``_notify_console_run_outcome`` above). The copy is the run's
+        ``visible_copy`` -- the same text as the transcript system row -- so
+        the toast and the row never disagree.
+
+        Args:
+            visible_copy: The failed run's user-facing copy (e.g.
+                "Provider stream failed: unexpected provider error (...)").
+        """
+        self.app_instance.notify(visible_copy, severity="error")
 
     def _set_console_pending_skill_install(
         self, payload: Dict[str, Any] | None

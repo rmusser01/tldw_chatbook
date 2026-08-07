@@ -26,6 +26,8 @@ from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.widgets import Button, Static
 
+from .glyph_fallback import resolve_glyph
+
 
 #: Toggle-button id prefix. Unchanged from the Console original so existing
 #: selectors and tests keep resolving.
@@ -234,7 +236,7 @@ class DestinationRailSectionHeader(Horizontal):
         Returns:
             The expanded glyph when open, the collapsed glyph otherwise.
         """
-        return GLYPH_EXPANDED if self.open else GLYPH_COLLAPSED
+        return resolve_glyph(GLYPH_EXPANDED if self.open else GLYPH_COLLAPSED)
 
     def _toggle_tooltip(self) -> str:
         """Return the toggle tooltip describing the action it performs.

@@ -60,6 +60,14 @@ class ConsoleCommandProvider(Provider):
                 "Change the active Console workspace (Alt+W)",
             ),
             (
+                # TASK-2154.20 (AC-03): Alt+V had no palette path, leaving
+                # default-macOS-terminal users (Option-as-Meta off) with no
+                # non-Alt route to clipboard-image paste at all.
+                "Console: Paste image from clipboard",
+                screen.action_paste_clipboard_image,
+                "Paste the clipboard image into the composer (Alt+V)",
+            ),
+            (
                 "Console: New workspace",
                 screen.action_new_console_workspace,
                 "Create a local workspace and switch Console to it",

@@ -26,11 +26,15 @@ task...".
   flight carry a status suffix such as "[streaming]".
 - **Selected message + action row** — clicking a message (or moving to it
   with j/k) selects it and shows a row of action buttons directly beneath
-  it, plus a one-line guide: "Guide: j/k select · c Copy · e Edit ·
-  r Regenerate ♻ · ---> Continue · 👍/👎 Rate · 🗑 Delete · Esc clear".
+  it, plus a one-line guide that names the row's icon buttons in words —
+  e.g. for an assistant reply: "Guide: j/k select · c Copy · 🔊 Speak ·
+  e Edit · r ♻ Regenerate · ---> Continue · 👍/👎 Rate · 🗑 Delete ·
+  Esc clear". The guide follows the row: a message without the 🔊 button
+  does not list "Speak".
 - **Composer** — the input strip at the bottom: the "Composer ▾" collapse
-  button, the draft area, and the Send / Mic / Attach / Save buttons. Mic
-  and Attach have their own page:
+  button, the **Menu** button (Prompts, Attach, Save as Chatbook, Generate
+  Image/Caption, Impersonate), the draft area, and the Send / Mic buttons.
+  Mic and Attach have their own page:
   [attachments, images & voice](attachments-images-voice.md).
 
 ## Features & controls

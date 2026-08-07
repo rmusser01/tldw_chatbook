@@ -29,10 +29,10 @@ from Tests.UI.app_factory import _build_test_app
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Chat.console_display_state import ConsoleRetrievalScopeState
 from tldw_chatbook.Chat.rag_scope import (
-    SCOPE_EMPTY_NOTICE_TEMPLATE,
     RagScope,
     ScopeItem,
     read_conversation_scope,
+    scope_empty_notice,
     write_conversation_scope,
 )
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, ConflictError
@@ -239,9 +239,9 @@ async def test_retrieval_scope_row_empty_state_matches_chip_rendering():
     ``compose()`` branched only on ``is_scoped`` and never checked
     ``is_empty``/``cause`` -- the fields ``ConsoleRetrievalScopeState``
     gained for task-10's header chip. The chip's own
-    ``_scope_chip_render`` DOES render EMPTY ("Scope: empty" + alert +
-    cause tooltip via ``SCOPE_EMPTY_NOTICE_TEMPLATE``); since row and chip
-    are documented as "one state, two renderers" of the exact same
+    ``_scope_chip_render`` DOES render EMPTY ("Scope: no sources" + alert +
+    plain-language cause tooltip via ``scope_empty_notice``); since row and
+    chip are documented as "one state, two renderers" of the exact same
     snapshot (``ConsoleRetrievalScopeState``'s own docstring), they must
     not diverge -- an EMPTY snapshot must not silently render as the
     "everything" default the way an ``is_scoped=False`` check alone would
@@ -268,10 +268,10 @@ async def test_retrieval_scope_row_empty_state_matches_chip_rendering():
 
         row = console.query_one(f"#{ROW_ID}")
         label = row.query_one(f"#{LABEL_ID}", Static)
-        assert _static_plain_text(label) == "Scope: empty"
-        assert str(label.tooltip) == SCOPE_EMPTY_NOTICE_TEMPLATE.format(
-            cause="deleted-items"
-        )
+        assert _static_plain_text(label) == "Scope: no sources"
+        assert str(label.tooltip) == scope_empty_notice("deleted-items")
+        # TX-03: the raw cause token never renders.
+        assert "deleted-items" not in str(label.tooltip)
         # Same action-available affordance as the plain-unscoped row (an
         # empty *evaluated* scope still lets the user narrow to something
         # that actually resolves, or clear it outright).
@@ -823,7 +823,7 @@ async def test_initial_mount_of_restored_persisted_scoped_session_warms_row_and_
 # --- task-10: "Scope" chip --------------------------------------------
 #
 # The chip lives in the Console status-pill strip above the composer
-# (``#console-scope-chip``, a sibling of "Sources: 0 staged" / "RAG: off")
+# (``#console-scope-chip``, a sibling of "Sources: 0" / "Library search: off")
 # and renders from the exact same ``ConsoleRetrievalScopeState`` snapshot as
 # the Inspector row above -- see ``ChatScreen._sync_console_retrieval_scope_row``
 # and ``ConsoleStatusChips.sync_scope_chip``/``_scope_chip_render``.
@@ -863,11 +863,11 @@ async def test_scope_chip_shows_count_and_tooltip_when_scoped():
         chip = console.query_one(f"#{SCOPE_CHIP_ID}", ConsoleScopeChip)
         assert chip.display is True
         assert _static_plain_text(chip) == "Scope: 2"
-        # Phase-3 will widen this to the intersection breakdown
-        # ("conversation A ∩ workspace B → N") once workspace-level
+        # Phase-3 will widen this to the two-level breakdown ("conversation
+        # scope (A items) and workspace scope (B items)") once workspace-level
         # scoping resolves through the same seam; today it is
         # conversation-only.
-        assert str(chip.tooltip) == "conversation 2 items"
+        assert str(chip.tooltip) == "Only searching: conversation scope (2 items)."
         assert not chip.has_class("console-chip-alert")
 
 
@@ -990,9 +990,11 @@ async def test_scope_chip_empty_state_action_required_styling_and_cause_tooltip(
 
         chip = console.query_one(f"#{SCOPE_CHIP_ID}", ConsoleScopeChip)
         assert chip.display is True
-        assert _static_plain_text(chip) == "Scope: empty"
+        assert _static_plain_text(chip) == "Scope: no sources"
         assert chip.has_class("console-chip-alert")
-        assert "deleted-items" in str(chip.tooltip)
+        # TX-03: plain-language cause phrase; the raw token never renders.
+        assert "the scoped items have been deleted" in str(chip.tooltip)
+        assert "deleted-items" not in str(chip.tooltip)
 
 
 # --- task-13: workspace-level scope entry point + intersection ---------
@@ -1168,8 +1170,8 @@ async def test_conversation_picker_universe_is_workspace_scope_when_set():
 @pytest.mark.asyncio
 async def test_chip_tooltip_shows_intersection_breakdown_when_both_levels_set():
     """Both a conversation scope AND the workspace scope active -> the
-    chip's effective count is the intersection, and its tooltip shows the
-    full breakdown ("conversation A ∩ workspace B → N")."""
+    chip's effective count is the intersection, and its tooltip spells the
+    full breakdown out in words (TX-03: no ∩/→ math notation)."""
     db = CharactersRAGDB(":memory:", "test-client")
     try:
         note_id = db.add_note(title="N1", content="body")
@@ -1204,7 +1206,10 @@ async def test_chip_tooltip_shows_intersection_breakdown_when_both_levels_set():
             assert chip.display is True
             # conversation {m1, note} ∩ workspace {m1, m2} -> {m1}.
             assert _static_plain_text(chip) == "Scope: 1"
-            assert str(chip.tooltip) == "conversation 2 ∩ workspace 2 → 1"
+            assert str(chip.tooltip) == (
+                "Only searching: conversation scope (2 items) and workspace "
+                "scope (2 items) — 1 in both."
+            )
     finally:
         db.close_connection()
 
@@ -1212,7 +1217,7 @@ async def test_chip_tooltip_shows_intersection_breakdown_when_both_levels_set():
 @pytest.mark.asyncio
 async def test_chip_tooltip_shows_workspace_only_breakdown():
     """A workspace scope with NO conversation scope -> single-level
-    "workspace N items" tooltip (not the conversation-flavored default)."""
+    workspace-scope tooltip (not the conversation-flavored default)."""
     app = _build_test_app()
     app.media_db = _AlwaysExistsMediaDB()
     host = ConsoleHarness(app)
@@ -1234,7 +1239,7 @@ async def test_chip_tooltip_shows_workspace_only_breakdown():
         chip = console.query_one(f"#{SCOPE_CHIP_ID}", ConsoleScopeChip)
         assert chip.display is True
         assert _static_plain_text(chip) == "Scope: 1"
-        assert str(chip.tooltip) == "workspace 1 items"
+        assert str(chip.tooltip) == "Only searching: workspace scope (1 item)."
 
 
 @pytest.mark.asyncio
@@ -1272,14 +1277,17 @@ async def test_no_workspace_overlap_renders_empty_state_on_row_and_chip():
 
             row = console.query_one(f"#{ROW_ID}")
             label = row.query_one(f"#{LABEL_ID}", Static)
-            assert _static_plain_text(label) == "Scope: empty"
-            assert "no-workspace-overlap" in str(label.tooltip)
+            assert _static_plain_text(label) == "Scope: no sources"
+            # TX-03: plain-language cause phrase; the raw token never renders.
+            assert "share no items" in str(label.tooltip)
+            assert "no-workspace-overlap" not in str(label.tooltip)
 
             chip = console.query_one(f"#{SCOPE_CHIP_ID}", ConsoleScopeChip)
             assert chip.display is True
-            assert _static_plain_text(chip) == "Scope: empty"
+            assert _static_plain_text(chip) == "Scope: no sources"
             assert chip.has_class("console-chip-alert")
-            assert "no-workspace-overlap" in str(chip.tooltip)
+            assert "share no items" in str(chip.tooltip)
+            assert "no-workspace-overlap" not in str(chip.tooltip)
     finally:
         db.close_connection()
 

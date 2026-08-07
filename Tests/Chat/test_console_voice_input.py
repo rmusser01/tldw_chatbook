@@ -1906,9 +1906,9 @@ def test_every_preparing_message_fits_the_one_row_chip(message):
     """The chip is 42 cells and one row; longer copy is cut mid-sentence.
 
     An earlier draft ended on "…(first run may" and lost the duration warning
-    entirely. The "◌ " prefix the screen adds counts against the budget.
+    entirely. The "◐ " prefix the screen adds counts against the budget.
     """
-    assert len(f"◌ {message}") <= cvi.WARMUP_MESSAGE_MAX_CELLS
+    assert len(f"◐ {message}") <= cvi.WARMUP_MESSAGE_MAX_CELLS
 
 
 def test_the_first_run_detail_says_what_the_chip_cannot(monkeypatch):

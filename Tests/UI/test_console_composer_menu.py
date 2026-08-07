@@ -14,7 +14,6 @@ from tldw_chatbook.Widgets.Console.console_composer_menu_modal import (
     ACTION_GENERATE_IMAGE,
     ACTION_ATTACH_CONTEXT,
     ACTION_IMPERSONATE,
-    ACTION_NARRATE_CONVERSATION,
     ACTION_SAVE_CHATBOOK,
     build_composer_menu_entries,
 )
@@ -40,9 +39,35 @@ def test_menu_lists_the_requested_actions_in_order():
         ACTION_SAVE_CHATBOOK,
         ACTION_GENERATE_IMAGE,
         ACTION_GENERATE_CAPTION,
-        ACTION_NARRATE_CONVERSATION,
         ACTION_IMPERSONATE,
     ]
+
+
+@pytest.mark.unit
+def test_narrate_stays_out_of_the_menu_until_implemented():
+    """task-2154.14 (DS-03): no visible-but-dead "Narrate Entire Conversation".
+
+    The entry's only behavior was a "not implemented yet" toast; shipping
+    dead UI erodes trust in every other row. Every menu state (normal,
+    temporary, image staged, undo available) must be narrate-free, and no
+    row may advertise an unimplemented feature as its description.
+    """
+    states = (
+        build_composer_menu_entries(),
+        build_composer_menu_entries(ephemeral=True),
+        build_composer_menu_entries(
+            attachment_kind="image",
+            can_save_chatbook=True,
+            improvement_undo_available=True,
+        ),
+    )
+    for entries in states:
+        ids = [entry.action_id for entry in entries]
+        assert "narrate-conversation" not in ids
+        assert all("narrate" not in entry.label.lower() for entry in entries)
+        assert all(
+            "not implemented" not in entry.description.lower() for entry in entries
+        )
 
 
 @pytest.mark.unit

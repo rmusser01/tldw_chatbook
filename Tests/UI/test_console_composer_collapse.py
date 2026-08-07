@@ -511,8 +511,11 @@ async def test_expanded_composer_toggle_renders_full_approved_label(size):
         collapse = app.query_one("#console-composer-collapse", Button)
 
         _assert_full_button_label_fits(collapse, "Composer ▾")
-        assert collapse.region.width == 14
-        assert collapse.content_region.width == 12
+        # task-2154.14: 14 -> 12 ("Composer ▾" is exactly 10 cells + 2
+        # chrome); the 2 freed cells fund the labeled "Menu" button beside
+        # it, keeping the left cluster's total footprint unchanged.
+        assert collapse.region.width == 12
+        assert collapse.content_region.width == 10
 
 
 @pytest.mark.asyncio
@@ -774,7 +777,7 @@ def test_console_composer_collapsed_styles_are_pinned(stylesheet: Path):
         "#console-composer-collapsed-status",
         "#console-composer-expand",
         "text-overflow: ellipsis",
-        "#console-composer-collapse {\n    width: 14;\n    min-width: 14;\n}",
+        "#console-composer-collapse {\n    width: 12;\n    min-width: 12;\n}",
         "#console-composer-expand {\n    width: 12;\n    min-width: 12;\n}",
     )
 
@@ -813,15 +816,22 @@ async def test_composer_bar_no_longer_owns_the_save_chatbook_button():
 async def test_composer_row_menu_left_of_draft_send_beside_draft_mic_gapped():
     """Pin the requested composer row order and the Send/Mic buffer.
 
-    ☰ sits left of the draft (right of Composer ▾) so overflow actions live
-    on the left button cluster; Send hugs the draft's right edge; Mic
-    follows Send across a >=2-cell empty gap so a press aimed at one cannot
-    land on the other. Stop's budgeted-but-hidden slot sits AFTER Mic, so a
-    run starting or stopping never shifts Send or Mic.
+    The Menu button sits left of the draft (right of Composer ▾) so overflow
+    actions live on the left button cluster; Send hugs the draft's right
+    edge; Mic follows Send across a >=2-cell empty gap so a press aimed at
+    one cannot land on the other. Stop's budgeted-but-hidden slot sits AFTER
+    Mic, so a run starting or stopping never shifts Send or Mic.
     """
     app = _ComposerGeometryApp()
 
     async with app.run_test(size=(140, 42)) as pilot:
+        await pilot.pause()
+        composer = app.query_one("#console-native-composer", ConsoleComposerBar)
+        # TASK-2154.6: an empty draft shows the Send disabled-reason strip
+        # between the draft and Send (by design, borrowing 1fr cells) --
+        # probe with a draft present so the row-order assertions below
+        # measure the resting layout the way they always have.
+        composer.load_draft("x")
         await pilot.pause()
         collapse = app.query_one("#console-composer-collapse", Button)
         menu = app.query_one("#console-composer-menu", Button)

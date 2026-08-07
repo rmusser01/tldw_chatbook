@@ -108,6 +108,16 @@ Right `Inspector` badge priority:
 
 Badge builders must be deterministic. If multiple states in the same priority tier are present, choose the first state in the explicit priority list above. Do not concatenate multiple badges into a long status strip.
 
+### Auto-Open Reconciliation (2026-08-06, UX review DR-03)
+
+The "no auto-open, ever" rule above (and the matching Non-Goal bullet) is superseded by three bounded, render-state-only exceptions that shipped later, after live-smoke findings showed collapsed rails made critical run state unreachable (TASK-915, TASK-1140, parallel-agents spec §6 fix round 2). Decision recorded here: **keep the exceptions, amend the spec.** All three are ephemeral — never written to persisted rail preferences — and always yield to an explicit user toggle.
+
+1. **Standard-width Inspector open (118–128 available columns).** When the user has never stored a `right_open` preference and the Inspector has a `Run recipe` row plus at least one of Blocked impact / Next action / Sources / Tools / Approvals / Artifacts, the Inspector opens at the canonical ~120-column width so first-run users discover it (`chat_screen.py` `_should_open_standard_width_inspector`).
+2. **Pending-launch Inspector open.** Launching live work opens the Inspector once so the new run is visible; the flag clears on the user's next explicit right-rail toggle (`_apply_pending_launch_inspector_auto_open`).
+3. **Fleet Agent-section force-open.** While the fleet summary line is non-empty (background runs/approvals active), the left rail's Agent section force-opens; a manual collapse suppresses the force for the rest of that busy window, and a quiet fleet releases it (`_apply_fleet_agent_section_auto_open`).
+
+Everything else above still stands: badges remain the primary collapsed-rail signal, no state change other than the three exceptions opens a rail or section, and none of the three is persisted.
+
 ## Layout And Visual Hierarchy
 
 The central transcript/composer lane owns the screen.
@@ -132,6 +142,8 @@ When both rails are open:
 At compact terminal widths, the center transcript/composer lane is protected first. If both side rails cannot fit with the existing minimum readable center lane, the right inspector remains collapsed and the left context rail may be collapsed by user action. Rail handles should use fixed narrow widths so they do not squeeze the transcript or composer.
 
 Compact-width protection is a responsive rendering override, not a preference mutation. If a persisted workspace/session preference says `right_open=True` but the terminal is too narrow to safely render the inspector, Console should temporarily render the right rail collapsed for that viewport without overwriting the stored preference.
+
+> **Amended 2026-08-05 by [ADR-043](../../../backlog/decisions/043-console-rail-compact-collapse-yields-to-explicit-toggle.md):** the compact collapse is the responsive *default*, not a hard block — an explicit in-app rail toggle is honored at any width (with the main column's min-width waived so the grid still always resolves), because a hard block made manual toggles silent no-ops below the threshold (LY-11). The persistence model described here is unchanged.
 
 Visual changes should be restrained:
 

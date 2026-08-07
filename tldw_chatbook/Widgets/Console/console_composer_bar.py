@@ -46,6 +46,9 @@ from textual.geometry import Region
 from textual.widget import Widget
 from textual.widgets import Button, Input, Static
 
+from ...Chat.console_display_state import build_console_disabled_reason
+from ...Chat.console_glyphs import GLYPH_VOICE_RECORDING, GLYPH_VOICE_WORKING
+from ...Widgets.glyph_fallback import resolve_glyph, resolve_glyph_text
 from ...Chat.console_voice_input import (
     STATE_FINISHING,
     STATE_IDLE,
@@ -253,13 +256,18 @@ class _DraftLineSlice:
 #: near-miss hit nothing.
 MIC_SEND_GAP = 2
 
-#: Fixed cell width of the composer action row at rest: Send(8) + gap(2) +
-#: Mic(8) + Stop(8). Stop is display-toggled rather than removed, so it is
-#: budgeted even while hidden. The ☰ menu button (4) moved out of this row
-#: to sit left of the draft, beside Composer ▾; Attach(10) and Save(8) live
-#: behind ☰ because this row is width-bounded and every always-present
-#: button is space the draft never gets back.
-BASE_ACTIONS_WIDTH = 8 + MIC_SEND_GAP + 8 + 8
+#: Fixed cell width of the composer action row at rest: Send(6) + gap(2) +
+#: Dictate(11) + Stop(6). Stop is display-toggled rather than removed, so it is
+#: budgeted even while hidden. The overflow-menu button ("Menu", 6) moved
+#: out of this row to sit left of the draft, beside Composer ▾; Attach(10)
+#: and Save(8) live behind it because this row is width-bounded and every
+#: always-present button is space the draft never gets back. CN-01
+#: (TASK-2154.13): Dictate needs 11 for its longest lifecycle label
+#: ("Dictating", 9 visible cells + padding); Send and Stop tightened from 8
+#: to 6 -- exactly their 4-cell labels + button padding, the same width the
+#: "Menu" button already uses -- so the row ends one cell UNDER the old 26
+#: instead of three over, and the draft keeps its 32-cell floor.
+BASE_ACTIONS_WIDTH = 6 + MIC_SEND_GAP + 11 + 6
 
 #: Width while an attachment is staged, adding the ✕ clear control (4).
 ATTACHMENT_ACTIONS_WIDTH = BASE_ACTIONS_WIDTH + 4
@@ -277,13 +285,21 @@ class ConsoleComposerBar(Horizontal):
     COMPOSER_CHROME_ROWS = 4
     VOICE_CHIP_MIN_WIDTH = 24
     VOICE_CHIP_MAX_WIDTH = 42
+    #: Cell cap for the inline `#console-send-disabled-reason` strip. The
+    #: longest copy `build_console_disabled_reason` emits is 49 cells, so 52
+    #: renders every reason whole at common widths while the `1fr` draft
+    #: yields the space; narrower composers ellipsize (`text-overflow` in
+    #: the stylesheet) rather than wrapping into a second row.
+    SEND_REASON_MAX_WIDTH = 52
     #: Shown in the chip both for the terminal "stop and transcribe" phase
     #: (`sync_dictation_state`'s "transcribing" branch) and for a per-segment
     #: transcription in flight while still `recording`
     #: (`set_voice_segment_transcribing`) -- same word for "the model is
     #: working on your audio right now" in both places, so there is only one
-    #: phrase to recognize rather than two.
-    VOICE_CHIP_TRANSCRIBING_LABEL = "◌ Transcribing…"
+    #: phrase to recognize rather than two. CN-05 (TASK-2154.13): the marker
+    #: glyph is ``GLYPH_VOICE_WORKING`` -- this used to lead with "◌", which
+    #: also marks temporary session tabs; one glyph, one meaning.
+    VOICE_CHIP_TRANSCRIBING_LABEL = f"{GLYPH_VOICE_WORKING} Transcribing…"
     FALLBACK_DRAFT_WIDTH = 80
     PASTE_TOKEN_STYLE = "bold cyan"
     PASTE_CONFIRM_STYLE = "bold black on yellow"
@@ -399,6 +415,9 @@ class ConsoleComposerBar(Horizontal):
         self._run_active = False
         self._send_blocked = False
         self._setup_blocked_reason = ""
+        #: Last rendered `#console-send-disabled-reason` copy, tracked so a
+        #: reason change can re-window the draft at its new width.
+        self._send_disabled_reason = ""
         self._can_save_chatbook = False
         self._ephemeral = False
         self._dictation_state: _DictationState = "idle"
@@ -1136,13 +1155,56 @@ class ConsoleComposerBar(Horizontal):
     def _sync_current_action_state(self) -> None:
         """Refresh action buttons from the current draft and cached run/save state."""
         self.sync_action_state(
-            has_draft=bool(self.draft_text().strip()),
+            # A staged attachment is sendable payload on its own (the screen
+            # passes the same OR at its own sync site) -- without it, a
+            # keystroke-side resync would flip Send back to disabled and
+            # flash the "type a message" reason while an image waits staged.
+            has_draft=bool(self.draft_text().strip())
+            or self._pending_attachment_label is not None,
             run_active=self._run_active,
             can_save_chatbook=self._can_save_chatbook,
             send_blocked=self._send_blocked,
             setup_blocked_reason=self._setup_blocked_reason,
             ephemeral=self._ephemeral,
         )
+
+    def _sync_send_disabled_reason(self, reason: str, *, muted: bool) -> None:
+        """Render or hide the persistent Send disabled-reason strip.
+
+        FR-04 (TASK-2154.6): the blocked/empty reason must be perceivable
+        WITHOUT hovering the (now genuinely disabled) Send button. The strip
+        lives inside the single-row expanded composer, display-toggled with
+        an ``auto`` width the ``1fr`` draft yields -- it never adds height
+        and never touches the fixed actions-row budget
+        (``BASE_ACTIONS_WIDTH``).
+
+        Args:
+            reason: User-facing copy from ``build_console_disabled_reason``;
+                empty hides the strip.
+            muted: True for the idle "type a message" guidance (rendered in
+                the quiet ``-idle`` style), False for genuine blockers.
+        """
+        try:
+            strip = self.query_one("#console-send-disabled-reason", Static)
+        except NoMatches:
+            return
+        strip.set_class(muted, "console-send-disabled-reason-idle")
+        if reason:
+            strip.update(Content(reason))
+            strip.styles.display = "block"
+            strip.styles.width = "auto"
+            strip.styles.min_width = 0
+            strip.styles.max_width = self.SEND_REASON_MAX_WIDTH
+            strip.styles.height = 1
+            strip.styles.min_height = 1
+        else:
+            strip.update(Content(""))
+            strip.styles.display = "none"
+            strip.styles.width = 0
+            strip.styles.min_width = 0
+            strip.styles.max_width = 0
+            strip.styles.height = 0
+            strip.styles.min_height = 0
 
     def sync_action_state(
         self,
@@ -1188,7 +1250,14 @@ class ConsoleComposerBar(Horizontal):
 
         send_ready = has_draft and not send_blocked
 
-        send_button.disabled = False
+        # TASK-2154.6 (FR-04): Send now carries a REAL disabled state instead
+        # of the old CSS-classes-only subdual -- a hover tooltip was the sole
+        # pre-click affordance, and an empty draft did not even get that.
+        # The keyboard path does not go through this flag's event gating:
+        # `on_key`'s Enter branch detects the disabled button and dispatches
+        # `handle_console_send_message` directly, so the blocked-attempt
+        # feedback (toast + transcript system row) survives the flag.
+        send_button.disabled = not send_ready
         send_button.variant = "primary" if send_ready else "default"
         if send_blocked and setup_blocked_reason:
             send_button.tooltip = setup_blocked_reason
@@ -1199,7 +1268,7 @@ class ConsoleComposerBar(Horizontal):
         elif has_draft:
             send_button.tooltip = "Send the active Console session draft."
         else:
-            send_button.tooltip = None
+            send_button.tooltip = "Type a message to send."
         send_button.set_class(send_ready, "console-action-primary")
         send_button.set_class(not send_ready, "console-action-subdued")
         send_button.set_class(not send_ready, "console-action-disabled")
@@ -1210,6 +1279,15 @@ class ConsoleComposerBar(Horizontal):
             send_blocked and bool(setup_blocked_reason),
             "console-composer-setup-blocked",
         )
+        reason = build_console_disabled_reason(
+            action_id="send",
+            has_draft=has_draft,
+            send_blocked=send_blocked,
+            setup_blocked_reason=setup_blocked_reason,
+        )
+        reason_changed = reason != self._send_disabled_reason
+        self._send_disabled_reason = reason
+        self._sync_send_disabled_reason(reason, muted=not send_blocked)
 
         stop_button.disabled = False
         stop_button.variant = "warning" if run_active else "default"
@@ -1219,11 +1297,14 @@ class ConsoleComposerBar(Horizontal):
         # was never actually what a user hovering an active Stop button
         # saw -- fixed here too, matching the collapsed Stop button (which
         # has no such override).
-        stop_button.tooltip = (
-            "Stop this tab's run."
-            if run_active
-            else "No active run to stop in this tab."
-        )
+        # TASK-2154.6 (DS-07): the idle copy ("No active run to stop in
+        # this tab.") was unreachable -- the button is display-toggled off
+        # while idle, so nothing could ever be hovered to read it. The
+        # alternative (a permanently visible disabled-idle Stop) would
+        # spend 8 cells of the fixed BASE_ACTIONS_WIDTH budget on a
+        # control that is never actionable while shown, so the dead copy
+        # goes instead of the budget.
+        stop_button.tooltip = "Stop this tab's run." if run_active else None
         stop_button.set_class(run_active, "console-stop-active")
         stop_button.set_class(not run_active, "console-stop-idle")
         stop_button.set_class(not run_active, "console-action-disabled")
@@ -1239,6 +1320,14 @@ class ConsoleComposerBar(Horizontal):
 
         if setup_reason_changed and not self.draft_text().strip():
             self._refresh_visible_draft()
+        if reason_changed and self.draft_text().strip():
+            # The reason strip's width comes out of the 1fr draft's cells,
+            # so a reason (dis)appearance re-windows the draft -- but only
+            # after the pending layout has actually moved the draft's
+            # region. A synchronous `_refresh_visible_draft()` here would
+            # still read the PRE-toggle width (same reason
+            # `set_pending_attachment_label` does not re-window inline).
+            self.call_after_refresh(self._refresh_visible_draft)
 
     def sync_dictation_state(self, state: _DictationState) -> None:
         """Refresh the microphone action for the current one-shot lifecycle.
@@ -1263,10 +1352,19 @@ class ConsoleComposerBar(Horizontal):
         except NoMatches:
             return
         labels = {
-            "idle": "Mic",
-            "starting": "Mic…",
-            "recording": "Rec ●",
-            "transcribing": "STT…",
+            # CN-01 (TASK-2154.13): one verb family for the whole lifecycle --
+            # the feature is "Dictate" (idle), it is working ("Dictate…",
+            # starting or transcribing -- the tooltip and voice chip decode
+            # which phase), and it is capturing ("Dictating"). Supersedes the
+            # TX-07 (TASK-2154.12) "Text…" busy word, which had replaced the
+            # jargon "STT…" but still read as a third name for one feature.
+            # The recording label also drops its old "●" marker: the red
+            # variant and the chip's ◉ timer carry liveness, and "●" means
+            # agent-running (CN-05).
+            "idle": "Dictate",
+            "starting": "Dictate…",
+            "recording": "Dictating",
+            "transcribing": "Dictate…",
         }
         tooltips = {
             "idle": self.DICTATION_IDLE_TOOLTIP,
@@ -1274,7 +1372,7 @@ class ConsoleComposerBar(Horizontal):
             # way out. The button stays clickable here (unlike "transcribing",
             # where there is nothing left to cancel) and a press cancels.
             "starting": "Preparing the speech model — press to cancel.",
-            "recording": "Stop microphone recording and transcribe.",
+            "recording": "Stop dictating and transcribe.",
             # No provider name here either: the transcribing phase runs on the
             # same resolved provider the idle tooltip declines to name.
             "transcribing": "Transcribing…",
@@ -1336,7 +1434,8 @@ class ConsoleComposerBar(Horizontal):
             )
         elif state == "transcribing":
             self.set_voice_status(
-                STATE_FINISHING, message=self.VOICE_CHIP_TRANSCRIBING_LABEL
+                STATE_FINISHING,
+                message=resolve_glyph_text(self.VOICE_CHIP_TRANSCRIBING_LABEL),
             )
 
     def set_dictation_availability(
@@ -1833,7 +1932,7 @@ class ConsoleComposerBar(Horizontal):
             # unstyled keeps it from being mistaken for a stateful paste
             # token.
             if focused:
-                caret_cell = cls.CURSOR_GLYPH if cursor_visible else " "
+                caret_cell = resolve_glyph(cls.CURSOR_GLYPH) if cursor_visible else " "
                 caret_position = (
                     len(text)
                     if cursor_index is None
@@ -1926,7 +2025,7 @@ class ConsoleComposerBar(Horizontal):
             return rendered
 
         if focused:
-            placeholder = Text(cls.CURSOR_GLYPH if cursor_visible else " ")
+            placeholder = Text(resolve_glyph(cls.CURSOR_GLYPH) if cursor_visible else " ")
             placeholder.append(cls.DRAFT_PLACEHOLDER, style="bright_black")
             return placeholder
         return Text(cls.DRAFT_PLACEHOLDER, style="bright_black")
@@ -3881,23 +3980,25 @@ class ConsoleComposerBar(Horizontal):
             actions = self.query_one("#console-composer-actions", Horizontal)
         except NoMatches:
             return
-        # The Attach button moved into the ☰ menu, so the count-aware
+        # The Attach button moved into the composer Menu, so the count-aware
         # "Attach +" relabel it used to carry moved with it -- the staged
         # count now reads off the indicator beside this row, which is where
         # a user looks for it anyway. ✕ stays: it is the only control that
         # is meaningless until something is staged, so it costs nothing at
         # rest and burying it would hide the way to undo a visible thing.
         if normalized:
-            indicator.update(escape(f"📎 {normalized}"))
+            indicator.update(escape(resolve_glyph_text(f"📎 {normalized}")))
             indicator.styles.display = "block"
             indicator.styles.width = "auto"
             indicator.styles.max_width = 28
             clear_button.styles.display = "block"
             self._set_actions_row_width(actions, ATTACHMENT_ACTIONS_WIDTH)
+            # CN-04 (TASK-2154.13): one phrase with the compose-time tooltip
+            # ("Remove the pending attachment."), not a second "Clear" verb.
             if count > 1:
-                clear_button.tooltip = f"Clear all {count} attachments."
+                clear_button.tooltip = f"Remove all {count} pending attachments."
             else:
-                clear_button.tooltip = "Clear the attachment."
+                clear_button.tooltip = "Remove the pending attachment."
         else:
             indicator.update("")
             indicator.styles.display = "none"
@@ -3966,7 +4067,7 @@ class ConsoleComposerBar(Horizontal):
         width = min(self.VOICE_CHIP_MAX_WIDTH, available)
 
         if state == "listening":
-            head = f"● {elapsed_seconds // 60}:{elapsed_seconds % 60:02d}"
+            head = f"{resolve_glyph(GLYPH_VOICE_RECORDING)} {elapsed_seconds // 60}:{elapsed_seconds % 60:02d}"
             room = width - len(head) - 3
             if segment_transcribing and room > 8:
                 # A right-truncating `[-room:]` slice (as used for `partial`
@@ -3980,7 +4081,7 @@ class ConsoleComposerBar(Horizontal):
                 # replace the cut-off end with an explicit ellipsis of our
                 # own when the label doesn't fit whole -- the label's own
                 # trailing "…" only ever survives when nothing was cut.
-                label = self.VOICE_CHIP_TRANSCRIBING_LABEL
+                label = resolve_glyph_text(self.VOICE_CHIP_TRANSCRIBING_LABEL)
                 if len(label) <= room:
                     tail = label
                 else:
@@ -4009,9 +4110,10 @@ class ConsoleComposerBar(Horizontal):
         """Build the expanded and collapsed composer presentations.
 
         The expanded row reads, left to right: the ``Composer ▾`` collapse
-        toggle, the ``☰`` overflow-menu button, the visible draft (with its
-        hidden compatibility/status companions), then the fixed-width action
-        row holding ``Send``, the ``MIC_SEND_GAP`` buffer, ``Mic``, and the
+        toggle, the ``Menu`` overflow-menu button, the visible draft (with its
+        hidden compatibility/status companions and the display-toggled Send
+        disabled-reason strip), then the fixed-width action row holding
+        ``Send``, the ``MIC_SEND_GAP`` buffer, ``Mic``, and the
         display-toggled ``Stop``/``✕`` controls. The collapsed presentation
         is a one-row status line with ``Stop`` (while a run is active) and
         ``Expand ▴``. Both presentations are always mounted;
@@ -4027,24 +4129,42 @@ class ConsoleComposerBar(Horizontal):
         )
         expanded.styles.display = "none" if self._collapsed else "block"
         with expanded:
-            yield self._bounded_button(
-                "Composer ▾",
-                width=14,
+            # task-2154.14 (DS-01): the left cluster keeps its old 18-cell
+            # footprint across the relabel: the toggle tightens 14 -> 12 and
+            # the menu button grows 4 -> 6. Both only fit their labels at
+            # those widths because `line_pad` is cleared below -- Textual 8's
+            # default `line-pad: 1` reserves a column each side of every
+            # rendered line (and the TCSS parser rejects `line-pad: 0`, so it
+            # must be set inline; see the generated stylesheet's own note).
+            # Without that, "Composer ▾" needs 14 and "Menu" needs 8.
+            collapse_button = self._bounded_button(
+                resolve_glyph_text("Composer ▾"),
+                width=12,
                 id="console-composer-collapse",
                 classes="destination-action-button console-composer-toggle",
                 tooltip="Collapse composer for more transcript space.",
             )
-            # The ☰ overflow menu sits LEFT of the draft, beside Composer ▾
-            # (superseding the task-1680 before-Send placement): overflow
-            # actions live on the left button cluster, keeping the row right
-            # of the draft to the Mic → gap → Send flow.
-            yield self._bounded_button(
-                "☰",
-                width=4,
+            collapse_button.styles.line_pad = 0
+            yield collapse_button
+            # The Menu overflow button sits LEFT of the draft, beside
+            # Composer ▾ (superseding the task-1680 before-Send placement):
+            # overflow actions live on the left button cluster, keeping the
+            # row right of the draft to the Mic → gap → Send flow. task-2154.14
+            # (DS-01/DS-02): the bare ☰ glyph had a tooltip-only identity and
+            # under-sold the menu, so the button now says "Menu" in words and
+            # the tooltip summarizes the real entries.
+            menu_button = self._bounded_button(
+                "Menu",
+                width=6,
                 id="console-composer-menu",
                 classes="destination-action-button console-composer-menu-button",
-                tooltip="More composer actions (image, caption, impersonate).",
+                tooltip=(
+                    "Composer menu: prompts, attach, save as Chatbook, "
+                    "generate image or caption, impersonate."
+                ),
             )
+            menu_button.styles.line_pad = 0
+            yield menu_button
             visible_draft = Static(
                 self._draft_renderable(""),
                 id="console-command-visible-text",
@@ -4124,6 +4244,12 @@ class ConsoleComposerBar(Horizontal):
             status.styles.height = 0
             status.styles.min_height = 0
             yield status
+            # TASK-2154.6 (FR-04): the Send disabled reason is no longer a
+            # permanently-hidden compat static -- `_sync_send_disabled_reason`
+            # display-toggles it (width 0 -> auto, capped at
+            # SEND_REASON_MAX_WIDTH) whenever Send is blocked or the draft is
+            # empty, sitting on this same single row between the 1fr draft
+            # and the fixed actions row so it never adds composer height.
             disabled_reason = Static(
                 "",
                 id="console-send-disabled-reason",
@@ -4148,19 +4274,24 @@ class ConsoleComposerBar(Horizontal):
             with actions:
                 # Send hugs the draft it submits (the row is left-aligned
                 # so Stop's hidden budget never parks between draft and
-                # Send), then Mic follows across the MIC_SEND_GAP buffer so
-                # a press aimed at one cannot land on the other.
+                # Send), then Dictate follows across the MIC_SEND_GAP buffer
+                # so a press aimed at one cannot land on the other.
                 yield self._bounded_button(
                     "Send",
-                    width=8,
+                    width=6,
                     id="console-send-message",
                     classes="destination-action-button console-send-button",
                     variant="primary",
                     tooltip="Send the active Console session draft.",
+                    # A fresh composer always has an empty draft, so Send
+                    # starts genuinely disabled (TASK-2154.6); the first
+                    # `sync_action_state` flip re-enables it once there is
+                    # something to send.
+                    disabled=True,
                 )
                 mic_button = self._bounded_button(
-                    "Mic",
-                    width=8,
+                    "Dictate",
+                    width=11,
                     id="console-dictation",
                     classes="destination-action-button console-dictation-button",
                     tooltip=self.DICTATION_IDLE_TOOLTIP,
@@ -4169,7 +4300,7 @@ class ConsoleComposerBar(Horizontal):
                 yield mic_button
                 stop_button = self._bounded_button(
                     "Stop",
-                    width=8,
+                    width=6,
                     id="console-stop-generation",
                     classes="destination-action-button console-stop-button",
                     # Fleet-UX expert review F7 (task-1234): under parallel
@@ -4180,16 +4311,16 @@ class ConsoleComposerBar(Horizontal):
                 )
                 stop_button.styles.display = "none"
                 yield stop_button
-                # Attach and Save Chatbook moved into the ☰ menu: this row
-                # is width-bounded, so every always-present button here is
+                # Attach and Save Chatbook moved into the composer Menu: this
+                # row is width-bounded, so every always-present button here is
                 # space the draft never gets back. What remains is Send,
-                # Mic, and the two CONDITIONAL controls (Stop while a run
+                # Dictate, and the two CONDITIONAL controls (Stop while a run
                 # is active, ✕ while an attachment is staged) -- those cost
                 # nothing at rest, are time-critical when shown, and sit
-                # AFTER Mic in Stop's budgeted slot so toggling them never
-                # shifts Send or Mic.
+                # AFTER Dictate in Stop's budgeted slot so toggling them never
+                # shifts Send or Dictate.
                 clear_attachment = self._bounded_button(
-                    "✕",
+                    resolve_glyph("✕"),
                     width=4,
                     id="console-clear-attachment",
                     classes=(

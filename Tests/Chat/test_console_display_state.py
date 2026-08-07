@@ -31,8 +31,8 @@ def test_console_control_state_exposes_provider_model_and_context_labels():
     assert state.provider_label == "Provider: OpenAI"
     assert state.model_label == "Model: gpt-5.5"
     assert state.assistant_label == "Assistant: General"
-    assert state.rag_label == "RAG: on"
-    assert state.sources_label == "Sources: 3 staged"
+    assert state.rag_label == "Library search: on"
+    assert state.sources_label == "Sources: 3"
     assert state.tools_label == "Tools: 4 ready"
     assert state.approvals_label == "Approvals: 1 pending"
 
@@ -105,20 +105,24 @@ def test_console_control_state_tools_chip_shows_neutral_placeholder_at_zero():
     "Tools: 0 ready" -- live UAT read that as "no tools available" even
     though calculator/get_current_datetime are always registered builtins.
     `tools_active` (dim/emphasis) is UNCHANGED by this -- still False at
-    zero, exactly as before."""
+    zero, exactly as before.
+
+    TASK-2154.12 (TX-04): the placeholder is now an inert dash and the chip
+    itself hides at zero, so the lazy-loading detail never renders."""
     state = ConsoleControlState.from_values()
-    assert state.tools_label == "Tools: not loaded"
+    assert state.tools_label == "Tools: —"
     assert "0 ready" not in state.tools_label
+    assert "not loaded" not in state.tools_label
     assert state.tools_active is False
 
     # Explicit zero (not just the default) reads identically.
     explicit_zero = ConsoleControlState.from_values(tool_count=0, mcp_tool_count=None)
-    assert explicit_zero.tools_label == "Tools: not loaded"
+    assert explicit_zero.tools_label == "Tools: —"
 
     # A real mcp_tool_count of 0 (seam wired, catalog genuinely empty) is
     # NOT "no MCP seam" (that's `None`) -- still an honest zero, same copy.
     wired_but_empty = ConsoleControlState.from_values(tool_count=0, mcp_tool_count=0)
-    assert wired_but_empty.tools_label == "Tools: not loaded"
+    assert wired_but_empty.tools_label == "Tools: —"
 
 
 def test_console_staged_context_state_preserves_live_work_payload_provenance():
@@ -260,10 +264,11 @@ def test_console_inspector_state_exposes_action_disabled_reasons():
     text = state.to_plain_text()
     actions_by_id = {action.widget_id: action for action in state.actions}
 
-    # TASK-1843: the Inspector row now shares the chip's derivation AND its
-    # honest zero placeholder. "0 ready" read as "no tools available" even
-    # though built-ins like calculator/get_current_datetime always exist.
-    assert "Tools: not loaded" in text
+    # TASK-1843: the Inspector row shares the chip's derivation. TASK-2154.12
+    # (TX-04): the zero placeholder is the inert dash -- "0 ready" read as
+    # "no tools available", "not loaded" exposed the lazy-loading detail.
+    assert "Tools: —" in text
+    assert "not loaded" not in text
     assert "Sources: missing source" in text
     assert "RAG/source:" not in text
     assert actions_by_id[CONSOLE_INSPECTOR_REVIEW_APPROVAL_ID].enabled is False
@@ -428,15 +433,16 @@ def test_chip_and_inspector_report_the_same_tool_count():
     )
     assert "12" in control.tools_label
 
-    # And the zero case must use the same honest placeholder, not "0 ready"
-    # which reads as "no tools available" when built-ins are always present.
+    # And the zero case uses the same neutral placeholder on both surfaces
+    # (the chip additionally hides at zero, TX-04): "0 ready" read as "no
+    # tools available", "not loaded" exposed the lazy-loading detail.
     zero_control = ConsoleControlState.from_values(
         provider="OpenAI", model="gpt-4o", tool_count=0, mcp_tool_count=None
     )
     zero_inspector = ConsoleInspectorState.from_values(tool_count=0)
     zero_row = [r for r in zero_inspector.rows if r.label == "Tools"][0]
-    assert "not loaded" in zero_control.tools_label
-    assert "not loaded" in zero_row.value, (
+    assert zero_control.tools_label == "Tools: —"
+    assert zero_row.value == "—", (
         f"inspector zero-state says {zero_row.value!r}, chip says "
         f"{zero_control.tools_label!r}"
     )

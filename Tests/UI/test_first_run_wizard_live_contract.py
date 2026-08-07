@@ -321,7 +321,7 @@ async def _open_rerun_wizard_from_settings(pilot):
     """Drive the real Settings ▸ Diagnostics ▸ "Run setup wizard" button.
 
     Returns the pushed FirstRunSetupWizard screen. Shared by the "Done" and
-    "Go to Chat" re-entry tests below.
+    "Go to Console" re-entry tests below.
     """
     app = pilot.app
     await _wait_until(
@@ -366,7 +366,7 @@ async def test_rerun_over_settings_done_returns_to_settings(
         async with app.run_test(size=(180, 55)) as pilot:
             wizard_screen = await _open_rerun_wizard_from_settings(pilot)
             await _walk_rerun_quick_track_to_summary(pilot, wizard_screen)
-            # Rerun summary exposes "Done"/"Go to Chat", not the first-run
+            # Rerun summary exposes "Done"/"Go to Console", not the first-run
             # exit pair -- "Done" is the exit_route=None path.
             assert len(app.screen.query("#setup-exit-done")) == 1
 
@@ -390,7 +390,7 @@ async def test_rerun_over_settings_go_to_chat_navigates_to_chat(
 ) -> None:
     """Final-review finding 2: before the fix, both re-entry pushes
     (Settings' button and the command palette) omitted the result
-    callback, so a truthy exit_route off the Summary step's "Go to Chat"
+    callback, so a truthy exit_route off the Summary step's "Go to Console"
     button was silently dropped -- the button looked live but did nothing.
     Now that settings_screen.py's push wires
     app_instance.handle_first_run_wizard_result, this must actually
@@ -504,7 +504,10 @@ async def test_wizard_navigation_visible_at_80x24(
             rendered_text = "\n".join(
                 "".join(segment.text for segment in strip) for strip in strips
             )
-            for expected in ("Back", "Next", "Cancel"):
+            # TASK-2154.9 (FR-01): the cancel button now carries its
+            # consequence as the label -- "Finish later" (same dialog as
+            # Esc) -- so the rendered frame is checked for that wording.
+            for expected in ("Back", "Next", "Finish later"):
                 assert expected in rendered_text, (
                     f"{expected!r} button text missing from the rendered frame"
                 )
@@ -648,7 +651,7 @@ async def test_summary_exit_buttons_visible_at_120x40_full_track(
                 "".join(segment.text for segment in strip) for strip in strips
             )
             for button, label in (
-                (exit_chat, "Start chatting"),
+                (exit_chat, "Open Console"),
                 (exit_home, "Explore on my own"),
             ):
                 region = button.region
@@ -662,7 +665,7 @@ async def test_summary_exit_buttons_visible_at_120x40_full_track(
                     f"{label!r} exit button's region looked on-screen but the "
                     "compositor never painted it"
                 )
-            assert "Start chatting" in rendered_text
+            assert "Open Console" in rendered_text
             assert "Explore on my own" in rendered_text
 
 

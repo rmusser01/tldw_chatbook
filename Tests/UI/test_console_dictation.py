@@ -89,15 +89,15 @@ async def test_console_mic_exposes_clear_idle_recording_and_transcribing_states(
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         mic = composer.query_one("#console-dictation", Button)
 
-        assert str(mic.label) == "Mic"
+        assert str(mic.label) == "Dictate"
         composer.sync_dictation_state("recording")
-        assert str(mic.label) == "Rec ●"
+        assert str(mic.label) == "Dictating"
         assert "Stop" in str(mic.tooltip)
         composer.sync_dictation_state("transcribing")
-        assert str(mic.label) == "STT…"
+        assert str(mic.label) == "Dictate…"
         assert mic.disabled is True
         composer.sync_dictation_state("idle")
-        assert str(mic.label) == "Mic"
+        assert str(mic.label) == "Dictate"
 
 
 @pytest.mark.asyncio
@@ -120,11 +120,11 @@ async def test_console_mic_inserts_at_caret_without_sending(monkeypatch):
         message_count = len(store.messages_for_session(store.active_session_id))
 
         await pilot.click("#console-dictation")
-        mic = await _wait_for_mic_label(composer, pilot, "Rec ●")
+        mic = await _wait_for_mic_label(composer, pilot, "Dictating")
         assert mic.disabled is False
         await pilot.pause(0.6)
         await pilot.click("#console-dictation")
-        await _wait_for_mic_label(composer, pilot, "Mic")
+        await _wait_for_mic_label(composer, pilot, "Dictate")
 
         assert composer.draft_text() == "hello dictated words world"
         assert len(store.messages_for_session(store.active_session_id)) == message_count
@@ -161,16 +161,16 @@ async def test_console_mic_has_strict_wall_timer_and_visible_limit_transition(
 
         monkeypatch.setattr(console, "set_timer", capture_timer)
         await pilot.click("#console-dictation")
-        await _wait_for_mic_label(composer, pilot, "Rec ●")
+        await _wait_for_mic_label(composer, pilot, "Dictating")
 
         assert scheduled["delay"] == 60.0
         scheduled["callback"]()
         while not stop_started.is_set():
             await pilot.pause(0.01)
-        assert str(composer.query_one("#console-dictation", Button).label) == "STT…"
+        assert str(composer.query_one("#console-dictation", Button).label) == "Dictate…"
 
         stop_release.set()
-        await _wait_for_mic_label(composer, pilot, "Mic")
+        await _wait_for_mic_label(composer, pilot, "Dictate")
         assert fake.stop_calls == 1
 
 
@@ -208,7 +208,7 @@ async def test_console_mic_failures_are_visible_preserve_draft_and_recover_idle(
             await pilot.pause(0.6)
             await pilot.click("#console-dictation")
             if stage == "stop":
-                await _wait_for_mic_label(composer, pilot, "Rec ●")
+                await _wait_for_mic_label(composer, pilot, "Dictating")
                 await pilot.pause(0.6)
                 await pilot.click("#console-dictation")
             deadline = time.monotonic() + 4
@@ -216,7 +216,7 @@ async def test_console_mic_failures_are_visible_preserve_draft_and_recover_idle(
                 message in str(call.args[0]) for call in notify.call_args_list
             ):
                 await pilot.pause(0.01)
-            await _wait_for_mic_label(composer, pilot, "Mic")
+            await _wait_for_mic_label(composer, pilot, "Dictate")
 
             assert composer.draft_text() == "keep this draft"
             assert any(

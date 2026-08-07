@@ -2,6 +2,7 @@ from tldw_chatbook.Chat.rag_scope import (
     RagScope, ScopeItem, SCOPE_VERSION, parse_scope, serialize_scope,
     SOURCE_TYPE_MEDIA, SOURCE_TYPE_NOTE,
     EffectiveScope, resolve_effective_scope, ScopeCache,
+    SCOPE_REASON_EMPTY, scope_cause_phrase, scope_empty_notice,
 )
 
 def test_round_trip():
@@ -165,3 +166,37 @@ def test_cache_clear_removes_all_entries():
     cache.put("c1", "w1", "s1", "s2", eff)
     cache.clear()
     assert cache.get("c1", "w1", "s1", "s2") is None
+
+
+def test_scope_cause_phrase_maps_every_known_token_to_plain_language():
+    """TX-03 (TASK-2154.12): raw cause tokens are diagnostic vocabulary and
+    must never reach user-visible copy -- every known token maps to a plain
+    phrase, and unknown/blank causes fall back without leaking the token."""
+    assert (
+        scope_cause_phrase("no-workspace-overlap")
+        == "the conversation and workspace scopes share no items"
+    )
+    assert scope_cause_phrase("deleted-items") == "the scoped items have been deleted"
+    assert (
+        scope_cause_phrase("workspace-scope-unavailable")
+        == "the workspace scope could not be read"
+    )
+    for unknown in (SCOPE_REASON_EMPTY, "unknown", None, "", "some-future-cause"):
+        phrase = scope_cause_phrase(unknown)
+        assert phrase == "the scope matches nothing to search"
+        if unknown:
+            assert str(unknown) not in phrase
+
+
+def test_scope_empty_notice_never_renders_raw_cause_tokens():
+    """The shared notice formats the plain-language phrase for every caller
+    (chip tooltip, row tooltip, notification, recovery card)."""
+    notice = scope_empty_notice("deleted-items")
+    assert notice == (
+        "Retrieval scope is empty (the scoped items have been deleted); "
+        "no sources searched."
+    )
+    assert "deleted-items" not in notice
+    fallback = scope_empty_notice(None)
+    assert "scope_empty" not in fallback
+    assert "(" in fallback and ")" in fallback

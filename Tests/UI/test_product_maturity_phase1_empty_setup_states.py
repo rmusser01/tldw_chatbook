@@ -168,20 +168,21 @@ async def test_clean_run_setup_and_runtime_blockers_expose_recovery_copy(
                 ),
                 context="console setup route",
             )
-            # In a clean run the default model may be preselected, but the
-            # session settings action and setup card remain the
-            # recovery/control surfaces.
+            # In a clean run no provider is selected, so the session settings
+            # action and setup card resolve the *provider* recovery family
+            # (TASK-2154.7: the action now matches the first incomplete step
+            # instead of always reading "Choose model").
             await _wait_until(
                 pilot,
                 lambda: (
-                    "Choose model" in _screen_text(app)
+                    "Choose provider" in _screen_text(app)
                     or "Open Settings" in _screen_text(app)
                 ),
                 context="console provider setup controls",
             )
             assert (
                 app.screen._console_provider_blocker_copy()
-                == "Provider setup needed: choose a model"
+                == "Provider setup needed: choose a provider"
             )
             # The shared Workbench recovery banner stays hidden — the setup
             # card's action button is the recovery/control surface now
@@ -192,9 +193,10 @@ async def test_clean_run_setup_and_runtime_blockers_expose_recovery_copy(
             assert recovery_action.display is False
             card_action = app.screen.query_one("#console-setup-modal-action", Button)
             assert card_action.display is True
-            assert str(card_action.label) == "Choose model"
+            assert str(card_action.label) == "Choose provider"
             assert not list(app.screen.query("#console-open-provider-settings"))
-            assert "More ›" in _screen_text(app)
+            overflow_hint = app.screen.query_one("#nav-overflow-hint", Button)
+            assert str(overflow_hint.label).strip() == "More ▾"
 
             await app.handle_screen_navigation(NavigateToScreen("acp"))
             await _wait_until(

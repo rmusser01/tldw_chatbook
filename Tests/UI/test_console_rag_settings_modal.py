@@ -1,8 +1,9 @@
-"""The RAG chip's Library RAG settings modal: gating, results, dismissal.
+"""The Library-search chip's Library search settings modal: gating, results, dismissal.
 
-User request 2026-08-01: clicking "RAG: off" in the status strip opens a
-modal that lets the user set the retrieval query and run it -- instead of
-the query living only in a rail input that may not even be on screen.
+User request 2026-08-01: clicking "Library search: off" in the status strip
+opens a modal that lets the user set the retrieval query and run it --
+instead of the query living only in a rail input that may not even be on
+screen.
 """
 
 from unittest.mock import Mock
@@ -554,11 +555,11 @@ def test_toggle_labels_come_from_the_one_library_label_table():
 def test_status_copy_is_honest_about_what_on_means():
     """The modal explains that "on" == staged retrieved evidence."""
     off = ConsoleRagSettingsModal()
-    assert "RAG is off" in off._status_copy()
+    assert "Library search is off" in off._status_copy()
     assert "staged" in off._status_copy()
 
     on = ConsoleRagSettingsModal(rag_active=True, staged_title="Incident Review")
-    assert "RAG is on" in on._status_copy()
+    assert "Library search is on" in on._status_copy()
     assert "Incident Review" in on._status_copy()
 
 
@@ -597,7 +598,7 @@ def test_screen_callback_stores_sanitized_query_and_delegates_run():
 @pytest.mark.unit
 def test_visible_run_action_falls_back_to_the_composer_draft():
     """User decision (2026-08-02): with no dedicated query set, the visible
-    Run Library RAG action retrieves with the composer draft instead of
+    Search Library action retrieves with the composer draft instead of
     demanding a query the collapsed rail gives no place to type. The
     fallback is STORED so the rail input and this modal agree with what
     actually ran.

@@ -69,11 +69,11 @@ def test_template_default_model_does_not_precheck_step_two():
 def test_endpoint_problems_relabel_step_one():
     assert (
         _build(readiness=_readiness("Invalid URL")).steps[0].label
-        == "Save the provider endpoint"
+        == "Save the provider's server address (endpoint)"
     )
     assert (
         _build(readiness=_readiness("Endpoint not saved")).steps[0].label
-        == "Save the provider endpoint"
+        == "Save the provider's server address (endpoint)"
     )
     assert (
         _build(readiness=_readiness("Unknown")).steps[0].label
@@ -81,7 +81,7 @@ def test_endpoint_problems_relabel_step_one():
     )
     assert (
         _build(readiness=_readiness("Pending")).steps[0].label
-        == "Choose a send-capable provider"
+        == "Choose a provider that works in the Console"
     )
 
 

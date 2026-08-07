@@ -9,7 +9,7 @@ from textual.containers import Horizontal
 from textual.widgets import Button, Static
 
 from tldw_chatbook.Chat.console_display_state import ConsoleRetrievalScopeState
-from tldw_chatbook.Chat.rag_scope import SCOPE_EMPTY_NOTICE_TEMPLATE, SCOPE_REASON_EMPTY
+from tldw_chatbook.Chat.rag_scope import SCOPE_REASON_EMPTY, scope_empty_notice
 from tldw_chatbook.Widgets.recompose_capture_guard import RecomposeCaptureGuard
 
 ROW_ID = "console-retrieval-scope-row"
@@ -54,10 +54,12 @@ class ConsoleRetrievalScopeRow(RecomposeCaptureGuard, Horizontal):
     - Empty (``is_empty``): the configured scope resolves to nothing to
       retrieve from -- every item in an active scope has since been
       deleted, OR (task-13, Phase 3) a conversation/workspace intersection
-      has no overlap. Renders "Scope: empty" with the cause folded into the
-      label's tooltip via ``SCOPE_EMPTY_NOTICE_TEMPLATE``, same wording the
-      chip's tooltip uses, plus the "Narrow…" button (an empty scope still
-      lets the user pick something that actually resolves). Reached from
+      has no overlap. Renders "Scope: no sources" with the plain-language
+      cause folded into the label's tooltip via ``scope_empty_notice``
+      (TASK-2154.12/TX-03: the raw cause token and "Scope: empty" wording
+      are gone), same wording the chip's tooltip uses, plus the "Narrow…"
+      button (an empty scope still lets the user pick something that
+      actually resolves). Reached from
       the real ``ChatScreen._build_console_retrieval_scope_state`` via the
       off-loop-resolved ``self._console_effective_scope_cache`` (Phase 3
       wired the conversation/workspace intersection into the display path;
@@ -83,7 +85,7 @@ class ConsoleRetrievalScopeRow(RecomposeCaptureGuard, Horizontal):
         # (which checks ``is_empty`` explicitly). Row and chip render the
         # exact same state snapshot and must agree.
         if self.state.is_empty:
-            label = "Scope: empty"
+            label = "Scope: no sources"
         elif self.state.is_scoped:
             label = f"Scope: {self.state.item_count} items"
         else:
@@ -105,13 +107,14 @@ class ConsoleRetrievalScopeRow(RecomposeCaptureGuard, Horizontal):
         label_widget.styles.min_width = 0
         if self.state.is_empty:
             # Cause folded into the label's tooltip, same wording and same
-            # ``SCOPE_EMPTY_NOTICE_TEMPLATE`` the chip's tooltip uses
+            # ``scope_empty_notice`` phrasing the chip's tooltip uses
             # (``ConsoleStatusChips._scope_chip_render``) -- reuses the
             # row's existing label widget rather than a second Static,
             # since the row's own frame is pinned to a single text line
             # (``#console-retrieval-scope-row`` is ``max-height: 1``).
-            cause = self.state.cause or SCOPE_REASON_EMPTY
-            label_widget.tooltip = SCOPE_EMPTY_NOTICE_TEMPLATE.format(cause=cause)
+            label_widget.tooltip = scope_empty_notice(
+                self.state.cause or SCOPE_REASON_EMPTY
+            )
         yield label_widget
         if self.state.is_scoped:
             yield self._action_button(

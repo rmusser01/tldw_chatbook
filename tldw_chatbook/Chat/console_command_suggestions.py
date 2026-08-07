@@ -31,10 +31,20 @@ _COMMAND_DESCRIPTIONS: dict[str, str] = {
     "prompt": "Insert a saved prompt into the composer",
     "system": "Apply a saved system prompt to this session",
     "skills": "List or run a skill",
-    "prefill": "Arm, pin, or clear a response prefill",
+    "prefill": "Prepare the start of the assistant's reply",
     "generate-image": "Generate an image (optionally via a chosen backend)",
     "rewind": "Rewind the session to an earlier user prompt",
 }
+
+#: Shown for a registered command with no ``_COMMAND_DESCRIPTIONS`` entry --
+#: the popup never renders an empty description (Console UX review 2026-08,
+#: TX-05). Only non-built-in registrations (extensions, test doubles) can
+#: reach this fallback: every built-in has an entry above.
+COMMAND_DESCRIPTION_FALLBACK = "Custom command"
+
+#: Same guarantee for skill rows: ``SkillCommandCandidate.description``
+#: defaults to ``""`` when the resolver snapshot has no copy.
+SKILL_DESCRIPTION_FALLBACK = "Run this skill"
 
 
 @dataclass(frozen=True)
@@ -46,7 +56,9 @@ class CommandSuggestion:
             trailing space, which re-triggers arg-mode for ``/skills ``).
         label: Display label, e.g. ``"/prompt"`` (command mode) or the bare
             skill name (skills-arg mode).
-        description: Short human-readable description; may be empty.
+        description: Short human-readable description. Always non-empty:
+            command-mode rows fall back to ``COMMAND_DESCRIPTION_FALLBACK``,
+            skill rows to ``SKILL_DESCRIPTION_FALLBACK``.
     """
 
     insert_text: str
@@ -85,7 +97,7 @@ def suggestions_for_draft(
             CommandSuggestion(
                 insert_text=f"{COMMAND_PREFIX}{SKILLS_COMMAND_NAME} {candidate.name} ",
                 label=candidate.name,
-                description=candidate.description,
+                description=candidate.description or SKILL_DESCRIPTION_FALLBACK,
             )
             for candidate in skill_candidates
             if candidate.name.lower().startswith(prefix)
@@ -101,7 +113,9 @@ def suggestions_for_draft(
         CommandSuggestion(
             insert_text=f"{COMMAND_PREFIX}{name} ",
             label=f"{COMMAND_PREFIX}{name}",
-            description=_COMMAND_DESCRIPTIONS.get(name.lower(), ""),
+            description=_COMMAND_DESCRIPTIONS.get(
+                name.lower(), COMMAND_DESCRIPTION_FALLBACK
+            ),
         )
         for name in command_names
         if name.lower().startswith(prefix)
@@ -115,7 +129,7 @@ def suggestions_for_draft(
         CommandSuggestion(
             insert_text=f"{COMMAND_PREFIX}{SKILLS_COMMAND_NAME} {candidate.name} ",
             label=f"{COMMAND_PREFIX}{SKILLS_COMMAND_NAME} {candidate.name}",
-            description=candidate.description,
+            description=candidate.description or SKILL_DESCRIPTION_FALLBACK,
         )
         for candidate in skill_candidates
         if candidate.name.lower().startswith(prefix)

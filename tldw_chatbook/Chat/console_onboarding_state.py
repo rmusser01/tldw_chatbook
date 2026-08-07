@@ -11,16 +11,26 @@ from tldw_chatbook.Chat.console_session_settings import ConsoleSettingsReadiness
 from tldw_chatbook.Chat.provider_catalog import provider_display_name
 
 CONSOLE_SETUP_CARD_TITLE = "Get started"
+#: TASK-2154.8 (FR-10): one plain-language sentence under the card title so a
+#: first-time user knows what a "provider" even is before the steps ask them
+#: to connect one. Kept provider-agnostic (no settings jargon).
+CONSOLE_SETUP_CARD_SUBTITLE = (
+    "A provider is the AI service that answers your messages — "
+    "for example OpenAI, Anthropic, or a server running on this computer."
+)
 CONSOLE_READY_EMPTY_COPY = "Ready — type a message to begin."
 CONSOLE_QUIET_EMPTY_COPY = "No messages yet."
 CONSOLE_SETUP_STEP_GLYPHS = {"done": "✓", "active": "●", "pending": "○"}
 
+# TASK-2154.8 (FR-10): endpoint variants name the thing in plain terms first
+# ("server address") with the jargon glossed after it; "send-capable" becomes
+# an ordinary sentence. CONSOLE_SETUP_CARD_SUBTITLE explains "provider" itself.
 _STEP_ONE_LABELS = {
     "Missing key": "Connect a provider (API key or local server)",
-    "Invalid URL": "Save the provider endpoint",
-    "Endpoint not saved": "Save the provider endpoint",
+    "Invalid URL": "Save the provider's server address (endpoint)",
+    "Endpoint not saved": "Save the provider's server address (endpoint)",
     "Unknown": "Choose a supported provider",
-    "Pending": "Choose a send-capable provider",
+    "Pending": "Choose a provider that works in the Console",
 }
 CONSOLE_SETUP_STEP_THREE_DETAIL = "Composer unlocks after setup"
 _TRUE_STRINGS = {"true", "yes", "1", "on"}

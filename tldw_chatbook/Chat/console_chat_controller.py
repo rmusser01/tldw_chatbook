@@ -1218,6 +1218,19 @@ class ConsoleChatController:
         #: most controller-only tests, matching every other UI bridge slot
         #: here.
         self.notify_run_outcome: Callable[[str, ConsoleRunStatus], None] | None = None
+        #: task-2154.16 (FB-05): UI-thread callback invoked DIRECTLY (same
+        #: main-loop guarantee as ``notify_run_outcome`` above) from
+        #: ``_set_run_state``'s once-guarded transition INTO ``FAILED`` for
+        #: the ACTIVE (viewed) session -- the case ``notify_run_outcome``
+        #: deliberately skips. The viewed session's failure was previously
+        #: confined to a transcript system row plus run-state copy on a
+        #: hidden surface, so a user composing their next message got no
+        #: ambient failure signal. Carries the run's ``visible_copy`` (the
+        #: same text as the transcript system row). Wired to
+        #: ``ChatScreen._notify_console_run_failure`` by
+        #: ``_ensure_console_chat_controller``. ``None`` in most
+        #: controller-only tests, matching every other UI bridge slot here.
+        self.notify_run_failure: Callable[[str], None] | None = None
         #: Optional override for how long ``request_mcp_approvals`` waits
         #: for a human decision before failing every undecided call to
         #: ``"timeout"``. Defaults to reading ``[mcp] approval_timeout_
@@ -8363,13 +8376,14 @@ class ConsoleChatController:
                 self._unvisited_outcomes[target] = ConsoleRunMarker.FINISHED_FAILED
             # Task 10 (background completion toasts, parallel-agents spec):
             # ONE toast on a non-active session's run finishing/failing --
-            # the viewed session's own terminal transition is visible live
-            # in its transcript and gets none (same "user is watching" rule
-            # as the unvisited-outcome stamp just above). Once-guarded on
-            # the transition INTO a terminal state: `previous_status` was
-            # NOT already one of the four terminal statuses, so re-setting
-            # the same COMPLETED/FAILED status again (e.g. a defensive
-            # re-stamp) does not re-toast.
+            # the viewed session's own terminal transition gets none FROM
+            # THIS branch (same "user is watching" rule as the
+            # unvisited-outcome stamp just above; task-2154.16/FB-05 added
+            # the viewed session's FAILED toast as its own branch below).
+            # Once-guarded on the transition INTO a terminal state:
+            # `previous_status` was NOT already one of the four terminal
+            # statuses, so re-setting the same COMPLETED/FAILED status again
+            # (e.g. a defensive re-stamp) does not re-toast.
             if (
                 run_state.status
                 in (ConsoleRunStatus.COMPLETED, ConsoleRunStatus.FAILED)
@@ -8383,6 +8397,27 @@ class ConsoleChatController:
                 and self.notify_run_outcome is not None
             ):
                 self.notify_run_outcome(target, run_state.status)
+        # task-2154.16 (FB-05): the ACTIVE session's own transition INTO
+        # FAILED gets an ambient error toast carrying the run's visible copy
+        # (the same text as the transcript system row) -- the system row
+        # alone left a user composing their next message with no failure
+        # signal (the run-state surface is hidden; the header badge stays
+        # Ready). COMPLETED stays silent here (FB-07 is out of scope), and
+        # the same once-guard as the non-active branch above keeps a
+        # defensive re-stamp of an already-terminal status from re-toasting.
+        if (
+            target == (self.store.active_session_id or "")
+            and run_state.status is ConsoleRunStatus.FAILED
+            and previous_status
+            not in {
+                ConsoleRunStatus.BLOCKED,
+                ConsoleRunStatus.COMPLETED,
+                ConsoleRunStatus.FAILED,
+                ConsoleRunStatus.STOPPED,
+            }
+            and self.notify_run_failure is not None
+        ):
+            self.notify_run_failure(run_state.visible_copy)
 
     def _clear_terminal_run_state(self, session_id: str | None = None) -> None:
         """Clear stale terminal status copy for ``session_id`` (default: active).

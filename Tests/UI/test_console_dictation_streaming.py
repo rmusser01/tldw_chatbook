@@ -261,7 +261,7 @@ async def test_partials_stay_out_of_the_draft_and_finals_insert_once_at_the_care
         message_count = len(store.messages_for_session(store.active_session_id))
 
         await pilot.click("#console-dictation")
-        await _wait_for_mic_label(composer, pilot, "Rec ●")
+        await _wait_for_mic_label(composer, pilot, "Dictating")
 
         service.emit_partial("dict")
         service.emit_partial("dictated wo")
@@ -278,7 +278,7 @@ async def test_partials_stay_out_of_the_draft_and_finals_insert_once_at_the_care
 
         await pilot.pause(0.1)
         await pilot.click("#console-dictation")
-        await _wait_for_mic_label(composer, pilot, "Mic")
+        await _wait_for_mic_label(composer, pilot, "Dictate")
 
         assert composer.draft_text() == "hello dictated words world"
         assert len(store.messages_for_session(store.active_session_id)) == message_count
@@ -311,7 +311,7 @@ async def test_mid_capture_failure_is_visible_preserves_draft_and_recovers_idle(
         composer.load_draft("keep this draft")
 
         await pilot.click("#console-dictation")
-        await _wait_for_mic_label(composer, pilot, "Rec ●")
+        await _wait_for_mic_label(composer, pilot, "Dictating")
 
         service.emit_partial("half a sentence")
         await pilot.pause()
@@ -319,7 +319,7 @@ async def test_mid_capture_failure_is_visible_preserves_draft_and_recovers_idle(
         # The recognizer dies while the user is still speaking: no blocking
         # call is in flight to raise this, so only the event stream can show it.
         service.emit_error("Microphone was disconnected")
-        await _wait_for_mic_label(composer, pilot, "Mic")
+        await _wait_for_mic_label(composer, pilot, "Dictate")
 
         assert composer.draft_text() == "keep this draft"
         assert console._console_dictation_state == "idle"
@@ -364,7 +364,7 @@ async def test_unavailable_microphone_fails_once_with_an_actionable_remedy(monke
         composer.load_draft("keep this draft")
 
         await pilot.click("#console-dictation")
-        await _wait_for_mic_label(composer, pilot, "Mic")
+        await _wait_for_mic_label(composer, pilot, "Dictate")
 
         assert composer.draft_text() == "keep this draft"
         assert console._console_dictation_state == "idle"
@@ -405,10 +405,10 @@ async def test_a_silent_capture_tells_the_user_and_leaves_the_draft_alone(monkey
 
         # Capture 1: the recognizer never says anything at all.
         await pilot.click("#console-dictation")
-        await _wait_for_mic_label(composer, pilot, "Rec ●")
+        await _wait_for_mic_label(composer, pilot, "Dictating")
         await pilot.pause(0.1)
         await pilot.click("#console-dictation")
-        await _wait_for_mic_label(composer, pilot, "Mic")
+        await _wait_for_mic_label(composer, pilot, "Dictate")
 
         assert composer.draft_text() == "hello world"
         assert store.session_draft(session_id) == stored_before
@@ -428,12 +428,12 @@ async def test_a_silent_capture_tells_the_user_and_leaves_the_draft_alone(monkey
         # widget, which would otherwise look like a silent behavioral failure.
         await pilot.pause(0.5)
         assert await pilot.click("#console-dictation")
-        await _wait_for_mic_label(composer, pilot, "Rec ●")
+        await _wait_for_mic_label(composer, pilot, "Dictating")
         service.emit_partial("mmm")
         service.emit_final("   ")
         await pilot.pause(0.1)
         await pilot.click("#console-dictation")
-        await _wait_for_mic_label(composer, pilot, "Mic")
+        await _wait_for_mic_label(composer, pilot, "Dictate")
 
         assert composer.draft_text() == "hello world"
         assert store.session_draft(session_id) == stored_before
@@ -461,7 +461,7 @@ async def test_one_failure_draining_before_the_stop_worker_shows_one_toast(monke
         composer.load_draft("keep this draft")
 
         await pilot.click("#console-dictation")
-        await _wait_for_mic_label(composer, pilot, "Rec ●")
+        await _wait_for_mic_label(composer, pilot, "Dictating")
         session = console._console_dictation_session
 
         # The stop is requested first, but the mid-capture failure drains
@@ -473,7 +473,7 @@ async def test_one_failure_draining_before_the_stop_worker_shows_one_toast(monke
                 VoiceFailed(reason="Microphone was disconnected"),
             )
         )
-        await _wait_for_mic_label(composer, pilot, "Mic")
+        await _wait_for_mic_label(composer, pilot, "Dictate")
         for _ in range(5):
             await pilot.pause(0.01)
 
@@ -504,7 +504,7 @@ async def test_one_failure_draining_during_the_stop_worker_shows_one_toast(monke
         composer.load_draft("keep this draft")
 
         await pilot.click("#console-dictation")
-        await _wait_for_mic_label(composer, pilot, "Rec ●")
+        await _wait_for_mic_label(composer, pilot, "Dictating")
         session = console._console_dictation_session
 
         console._request_console_dictation_stop()
@@ -521,7 +521,7 @@ async def test_one_failure_draining_during_the_stop_worker_shows_one_toast(monke
             )
         )
         service.stop_gate.set()
-        await _wait_for_mic_label(composer, pilot, "Mic")
+        await _wait_for_mic_label(composer, pilot, "Dictate")
         for _ in range(5):
             await pilot.pause(0.01)
 
@@ -553,7 +553,7 @@ async def test_a_live_partial_renders_in_the_chip_and_leaves_the_draft_empty(
         composer.load_draft("hello world")
 
         await pilot.click("#console-dictation")
-        await _wait_for_mic_label(composer, pilot, "Rec ●")
+        await _wait_for_mic_label(composer, pilot, "Dictating")
 
         service.emit_partial("dictated wo")
         await pilot.pause()
@@ -582,7 +582,7 @@ async def test_bracketed_whisper_tokens_render_literally_not_as_markup(monkeypat
         composer.load_draft("hello world")
 
         await pilot.click("#console-dictation")
-        await _wait_for_mic_label(composer, pilot, "Rec ●")
+        await _wait_for_mic_label(composer, pilot, "Dictating")
 
         service.emit_partial("[silence] [BLANK_AUDIO]")
         await pilot.pause()
@@ -612,10 +612,10 @@ async def test_a_partial_arriving_outside_recording_never_reaches_the_chip(
         # chip collapses; the session survives a success (only failures drop
         # it), so a partial can still drain from it afterwards.
         await pilot.click("#console-dictation")
-        await _wait_for_mic_label(composer, pilot, "Rec ●")
+        await _wait_for_mic_label(composer, pilot, "Dictating")
         await pilot.pause(0.1)
         await pilot.click("#console-dictation")
-        await _wait_for_mic_label(composer, pilot, "Mic")
+        await _wait_for_mic_label(composer, pilot, "Dictate")
 
         chip = composer.query_one("#console-voice-status", Static)
         assert str(chip.renderable) == ""
@@ -655,7 +655,7 @@ async def test_segment_transcribing_alone_does_not_mark_recognizer_output_heard(
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
 
         await pilot.click("#console-dictation")
-        await _wait_for_mic_label(composer, pilot, "Rec ●")
+        await _wait_for_mic_label(composer, pilot, "Dictating")
 
         service.emit_segment_transcribing()
         await pilot.pause()
@@ -668,7 +668,7 @@ async def test_segment_transcribing_alone_does_not_mark_recognizer_output_heard(
         assert session._segments == []
 
         await pilot.click("#console-dictation")
-        await _wait_for_mic_label(composer, pilot, "Mic")
+        await _wait_for_mic_label(composer, pilot, "Dictate")
 
         assert [
             call
@@ -698,14 +698,14 @@ async def test_segment_transcribing_does_not_disturb_a_real_final_that_follows(
             composer.move_cursor_left()
 
         await pilot.click("#console-dictation")
-        await _wait_for_mic_label(composer, pilot, "Rec ●")
+        await _wait_for_mic_label(composer, pilot, "Dictating")
 
         service.emit_segment_transcribing()
         await pilot.pause()
         service.emit_final("dictated")
         await pilot.pause(0.1)
         await pilot.click("#console-dictation")
-        await _wait_for_mic_label(composer, pilot, "Mic")
+        await _wait_for_mic_label(composer, pilot, "Dictate")
 
         assert composer.draft_text() == "hello dictated world"
 
@@ -777,7 +777,7 @@ async def test_the_chip_shows_a_transcribing_indication_while_a_segment_is_in_fl
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
 
         await pilot.click("#console-dictation")
-        await _wait_for_mic_label(composer, pilot, "Rec ●")
+        await _wait_for_mic_label(composer, pilot, "Dictating")
 
         chip = composer.query_one("#console-voice-status", Static)
         # Before the segment closes, the chip shows only the elapsed counter.
@@ -789,7 +789,7 @@ async def test_the_chip_shows_a_transcribing_indication_while_a_segment_is_in_fl
         assert "Transcribing" in _painted(chip)
         # The mic button itself is untouched -- this is a chip-only indication.
         mic = composer.query_one("#console-dictation", Button)
-        assert str(mic.label) == "Rec ●"
+        assert str(mic.label) == "Dictating"
 
         # It reverts once the next event lands (a final, here).
         service.emit_final("hello")
@@ -822,7 +822,7 @@ async def test_the_transcribing_indication_reverts_on_a_command_ack_too(monkeypa
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
 
         await pilot.click("#console-dictation")
-        await _wait_for_mic_label(composer, pilot, "Rec ●")
+        await _wait_for_mic_label(composer, pilot, "Dictating")
 
         service.emit_segment_transcribing()
         await pilot.pause()
@@ -852,7 +852,7 @@ async def test_the_transcribing_indication_survives_a_redundant_resync(monkeypat
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
 
         await pilot.click("#console-dictation")
-        await _wait_for_mic_label(composer, pilot, "Rec ●")
+        await _wait_for_mic_label(composer, pilot, "Dictating")
 
         service.emit_segment_transcribing()
         await pilot.pause()
@@ -881,7 +881,7 @@ async def test_the_transcribing_indication_reverts_on_a_mid_capture_stop(monkeyp
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
 
         await pilot.click("#console-dictation")
-        await _wait_for_mic_label(composer, pilot, "Rec ●")
+        await _wait_for_mic_label(composer, pilot, "Dictating")
 
         service.emit_segment_transcribing()
         await pilot.pause()
@@ -889,11 +889,11 @@ async def test_the_transcribing_indication_reverts_on_a_mid_capture_stop(monkeyp
         assert "Transcribing" in _painted(chip)
 
         await pilot.click("#console-dictation")
-        await _wait_for_mic_label(composer, pilot, "Mic")
+        await _wait_for_mic_label(composer, pilot, "Dictate")
 
         # A fresh capture must start clean, with no leftover indication.
         await pilot.click("#console-dictation")
-        await _wait_for_mic_label(composer, pilot, "Rec ●")
+        await _wait_for_mic_label(composer, pilot, "Dictating")
         assert "Transcribing" not in _painted(chip)
 
 
@@ -918,7 +918,7 @@ async def test_a_blank_segment_completion_reverts_the_indication_with_no_final(
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
 
         await pilot.click("#console-dictation")
-        await _wait_for_mic_label(composer, pilot, "Rec ●")
+        await _wait_for_mic_label(composer, pilot, "Dictating")
 
         chip = composer.query_one("#console-voice-status", Static)
         service.emit_segment_transcribing()  # done=False: segment started
@@ -956,7 +956,7 @@ async def test_the_tick_forwards_the_indication_while_it_is_still_live(monkeypat
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
 
         await pilot.click("#console-dictation")
-        await _wait_for_mic_label(composer, pilot, "Rec ●")
+        await _wait_for_mic_label(composer, pilot, "Dictating")
 
         chip = composer.query_one("#console-voice-status", Static)
         service.emit_segment_transcribing()  # still in flight
@@ -1006,7 +1006,7 @@ async def test_elapsed_counter_ticks_once_per_second_and_stops_on_normal_stop(
         monkeypatch.setattr(console, "set_interval", capture_interval)
 
         await pilot.click("#console-dictation")
-        await _wait_for_mic_label(composer, pilot, "Rec ●")
+        await _wait_for_mic_label(composer, pilot, "Dictating")
 
         assert scheduled["delay"] == 1.0
         chip = composer.query_one("#console-voice-status", Static)
@@ -1025,7 +1025,7 @@ async def test_elapsed_counter_ticks_once_per_second_and_stops_on_normal_stop(
 
         await pilot.pause(0.1)
         await pilot.click("#console-dictation")
-        await _wait_for_mic_label(composer, pilot, "Mic")
+        await _wait_for_mic_label(composer, pilot, "Dictate")
 
         assert elapsed_timer.stop.called
         assert console._console_dictation_elapsed_timer is None
@@ -1054,10 +1054,10 @@ async def test_elapsed_timer_stops_on_a_mid_capture_failure(monkeypatch):
         monkeypatch.setattr(console, "set_interval", capture_interval)
 
         await pilot.click("#console-dictation")
-        await _wait_for_mic_label(composer, pilot, "Rec ●")
+        await _wait_for_mic_label(composer, pilot, "Dictating")
 
         service.emit_error("Microphone was disconnected")
-        await _wait_for_mic_label(composer, pilot, "Mic")
+        await _wait_for_mic_label(composer, pilot, "Dictate")
 
         assert elapsed_timer.stop.called
         assert console._console_dictation_elapsed_timer is None
@@ -1080,7 +1080,7 @@ async def test_a_redundant_recording_resync_does_not_reset_the_chip(monkeypatch)
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
 
         await pilot.click("#console-dictation")
-        await _wait_for_mic_label(composer, pilot, "Rec ●")
+        await _wait_for_mic_label(composer, pilot, "Dictating")
 
         service.emit_partial("dictated wo")
         await pilot.pause()
@@ -1119,7 +1119,7 @@ async def test_elapsed_timer_stops_when_the_screen_unmounts_mid_capture(monkeypa
         monkeypatch.setattr(console, "set_interval", capture_interval)
 
         await pilot.click("#console-dictation")
-        await _wait_for_mic_label(composer, pilot, "Rec ●")
+        await _wait_for_mic_label(composer, pilot, "Dictating")
 
         # Pop the only pushed screen so `on_unmount` runs exactly once here,
         # rather than a second time when `host.run_test()` itself tears down.
@@ -1184,7 +1184,7 @@ async def test_unavailable_mic_is_visually_distinguishable_not_just_the_tooltip(
         # Nothing else about the button changed -- still visible, still the
         # ordinary label, still real-clickable (see task-15-report.md for why
         # Textual `disabled` is not used for this).
-        assert str(mic.label) == "Mic"
+        assert str(mic.label) == "Dictate"
         assert mic.disabled is False
         assert mic.styles.display != "none"
 
@@ -1213,7 +1213,7 @@ async def test_dictation_tooltip_names_the_missing_capture_extra_only(monkeypatc
         assert "transcription_faster_whisper" not in tooltip
         # Never hidden, whatever the availability.
         assert mic.styles.display != "none"
-        assert str(mic.label) == "Mic"
+        assert str(mic.label) == "Dictate"
 
 
 @pytest.mark.asyncio
@@ -1276,7 +1276,7 @@ async def test_pressing_unavailable_mic_surfaces_remedy_beyond_the_tooltip(monke
         # dictation_error`), which this button press still reaches because
         # the mic is never made Textual-`disabled` for unavailability alone.
         await pilot.click("#console-dictation")
-        await _wait_for_mic_label(composer, pilot, "Mic")
+        await _wait_for_mic_label(composer, pilot, "Dictate")
 
         matching = [
             call
@@ -1320,12 +1320,12 @@ async def test_dictation_reprobes_on_activation_and_recovers_without_a_remount(
         # The chip collapsing on `idle` reflows the action row, so a stale
         # click coordinate can silently miss; assert the click itself lands.
         assert await pilot.click("#console-dictation")
-        await _wait_for_mic_label(composer, pilot, "Rec ●")
+        await _wait_for_mic_label(composer, pilot, "Dictating")
         assert service.start_calls == 1
 
         await pilot.pause(0.1)
         await pilot.click("#console-dictation")
-        await _wait_for_mic_label(composer, pilot, "Mic")
+        await _wait_for_mic_label(composer, pilot, "Dictate")
 
         # Recovered without a remount: the idle tooltip is the ordinary one,
         # not the stale unavailable-capture message.
@@ -1365,10 +1365,10 @@ async def test_voice_provider_overridden_notifies_once_per_app_run(monkeypatch):
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
 
         await pilot.click("#console-dictation")
-        await _wait_for_mic_label(composer, pilot, "Rec ●")
+        await _wait_for_mic_label(composer, pilot, "Dictating")
         await pilot.pause(0.1)
         await pilot.click("#console-dictation")
-        await _wait_for_mic_label(composer, pilot, "Mic")
+        await _wait_for_mic_label(composer, pilot, "Dictate")
 
         first_capture_calls = _override_calls()
         assert len(first_capture_calls) == 1
@@ -1385,10 +1385,10 @@ async def test_voice_provider_overridden_notifies_once_per_app_run(monkeypatch):
 
         await pilot.pause(0.5)
         assert await pilot.click("#console-dictation")
-        await _wait_for_mic_label(composer, pilot, "Rec ●")
+        await _wait_for_mic_label(composer, pilot, "Dictating")
         await pilot.pause(0.1)
         await pilot.click("#console-dictation")
-        await _wait_for_mic_label(composer, pilot, "Mic")
+        await _wait_for_mic_label(composer, pilot, "Dictate")
 
         assert _override_calls() == []
 
@@ -1433,10 +1433,10 @@ async def test_model_default_notifies_once_per_app_run(monkeypatch):
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
 
         await pilot.click("#console-dictation")
-        await _wait_for_mic_label(composer, pilot, "Rec ●")
+        await _wait_for_mic_label(composer, pilot, "Dictating")
         await pilot.pause(0.1)
         await pilot.click("#console-dictation")
-        await _wait_for_mic_label(composer, pilot, "Mic")
+        await _wait_for_mic_label(composer, pilot, "Dictate")
 
         first_capture_calls = _default_calls()
         assert len(first_capture_calls) == 1
@@ -1449,10 +1449,10 @@ async def test_model_default_notifies_once_per_app_run(monkeypatch):
 
         await pilot.pause(0.5)
         assert await pilot.click("#console-dictation")
-        await _wait_for_mic_label(composer, pilot, "Rec ●")
+        await _wait_for_mic_label(composer, pilot, "Dictating")
         await pilot.pause(0.1)
         await pilot.click("#console-dictation")
-        await _wait_for_mic_label(composer, pilot, "Mic")
+        await _wait_for_mic_label(composer, pilot, "Dictate")
 
         assert _default_calls() == []
 
@@ -1474,7 +1474,7 @@ async def test_a_probe_crash_at_mount_does_not_brick_the_button(monkeypatch):
         for _ in range(5):
             await pilot.pause(0.02)
 
-        assert str(mic.label) == "Mic"
+        assert str(mic.label) == "Dictate"
         assert "boom" not in str(mic.tooltip)
         # Pinned to the constant, not a copy of its wording: the wording it used
         # to spell out ("Record one English utterance with local Parakeet v2.")
@@ -1544,7 +1544,7 @@ async def test_a_failure_landing_while_start_is_in_flight_arms_nothing(monkeypat
 
             # The visible symptom first: no `Rec ●` and no ticking chip over a
             # capture that no longer exists.
-            assert str(mic.label) == "Mic"
+            assert str(mic.label) == "Dictate"
             assert console._console_dictation_state == "idle"
             assert console._console_dictation_timer is None
             assert console._console_dictation_elapsed_timer is None
@@ -1582,7 +1582,7 @@ async def test_the_console_capture_is_given_a_bounded_pcm_budget(monkeypatch):
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
 
         await pilot.click("#console-dictation")
-        await _wait_for_mic_label(composer, pilot, "Rec ●")
+        await _wait_for_mic_label(composer, pilot, "Dictating")
 
         bound = service.factory_kwargs.get("max_buffer_bytes")
         assert bound == chat_screen_module.CONSOLE_DICTATION_MAX_BYTES
@@ -1620,7 +1620,7 @@ async def test_the_buffer_limit_callback_stops_the_capture_from_its_own_thread(
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
 
         await pilot.click("#console-dictation")
-        await _wait_for_mic_label(composer, pilot, "Rec ●")
+        await _wait_for_mic_label(composer, pilot, "Dictating")
 
         on_buffer_limit = service.factory_kwargs["on_buffer_limit"]
         returned = threading.Event()
@@ -1636,7 +1636,7 @@ async def test_the_buffer_limit_callback_stops_the_capture_from_its_own_thread(
         thread.join(timeout=2)
         assert returned.is_set(), "the buffer-limit callback blocked its caller"
 
-        await _wait_for_mic_label(composer, pilot, "Mic")
+        await _wait_for_mic_label(composer, pilot, "Dictate")
         assert service.stop_calls == 1
         assert any(
             "Dictation limit reached" in str(call.args[0])
@@ -1662,7 +1662,7 @@ async def test_a_torn_down_captures_buffer_limit_cannot_stop_the_next_one(
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
 
         await pilot.click("#console-dictation")
-        await _wait_for_mic_label(composer, pilot, "Rec ●")
+        await _wait_for_mic_label(composer, pilot, "Dictating")
 
         console._dictation._on_console_dictation_buffer_limit(object())
         for _ in range(5):
@@ -1791,7 +1791,7 @@ async def test_inline_new_paragraph_command_appends_a_break_and_counts_as_consum
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
 
         await pilot.click("#console-dictation")
-        await _wait_for_mic_label(composer, pilot, "Rec ●")
+        await _wait_for_mic_label(composer, pilot, "Dictating")
         session = console._console_dictation_session
 
         service.emit_final("one.")
@@ -1803,7 +1803,7 @@ async def test_inline_new_paragraph_command_appends_a_break_and_counts_as_consum
 
         await pilot.pause(0.1)
         await pilot.click("#console-dictation")
-        await _wait_for_mic_label(composer, pilot, "Mic")
+        await _wait_for_mic_label(composer, pilot, "Dictate")
 
         # Unpadded: not "one. \n\n two", which is what a naive " ".join would
         # have produced.
@@ -1834,7 +1834,7 @@ async def test_inline_only_capture_returns_empty_and_does_not_raise(monkeypatch)
         stored_before = store.session_draft(session_id)
 
         await pilot.click("#console-dictation")
-        await _wait_for_mic_label(composer, pilot, "Rec ●")
+        await _wait_for_mic_label(composer, pilot, "Dictating")
         session = console._console_dictation_session
 
         service.emit_final("Console, new paragraph.")
@@ -1842,7 +1842,7 @@ async def test_inline_only_capture_returns_empty_and_does_not_raise(monkeypatch)
 
         await pilot.pause(0.1)
         await pilot.click("#console-dictation")
-        await _wait_for_mic_label(composer, pilot, "Mic")
+        await _wait_for_mic_label(composer, pilot, "Dictate")
 
         assert session.commands_consumed == 1
         assert composer.draft_text() == "keep this draft"
@@ -1879,7 +1879,7 @@ async def test_capture_ending_command_is_kept_out_of_segments_but_forwarded(
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
 
         await pilot.click("#console-dictation")
-        await _wait_for_mic_label(composer, pilot, "Rec ●")
+        await _wait_for_mic_label(composer, pilot, "Dictating")
         session = console._console_dictation_session
 
         received: list = []
@@ -1905,7 +1905,7 @@ async def test_capture_ending_command_is_kept_out_of_segments_but_forwarded(
         # Task 3: the screen's own dispatch (triggered by the SAME event the
         # spy above just observed) already stops the capture -- no manual
         # click needed or wanted here.
-        await _wait_for_mic_label(composer, pilot, "Mic")
+        await _wait_for_mic_label(composer, pilot, "Dictate")
 
         # Only the dictated segment reached the draft; "stop" did not.
         assert composer.draft_text() == "dictated words"
@@ -1927,13 +1927,13 @@ async def test_genuinely_empty_capture_with_no_commands_still_raises(monkeypatch
         composer.load_draft("keep this draft")
 
         await pilot.click("#console-dictation")
-        await _wait_for_mic_label(composer, pilot, "Rec ●")
+        await _wait_for_mic_label(composer, pilot, "Dictating")
         session = console._console_dictation_session
         assert session.commands_consumed == 0
 
         await pilot.pause(0.1)
         await pilot.click("#console-dictation")
-        await _wait_for_mic_label(composer, pilot, "Mic")
+        await _wait_for_mic_label(composer, pilot, "Dictate")
 
         assert composer.draft_text() == "keep this draft"
         assert [
@@ -1967,7 +1967,7 @@ async def test_a_trailing_inline_break_survives_insertion_into_an_empty_draft(
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
 
         await pilot.click("#console-dictation")
-        await _wait_for_mic_label(composer, pilot, "Rec ●")
+        await _wait_for_mic_label(composer, pilot, "Dictating")
 
         service.emit_final("one.")
         service.emit_final("Console, new paragraph.")
@@ -1975,7 +1975,7 @@ async def test_a_trailing_inline_break_survives_insertion_into_an_empty_draft(
 
         await pilot.pause(0.1)
         await pilot.click("#console-dictation")
-        await _wait_for_mic_label(composer, pilot, "Mic")
+        await _wait_for_mic_label(composer, pilot, "Dictate")
 
         assert composer.draft_text() == "one.\n\n"
 
@@ -1998,7 +1998,7 @@ async def test_a_leading_inline_break_lands_a_new_capture_on_a_fresh_paragraph(
         composer.load_draft("Point one.")
 
         await pilot.click("#console-dictation")
-        await _wait_for_mic_label(composer, pilot, "Rec ●")
+        await _wait_for_mic_label(composer, pilot, "Dictating")
 
         service.emit_final("Console, new paragraph.")
         service.emit_final("Point two.")
@@ -2006,7 +2006,7 @@ async def test_a_leading_inline_break_lands_a_new_capture_on_a_fresh_paragraph(
 
         await pilot.pause(0.1)
         await pilot.click("#console-dictation")
-        await _wait_for_mic_label(composer, pilot, "Mic")
+        await _wait_for_mic_label(composer, pilot, "Dictate")
 
         assert composer.draft_text() == "Point one.\n\nPoint two."
 
@@ -2036,12 +2036,12 @@ async def test_commands_consumed_resets_so_a_later_silent_capture_still_raises(
 
         # Capture 1: command-only, must not raise.
         await pilot.click("#console-dictation")
-        await _wait_for_mic_label(composer, pilot, "Rec ●")
+        await _wait_for_mic_label(composer, pilot, "Dictating")
         service.emit_final("Console, new paragraph.")
         await pilot.pause()
         await pilot.pause(0.1)
         await pilot.click("#console-dictation")
-        await _wait_for_mic_label(composer, pilot, "Mic")
+        await _wait_for_mic_label(composer, pilot, "Dictate")
         assert [
             call
             for call in notify.call_args_list
@@ -2052,12 +2052,12 @@ async def test_commands_consumed_resets_so_a_later_silent_capture_still_raises(
         # from capture 1 must not still be armed on this session's reset.
         await pilot.pause(0.5)
         assert await pilot.click("#console-dictation")
-        await _wait_for_mic_label(composer, pilot, "Rec ●")
+        await _wait_for_mic_label(composer, pilot, "Dictating")
         session = console._console_dictation_session
         assert session.commands_consumed == 0
         await pilot.pause(0.1)
         await pilot.click("#console-dictation")
-        await _wait_for_mic_label(composer, pilot, "Mic")
+        await _wait_for_mic_label(composer, pilot, "Dictate")
 
         assert composer.draft_text() == "keep this draft"
         assert [
@@ -2095,7 +2095,7 @@ async def test_inline_commands_reach_the_screen_but_never_trigger_capture_ending
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
 
         await pilot.click("#console-dictation")
-        await _wait_for_mic_label(composer, pilot, "Rec ●")
+        await _wait_for_mic_label(composer, pilot, "Dictating")
         session = console._console_dictation_session
 
         received: list = []
@@ -2125,7 +2125,7 @@ async def test_inline_commands_reach_the_screen_but_never_trigger_capture_ending
 
         await pilot.pause(0.1)
         await pilot.click("#console-dictation")
-        await _wait_for_mic_label(composer, pilot, "Mic")
+        await _wait_for_mic_label(composer, pilot, "Dictate")
         assert composer.draft_text() == "one.\n\ntwo"
 
 
@@ -2138,7 +2138,7 @@ async def test_a_capture_ending_command_replaces_the_stale_partial_with_an_ack(
     The command's own utterance leaves a stale partial ("console sto...") in
     the chip until it is routed here, and it must not survive. The ack goes in
     its place -- though for a CAPTURE-ENDING command the user sees it only as
-    the handoff to "◌ Transcribing…", because the dispatch below repaints the
+    the handoff to "◐ Transcribing…", because the dispatch below repaints the
     chip in the same tick. The ack's own visibility case is the inline one
     (next test), which ends no capture and so has nowhere else to show.
 
@@ -2159,7 +2159,7 @@ async def test_a_capture_ending_command_replaces_the_stale_partial_with_an_ack(
             )
 
             await pilot.click("#console-dictation")
-            await _wait_for_mic_label(composer, pilot, "Rec ●")
+            await _wait_for_mic_label(composer, pilot, "Dictating")
 
             service.emit_partial("console sto")
             await pilot.pause()
@@ -2180,7 +2180,7 @@ async def test_a_capture_ending_command_replaces_the_stale_partial_with_an_ack(
             assert "Transcribing" in painted
 
             service.stop_gate.set()
-            await _wait_for_mic_label(composer, pilot, "Mic")
+            await _wait_for_mic_label(composer, pilot, "Dictate")
     finally:
         service.stop_gate.set()
 
@@ -2206,7 +2206,7 @@ async def test_an_inline_command_acks_in_the_chip_and_keeps_the_capture_live(
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
 
         await pilot.click("#console-dictation")
-        await _wait_for_mic_label(composer, pilot, "Rec ●")
+        await _wait_for_mic_label(composer, pilot, "Dictating")
 
         service.emit_final("Console, new paragraph.")
         await pilot.pause()
@@ -2226,7 +2226,7 @@ async def test_an_inline_command_acks_in_the_chip_and_keeps_the_capture_live(
 
         await pilot.pause(0.1)
         await pilot.click("#console-dictation")
-        await _wait_for_mic_label(composer, pilot, "Mic")
+        await _wait_for_mic_label(composer, pilot, "Dictate")
 
 
 @pytest.mark.asyncio
@@ -2247,12 +2247,12 @@ async def test_stop_command_ends_the_capture_and_inserts_the_transcript(monkeypa
             composer.move_cursor_left()
 
         await pilot.click("#console-dictation")
-        await _wait_for_mic_label(composer, pilot, "Rec ●")
+        await _wait_for_mic_label(composer, pilot, "Dictating")
 
         service.emit_final("dictated words")
         service.emit_final("Console, stop.")
         await pilot.pause()
-        await _wait_for_mic_label(composer, pilot, "Mic")
+        await _wait_for_mic_label(composer, pilot, "Dictate")
 
         assert composer.draft_text() == "hello dictated words world"
         assert service.stop_calls == 1
@@ -2278,7 +2278,7 @@ async def test_discard_command_abandons_the_capture_without_inserting(monkeypatc
         composer.load_draft("keep this draft")
 
         await pilot.click("#console-dictation")
-        await _wait_for_mic_label(composer, pilot, "Rec ●")
+        await _wait_for_mic_label(composer, pilot, "Dictating")
 
         service.emit_final("dictated words")
         service.emit_final("Console, discard.")
@@ -2352,7 +2352,7 @@ async def test_send_command_inserts_then_presses_send_after_the_stop_completes(
             )
 
             await pilot.click("#console-dictation")
-            await _wait_for_mic_label(composer, pilot, "Rec ●")
+            await _wait_for_mic_label(composer, pilot, "Dictating")
 
             service.emit_final("dictated words")
             service.emit_final("Console, send.")
@@ -2414,7 +2414,7 @@ async def test_a_failure_during_the_stop_worker_clears_pending_send_without_send
         composer.load_draft("keep this draft")
 
         await pilot.click("#console-dictation")
-        await _wait_for_mic_label(composer, pilot, "Rec ●")
+        await _wait_for_mic_label(composer, pilot, "Dictating")
         session = console._console_dictation_session
 
         service.emit_final("Console, send.")
@@ -2435,7 +2435,7 @@ async def test_a_failure_during_the_stop_worker_clears_pending_send_without_send
             )
         )
         service.stop_gate.set()
-        await _wait_for_mic_label(composer, pilot, "Mic")
+        await _wait_for_mic_label(composer, pilot, "Dictate")
         for _ in range(5):
             await pilot.pause(0.01)
 
@@ -2449,11 +2449,11 @@ async def test_a_failure_during_the_stop_worker_clears_pending_send_without_send
         # The stale pending action must not leak into an unrelated later
         # capture: a manual dictate-and-stop afterwards must not auto-send.
         await pilot.click("#console-dictation")
-        await _wait_for_mic_label(composer, pilot, "Rec ●")
+        await _wait_for_mic_label(composer, pilot, "Dictating")
         service.emit_final("unrelated words")
         await pilot.pause(0.1)
         await pilot.click("#console-dictation")
-        await _wait_for_mic_label(composer, pilot, "Mic")
+        await _wait_for_mic_label(composer, pilot, "Dictate")
         assert send_calls == []
         assert composer.draft_text() == "keep this draft unrelated words"
 
@@ -2488,7 +2488,7 @@ async def test_new_session_command_opens_a_new_tab_after_the_stop_completes(
             )
 
             await pilot.click("#console-dictation")
-            await _wait_for_mic_label(composer, pilot, "Rec ●")
+            await _wait_for_mic_label(composer, pilot, "Dictating")
 
             service.emit_final("Console, new session.")
             await pilot.pause()
@@ -2534,11 +2534,11 @@ async def test_read_that_back_acks_instead_of_speaking_while_a_run_is_active(
         monkeypatch.setattr(console, "_console_run_active", lambda: True)
 
         await pilot.click("#console-dictation")
-        await _wait_for_mic_label(composer, pilot, "Rec ●")
+        await _wait_for_mic_label(composer, pilot, "Dictating")
 
         service.emit_final("Console, read that back.")
         await pilot.pause()
-        await _wait_for_mic_label(composer, pilot, "Mic")
+        await _wait_for_mic_label(composer, pilot, "Dictate")
         for _ in range(5):
             await pilot.pause(0.01)
 
@@ -2570,11 +2570,11 @@ async def test_read_that_back_acks_when_there_is_no_completed_assistant_reply(
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
 
         await pilot.click("#console-dictation")
-        await _wait_for_mic_label(composer, pilot, "Rec ●")
+        await _wait_for_mic_label(composer, pilot, "Dictating")
 
         service.emit_final("Console, read that back.")
         await pilot.pause()
-        await _wait_for_mic_label(composer, pilot, "Mic")
+        await _wait_for_mic_label(composer, pilot, "Dictate")
         for _ in range(5):
             await pilot.pause(0.01)
 
@@ -2629,7 +2629,7 @@ async def test_read_that_back_speaks_the_last_completed_assistant_reply(monkeypa
             assert pending.status == "pending"
 
             await pilot.click("#console-dictation")
-            await _wait_for_mic_label(composer, pilot, "Rec ●")
+            await _wait_for_mic_label(composer, pilot, "Dictating")
 
             service.emit_final("Console, read that back.")
             await pilot.pause()
@@ -2644,7 +2644,7 @@ async def test_read_that_back_speaks_the_last_completed_assistant_reply(monkeypa
             )
 
             service.stop_gate.set()
-            await _wait_for_mic_label(composer, pilot, "Mic")
+            await _wait_for_mic_label(composer, pilot, "Dictate")
             deadline = time.monotonic() + 4
             spoken_event = None
             while time.monotonic() < deadline and spoken_event is None:
@@ -2708,11 +2708,11 @@ async def test_a_command_draining_after_its_capture_ended_is_not_queued_for_the_
 
         # Capture 1: dictate and stop normally (mouse) -- nothing voice-queued.
         await pilot.click("#console-dictation")
-        await _wait_for_mic_label(composer, pilot, "Rec ●")
+        await _wait_for_mic_label(composer, pilot, "Dictating")
         service.emit_final("first words")
         await pilot.pause(0.1)
         await pilot.click("#console-dictation")
-        await _wait_for_mic_label(composer, pilot, "Mic")
+        await _wait_for_mic_label(composer, pilot, "Dictate")
         session = console._console_dictation_session
         assert session is not None
         # Confirms the reuse this bug depends on -- a freshly built session
@@ -2734,12 +2734,12 @@ async def test_a_command_draining_after_its_capture_ended_is_not_queued_for_the_
         # above) -- without it, the second click is flaky.
         await pilot.pause(0.5)
         await pilot.click("#console-dictation")
-        await _wait_for_mic_label(composer, pilot, "Rec ●")
+        await _wait_for_mic_label(composer, pilot, "Dictating")
         assert console._console_dictation_session is session
         service.emit_final("second words")
         await pilot.pause(0.1)
         await pilot.click("#console-dictation")
-        await _wait_for_mic_label(composer, pilot, "Mic")
+        await _wait_for_mic_label(composer, pilot, "Dictate")
 
         assert send_calls == []
         assert composer.draft_text() == "first words second words"
@@ -2779,7 +2779,7 @@ async def test_discard_after_send_within_the_transcribe_window_ships_nothing(
             )
 
             await pilot.click("#console-dictation")
-            await _wait_for_mic_label(composer, pilot, "Rec ●")
+            await _wait_for_mic_label(composer, pilot, "Dictating")
             session = console._console_dictation_session
 
             service.emit_final("Console, send.")
@@ -2802,7 +2802,7 @@ async def test_discard_after_send_within_the_transcribe_window_ships_nothing(
             assert console._console_pending_voice_action is None
 
             service.stop_gate.set()
-            await _wait_for_mic_label(composer, pilot, "Mic")
+            await _wait_for_mic_label(composer, pilot, "Dictate")
             for _ in range(5):
                 await pilot.pause(0.01)
 
@@ -2846,7 +2846,7 @@ async def test_a_command_finalizing_during_its_own_transcribe_window_still_queue
             )
 
             await pilot.click("#console-dictation")
-            await _wait_for_mic_label(composer, pilot, "Rec ●")
+            await _wait_for_mic_label(composer, pilot, "Dictating")
             session = console._console_dictation_session
 
             service.emit_final("dictated words")
@@ -2920,18 +2920,18 @@ async def test_a_stale_discard_command_does_not_cancel_the_live_next_capture(
 
         # Capture 1: dictates something real, then stops normally.
         await pilot.click("#console-dictation")
-        await _wait_for_mic_label(composer, pilot, "Rec ●")
+        await _wait_for_mic_label(composer, pilot, "Dictating")
         stale_on_final = service.on_final
         service.emit_final("first words")
         await pilot.pause(0.1)
         await pilot.click("#console-dictation")
-        await _wait_for_mic_label(composer, pilot, "Mic")
+        await _wait_for_mic_label(composer, pilot, "Dictate")
         assert len(sessions) == 1  # confirms the session-reuse this bug depends on
 
         # Capture 2: live and recording, over the same session/controller.
         await pilot.pause(0.5)
         await pilot.click("#console-dictation")
-        await _wait_for_mic_label(composer, pilot, "Rec ●")
+        await _wait_for_mic_label(composer, pilot, "Dictating")
         service.emit_final("live words")
         await pilot.pause()
 
@@ -2947,7 +2947,7 @@ async def test_a_stale_discard_command_does_not_cancel_the_live_next_capture(
 
         await pilot.pause(0.1)
         await pilot.click("#console-dictation")
-        await _wait_for_mic_label(composer, pilot, "Mic")
+        await _wait_for_mic_label(composer, pilot, "Dictate")
         # Capture 1's own words were already inserted when IT stopped; only
         # capture 2's own "live words" should have joined them.
         assert composer.draft_text() == "first words live words"
@@ -2972,17 +2972,17 @@ async def test_a_stale_final_does_not_join_the_live_next_captures_transcript(
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
 
         await pilot.click("#console-dictation")
-        await _wait_for_mic_label(composer, pilot, "Rec ●")
+        await _wait_for_mic_label(composer, pilot, "Dictating")
         stale_on_final = service.on_final
         service.emit_final("first words")
         await pilot.pause(0.1)
         await pilot.click("#console-dictation")
-        await _wait_for_mic_label(composer, pilot, "Mic")
+        await _wait_for_mic_label(composer, pilot, "Dictate")
         assert len(sessions) == 1
 
         await pilot.pause(0.5)
         await pilot.click("#console-dictation")
-        await _wait_for_mic_label(composer, pilot, "Rec ●")
+        await _wait_for_mic_label(composer, pilot, "Dictating")
         service.emit_final("live words")
         await pilot.pause()
 
@@ -2991,7 +2991,7 @@ async def test_a_stale_final_does_not_join_the_live_next_captures_transcript(
 
         await pilot.pause(0.1)
         await pilot.click("#console-dictation")
-        await _wait_for_mic_label(composer, pilot, "Mic")
+        await _wait_for_mic_label(composer, pilot, "Dictate")
 
         # Capture 1's own words were already inserted when IT stopped; the
         # stale segment must not have joined capture 2's transcript alongside
@@ -3032,12 +3032,12 @@ async def test_a_stale_failure_does_not_tear_down_the_live_next_capture(
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
 
         await pilot.click("#console-dictation")
-        await _wait_for_mic_label(composer, pilot, "Rec ●")
+        await _wait_for_mic_label(composer, pilot, "Dictating")
         stale_on_error = service.on_error
         service.emit_final("first words")
         await pilot.pause(0.1)
         await pilot.click("#console-dictation")
-        await _wait_for_mic_label(composer, pilot, "Mic")
+        await _wait_for_mic_label(composer, pilot, "Dictate")
         assert len(sessions) == 1
         controller = sessions[0]._controller
 
@@ -3050,7 +3050,7 @@ async def test_a_stale_failure_does_not_tear_down_the_live_next_capture(
 
         await pilot.pause(0.5)
         await pilot.click("#console-dictation")
-        await _wait_for_mic_label(composer, pilot, "Rec ●")
+        await _wait_for_mic_label(composer, pilot, "Dictating")
         service.emit_final("live words")
         await pilot.pause()
         assert controller.state == voice_module.STATE_LISTENING
@@ -3077,7 +3077,7 @@ async def test_a_stale_failure_does_not_tear_down_the_live_next_capture(
 
         await pilot.pause(0.1)
         await pilot.click("#console-dictation")
-        await _wait_for_mic_label(composer, pilot, "Mic")
+        await _wait_for_mic_label(composer, pilot, "Dictate")
         assert composer.draft_text() == "first words live words"
         assert service.stop_calls == 2  # capture 2's own real stop now ran
 
@@ -3100,17 +3100,17 @@ async def test_a_stale_partial_never_reaches_the_live_next_captures_chip(
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
 
         await pilot.click("#console-dictation")
-        await _wait_for_mic_label(composer, pilot, "Rec ●")
+        await _wait_for_mic_label(composer, pilot, "Dictating")
         stale_on_partial = service.on_partial
         service.emit_final("first words")
         await pilot.pause(0.1)
         await pilot.click("#console-dictation")
-        await _wait_for_mic_label(composer, pilot, "Mic")
+        await _wait_for_mic_label(composer, pilot, "Dictate")
         assert len(sessions) == 1
 
         await pilot.pause(0.5)
         await pilot.click("#console-dictation")
-        await _wait_for_mic_label(composer, pilot, "Rec ●")
+        await _wait_for_mic_label(composer, pilot, "Dictating")
 
         stale_on_partial("ghost text from capture one")
         await pilot.pause()
@@ -3124,7 +3124,7 @@ async def test_a_stale_partial_never_reaches_the_live_next_captures_chip(
         service.emit_final("current text")
         await pilot.pause(0.1)
         await pilot.click("#console-dictation")
-        await _wait_for_mic_label(composer, pilot, "Mic")
+        await _wait_for_mic_label(composer, pilot, "Dictate")
         # Capture 1's own words were already inserted when IT stopped; only
         # capture 2's own "current text" should have joined them.
         assert composer.draft_text() == "first words current text"
@@ -3208,31 +3208,31 @@ async def test_spoken_feedback_off_posts_no_status_tts_while_toasts_still_fire(
 
         # A plain stop.
         await pilot.click("#console-dictation")
-        await _wait_for_mic_label(composer, pilot, "Rec ●")
+        await _wait_for_mic_label(composer, pilot, "Dictating")
         service.emit_final("hello there")
         await pilot.pause(0.1)
         await pilot.click("#console-dictation")
-        await _wait_for_mic_label(composer, pilot, "Mic")
+        await _wait_for_mic_label(composer, pilot, "Dictate")
 
         # A discard. The 0.5s settle matches the established pattern for a
         # second click right after a first capture ends (see
         # test_a_command_draining_after_its_capture_ended_is_not_queued_for_the_next)
-        # -- the mic label reaches "Mic" mid-way through the stop worker's
+        # -- the mic label reaches "Dictate" mid-way through the stop worker's
         # tail, so a click landing immediately after it is flaky. Reproduced
         # on this test at ~1-in-5 without the settle.
         await pilot.pause(0.5)
         await pilot.click("#console-dictation")
-        await _wait_for_mic_label(composer, pilot, "Rec ●")
+        await _wait_for_mic_label(composer, pilot, "Dictating")
         service.emit_final("Console, discard.")
         await pilot.pause(0.1)
-        await _wait_for_mic_label(composer, pilot, "Mic")
+        await _wait_for_mic_label(composer, pilot, "Dictate")
 
         # A mid-capture error.
         await pilot.pause(0.5)
         await pilot.click("#console-dictation")
-        await _wait_for_mic_label(composer, pilot, "Rec ●")
+        await _wait_for_mic_label(composer, pilot, "Dictating")
         service.emit_error("Microphone was disconnected")
-        await _wait_for_mic_label(composer, pilot, "Mic")
+        await _wait_for_mic_label(composer, pilot, "Dictate")
         for _ in range(5):
             await pilot.pause(0.01)
 
@@ -3262,11 +3262,11 @@ async def test_spoken_feedback_on_speaks_capture_ended_for_a_plain_stop(monkeypa
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
 
         await pilot.click("#console-dictation")
-        await _wait_for_mic_label(composer, pilot, "Rec ●")
+        await _wait_for_mic_label(composer, pilot, "Dictating")
         service.emit_final("hello there")
         await pilot.pause(0.1)
         await pilot.click("#console-dictation")
-        await _wait_for_mic_label(composer, pilot, "Mic")
+        await _wait_for_mic_label(composer, pilot, "Dictate")
         for _ in range(5):
             await pilot.pause(0.01)
 
@@ -3289,10 +3289,10 @@ async def test_spoken_feedback_on_speaks_discarded_for_the_discard_command(
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
 
         await pilot.click("#console-dictation")
-        await _wait_for_mic_label(composer, pilot, "Rec ●")
+        await _wait_for_mic_label(composer, pilot, "Dictating")
         service.emit_final("Console, discard.")
         await pilot.pause(0.1)
-        await _wait_for_mic_label(composer, pilot, "Mic")
+        await _wait_for_mic_label(composer, pilot, "Dictate")
         for _ in range(5):
             await pilot.pause(0.01)
 
@@ -3323,10 +3323,10 @@ async def test_spoken_feedback_on_speaks_sent_for_the_send_command(monkeypatch):
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
 
         await pilot.click("#console-dictation")
-        await _wait_for_mic_label(composer, pilot, "Rec ●")
+        await _wait_for_mic_label(composer, pilot, "Dictating")
         service.emit_final("Console, send.")
         await pilot.pause(0.1)
-        await _wait_for_mic_label(composer, pilot, "Mic")
+        await _wait_for_mic_label(composer, pilot, "Dictate")
 
         deadline = time.monotonic() + 4
         spoken: list[str] = []
@@ -3360,10 +3360,10 @@ async def test_spoken_feedback_on_speaks_new_session_for_the_new_session_command
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
 
         await pilot.click("#console-dictation")
-        await _wait_for_mic_label(composer, pilot, "Rec ●")
+        await _wait_for_mic_label(composer, pilot, "Dictating")
         service.emit_final("Console, new session.")
         await pilot.pause(0.1)
-        await _wait_for_mic_label(composer, pilot, "Mic")
+        await _wait_for_mic_label(composer, pilot, "Dictate")
 
         deadline = time.monotonic() + 4
         spoken: list[str] = []
@@ -3396,10 +3396,10 @@ async def test_spoken_feedback_on_speaks_still_responding_for_read_that_back(
         monkeypatch.setattr(console, "_console_run_active", lambda: True)
 
         await pilot.click("#console-dictation")
-        await _wait_for_mic_label(composer, pilot, "Rec ●")
+        await _wait_for_mic_label(composer, pilot, "Dictating")
         service.emit_final("Console, read that back.")
         await pilot.pause()
-        await _wait_for_mic_label(composer, pilot, "Mic")
+        await _wait_for_mic_label(composer, pilot, "Dictate")
         for _ in range(5):
             await pilot.pause(0.01)
 
@@ -3422,10 +3422,10 @@ async def test_spoken_feedback_on_speaks_nothing_to_read_yet_for_read_that_back(
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
 
         await pilot.click("#console-dictation")
-        await _wait_for_mic_label(composer, pilot, "Rec ●")
+        await _wait_for_mic_label(composer, pilot, "Dictating")
         service.emit_final("Console, read that back.")
         await pilot.pause()
-        await _wait_for_mic_label(composer, pilot, "Mic")
+        await _wait_for_mic_label(composer, pilot, "Dictate")
         for _ in range(5):
             await pilot.pause(0.01)
 
@@ -3459,10 +3459,10 @@ async def test_read_that_back_speech_is_unaffected_by_spoken_feedback_toggle_on(
         )
 
         await pilot.click("#console-dictation")
-        await _wait_for_mic_label(composer, pilot, "Rec ●")
+        await _wait_for_mic_label(composer, pilot, "Dictating")
         service.emit_final("Console, read that back.")
         await pilot.pause()
-        await _wait_for_mic_label(composer, pilot, "Mic")
+        await _wait_for_mic_label(composer, pilot, "Dictate")
 
         deadline = time.monotonic() + 4
         spoken: list[str] = []
@@ -3492,9 +3492,9 @@ async def test_spoken_feedback_on_speaks_the_same_reason_the_error_toast_shows(
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
 
         await pilot.click("#console-dictation")
-        await _wait_for_mic_label(composer, pilot, "Rec ●")
+        await _wait_for_mic_label(composer, pilot, "Dictating")
         service.emit_error("Microphone was disconnected")
-        await _wait_for_mic_label(composer, pilot, "Mic")
+        await _wait_for_mic_label(composer, pilot, "Dictate")
         for _ in range(5):
             await pilot.pause(0.01)
 
@@ -3576,7 +3576,7 @@ async def test_starting_capture_stops_any_in_flight_playback_before_opening_mic(
         assert len(playback_calls) == 1
         assert playback_calls[0].action == "stop"
 
-        await _wait_for_mic_label(composer, pilot, "Rec ●")
+        await _wait_for_mic_label(composer, pilot, "Dictating")
         assert service.start_calls == 1
 
 
@@ -3599,7 +3599,7 @@ async def test_capture_started_is_never_spoken_even_with_feedback_on(monkeypatch
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
 
         await pilot.click("#console-dictation")
-        await _wait_for_mic_label(composer, pilot, "Rec ●")
+        await _wait_for_mic_label(composer, pilot, "Dictating")
         for _ in range(5):
             await pilot.pause(0.01)
 
@@ -3659,7 +3659,7 @@ async def test_send_refuses_when_the_user_switched_sessions_mid_transcribe(
             origin_id = store.active_session_id
 
             await pilot.click("#console-dictation")
-            await _wait_for_mic_label(composer, pilot, "Rec ●")
+            await _wait_for_mic_label(composer, pilot, "Dictating")
 
             service.emit_final("dictated words")
             service.emit_final("Console, send.")
@@ -3676,7 +3676,7 @@ async def test_send_refuses_when_the_user_switched_sessions_mid_transcribe(
             assert store.active_session_id == other.id != origin_id
 
             service.stop_gate.set()
-            await _wait_for_mic_label(composer, pilot, "Mic")
+            await _wait_for_mic_label(composer, pilot, "Dictate")
             for _ in range(10):
                 await pilot.pause(0.01)
 
@@ -3721,7 +3721,7 @@ async def test_send_still_ships_when_the_session_never_changed(monkeypatch):
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
 
         await pilot.click("#console-dictation")
-        await _wait_for_mic_label(composer, pilot, "Rec ●")
+        await _wait_for_mic_label(composer, pilot, "Dictating")
 
         service.emit_final("dictated words")
         service.emit_final("Console, send.")
@@ -3770,12 +3770,12 @@ async def test_a_refused_send_does_not_speak_sent(monkeypatch):
         )
 
         await pilot.click("#console-dictation")
-        await _wait_for_mic_label(composer, pilot, "Rec ●")
+        await _wait_for_mic_label(composer, pilot, "Dictating")
 
         service.emit_final("dictated words")
         service.emit_final("Console, send.")
         await pilot.pause()
-        await _wait_for_mic_label(composer, pilot, "Mic")
+        await _wait_for_mic_label(composer, pilot, "Dictate")
 
         deadline = time.monotonic() + 4
         spoken: list[str] = []
@@ -3822,7 +3822,7 @@ async def test_a_late_discard_is_acknowledged_instead_of_silently_ignored(
             )
 
             await pilot.click("#console-dictation")
-            await _wait_for_mic_label(composer, pilot, "Rec ●")
+            await _wait_for_mic_label(composer, pilot, "Dictating")
             session = console._console_dictation_session
 
             service.emit_final("dictated words")
@@ -3845,7 +3845,7 @@ async def test_a_late_discard_is_acknowledged_instead_of_silently_ignored(
             assert _spoken_texts(app.post_message) == []
 
             service.stop_gate.set()
-            await _wait_for_mic_label(composer, pilot, "Mic")
+            await _wait_for_mic_label(composer, pilot, "Dictate")
 
             deadline = time.monotonic() + 4
             spoken: list[str] = []
@@ -3897,10 +3897,10 @@ async def test_discarded_is_spoken_only_after_the_microphone_is_released(
             )
 
             await pilot.click("#console-dictation")
-            await _wait_for_mic_label(composer, pilot, "Rec ●")
+            await _wait_for_mic_label(composer, pilot, "Dictating")
 
             service.emit_final("Console, discard.")
-            await _wait_for_mic_label(composer, pilot, "Mic")
+            await _wait_for_mic_label(composer, pilot, "Dictate")
             deadline = time.monotonic() + 4
             while time.monotonic() < deadline and not release_entered.is_set():
                 await pilot.pause(0.01)
@@ -3951,12 +3951,12 @@ async def test_a_command_only_capture_acknowledges_that_nothing_was_inserted(
         composer.load_draft("untouched")
 
         await pilot.click("#console-dictation")
-        await _wait_for_mic_label(composer, pilot, "Rec ●")
+        await _wait_for_mic_label(composer, pilot, "Dictating")
 
         service.emit_final("Console, new paragraph.")
         service.emit_final("Console, stop.")
         await pilot.pause()
-        await _wait_for_mic_label(composer, pilot, "Mic")
+        await _wait_for_mic_label(composer, pilot, "Dictate")
 
         deadline = time.monotonic() + 4
         spoken: list[str] = []
@@ -4004,7 +4004,7 @@ async def test_read_back_refuses_while_a_capture_is_open(monkeypatch):
         )
 
         await pilot.click("#console-dictation")
-        await _wait_for_mic_label(composer, pilot, "Rec ●")
+        await _wait_for_mic_label(composer, pilot, "Dictating")
         app.post_message.reset_mock()
 
         await console._console_read_last_response_back()

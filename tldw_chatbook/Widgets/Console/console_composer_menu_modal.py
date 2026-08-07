@@ -1,8 +1,10 @@
-"""Composer overflow menu: the ``☰`` button's action list.
+"""Composer overflow menu: the composer ``Menu`` button's action list.
 
 task-1680: the composer's action row is width-bounded, so new actions go
 behind one menu button rather than growing the row. Each entry returns a
-stable action id; the screen owns what each id does.
+stable action id; the screen owns what each id does. task-2154.14: the
+button is labeled "Menu" in words (DS-01) -- a bare ☰ glyph had a
+tooltip-only identity.
 """
 
 from __future__ import annotations
@@ -22,7 +24,10 @@ from tldw_chatbook.Chat.console_ephemeral import ACTION_SAVE_CHAT, blocked_reaso
 #: screen's dispatch table keys off these and tests pin them.
 ACTION_GENERATE_IMAGE = "generate-image"
 ACTION_GENERATE_CAPTION = "generate-caption"
-ACTION_NARRATE_CONVERSATION = "narrate-conversation"
+#: task-2154.14 (DS-03): the "Narrate Entire Conversation" entry was removed
+#: until per-speaker narration is actually implemented -- a visible menu row
+#: whose only behavior is a "not implemented yet" toast erodes trust in every
+#: other entry. Re-add the action id here when the feature lands.
 ACTION_IMPERSONATE = "impersonate"
 #: Moved here from the composer action row. These two strings are also the
 #: ids of the buttons they replaced, so the screen's existing
@@ -63,7 +68,7 @@ def build_composer_menu_entries(
     chat rather than disabled, because a disabled save on an already-saved
     conversation reads as a failure rather than as "already done".
 
-    Attach and Save Chatbook moved here from the composer's action row,
+    Attach and Save as Chatbook moved here from the composer's action row,
     which is width-bounded at a fixed cell count: every always-present
     button there is space the draft never gets back. The row keeps only
     ``Send``, ``Mic``, and the two CONDITIONAL controls (``Stop`` while a
@@ -100,13 +105,17 @@ def build_composer_menu_entries(
             "Browse, improve, or build reusable prompts",
         ),
         ComposerMenuEntry(
+            # CN-03 (TASK-2154.13): this entry opens the file picker
+            # (`_handle_console_attach_context`), while the control bar's
+            # "Attach context" opens the Library/workspace rail -- two
+            # actions, so two names, one word apart.
             ACTION_ATTACH_CONTEXT,
-            "Attach",
-            "Attach files or context to this session",
+            "Attach file",
+            "Attach a file to the draft",
         ),
         ComposerMenuEntry(
             ACTION_SAVE_CHATBOOK,
-            "Save Chatbook",
+            "Save as Chatbook",
             chatbook_reason,
             enabled=chatbook_blocked is None and can_save_chatbook,
         ),
@@ -132,11 +141,6 @@ def build_composer_menu_entries(
             "Generate Caption",
             caption_reason,
             enabled=attachment_kind == "image",
-        ),
-        ComposerMenuEntry(
-            ACTION_NARRATE_CONVERSATION,
-            "Narrate Entire Conversation",
-            "Per-speaker voices (not implemented yet)",
         ),
         ComposerMenuEntry(
             ACTION_IMPERSONATE,
@@ -213,7 +217,7 @@ class ConsoleComposerMenuModal(ModalScreen["str | None"]):
             ephemeral: Whether the active session is temporary, which
                 decides whether "Save this chat" is offered at all.
             can_save_chatbook: Whether a Chatbook artifact is available,
-                which decides whether the Save Chatbook row is actionable.
+                which decides whether the Save as Chatbook row is actionable.
             **kwargs: Forwarded to ``ModalScreen``.
         """
         super().__init__(**kwargs)
