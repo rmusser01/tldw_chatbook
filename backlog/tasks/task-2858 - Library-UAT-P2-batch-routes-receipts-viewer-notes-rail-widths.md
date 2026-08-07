@@ -1,9 +1,11 @@
 ---
 id: TASK-2858
 title: 'Library UAT P2 batch: routes, receipts, viewer, notes, rail, widths'
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@claude'
 created_date: '2026-08-07 01:10'
+updated_date: '2026-08-07 12:45'
 labels:
   - library
   - ux
@@ -50,3 +52,9 @@ observed at dev `6ffa56516`. Grouped for one pass; split if any item grows.
 - [ ] #7 Prefilled search inputs are editable without cursor traps, and stale rail queries do not survive screen switches
 - [ ] #8 At 120/100/80 columns no rail row label truncates mid-word, and each finding's surface is re-verified live
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+Four-group SDD arc on fix/library-uat-p2-batch (plan: docs/superpowers/plans/library-uat-p2-batch.md):\n1. Entry routing + canvas restoration (LIB-03, AC1) — generic entries land one canonical surface, deep links keep their labeled destinations, revisits restore.\n2. Honest advertisement + export feedback (LIB-09/11/12, AC2-3) — full BINDINGS gate audit, disabled-with-reason export button, durable last-export receipt.\n3. Content surfaces (LIB-13/14, AC4-5) — viewer markdown via the existing Notes renderer + Raw toggle; note lifecycle (placeholder title, no premature commit, version on save only).\n4. Rail determinism + input traps + widths + folder-notes copy (LIB-15/17/18/19, AC6-8) + close-out.\nEvery item re-verified at HEAD first (P1 arc + task-1993 may have moved several). Same process as the P1 arc: TDD, task review + scoped re-reviews per fix round, live tmux verification per task, final whole-branch review.
+<!-- SECTION:PLAN:END -->
