@@ -54,3 +54,9 @@ Implementation plan: Docs/superpowers/plans/2026-08-02-local-library-agent-tools
 5. Add Console-only MCP overlap filtering and descriptor-backed MCP registration/delegation.
 6. Verify cross-runtime parity, compatibility, documentation, and Definition of Done.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+**2026-08-06 progress (@kimi, branch feat/hub-local-agent-tools):** Plan Task 1 (shared contracts) landed: `tldw_chatbook/Library/library_tool_contract.py` — the 18-descriptor table (names, trust/read-only description tails, bounded input schemas, `type.operation` routes), opaque stable-ID codec (`type:<base64url>`, ASCII, ≤128 B, fail-closed parse with wrong-type/malformed/path-like rejection), versioned continuation-cursor codec (SHA-256-checked canonical payload, tamper → `invalid_argument`, revision mismatch → `content_changed` + fresh-start hint), the six spec error codes with JSON-safe `to_payload()`, page/max-chars/query validation, control-character display normalization (160 B cap, 32 B floor), and the 32 KiB byte fitting (`fit_page_payload` with the fixed keywords→preview→metadata trim order + `fit_text_segment` largest-prefix fitting with skip/repeat-free offsets). Tests: `Tests/Library/test_library_tool_contract.py` (~30 cases). `Library/__init__.py` exports the descriptor table and error type. Remaining: plan Tasks 2–10 (storage query seams per type, `LocalLibraryToolService`, Console provider + privacy setting, MCP registration/delegation, parity/docs). No ACs ticked yet — service behavior does not exist until Task 5.
+<!-- SECTION:NOTES:END -->
