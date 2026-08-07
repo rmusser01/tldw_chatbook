@@ -290,6 +290,53 @@ def test_console_transcript_sync_timer_updates_responsiveness_monitor():
     assert stopped == [True]
 
 
+def _console_controller_slots() -> set[str]:
+    """The controller attributes `MagicMock(spec=ChatScreen)` cannot see.
+
+    The decomposition wires each controller in `__init__`, so they are
+    *instance* attributes; `spec=` reads the CLASS and therefore never stubs
+    them. `_sync_native_console_chat_ui` reaches some of them directly rather
+    than through a screen-level delegation, so an unstubbed slot fails with
+    `Mock object has no attribute '_session'` — which is how wave 2 shipped
+    this test red to dev.
+
+    Read back out of `__init__` rather than re-listed here, so the next wave's
+    controller does not re-open the treadmill `_make_sync_probe_screen`'s
+    docstring warns about.
+
+    Returns:
+        set[str]: Attribute names assigned a `Console*Controller(...)`.
+
+    Raises:
+        AssertionError: If the pattern matches nothing — that means the wiring
+            shape changed and this helper is silently stubbing nothing.
+    """
+    import ast
+    import inspect
+    import textwrap
+
+    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+
+    tree = ast.parse(textwrap.dedent(inspect.getsource(ChatScreen.__init__)))
+    slots = {
+        target.attr
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Assign) and isinstance(node.value, ast.Call)
+        and isinstance(node.value.func, ast.Name)
+        and node.value.func.id.startswith("Console")
+        and node.value.func.id.endswith("Controller")
+        for target in node.targets
+        if isinstance(target, ast.Attribute)
+        and isinstance(target.value, ast.Name)
+        and target.value.id == "self"
+    }
+    assert slots, (
+        "no Console*Controller assignments found in ChatScreen.__init__; the "
+        "wiring shape changed and this helper now stubs nothing."
+    )
+    return slots
+
+
 def _make_sync_probe_screen(monitor):
     """A ChatScreen stand-in for exercising the console-sync recording bracket.
 
@@ -307,6 +354,8 @@ def _make_sync_probe_screen(monitor):
     from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
     screen = MagicMock(spec=ChatScreen)
+    for slot in _console_controller_slots():
+        setattr(screen, slot, MagicMock())
     screen._console_sync_in_progress = False
     screen._console_sync_requested = False
     # Console decomposition wave 2 (PR #1381) moved stages onto instance-held
