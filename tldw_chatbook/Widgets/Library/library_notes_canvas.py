@@ -274,9 +274,17 @@ class LibraryNotesCanvas(Vertical):
             id="library-note-title",
         )
         if self.preview:
+            # TASK-1993: consume YAML front matter (file-synced notes carry
+            # it) instead of rendering the --- block as noise; None falls
+            # back to the default parser when mdit-py-plugins is absent.
+            from tldw_chatbook.Utils.markdown_parsing import (
+                front_matter_parser_factory,
+            )
+
             yield Markdown(
                 editor_state.content,
                 id="library-note-preview-body",
+                parser_factory=front_matter_parser_factory(),
             )
         else:
             yield TextArea(
