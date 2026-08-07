@@ -124,6 +124,36 @@ SETTINGS_DATABASES = (
     ("subscriptions", "Subscriptions", "tldw_cli_subscriptions"),
 )
 
+#: TASK-1995: real markdown, rendered by the About pane's Markdown widget.
+#: This text was previously Rich console markup ([bold]/[italic]/[link=…]),
+#: which Textual's Markdown does not interpret — the tags rendered literally.
+ABOUT_MARKDOWN = """\
+**tldw-chatbook** is a sophisticated Terminal User Interface (TUI) application for interacting with various Large Language Model APIs.
+
+*Features:*
+
+- Multi-provider LLM support (OpenAI, Anthropic, Google, and many more)
+- Advanced conversation management with branching
+- Character-based conversations with personality cards
+- Comprehensive note-taking with bidirectional file sync
+- Media ingestion and analysis (video, audio, documents, PDFs, e-books)
+- RAG (Retrieval-Augmented Generation) for intelligent search
+- Local LLM server management
+- Extensive customization options
+
+*License:* AGPLv3+
+
+*Links:*
+
+- GitHub: <https://github.com/rmusser01/tldw>
+- Documentation: <https://github.com/rmusser01/tldw/wiki>
+- Issues: <https://github.com/rmusser01/tldw/issues>
+
+*Created by:* rmusser01 and contributors
+
+Thank you for using tldw-chatbook! 🎉
+"""
+
 
 class ToolsSettingsWindow(Container):
     """
@@ -3362,32 +3392,7 @@ class ToolsSettingsWindow(Container):
             "Information about the tldw-chatbook project", classes="section-description"
         )
 
-        about_text = """
-[bold]tldw-chatbook[/bold] is a sophisticated Terminal User Interface (TUI) application for interacting with various Large Language Model APIs.
-
-[italic]Features:[/italic]
-• Multi-provider LLM support (OpenAI, Anthropic, Google, and many more)
-• Advanced conversation management with branching
-• Character-based conversations with personality cards
-• Comprehensive note-taking with bidirectional file sync
-• Media ingestion and analysis (video, audio, documents, PDFs, e-books)
-• RAG (Retrieval-Augmented Generation) for intelligent search
-• Local LLM server management
-• Extensive customization options
-
-[italic]License:[/italic] AGPLv3+
-
-[italic]Links:[/italic]
-• GitHub: [link=https://github.com/rmusser01/tldw]https://github.com/rmusser01/tldw[/link]
-• Documentation: [link=https://github.com/rmusser01/tldw/wiki]https://github.com/rmusser01/tldw/wiki[/link]
-• Issues: [link=https://github.com/rmusser01/tldw/issues]https://github.com/rmusser01/tldw/issues[/link]
-
-[italic]Created by:[/italic] rmusser01 and contributors
-
-Thank you for using tldw-chatbook! 🎉
-        """
-
-        yield Markdown(about_text.strip(), classes="about-content")
+        yield Markdown(ABOUT_MARKDOWN, classes="about-content")
 
         # Add some styling
         yield Static("", classes="settings-separator")

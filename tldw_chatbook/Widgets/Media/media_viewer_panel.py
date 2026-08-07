@@ -74,6 +74,84 @@ READING_HIGHLIGHT_DELETE_DISABLED_TOOLTIP = (
 READING_HIGHLIGHT_DELETE_ENABLED_TOOLTIP = "Delete this reading highlight."
 
 
+def _fenced_ranges(content: str) -> List[Tuple[int, int]]:
+    """Return (start, end) offsets of fenced code blocks in ``content``.
+
+    A fence opens at a line whose first non-space characters are ``` and
+    closes at the next such line. An unclosed fence runs to the end of the
+    content — the safe reading for transforms that must not touch code.
+    """
+    ranges: List[Tuple[int, int]] = []
+    pos = 0
+    start: Optional[int] = None
+    for line in content.splitlines(keepends=True):
+        if line.lstrip().startswith("```"):
+            if start is None:
+                start = pos
+            else:
+                ranges.append((start, pos + len(line)))
+                start = None
+        pos += len(line)
+    if start is not None:
+        ranges.append((start, len(content)))
+    return ranges
+
+
+def format_reading_text(content: str) -> str:
+    """Apply the reading-mode transforms outside fenced code blocks only.
+
+    TASK-1995: sentence-splitting and numbered-line promotion previously ran
+    over the whole document, mangling code blocks (a ``.`` inside code grew a
+    paragraph break; ``1.`` at the start of a code line became a heading).
+    """
+    parts: List[str] = []
+    last_end = 0
+    for start, end in _fenced_ranges(content):
+        text = content[last_end:start]
+        text = re.sub(r"([.!?])\s+", r"\1\n\n", text)
+        text = re.sub(r"^(\d+\.)\s+", r"## \1 ", text, flags=re.MULTILINE)
+        parts.append(text)
+        parts.append(content[start:end])
+        last_end = end
+    text = content[last_end:]
+    text = re.sub(r"([.!?])\s+", r"\1\n\n", text)
+    text = re.sub(r"^(\d+\.)\s+", r"## \1 ", text, flags=re.MULTILINE)
+    parts.append(text)
+    return "".join(parts)
+
+
+def highlight_match_spans(
+    content: str,
+    matches: List[Tuple[int, int]],
+    current_index: int,
+) -> str:
+    """Wrap search matches in markdown emphasis, skipping fenced code.
+
+    TASK-1995: wrapping a hit inside a fenced block in backticks/bold broke
+    the fence rendering; matches inside code are left as-is (the search
+    counter still counts them).
+    """
+    fenced = _fenced_ranges(content)
+
+    def _inside_fence(start: int, end: int) -> bool:
+        return any(fs <= start and end <= fe for fs, fe in fenced)
+
+    result: List[str] = []
+    last_end = 0
+    for i, (start, end) in enumerate(sorted(matches)):
+        result.append(content[last_end:start])
+        match_text = content[start:end]
+        if _inside_fence(start, end):
+            result.append(match_text)
+        elif i == current_index:
+            result.append(f" **`▶ {match_text} ◀`** ")
+        else:
+            result.append(f" `{match_text}` ")
+        last_end = end
+    result.append(content[last_end:])
+    return "".join(result)
+
+
 class ContentSearchEvent(Message):
     """Event fired when searching within content."""
 
@@ -1043,46 +1121,14 @@ class MediaViewerPanel(Container):
             button.tooltip = READ_IT_LATER_DISABLED_TOOLTIP
 
     def _format_content_for_reading(self, content: str) -> str:
-        """Format content for better readability."""
-        # Add line breaks after sentences
-        content = re.sub(r"([.!?])\s+", r"\1\n\n", content)
-
-        # Add headers for sections if detected
-        content = re.sub(r"^(\d+\.)\s+", r"## \1 ", content, flags=re.MULTILINE)
-
-        return content
+        """Format content for better readability, leaving fenced code intact."""
+        return format_reading_text(content)
 
     def _highlight_matches(self, content: str) -> str:
         """Highlight search matches in content."""
         if not self.search_matches:
             return content
-
-        # Sort matches by position
-        sorted_matches = sorted(self.search_matches)
-
-        # Build highlighted content
-        result = []
-        last_end = 0
-
-        for i, (start, end) in enumerate(sorted_matches):
-            # Add text before match
-            result.append(content[last_end:start])
-
-            # Add highlighted match
-            match_text = content[start:end]
-            if i == self.current_match:
-                # Current match gets special highlighting with inline code style
-                result.append(f" **`▶ {match_text} ◀`** ")
-            else:
-                # Other matches get regular highlighting
-                result.append(f" `{match_text}` ")
-
-            last_end = end
-
-        # Add remaining text
-        result.append(content[last_end:])
-
-        return "".join(result)
+        return highlight_match_spans(content, self.search_matches, self.current_match)
 
     @on(Button.Pressed, "#media-use-in-chat-button")
     def handle_use_in_chat_button(self, event: Button.Pressed) -> None:
