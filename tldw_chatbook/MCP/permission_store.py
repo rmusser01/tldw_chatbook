@@ -606,6 +606,14 @@ class EffectiveToolState:
             ``global_default``, or (built-in tools only, via
             ``resolve_builtin_state``) ``builtin_default``, the allow
             floor applied when nothing more specific overrides it.
+            One SYNTHETIC value exists outside the precedence walk:
+            ``gate_error``, constructed by ``MCPWorkbench`` (paired
+            unconditionally with ``state="deny"``) when per-tool
+            resolution RAISES -- a fail-closed verdict, not a configured
+            state, which is why ``ui_label`` renders it "Unknown"
+            (task-2870) and every copy surface derives its explanation
+            from ``PERMISSION_STATE_UNRESOLVED_CLAUSE`` rather than
+            claiming "Off".
         config_changed: True when an explicit tool-level ``allow`` was
             downgraded to ``ask`` by the rug-pull guard (hash mismatch
             and/or a persisted ``config_changed`` marker).
