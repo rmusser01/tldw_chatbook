@@ -160,7 +160,7 @@ def test_no_records_yields_default_empty_copy():
     assert state.status_copy == ""
     assert (
         state.empty_copy
-        == "No media in your Library yet. Ingest something to see it here."
+        == "No media in your Library yet. Import something to see it here."
     )
     assert state.selected_id == ""
     assert state.preview_lines == ()

@@ -97,7 +97,7 @@ def _select_mode_canvas_state() -> LibraryMediaCanvasState:
         type_options=("All", "audio", "video"),
         active_type="All",
         status_copy="",
-        empty_copy="No media in your Library yet. Ingest something to see it here.",
+        empty_copy="No media in your Library yet. Import something to see it here.",
         selected_id="",
         preview_lines=(),
         count=len(rows),

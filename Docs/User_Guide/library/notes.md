@@ -51,7 +51,7 @@ files under a folder you choose and has its own Session Git panel — see
 | "sort: Newest ▸" | Cycles the order: Newest → Oldest → Title. |
 | "Sync" | Opens the Notes sync panel (below). |
 | "Import note" | Opens a file picker, "Import Note (TXT, MD, JSON, YAML)". The imported file becomes a new note. |
-| "Export…" | Opens the "Export chatbook" canvas scoped to notes — bundle notes into a .zip. |
+| "Export…" | Opens the "Export bundle (.zip)" canvas scoped to notes — bundle notes into a .zip. |
 | "Select" / "Done" | Toggles select mode: rows grow ☑/☐ checkboxes, and a row appears with "N selected", "Select all N shown", "Clear", and "Export selected". "Export…" hides while selecting. |
 
 With no notes at all, the list reads "No notes yet. Create one to see it
@@ -178,3 +178,6 @@ click-driven. Global navigation keys live in the [guide index](../index.md).
 *Verified against c2cbb8081 — 2026-08-04 (PR-T1: "Use in Console"
 delivering the note's real content on send is covered by capture
 round-trip tests, task-2374).*
+
+*Re-stamped against dev @ 4acb17a0b — 2026-08-07 (TASK-2857: "Export…"
+now opens the "Export bundle (.zip)" canvas, not "Export chatbook").*

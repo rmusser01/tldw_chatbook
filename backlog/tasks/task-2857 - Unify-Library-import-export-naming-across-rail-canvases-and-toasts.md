@@ -1,9 +1,11 @@
 ---
 id: TASK-2857
-title: Unify Library import/export naming across rail, canvases and toasts
-status: To Do
-assignee: []
+title: 'Unify Library import/export naming across rail, canvases and toasts'
+status: Done
+assignee:
+  - '@claude'
 created_date: '2026-08-07 01:10'
+updated_date: '2026-08-07 04:58'
 labels:
   - library
   - ux-copy
@@ -31,8 +33,185 @@ every return visit.
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 One verb pair is chosen (recommend Import/Export) and used consistently across rail rows, canvas titles, empty states, buttons and toasts for the same concept
-- [ ] #2 "chatbook" is either introduced with a one-line explainer where it appears or replaced (e.g. "Export bundle (.zip)")
-- [ ] #3 "Open in Media manager" names the surface it actually opens using that surface's own name
-- [ ] #4 A naming inventory in the task notes lists every changed string (rail/canvas/toast/tooltip), and the user guide pages citing these labels are updated or re-stamped
+- [x] #1 One verb pair is chosen (recommend Import/Export) and used consistently across rail rows, canvas titles, empty states, buttons and toasts for the same concept
+- [x] #2 "chatbook" is either introduced with a one-line explainer where it appears or replaced (e.g. "Export bundle (.zip)")
+- [x] #3 "Open in Media manager" names the surface it actually opens using that surface's own name
+- [x] #4 A naming inventory in the task notes lists every changed string (rail/canvas/toast/tooltip), and the user guide pages citing these labels are updated or re-stamped
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Grep-audit every user-facing Library string containing ingest/chatbook/Media manager across Library/*.py, Widgets/Library/*.py, UI/Screens/library_screen.py -- classify each as identifier (leave) vs UI copy (rename), building the full inventory before touching code.
+2. Rename to the Import/Export verb pair: rail row 'Add content...' -> 'Import...'; ingest canvas Start button 'Start ingest' -> 'Start import'; guardrail modal copy + 'Start ingest anyway' -> import wording; Media empty-state 'Ingest something...' -> 'Import something...'; toast 'Ingest finished' -> 'Import finished'; queue copy (INGEST_UNAVAILABLE_COPY, QUEUE_EMPTY_COPY, 'Recent ingests', 'Analyze after ingest' checkbox label) -> Import wording.
+3. Export side: EXPORT_HEADER_COPY/EXPORT_BUTTON_COPY 'Export chatbook' -> 'Export bundle (.zip)'; success toast 'Exported chatbook to' -> 'Exported bundle to'; default export filename fallback 'chatbook' -> 'bundle'. Leave the Chatbooks product/service identifiers (ChatbookCreator, export_chatbook, create_chatbook, the default artifact name fallback) untouched -- product-level naming, not a Library rail/canvas/toast/tooltip label.
+4. 'Open in Media manager' -> 'Open in Library > Media' (task-2851 already retired the legacy Media route alias, so this button now round-trips into Library; correct the stale docstring claiming it 'genuinely navigates away').
+5. Add/adjust a test pinning the canonical verb pair agreement (rail button + canvas title + toast all say Import) on the primary import flow; update every existing test assertion hardcoding an old string (Tests/Library + Tests/UI); leave test behavior/coverage otherwise intact.
+6. Re-stamp/update Docs/User_Guide/library.md + library/import-and-export.md + library/media-and-conversations.md + library/notes.md for every quoted label that changed.
+7. Run targeted pytest + --collect-only over Tests/Library; live-tmux verify the Import flow and Export flow end-to-end.
+8. Record the full old->new string inventory in Implementation Notes; commit.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Chosen verb pair: **Import / Export**. "ingest" survives only in code identifiers (ids,
+classes, config keys, function/variable names, DB fields) -- never in a rendered string.
+"chatbook" stays as the product/service name in `Chatbooks/`, `ChatbookCreator`,
+`export_chatbook`/`create_chatbook`, and the created artifact's own default metadata name
+(`_safe_text(form.get("name", ""), "Chatbook", ...)` at `library_screen.py` -- deliberately
+untouched: that's the exported bundle's own type-appropriate default title, consistent
+elsewhere in Artifacts/Home, not a Library rail/canvas/toast label).
+
+### String inventory (old -> new)
+
+Rail / top button / landing hub / command palette:
+- `library_shell_state.py` row title "Add content…" -> "Import…"
+- `library_screen.py` rail-top primary button "Add content…" -> "Import…"
+- `library_screen.py` landing-hub action button "Add content…" -> "Import…"
+- `library_screen.py` footer hint tuple `("i", "add content")` -> `("i", "import content")`
+  (`LIBRARY_LANDING_SHORTCUTS`; rendered in the landing footer as "i add content")
+- `app.py` `LibraryIngestProvider.COMMANDS` "Library: Add content…" -> "Library: Import…";
+  help "Open Library and add content" -> "Open Library and import content"
+- `app.py` palette-action toast "Opened Library to ingest content" -> "...to import content"
+- `app.py` palette-action error toast "Failed to open Library ingest: {e}" -> "...import: {e}"
+
+Ingest canvas (still named "Import media" -- unchanged, already correct):
+- `library_ingest_canvas.py` Start button "Start ingest" -> "Start import"
+- `library_ingest_canvas.py` "Recent ingests" collapsible title -> "Recent imports"
+- `library_ingest_state.py` `INGEST_UNAVAILABLE_COPY` "Ingest is unavailable in this
+  runtime." -> "Import is unavailable in this runtime."
+- `library_ingest_state.py` `QUEUE_EMPTY_COPY` "No ingest jobs yet." -> "No import jobs yet."
+- `ingest_capabilities.py` checkbox `label="Analyze after ingest"` -> "Analyze after import"
+  (generic/Plain-text-HTML type group)
+- `library_screen.py` `IngestGuardrailModal` "Some files may fail to ingest:" -> "...import:";
+  "Start ingest anyway" -> "Start import anyway"
+- `library_screen.py` completion toast "Ingest finished — " -> "Import finished — "
+- `library_screen.py` "Cancelling a server ingest is unavailable in this runtime." ->
+  "...server import is unavailable..."
+- `app.py` per-job progress detail `f"Ingested {source_name}"` -> `f"Imported {source_name}"`
+  (rendered in the queue row, e.g. "Ingested report.txt")
+- `app.py` empty-folder job error "No files to ingest were found in this folder." ->
+  "No files to import were found in this folder."
+- `app.py` generic parse-failure fallback "Library ingest parsing failed." (both call sites)
+  -> "Library import parsing failed."
+- `app.py` broken-pool job error "Library ingest parse pool failed unexpectedly; retry to
+  resume." -> "Library import parse pool failed unexpectedly; retry to resume."
+- `app.py` server-ingest failure text: "No server backend is configured, so this ingest
+  cannot run..." -> "...this import cannot run..."; "The server refused the ingest: {exc}"
+  -> "...import: {exc}"; "The server rejected the ingest: {errors[0]}" -> "...import:
+  {errors[0]}"; "Could not reach the server to cancel that ingest." -> "...that import."
+
+Media browse/viewer:
+- `library_media_state.py` `LIBRARY_MEDIA_EMPTY_COPY` "No media in your Library yet. Ingest
+  something to see it here." -> "...Import something to see it here."
+- `library_media_viewer.py` full-viewer action button "Open in Media manager" -> "Open in
+  Library ▸ Media" (AC #3: task-2851 already retired the standalone Media screen this used
+  to jump to -- "media" now aliases to "library" in `screen_registry._SCREEN_ALIASES` --
+  so the button round-trips into Library's own restored state rather than leaving it; live
+  tmux check confirmed no crash and the same viewer state on return. The stale docstring
+  claiming it "genuinely navigates away" is corrected to describe the alias.)
+
+Export canvas:
+- `library_export_state.py` `EXPORT_HEADER_COPY` "Export chatbook" -> "Export bundle (.zip)"
+- `library_export_state.py` `EXPORT_BUTTON_COPY` "Export chatbook" -> "Export bundle (.zip)"
+  (AC #2: "chatbook" replaced rather than explained, per the recommended text)
+- `library_screen.py` success toast `f"Exported chatbook to {path}"` -> `f"Exported bundle
+  to {path}"`
+- `library_screen.py` default export filename fallback ("chatbook.zip" when the Export
+  name field is empty) -> "bundle.zip" (live check: the field's own date-based default,
+  "Library export <date>", normally pre-fills it first, so this fallback only fires when a
+  user clears the name -- confirmed correct but rarely exercised)
+- Library RAG empty-index recovery copy (`library_local_rag_search_service.py`):
+  `next_action` "Ingest content to index it automatically..." -> "Import content...";
+  `recovery_action` "Library ingest" -> "Library import" (rendered via
+  `DestinationRecoveryState.visible_copy`'s "Recovery: …" line); `disabled_tooltip`
+  "...Ingest content to index it automatically..." -> "...Import content..."
+
+### Deliberately left unchanged (non-Library surfaces / product identifiers / dead code)
+
+- `Chatbooks/`, `ChatbookExportManagementWindow.py`, `Docs/User_Guide/home.md` and
+  `index.md`'s "Chatbook artifacts" -- a separate, established surface (Artifacts/Home) that
+  genuinely deals in Chatbook-typed artifacts; not a Library label.
+- `Watchlists_Modules/items_pane.py` status filter option `("Ingested", "ingested")` -- a
+  different feature's own status vocabulary (matches a stored `ingested` DB value), not
+  connected to Library's Import flow.
+- `Home/active_work_adapter.py` "Opening Library ingest job details." -- Home's own message
+  about a Library job, outside "rail, canvases and toasts" scope; flagged as a follow-up
+  candidate below rather than expanded into out of scope.
+- `TabNavigationProvider.TAB_HELP_TEXT[TAB_INGEST]` = "Switch to content ingestion" (and the
+  matching `Constants.py` tab-display-name entry) -- traced via `command_palette_tab_ids()`
+  (only primary `NAVIGATION_TABS` get a labeled command; legacy folded routes like `ingest`
+  surface only as fuzzy-match alias terms via `_destination_alias_terms`, not this dict) --
+  appears to be an unreachable/dead entry; left alone rather than guessed at.
+- `SERVER_QUIET_LINE_COPY = "ingest runs on Local"` in `library_ingest_state.py` -- explicitly
+  commented "Retired"; confirmed zero call sites (grep), never rendered.
+- Deep pipeline error text `f"Failed to ingest {file_type} file: ..."` in
+  `Local_Ingestion/local_file_ingestion.py` -- shared by callers well outside Library (web
+  clip, preflight, `app.py`), and its exact punctuation is load-bearing for
+  `short_ingest_error`'s marker-based split; out of this task's blast radius.
+- `known_prefix = f"Chatbook created successfully at {path}"` in `library_screen.py` --
+  matches `ChatbookCreator`'s own literal return-value prefix (a different module), not
+  Library UI text; changing it would break the stripping logic, not rename a label.
+- Config keys/identifiers throughout (`library.ingest_backend`, `library.ingest_options.*`,
+  `library.ingest_directory_scan_limit`, every `id="library-ingest-*"`/`#ingest-*` DOM id,
+  `IngestGuardrailModal`, `LibraryIngestCanvas`, `LibraryIngestJob`, `INGEST_DUPLICATE_
+  PROGRESS_PREFIX`, route id `"ingest"` in `screen_registry._SCREEN_ALIASES`) -- identifiers,
+  not UI copy, per the task's own instruction.
+
+### Tests
+
+Updated every existing assertion pinning an old string (`Tests/Library/test_library_ingest_
+state.py`, `test_library_media_state.py`, `test_library_export_execution.py`, `test_library_
+shell_state.py`, `test_library_ingest_runner.py`; `Tests/UI/test_library_screen.py`,
+`test_library_ingest_canvas.py`, `test_library_ingest_guardrail_modal.py`, `test_library_
+multiselect_media.py`, `test_command_palette_providers.py`, `test_product_maturity_phase3_
+library_contract_layout.py`, `test_unified_shell_phase6_power_user_replay.py`,
+`test_product_maturity_phase6_power_user_replay.py`, `test_screen_footer_hints.py`,
+`test_library_shell.py`) -- assertions and docstrings both, never deleted a test.
+
+Extended `test_library_shell.py::test_ingest_cta_uses_one_canonical_label_everywhere`
+(previously task-2235's) to also open the canvas and check its header agrees. Added a new
+end-to-end test, `test_library_shell_import_verb_pair_agrees_across_rail_canvas_and_toast`,
+that submits a real file through the rail button, canvas, and Start button, and asserts the
+completion toast text -- pinning "rail says Import, canvas says Import media, Start button
+says Start import, toast says Import finished" as one regression.
+
+Targeted run (all touched Library/UI/App test files + `--collect-only -q Tests/Library`):
+1076 collected, 703+572 passed across two full sub-suite runs, plus `test_library_shell.py`
+full file green -- **9 confirmed pre-existing failures, unrelated to this task, verified
+against a throwaway HEAD worktree (git worktree add --detach) so they are not misreported as
+introduced by this change**:
+`test_do_submit_ingest_persists_options`, `test_faster_whisper_recovery_handler_uses_
+explicit_provider`, `test_switch_is_not_offered_when_the_server_seam_cannot_submit`,
+`test_submit_confirm_guardrail_calls_submit`, `test_submit_without_warnings_calls_submit`,
+`test_submit_clears_the_stale_preflight_summary`, `test_phase6_power_user_release_replay_
+exposes_fast_repeat_paths`, `test_landing_footer_advertises_the_landing_keyboard_story`,
+`test_options_persist_to_config` -- the first 6 + the 9th share one root cause
+(`LibraryScreen.__new__`/`object.__new__`-constructed fixtures never set
+`_library_ingest_preflight_generation`, added by an unrelated task-2011-era commit); the 7th
+is a Home-screen assertion unrelated to Library; the 8th is a footer-text test missing the
+`AppFooterStatus.GLOBAL_HINTS` suffix another commit added. None of these fixtures were
+touched by this task. Recommend a follow-up backlog task to fix the shared fixture helper.
+
+### Live verification (tmux, socket `sddT5lib<rand>`, scratch profile `/tmp/sddT5`)
+
+Walked Import end-to-end: command palette "Library: Import…" / "Open Library and import
+content" -> rail-top "Import…" button -> canvas header "Import media" -> options fold
+"Analyze after import: off, ..." -> "Start import" button -> real file imported -> queue
+"No import jobs yet." before, done row after. Walked Export: rail "Export" -> canvas header
+"Export bundle (.zip)" -> submit button "Export bundle (.zip)" -> Choose destination dialog
+(pre-filled date-based name, so the "bundle.zip" fallback wasn't exercised in this run, but
+the fallback code path was confirmed by reading). Opened the imported item's full viewer and
+confirmed the action row reads "Open in Library ▸ Media"; pressed it and confirmed no crash
+and the same Library state on return (matching the documented alias round-trip).
+
+### Modified files
+
+`tldw_chatbook/app.py`, `tldw_chatbook/UI/Screens/library_screen.py`, `tldw_chatbook/Library/
+{ingest_capabilities,library_export_state,library_ingest_state,library_local_rag_search_
+service,library_media_state,library_shell_state}.py`, `tldw_chatbook/Widgets/Library/
+{library_ingest_canvas,library_media_canvas,library_media_viewer}.py`; the 15 test files
+listed above; `Docs/User_Guide/library.md` + `library/{import-and-export,media-and-
+conversations,notes}.md` (re-stamped `4acb17a0b`).
+<!-- SECTION:NOTES:END -->

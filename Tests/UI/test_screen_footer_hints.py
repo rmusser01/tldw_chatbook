@@ -104,7 +104,7 @@ async def test_production_routes_own_and_preserve_contextual_footer_hints():
                 # screen's own hints.
                 assert (
                     screen.query_one(AppFooterStatus).shortcut_text
-                    == "/ focus search | i add content | n new note | "
+                    == "/ focus search | i import content | n new note | "
                     f"{AppFooterStatus.GLOBAL_HINTS}"
                 )
                 for _ in range(300):
@@ -193,7 +193,7 @@ def test_library_shortcuts_advertise_the_evidence_card_keys():
     # the hub next-action accelerators and the pane-cycle key, not just `/`.
     assert LibraryScreen.LIBRARY_LANDING_SHORTCUTS == (
         ("/", "focus search"),
-        ("i", "add content"),
+        ("i", "import content"),
         ("n", "new note"),
         ("F6", "next pane"),
     )
@@ -355,7 +355,7 @@ async def test_library_registration_updates_the_screens_own_footer():
         screen_footer = screen.query_one(AppFooterStatus)
         # Landing canvas: the task-2237 landing set, on the screen's OWN
         # footer (not the app default-screen one).
-        assert "add content" in screen_footer.shortcut_text
+        assert "import content" in screen_footer.shortcut_text
 
         for _ in range(300):
             rows = list(screen.query("#library-row-browse-search"))

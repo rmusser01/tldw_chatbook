@@ -142,7 +142,7 @@ async def test_guardrail_modal_renders_warning_details(sample_warnings, sample_c
 
         statics = list(app.screen.query(Static))
         labels = {str(s.renderable) for s in statics}
-        assert "Some files may fail to ingest:" in labels
+        assert "Some files may fail to import:" in labels
         assert any("PDF processing (3 files):" in label for label in labels)
         assert any("OCR document extraction (3 files):" in label for label in labels)
 

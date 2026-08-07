@@ -336,11 +336,13 @@ def build_library_shell_state(
         LibraryRailRow(
             row_id=LIBRARY_ROW_INGEST_MEDIA,
             section_id="ingest",
-            # task-2235 (R2): one canonical label for the ingest CTA across
-            # rail, landing hub, and command palette -- F-013's plain
-            # "Add content…". "Import media" survives only inside the
-            # ingest flow itself (canvas header, file-picker title).
-            title="Add content…",
+            # task-2857 (Library UAT 2026-08-06, LIB-10): one canonical verb
+            # ("Import") across rail, canvas header, empty states, buttons
+            # and toasts -- supersedes task-2235 (R2)'s "Add content…",
+            # which disagreed with the canvas it opened ("Import media"),
+            # the Start button, and the completion toast, all of which
+            # already said "ingest"/"import" inconsistently.
+            title="Import…",
             target_kind="canvas",
             target_id="ingest-media",
             count=None,

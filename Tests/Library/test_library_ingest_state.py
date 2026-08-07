@@ -1735,9 +1735,9 @@ def test_invalid_option_values_gate_start_with_text_message():
 
 
 def test_recent_ledger_survives_registry_clear_and_empty_copy_is_honest():
-    """(task-2130) Recent ingests is the durable session ledger: jobs
+    """(task-2130) Recent imports is the durable session ledger: jobs
     snapshotted at Clear-finished time still render after the registry
-    removal, and the empty-queue copy stops claiming "No ingest jobs
+    removal, and the empty-queue copy stops claiming "No import jobs
     yet." after a session with activity."""
     cleared = _job(
         state=IngestJobState.FAILED,
@@ -1753,7 +1753,7 @@ def test_recent_ledger_survives_registry_clear_and_empty_copy_is_honest():
     assert state.queue_empty_line == "Queue is empty."
 
     untouched = build_library_ingest_state((), form=LibraryIngestFormState())
-    assert untouched.queue_empty_line == "No ingest jobs yet."
+    assert untouched.queue_empty_line == "No import jobs yet."
 
 
 def test_queue_counts_line_shows_in_flight_batch_work():
@@ -2137,7 +2137,7 @@ def test_matched_rows_and_tallies_use_the_forecast_vocabulary() -> None:
         job_id="ingest-job-1",
         state=IngestJobState.DONE,
         source_path="/tmp/fresh.txt",
-        progress={"message": "Ingested fresh.txt"},
+        progress={"message": "Imported fresh.txt"},
         batch_id="local-aaa",
         submitted_at=10.0,
     )
@@ -2263,7 +2263,7 @@ def test_queue_tally_and_group_header_agree_on_matched() -> None:
         job_id="ingest-job-1",
         state=IngestJobState.DONE,
         source_path="/tmp/fresh.txt",
-        progress={"message": "Ingested fresh.txt"},
+        progress={"message": "Imported fresh.txt"},
         batch_id="local-aaa",
         submitted_at=10.0,
     )

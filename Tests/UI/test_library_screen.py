@@ -41,7 +41,7 @@ async def test_ingest_button_present(library_screen):
     """The rail-top primary button names the action in plain language
     (F-013) and explains where it takes the user."""
     button = library_screen.query_one("#library-ingest-top-button", Button)
-    assert str(button.label) == "Add content…"
+    assert str(button.label) == "Import…"
     assert str(button.tooltip) == "Add files, links, and transcripts to your Library."
 
 

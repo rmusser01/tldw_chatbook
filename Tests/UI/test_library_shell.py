@@ -498,11 +498,13 @@ async def test_landing_hub_shows_the_error_instead_of_false_zero_counts():
 
 @pytest.mark.asyncio
 async def test_ingest_cta_uses_one_canonical_label_everywhere():
-    """task-2235 (R2): the ingest canvas's CTA is one label across the
-    rail-top primary button, the landing hub action row, the Import /
-    Export rail row, and the command palette -- 'Add content…' (the
-    F-013 plain-language pick). 'Import media' survives only inside the
-    ingest flow itself (canvas header, file-picker title)."""
+    """task-2857 (Library UAT 2026-08-06, LIB-10): one verb -- "Import" --
+    across the rail-top primary button, the landing hub action row, the
+    Import / Export rail row, the command palette, and the ingest canvas
+    header. Supersedes task-2235 (R2)'s "Add content…" pick, which agreed
+    with none of the canvas header ("Import media"), the Start button
+    ("Start ingest"), or the completion toast ("Ingest finished")."""
+    from tldw_chatbook.Library.library_ingest_state import INGEST_HEADER_COPY
     from tldw_chatbook.Library.library_shell_state import (
         LIBRARY_ROW_INGEST_MEDIA,
         LibraryShellInput,
@@ -517,12 +519,12 @@ async def test_ingest_cta_uses_one_canonical_label_everywhere():
         for r in s.rows
         if r.row_id == LIBRARY_ROW_INGEST_MEDIA
     )
-    assert row.title == "Add content…"
+    assert row.title == "Import…"
 
     # Palette entry is canonical.
     from tldw_chatbook.app import LibraryIngestProvider
 
-    assert LibraryIngestProvider.COMMANDS[0][0] == "Library: Add content…"
+    assert LibraryIngestProvider.COMMANDS[0][0] == "Library: Import…"
 
     # Rendered: rail-top button and hub action row share the label.
     app = _build_test_app()
@@ -535,8 +537,16 @@ async def test_ingest_cta_uses_one_canonical_label_everywhere():
 
         top = screen.query_one("#library-ingest-top-button", Button)
         hub = screen.query_one("#library-hub-action-import", Button)
-        assert str(top.label) == "Add content…"
-        assert str(hub.label) == "Add content…"
+        assert str(top.label) == "Import…"
+        assert str(hub.label) == "Import…"
+
+        # The canvas the button opens agrees on the same verb: "Import…"
+        # opens a canvas headed "Import media", not a differently-worded
+        # destination.
+        top.press()
+        await _wait_for_selector(screen, pilot, "#library-ingest-header")
+        header = str(screen.query_one("#library-ingest-header").renderable)
+        assert header == INGEST_HEADER_COPY == "Import media"
 
 
 @pytest.mark.asyncio
@@ -996,7 +1006,7 @@ async def test_rail_shows_a_visible_scrollbar_when_content_overflows():
 @pytest.mark.asyncio
 async def test_landing_footer_advertises_the_landing_keyboard_story():
     """task-2237 (R2): the landing footer advertises every key that works
-    there -- `/` focus search, the hub accelerators `i` (add content) and
+    there -- `/` focus search, the hub accelerators `i` (import content) and
     `n` (new note), and F6 pane cycling -- instead of the bare one-key
     hint F-012 shipped."""
     app = _build_test_app()
@@ -1009,7 +1019,7 @@ async def test_landing_footer_advertises_the_landing_keyboard_story():
 
         footer = screen.query_one(AppFooterStatus)
         assert footer.shortcut_text == (
-            "/ focus search | i add content | n new note | F6 next pane"
+            "/ focus search | i import content | n new note | F6 next pane"
         )
 
 
@@ -2718,8 +2728,8 @@ async def test_library_shell_browse_media_renders_canvas_with_rows_and_preview()
         assert "Product Demo Video" in preview
         # (task-186) The summary's primary action opens the IN-LIBRARY
         # viewer (nav stays on Library), so its label says so -- the
-        # "Open in Media manager" escape hatch lives on the full viewer's
-        # own action row, the only place that genuinely navigates away.
+        # "Open in Library ▸ Media" action (task-2857) lives on the full
+        # viewer's own action row instead.
         assert (
             str(screen.query_one("#library-media-open-viewer", Button).label)
             == "Open in viewer"
@@ -2863,6 +2873,11 @@ async def test_library_shell_media_viewer_uses_destination_honest_labels():
     showing media; "Use in Chat" is inaccurate once staged as Console live
     work (the same handoff every other Library "Use in Console" action --
     notes, conversations -- already uses). Button ids are unchanged.
+
+    task-2857: "Open in Media manager" itself went stale once task-2851
+    retired the legacy Media route (the "media" route id now aliases to
+    "library"), so the label was corrected to "Open in Library ▸ Media" --
+    naming the surface it actually opens.
     """
     app = _build_test_app()
     _seed_conversations(app, _two_conversations(), media=_two_media_items())
@@ -2879,7 +2894,7 @@ async def test_library_shell_media_viewer_uses_destination_honest_labels():
 
         assert (
             str(screen.query_one("#library-media-open", Button).label)
-            == "Open in Media manager"
+            == "Open in Library ▸ Media"
         )
         assert (
             str(screen.query_one("#library-media-use-in-chat", Button).label)
@@ -10577,6 +10592,64 @@ async def test_library_shell_ingest_canvas_happy_path_open_in_library(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_library_shell_import_verb_pair_agrees_across_rail_canvas_and_toast(
+    tmp_path,
+):
+    """(task-2857, Library UAT 2026-08-06 LIB-10) One flow, one verb: the
+    rail row/top button say "Import…", the canvas they open is headed
+    "Import media", and the completion toast says "Import finished" --
+    not the pre-task-2857 mix of "Add content…" / "Import media" /
+    "Ingest finished" that made the flow look like three different
+    features."""
+    db = MediaDatabase(tmp_path / "ingest-canvas.db", client_id="task-2857-verb-pair")
+    source = tmp_path / "verb.txt"
+    source.write_text("One verb pair end to end.", encoding="utf-8")
+    harness = _LibraryIngestCanvasHarness(db)
+    harness.notify = Mock()
+
+    async with harness.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = harness.screen_stack[-1]
+        await _wait_for_library_shell(screen, pilot)
+
+        rail_row = screen.query_one("#library-row-ingest-import-media", Button)
+        assert "Import…" in str(rail_row.label)
+
+        await _open_library_ingest_canvas(screen, pilot)
+        header = str(screen.query_one("#library-ingest-header").renderable)
+        assert header == "Import media"
+
+        start_button = screen.query_one("#library-ingest-start", Button)
+        assert str(start_button.label) == "Start import"
+
+        path_input = screen.query_one("#library-ingest-path", Input)
+        path_input.value = str(source)
+        await pilot.pause()
+        start_button.press()
+        await pilot.pause()
+
+        for _ in range(_INGEST_POLL_ATTEMPTS):
+            jobs = harness.library_ingest_jobs.jobs()
+            if jobs and jobs[0].state == IngestJobState.DONE:
+                break
+            await pilot.pause(_INGEST_POLL_INTERVAL)
+        else:
+            raise AssertionError(
+                f"Job never reached DONE: {harness.library_ingest_jobs.jobs()}"
+            )
+        await pilot.pause()
+
+        summaries = [
+            call.args[0]
+            for call in harness.notify.call_args_list
+            if call.args and str(call.args[0]).startswith("Import finished")
+        ]
+        assert summaries == ["Import finished — 1 imported"], (
+            "rail says Import, canvas says Import media, but the toast "
+            f"disagreed: {[c.args[0] for c in harness.notify.call_args_list if c.args]}"
+        )
+
+
+@pytest.mark.asyncio
 async def test_library_shell_ingest_path_enter_submits_valid_form(tmp_path):
     """(task-186) Enter in the path field with a valid path starts the
     ingest exactly like the Start button. Enter on a blank path stays
@@ -12749,7 +12822,7 @@ async def test_library_shell_export_submit_single_flight_and_notifies_on_success
         # <path>" prefix stripped) lands between the path and the
         # existing auto-included suffix.
         assert notify_message == (
-            f"Exported chatbook to {tmp_path / 'out.zip'}: "
+            f"Exported bundle to {tmp_path / 'out.zip'}: "
             "Warning: 1 character dependency is missing (3 characters auto-included)"
         )
         assert kwargs.get("severity") == "information"
@@ -12891,7 +12964,7 @@ async def test_library_shell_export_orphaned_run_completion_cannot_corrupt_a_lat
             # Empty: this test pins the run_id staleness guard, not
             # task-158's creator-detail surfacing (see the dedicated
             # success test above) -- an empty message keeps the notify
-            # text below exactly the bare "Exported chatbook to <path>".
+            # text below exactly the bare "Exported bundle to <path>".
             "message": "",
             "path": "",
             "dependency_info": {},
@@ -12973,7 +13046,7 @@ async def test_library_shell_export_orphaned_run_completion_cannot_corrupt_a_lat
         # The orphaned export genuinely completed -- still notified...
         assert len(notified) == 1
         assert (
-            notified[0][0] == f"Exported chatbook to {tmp_path / 'orphaned_dest.zip'}"
+            notified[0][0] == f"Exported bundle to {tmp_path / 'orphaned_dest.zip'}"
         )
         # ...but the CURRENT (fresh, second) visit is completely
         # undisturbed: still not running, still no error/status, the
@@ -13154,7 +13227,7 @@ def test_library_export_registry_failure_warns_it_wont_appear_in_artifacts(
             # Empty: this test pins the registry-failure warning, not
             # task-158's creator-detail surfacing -- an empty message
             # keeps the primary notify text below exactly the bare
-            # "Exported chatbook to <path>".
+            # "Exported bundle to <path>".
             "message": "",
             "path": "",
             "dependency_info": {},
@@ -13194,7 +13267,7 @@ def test_library_export_registry_failure_warns_it_wont_appear_in_artifacts(
     assert outcome["registry_recorded"] is False
     assert len(service.create_calls) == 1
     assert notified == [
-        (f"Exported chatbook to {output_path}", {"severity": "information"}),
+        (f"Exported bundle to {output_path}", {"severity": "information"}),
         (
             "Export saved, but couldn't be registered — it won't appear under Artifacts.",
             {"severity": "warning"},
@@ -13490,7 +13563,7 @@ async def test_library_ingest_batch_completion_posts_summary_toast(tmp_path):
         summaries = [
             call.args[0]
             for call in harness.notify.call_args_list
-            if call.args and str(call.args[0]).startswith("Ingest finished")
+            if call.args and str(call.args[0]).startswith("Import finished")
         ]
         assert len(summaries) == 1, (
             f"expected exactly one completion toast, saw: "
@@ -14135,9 +14208,9 @@ async def test_completion_toast_survives_mid_batch_clear(tmp_path):
         summaries = [
             call.args[0]
             for call in harness.notify.call_args_list
-            if call.args and str(call.args[0]).startswith("Ingest finished")
+            if call.args and str(call.args[0]).startswith("Import finished")
         ]
-        assert summaries == ["Ingest finished — 1 imported"], (
+        assert summaries == ["Import finished — 1 imported"], (
             f"mid-batch clear broke the settle toast: {summaries}"
         )
 
@@ -14223,12 +14296,12 @@ async def test_completion_toast_reports_dedup_as_already_in_library(tmp_path):
         summaries = [
             call.args[0]
             for call in harness.notify.call_args_list
-            if call.args and str(call.args[0]).startswith("Ingest finished")
+            if call.args and str(call.args[0]).startswith("Import finished")
         ]
         assert summaries and summaries[-1] == (
-            "Ingest finished — 1 matched"
+            "Import finished — 1 matched"
         ), f"dedup batch misreported: {summaries}"
-        assert summaries[0] == "Ingest finished — 1 imported"
+        assert summaries[0] == "Import finished — 1 imported"
 
 
 @pytest.mark.asyncio
@@ -14875,7 +14948,7 @@ async def test_reset_to_defaults_resets_text_inputs_and_persistence(tmp_path):
 @pytest.mark.asyncio
 async def test_clear_finished_keeps_recent_ledger_and_scrolls_confirm(tmp_path):
     """(task-2130) A confirmed Clear finished must not erase the session's
-    only record: Recent ingests still lists the cleared failure, the empty
+    only record: Recent imports still lists the cleared failure, the empty
     copy is honest, and the armed confirm is scrolled into view."""
     db = MediaDatabase(tmp_path / "ingest-canvas.db", client_id="c4-ledger")
     harness = _LibraryIngestCanvasHarness(db)
@@ -14919,7 +14992,7 @@ async def test_clear_finished_keeps_recent_ledger_and_scrolls_confirm(tmp_path):
         )
         assert state.queue_empty_line == "Queue is empty."
         recent = list(screen.query("#library-ingest-recent"))
-        assert recent, "Recent ingests vanished after the clear"
+        assert recent, "Recent imports vanished after the clear"
 
 
 @pytest.mark.asyncio
@@ -14974,7 +15047,7 @@ async def test_commit_summary_renders_for_text_selection_and_clears(tmp_path):
 async def test_dismiss_preserves_failure_in_recent_ledger(tmp_path):
     """(task-2140) Dismiss was the one destructive act that erased the
     failure from every surface with zero friction -- the record now
-    survives in Recent ingests, marked dismissed."""
+    survives in Recent imports, marked dismissed."""
     db = MediaDatabase(tmp_path / "ingest-canvas.db", client_id="c5-dismiss")
     harness = _LibraryIngestCanvasHarness(db)
     broken = tmp_path / "broken.pdf"
@@ -15009,7 +15082,7 @@ async def test_dismiss_preserves_failure_in_recent_ledger(tmp_path):
         )
         assert getattr(state.recent_jobs[0], "dismissed", False) is True
         recent = list(screen.query("#library-ingest-recent"))
-        assert recent, "Recent ingests must render the dismissed record"
+        assert recent, "Recent imports must render the dismissed record"
 
 
 @pytest.mark.asyncio

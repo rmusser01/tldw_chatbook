@@ -354,7 +354,7 @@ class LibraryIngestQueuePanel(Vertical):
         # earlier always-visible contract on that evidence).
         if state.recent_jobs:
             with Collapsible(
-                title="Recent ingests",
+                title="Recent imports",
                 collapsed=True,
                 id="library-ingest-recent",
             ):
@@ -844,7 +844,7 @@ class LibraryIngestCanvas(VerticalScroll):
         start_quiet_line.styles.height = 1
         yield start_quiet_line
         yield Button(
-            "Start ingest",
+            "Start import",
             id="library-ingest-start",
             classes="library-canvas-action",
             compact=True,

@@ -25,13 +25,13 @@ from typing import Mapping
 from tldw_chatbook.Library.library_export_scope import ExportScope, export_scope_label
 
 # Exact copy values (binding -- see the F4 plan's Global Constraints).
-EXPORT_HEADER_COPY = "Export chatbook"
+EXPORT_HEADER_COPY = "Export bundle (.zip)"
 COUNTING_COPY = "Counting…"
 EMPTY_SCOPE_COPY = "Nothing to export in this scope."
 MEDIA_QUALITY_HELPER_COPY = "original copies full media files into the zip"
 CHOOSE_DESTINATION_COPY = "Choose destination…"
 DESTINATION_PLACEHOLDER_COPY = "No destination chosen"
-EXPORT_BUTTON_COPY = "Export chatbook"
+EXPORT_BUTTON_COPY = "Export bundle (.zip)"
 SERVER_DISABLED_TOOLTIP_COPY = "Export packages local content only."
 
 # The creator's own quality options (thumbnail/compressed/original); default
@@ -90,7 +90,7 @@ class LibraryExportFormState:
         status_line: A quiet in-progress line (Task 3, e.g. ``"Exporting…
             (N items)"``); empty when not running.
         error_line: The last export failure's message, or ``""``.
-        export_enabled: Whether the "Export chatbook" button is enabled --
+        export_enabled: Whether the "Export bundle (.zip)" button is enabled --
             requires counts landed, a non-empty scope, a chosen
             destination, and no export already running.
         show_media_fields: Whether the quality control + its helper line

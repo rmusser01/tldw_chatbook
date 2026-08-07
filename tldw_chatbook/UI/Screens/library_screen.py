@@ -875,7 +875,7 @@ class IngestGuardrailModal(ModalScreen[bool]):
 
     def compose(self) -> ComposeResult:
         with Vertical(id="ingest-guardrail-modal"):
-            yield Static("Some files may fail to ingest:")
+            yield Static("Some files may fail to import:")
             for i, w in enumerate(self.warnings):
                 count = self.affected_counts.get(w["feature"], 0)
                 with Vertical():
@@ -889,7 +889,7 @@ class IngestGuardrailModal(ModalScreen[bool]):
             with Horizontal(id="ingest-guardrail-actions"):
                 yield Button("Cancel", id="ingest-guardrail-cancel", variant="error")
                 yield Button(
-                    "Start ingest anyway",
+                    "Start import anyway",
                     id="ingest-guardrail-confirm",
                     variant="primary",
                 )
@@ -1010,7 +1010,7 @@ class LibraryScreen(BaseAppScreen):
     #: mirror), and F6 cycles the workbench panes.
     LIBRARY_LANDING_SHORTCUTS = (
         ("/", "focus search"),
-        ("i", "add content"),
+        ("i", "import content"),
         ("n", "new note"),
         ("F6", "next pane"),
     )
@@ -1598,7 +1598,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_ingest_clear_finished_armed: bool = False
         self._library_ingest_clear_finished_armed_at: float = 0.0
         # (task-2130) Durable session ledger: terminal jobs snapshotted at
-        # Clear-finished time so Recent ingests (incl. failure records)
+        # Clear-finished time so Recent imports (incl. failure records)
         # survives the registry removal.
         self._library_ingest_recent_ledger: list[LibraryIngestJob] = []
         # (task-2043) Failed rows whose inline error details are expanded.
@@ -1703,7 +1703,7 @@ class LibraryScreen(BaseAppScreen):
         (see ``LibraryRailSearchInput``).
 
         task-2237 (R2): on the LANDING only, `i` and `n` are the hub
-        next-action accelerators (add content / new note), dispatched
+        next-action accelerators (import content / new note), dispatched
         through the same guarded row-switch the hub rows use. They are
         advertised on the landing footer and nowhere else, so they never
         fire off the landing.
@@ -4175,11 +4175,13 @@ class LibraryScreen(BaseAppScreen):
         Returns the rail's primary button, which jumps directly to the
         ingest media canvas, surfaced above the rail search box for
         discoverability. F-013: the label names the action in plain
-        language ("ingest" stays inside the ingest canvas itself).
+        language ("ingest" stays inside the ingest canvas itself);
+        task-2857: that plain language is "Import…", matching the canvas
+        header, the Start button, and the completion toast.
         """
         return [
             Button(
-                "Add content…",
+                "Import…",
                 variant="primary",
                 id="library-ingest-top-button",
                 tooltip="Add files, links, and transcripts to your Library.",
@@ -4647,7 +4649,9 @@ class LibraryScreen(BaseAppScreen):
                         for label, tooltip, row_id, target_id, button_id in (
                             # task-2235 (R2): the canonical ingest CTA label
                             # and tooltip match the rail-top primary button.
-                            ("Add content…", "Add files, links, and transcripts to your Library.",
+                            # task-2857: relabeled "Import…" for consistency
+                            # with the canvas header/Start button/toast.
+                            ("Import…", "Add files, links, and transcripts to your Library.",
                              LIBRARY_ROW_INGEST_MEDIA, "ingest-media",
                              "library-hub-action-import"),
                             ("Search", "Search everything in the Library.",
@@ -5995,7 +5999,7 @@ class LibraryScreen(BaseAppScreen):
            unstated (e.g. an empty creator message, or a creator message
            whose only detail is a missing-dependency warning).
         """
-        message = f"Exported chatbook to {escape_markup(str(path))}"
+        message = f"Exported bundle to {escape_markup(str(path))}"
 
         detail = str(creator_message or "").strip()
         known_prefix = f"Chatbook created successfully at {path}"
@@ -6179,7 +6183,7 @@ class LibraryScreen(BaseAppScreen):
         ``submit``/``mark_parsing``/``mark_writing``/``mark_done``/
         ``mark_failed``/``requeue`` -- from two different call shapes:
 
-        - **Synchronously inside a message handler.** The "Start ingest"
+        - **Synchronously inside a message handler.** The "Start import"
           and "Retry" button handlers call ``submit_library_ingest_job``/
           ``retry_library_ingest_job`` directly, which mutate the registry
           (firing this listener) *before* the handler's own trailing
@@ -6331,7 +6335,7 @@ class LibraryScreen(BaseAppScreen):
                     # present -- something the user pointed at genuinely
                     # broke and nothing landed.
                     notify(
-                        "Ingest finished — " + " · ".join(parts),
+                        "Import finished — " + " · ".join(parts),
                         severity=(
                             "information"
                             if imported > 0 or matched > 0 or failed == 0
@@ -8175,8 +8179,8 @@ class LibraryScreen(BaseAppScreen):
         """Open the browse summary's selected media item in the in-Library viewer.
 
         The browse canvas preview's primary action. Stays entirely inside
-        Library (unlike the full viewer's "Open in Media manager" escape
-        hatch, which navigates to the legacy Media screen) -- hence the
+        Library and never posts a navigation message, unlike the full
+        viewer's "Open in Library ▸ Media" action (task-2857) -- hence the
         "Open in viewer" label (2026-07 UAT relabel).
 
         Args:
@@ -14184,7 +14188,7 @@ class LibraryScreen(BaseAppScreen):
         """Validate the form and submit a new Library ingest job.
 
         Args:
-            event: Button press event emitted by the "Start ingest" action.
+            event: Button press event emitted by the "Start import" action.
         """
         event.stop()
         self._submit_library_ingest_form()
@@ -14193,7 +14197,7 @@ class LibraryScreen(BaseAppScreen):
     def handle_library_ingest_path_submitted(self, event: Input.Submitted) -> None:
         """Submit the ingest form when Enter is pressed in the path field.
 
-        Mirrors the Start ingest button exactly, but only when the Start
+        Mirrors the Start import button exactly, but only when the Start
         gate is open (``start_enabled``) -- Enter on a blank path (or with
         the registry/DB unavailable) stays quiet instead of nagging, since
         the always-visible gate line already explains the blocker
@@ -14253,7 +14257,7 @@ class LibraryScreen(BaseAppScreen):
     def _submit_library_ingest_form(self) -> None:
         """Validate the ingest form and submit a new Library ingest job.
 
-        Shared by the Start ingest button and Enter in the path field. An
+        Shared by the Start import button and Enter in the path field. An
         invalid/missing path is a quiet warning notice, matching every
         other Library form failure path in this screen; a missing
         ``submit_library_ingest_job`` seam (registry absent) gets the same
@@ -14635,7 +14639,7 @@ class LibraryScreen(BaseAppScreen):
         request_cancel = getattr(self.app_instance, "cancel_remote_ingest_batch", None)
         if not callable(request_cancel):
             self._notify_library_ingest_warning(
-                "Cancelling a server ingest is unavailable in this runtime."
+                "Cancelling a server import is unavailable in this runtime."
             )
             return
         request_cancel(job.batch_id)
@@ -14771,7 +14775,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_ingest_expanded_details.clear()
         registry = self._library_ingest_registry()
         # (task-2130) Snapshot the terminal jobs into the session ledger
-        # BEFORE the removal -- Recent ingests is the durable record.
+        # BEFORE the removal -- Recent imports is the durable record.
         jobs_fn = getattr(registry, "jobs", None)
         if callable(jobs_fn):
             terminal = [
@@ -14975,12 +14979,12 @@ class LibraryScreen(BaseAppScreen):
                 action.
         """
         event.stop()
-        raw_name = str(self._library_export_form.get("name", "")).strip() or "chatbook"
+        raw_name = str(self._library_export_form.get("name", "")).strip() or "bundle"
         safe_name = (
             "".join(
                 char for char in raw_name if char.isalnum() or char in (" ", "-", "_")
             ).rstrip()
-            or "chatbook"
+            or "bundle"
         )
         self.app.push_screen(
             FileSave(
@@ -16348,15 +16352,23 @@ class LibraryScreen(BaseAppScreen):
 
     @on(Button.Pressed, "#library-media-open")
     def handle_library_media_open(self, event: Button.Pressed) -> None:
-        """Hand off to the legacy Media manager screen.
+        """Hand off to Library's own Media surface via the "media" route.
 
-        Only the full in-Library viewer's action row carries this button
-        now -- it genuinely navigates away from Library, so its "Open in
-        Media manager" label is honest. The browse summary's in-Library
-        action is ``#library-media-open-viewer`` ("Open in viewer") instead.
+        Only the full in-Library viewer's action row carries this button.
+        Before task-2851 this genuinely left Library for the separate
+        legacy Media screen, which is why the button used to be labeled
+        "Open in Media manager". Task-2851 retired that route -- the
+        "media" route id now aliases to "library" in
+        ``screen_registry._SCREEN_ALIASES`` -- so this now round-trips
+        into Library's own restored state instead of a different screen.
+        The label says what it actually opens now: "Open in Library ▸
+        Media" (task-2857). The browse summary's in-Library action is
+        ``#library-media-open-viewer`` ("Open in viewer") instead, and
+        never posts a navigation message at all.
 
         Args:
-            event: Button press event emitted by the "Open in Media manager" action.
+            event: Button press event emitted by the "Open in Library ▸
+                Media" action.
         """
         event.stop()
         self.post_message(NavigateToScreen("media"))

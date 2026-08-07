@@ -220,7 +220,7 @@ async def test_library_contract_layout_regions_survive_terminal_sizes(
         for label in (
             "Collections",
             "Search / RAG",
-            "Add content…",
+            "Import…",
             "Study decks",
             "Flashcards",
             "Quizzes",

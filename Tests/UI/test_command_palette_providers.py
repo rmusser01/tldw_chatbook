@@ -790,7 +790,7 @@ class TestLibraryIngestProvider:
             hits.append(hit)
 
         assert len(hits) == 1
-        assert hits[0].text == "Library: Add content…"
+        assert hits[0].text == "Library: Import…"
         assert "Open Library" in hits[0].help
 
     @pytest.mark.asyncio
@@ -801,7 +801,7 @@ class TestLibraryIngestProvider:
             hits.append(hit)
 
         assert len(hits) == 1
-        assert hits[0].text == "Library: Add content…"
+        assert hits[0].text == "Library: Import…"
 
     @pytest.mark.asyncio
     async def test_search_unmatched_query_returns_no_hits(self, library_ingest_provider):
@@ -843,7 +843,7 @@ class TestLibraryIngestProvider:
         library_ingest_provider.app.notify.assert_called_once()
         call_args = library_ingest_provider.app.notify.call_args
         assert call_args[1]["severity"] == "error"
-        assert "Failed to open Library ingest" in call_args[0][0]
+        assert "Failed to open Library import" in call_args[0][0]
         assert "nav error" in call_args[0][0]
 
 

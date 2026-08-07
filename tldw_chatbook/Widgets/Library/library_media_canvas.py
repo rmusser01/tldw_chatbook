@@ -181,10 +181,10 @@ class LibraryMediaCanvas(RecomposeCaptureGuard, Vertical):
             toolbar.styles.height = "auto"
             with toolbar:
                 # Opens the selected item in the IN-LIBRARY media viewer
-                # (nav stays on Library), so the label must not promise the
-                # legacy Media manager -- that escape hatch lives on the
-                # full viewer's own action row (`#library-media-open`,
-                # `LibraryMediaViewer`), which genuinely navigates there.
+                # (nav stays on Library), distinct from the full viewer's
+                # own action row (`#library-media-open`, `LibraryMediaViewer`
+                # -- "Open in Library ▸ Media", task-2857), which posts a
+                # fresh ``NavigateToScreen`` for the "media" route.
                 yield Button(
                     "Open in viewer",
                     id="library-media-open-viewer",

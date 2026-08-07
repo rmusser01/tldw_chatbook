@@ -64,9 +64,9 @@ INGEST_SERVER_NEEDS_SERVER_MODE_COPY = (
     "import on the server."
 )
 MEDIA_DB_UNAVAILABLE_COPY = "Media database is unavailable."
-INGEST_UNAVAILABLE_COPY = "Ingest is unavailable in this runtime."
+INGEST_UNAVAILABLE_COPY = "Import is unavailable in this runtime."
 QUEUE_HEADING_COPY = "Queue"
-QUEUE_EMPTY_COPY = "No ingest jobs yet."
+QUEUE_EMPTY_COPY = "No import jobs yet."
 # (task-2130) After a session with activity the old line was a lie.
 QUEUE_EMPTY_AFTER_ACTIVITY_COPY = "Queue is empty."
 START_QUIET_LINE_COPY = "Enter a file path to start."
@@ -413,7 +413,7 @@ class LibraryIngestFormState:
         title: Optional title form field, as typed.
         author: Optional author form field, as typed.
         keywords: Comma-separated keywords, as typed (not yet split).
-        analyze: Whether "Analyze after ingest" is toggled on.
+        analyze: Whether "Analyze after import" is toggled on.
         chunk: Whether "Chunk content" is toggled on.
         chunk_size: The chunk-size field's raw text (display-echo only;
             parsed and clamped to ``[MIN_CHUNK_SIZE, MAX_CHUNK_SIZE]`` at
@@ -543,7 +543,7 @@ class LibraryIngestCanvasState:
             both would be redundant, since without a registry the media-db
             gate can never even be checked in production.
         form: The form echo (see ``LibraryIngestFormState``).
-        start_enabled: Whether the "Start ingest" button is enabled --
+        start_enabled: Whether the "Start import" button is enabled --
             requires a working registry, an available media DB, and a
             non-blank typed path.
         start_quiet_line: (L3b AB wave, A4) A muted line (``"Enter a file
@@ -929,7 +929,7 @@ def _queue_counts_line(jobs: Sequence[LibraryIngestJob]) -> str:
     # these totals span ALL ingests -- say so, or a fresh batch's outcome
     # blurs into history.
     # (task-2230) The count is QUEUE-scoped -- it drops when the user
-    # clears finished rows, while Recent ingests keeps the real history.
+    # clears finished rows, while Recent imports keeps the real history.
     # Saying "all ingests" over a number that shrinks was a lie the label
     # itself denied.
     return f"{joined} — in queue" if joined else ""
@@ -1582,7 +1582,7 @@ def build_library_ingest_state(
     if not form.path.strip() and active_preflight is None:
         intro_lines = build_intro_lines()
 
-    # (task-2130) Recent ingests is the durable session ledger: jobs the
+    # (task-2130) Recent imports is the durable session ledger: jobs the
     # user cleared from the queue live on here (the screen snapshots them
     # into ``recent_ledger`` before the registry removal), so Clear
     # finished no longer erases the only record of a session's failures.

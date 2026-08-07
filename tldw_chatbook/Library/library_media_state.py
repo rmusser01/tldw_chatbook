@@ -11,7 +11,7 @@ from tldw_chatbook.Workspaces.conversation_browser_state import (
 )
 
 LIBRARY_MEDIA_EMPTY_COPY = (
-    "No media in your Library yet. Ingest something to see it here."
+    "No media in your Library yet. Import something to see it here."
 )
 
 _ID_KEYS = ("id", "media_id", "uuid")

@@ -177,7 +177,7 @@ class LibraryMediaViewer(Vertical):
                     compact=True,
                 )
                 yield Button(
-                    "Open in Media manager",
+                    "Open in Library ▸ Media",
                     id="library-media-open",
                     classes="library-canvas-action",
                     compact=True,
