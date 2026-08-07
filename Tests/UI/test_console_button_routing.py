@@ -46,6 +46,14 @@ from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.Widgets.Console import ConsoleWorkspaceContextTray
 from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
 
+#: Terminal size every routing test mounts at. Deliberately file-local
+#: rather than shared: the Console shell is RESPONSIVE -- regions hide and
+#: show by width, and the geometry baseline pins OBSERVED truth at specific
+#: sizes -- so a repo-wide "standard console size" would let one edit
+#: silently change what a dozen unrelated tests exercise. 160x44 is wide
+#: enough that every button these tests press is mounted and hit-testable.
+_ROUTING_SIZE = (160, 44)
+
 
 def _install_real_marks_service(app, tmp_path) -> ConversationLocalMarksService:
     """Give the test app a marks service backed by a real sqlite file.
@@ -104,7 +112,7 @@ async def test_star_button_writes_a_durable_local_mark_and_toggles_it_back(tmp_p
     rows = (_browser_row("conv-star-1", "Planning notes"),)
     host = ConsoleHarness(app)
 
-    async with host.run_test(size=(160, 44)) as pilot:
+    async with host.run_test(size=_ROUTING_SIZE) as pilot:
         console = await _mounted_console(host, pilot)
         await _sync_tray(console, pilot, _base_grouped_workspace_state(rows=rows))
 
@@ -132,7 +140,7 @@ async def test_star_button_writes_nothing_when_the_marks_service_is_missing():
     rows = (_browser_row("conv-star-2", "Unbacked row"),)
     host = ConsoleHarness(app)
 
-    async with host.run_test(size=(160, 44)) as pilot:
+    async with host.run_test(size=_ROUTING_SIZE) as pilot:
         console = await _mounted_console(host, pilot)
         await _sync_tray(console, pilot, _base_grouped_workspace_state(rows=rows))
 
@@ -154,7 +162,7 @@ async def test_browser_section_toggle_persists_its_collapse_preference():
     app = _build_test_app()
     host = ConsoleHarness(app)
 
-    async with host.run_test(size=(160, 44)) as pilot:
+    async with host.run_test(size=_ROUTING_SIZE) as pilot:
         console = await _mounted_console(host, pilot)
         await _sync_tray(console, pilot, _base_grouped_workspace_state())
 
@@ -181,7 +189,7 @@ async def test_browser_group_toggle_persists_its_collapse_preference():
     app = _build_test_app()
     host = ConsoleHarness(app)
 
-    async with host.run_test(size=(160, 44)) as pilot:
+    async with host.run_test(size=_ROUTING_SIZE) as pilot:
         console = await _mounted_console(host, pilot)
         await _sync_tray(console, pilot, _base_grouped_workspace_state())
 
@@ -229,7 +237,7 @@ async def test_no_widget_carries_the_workspace_conversations_toggle_id():
     app = _build_test_app()
     host = ConsoleHarness(app)
 
-    async with host.run_test(size=(160, 44)) as pilot:
+    async with host.run_test(size=_ROUTING_SIZE) as pilot:
         console = await _mounted_console(host, pilot)
         await _sync_tray(console, pilot, _base_grouped_workspace_state())
 
@@ -263,7 +271,7 @@ async def test_workspace_conversation_row_switches_to_its_already_open_session()
     app = _build_test_app()
     host = ConsoleHarness(app)
 
-    async with host.run_test(size=(160, 44)) as pilot:
+    async with host.run_test(size=_ROUTING_SIZE) as pilot:
         console = await _mounted_console(host, pilot)
         store = console._ensure_console_chat_store()
         first_session_id = store.active_session_id
@@ -300,7 +308,7 @@ async def test_close_tab_button_drops_an_empty_session_without_confirmation():
     app = _build_test_app()
     host = ConsoleHarness(app)
 
-    async with host.run_test(size=(160, 44)) as pilot:
+    async with host.run_test(size=_ROUTING_SIZE) as pilot:
         console = await _mounted_console(host, pilot, "#console-native-composer")
         store = console._ensure_console_chat_store()
         keeper_id = store.active_session_id
@@ -332,7 +340,7 @@ async def test_close_tab_button_confirms_before_dropping_a_session_with_messages
     app = _build_test_app()
     host = ConsoleHarness(app)
 
-    async with host.run_test(size=(160, 44)) as pilot:
+    async with host.run_test(size=_ROUTING_SIZE) as pilot:
         console = await _mounted_console(host, pilot, "#console-native-composer")
         store = console._ensure_console_chat_store()
         keeper_id = store.active_session_id
@@ -364,7 +372,7 @@ async def test_session_tab_button_activates_an_inactive_session():
     app = _build_test_app()
     host = ConsoleHarness(app)
 
-    async with host.run_test(size=(160, 44)) as pilot:
+    async with host.run_test(size=_ROUTING_SIZE) as pilot:
         console = await _mounted_console(host, pilot, "#console-native-composer")
         store = console._ensure_console_chat_store()
         first_session_id = store.active_session_id
@@ -409,7 +417,7 @@ async def test_mic_button_opens_a_capture_when_idle(monkeypatch):
     app = _build_test_app()
     host = ConsoleHarness(app)
 
-    async with host.run_test(size=(160, 44)) as pilot:
+    async with host.run_test(size=_ROUTING_SIZE) as pilot:
         console = await _mounted_console(host, pilot, "#console-native-composer")
 
         async def _no_op_start() -> None:
@@ -437,7 +445,7 @@ async def test_mic_button_exits_the_hands_free_loop_instead_of_toggling():
     app = _build_test_app()
     host = ConsoleHarness(app)
 
-    async with host.run_test(size=(160, 44)) as pilot:
+    async with host.run_test(size=_ROUTING_SIZE) as pilot:
         console = await _mounted_console(host, pilot, "#console-native-composer")
         recorder = _ExitRecorder()
         console._console_hands_free = recorder
@@ -458,7 +466,7 @@ async def test_mic_button_exits_the_realtime_loop_instead_of_toggling():
     app = _build_test_app()
     host = ConsoleHarness(app)
 
-    async with host.run_test(size=(160, 44)) as pilot:
+    async with host.run_test(size=_ROUTING_SIZE) as pilot:
         console = await _mounted_console(host, pilot, "#console-native-composer")
         recorder = _ExitRecorder()
         console._console_realtime = recorder
@@ -484,7 +492,7 @@ async def test_mic_button_routes_a_live_capture_to_cancel_or_stop(
     app = _build_test_app()
     host = ConsoleHarness(app)
 
-    async with host.run_test(size=(160, 44)) as pilot:
+    async with host.run_test(size=_ROUTING_SIZE) as pilot:
         console = await _mounted_console(host, pilot, "#console-native-composer")
         calls: list[str] = []
         for name in ("start", "cancel", "stop"):

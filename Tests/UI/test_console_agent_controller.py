@@ -53,6 +53,12 @@ from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
+#: Terminal size the agent-section tests mount at -- wide enough that the
+#: Agent rail section is expanded rather than collapsed by the responsive
+#: shell. File-local on purpose; see the note in
+#: `test_console_button_routing.py` for why there is no shared constant.
+_AGENT_SECTION_SIZE = (180, 48)
+
 
 def _bridge_over(db_path) -> ConsoleAgentBridge:
     """A real bridge over a real durable run store -- no fakes anywhere."""
@@ -117,7 +123,7 @@ async def test_persisted_run_state_reaches_the_mounted_agent_rail_statics(tmp_pa
 
     app = _build_test_app()
     host = ConsoleHarness(app)
-    async with host.run_test(size=(180, 48)) as pilot:
+    async with host.run_test(size=_AGENT_SECTION_SIZE) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-rail-section-header-agent")
 
@@ -161,7 +167,7 @@ async def test_agent_section_sync_skips_repainting_an_unchanged_payload(tmp_path
 
     app = _build_test_app()
     host = ConsoleHarness(app)
-    async with host.run_test(size=(180, 48)) as pilot:
+    async with host.run_test(size=_AGENT_SECTION_SIZE) as pilot:
         from textual.widgets import Static
 
         console = host.screen_stack[-1]
@@ -204,7 +210,7 @@ async def test_drilldown_cycle_steps_persisted_subagents_and_retargets_the_full_
 
     app = _build_test_app()
     host = ConsoleHarness(app)
-    async with host.run_test(size=(180, 48)) as pilot:
+    async with host.run_test(size=_AGENT_SECTION_SIZE) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-rail-section-header-agent")
 
@@ -256,7 +262,7 @@ async def test_subagent_badge_counts_batch_once_and_cache_until_the_row_set_chan
 
     app = _build_test_app()
     host = ConsoleHarness(app)
-    async with host.run_test(size=(180, 48)) as pilot:
+    async with host.run_test(size=_AGENT_SECTION_SIZE) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-rail-section-header-agent")
 

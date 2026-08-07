@@ -61,6 +61,21 @@ def _imported_but_unreferenced(source: str) -> dict[str, int]:
                     continue
                 imported[alias.asname or alias.name.split(".")[0]] = node.lineno
 
+    # Quoted annotations (`x: "ChatScreen"`) are real uses, and they are
+    # `ast.Constant` strings -- but so is every docstring. Scanning ALL string
+    # constants therefore silently marks a name "referenced" because some
+    # docstring mentions it, which is the exact false negative this function
+    # exists to avoid: `ConsoleDictationController` is named in a dozen
+    # docstrings in the target module and used in zero expressions. So string
+    # scanning is restricted to annotation subtrees only.
+    annotation_nodes: list[ast.AST] = []
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.AnnAssign, ast.arg)) and node.annotation is not None:
+            annotation_nodes.append(node.annotation)
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            if node.returns is not None:
+                annotation_nodes.append(node.returns)
+
     referenced: set[str] = set()
     for node in ast.walk(tree):
         if isinstance(node, ast.Name):
@@ -71,9 +86,10 @@ def _imported_but_unreferenced(source: str) -> dict[str, int]:
                 base = base.value
             if isinstance(base, ast.Name):
                 referenced.add(base.id)
-        elif isinstance(node, ast.Constant) and isinstance(node.value, str):
-            # String annotations ("ChatScreen", "dict[str, Foo]") are real uses.
-            referenced.update(re.findall(r"[A-Za-z_][A-Za-z0-9_]*", node.value))
+    for annotation in annotation_nodes:
+        for node in ast.walk(annotation):
+            if isinstance(node, ast.Constant) and isinstance(node.value, str):
+                referenced.update(re.findall(r"[A-Za-z_][A-Za-z0-9_]*", node.value))
 
     return {name: line for name, line in imported.items() if name not in referenced}
 
@@ -142,3 +158,30 @@ def test_alias_reached_imports_are_marked_load_bearing() -> None:
         "fail with AttributeError. Add `# noqa: F401` to each, or repoint the "
         "tests at the defining module and drop the import (task-3023)."
     )
+
+
+@pytest.mark.unit
+def test_a_docstring_mention_does_not_count_as_a_reference() -> None:
+    """The false negative this detector shipped with, pinned.
+
+    The first cut scanned every string `ast.Constant` for identifier tokens so
+    that quoted annotations would count as uses. Docstrings are string
+    constants too, so a symbol named only in prose looked referenced -- and
+    `ConsoleDictationController`, whose deletion turns 28 tests red, is named
+    in a dozen docstrings and used in zero expressions. The guard passed with
+    its marker removed. Real annotations must still count, so both halves are
+    asserted here rather than only the bug.
+    """
+    source = (
+        "from x import DocstringOnly, RealAnnotation, Genuinely\n"
+        "def f(a: 'RealAnnotation') -> None:\n"
+        "    \"\"\"Mentions DocstringOnly in prose only.\"\"\"\n"
+        "    Genuinely()\n"
+    )
+    unreferenced = _imported_but_unreferenced(source)
+    assert "DocstringOnly" in unreferenced, (
+        "a name mentioned only in a docstring was treated as referenced -- "
+        "the detector is scanning docstrings again."
+    )
+    assert "RealAnnotation" not in unreferenced, "quoted annotations are real uses"
+    assert "Genuinely" not in unreferenced, "expression uses are real uses"
