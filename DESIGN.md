@@ -424,3 +424,15 @@ wiring time. Second, if a proxy property is write-only, its getter must raise
 `getattr(obj, name, default)` swallow `AttributeError` specifically, so a
 defensive read would silently take the default forever with nothing raised
 anywhere.
+
+**New Console code goes in `UI/Console_Modules/`, and a ratchet enforces it.**
+The decomposition's first two waves extracted ~4,900 lines out of
+`chat_screen.py` and the file still ended up *larger* than when the work
+started, because ~5,500 lines of concurrent feature work landed in it over the
+same window. Extraction cannot outrun growth, so the screen's size is now a
+ceiling: `Tests/Architecture/test_screen_size_ratchet.py` holds a line and
+method budget that may only ever be lowered. A wave lowers it in the same PR
+that earns the reduction; a feature that would raise it belongs in a module
+instead. The test's failure message names the module directory and this
+section, because the moment it fires is the moment someone needs to know where
+else to put the code — not a link to chase later.
