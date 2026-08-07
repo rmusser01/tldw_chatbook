@@ -1,0 +1,276 @@
+"""Characterisation of the Console transcript region, written BEFORE its extraction.
+
+Wave-3 console decomposition, task 2. Every assertion here was run green
+against ``ChatScreen`` as it stood at ``4348d5b1c`` -- i.e. with the
+transcript block still composed inline inside ``compose_content`` and the
+four transcript-DOM methods still defined on the screen -- and committed
+separately, before a single production line moved. That ordering is the
+point: a characterisation written after the move can only prove the tests
+still pass, never that the behaviour they describe is the behaviour that
+existed beforehand.
+
+Two things are pinned, matching the two ways this extraction could go
+wrong:
+
+1. **The composed block** -- the ``#console-main-column`` >
+   ``#console-transcript-region`` > ``#console-session-surface`` >
+   ``#console-native-transcript`` chain, the inline sizing the workspace
+   grid depends on, and the deliberately top-less frame on
+   ``#console-transcript-region`` (``_frame_console_region(..., top=False)``,
+   which is what makes the transcript read as continuous with the control
+   bar above it). Ids and nesting are the extraction's stated contract, so
+   they are asserted as a parent/child chain rather than by bare presence:
+   a region widget that mounted the right ids in the wrong place would pass
+   a presence check.
+
+2. **The four transcript-DOM methods** that move into the region --
+   ``_capture_console_transcript_reading_state``,
+   ``_restore_console_transcript_reading_state``,
+   ``_clear_native_console_message_selection`` and
+   ``_note_console_follow_intent`` -- each driven against a REAL mounted
+   transcript rendering REAL store-persisted rows (``store.append_message``
+   -> ``_sync_native_console_chat_ui`` -> the widget), never a stub. They
+   are called here through their SCREEN-level names on purpose: post-move
+   those names are delegations, so this file is the direct evidence that
+   the delegation table works.
+"""
+
+import pytest
+
+from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
+from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
+from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
+    ConsoleHarness,
+)
+from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+from tldw_chatbook.Widgets.Console import ConsoleTranscript
+
+
+def _ready_console_host() -> ConsoleHarness:
+    """Build a Console harness whose provider readiness is already satisfied."""
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    return ConsoleHarness(app)
+
+
+def _tail_is_anchored(transcript: ConsoleTranscript) -> bool:
+    """Return Textual's semantic tail-follow state, including manual release.
+
+    ``ScrollView.is_anchored`` stays True after ``release_anchor()`` -- the
+    release is recorded separately on ``_anchor_released``. This is the same
+    pair ``_capture_console_transcript_reading_state`` itself reads, so the
+    assertions below check exactly the state the captured snapshot means
+    (and ``test_console_composer_collapse`` carries an identical helper for
+    the same reason).
+    """
+    return bool(
+        transcript.is_anchored and not getattr(transcript, "_anchor_released", False)
+    )
+
+
+async def _mounted_console(host: ConsoleHarness, pilot):
+    """Return the mounted Console screen once its composer exists."""
+    console = host.screen_stack[-1]
+    await _wait_for_selector(console, pilot, "#console-native-composer")
+    return console
+
+
+async def _seed_transcript(console, pilot):
+    """Persist enough rows to make the mounted transcript scrollable.
+
+    Mirrors ``test_console_composer_collapse._seed_overflowing_transcript``:
+    rows go into the real ``ConsoleChatStore`` and reach the widget through
+    the production sync path, so what the assertions below read back is the
+    transcript's response to persisted state, not a hand-set attribute.
+
+    The ``pilot.pause()`` is load-bearing, not defensive: ``max_scroll_y``
+    is derived from the laid-out virtual size, so without letting Textual
+    run a layout pass the freshly pushed rows can still measure as
+    zero-height and every anchor assertion below degenerates (``scroll_y ==
+    max_scroll_y == 0`` reads as "anchored"). Observed as an order-dependent
+    flake while writing this file.
+
+    Args:
+        console: The mounted ``ChatScreen``.
+        pilot: The Textual pilot driving that screen.
+
+    Returns:
+        A ``(transcript, selected_message_id)`` pair: the mounted
+        ``ConsoleTranscript`` and the id of the last row appended, already
+        selected on it.
+    """
+    store = console._ensure_console_chat_store()
+    selected_message_id = ""
+    for index in range(24):
+        message = store.append_message(
+            store.active_session_id,
+            role=(
+                ConsoleMessageRole.USER
+                if index % 2 == 0
+                else ConsoleMessageRole.ASSISTANT
+            ),
+            content="\n".join(f"message {index} line {line}" for line in range(3)),
+        )
+        selected_message_id = message.id
+    await console._sync_native_console_chat_ui()
+    await pilot.pause()
+    transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
+    assert transcript.max_scroll_y > 0
+    transcript.select_message(selected_message_id)
+    return transcript, selected_message_id
+
+
+@pytest.mark.asyncio
+async def test_transcript_region_composes_its_ids_in_the_documented_nesting():
+    host = _ready_console_host()
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+
+        main_column = console.query_one("#console-main-column")
+        transcript_region = console.query_one("#console-transcript-region")
+        session_surface = console.query_one("#console-session-surface")
+        transcript = console.query_one("#console-native-transcript")
+
+        # The chain, link by link -- presence alone would not catch a
+        # region mounted as a sibling instead of a parent.
+        assert main_column.parent is console.query_one("#console-workspace-grid")
+        assert transcript_region.parent is main_column
+        assert session_surface.parent is transcript_region
+        assert transcript_region in main_column.children
+        assert session_surface in transcript_region.children
+        assert transcript in session_surface.query(ConsoleTranscript).nodes
+
+        # `console-region` is what the shell's own styling keys off.
+        assert transcript_region.has_class("console-region")
+
+
+@pytest.mark.asyncio
+async def test_transcript_region_keeps_its_inline_sizing_and_topless_frame():
+    host = _ready_console_host()
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+
+        main_column = console.query_one("#console-main-column")
+        transcript_region = console.query_one("#console-transcript-region")
+        left_rail = console.query_one("#console-left-rail")
+
+        # Inline sizing set at compose time (the stylesheet carries
+        # different values, so these prove the inline assignments survived).
+        assert main_column.styles.width is not None
+        assert main_column.styles.width.value == 13
+        assert main_column.styles.min_width is not None
+        assert main_column.styles.min_width.value == 56
+        assert main_column.styles.min_height is not None
+        assert main_column.styles.min_height.value == 0
+
+        # The main column really is the dominant pane at this width.
+        assert main_column.region.width > left_rail.region.width
+
+        # `_frame_console_region(..., top=False)`: three solid edges, no top.
+        border = transcript_region.styles.border
+        assert border.top[0] in {"", "none"}
+        assert border.right[0] == "solid"
+        assert border.bottom[0] == "solid"
+        assert border.left[0] == "solid"
+        assert transcript_region.has_class("console-frame-solid")
+
+
+@pytest.mark.asyncio
+async def test_manual_reading_state_captures_and_restores_scroll_and_selection():
+    host = _ready_console_host()
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        transcript, selected = await _seed_transcript(console, pilot)
+        transcript.release_anchor()
+        transcript.scroll_to(y=2, animate=False)
+        await pilot.pause()
+
+        captured = console._capture_console_transcript_reading_state()
+        assert captured is not None
+        assert captured.anchored is False
+        assert captured.scroll_y == pytest.approx(2.0)
+        assert captured.selected_message_id == selected
+
+        # Move away from the captured position in both dimensions.
+        transcript.scroll_to(y=0, animate=False)
+        transcript.selected_message_id = None
+        await pilot.pause()
+
+        console._restore_console_transcript_reading_state(captured)
+        await pilot.pause()
+
+        assert transcript.selected_message_id == selected
+        assert transcript.scroll_y == pytest.approx(2.0)
+        assert _tail_is_anchored(transcript) is False
+
+
+@pytest.mark.asyncio
+async def test_anchored_reading_state_restores_tail_follow():
+    host = _ready_console_host()
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        transcript, selected = await _seed_transcript(console, pilot)
+        transcript.anchor()
+        await pilot.pause()
+
+        captured = console._capture_console_transcript_reading_state()
+        assert captured is not None
+        assert captured.anchored is True
+
+        transcript.release_anchor()
+        transcript.scroll_to(y=0, animate=False)
+        await pilot.pause()
+        assert _tail_is_anchored(transcript) is False
+
+        console._restore_console_transcript_reading_state(captured)
+        await pilot.pause()
+
+        assert _tail_is_anchored(transcript) is True
+        assert transcript.selected_message_id == selected
+
+
+@pytest.mark.asyncio
+async def test_restoring_a_missing_reading_state_is_inert():
+    host = _ready_console_host()
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        transcript, selected = await _seed_transcript(console, pilot)
+        await pilot.pause()
+
+        console._restore_console_transcript_reading_state(None)
+        await pilot.pause()
+
+        assert transcript.selected_message_id == selected
+
+
+@pytest.mark.asyncio
+async def test_clear_message_selection_clears_the_mounted_transcript():
+    host = _ready_console_host()
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        transcript, selected = await _seed_transcript(console, pilot)
+        await pilot.pause()
+        assert transcript.selected_message_id == selected
+
+        console._clear_native_console_message_selection()
+        await pilot.pause()
+
+        assert transcript.selected_message_id is None
+
+
+@pytest.mark.asyncio
+async def test_note_follow_intent_stamps_the_mounted_transcript():
+    host = _ready_console_host()
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        transcript, _selected = await _seed_transcript(console, pilot)
+        transcript.release_anchor()
+        await pilot.pause()
+        before = transcript._follow_intent_time
+
+        console._note_console_follow_intent()
+
+        # TASK-336's whole mechanism is "the most recent of (follow intent,
+        # user scroll) wins", so the stamp must land AFTER the release above.
+        assert transcript._follow_intent_time > before
+        assert transcript._follow_intent_time >= transcript._user_scroll_time
