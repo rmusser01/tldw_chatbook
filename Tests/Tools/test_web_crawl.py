@@ -765,8 +765,8 @@ def test_crawl_html_only_aborts_sniffed_pdf_despite_declared_html(crawl_env):
     still abort the read early under html_only (crawl) mode. Pre-fix, the
     early-break only looked at the declared content-type — since
     "text/html" IS an HTML type, the break never fired and the crawl drained
-    the entire (potentially huge) misdeclared body instead of aborting once
-    the type is known from the sniff."""
+    up to the 1 MiB page cap instead of aborting once the type is known
+    from the sniff."""
     def guarded_chunks():
         yield b"%PDF-"  # >= 5 bytes: resolves the sniff to is_pdf=True this chunk
         for i in range(3):
@@ -862,3 +862,86 @@ def test_sitemap_child_budget_reached_stop_reason(crawl_env, monkeypatch):
     crawl_env.routes["http://example.com/s2.xml"] = _sitemap_response(empty_child)
     out = web_crawl("http://example.com/", sitemap_url="http://example.com/sitemap.xml")
     assert out.endswith("Stopped: sitemap child budget reached.")
+
+
+# ---------------------------------------------------------------------------
+# Final-review fix wave (task-2620): redirect-dedup regression, child
+# skip-and-count, budget-truncated sitemap seeding honesty
+# ---------------------------------------------------------------------------
+
+
+def test_crawl_redirect_dedup_lists_content_fetched_via_redirect(crawl_env):
+    """REGRESSION vs dev: the redirect-dedup guard checked the final URL
+    against `visited` — but `visited` holds ENQUEUED urls, not LISTED ones.
+    Root links to both /x and /y; /x 302s onto /y. /y's body (fetched via
+    /x's attempt) must be listed even though /y was separately enqueued as
+    its own link and, with the budget spent on root+/-x, never gets its own
+    turn to be popped from the queue. Pre-fix this silently discarded the
+    fetched page and reported "Crawled 1 pages"."""
+    _site(crawl_env, {"http://example.com/": ("root", ["/x", "/y"])})
+    crawl_env.routes["http://example.com/x"] = httpx.Response(
+        302, headers={"location": "http://example.com/y"}
+    )
+    _site(crawl_env, {"http://example.com/y": ("y content words", [])})
+    out = web_crawl("http://example.com/", max_pages=2)
+    assert "y content words" in out
+    assert "Crawled 2 pages" in out
+
+
+@requires_defusedxml
+def test_sitemap_children_skipped_counted_in_footer(crawl_env):
+    """AC#1's skip-and-COUNT half (previously unimplemented): child fetch
+    failures and parse refusals were swallowed by a bare `continue` in the
+    child loop, so a sitemapindex whose children ALL fail reported zero
+    signal ("Crawled 0 pages (0 failed, 0 blocked). Stopped: sitemap
+    exhausted."). One child refuses to parse (defusedxml entity-declaration
+    refusal) and one 500s — the footer must count both as skipped."""
+    index = (
+        b'<?xml version="1.0"?>'
+        b'<sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
+        b"<sitemap><loc>http://example.com/bad.xml</loc></sitemap>"
+        b"<sitemap><loc>http://example.com/broken.xml</loc></sitemap>"
+        b"</sitemapindex>"
+    )
+    crawl_env.routes["http://example.com/sitemap.xml"] = _sitemap_response(index)
+    crawl_env.routes["http://example.com/bad.xml"] = _sitemap_response(_ENTITY_SITEMAP)
+    crawl_env.routes["http://example.com/broken.xml"] = httpx.Response(500)
+    out = web_crawl("http://example.com/", sitemap_url="http://example.com/sitemap.xml")
+    assert "2 child sitemaps skipped" in out
+    assert out.endswith("Stopped: sitemap exhausted.")
+
+
+def test_sitemap_budget_truncated_reports_page_budget_reached(crawl_env):
+    """A plain urlset with MORE same-host URLs than max_pages — the default
+    path for nearly every real sitemap at the default max_pages=20 — must
+    not claim "sitemap exhausted"; `take()`'s cap left candidates behind."""
+    urls_xml = "".join(f"<url><loc>http://example.com/p{i}</loc></url>" for i in range(10))
+    xml = (
+        '<?xml version="1.0"?>'
+        '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
+        f"{urls_xml}</urlset>"
+    ).encode()
+    crawl_env.routes["http://example.com/sitemap.xml"] = _sitemap_response(xml)
+    _site(crawl_env, {f"http://example.com/p{i}": (f"page {i}", []) for i in range(10)})
+    out = web_crawl(
+        "http://example.com/", sitemap_url="http://example.com/sitemap.xml", max_pages=3
+    )
+    assert out.endswith("Stopped: page budget reached.")
+
+
+def test_sitemap_exactly_consumed_still_reports_exhausted(crawl_env):
+    """Boundary: a sitemap with EXACTLY max_pages same-host URLs (nothing
+    left over) must still report "sitemap exhausted" — take() only flips the
+    truncation flag when a candidate was actually left unconsidered."""
+    urls_xml = "".join(f"<url><loc>http://example.com/p{i}</loc></url>" for i in range(3))
+    xml = (
+        '<?xml version="1.0"?>'
+        '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
+        f"{urls_xml}</urlset>"
+    ).encode()
+    crawl_env.routes["http://example.com/sitemap.xml"] = _sitemap_response(xml)
+    _site(crawl_env, {f"http://example.com/p{i}": (f"page {i}", []) for i in range(3)})
+    out = web_crawl(
+        "http://example.com/", sitemap_url="http://example.com/sitemap.xml", max_pages=3
+    )
+    assert out.endswith("Stopped: sitemap exhausted.")

@@ -22,6 +22,7 @@ import socket
 import time
 from collections import deque
 from html.parser import HTMLParser
+from typing import NamedTuple
 from urllib.parse import urljoin, urlsplit
 
 import httpx
@@ -732,7 +733,13 @@ def _parse_sitemap(xml_bytes: bytes) -> tuple[list[str], list[str]]:
     return locs, []
 
 
-def _format_crawl_result(pages: list[dict], failed: int, blocked: int, stop_reason: str) -> str:
+def _format_crawl_result(
+    pages: list[dict],
+    failed: int,
+    blocked: int,
+    stop_reason: str,
+    children_skipped: int = 0,
+) -> str:
     blocks: list[str] = []
     total = 0
     for i, page in enumerate(pages, 1):
@@ -749,7 +756,10 @@ def _format_crawl_result(pages: list[dict], failed: int, blocked: int, stop_reas
             break
         blocks.append(block)
         total += block_bytes
-    footer = f"Crawled {len(pages)} pages ({failed} failed, {blocked} blocked). Stopped: {stop_reason}."
+    counts = f"{failed} failed, {blocked} blocked"
+    if children_skipped > 0:
+        counts += f"; {children_skipped} child sitemaps skipped"
+    footer = f"Crawled {len(pages)} pages ({counts}). Stopped: {stop_reason}."
     return "\n\n".join(blocks + [footer]) if blocks else footer
 
 
@@ -807,24 +817,45 @@ def _crawl_fetch_page(
     raise LocalToolError(f"[redirect-limit] exceeded {FETCH_MAX_REDIRECTS} redirects for {url!r}")
 
 
+class _SitemapSeed(NamedTuple):
+    """Result of consulting a sitemap (or sitemapindex) for page URLs.
+
+    children_capped: True when the SITEMAP_MAX_CHILDREN break fired, so the
+        caller can report an honest stop reason instead of claiming the
+        sitemap was exhausted when children were actually left unfetched.
+    budget_truncated: True when `take()`'s max_pages cap stopped with
+        candidates (page URLs or, in the child loop, child sitemaps)
+        actually left over — i.e. the seed was cut short by the page
+        budget, not because the sitemap was fully consulted. False when
+        every candidate was considered, even if that consumed exactly
+        max_pages slots.
+    children_skipped: count of child sitemaps that were fetched-or-attempted
+        but excluded from `urls` for a reason OTHER than the host filter or
+        the SITEMAP_MAX_CHILDREN cap — i.e. every `continue` below that
+        represents a child that failed to contribute: fetch/redirect error,
+        oversized body, or a parse refusal (including a defusedxml
+        hardening refusal).
+    """
+
+    urls: list[str]
+    children_capped: bool
+    budget_truncated: bool
+    children_skipped: int
+
+
 def _seed_from_sitemap(
     client: httpx.Client,
     sitemap_url: str,
     scope_host: str,
     max_pages: int,
     deadline: float,
-) -> tuple[list[str], bool]:
+) -> _SitemapSeed:
     """Collect up to max_pages same-host page URLs from a sitemap.
 
     Sitemap fetches are discovery overhead — they do NOT consume the page
     budget; the deadline bounds a pathological index (spec §2). Host rules:
     child sitemaps must share sitemap_url's host; page URLs must share the
     crawl scope host.
-
-    Returns (urls, children_capped): children_capped is True when the
-    SITEMAP_MAX_CHILDREN break below fires, so the caller can report an
-    honest stop reason instead of claiming the sitemap was exhausted when
-    children were actually left unfetched.
     """
     final_url, _headers, body, truncated, _is_pdf = _crawl_fetch_page(
         client, sitemap_url, deadline, max_bytes=SITEMAP_MAX_BYTES, html_only=False
@@ -836,10 +867,15 @@ def _seed_from_sitemap(
 
     urls: list[str] = []
     seen: set[str] = set()
+    budget_truncated = False
 
     def take(candidates: list[str]) -> None:
+        nonlocal budget_truncated
         for candidate in candidates:
             if len(urls) >= max_pages:
+                # At least `candidate` (and anything after it) was never
+                # considered: the cap, not exhaustion, ended this pass.
+                budget_truncated = True
                 return
             if _crawl_host(candidate) != scope_host:
                 continue
@@ -852,8 +888,12 @@ def _seed_from_sitemap(
     take(page_urls)
     children_fetched = 0
     children_capped = False
+    children_skipped = 0
     for child in children:
-        if len(urls) >= max_pages or time.monotonic() >= deadline:
+        if len(urls) >= max_pages:
+            budget_truncated = True
+            break
+        if time.monotonic() >= deadline:
             break
         if _crawl_host(child) != sitemap_host:
             continue
@@ -869,15 +909,18 @@ def _seed_from_sitemap(
                 client, child, deadline, max_bytes=SITEMAP_MAX_BYTES, html_only=False
             )
         except (LocalToolError, _CrawlDeadline):
+            children_skipped += 1
             continue
         if child_truncated:
+            children_skipped += 1
             continue
         try:
             child_pages, _nested = _parse_sitemap(child_body)  # one level: nested indexes ignored
         except LocalToolError:
+            children_skipped += 1
             continue
         take(child_pages)
-    return urls, children_capped
+    return _SitemapSeed(urls, children_capped, budget_truncated, children_skipped)
 
 
 def web_crawl(
@@ -893,6 +936,11 @@ def web_crawl(
     expected to follow up with web_fetch on pages that matter (spec §2).
     Every URL is egress-guarded; budgets bound fetch ATTEMPTS; a wall-clock
     deadline bounds the whole crawl. Ephemeral: no database writes.
+
+    Attempt/row invariant: a redirect that lands on an already-listed final
+    URL still spends its own attempt slot but produces no row (deduped
+    against the already-listed URL), so "Crawled N pages" can legitimately
+    be smaller than the number of fetch attempts spent.
 
     When ``sitemap_url`` is given, sitemap mode replaces link-discovery BFS:
     the page list comes from the sitemap (urlset, or a one-level
@@ -918,10 +966,12 @@ def web_crawl(
     deadline = time.monotonic() + CRAWL_DEADLINE_SECONDS
     queue: "deque[tuple[str, int]]" = deque([(url, 0)])
     visited = {_normalize_crawl_url(url)}
+    listed: set[str] = set()  # normalized final URLs actually appended to `pages`
     pages: list[dict] = []
     failed = blocked = 0
     attempts = 0
     stop_reason = "no more links within depth"
+    children_skipped = 0
 
     client = httpx.Client(
         follow_redirects=False,
@@ -936,31 +986,36 @@ def web_crawl(
             if not isinstance(sitemap_url, str) or not sitemap_url.strip():
                 raise LocalToolError("[invalid-args] sitemap_url must be a non-empty string")
             try:
-                seeded, children_capped = _seed_from_sitemap(
+                seed = _seed_from_sitemap(
                     client, sitemap_url.strip(), scope_host, max_pages, deadline
                 )
             except _CrawlDeadline:
-                seeded = []
-                children_capped = False
+                seed = _SitemapSeed(urls=[], children_capped=False, budget_truncated=False, children_skipped=0)
             except LocalToolError as exc:
                 if "[crawl-failed]" in str(exc):
                     raise
                 raise LocalToolError(f"[crawl-failed] sitemap could not be fetched: {exc}") from exc
-            queue = deque((u, 0) for u in seeded)
-            visited = {_normalize_crawl_url(u) for u in seeded}
-            # Three non-exceptional paths can leave `seeded` short/empty for a
-            # reason other than "the sitemap was fully consulted": the clock
+            queue = deque((u, 0) for u in seed.urls)
+            visited = {_normalize_crawl_url(u) for u in seed.urls}
+            children_skipped = seed.children_skipped
+            # Four non-exceptional paths can leave `seed.urls` short/empty for
+            # a reason other than "the sitemap was fully consulted": the clock
             # ran out (root fetch's _CrawlDeadline, caught above, and the
             # child-sitemap loop's plain `break` on time.monotonic() >=
             # deadline both leave the clock past the deadline, read back
-            # here), or the SITEMAP_MAX_CHILDREN break fired and left child
-            # sitemaps unfetched (children_capped). Check the clock first:
-            # a deadline that also capped children is reported as the
-            # deadline, since that's the harder budget the caller hit.
+            # here); the SITEMAP_MAX_CHILDREN break fired and left child
+            # sitemaps unfetched (children_capped); or `take()`'s max_pages
+            # cap left page-URL or child-sitemap candidates unconsidered
+            # (budget_truncated). Priority reflects which budget is "harder":
+            # deadline (wall-clock, non-negotiable) > children_capped (an
+            # amplification guard) > budget_truncated (the ordinary page
+            # budget) > exhausted (every candidate was actually considered).
             if time.monotonic() >= deadline:
                 stop_reason = "deadline reached"
-            elif children_capped:
+            elif seed.children_capped:
                 stop_reason = "sitemap child budget reached"
+            elif seed.budget_truncated:
+                stop_reason = "page budget reached"
             else:
                 stop_reason = "sitemap exhausted"
 
@@ -993,8 +1048,17 @@ def web_crawl(
                     failed += 1
                 continue
             final_norm = _normalize_crawl_url(final_url)
-            if final_norm in visited and final_norm != _normalize_crawl_url(current):
-                continue  # a previously-fetched URL already redirected here
+            if final_norm in listed:
+                # This exact final URL was already appended to `pages` —
+                # via its own fetch or another page's redirect onto it.
+                # `visited` is NOT the right set to dedup against here: it
+                # holds every ENQUEUED url (marked at discovery time), so a
+                # page that redirects onto a separately-enqueued sibling
+                # link would otherwise be discarded even though nothing had
+                # listed it yet — the start page's own final URL can't be
+                # in `listed` before it's listed, so no `!= current` carve-out
+                # is needed here.
+                continue
             visited.add(final_norm)
 
             ctype = (headers.get("content-type") or "").split(";", 1)[0].strip().lower()
@@ -1013,6 +1077,7 @@ def web_crawl(
             if is_pdf or (ctype and ctype not in _HTML_TYPES):
                 marker = "[application/pdf]" if is_pdf else f"[{ctype}]"
                 pages.append({"url": final_url, "title": "", "excerpt": "", "marker": marker})
+                listed.add(final_norm)
                 continue
 
             html = _decode_body(body, headers.get("content-type", ""))
@@ -1040,6 +1105,7 @@ def web_crawl(
                 "excerpt": full_text[:CRAWL_EXCERPT_MAX_CHARS].strip(),
                 "marker": None,
             })
+            listed.add(final_norm)
 
             # Expansion: same-host pages only, within the depth budget. A page
             # that redirected off-host is listed but its links are not followed.
@@ -1079,4 +1145,4 @@ def web_crawl(
     finally:
         client.close()
 
-    return _format_crawl_result(pages, failed, blocked, stop_reason)
+    return _format_crawl_result(pages, failed, blocked, stop_reason, children_skipped)
