@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
+from types import MappingProxyType
 
 import pytest
 
@@ -80,6 +81,58 @@ class FakeLocalService:
             raise self.builtin_error
         return self.builtin_result
 
+    async def run_runtime_request(self, method, params=None):
+        """Mirrors `LocalRuntimeDelegate.request()`'s own `tools/call` branch:
+        the raw protocol method reaches the SAME `execute_tool` seam the
+        `tool.execute` action does -- which is exactly why it needs the same
+        refusal at the control-plane boundary."""
+        normalized = dict(params or {})
+        result: dict = {}
+        if method == "tools/call":
+            arguments = normalized.get("arguments")
+            result = await self.execute_tool(
+                str(normalized.get("name") or normalized.get("tool_name") or ""),
+                arguments if isinstance(arguments, dict) else {},
+            )
+        return {
+            "source": "local",
+            "method": method,
+            "params": normalized,
+            "result": result,
+        }
+
+    async def run_runtime_batch(self, requests):
+        # Fix Round H (PR-T3 review), Item 2b: mirrors
+        # `LocalMCPControlService.run_runtime_batch()`'s own
+        # `dict(request)` coercion (`local_control_service.py:500`) --
+        # this used to only accept a literal `dict` (`isinstance(request,
+        # dict)`) and silently drop anything else (a `Mapping` that isn't a
+        # `dict` subclass, or a list-of-pairs) to `{}`, which is exactly
+        # the divergence dimension `test_raw_tools_call_as_a_list_of_
+        # pairs_inside_a_batch_is_refused_before_anything_runs` below had
+        # to route around by wiring a REAL `LocalMCPControlService`
+        # instead of this fake -- this fake could not exercise that bug
+        # either way. `dict(request)` raises the SAME TypeError/ValueError
+        # the real method would for a genuinely non-coercible item, which
+        # is correct: by the time `run_action()` calls this method the
+        # requests are already normalized by `_normalize_batch_requests()`
+        # one layer up, so in practice every item here is already a plain
+        # dict -- this only matters for a caller that reaches this fake
+        # directly, bypassing that normalization.
+        results = []
+        for index, request in enumerate(requests):
+            entry = dict(request)
+            method = str(entry.get("method") or "")
+            if method == "tools/call":
+                params = entry.get("params") if isinstance(entry.get("params"), dict) else {}
+                arguments = params.get("arguments")
+                await self.execute_tool(
+                    str(params.get("name") or params.get("tool_name") or ""),
+                    arguments if isinstance(arguments, dict) else {},
+                )
+            results.append({"index": index, "method": method, "ok": True})
+        return {"source": "local", "results": results}
+
 
 def _service(
     tmp_path: Path,
@@ -98,6 +151,40 @@ def _service(
         local_service=fake, server_service=None, target_store=None, context_store=None
     )
     return service, fake, client, store
+
+
+@pytest.mark.asyncio
+async def test_fake_local_service_run_runtime_batch_coerces_like_the_real_one(tmp_path):
+    """Fix Round H (PR-T3 review), Item 2b. Direct-call proof that
+    `FakeLocalService.run_runtime_batch()`'s `dict(request)` coercion now
+    matches `LocalMCPControlService.run_runtime_batch()`'s own -- called
+    DIRECTLY on the fake, bypassing `run_action()`'s own
+    `_normalize_batch_requests()` pre-dispatch scan. Every OTHER batch test
+    in this file goes through that scan, which already coerces every item
+    to a plain `dict` before the fake ever sees it -- so none of them could
+    tell this fake's own coercion apart from the old `isinstance(request,
+    dict) else {}` fallback it silently carried. A non-dict `Mapping` and a
+    list-of-pairs must both be recognized as a genuine `tools/call` request
+    when the fake is exercised on its own: the old code dropped both to
+    `{}`, reporting `method=""` and never dispatching to `execute_tool`."""
+    _service_ignored, fake, _client, _store = _service(tmp_path)
+    non_dict_request = MappingProxyType(
+        {"method": "tools/call", "params": {"name": "calculator"}}
+    )
+    list_of_pairs_request = [
+        ["method", "tools/call"], ["params", {"name": "calculator"}]
+    ]
+
+    result = await fake.run_runtime_batch([non_dict_request, list_of_pairs_request])
+
+    assert result["results"] == [
+        {"index": 0, "method": "tools/call", "ok": True},
+        {"index": 1, "method": "tools/call", "ok": True},
+    ]
+    assert fake.execute_tool_calls == [
+        ("calculator", {}),
+        ("calculator", {}),
+    ]
 
 
 def _log_records(store: LocalMCPStore) -> list[dict]:
@@ -152,11 +239,65 @@ async def test_hub_tool_builtin_routes_to_execute_tool(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_hub_tool_governance_denial_records_honest_blocked_row(tmp_path):
+    """Item 1 (PR-T3 fix round D). Before this item, an `MCPGovernanceDenied`
+    raised inside `coro` (here: the builtin `execute_tool()` path) fell into
+    `execute_hub_tool()`'s generic `except Exception` branch and was recorded
+    as a crashed execution -- `status="error"`, `error_category=
+    "execution_failed"`, `duration_ms` measured as if the call ran, and the
+    caller's pre-computed `decision="allowed"` left untouched -- three false
+    statements about an event that never dispatched at all; governance
+    refused it outright, before the tool ever ran. Recorded honestly instead,
+    reusing `record_tool_decision()`'s own never-executed vocabulary
+    (`status="blocked"`, `duration_ms=0`) and overriding `decision` to
+    `"denied"`. `error_category="governance_denied"` is asserted against the
+    RECORD READ BACK OFF THE PERSISTED JSONL (`_log_records()`), not the
+    in-memory value passed to `_record_tool_execution()` -- proving the token
+    survives `safe_metadata_token()` (execution_log.py's `build_record()`)
+    unmodified; that sanitizer rejects any value containing whitespace, so a
+    token with a space would silently come back as `"invalid"` instead of
+    failing loudly."""
+    service, fake, client, store = _service(tmp_path)
+    fake.builtin_error = control_plane_module.MCPGovernanceDenied(
+        "Denied by local governance: tool.execute"
+    )
+
+    with pytest.raises(control_plane_module.MCPGovernanceDenied):
+        await service.test_hub_tool("builtin:tldw_chatbook", "calculator", {"x": 1})
+
+    records = _log_records(store)
+    assert records and records[0]["ok"] is False
+    assert records[0]["status"] == "blocked"
+    assert records[0]["duration_ms"] == 0
+    assert records[0]["decision"] == "denied"
+    assert records[0]["exception_type"] == "MCPGovernanceDenied"
+    assert records[0]["error_category"] == "governance_denied"
+
+
+@pytest.mark.asyncio
 async def test_hub_tool_unknown_prefix_raises_value_error_display_only(tmp_path):
     service, fake, client, store = _service(tmp_path)
 
     with pytest.raises(ValueError, match="display-only"):
         await service.test_hub_tool("server:remote-1", "search", {})
+
+
+@pytest.mark.asyncio
+async def test_hub_tool_unknown_prefix_raises_the_typed_display_only_error(tmp_path):
+    """task-2539 (PR-T3 fix round B, item 3): drift-proofing at the RAISE
+    SITE itself, not just where the message is rendered. Before this item,
+    nothing in this suite pinned the exact type/message `execute_hub_tool()`
+    raises for a server-source key -- only the UI-side classifier
+    (`mcp_workbench._is_permission_refusal()`) pinned its OWN copy of the
+    string, so a reword here would have silently reverted that classifier's
+    fix (it no longer even LOOKS at the message, but this test exists so a
+    future accidental reword is caught at the source, not inferred)."""
+    service, fake, client, store = _service(tmp_path)
+
+    with pytest.raises(control_plane_module.MCPServerSourceDisplayOnlyError) as exc_info:
+        await service.test_hub_tool("server:remote-1", "search", {})
+
+    assert str(exc_info.value) == "Server-source tools are display-only."
 
 
 @pytest.mark.asyncio
@@ -318,3 +459,441 @@ async def test_hub_tool_approved_decision_recorded_on_failure_too(tmp_path):
     records = _log_records(store)
     assert records and records[0]["decision"] == "approved"
     assert records[0]["ok"] is False
+
+
+# -- Task 4 (PR-T3): `registered_argument_names` threads from `test_hub_tool()`
+# through to the execution log -- before this task NO caller in the tree
+# supplied it, so every row recorded `argument_names: []` and
+# `unknown_argument_count == len(arguments)` regardless of what the tool's
+# schema actually registered.
+
+
+@pytest.mark.asyncio
+async def test_hub_tool_registered_argument_names_threads_to_execution_log(tmp_path):
+    service, fake, client, store = _service(tmp_path)
+
+    await service.test_hub_tool(
+        "local:docs",
+        "search",
+        {"q": "hi", "surprise": "unexpected arg"},
+        registered_argument_names={"q", "limit"},
+    )
+
+    records = _log_records(store)
+    assert records and records[0]["argument_names"] == ["q"]
+    # "surprise" was supplied but never registered on the schema.
+    assert records[0]["unknown_argument_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_hub_tool_omitted_registered_argument_names_keeps_pre_task4_behavior(
+    tmp_path,
+):
+    """A caller that doesn't supply `registered_argument_names` (every
+    caller before Task 4) keeps recording NO names and counting every
+    supplied argument as unknown -- byte-identical to before this task."""
+    service, fake, client, store = _service(tmp_path)
+
+    await service.test_hub_tool("local:docs", "search", {"q": "hi"})
+
+    records = _log_records(store)
+    assert records and records[0]["argument_names"] == []
+    assert records[0]["unknown_argument_count"] == 1
+
+
+# -- Task 6 (PR-T3), Route B: the Advanced runner's `tool.execute` hatch.
+# `run_action("tool.execute", ...)` used to call `local_service.execute_tool()`
+# directly -- bypassing BOTH the Hub's per-tool permission gate (a tool set to
+# Off ran anyway) and `_record_tool_execution()` (which lives only inside
+# `execute_hub_tool()`), so the run left no trace in the audit trail at all.
+# It now resolves the same permission state the Test Tool gate resolves and
+# executes through the same shared seam as every other run.
+
+
+@pytest.mark.asyncio
+async def test_advanced_tool_execute_routes_through_execute_hub_tool_and_logs(tmp_path):
+    service, fake, client, store = _service(tmp_path)
+
+    result = await service.run_action(
+        "tool.execute", {"tool_name": "calculator", "arguments": {"x": 1}}
+    )
+
+    # Same underlying call and same returned envelope as before -- the
+    # built-in branch of `execute_hub_tool()` IS `local_service.execute_tool`.
+    assert fake.execute_tool_calls == [("calculator", {"x": 1})]
+    assert result == fake.builtin_result
+
+    records = _log_records(store)
+    assert records, "the Advanced execute hatch must leave an audit-trail row"
+    assert records[0]["server_key"] == "builtin:tldw_chatbook"
+    assert records[0]["tool_name"] == "calculator"
+    assert records[0]["ok"] is True
+    assert records[0]["initiator"] == "test"
+
+
+@pytest.mark.asyncio
+async def test_advanced_tool_execute_refuses_a_tool_set_to_off(tmp_path):
+    """The headline: an Off tool must not run from the Advanced hatch."""
+    service, fake, client, store = _service(tmp_path)
+    service.set_tool_state("builtin:tldw_chatbook", "calculator", "deny")
+
+    with pytest.raises(PermissionError, match="Off"):
+        await service.run_action(
+            "tool.execute", {"tool_name": "calculator", "arguments": {"x": 1}}
+        )
+
+    assert fake.execute_tool_calls == []
+
+
+@pytest.mark.asyncio
+async def test_advanced_tool_execute_refuses_a_tool_set_to_off_with_the_typed_error(
+    tmp_path,
+):
+    """Item 2 (PR-T3 fix round D): drift-proofing at the RAISE SITE, same
+    precedent as `test_hub_tool_unknown_prefix_raises_the_typed_display_
+    only_error`. `UI/MCP_Modules/mcp_inspector.py`'s Advanced runner
+    narrows its own classifier to this TYPE -- if this raise site ever
+    reverted to a bare `PermissionError`, that narrowed handler would stop
+    recognizing this genuine refusal (falling through to "Action failed:"),
+    with nothing in this suite failing to say so were it not for this test
+    pinning the type here, at the source."""
+    service, fake, client, store = _service(tmp_path)
+    service.set_tool_state("builtin:tldw_chatbook", "calculator", "deny")
+
+    with pytest.raises(control_plane_module.MCPHubGateDeniedError):
+        await service.run_action(
+            "tool.execute", {"tool_name": "calculator", "arguments": {"x": 1}}
+        )
+
+
+@pytest.mark.asyncio
+async def test_advanced_tool_execute_refusal_is_recorded_as_denied(tmp_path):
+    """A refusal is part of the audit trail too -- a blocked row, not silence.
+
+    Fix Round B, Item 1 (this test's assertion is a PRE-AUTHORIZED contract
+    change): Fix Round A's Item 5 made this row carry a reason by passing
+    the refusal message through as ``error=``, reusing the SAME
+    ``decision="denied"`` + truthy ``error`` -> ``"approval_cancelled"``
+    derivation ``test_record_tool_decision_writes_denied_record`` (test_
+    control_plane_bridge.py) and ``console_chat_controller.py``'s shutdown-
+    mid-approval recorder rely on. That reuse was wrong: those other two
+    callers describe a genuine user-cancelled-an-offered-approval outcome,
+    while THIS call site is the permission gate denying outright -- no
+    approval was ever offered, nobody cancelled anything. Reusing their
+    category made the row specific AND FALSE instead of generic and true.
+    ``record_tool_decision()`` now takes an explicit ``error_category``
+    that, when supplied, is used verbatim instead of being derived --
+    this call site now passes the honest ``"gate_denied"`` token instead of
+    ``error=``. The message text still never reaches the row --
+    ``build_record()``'s ``error_category`` is a sanitized token
+    (``safe_metadata_token()``), never exception/free text, by the
+    metadata-only design the whole execution log is built on;
+    ``error_category`` is the only signal that survives.
+    """
+    service, fake, client, store = _service(tmp_path)
+    service.set_tool_state("builtin:tldw_chatbook", "calculator", "deny")
+
+    with pytest.raises(PermissionError):
+        await service.run_action("tool.execute", {"tool_name": "calculator"})
+
+    records = _log_records(store)
+    assert records and records[0]["decision"] == "denied"
+    assert records[0]["status"] == "blocked"
+    assert records[0]["ok"] is False
+    assert records[0]["server_key"] == "builtin:tldw_chatbook"
+    assert records[0]["tool_name"] == "calculator"
+    # Fix Round B, Item 1: an explicit, honest category -- the permission
+    # gate denied this outright; nothing was ever offered for the user to
+    # cancel. "error" itself (the raw refusal sentence) must never land on
+    # the row -- only the derived/explicit category.
+    assert records[0]["error_category"] == "gate_denied"
+    assert "error" not in records[0]
+    assert "Off in Permissions" not in repr(records[0])
+
+
+@pytest.mark.asyncio
+async def test_advanced_tool_execute_records_the_decision_it_ran_under(tmp_path):
+    """An Ask-resolved tool (the default posture for a NON-hash-free server
+    key, and what `resolve_effective_state_by_key()` collapses every
+    non-deny verdict to for those) records "approved" -- the Advanced
+    runner's confirm press is the approval, the same vocabulary the agent
+    bridge's approved calls use. `builtin:tldw_chatbook` is itself in
+    `HASH_FREE_SERVER_KEYS`, so an explicit "ask" override (set here) still
+    resolves to "ask"/"approved" same as always -- only an explicit/
+    inherited "allow" for a hash-free key is exempt from the collapse (see
+    `test_advanced_tool_execute_allow_records_allowed_not_approved` below)."""
+    service, fake, client, store = _service(tmp_path)
+    service.set_tool_state("builtin:tldw_chatbook", "calculator", "ask")
+
+    await service.run_action("tool.execute", {"tool_name": "calculator"})
+
+    records = _log_records(store)
+    assert records and records[0]["decision"] == "approved"
+
+
+@pytest.mark.asyncio
+async def test_advanced_tool_execute_allow_records_allowed_not_approved(tmp_path):
+    """Fix Round A, Item 1: `builtin:tldw_chatbook` (the Advanced hatch's
+    fixed gate key, `BUILTIN_SERVER_KEY`) is in `HASH_FREE_SERVER_KEYS` --
+    in-process code the rug-pull hash guard was never meant to cover (see
+    that constant's docstring). Before this fix,
+    `resolve_effective_state_by_key()` collapsed EVERY "allow" to "ask"
+    unconditionally, so a calculator explicitly set to Allow still recorded
+    `decision="approved"` (asked-and-approved) from this Advanced hatch,
+    while the SAME tool resolved via a live `HubTool` (the Test Tool panel,
+    `resolve_effective_state()`, which already honors the exemption) would
+    record `decision="allowed"` (no ask needed) for the identical
+    permission state -- a cross-surface split in the audit trail. This also
+    exercises the `decision="allowed" if state.state == "allow" else
+    "approved"` branch in `execute_advanced_tool()`, which was unreachable
+    before this fix since by-key resolution never returned "allow"."""
+    service, fake, client, store = _service(tmp_path)
+    service.set_tool_state("builtin:tldw_chatbook", "calculator", "allow")
+
+    await service.run_action(
+        "tool.execute", {"tool_name": "calculator", "arguments": {"x": 1}}
+    )
+
+    records = _log_records(store)
+    assert records and records[0]["decision"] == "allowed"
+    assert records[0]["ok"] is True
+
+
+@pytest.mark.asyncio
+async def test_advanced_tool_execute_gate_check_exception_uses_honest_copy(tmp_path):
+    """Item 1 (PR-T3 fix round F): the THIRD occurrence of one pattern in
+    this branch -- a permission-gate check that RAISES must not be told
+    to the user as a genuine "Off" verdict. Before this fix,
+    `execute_advanced_tool()` synthesized the same fail-closed
+    `EffectiveToolState(state="deny", origin="gate_error")` that
+    `MCPWorkbench._resolve_test_gate()` (`mcp_workbench.py`) synthesizes
+    for the identical case, then fell into the SAME deny branch as a
+    genuine "Off" and raised `_ADVANCED_EXECUTE_BLOCKED_MESSAGE` --
+    "{tool} is set to Off in Permissions." -- a confident, false claim
+    about the user's own configuration when the RESOLVER crashed, not the
+    gate. This is what task-2536 (fix round B) already fixed on the Test
+    Tool panel's blocked-result body and fix round D polished further;
+    this raise site had never branched on `origin` at all. Verified here
+    by making `gate_tool_test_by_key` raise directly, mirroring `_resolve_
+    test_gate()`'s own mutation precedent for that twin fix."""
+    service, fake, client, store = _service(tmp_path)
+
+    def _raise(server_key: str, tool_name: str):
+        raise RuntimeError("permission store corrupt")
+
+    service.gate_tool_test_by_key = _raise  # type: ignore[method-assign]
+
+    with pytest.raises(control_plane_module.MCPHubGateDeniedError) as exc_info:
+        await service.run_action(
+            "tool.execute", {"tool_name": "calculator", "arguments": {"x": 1}}
+        )
+
+    assert str(exc_info.value) == "Permission state could not be resolved."
+    assert "Off in Permissions" not in str(exc_info.value)
+    assert fake.execute_tool_calls == []
+
+
+@pytest.mark.asyncio
+async def test_advanced_tool_execute_gate_check_exception_records_gate_error_token(
+    tmp_path,
+):
+    """Item 1 (PR-T3 fix round F), audit-row half: `error_category=
+    "gate_denied"` is ALSO false for a gate check that raised -- that
+    token means the Hub's OWN Allow/Ask/Off gate genuinely resolved to
+    Off, and here the gate never resolved at all. A resolver failure now
+    records its own honest token, `"gate_error"` (matching the
+    `EffectiveToolState.origin` value that produced it, the same
+    vocabulary-consistency precedent `"gate_denied"`'s own comment
+    states), read back off the PERSISTED JSONL row -- not the in-memory
+    call -- proving it survives `safe_metadata_token()` unmodified, same
+    precedent as `test_advanced_tool_execute_refusal_is_recorded_as_
+    denied` above."""
+    service, fake, client, store = _service(tmp_path)
+
+    def _raise(server_key: str, tool_name: str):
+        raise RuntimeError("permission store corrupt")
+
+    service.gate_tool_test_by_key = _raise  # type: ignore[method-assign]
+
+    with pytest.raises(control_plane_module.MCPHubGateDeniedError):
+        await service.run_action("tool.execute", {"tool_name": "calculator"})
+
+    records = _log_records(store)
+    assert records and records[0]["decision"] == "denied"
+    assert records[0]["status"] == "blocked"
+    assert records[0]["error_category"] == "gate_error"
+    assert records[0]["error_category"] != "gate_denied"
+    assert "error" not in records[0]
+
+
+# -- Task 6 (PR-T3), Route B, second door: `runtime.request` /`runtime.batch`
+# are Advanced descriptors too, and the in-process runtime speaks the real
+# protocol -- `{"method": "tools/call"}` reached the SAME
+# `runtime_delegate.execute_tool()` as the hatch above, with the same two
+# holes (no Hub permission gate, no execution-log row). Gating only
+# `tool.execute` would have locked the front door and left this one open.
+
+
+@pytest.mark.asyncio
+async def test_raw_tools_call_through_runtime_request_is_refused(tmp_path):
+    service, fake, client, store = _service(tmp_path)
+
+    with pytest.raises(PermissionError, match="Execute Local Tool"):
+        await service.run_action(
+            "runtime.request",
+            {"method": "tools/call", "params": {"name": "calculator"}},
+        )
+
+    assert fake.execute_tool_calls == []
+
+
+@pytest.mark.asyncio
+async def test_raw_tools_call_through_runtime_request_raises_the_typed_error(tmp_path):
+    """Item 2 (PR-T3 fix round D): same drift-proofing precedent as
+    `test_advanced_tool_execute_refuses_a_tool_set_to_off_with_the_typed_
+    error` -- pin the TYPE at the raise site, not just the message, since
+    `UI/MCP_Modules/mcp_inspector.py`'s Advanced runner now classifies
+    refusals by type. `RawToolCallRefusedError` is shared verbatim with
+    `local_runtime_delegate.LocalMCPRuntimeDelegate.request()`'s own raise
+    site for the identical refusal (see that type's own docstring)."""
+    service, fake, client, store = _service(tmp_path)
+
+    with pytest.raises(control_plane_module.RawToolCallRefusedError):
+        await service.run_action(
+            "runtime.request",
+            {"method": "tools/call", "params": {"name": "calculator"}},
+        )
+
+
+@pytest.mark.asyncio
+async def test_raw_tools_call_inside_a_runtime_batch_is_refused(tmp_path):
+    """One `tools/call` anywhere in the batch refuses the whole batch --
+    partial execution would run the ungated call and report it as a normal
+    batch row."""
+    service, fake, client, store = _service(tmp_path)
+
+    with pytest.raises(PermissionError, match="Execute Local Tool"):
+        await service.run_action(
+            "runtime.batch",
+            {
+                "requests": [
+                    {"method": "tools/list"},
+                    {"method": "tools/call", "params": {"name": "calculator"}},
+                ]
+            },
+        )
+
+    assert fake.execute_tool_calls == []
+
+
+@pytest.mark.asyncio
+async def test_raw_tools_call_inside_a_batch_as_non_dict_mapping_is_refused(tmp_path):
+    """Minor #4 (Fix Round A): the pre-dispatch scan used to check
+    `isinstance(request, dict)`, while `LocalMCPControlService.
+    run_runtime_batch()` accepts any `Mapping` -- a non-dict `Mapping` item
+    (unreachable from the UI today, since the payload is always
+    `json.loads` output, but worth closing so the scan and the batch runner
+    agree on what counts as a request) would silently skip the scan. Widened
+    to `Mapping` so it doesn't."""
+    service, fake, client, store = _service(tmp_path)
+    non_dict_request = MappingProxyType(
+        {"method": "tools/call", "params": {"name": "calculator"}}
+    )
+
+    with pytest.raises(PermissionError, match="Execute Local Tool"):
+        await service.run_action("runtime.batch", {"requests": [non_dict_request]})
+
+    assert fake.execute_tool_calls == []
+
+
+@pytest.mark.asyncio
+async def test_raw_tools_call_as_a_list_of_pairs_inside_a_batch_is_refused_before_anything_runs(
+    tmp_path,
+):
+    """Item 2 (PR-T3 fix round F). The pre-dispatch scan only ever inspected
+    items where `isinstance(request, Mapping)` -- but `LocalMCPControlService.
+    run_runtime_batch()` (`local_control_service.py:500`) normalizes every
+    item with `dict(request)`, which ALSO accepts a list of `(key, value)`
+    pairs. `json.loads` produces exactly a bare `list` for a JSON array, so
+    a payload like
+
+        {"requests": [{"method": "tools/list"}, [["method", "tools/call"]]]}
+
+    -- reachable from the Advanced pane's raw-JSON textarea -- has its
+    second item skip the scan entirely (it is a `list`, not a `Mapping`)
+    while the real dispatcher still normalizes and runs it.
+
+    This falsifies `RawToolCallRefusedError`'s own docstring promise ("a
+    refusal ... that never reached the tool") in a subtler way than an
+    outright miss: the scan DOES eventually refuse this batch -- but only
+    after item 0 has already dispatched for real through the delegate and
+    been recorded, because the durable backstop
+    (`LocalMCPRuntimeDelegate.request()`) is what actually catches item 1,
+    one item late. "It raised" alone is not evidence of the fix -- the
+    pre-fix code raises too. The activity log staying non-empty is the
+    tell; this test's post-fix assertion is that it stays EMPTY.
+
+    Wired with a REAL `LocalMCPControlService` (default, real
+    `LocalMCPRuntimeDelegate`) instead of this file's `FakeLocalService` --
+    that fake's own `run_runtime_batch()` neither coerces a list of pairs
+    nor reproduces the delegate's `tools/call` backstop, so it cannot
+    exercise this bug either way.
+    """
+    store = LocalMCPStore(tmp_path / "store.json")
+    local_service = LocalMCPControlService(
+        store=store, client=None, manifest_provider=lambda: {}
+    )
+    service = UnifiedMCPControlPlaneService(
+        local_service=local_service,
+        server_service=None,
+        target_store=None,
+        context_store=None,
+    )
+
+    with pytest.raises(PermissionError, match="Execute Local Tool"):
+        await service.run_action(
+            "runtime.batch",
+            {
+                "requests": [
+                    {"method": "tools/list"},
+                    [["method", "tools/call"]],
+                ]
+            },
+        )
+
+    activity = local_service.get_runtime_activity()
+    assert activity["entries"] == [], (
+        "the pre-dispatch scan must refuse the WHOLE batch before any item "
+        "dispatches -- a non-empty activity log means an earlier item "
+        "(here: the 'tools/list' request) already ran for real"
+    )
+
+
+@pytest.mark.asyncio
+async def test_raw_tools_call_as_a_list_of_pairs_alone_in_a_batch_is_refused(tmp_path):
+    """Companion control to the test above, isolating the SAME normalization
+    gap without the "does item 0 leak first" timing question -- a batch
+    whose ONLY item is a list-of-pairs `tools/call` must still be refused
+    (not silently treated as an unrecognized, harmless item)."""
+    service, fake, client, store = _service(tmp_path)
+
+    with pytest.raises(PermissionError, match="Execute Local Tool"):
+        await service.run_action(
+            "runtime.batch",
+            {"requests": [[["method", "tools/call"], ["params", {"name": "calculator"}]]]},
+        )
+
+    assert fake.execute_tool_calls == []
+
+
+@pytest.mark.asyncio
+async def test_other_runtime_request_methods_are_untouched(tmp_path):
+    """The diagnostic value of the raw request runner survives: only the
+    executing method is refused."""
+    service, fake, client, store = _service(tmp_path)
+
+    result = await service.run_action(
+        "runtime.request", {"method": "tools/list", "params": {}}
+    )
+
+    assert result["method"] == "tools/list"

@@ -7,6 +7,142 @@ from tldw_chatbook.config import get_chachanotes_db_lazy, get_media_db_lazy
 
 from .server import MCP_AVAILABLE, describe_local_mcp_capabilities
 
+# Fix Round A (PR-T3 whole-branch review), Item 2. Task 6 (PR-T3) refused a
+# raw `tools/call` in `UnifiedMCPControlPlaneService.run_action()`
+# (`_refuse_raw_tool_call`), one layer above this delegate -- but that
+# refusal sits one layer above the seam it protects: `request()`'s
+# `tools/call` branch below calls `self.execute_tool()` directly, so any
+# caller that reaches `request()`/`batch()` WITHOUT going through
+# `run_action()` (a direct call on this delegate, `batch()`'s own loop over
+# `request()`, or `LocalMCPControlService.run_runtime_request()`/
+# `run_runtime_batch()` -- both public methods reachable off
+# `app.local_mcp_control_service`) bypassed the gate and the audit-log row
+# entirely.
+#
+# This module-level constant is shared verbatim with
+# `unified_control_plane_service.py`'s own refusal so the two independent
+# enforcement points can never show the user different copy for the same
+# refusal. Each site carries a comment naming which job it does:
+#   - `run_action()`'s pre-dispatch scan (control-plane layer): preserves
+#     `runtime.batch`'s all-or-nothing property -- checked before ANY item
+#     dispatches, since the batch runs serially and a per-item refusal here
+#     alone would only stop the offending item, not the ones before it that
+#     had already executed.
+#   - This delegate's `request()` (this layer): the durable backstop that
+#     catches every caller, including ones that never went through that
+#     scan.
+RAW_TOOL_CALL_REFUSED_MESSAGE = (
+    "Tool calls run through the Execute Local Tool action, which applies your "
+    "Permissions settings and records the run."
+)
+
+# Fix Round G, Item 7 (PR-T3 review of Fix Round F). Independent surfaces
+# state the identical "the permission RESOLVER itself failed, not a
+# genuine verdict" condition (`EffectiveToolState(state="deny",
+# origin="gate_error")`) in their own sentence shape:
+#   - `unified_control_plane_service._ADVANCED_EXECUTE_GATE_ERROR_MESSAGE`:
+#     a bare, capitalized sentence -- the Advanced hatch already carries
+#     "Blocked · not run" on its own heading line (`MCPInspector.
+#     _ADVANCED_BLOCKED_HEADING`), so the body under it is just the claim.
+#   - `mcp_workbench._TOOL_TEST_BLOCKED_UNKNOWN_TEXT`: `"Blocked —
+#     <clause>."`, deliberately parallel to its own genuine-deny sibling
+#     `_TOOL_TEST_BLOCKED_TEXT` ("Blocked — this tool is set to Off in
+#     Permissions.") -- the Test Tool panel has no separate "Blocked"
+#     heading of its own, so each of its blocked bodies carries the prefix.
+#   - `mcp_inspector._UNKNOWN_ORIGIN_SENTENCE` (Fix Round I, Item 4): a
+#     bare, capitalized sentence like the Advanced hatch's -- the
+#     Permissions-explanation block's fallback for an `EffectiveToolState.
+#     origin` this UI doesn't otherwise recognize (`_ORIGIN_SENTENCES.get
+#     (effective.origin, _UNKNOWN_ORIGIN_SENTENCE)`), reachable whenever a
+#     Tools-mode tool selection's own `gate_tool_test()` call raises
+#     (`MCPWorkbench._effective_for_display()`'s single-tool fallback
+#     path). A review found this one was STILL an independently-maintained
+#     literal after the first two converged -- brought in here rather than
+#     left as the "majority phrasing" a comment nearby used to justify the
+#     other two's convergence while not actually including it.
+#
+# Before the first fix these were independently maintained literals that
+# happened to read close ("could not be resolved" vs. "could not be
+# determined") -- exactly the drifted-duplicate shape this whole PR exists
+# to close. One clause here, lowercase and without terminal punctuation so
+# any sentence SHAPE can compose around it (a leading capital for a
+# bare-sentence surface, a lowercase mid-sentence fragment after a
+# "Blocked — " em-dash for another) -- this is what all three surfaces
+# above are now DERIVED from, not merely equal to: a reword here changes
+# all three, or they go visibly out of sync at the assertion syntax level
+# (a stale call site left unedited), not just at the reader's eye. Homed
+# here rather than in `unified_control_plane_service.py`/`mcp_workbench.
+# py`/`mcp_inspector.py`, mirroring `RAW_TOOL_CALL_REFUSED_MESSAGE` just
+# above: this module imports from none of them, and all three already
+# import from this module, so each can depend on this one without a cycle.
+PERMISSION_STATE_UNRESOLVED_CLAUSE = "permission state could not be resolved"
+
+
+def capitalize_first(text: str) -> str:
+    """Uppercase only the first character; every other character is left
+    exactly as given.
+
+    Fix Round I, Item 3. `str.capitalize()` does NOT do this -- it
+    additionally LOWERCASES every character after the first, silently
+    mangling any acronym, proper noun, or server name a future clause
+    might contain. Proven live at `unified_control_plane_service.
+    _ADVANCED_EXECUTE_GATE_ERROR_MESSAGE`'s old
+    `f"{PERMISSION_STATE_UNRESOLVED_CLAUSE.capitalize()}."`: a clause
+    reading "MUTATED permission state is unknown" rendered as "Mutated
+    permission state is unknown." -- silently downcasing MUTATED with no
+    signal that anything had changed. `PERMISSION_STATE_UNRESOLVED_CLAUSE`
+    itself has no acronym today, so the bug was latent, not yet visible in
+    the shipped copy; the fragility was in the FORMULA, reachable by any
+    future reword of the clause, and would have reintroduced a
+    cross-surface divergence through the very mechanism (`capitalize_
+    first`, replacing three separate `.capitalize()`/reimplementation call
+    sites) added to prevent one.
+
+    Every surface that turns `PERMISSION_STATE_UNRESOLVED_CLAUSE` (or any
+    future shared clause homed here) into a leading-capital sentence must
+    call this, not `str.capitalize()` and not its own hand-rolled
+    `text[0].upper() + text[1:]` -- one implementation, so a future
+    behavior change (e.g. Unicode titlecasing edge cases) updates every
+    caller identically instead of risking a fourth reimplementation
+    drifting from the other three.
+
+    Args:
+        text: The clause to sentence-case; may be empty.
+
+    Returns:
+        ``text`` with only its first character uppercased -- every other
+        character byte-identical to the input; ``""`` for ``""``.
+    """
+    return text[:1].upper() + text[1:]
+
+
+class RawToolCallRefusedError(PermissionError):
+    """A raw ``tools/call`` was refused -- run it through Execute Local Tool.
+
+    Item 2 (PR-T3 fix round D). Raised at BOTH enforcement points that
+    share :data:`RAW_TOOL_CALL_REFUSED_MESSAGE` above -- this delegate's
+    own ``request()`` (the durable backstop, below) and
+    ``unified_control_plane_service.UnifiedMCPControlPlaneService.
+    _refuse_raw_tool_call()`` (the control-plane pre-dispatch scan, one
+    layer up) -- so the two independent refusals of the identical event
+    share one type the same way they already share one message. Defined
+    here, not in ``unified_control_plane_service.py``, because this
+    module is the dependency-safe common ground: ``local_control_
+    service.py`` (home of the sibling ``MCPGovernanceDenied``) and
+    ``unified_control_plane_service.py`` both already import from this
+    module, and this module imports from neither of them.
+
+    Subclasses ``PermissionError`` so any existing ``except
+    PermissionError`` handler upstream keeps working unchanged.
+    `UI/MCP_Modules/mcp_inspector.py`'s Advanced runner narrows its own
+    handler to this type (among others) instead of the bare base class,
+    so a tool's own body raising an unrelated ``PermissionError`` renders
+    as a failure, not a refusal that never reached the tool.
+    """
+
+    def __init__(self, message: str = RAW_TOOL_CALL_REFUSED_MESSAGE) -> None:
+        super().__init__(message)
+
 
 class LocalMCPRuntimeDelegate:
     """Direct local MCP runtime adapter that avoids loopback FastMCP dependency."""
@@ -23,6 +159,37 @@ class LocalMCPRuntimeDelegate:
         "prompts/get",
     )
     _UNAVAILABLE_DIRECT_TOOLS = {"chat_with_llm"}
+    #: Fix Round C (PR-T3 review), Item 1. `request()`'s `tools/call` branch
+    #: below refuses unconditionally (`RAW_TOOL_CALL_REFUSED_MESSAGE`), but
+    #: `tools/call` stayed listed as an ordinary, fully-supported entry in
+    #: `get_protocol_diagnostics()`'s `methods` list -- the exact surface an
+    #: agent reads before planning a `runtime.request` call (reachable via
+    #: `run_action("runtime.protocol.inspect")`). An agent that saw
+    #: `{"name": "tools/call", "supported": true}` there had no way to learn
+    #: the call would be refused short of trying it. Mirrors
+    #: `_UNAVAILABLE_DIRECT_TOOLS` above in NAME only: `tools/call` stays a
+    #: *recognized* method (still enumerated in `_REQUEST_METHODS`, since
+    #: `request()` genuinely understands it well enough to refuse it by name
+    #: rather than raising "unsupported method") and is reported
+    #: `supported: False` in diagnostics -- but that is a two-way flag, not
+    #: the tools bucket's three-way `implemented`/`unavailable`/`missing`
+    #: split (Fix Round E, Item 5: the shapes differ). `supported: False`
+    #: here can ONLY mean a policy refusal, though: every entry in
+    #: `get_protocol_diagnostics()`'s `methods` list is built by iterating
+    #: `_REQUEST_METHODS` -- this class's own fixed roster of methods it
+    #: recognizes -- so a method that is simply not implemented never gets
+    #: a `methods` entry at all; it is ABSENT, not present with `supported:
+    #: False`. Fix Round G (review of Fix Round E): the prior wording here
+    #: -- "a reader of THIS surface alone cannot tell a policy refusal like
+    #: this one from a method that is simply not implemented" -- overstated
+    #: the gap. The two cases ARE distinguishable, by presence vs. absence
+    #: in the list; what the two-way/three-way shape difference actually
+    #: means is narrower: absence is not itself LABELED "unimplemented" the
+    #: way the tools bucket's own `missing` key spells it out. The flag
+    #: itself is honest and load-bearing either way; only that framing was
+    #: not quite right. See `get_protocol_diagnostics()` for where this is
+    #: read.
+    _UNAVAILABLE_DIRECT_METHODS = frozenset({"tools/call"})
     _RESOURCE_URI_PREFIXES = (
         "conversation://",
         "note://",
@@ -60,10 +227,57 @@ class LocalMCPRuntimeDelegate:
         }
 
     def get_protocol_capabilities(self) -> dict[str, Any]:
+        """The methods `request()` recognizes and will dispatch on by name.
+
+        NOTE: "recognized" is not "will succeed" -- `tools/call` is listed
+        in `request_methods` because `request()` genuinely understands that
+        method name (it is not an "unsupported method" `KeyError`), but
+        every call is unconditionally refused (see `request()`'s
+        `tools/call` branch and `RAW_TOOL_CALL_REFUSED_MESSAGE`).
+
+        Item 4 (PR-T3 fix round D), closing the scope Fix Round C
+        deliberately left open (see that round's own commit message):
+        `request_methods` listed `tools/call` with nothing on THIS
+        method's own return value to say it is refused -- that signal
+        lived only on `get_protocol_diagnostics()`'s per-method
+        `supported` flag. `request_methods` itself is UNCHANGED (Fix
+        Round C's own reasoning still holds: dropping `tools/call` from
+        it would itself be inaccurate, since `request()` recognizes the
+        method by name rather than raising the generic "unsupported
+        method" `KeyError`). Instead, `unavailable_request_methods` is a
+        NEW field, using the same `_UNAVAILABLE_DIRECT_METHODS`
+        vocabulary `get_protocol_diagnostics()` already uses -- so the
+        "recognized but refused" distinction is visible on THIS method's
+        own payload, not only the sibling one. `get_protocol_diagnostics()`
+        remains the surface with full per-method detail (a real
+        `supported` flag on every entry, not just the unavailable ones).
+
+        Item 3 (PR-T3 fix round F): the paragraph above used to justify
+        this by describing "an agent reading ONLY this method, never
+        cross-referencing `get_protocol_diagnostics()`" -- overclaiming a
+        reader that does not exist. This method has exactly ONE
+        production consumer, `LocalMCPControlService.get_advanced()`
+        (`local_control_service.py:329`), which already returns this
+        method's output and `get_protocol_diagnostics()`'s output
+        together, as sibling keys (`"protocol"` / `"protocol_diagnostics"`)
+        of the SAME payload -- nothing in this codebase ever sees one
+        without the other. The field is still worth having: a caller that
+        renders or forwards only the `"protocol"` slice of that payload
+        (or any future consumer of this method taken in isolation) would
+        otherwise have to reconstruct "which methods are unavailable"
+        from the diagnostics' full per-method list instead of reading it
+        directly here. The change was never in question, only its
+        justification -- say what this actually does.
+        """
         return {
             "adapter": "direct_in_process",
             "supports_batch": True,
             "request_methods": list(self._REQUEST_METHODS),
+            "unavailable_request_methods": [
+                method
+                for method in self._REQUEST_METHODS
+                if method in self._UNAVAILABLE_DIRECT_METHODS
+            ],
         }
 
     def get_protocol_diagnostics(self) -> dict[str, Any]:
@@ -82,7 +296,11 @@ class LocalMCPRuntimeDelegate:
             "mcp_sdk_available": MCP_AVAILABLE,
             "supports_batch": True,
             "methods": [
-                {"name": method, "supported": True} for method in self._REQUEST_METHODS
+                {
+                    "name": method,
+                    "supported": method not in self._UNAVAILABLE_DIRECT_METHODS,
+                }
+                for method in self._REQUEST_METHODS
             ],
             "manifest": {
                 "tools": len(tools),
@@ -196,18 +414,22 @@ class LocalMCPRuntimeDelegate:
         if normalized_method == "prompts/list":
             return {"prompts": list(manifest.get("prompts", []))}
         if normalized_method == "tools/call":
-            arguments = payload.get("arguments")
-            return {
-                "tool_name": self._require_payload_field(
-                    payload, "name", aliases=("tool_name",)
-                ),
-                "result": await self.execute_tool(
-                    self._require_payload_field(
-                        payload, "name", aliases=("tool_name",)
-                    ),
-                    arguments if isinstance(arguments, Mapping) else {},
-                ),
-            }
+            # Fix Round A, Item 2: the durable backstop -- refuse here too,
+            # not just at the control-plane pre-dispatch scan (see the
+            # module-level `RAW_TOOL_CALL_REFUSED_MESSAGE` comment for why
+            # both layers are needed). Tool execution keeps exactly one
+            # door through this delegate: `execute_tool()`, called directly
+            # by `LocalMCPControlService.execute_tool()` for the gated,
+            # logged `tool.execute` action -- never through this raw
+            # protocol branch. Fix Round C, Item 1: this refusal is now also
+            # advertised, not just enforced -- `get_protocol_diagnostics()`
+            # reports `tools/call` as `supported: False`
+            # (`_UNAVAILABLE_DIRECT_METHODS`), so an agent inspecting the
+            # protocol before planning a call sees the same "no" this raise
+            # produces, instead of discovering it by trying.
+            # Item 2 (PR-T3 fix round D): typed, not a bare `PermissionError`
+            # -- see `RawToolCallRefusedError`'s own docstring for why.
+            raise RawToolCallRefusedError(RAW_TOOL_CALL_REFUSED_MESSAGE)
         if normalized_method == "resources/read":
             return {
                 "resource_uri": self._require_payload_field(

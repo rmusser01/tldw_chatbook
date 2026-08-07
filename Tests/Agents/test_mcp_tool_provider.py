@@ -87,6 +87,11 @@ class FakeMCPService:
         self.approve_for_session_calls: list[tuple] = []
         self.record_tool_decision_calls: list[tuple] = []
         self.execute_calls: list[tuple] = []
+        # Task 4 (PR-T3): `registered_argument_names` recorded separately
+        # from `execute_calls` -- that 5-tuple's shape is pinned by many
+        # pre-existing exact-equality assertions (mirrors `decision_calls`'
+        # own precedent above in the sibling `ToolTestHubService` fake).
+        self.execute_registered_argument_names_calls: list[set[str] | None] = []
 
     def get_kill_switch(self) -> bool:
         return self.kill_switch
@@ -144,10 +149,12 @@ class FakeMCPService:
         initiator: str = "test",
         decision: str = "allowed",
         timeout_seconds: float | None = None,
+        registered_argument_names: set[str] | None = None,
     ) -> dict:
         self.execute_calls.append(
             (server_key, tool_name, dict(arguments or {}), initiator, decision)
         )
+        self.execute_registered_argument_names_calls.append(registered_argument_names)
         if self.execute_delay:
             await asyncio.sleep(self.execute_delay)
         if self.execute_raises is not None:
@@ -495,6 +502,68 @@ def test_invoke_allow_executes_and_returns_content(running_loop):
     assert result.ok is True
     assert "42" in result.content
     assert service.execute_calls == [("local:srv", "run", {"x": 1}, "agent", "allowed")]
+
+
+def test_invoke_passes_registered_argument_names_from_tool_schema(running_loop):
+    """Task 4 (PR-T3): `_execute()` derives `registered_argument_names`
+    from the resolved `HubTool.input_schema` -- the same schema source the
+    Hub workbench's Test Tool form renders from -- and forwards it to
+    `execute_hub_tool()` so an agent-initiated call is audited with real
+    argument names instead of the pre-Task-4 always-empty `[]`."""
+    service = FakeMCPService(
+        catalog_records=[
+            _catalog_record(
+                "srv",
+                [
+                    _tool_dict(
+                        "run",
+                        input_schema={
+                            "type": "object",
+                            "properties": {
+                                "x": {"type": "integer"},
+                                "y": {"type": "string"},
+                            },
+                        },
+                    )
+                ],
+            )
+        ],
+        states={
+            ("local:srv", "run"): EffectiveToolState(
+                state="allow", origin="tool_override"
+            )
+        },
+    )
+    provider = MCPToolProvider(service=service, main_loop=running_loop)
+    _compose(provider)
+    tool_id = provider.list_catalog()[0].id
+
+    result = provider.invoke(tool_id, {"x": 1})
+
+    assert result.ok is True
+    assert service.execute_registered_argument_names_calls == [{"x", "y"}]
+
+
+def test_invoke_no_input_schema_passes_empty_registered_argument_names(running_loop):
+    """A tool with no advertised schema (`_tool_dict()`'s default) still
+    reaches `execute_hub_tool()` with a real (empty) set, not `None` --
+    `schema_argument_names(None) == set()`, never raises."""
+    service = FakeMCPService(
+        catalog_records=[_catalog_record("srv", [_tool_dict("run")])],
+        states={
+            ("local:srv", "run"): EffectiveToolState(
+                state="allow", origin="tool_override"
+            )
+        },
+    )
+    provider = MCPToolProvider(service=service, main_loop=running_loop)
+    _compose(provider)
+    tool_id = provider.list_catalog()[0].id
+
+    result = provider.invoke(tool_id, {})
+
+    assert result.ok is True
+    assert service.execute_registered_argument_names_calls == [set()]
 
 
 def test_invoke_non_text_result_returns_placeholder(running_loop):
@@ -1005,6 +1074,7 @@ class _TrackingSubmissionService(FakeMCPService):
         initiator: str = "test",
         decision: str = "allowed",
         timeout_seconds: float | None = None,
+        registered_argument_names: set[str] | None = None,
     ):
         return self.execution_coroutine
 
@@ -1163,6 +1233,7 @@ class RealContractFakeMCPService:
         initiator: str = "test",
         decision: str = "allowed",
         timeout_seconds: float | None = None,
+        registered_argument_names: set[str] | None = None,
     ) -> dict:
         timeout = (
             timeout_seconds

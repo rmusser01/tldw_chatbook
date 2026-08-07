@@ -10,11 +10,14 @@ stylesheet is loaded in this harness, so nothing here asserts on styling).
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 import pytest
 from textual.app import App, ComposeResult
 from textual.widgets import Checkbox, Input, Select, Static, TextArea
+
+import tldw_chatbook
 
 from tldw_chatbook.UI.MCP_Modules.mcp_schema_form import (
     MCPSchemaForm,
@@ -567,3 +570,108 @@ async def test_collect_arguments_sends_null_for_blank_required_nullable_field():
         form = app.query_one(MCPSchemaForm)
         args = form.collect_arguments()
     assert args == {"note": None}
+
+
+# -- Task 6 (PR-T3, task-2272 item 1): the boolean field must be READABLE ----
+# The harness above loads no stylesheet, which is exactly why this shipped
+# broken: under the production bundle, `css/features/_conversations.tcss`'s
+# unscoped `Checkbox { width: 100%; height: 2; }` type selector fixes every
+# checkbox app-wide at two rows -- both of which the widget's own border
+# consumes, leaving ZERO content rows. `search_rag`'s `use_semantic` painted
+# as an empty box: no toggle glyph, no label, state impossible to read.
+# These tests mount with the real bundle so that rule is in play.
+
+BOOLEAN_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "use_semantic": {
+            "type": "boolean",
+            "description": "Use semantic search",
+            "default": True,
+        },
+    },
+}
+
+
+class StyledSchemaFormApp(App):
+    """Schema-form harness WITH the production stylesheet loaded."""
+
+    CSS_PATH = str(
+        Path(tldw_chatbook.__file__).parent / "css" / "tldw_cli_modular.tcss"
+    )
+
+    def compose(self) -> ComposeResult:
+        yield MCPSchemaForm(schema=BOOLEAN_SCHEMA, id="mcp-inspector-test-form")
+
+
+def _painted(checkbox: Checkbox) -> str:
+    return "\n".join(
+        checkbox.render_line(y).text for y in range(checkbox.size.height)
+    )
+
+
+@pytest.mark.asyncio
+async def test_boolean_field_paints_glyph_and_label_under_the_app_stylesheet():
+    app = StyledSchemaFormApp()
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        checkbox = app.query_one(Checkbox)
+        assert checkbox.size.height >= 1, (
+            "the checkbox has no content rows at all -- a border-only husk"
+        )
+        painted = _painted(checkbox)
+        assert "Use semantic search" in painted
+        assert "X" in painted  # the toggle glyph itself
+
+
+@pytest.mark.asyncio
+async def test_boolean_field_state_is_readable_by_more_than_position():
+    """On and off must differ in what is PAINTED, not only in the widget's
+    internal `value` -- the reported symptom was a box whose state could not
+    be read at all."""
+    app = StyledSchemaFormApp()
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        checkbox = app.query_one(Checkbox)
+
+        def _glyph_style():
+            for segment in checkbox.render_line(0):
+                if "X" in segment.text:
+                    return segment.style
+            return None
+
+        on_style = _glyph_style()
+        checkbox.value = False
+        await pilot.pause()
+        off_style = _glyph_style()
+        assert on_style is not None and off_style is not None
+        assert on_style != off_style
+
+
+@pytest.mark.asyncio
+async def test_boolean_field_toggles_on_a_mouse_click():
+    """Un-clickable was the other half of the report: only Tab+Space worked."""
+    app = StyledSchemaFormApp()
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        checkbox = app.query_one(Checkbox)
+        before = checkbox.value
+        await pilot.click(Checkbox)
+        await pilot.pause()
+        assert checkbox.value is not before
+
+
+@pytest.mark.asyncio
+async def test_boolean_field_keeps_its_content_rows_while_focused():
+    """The `_evals.tcss` precedent: a focus-only decoration that grows or
+    overpaints a fixed-height checkbox erases the very label it is meant to
+    highlight, and shifts every sibling below it mid-click."""
+    app = StyledSchemaFormApp()
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        checkbox = app.query_one(Checkbox)
+        unfocused_region = checkbox.region
+        checkbox.focus()
+        await pilot.pause()
+        assert checkbox.region.height == unfocused_region.height
+        assert "Use semantic search" in _painted(checkbox)

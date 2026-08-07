@@ -16,6 +16,7 @@ from textual.widgets import Button, Checkbox, ContentSwitcher, DataTable, Input,
 import tldw_chatbook
 import tldw_chatbook.UI.MCP_Modules.mcp_inspector as mcp_inspector_module
 import tldw_chatbook.UI.MCP_Modules.mcp_workbench as mcp_workbench_module
+from tldw_chatbook.MCP.local_control_service import MCPGovernanceDenied
 from tldw_chatbook.MCP.permission_store import (
     BUILTIN_TOOL_SERVER_KEY,
     HASH_FREE_SERVER_KEYS,
@@ -26,6 +27,9 @@ from tldw_chatbook.MCP.permission_store import (
 )
 from tldw_chatbook.MCP.readiness import HubAction
 from tldw_chatbook.MCP.unified_control_models import UnifiedMCPContext
+from tldw_chatbook.MCP.unified_control_plane_service import (
+    MCPServerSourceDisplayOnlyError,
+)
 from tldw_chatbook.UI.MCP_Modules.mcp_audit_mode import MCPAuditMode
 from tldw_chatbook.UI.MCP_Modules.mcp_inspector import (
     MCPInspector,
@@ -72,6 +76,12 @@ class FakeTargetStore:
         return [FakeTarget()]
 
 
+# Fix Round H (PR-T3 review), Item 2c: a genuine fake-vs-real key-set pin
+# candidate (`load_section()` below returns hand-rolled, UI-rendered dict
+# shapes per source/section) but NOT pinned this round -- see the POLICY
+# comment above `FakeLocalMCPControlService` in
+# Tests/MCP/test_unified_control_plane_service.py for the line drawn and
+# why this one is flagged rather than pinned or silently skipped.
 class FakeHubService:
     def __init__(self) -> None:
         self.target_store = FakeTargetStore()
@@ -2936,6 +2946,12 @@ class ToolTestHubService(FakeHubService):
         # (`test_calls == [("local:docs", "fetch", {})]`), so the decision
         # string goes in its own list rather than growing that tuple.
         self.decision_calls: list[str] = []
+        # Task 4 (PR-T3): the schema-approved argument names the dispatch
+        # path (`on_mcp_inspector_tool_test_requested()`) derives from the
+        # resolved `HubTool.input_schema` and forwards here -- separate
+        # from `test_calls` for the same reason `decision_calls` is (that
+        # 3-tuple's shape is pinned by many pre-existing assertions).
+        self.registered_argument_names_calls: list[set[str] | None] = []
 
     def gate_tool_test(self, tool: Any) -> EffectiveToolState:
         self.gate_calls.append((tool.server_key, tool.name))
@@ -3007,9 +3023,18 @@ class ToolTestHubService(FakeHubService):
     async def local_external_catalog(self):
         return await self.load_section("external_servers")
 
-    async def test_hub_tool(self, server_key, tool_name, arguments=None, *, decision="allowed"):
+    async def test_hub_tool(
+        self,
+        server_key,
+        tool_name,
+        arguments=None,
+        *,
+        decision="allowed",
+        registered_argument_names=None,
+    ):
         self.test_calls.append((server_key, tool_name, dict(arguments or {})))
         self.decision_calls.append(decision)
+        self.registered_argument_names_calls.append(registered_argument_names)
         if self.test_gate is not None:
             await self.test_gate.wait()
         if self.raise_error is not None:
@@ -3190,6 +3215,201 @@ async def test_test_tool_run_error_renders_failed_with_message():
         assert "boom" in result
 
 
+# -- F4 (PR-T3 task 3): a refusal must never read as a failure -------------
+#
+# task-2537 + task-2539 (PR-T3 fix round B, item 3): `_is_permission_
+# refusal()`'s classification contract changed from "any `PermissionError`,
+# or a `ValueError` matching an exact string" to "one of two DEDICATED
+# exception types" (`MCPGovernanceDenied`, `MCPServerSourceDisplayOnlyError`
+# -- see their own docstrings). NOTE: the old contract test this replaces
+# (`test_is_permission_refusal_classifies_permission_error_and_display_
+# only_value_error`) is not on fix round B's list of two pre-authorized
+# assertion changes -- flagged for review in the round's report. It had to
+# change because it directly pinned the over-broad/prose-dependent
+# behavior this item's own brief identifies as the bug: a bare
+# `PermissionError` (not `MCPGovernanceDenied`) must now classify `False`,
+# the exact inverse of what it asserted before.
+
+
+def test_is_permission_refusal_classifies_typed_refusals_only():
+    """Pure classification contract, independent of the UI:
+    `MCPGovernanceDenied` (the governance seam's typed refusal) and
+    `MCPServerSourceDisplayOnlyError` (`execute_hub_tool()`'s typed
+    display-only refusal) both classify as a refusal; an unrelated
+    `ValueError`/`RuntimeError` does not (a genuine failure must keep
+    rendering as `Failed`, not get swept into `Blocked`)."""
+    assert (
+        mcp_workbench_module._is_permission_refusal(
+            MCPGovernanceDenied("Denied by local governance: tool.execute")
+        )
+        is True
+    )
+    assert (
+        mcp_workbench_module._is_permission_refusal(MCPServerSourceDisplayOnlyError())
+        is True
+    )
+    assert mcp_workbench_module._is_permission_refusal(ValueError("bad json")) is False
+    assert mcp_workbench_module._is_permission_refusal(RuntimeError("boom")) is False
+
+
+def test_is_permission_refusal_bare_permission_error_from_tool_body_is_not_a_refusal():
+    """task-2537: a `PermissionError` that is NOT `MCPGovernanceDenied` --
+    e.g. a real OS EACCES a tool's own `execute()` body raises reading a
+    permission-denied path -- must NOT classify as a refusal. The call DID
+    reach the tool; the tool itself is what failed. Before this item, ANY
+    `PermissionError` (the bare base class) classified as a refusal, which
+    would have misrendered a genuine per-tool failure as `Blocked · not
+    run`, falsely claiming the call never reached the tool. Latent today
+    only because the one file-shaped built-in (`ingest_media`) is
+    currently a stub that never raises from its own body -- a latent lie
+    is still a lie."""
+    assert (
+        mcp_workbench_module._is_permission_refusal(
+            PermissionError("EACCES: permission denied")
+        )
+        is False
+    )
+
+
+def test_is_permission_refusal_display_only_classification_is_type_based_not_message_based():
+    """task-2539: classification no longer depends on the exact wording of
+    the display-only message -- only on `MCPServerSourceDisplayOnlyError`'s
+    TYPE. Before this item, the message was pinned only where it's
+    RENDERED, never at its raise site, so an unrelated reword of
+    `execute_hub_tool()`'s raise-site string would have silently reverted
+    the F4 fix with a fully green suite; this proves that drift is now
+    closed."""
+    assert (
+        mcp_workbench_module._is_permission_refusal(
+            MCPServerSourceDisplayOnlyError("A totally different wording.")
+        )
+        is True
+    )
+
+
+@pytest.mark.asyncio
+async def test_test_tool_run_permission_error_renders_blocked_not_failed():
+    """F4: `local_control_service.execute_tool()`'s `MCPGovernanceDenied`
+    (governance denies `tool.execute`) is a REFUSAL -- the call never
+    reached the tool -- not a run failure. It must read as `Blocked · not
+    run`, never `Failed · Nms`, and must NOT show the Hub Permissions
+    "Change in Permissions" jump (a different permission system --
+    jumping there would not fix a governance refusal).
+
+    task-2537 (fix round B, item 3): the fake service now raises
+    `MCPGovernanceDenied` (what the real governance seam raises after this
+    item), not a bare `PermissionError` -- `_is_permission_refusal()` is
+    now type-based and would no longer classify a bare `PermissionError`
+    as a refusal (see `test_is_permission_refusal_bare_permission_error_
+    from_tool_body_is_not_a_refusal`). The message text is unchanged
+    (byte-identical), so every assertion below is untouched.
+
+    Review fix (Important #1): `ToolTestHubService.gate_state` defaults to
+    `"allow"`, so the Hub gate's own decision note would otherwise read
+    "Ran because this tool is set to Allow..." right next to "Blocked ·
+    not run" -- self-contradictory on the same run. The note must be
+    empty/hidden for a refusal, not the Hub gate's unrelated dispatch
+    reasoning."""
+    app = ToolTestApp()
+    app.unified_mcp_service.raise_error = MCPGovernanceDenied(
+        "Governance profile denies tool.execute."
+    )
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("tools")
+        await pilot.pause()
+        await _select_tools_mode_row(app, pilot, 0)  # docs::fetch
+        await pilot.click("#mcp-inspector-test-tool")
+        await pilot.pause()
+        await pilot.click("#mcp-inspector-test-run")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        result = str(app.query_one("#mcp-inspector-test-result", Static).renderable)
+        assert result.startswith("Blocked · not run")
+        assert not result.startswith("Failed")
+        assert "Governance profile denies tool.execute." in result
+        goto = app.query_one("#mcp-inspector-goto-permission-test", Button)
+        assert goto.display is False
+        note_widget = app.query_one("#mcp-inspector-test-result-note", Static)
+        assert str(note_widget.renderable) == ""
+        assert note_widget.display is False
+        assert app.query_one("#mcp-inspector-test-run", Button).disabled is False
+
+
+@pytest.mark.asyncio
+async def test_test_tool_run_server_source_display_only_value_error_renders_blocked_not_failed():
+    """F4: `execute_hub_tool()`'s `MCPServerSourceDisplayOnlyError`
+    ("Server-source tools are display-only.") is likewise a refusal (a
+    structural mismatch), not a run failure.
+
+    task-2539 (fix round B, item 3): the fake service now raises the typed
+    `MCPServerSourceDisplayOnlyError`, not a bare `ValueError` --
+    `_is_permission_refusal()` is now type-based. The message text is
+    unchanged (byte-identical, it's this type's own default), so every
+    assertion below is untouched.
+
+    Review fix (Important #1): same self-contradiction guard as the
+    `PermissionError` sibling test above -- the note must not carry the
+    Hub gate's own "Ran because..." reasoning next to "Blocked · not
+    run"."""
+    app = ToolTestApp()
+    app.unified_mcp_service.raise_error = MCPServerSourceDisplayOnlyError()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("tools")
+        await pilot.pause()
+        await _select_tools_mode_row(app, pilot, 0)  # docs::fetch
+        await pilot.click("#mcp-inspector-test-tool")
+        await pilot.pause()
+        await pilot.click("#mcp-inspector-test-run")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        result = str(app.query_one("#mcp-inspector-test-result", Static).renderable)
+        assert result.startswith("Blocked · not run")
+        assert not result.startswith("Failed")
+        assert "Server-source tools are display-only." in result
+        note_widget = app.query_one("#mcp-inspector-test-result-note", Static)
+        assert str(note_widget.renderable) == ""
+        assert note_widget.display is False
+
+
+@pytest.mark.asyncio
+async def test_test_tool_run_bare_permission_error_from_tool_body_renders_failed_not_blocked():
+    """task-2537 (fix round B, item 3), end to end -- the whole point of
+    item 3(a): a genuine `PermissionError` a TOOL'S OWN body raises (e.g. a
+    real OS EACCES reading a permission-denied path) is a run FAILURE, not
+    a refusal -- the call DID reach the tool. It must render `Failed ·
+    Nms`, never `Blocked · not run`, which would falsely claim the call
+    never reached the tool. Before this item, `_is_permission_refusal()`
+    matched any bare `PermissionError` regardless of where it was raised,
+    so this exact scenario misrendered as a refusal."""
+    app = ToolTestApp()
+    app.unified_mcp_service.raise_error = PermissionError(
+        "EACCES: permission denied reading /etc/shadow"
+    )
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("tools")
+        await pilot.pause()
+        await _select_tools_mode_row(app, pilot, 0)  # docs::fetch
+        await pilot.click("#mcp-inspector-test-tool")
+        await pilot.pause()
+        await pilot.click("#mcp-inspector-test-run")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        result = str(app.query_one("#mcp-inspector-test-result", Static).renderable)
+        first_line = result.split("\n", 1)[0]
+        assert first_line.startswith("Failed · ")
+        assert not result.startswith("Blocked")
+        assert "EACCES: permission denied reading /etc/shadow" in result
+
+
 @pytest.mark.asyncio
 async def test_test_tool_run_redacts_secret_shaped_result():
     """RAG-49 deliberate contract change: the redacted envelope no longer
@@ -3330,6 +3550,101 @@ async def test_test_tool_double_run_dispatches_exactly_one_service_call():
 
 
 @pytest.mark.asyncio
+async def test_test_tool_double_run_reenables_run_button_for_the_swallowed_press():
+    """Task 3 (PR-T3): the in-flight-duplicate branch above swallows a
+    SECOND `ToolTestRequested` for the SAME tool with only a toast -- but
+    the REAL first press's `_handle_test_run()` already disabled the Run
+    button, via the real click path this time (not the direct
+    `on_mcp_inspector_tool_test_requested()` double-call the sibling test
+    above uses). Since the second press produces no run of its own, that
+    disable must be undone -- the first, still-in-flight run's own
+    eventual `show_tool_result()` re-enables it again itself, harmlessly,
+    on completion; the in-flight SET (not the button) remains the
+    authoritative dedupe, so this does not let a second `test_hub_tool()`
+    call through."""
+    app = ToolTestApp()
+    app.unified_mcp_service.test_gate = asyncio.Event()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("tools")
+        await pilot.pause()
+        await _select_tools_mode_row(app, pilot, 1)  # docs::search (form schema)
+        await pilot.click("#mcp-inspector-test-tool")
+        await pilot.pause()
+        app.query_one("#mcp-schema-field-0", Input).value = "hello"
+        run_button = app.query_one("#mcp-inspector-test-run", Button)
+        await pilot.click(run_button)
+        await pilot.pause()
+        assert run_button.disabled is True
+
+        # A second Pressed for the SAME tool, queued before the first
+        # handler's disable took visible effect in the real race --
+        # reproduced directly (mirrors
+        # test_test_tool_double_run_dispatches_exactly_one_service_call's
+        # own technique).
+        tools = workbench._last_hub_tools
+        tool = next(t for t in tools if t.name == "search")
+        event = MCPInspector.ToolTestRequested(tool.server_key, tool.name, {"query": "hello"})
+        workbench.on_mcp_inspector_tool_test_requested(event)
+        await pilot.pause()
+
+        assert run_button.disabled is False
+        assert len(app.unified_mcp_service.test_calls) == 1
+
+        app.unified_mcp_service.test_gate.set()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+
+# -- Task 4 (PR-T3): the dispatch path threads the tool's schema-approved
+# argument names through to `test_hub_tool()` -- before this task NO caller
+# in the tree supplied `registered_argument_names`, so every audit row
+# recorded `argument_names: []` regardless of what was actually called.
+
+
+@pytest.mark.asyncio
+async def test_tool_test_dispatch_supplies_registered_argument_names_from_schema():
+    """`docs::search` (row 1) carries `inputSchema.properties: {"query": ...}`
+    -- `on_mcp_inspector_tool_test_requested()` must resolve that schema via
+    `_tool_for()` and forward its property names to `test_hub_tool()`, not
+    the pre-Task-4 `None`/omitted default that always logged `[]`."""
+    app = ToolTestApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        tools = workbench._last_hub_tools
+        tool = next(t for t in tools if t.name == "search")
+        event = MCPInspector.ToolTestRequested(tool.server_key, tool.name, {"query": "hello"})
+        workbench.on_mcp_inspector_tool_test_requested(event)
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert app.unified_mcp_service.registered_argument_names_calls == [{"query"}]
+
+
+@pytest.mark.asyncio
+async def test_tool_test_dispatch_no_schema_supplies_empty_registered_argument_names():
+    """`docs::fetch` (row 0) has no `inputSchema` -- the derived set is
+    empty, never `None`/omitted, so the execution log records a real
+    (if empty) provenance check rather than silently skipping it."""
+    app = ToolTestApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        tools = workbench._last_hub_tools
+        tool = next(t for t in tools if t.name == "fetch")
+        event = MCPInspector.ToolTestRequested(tool.server_key, tool.name, {})
+        workbench.on_mcp_inspector_tool_test_requested(event)
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert app.unified_mcp_service.registered_argument_names_calls == [set()]
+
+
+@pytest.mark.asyncio
 async def test_slow_tool_result_does_not_render_under_a_different_selected_tool():
     """I1: tool A's ("docs::fetch") slow test run must not land in tool B's
     ("notes::list_notes") panel when the user switches selection before A
@@ -3449,6 +3764,52 @@ async def test_test_tool_run_non_mapping_result_str_raises_does_not_crash():
         assert first_line.startswith("Failed · ")
         assert app.query_one("#mcp-inspector-test-run", Button).disabled is False
         assert workbench._tool_test_in_flight == set()
+
+
+@pytest.mark.asyncio
+async def test_render_failure_in_show_tool_test_result_notifies_instead_of_only_logging(
+    monkeypatch,
+):
+    """Task 3 (PR-T3): `_show_tool_test_result()`'s try/except around
+    `MCPInspector.show_tool_result()` used to only `logger.warning()` a
+    render failure -- the run genuinely completed (this test's fake
+    service returns a normal OK result), but a render bug meant the user
+    saw literally nothing: no result, no re-enabled Run button (that write
+    lives inside the same failing call), not even a log line visible from
+    the UI. It must also toast.
+
+    Review fix (Minor #5): the Run button must also come back -- without
+    it, the user is stuck unable to press Run again until they close and
+    reopen the panel, even though they were just told the run finished."""
+    app = ToolTestApp()
+    app.unified_mcp_service.test_result = {"ok": True}
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        notifications = _capture_notifications(app)
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("tools")
+        await pilot.pause()
+        await _select_tools_mode_row(app, pilot, 1)  # docs::search
+        await pilot.click("#mcp-inspector-test-tool")
+        await pilot.pause()
+        app.query_one("#mcp-schema-field-0", Input).value = "hello"
+        run_button = app.query_one("#mcp-inspector-test-run", Button)
+
+        def _raise(*args, **kwargs):
+            raise RuntimeError("render exploded")
+
+        monkeypatch.setattr(MCPInspector, "show_tool_result", _raise)
+
+        await pilot.click(run_button)
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert any(
+            "search" in msg and severity == "error"
+            for msg, severity in notifications
+        ), f"expected an error toast naming the tool, got: {notifications!r}"
+        assert run_button.disabled is False
 
 
 @pytest.mark.asyncio
@@ -3633,7 +3994,15 @@ class NoGateToolTestHubService(FakeHubService):
         self.test_calls: list[tuple[str, str, dict]] = []
         self.decision_calls: list[str] = []
 
-    async def test_hub_tool(self, server_key, tool_name, arguments=None, *, decision="allowed"):
+    async def test_hub_tool(
+        self,
+        server_key,
+        tool_name,
+        arguments=None,
+        *,
+        decision="allowed",
+        registered_argument_names=None,
+    ):
         self.test_calls.append((server_key, tool_name, dict(arguments or {})))
         self.decision_calls.append(decision)
         return {"ok": True}
@@ -3926,7 +4295,29 @@ async def test_switching_selected_tool_while_armed_does_not_leak_arm_to_new_tool
 async def test_gate_check_exception_fails_closed():
     """`_resolve_test_gate()`'s fail-closed half of the seams-absent-vs-
     raises precedent: a `gate_tool_test()` that IS callable but raises must
-    never fall through to running the tool."""
+    never fall through to running the tool.
+
+    task-2536 (PR-T3 fix round B, item 2, PRE-AUTHORIZED CONTRACT CHANGE):
+    this used to assert the GENUINE-deny body text
+    (`_TOOL_TEST_BLOCKED_TEXT`, "this tool is set to Off in Permissions")
+    for the synthesized `gate_error` gate too -- a confident, false claim
+    about the tool's configured state, directly above `_decision_note()`'s
+    own honest admission (checked by the sibling test below) that no state
+    could be resolved at all. The blocked body is now origin-aware: a
+    `gate_error` renders `_TOOL_TEST_BLOCKED_UNKNOWN_TEXT` instead.
+
+    Item 6 (PR-T3 fix round D): `_TOOL_TEST_BLOCKED_UNKNOWN_TEXT` dropped
+    its redundant "; the tool did not run" clause (doubled against the
+    "Blocked · not run" heading rendered directly above it) -- updated
+    here to match.
+
+    Fix Round G, Item 7 (PR-T3, PRE-AUTHORIZED CONTRACT CHANGE): this
+    surface's clause converged with the Advanced hatch's own identical-
+    condition blocked body (`unified_control_plane_service.
+    _ADVANCED_EXECUTE_GATE_ERROR_MESSAGE`) on "could not be resolved" --
+    was "could not be determined", an independently maintained near-
+    duplicate. Both now derive from `local_runtime_delegate.
+    PERMISSION_STATE_UNRESOLVED_CLAUSE`."""
     app = ToolTestApp()
 
     def _raise(tool: Any) -> Any:
@@ -3948,7 +4339,92 @@ async def test_gate_check_exception_fails_closed():
 
         assert app.unified_mcp_service.test_calls == []
         result = str(app.query_one("#mcp-inspector-test-result", Static).renderable)
-        assert "Blocked — this tool is set to Off in Permissions." in result
+        assert "Blocked — this tool is set to Off in Permissions." not in result
+        assert "Blocked — permission state could not be resolved." in result
+
+
+@pytest.mark.asyncio
+async def test_gate_check_exception_decision_note_suppressed_after_real_run():
+    """task-2270's rider (PR-T3 task 3) plus task-2536's follow-up (fix
+    round B, item 2), end to end: the deny short-circuit's decision note
+    used to say "This tool is set to Off." for `_resolve_test_gate()`'s
+    synthetic fail-closed gate_error origin -- dishonest, since the tool is
+    not necessarily off, the RESOLVER failed. Task 3 fixed the note alone
+    (to the honest `_UNKNOWN_ORIGIN_SENTENCE`); item 2 then made the BODY
+    honest too (see `test_gate_check_exception_fails_closed`), which made
+    the note's sentence a near-verbatim repeat sitting right underneath it.
+    Following this module's own no-double-say precedent (`_run_tool_test()`
+    passes `decision_note=None` when a refusal's body already explains
+    itself), the note is now suppressed for this specific `gate_error`
+    short-circuit -- `_decision_note()` itself is UNCHANGED and still
+    returns the honest sentence for a direct/unit-level call
+    (`test_decision_note_unknown_origin_degrades_to_bare_sentence`
+    pins that); only this one call site no longer surfaces it, because the
+    body above already said it. Mirrors `test_gate_check_exception_fails_
+    closed`'s setup, checking the NOTE widget instead of the status widget
+    it already covers.
+
+    Item 3 (PR-T3 fix round D): this test used to assert ONLY the note
+    widget's absence (`renderable == ""`, `display is False`) -- which is
+    ALSO that widget's MOUNT-TIME INITIAL STATE
+    (`_build_test_result_note_static()`, mcp_inspector.py). Proven
+    vacuous by deleting the `#mcp-inspector-test-run` click below: the
+    test still passed, because it was never distinguishing "the deny
+    short-circuit ran and suppressed the note" from "nothing ran at all".
+    The two absence assertions stay (they are still part of what's true),
+    but now sit alongside a POSITIVE anchor -- the result widget's body,
+    which starts empty at mount and can only contain the honest blocked
+    text if `show_tool_result()` actually executed -- so the test can no
+    longer pass without the click actually dispatching."""
+    app = ToolTestApp()
+
+    def _raise(tool: Any) -> Any:
+        raise RuntimeError("permission store corrupt")
+
+    app.unified_mcp_service.gate_tool_test = _raise
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("tools")
+        await pilot.pause()
+        await _select_tools_mode_row(app, pilot, 0)  # docs::fetch
+        await pilot.click("#mcp-inspector-test-tool")
+        await pilot.pause()
+        await pilot.click("#mcp-inspector-test-run")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        # Item 4 (PR-T3 fix round F): this is an ABSENCE assertion, not the
+        # positive anchor -- `test_calls == []` is equally true at mount,
+        # before the click ever fires, so it cannot by itself distinguish
+        # "the deny short-circuit ran and correctly skipped the service"
+        # from "nothing happened yet". Kept because it is still a true and
+        # useful fact (the service was never called), but see the RESULT
+        # WIDGET assertion just below for the actual positive anchor: that
+        # widget starts empty at mount and can only contain the honest
+        # blocked text if `show_tool_result()` actually executed, so IT is
+        # what proves the short-circuit ran, not this line.
+        assert app.unified_mcp_service.test_calls == []
+        result_widget = app.query_one("#mcp-inspector-test-result", Static)
+        # Positive anchor: proves the deny short-circuit actually ran
+        # (`show_tool_result()` was called) -- not just that the note is
+        # absent, which is equally true before anything has happened.
+        #
+        # Fix Round G, Item 7 (PR-T3, PRE-AUTHORIZED CONTRACT CHANGE): "could
+        # not be determined" -> "could not be resolved" -- see
+        # `test_gate_check_exception_fails_closed`'s docstring above for the
+        # full rationale (converged with the Advanced hatch's identical-
+        # condition body via `local_runtime_delegate.PERMISSION_STATE_
+        # UNRESOLVED_CLAUSE`).
+        assert (
+            "Blocked — permission state could not be resolved."
+            in str(result_widget.renderable)
+        )
+
+        note_widget = app.query_one("#mcp-inspector-test-result-note", Static)
+        assert str(note_widget.renderable) == ""
+        assert note_widget.display is False
 
 
 @pytest.mark.asyncio
@@ -4019,16 +4495,32 @@ def test_decision_note_off_gate_appends_origin_sentence():
     )
 
 
-def test_decision_note_unknown_origin_degrades_to_bare_sentence():
-    """`_resolve_test_gate()`'s synthetic fail-closed origin ("gate_error")
-    isn't a key in `_ORIGIN_SENTENCES` -- the note must still read cleanly
-    (no trailing blank space, no raise), mirroring that dict's own
-    `.get(origin, "")` + `.strip()` tolerance elsewhere in this module."""
-    gate = EffectiveToolState(state="deny", origin="gate_error")
-    assert (
-        mcp_workbench_module._decision_note(gate, ask_approved=False)
-        == "This tool is set to Off."
-    )
+# Fix Round H (PR-T3 review), Item 6: `test_decision_note_unknown_origin_
+# degrades_to_bare_sentence` (task-2270's rider, PR-T3 task 3) used to pin
+# `_decision_note()`'s own `gate.origin == "gate_error"` special case,
+# which returned the honest `_UNKNOWN_ORIGIN_SENTENCE` instead of falling
+# through to the dishonest "This tool is set to Off." -- necessary at the
+# time, because the deny short-circuit below called `_decision_note()` for
+# EVERY deny, `gate_error` included. task-2536 (fix round B) changed that
+# caller to pass `decision_note=None` for `gate_error` directly instead
+# (building its own honest body text), bypassing `_decision_note()`
+# entirely for that origin -- proven, not assumed: `EffectiveToolState.
+# origin="gate_error"` is produced ONLY by `_resolve_test_gate()`'s two
+# `except` branches, both paired unconditionally with `state="deny"`, and
+# neither of `_decision_note()`'s two remaining production callers can
+# reach it with that combination (the deny short-circuit below guards it
+# explicitly; `_run_tool_test()`'s caller routes every deny, gate_error
+# included, through that same short-circuit before `_run_tool_test()` is
+# ever scheduled). The special case is REMOVED from `_decision_note()`
+# itself (see its own docstring) -- dead honesty-vocabulary is a trap: a
+# future author could "fix" a bug by editing a branch nothing runs. This
+# test retired along with it, rather than kept pinning a hand-built input
+# combination no production caller can produce. The REAL end-to-end path
+# stays covered by `test_gate_check_exception_fails_closed` (the body
+# text) and `test_gate_check_exception_decision_note_suppressed_after_
+# real_run` (the note staying suppressed) below, both of which drive a
+# genuinely raising `gate_tool_test()` through the real dispatch, not a
+# hand-built `EffectiveToolState`.
 
 
 def test_decision_note_no_gate_returns_none():
@@ -6602,7 +7094,17 @@ class FakeExecutionLog:
     (a copy of) whatever record list the test seeded, newest-first is the
     CALLER's responsibility (the real log guarantees it; this fake just
     hands back records verbatim, same "render whatever it's given" contract
-    `MCPAuditMode` itself follows)."""
+    `MCPAuditMode` itself follows).
+
+    Fix Round H (PR-T3 review), Item 2c: not a fake-vs-real key-set pin
+    candidate itself -- it implements exactly ONE method with no real-side
+    computation to drift from. `_audit_record()` just below DOES hand-roll
+    a dict mirroring `ExecutionRecord`'s dataclass fields, a real but
+    orthogonal risk (dataclass-vs-dict, not fake-vs-real method) left as a
+    candidate for future work; see the POLICY comment above
+    `FakeLocalMCPControlService` in
+    Tests/MCP/test_unified_control_plane_service.py for the full policy.
+    """
 
     def __init__(self, records: list[dict] | None = None) -> None:
         self._records = list(records or [])
@@ -6687,6 +7189,92 @@ async def test_audit_mode_syncs_execution_log_entries_into_canvas():
         assert table.row_count == 2
         assert table.display is True
         assert app.query_one("#mcp-audit-empty").display is False
+
+
+# -- Task 5 (PR-T3, F3): a completed tool run repopulates the Audit
+# entries table without pressing `r` -- before this task, `_sync_audit_
+# mode()` had exactly ONE caller (the tail of `_sync_children()`), so
+# `_run_tool_test()` completing a run never resynced it, even though the
+# JSONL log already had the new row by the time the run finished (real
+# `test_hub_tool()`/`execute_hub_tool()` record BEFORE returning).
+
+
+class AuditRunAppendsHubService(AuditHubService):
+    """`test_hub_tool()` mimics the real service's own side effect
+    (`execute_hub_tool()` -> `_record_tool_execution()`): the execution
+    log already has a new row for THIS run by the time `test_hub_tool()`
+    returns -- a test built on this can then check whether the workbench
+    re-reads that log after the run, without touching `r`/reload."""
+
+    async def test_hub_tool(
+        self, server_key, tool_name, arguments=None, *, decision="allowed",
+        registered_argument_names=None,
+    ):
+        result = await super().test_hub_tool(
+            server_key, tool_name, arguments, decision=decision,
+            registered_argument_names=registered_argument_names,
+        )
+        self.execution_log._records.insert(
+            0, _audit_record(server_key=server_key, tool_name=tool_name)
+        )
+        return result
+
+
+class AuditRunAppendsApp(App):
+    def __init__(self, records: list[dict] | None = None) -> None:
+        super().__init__()
+        self.unified_mcp_service = AuditRunAppendsHubService(records)
+
+    def compose(self) -> ComposeResult:
+        yield MCPWorkbench(app_instance=self, id="mcp-workbench")
+
+
+@pytest.mark.asyncio
+async def test_completed_run_repopulates_audit_entries_without_manual_refresh():
+    app = AuditRunAppendsApp([])
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        assert workbench._last_audit_entries == []
+
+        tools = workbench._last_hub_tools
+        tool = next(t for t in tools if t.name == "search")
+        event = MCPInspector.ToolTestRequested(tool.server_key, tool.name, {"query": "hello"})
+        workbench.on_mcp_inspector_tool_test_requested(event)
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert workbench._last_audit_entries, (
+            "audit entries stayed empty after a completed run -- no manual "
+            "refresh was performed"
+        )
+        assert workbench._last_audit_entries[0]["tool_name"] == "search"
+
+
+@pytest.mark.asyncio
+async def test_completed_run_repopulates_audit_table_when_audit_mode_is_active():
+    """Same fix, checked at the rendered-table level (not just the internal
+    `_last_audit_entries` list) -- switch to Audit mode FIRST, then run a
+    tool test, and confirm the table itself grows without pressing `r`."""
+    app = AuditRunAppendsApp([])
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("audit")
+        await pilot.pause()
+        table = app.query_one("#mcp-audit-table", DataTable)
+        assert table.row_count == 0
+
+        tools = workbench._last_hub_tools
+        tool = next(t for t in tools if t.name == "search")
+        event = MCPInspector.ToolTestRequested(tool.server_key, tool.name, {"query": "hello"})
+        workbench.on_mcp_inspector_tool_test_requested(event)
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert table.row_count == 1
 
 
 @pytest.mark.asyncio

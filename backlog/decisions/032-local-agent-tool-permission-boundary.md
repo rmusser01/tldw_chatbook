@@ -27,6 +27,19 @@ sub-agent runs so nested invocations re-check permissions. Refusal strings are
 pinned constants from spec §3.3: `LOCAL_DENY_REFUSAL`, `LOCAL_TIMEOUT_REFUSAL`,
 and `LOCAL_KILL_SWITCH_REFUSAL`.
 
+**Addendum (PR-T3 review, Fix Round H, 2026-08-06):** a fourth pinned
+constant, `LOCAL_GATE_ERROR_REFUSAL`, distinguishes a permission-resolver
+CRASH from a genuine configured deny. `_verdict_for()`'s `resolve_state`
+`except` branch used to collapse into the SAME "deny" verdict as an actual
+Off, so `invoke()` rendered `LOCAL_DENY_REFUSAL`'s "set to Off" claim to the
+calling model even when the tool's real state was never determined. Fails
+closed identically (the tool still does not run); only the stated reason
+changes, and the new string asserts no configuration state and no
+"permanently unavailable" implication (derived from the same
+`local_runtime_delegate.PERMISSION_STATE_UNRESOLVED_CLAUSE` the MCP Hub's
+Test Tool panel and Advanced runner already share for the identical
+condition).
+
 All path-taking tools confine to a configurable `[console] workspace_root`
 (default: the app cwd at startup), coerced and templated following the
 `collapse_large_pastes` precedent in `config.py`. Hidden path components are

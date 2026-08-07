@@ -4,6 +4,7 @@ from tldw_chatbook.MCP.hub_tool_catalog import (
     builtin_tools_from_inventory,
     filter_tools,
     local_tools_from_record,
+    schema_argument_names,
     server_tools_from_inventory,
 )
 
@@ -79,6 +80,43 @@ def test_builtin_tool_without_schema_still_yields_none():
         {"tools": [{"name": "chat_with_llm", "description": "Chat."}]}
     )
     assert tools[0].input_schema is None and tools[0].executable
+
+
+def test_builtin_tools_never_carry_risk_tags_even_when_offered_them():
+    """TRIPWIRE (PR-T3 Fix Round C, Item 2). `permission_store
+    .BY_KEY_HASH_FREE_SERVER_KEYS` exempts `"builtin:tldw_chatbook"` from
+    `resolve_effective_state_by_key()`'s "any allow collapses to ask"
+    fallback, and that resolver has no `HubTool.tags` to floor a high-risk
+    inherited allow with either -- so the exemption is safe ONLY because
+    every `HubTool` this function produces carries `tags=()`
+    unconditionally, regardless of what the raw inventory entry contains.
+
+    Unlike `server_tools_from_inventory` (see
+    `test_server_tools_read_extras_defensively` above), this function does
+    not call `_extra_tags()` at all -- it hard-codes `tags=()`. This test
+    proves that by handing it a raw tool dict carrying the exact fields
+    `_extra_tags()` reads for server tools (`risk_class`, `capabilities`)
+    and asserting they are silently ignored. If a future change wires
+    `_extra_tags()` (or any tag source) into `builtin_tools_from_inventory`,
+    this goes red -- which is the day
+    `permission_store.BY_KEY_HASH_FREE_SERVER_KEYS`'s exemption for
+    `builtin:tldw_chatbook` stops being safe and needs re-examining, not
+    just a comment."""
+    tools = builtin_tools_from_inventory(
+        {
+            "tools": [
+                {
+                    "name": "delete_everything",
+                    "description": "Deletes things.",
+                    "risk_class": "high",
+                    "capabilities": ["network", "mutates"],
+                    "inputSchema": {"type": "object"},
+                }
+            ]
+        }
+    )
+
+    assert tools[0].tags == ()
 
 
 def test_server_tools_read_extras_defensively():
@@ -168,3 +206,36 @@ def test_server_tools_dedupe_duplicate_names():
     tools = server_tools_from_inventory(payload, target_id="main", target_label="Main")
     assert [t.name for t in tools] == ["web_search"]
     assert tools[0].description == "first"
+
+
+# -- Task 4 (PR-T3): schema_argument_names() -- the execution log's
+# argument-provenance seam reads a tool's registered names from here.
+
+
+def test_schema_argument_names_reads_top_level_properties():
+    schema = {
+        "type": "object",
+        "properties": {"query": {"type": "string"}, "limit": {"type": "integer"}},
+    }
+    assert schema_argument_names(schema) == {"query", "limit"}
+
+
+def test_schema_argument_names_none_schema_yields_empty_set():
+    assert schema_argument_names(None) == set()
+
+
+def test_schema_argument_names_malformed_properties_yields_empty_set():
+    assert schema_argument_names({"type": "object", "properties": "not-a-dict"}) == set()
+    assert schema_argument_names({"type": "object"}) == set()
+    assert schema_argument_names("not-a-dict") == set()  # defensive: never raises
+
+
+def test_schema_argument_names_tolerates_unrenderable_nested_property():
+    """Unlike `parse_schema()` (which falls back to raw JSON for a nested
+    object property), this only reports NAMES -- an unrenderable nested
+    property still counts as a registered top-level argument name."""
+    schema = {
+        "type": "object",
+        "properties": {"filters": {"type": "object", "properties": {"a": {}}}},
+    }
+    assert schema_argument_names(schema) == {"filters"}

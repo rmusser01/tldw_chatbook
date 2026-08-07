@@ -13,6 +13,70 @@ from tldw_chatbook.MCP.unified_control_models import (
 )
 
 
+# Fix Round H (PR-T3 review), Item 2c -- POLICY on pinning hand-mirrored
+# fakes against the real class they stand in for (the same question that
+# produced the get_runtime_health() pin in test_local_control_service.py
+# and the run_runtime_batch() coercion fix in
+# test_control_plane_tool_execute.py). NOT every fake gets one: a pin on
+# every fake is unmaintainable, and the point is catching SILENT drift, not
+# maximizing assertion count. The line drawn here:
+#
+#   PIN a fake when its return value is a HAND-ROLLED DICT LITERAL standing
+#   in for a real method that ALSO builds its own hand-rolled dict, AND
+#   something downstream treats that shape as meaningful -- rendering
+#   specific keys, or (as with the Advanced hatch's raw-JSON dump) showing
+#   the payload to the user verbatim. Two independently-authored literals
+#   claiming to describe the same shape drift silently: nothing raises,
+#   nothing warns, the suite just stops meaning what it appears to mean.
+#   `FakeLocalRuntimeDelegate` (test_local_control_service.py) is the
+#   textbook case -- proven by this round's own mutation (a bogus key
+#   added to the real `get_runtime_health()` left every other test green).
+#
+#   DO NOT pin a fake whose divergence would surface as a loud, immediate
+#   failure some other way, or whose return shape carries no meaning the
+#   tests actually lean on:
+#
+#   - `FakeLocalMCPControlService` (this file): ~20 methods, each
+#     returning synthetic fixture data (literal strings like "local-a",
+#     "docs::fetch") that were never intended to resemble real DB-derived
+#     content. The tests in this file exercise `UnifiedMCPControlPlaneService.
+#     run_action()`'s DISPATCH logic -- does it route to the right local_
+#     service method, forward the right arguments, pass the result through
+#     unchanged -- not the internal shape of what the local service
+#     returns. `run_action()` never inspects these payloads' keys (see
+#     e.g. the `runtime.health.get` branch: a bare `return await self.
+#     _maybe_await(self.local_service.get_runtime_health())`), so a field
+#     rename here would not silently invalidate anything this file asserts;
+#     it would just make the echoed-back dict spell its keys differently,
+#     and the pass-through assertions would still pass or fail on their own
+#     terms.
+#   - `FakeLocalStore` (test_local_control_service.py): stores/returns REAL
+#     domain dataclasses already imported from `local_store.py`
+#     (`LocalExternalMCPProfile`, `LocalGovernanceRule`, ...), not
+#     independently-invented shapes -- a signature or field drift in the
+#     real `LocalMCPStore` raises a loud `TypeError`/`AttributeError` at
+#     the first call, the opposite of the silent-drift failure mode a pin
+#     exists to catch.
+#   - `FakeExecutionLog` (test_mcp_workbench.py): implements exactly ONE
+#     method (`read_recent`) that hands back whatever the test seeded,
+#     verbatim -- there is no real-side computation for it to drift from.
+#     Its companion fixture `_audit_record()` DOES hand-roll a dict
+#     mirroring `ExecutionRecord`'s dataclass fields; that risk is real but
+#     orthogonal to this fake (a dataclass-vs-dict field pin, not a
+#     fake-vs-real METHOD pin) and is left as a candidate for future work,
+#     not silently dropped.
+#   - `FakeHubService` (test_mcp_workbench.py): the highest-traffic fake in
+#     this surface (a 7,000+ line file) and DOES return hand-rolled,
+#     UI-rendered dict shapes from `load_section()` per source/section
+#     combination -- a genuine candidate by the same logic as
+#     `FakeLocalRuntimeDelegate` above. Not pinned in this round: doing it
+#     properly means comparing against `UnifiedMCPControlPlaneService.
+#     load_section()`'s several distinct per-section/per-source shapes,
+#     which is a task-sized effort on its own, not a fix-round-sized one.
+#     Flagged explicitly rather than silently skipped -- see this round's
+#     own report.
+
+
 class FakeLocalMCPControlService:
     def __init__(self) -> None:
         self.calls: list[str] = []

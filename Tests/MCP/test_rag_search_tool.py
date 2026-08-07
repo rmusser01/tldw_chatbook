@@ -103,3 +103,97 @@ async def test_perform_rag_search_keyword_returns_formatted_results():
         }
     ]
     assert stub.calls == [("keyword", "test query", 10, ["pdf"])]
+
+
+class TestKeywordScoreIsHonest:
+    """PR-T3 task-1: a keyword-mode `search_rag` result must not report a
+    fabricated `score: 1.0` -- the Library's precedent
+    (`library_rag_state.py:604-611`) nulls the score at the service
+    boundary because FTS relevance was judged misleading, and no band
+    beats a wrong band (Task 2 of this plan will layer match bands on
+    top of `score`; a fabricated 1.0 would render every keyword row as
+    "match: strong", worse than the bare count it replaces).
+
+    Exercises the REAL `SimplifiedRAGSearchService` (not the stub above)
+    through the actual `MCPTools.perform_rag_search` entry point, so the
+    assertion pins the real fix site (`search_service.py`'s
+    `keyword_search`), not a test double's promise.
+    """
+
+    @pytest.mark.asyncio
+    async def test_keyword_mode_rows_carry_no_score(self, tmp_path):
+        from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
+        from tldw_chatbook.RAG_Search.simplified.search_service import (
+            SimplifiedRAGSearchService,
+        )
+
+        media_db = MediaDatabase(
+            tmp_path / "keyword_score_honest.sqlite", client_id="test-client"
+        )
+        try:
+            media_id, _uuid, message = media_db.add_media_with_keywords(
+                title="Honest Score Item",
+                content="honestscoremarker appears in this content",
+                media_type="article",
+                url="https://example.com/honest-score-item",
+            )
+            assert media_id is not None, f"seed failed: {message}"
+
+            service = SimplifiedRAGSearchService.__new__(SimplifiedRAGSearchService)
+            service.media_db = media_db
+            service.rag_service = None  # forces the keyword_search path
+
+            tools = MCPTools.__new__(MCPTools)
+            tools.rag_service = service
+
+            results = await tools.perform_rag_search(
+                "honestscoremarker", use_semantic=False
+            )
+
+            assert len(results) == 1
+            assert "error" not in results[0]
+            assert results[0]["score"] is None
+        finally:
+            media_db.close_connection()
+
+    @pytest.mark.asyncio
+    async def test_semantic_mode_rows_keep_real_score(self, tmp_path):
+        """Guards against an over-broad fix: only keyword-mode rows lose
+        their score. A semantic row's real float must survive unchanged."""
+        from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
+        from tldw_chatbook.RAG_Search.simplified.citations import (
+            SearchResultWithCitations,
+        )
+        from tldw_chatbook.RAG_Search.simplified.search_service import (
+            SimplifiedRAGSearchService,
+        )
+
+        media_db = MediaDatabase(
+            tmp_path / "semantic_score_honest.sqlite", client_id="test-client"
+        )
+        try:
+            real_result = SearchResultWithCitations(
+                id="chunk-1",
+                score=0.42,
+                document="Real document body text for the semantic result.",
+                metadata={"title": "Semantic Doc", "media_type": "article"},
+                citations=[],
+            )
+
+            class _StubEnhancedRAGService:
+                async def search(self, *, query, top_k, search_type, filter_metadata=None):
+                    return [real_result]
+
+            service = SimplifiedRAGSearchService.__new__(SimplifiedRAGSearchService)
+            service.media_db = media_db
+            service.rag_service = _StubEnhancedRAGService()
+
+            tools = MCPTools.__new__(MCPTools)
+            tools.rag_service = service
+
+            results = await tools.perform_rag_search("anything")  # use_semantic defaults True
+
+            assert len(results) == 1
+            assert results[0]["score"] == 0.42
+        finally:
+            media_db.close_connection()

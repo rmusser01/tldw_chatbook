@@ -19,6 +19,16 @@ from tldw_chatbook.MCP.server import (
 )
 
 
+# Fix Round H (PR-T3 review), Item 2c: not a fake-vs-real key-set pin
+# candidate -- every method below stores/returns REAL domain dataclasses
+# already imported from `local_store.py` (`LocalExternalMCPProfile`,
+# `LocalGovernanceRule`, ...), not independently-invented shapes, so a
+# signature or field drift in the real `LocalMCPStore` raises a loud
+# TypeError/AttributeError at the first call -- the opposite of the
+# silent-drift failure mode a pin exists to catch. See the POLICY comment
+# above `FakeLocalMCPControlService` in
+# Tests/MCP/test_unified_control_plane_service.py for the full policy and
+# contrast with `FakeLocalRuntimeDelegate` below, which IS pinned.
 class FakeLocalStore:
     def __init__(self) -> None:
         self.profiles = {
@@ -157,6 +167,10 @@ class FakeLocalRuntimeDelegate:
                 "resources/read",
                 "prompts/get",
             ],
+            # Item 4 (PR-T3 fix round D): mirrors the real delegate's new
+            # `unavailable_request_methods` field (`_UNAVAILABLE_DIRECT_
+            # METHODS`) -- this fake's own shape must not drift from it.
+            "unavailable_request_methods": ["tools/call"],
         }
 
     def get_protocol_diagnostics(self):
@@ -168,7 +182,11 @@ class FakeLocalRuntimeDelegate:
             "supports_batch": True,
             "methods": [
                 {"name": "tools/list", "supported": True},
-                {"name": "tools/call", "supported": True},
+                # Fix Round C, Item 1: `tools/call` is refused
+                # unconditionally by the real delegate's `request()`, so
+                # diagnostics must not advertise it as callable -- this
+                # fake mirrors that shape (`_UNAVAILABLE_DIRECT_METHODS`).
+                {"name": "tools/call", "supported": False},
             ],
             "manifest": {"tools": 2, "resources": 1, "prompts": 1},
             "implementation": {
@@ -248,6 +266,53 @@ class FakeLocalRuntimeDelegate:
             }
             for index, request in enumerate(requests)
         ]
+
+
+def test_fake_local_runtime_delegate_protocol_shapes_match_the_real_delegate():
+    """Item 3 (PR-T3 fix round F). `FakeLocalRuntimeDelegate.get_protocol_
+    capabilities()`/`get_protocol_diagnostics()` above are hand-maintained
+    to mirror `LocalMCPRuntimeDelegate`'s real methods of the same name --
+    enforced by nothing but a comment at each ("this fake's own shape must
+    not drift", "fake mirrors that shape"). Not hypothetical on this
+    branch: an earlier round's two fake-based tests stayed GREEN while the
+    real-delegate test went RED for the identical scenario, and the
+    fake-based assertions were briefly mistaken (by a reviewer, and in
+    relaying it) for real-delegate coverage. A fake that drifts from
+    reality is how a suite ends up certifying a lie.
+
+    Pins the top-level key SETS only, not values -- the fake's values are
+    hardcoded literals (`protocol_version="2025-03-26"`,
+    `mcp_sdk_available=False`, ...) while the real ones are computed
+    (`self._PROTOCOL_VERSION`, `MCP_AVAILABLE`, a manifest-derived
+    `methods`/`implementation`), so those legitimately differ and this
+    test does not compare them. What must never drift is WHICH FIELDS
+    exist: a future change to either real method (a renamed or added key)
+    that this fake does not also get would otherwise stay invisible to
+    every test written against the fake, exactly as it did before.
+
+    Fix Round H (PR-T3 review), Item 2a: `get_runtime_health()` is a THIRD
+    hand-mirrored method of this same fake/real pair, previously pinned by
+    nothing at all -- not even the comment-only "must not drift" discipline
+    the other two had. Verified before adding this line: temporarily adding
+    a bogus key to the real delegate's `get_runtime_health()` left all 43
+    OTHER tests across this file and `test_unified_control_plane_service.py`
+    green (44 collected total; only this NEW assertion caught it) -- the
+    raw-JSON Advanced dump renders whatever this method returns verbatim to
+    the user, so a silently-diverged fake would certify a rendering
+    scenario a real run could never produce. Same policy as the two lines
+    above: key SETS only."""
+    real_delegate = LocalMCPRuntimeDelegate(manifest_provider=lambda: {})
+    fake_delegate = FakeLocalRuntimeDelegate()
+
+    assert set(fake_delegate.get_protocol_capabilities().keys()) == set(
+        real_delegate.get_protocol_capabilities().keys()
+    )
+    assert set(fake_delegate.get_protocol_diagnostics().keys()) == set(
+        real_delegate.get_protocol_diagnostics().keys()
+    )
+    assert set(fake_delegate.get_runtime_health().keys()) == set(
+        real_delegate.get_runtime_health().keys()
+    )
 
 
 class FakeMCPClient:
@@ -1035,6 +1100,10 @@ async def test_local_control_service_exposes_runtime_status_and_protocol_helpers
                 "resources/read",
                 "prompts/get",
             ],
+            # Item 4 (PR-T3 fix round D): the fixture's `get_protocol_
+            # capabilities()` (above) now returns this field too -- kept in
+            # sync here since `get_advanced()` passes it through verbatim.
+            "unavailable_request_methods": ["tools/call"],
         },
         "protocol_diagnostics": {
             "adapter": "direct_in_process",
@@ -1044,7 +1113,11 @@ async def test_local_control_service_exposes_runtime_status_and_protocol_helpers
             "supports_batch": True,
             "methods": [
                 {"name": "tools/list", "supported": True},
-                {"name": "tools/call", "supported": True},
+                # Fix Round C, Item 1: `tools/call` is refused
+                # unconditionally by the real delegate's `request()`, so
+                # diagnostics must not advertise it as callable -- this
+                # fake mirrors that shape (`_UNAVAILABLE_DIRECT_METHODS`).
+                {"name": "tools/call", "supported": False},
             ],
             "manifest": {"tools": 2, "resources": 1, "prompts": 1},
             "implementation": {
@@ -1230,6 +1303,40 @@ def test_local_runtime_delegate_reports_runtime_health_from_lifecycle():
     assert isinstance(health["initialized_at"], str)
     assert health["uptime_seconds"] >= 0
     assert health["issues"] == []
+
+
+@pytest.mark.asyncio
+async def test_governance_denial_raises_the_typed_mcp_governance_denied_error():
+    """task-2537 (PR-T3 fix round B, item 3): `_require_runtime_
+    governance_allowed()`'s deny branch raises the dedicated
+    `MCPGovernanceDenied` subclass, not a bare `PermissionError` -- so
+    `mcp_workbench._is_permission_refusal()` can tell "governance refused
+    this call" apart from an unrelated `PermissionError` a tool's own body
+    might raise. Also proves the existing `except PermissionError`
+    contract still holds (the type IS a `PermissionError`)."""
+    runtime_delegate = FakeLocalRuntimeDelegate()
+    service = LocalMCPControlService(
+        store=FakeLocalStore(),
+        client=FakeMCPClient(),
+        manifest_provider=lambda: {},
+        runtime_delegate=runtime_delegate,
+    )
+    service.save_governance_rule(
+        {
+            "rule_id": "rule-deny-notes-list",
+            "capability_id": "notes.list.local",
+            "decision": "deny",
+            "notes": "Local note listing is blocked.",
+        }
+    )
+
+    from tldw_chatbook.MCP.local_control_service import MCPGovernanceDenied
+
+    with pytest.raises(MCPGovernanceDenied) as exc_info:
+        await service.execute_tool("search_notes", {"query": "roadmap"})
+
+    assert isinstance(exc_info.value, PermissionError)
+    assert str(exc_info.value) == "Denied by local governance: notes.list.local"
 
 
 @pytest.mark.asyncio

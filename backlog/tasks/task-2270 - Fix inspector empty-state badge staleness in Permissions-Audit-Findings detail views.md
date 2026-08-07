@@ -27,5 +27,21 @@ Rider from the PR-5 final review (same seam, honest-copy fix): when the test-gat
 - [ ] Selecting a permission row, audit entry, or finding with no server selected does not leave the empty-state badge above the populated detail.
 - [ ] All four detail views (Tools/Permissions/Audit/Findings) behave consistently: badge hidden while detail is displayed, restored on that view's clear path with the empty-state copy.
 - [ ] `update_readiness()` cannot resurrect the badge over displayed detail in any mode.
-- [ ] A `gate_error`-origin gate produces the honest "Permission state could not be resolved." note, never "This tool is set to Off."
+- [x] A `gate_error`-origin gate produces the honest "Permission state could not be resolved." note, never "This tool is set to Off." *(the rider — see Implementation Notes)*
 - [ ] Existing badge-content and Tools-mode pins keep passing; new behavior covered by additive tests per view.
+
+## Implementation Notes
+
+**2026-08-06 (PR-T3 Task 3, commit `b1c103ff3`):** The rider (the fourth AC item
+above) shipped. `_decision_note()`'s synthetic `gate_error` origin now degrades to
+the honest `_UNKNOWN_ORIGIN_SENTENCE` ("Permission state could not be resolved.")
+instead of falling through to the "This tool is set to Off." branch like any other
+deny — an authorized, named contract change to
+`test_decision_note_unknown_origin_degrades_to_bare_sentence`, which now pins the
+new value.
+
+**The main body of this task — the inspector's stale empty-state badge above
+populated detail in the Permissions, Audit, and Findings views (AC #1–#3, #5) — is
+UNTOUCHED and remains open.** PR-T3 only reached the decision-note text in the same
+seam; the badge-staleness defect itself was out of that PR's scope. This task stays
+**To Do**.

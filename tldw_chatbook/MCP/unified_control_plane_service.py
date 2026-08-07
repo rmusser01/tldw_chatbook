@@ -15,6 +15,13 @@ from tldw_chatbook.runtime_policy.types import RuntimeSourceState
 
 from .execution_log import MCPExecutionLog, build_record
 from .hub_tool_catalog import HubTool
+from .local_control_service import MCPGovernanceDenied
+from .local_runtime_delegate import (
+    PERMISSION_STATE_UNRESOLVED_CLAUSE,
+    RAW_TOOL_CALL_REFUSED_MESSAGE,
+    RawToolCallRefusedError,
+    capitalize_first,
+)
 from .permission_store import (
     EffectiveToolState,
     HASH_FREE_SERVER_KEYS,
@@ -23,9 +30,151 @@ from .permission_store import (
     resolve_effective_state,
     resolve_effective_state_by_key,
 )
+from .readiness import BUILTIN_SERVER_KEY
 from .server_target_store import ConfiguredServerTargetStore
 from .unified_context_store import UnifiedMCPContextStore
 from .unified_control_models import ServerAccessContext, UnifiedMCPContext
+
+# Task 6 (PR-T3), Route B: refusal copy for the Advanced runner's
+# `tool.execute` action when the Hub's per-tool permission gate resolves the
+# named built-in tool to "deny". Mirrors the Test Tool runner's own blocked
+# sentence (`_TOOL_TEST_BLOCKED_TEXT`, mcp_workbench.py) but names the tool,
+# since the Advanced panel has no tool detail beside it to say which one.
+# Deliberately does NOT lead with "Blocked": the inspector renders it under
+# `show_tool_result()`'s "Blocked · not run" heading, and every other
+# PermissionError this path can surface (the in-process runtime-governance
+# profile's own denials, raised by `local_control_service.execute_tool()`)
+# reads correctly under that same heading.
+#
+# ONLY for a genuine resolved "deny" (`state.origin != "gate_error"`) --
+# see `_ADVANCED_EXECUTE_GATE_ERROR_MESSAGE` just below for the synthesized
+# fail-closed case, where this claim would be false (the tool's actual
+# state was never determined).
+_ADVANCED_EXECUTE_BLOCKED_MESSAGE = "{tool} is set to Off in Permissions."
+
+# Item 1 (PR-T3 fix round F): honest counterpart to
+# `_ADVANCED_EXECUTE_BLOCKED_MESSAGE` above for `execute_advanced_tool()`'s
+# OWN fail-closed gate (`gate_tool_test_by_key()` raised, synthesized as
+# `EffectiveToolState(state="deny", origin="gate_error")` a few hundred
+# lines down) -- the resolver crashed, so the tool's configured state was
+# never determined; it is not necessarily "Off" at all. Before this, the
+# deny branch below used `_ADVANCED_EXECUTE_BLOCKED_MESSAGE` unconditionally
+# for BOTH cases, so a corrupt/erroring permission store told the user a
+# confident, false fact about their own configuration -- the THIRD
+# occurrence of the pattern task-2536 (fix round B, item 2) fixed on the
+# Test Tool panel's blocked-result body and task-2270's rider fixed on its
+# quiet decision note.
+#
+# Fix Round G, Item 7 (review of Fix Round F): the prior version of this
+# comment claimed the twin worth matching was `mcp_inspector._UNKNOWN_
+# ORIGIN_SENTENCE` -- wrong surface AT THE TIME. `_UNKNOWN_ORIGIN_
+# SENTENCE` was then the Permissions-detail-panel/quiet-decision-note
+# sentence, still an independently maintained literal; the twin THAT
+# round actually converged with was `mcp_workbench._TOOL_TEST_BLOCKED_
+# UNKNOWN_TEXT`, the Test Tool panel's own LOUD blocked-run body for this
+# identical `gate_error` condition.
+#
+# Fix Round I, Item 4 (review, recount): a later review found
+# `_UNKNOWN_ORIGIN_SENTENCE` was STILL a third, separately maintained
+# literal stating this same claim -- reachable whenever a Tools-mode tool
+# selection's own `gate_tool_test()` call raises
+# (`MCPWorkbench._effective_for_display()`'s single-tool fallback path;
+# `_decision_note()`'s OWN former `gate_error` branch, a fourth candidate,
+# was proven dead and removed one round earlier -- see that commit for why
+# it no longer counts). All three -- this constant, `_TOOL_TEST_BLOCKED_
+# UNKNOWN_TEXT`, and `_UNKNOWN_ORIGIN_SENTENCE` -- now derive from one
+# shared clause, `local_runtime_delegate.PERMISSION_STATE_UNRESOLVED_
+# CLAUSE` (see that module for the sharing rationale -- same
+# dependency-safe-common-ground precedent as `RAW_TOOL_CALL_REFUSED_
+# MESSAGE` just above), rather than being re-imported into each other:
+# this module is imported BY `mcp_workbench.py`/`mcp_inspector.py` (see
+# `_ADVANCED_EXECUTE_BLOCKED_MESSAGE`'s own mirrored-not-shared precedent,
+# and `_run_advanced_action()`'s docstring in `mcp_inspector.py` for why
+# the reverse import would be circular), so deriving all three from a
+# FOURTH, dependency-safe module lets a reword of the underlying claim
+# change every call site, without any of them importing each other.
+#
+# `capitalize_first()`, not `.capitalize()`: the latter also lowercases
+# everything AFTER the first character, silently mangling any acronym a
+# future clause might contain -- see that function's own docstring in
+# `local_runtime_delegate.py` for the proof.
+_ADVANCED_EXECUTE_GATE_ERROR_MESSAGE = f"{capitalize_first(PERMISSION_STATE_UNRESOLVED_CLAUSE)}."
+
+# task-2539 (PR-T3 fix round B, item 3): the exact message
+# `execute_hub_tool()` raises below for a server-source `server_key`. Its
+# own constant so the raise site and `MCPServerSourceDisplayOnlyError`'s
+# default message can never drift apart from each other.
+_SERVER_SOURCE_DISPLAY_ONLY_MESSAGE = "Server-source tools are display-only."
+
+
+class MCPServerSourceDisplayOnlyError(ValueError):
+    """`execute_hub_tool()`'s refusal for a server-source ``server_key``.
+
+    Raised ONLY when ``server_key`` is neither ``local:`` nor
+    ``builtin:`` -- a server-source tool has no in-process execution path
+    through this seam at all (see the Hub's Governance mode for how a
+    server-source tool's definition is shown instead). Subclasses
+    ``ValueError`` so any existing ``except ValueError`` handler upstream
+    keeps working unchanged.
+
+    task-2539: before this, `mcp_workbench._is_permission_refusal()` told
+    this refusal apart from an unrelated ``ValueError`` by comparing
+    ``str(exc)`` against this exact sentence -- fragile, since nothing
+    pinned that string AT THIS RAISE SITE, so an unrelated reword here
+    would have silently reverted that classifier's fix with a fully green
+    suite. Matching THIS TYPE instead makes the message text purely
+    cosmetic for classification; it stays byte-identical to what the bare
+    ``ValueError`` this replaces carried, purely so the rendered text is
+    unchanged for anyone reading the result.
+    """
+
+    def __init__(self, message: str = _SERVER_SOURCE_DISPLAY_ONLY_MESSAGE) -> None:
+        super().__init__(message)
+
+
+class MCPHubGateDeniedError(PermissionError):
+    """`execute_advanced_tool()`'s refusal when the Hub's OWN per-tool
+    permission gate (Allow/Ask/Off) resolves to "Off".
+
+    Item 2 (PR-T3 fix round D). Deliberately a DIFFERENT type from
+    ``local_control_service.MCPGovernanceDenied`` -- that exception names a
+    denial from the in-process runtime-governance profile, a separate
+    permission system checked one layer further in (inside
+    :meth:`UnifiedMCPControlPlaneService.execute_hub_tool`'s ``coro``, via
+    ``local_control_service._require_runtime_governance_allowed()``).
+    Conflating the two into one type would make it impossible to tell, from
+    the exception alone, WHICH gate refused a given call -- exactly the
+    distinction Fix Round D, Item 1's `error_category` tokens
+    (``"gate_denied"`` here vs. ``"governance_denied"`` there) preserve on
+    the execution-log side; this type preserves the same distinction on the
+    raise side.
+
+    Subclasses ``PermissionError`` so any existing ``except
+    PermissionError`` handler upstream keeps working unchanged.
+    """
+
+
+# Task 6 (PR-T3), Route B, second door: `runtime.request`/`runtime.batch` are
+# Advanced descriptors too, and the in-process runtime speaks the real
+# protocol -- `{"method": "tools/call"}` reaches the SAME
+# `runtime_delegate.execute_tool()` as the `tool.execute` action, with the
+# same two holes it had (no Hub permission gate, no execution-log row).
+# Gating only `tool.execute` would lock the front door and leave this open,
+# so tool execution keeps exactly one door here: the gated, logged one.
+# Every other protocol method (tools/list, prompts/list, status/get, ...)
+# is untouched -- this runner's diagnostic value is in those.
+#
+# Fix Round A, Item 2: this refusal (the control-plane pre-dispatch scan,
+# below) is one of TWO independent enforcement points -- the other is
+# `LocalMCPRuntimeDelegate.request()` itself, the durable backstop for
+# callers that reach the delegate without going through this scan at all.
+# The message constant is imported from that module, not redefined here, so
+# the two can never show the user different copy for the same refusal. This
+# scan's own job (see the full rationale on the import site): preserve
+# `runtime.batch`'s all-or-nothing property, which a delegate-level refusal
+# alone cannot -- the batch runs serially, so a per-item refusal there would
+# only stop the offending item, not the ones dispatched before it.
+_RAW_TOOL_CALL_REFUSED_MESSAGE = RAW_TOOL_CALL_REFUSED_MESSAGE
 
 
 class UnifiedMCPControlPlaneService:
@@ -1001,13 +1150,16 @@ class UnifiedMCPControlPlaneService:
                     )
                 )
             if action_name == "tool.execute":
-                return await self._maybe_await(
-                    self.local_service.execute_tool(
-                        self._require_field(payload, "tool_name"),
-                        payload.get("arguments")
-                        if isinstance(payload.get("arguments"), dict)
-                        else {},
-                    )
+                # Task 6 (PR-T3), Route B: NOT a bare `local_service.
+                # execute_tool()` call anymore -- see
+                # `execute_advanced_tool()` for why that route was the one
+                # execution path in the Hub with neither a permission gate
+                # nor an execution-log record.
+                return await self.execute_advanced_tool(
+                    self._require_field(payload, "tool_name"),
+                    payload.get("arguments")
+                    if isinstance(payload.get("arguments"), dict)
+                    else {},
                 )
             if action_name == "resource.read":
                 return await self._maybe_await(
@@ -1096,9 +1248,11 @@ class UnifiedMCPControlPlaneService:
             if action_name == "runtime.status.get":
                 return await self._maybe_await(self.local_service.get_runtime_status())
             if action_name == "runtime.request":
+                method = self._require_field(payload, "method")
+                self._refuse_raw_tool_call(method)
                 return await self._maybe_await(
                     self.local_service.run_runtime_request(
-                        self._require_field(payload, "method"),
+                        method,
                         payload.get("params")
                         if isinstance(payload.get("params"), dict)
                         else {},
@@ -1108,8 +1262,34 @@ class UnifiedMCPControlPlaneService:
                 requests = payload.get("requests")
                 if not isinstance(requests, list):
                     raise ValueError("Unified MCP action requires 'requests'.")
+                # Checked BEFORE dispatching any of them: the batch runs
+                # serially, so a `tools/call` in the middle would already
+                # have executed by the time a per-item refusal could
+                # report it, and would report as an ordinary batch row.
+                #
+                # Item 2 (PR-T3 fix round F): normalized ONCE via
+                # `_normalize_batch_requests()` -- the same `dict(request)`
+                # coercion `local_service.run_runtime_batch()` applies
+                # (`local_control_service.py:500`) -- and that SAME
+                # normalized list is what both this scan and the dispatch
+                # below consume. Before this, the scan checked
+                # `isinstance(request, Mapping)` against the RAW items
+                # (widened from `dict` to `Mapping` in Fix Round A, Minor
+                # #4) while the real dispatcher's `dict(request)` also
+                # accepts a list of `(key, value)` pairs -- a `list` is
+                # neither, so that shape skipped the scan silently and
+                # still ran for real. See `_normalize_batch_requests()`'s
+                # own docstring for the full mechanism. The delegate-level
+                # refusal (`LocalMCPRuntimeDelegate.request()`) remains the
+                # durable backstop for callers that reach it without going
+                # through this scan at all -- this fix does not replace
+                # that, it closes the gap that let this scan disagree with
+                # the dispatcher it is supposed to pre-empt.
+                normalized_requests = self._normalize_batch_requests(requests)
+                for request in normalized_requests:
+                    self._refuse_raw_tool_call(request.get("method"))
                 return await self._maybe_await(
-                    self.local_service.run_runtime_batch(requests)
+                    self.local_service.run_runtime_batch(normalized_requests)
                 )
             raise ValueError(f"Unsupported Unified MCP local action: {action_name}")
 
@@ -2175,7 +2355,16 @@ class UnifiedMCPControlPlaneService:
             The raw result payload from the underlying service call.
 
         Raises:
-            ValueError: If ``server_key`` is not a local/builtin key.
+            MCPServerSourceDisplayOnlyError: If ``server_key`` is not a
+                local/builtin key. A ``ValueError`` subclass -- any
+                existing ``except ValueError`` handler still catches it.
+            MCPGovernanceDenied: If the in-process runtime-governance
+                profile denies the call (raised inside ``coro`` by
+                ``local_control_service._require_runtime_governance_
+                allowed()``). Recorded honestly (item 1, fix round D) and
+                re-raised -- a ``PermissionError`` subclass, so any
+                existing ``except PermissionError`` handler upstream still
+                catches it.
             RuntimeError: If the tool call fails or exceeds the
                 effective timeout.
         """
@@ -2193,7 +2382,9 @@ class UnifiedMCPControlPlaneService:
                 normalized_tool_name, normalized_arguments
             )
         else:
-            raise ValueError("Server-source tools are display-only.")
+            # task-2539: typed, not a bare `ValueError` -- see
+            # `MCPServerSourceDisplayOnlyError`'s own docstring for why.
+            raise MCPServerSourceDisplayOnlyError()
 
         timeout = (
             timeout_seconds
@@ -2222,6 +2413,51 @@ class UnifiedMCPControlPlaneService:
                 decision=decision,
             )
             raise RuntimeError(message) from None
+        except MCPGovernanceDenied as exc:
+            # Item 1 (PR-T3 fix round D). Without this branch, a governance
+            # refusal fell into the generic `except Exception` below and was
+            # recorded as three false statements about one event: `status=
+            # "error"`/`error_category="execution_failed"` (the tool RAN and
+            # crashed -- it never ran at all), `duration_ms` measured from
+            # `started` (timing a call that never dispatched), and the
+            # caller's PRE-COMPUTED `decision` left untouched (describes
+            # what the caller expected going in, not what happened -- the
+            # governance check that just denied it runs INSIDE `coro`,
+            # after this method already committed to that value). Recorded
+            # honestly instead, reusing `record_tool_decision()`'s own
+            # "never executed" vocabulary (`status="blocked"`,
+            # `duration_ms=0`) rather than this method's own "attempted and
+            # timed" shape.
+            #
+            # `error_category="governance_denied"` is a NEW token, not Fix
+            # Round B's `"gate_denied"` (`execute_advanced_tool()`'s deny
+            # branch, a few hundred lines down): that token names the Hub's
+            # OWN Allow/Ask/Off permission gate. This denial comes from the
+            # in-process runtime-governance profile
+            # (`local_control_service._require_runtime_governance_
+            # allowed()`) -- a different system, checked at a different
+            # seam, for a different reason -- and reusing "gate_denied"
+            # here would conflate the two exactly the way Round B's own
+            # docstring warned "policy_denied" would falsely cross-
+            # reference the unrelated `runtime_policy` engine's
+            # `PolicyDeniedError`. "governance_denied" mirrors this
+            # exception's own name (`MCPGovernanceDenied`) instead.
+            self._record_tool_execution(
+                normalized_key,
+                normalized_tool_name,
+                ok=False,
+                duration_ms=0,
+                status="blocked",
+                error_category="governance_denied",
+                exception_type=type(exc).__name__,
+                status_code=None,
+                arguments=normalized_arguments,
+                registered_argument_names=registered_argument_names,
+                result=None,
+                initiator=initiator,
+                decision="denied",
+            )
+            raise
         except Exception as exc:
             duration_ms = int((time.monotonic() - started) * 1000)
             response = getattr(exc, "response", None)
@@ -2278,6 +2514,7 @@ class UnifiedMCPControlPlaneService:
         arguments: dict[str, Any] | None = None,
         *,
         decision: str = "allowed",
+        registered_argument_names: set[str] | None = None,
     ) -> dict[str, Any]:
         """Execute one tool test against a local or built-in server.
 
@@ -2299,12 +2536,19 @@ class UnifiedMCPControlPlaneService:
                 Hub UI passes ``"approved"`` for an Ask-gated tool the
                 user just confirmed; every other caller keeps the default
                 ``"allowed"`` this method has always recorded.
+            registered_argument_names: Optional schema-approved argument
+                names, forwarded unchanged to :meth:`execute_hub_tool`
+                (Task 4, PR-T3). Omitted callers keep recording every
+                supplied argument as unknown -- byte-identical to
+                pre-Task-4 behavior.
 
         Returns:
             The raw result payload from the underlying service call.
 
         Raises:
-            ValueError: If ``server_key`` is not a local/builtin key.
+            MCPServerSourceDisplayOnlyError: If ``server_key`` is not a
+                local/builtin key. A ``ValueError`` subclass -- any
+                existing ``except ValueError`` handler still catches it.
             RuntimeError: If the tool call fails or exceeds the
                 configured lifecycle timeout.
         """
@@ -2314,6 +2558,258 @@ class UnifiedMCPControlPlaneService:
             arguments,
             initiator="test",
             decision=decision,
+            timeout_seconds=self._lifecycle_timeout(),
+            registered_argument_names=registered_argument_names,
+        )
+
+    @staticmethod
+    def _normalize_batch_requests(requests: list[Any]) -> list[dict[str, Any]]:
+        """Coerce a ``runtime.batch`` ``requests`` list exactly the way
+        :meth:`LocalMCPControlService.run_runtime_batch` does.
+
+        Item 2 (PR-T3 fix round F). The pre-dispatch scan used to check
+        ``isinstance(request, Mapping)`` directly against the RAW items --
+        but ``local_control_service.run_runtime_batch()``
+        (``local_control_service.py:500``) normalizes every item with
+        ``dict(request)``, which also accepts a list of ``(key, value)``
+        pairs (``dict([["method", "tools/call"]])`` succeeds). A JSON array
+        nested inside ``requests`` is exactly that shape -- ``json.loads``
+        produces a bare ``list`` for a JSON array, and the Advanced pane's
+        raw-JSON textarea is reachable with one -- so it is a ``list``, not
+        a ``Mapping``, and the OLD scan skipped it silently while the real
+        dispatcher still ran it.
+
+        Called ONCE here and the result is reused for both the scan
+        (:meth:`_refuse_raw_tool_call` below) and the actual dispatch, so
+        the two can never again disagree about what counts as a request --
+        a duplicated coercion rule in two places is how they drifted apart
+        the first time. Any item that is not ``dict``-coercible (neither a
+        ``Mapping`` nor an iterable of pairs) raises the SAME
+        ``TypeError``/``ValueError`` ``run_runtime_batch()`` would have
+        raised for it -- this only moves the moment that error surfaces
+        earlier, before any item has dispatched, which is a strict
+        improvement for the same "check everything before running
+        anything" reason the scan exists at all.
+
+        Fix Round H (PR-T3 review), Item 5: called here, in ``run_action()``
+        (line ~1271), BEFORE ``local_service.run_runtime_batch()``'s own
+        ``_require_allowed("mcp.runtime.trigger.local")`` check (nested one
+        layer down, ``local_control_service.py:499``) ever runs. A
+        non-``dict``-coercible item (e.g. a bare ``5``) therefore raises
+        ``TypeError`` HERE, before the capability check, so a caller
+        lacking ``mcp.runtime.trigger.local`` who submits a malformed batch
+        gets a shape error instead of a policy denial. DECISION (not a
+        defect, left as-is): nothing runs either way -- both paths refuse
+        the whole batch before any item dispatches -- and this is
+        consistent with the pre-existing ``_refuse_raw_tool_call()`` scan
+        immediately below, which ALSO runs at this layer, before the same
+        nested permission check, for the identical "validate the whole
+        batch before dispatching or gating it" reason (see the comment
+        above this call site). Reordering to gate first would mean parsing
+        malformed, potentially adversarial batch items before knowing the
+        caller may even act -- worse, not better. If this needs revisiting,
+        it should move with `_refuse_raw_tool_call()`'s ordering too, not
+        change alone.
+
+        Args:
+            requests: The raw ``requests`` list from the ``runtime.batch``
+                payload.
+
+        Returns:
+            One ``dict`` per item, in order.
+        """
+        return [dict(request) for request in requests]
+
+    def _refuse_raw_tool_call(self, method: Any) -> None:
+        """Refuse a raw ``tools/call`` on the runtime request/batch runners.
+
+        Task 6 (PR-T3), Route B. Those runners hand a protocol method
+        straight to the in-process runtime, whose ``tools/call`` branch
+        (``LocalRuntimeDelegate.request``) calls the same
+        ``execute_tool()`` seam :meth:`execute_advanced_tool` gates -- so
+        without this they are a second, unlabelled way to run a tool the
+        user set to Off, leaving no execution-log row either. Executing a
+        tool keeps exactly one door here: ``tool.execute``, which gates
+        and records. Every other method is untouched.
+
+        Args:
+            method: The protocol method from the request payload; anything
+                that is not ``tools/call`` passes through.
+
+        Raises:
+            RawToolCallRefusedError: ``method`` is ``tools/call``. A
+                ``PermissionError`` subclass -- any existing ``except
+                PermissionError`` handler upstream still catches it.
+        """
+        if str(method or "").strip() == "tools/call":
+            # Item 2 (PR-T3 fix round D): typed, not a bare
+            # `PermissionError` -- see `RawToolCallRefusedError`'s own
+            # docstring for why this and the delegate's own raise site
+            # share one type the same way they already share one message.
+            raise RawToolCallRefusedError(_RAW_TOOL_CALL_REFUSED_MESSAGE)
+
+    async def execute_advanced_tool(
+        self, tool_name: str, arguments: dict[str, Any] | None = None
+    ) -> Any:
+        """Execute one built-in tool for the Advanced runner's ``tool.execute``.
+
+        Task 6 (PR-T3), Route B. The Advanced (legacy control plane) panel
+        offers a ``tool.execute`` descriptor whose Run Action button
+        reached ``local_service.execute_tool()`` straight through
+        :meth:`run_action` -- the ONLY execution path in the Hub that
+        touched neither the per-tool permission gate (a tool the user set
+        to Off ran anyway) nor :meth:`_record_tool_execution` (which lives
+        inside :meth:`execute_hub_tool`), so such a run left no row in the
+        audit trail at all. This routes it through the same shared seam as
+        the Test Tool runner and the agent bridge, so it is gated and
+        logged like every other run.
+
+        The gate is :meth:`gate_tool_test_by_key`, always called with
+        ``BUILTIN_SERVER_KEY`` -- the Advanced runner names a tool in raw
+        JSON and has no live ``HubTool`` to fingerprint, which is exactly
+        the case that seam exists for. It resolves ``deny``/``ask`` at full
+        fidelity; an ``allow`` collapses to ``ask`` UNLESS the server key is
+        in ``BY_KEY_HASH_FREE_SERVER_KEYS`` (Fix Round A, Item 1; narrowed
+        from the wider ``HASH_FREE_SERVER_KEYS`` in Fix Round C, Item 2 --
+        see that constant's docstring for why) -- and ``BUILTIN_SERVER_KEY``
+        (``"builtin:tldw_chatbook"``) is in both, so a tool explicitly (or
+        by inherited default) set to Allow resolves as ``allow`` here, same
+        as :meth:`gate_tool_test` would with a live ``HubTool``. A ``deny``
+        is refused here (nothing runs, a ``decision="denied"`` row is
+        recorded); an ``allow`` executes under ``decision="allowed"``; and
+        an ``ask`` executes under ``decision="approved"``, naming the
+        Advanced runner's own two-press confirm
+        (``MCPInspector._run_advanced_action()``) as the approval -- the
+        same contract, and the same audit vocabulary, the agent bridge's
+        Ask-then-approved calls already use. That confirm is a UI-level
+        mis-click guard independent of the gate state, not a substitute for
+        it: a caller that skips it is the one lying to the log, not this
+        method, and the gate's hard "Off" verdict is enforced here
+        regardless of whether a confirm ever happened.
+
+        A gate resolution that RAISES fails closed (a synthetic deny),
+        mirroring ``MCPWorkbench._resolve_test_gate()``: a runtime error
+        must never silently expose a tool permissions might forbid.
+
+        No ``registered_argument_names`` is supplied: the payload is
+        free-form JSON with no schema behind it, so this path honestly
+        records no argument provenance rather than inventing some.
+
+        Args:
+            tool_name: Name of the built-in tool to execute.
+            arguments: Tool arguments; defaults to an empty dict.
+
+        Returns:
+            The raw result payload from the built-in tool call.
+
+        Raises:
+            MCPHubGateDeniedError: The tool is set to Off in Permissions
+                (the Hub's own gate), OR the gate check itself raised and
+                this failed closed -- the two are distinguished by message
+                and by the ``error_category`` recorded on the audit row
+                (``"gate_denied"`` vs. ``"gate_error"``; see the deny
+                branch below), never conflated in the user-facing text. A
+                ``PermissionError`` subclass.
+            MCPGovernanceDenied: The in-process runtime-governance profile
+                denies it, raised further down by ``local_control_
+                service.execute_tool()``. A ``PermissionError`` subclass,
+                and a DIFFERENT type from ``MCPHubGateDeniedError`` above
+                -- see that type's own docstring for why.
+            RuntimeError: The tool call fails or exceeds the effective
+                timeout.
+        """
+        normalized_tool_name = str(tool_name or "").strip()
+        normalized_arguments = dict(arguments or {})
+        try:
+            state = self.gate_tool_test_by_key(
+                BUILTIN_SERVER_KEY, normalized_tool_name
+            )
+        except Exception as exc:
+            logger.warning(
+                "MCP advanced tool.execute gate check failed for {}; failing closed: {}",
+                normalized_tool_name,
+                type(exc).__name__,
+            )
+            state = EffectiveToolState(state="deny", origin="gate_error")
+
+        if state.state == "deny":
+            # Item 1 (PR-T3 fix round F): `state.origin == "gate_error"` is
+            # THIS method's own synthesized fail-closed verdict from the
+            # `except Exception` above -- the permission RESOLVER raised,
+            # not a genuine "Off". Before this branch existed, that case
+            # fell straight into the genuine-deny copy/token below, telling
+            # the user (and the audit row) a confident, false fact about
+            # their configuration -- indistinguishable from a real
+            # user-configured deny. Repeats the exact pattern fix round B
+            # (task-2536) removed from the Test Tool panel's blocked-result
+            # body, and fix round D polished further;
+            # `mcp_workbench._resolve_test_gate()` already branches on this
+            # same `origin` for the same reason.
+            is_gate_error = state.origin == "gate_error"
+            blocked_message = (
+                _ADVANCED_EXECUTE_GATE_ERROR_MESSAGE
+                if is_gate_error
+                else _ADVANCED_EXECUTE_BLOCKED_MESSAGE.format(
+                    tool=normalized_tool_name or "This tool"
+                )
+            )
+            # Fix Round B, Item 1: Fix Round A had this row reuse the
+            # `error=` mechanism to reach `error_category="approval_
+            # cancelled"` -- but that category means a user cancelled an
+            # approval that was genuinely OFFERED, and that never happened
+            # here: the permission GATE denied this outright, before any
+            # approval could be offered. Reusing the vocabulary made the
+            # row specific and FALSE instead of generic and true. This now
+            # passes the honest, explicit `error_category="gate_denied"`
+            # token instead -- chosen over "policy_denied" to stay
+            # consistent with this exact code path's own vocabulary
+            # (`gate_tool_test_by_key()`, `_resolve_test_gate()`,
+            # `EffectiveToolState.origin="gate_error"` -- all "gate", never
+            # "policy") and to avoid a false cross-reference to the
+            # separate runtime-policy engine (`runtime_policy/types.py`'s
+            # `PolicyDeniedError`), which is a different subsystem denying
+            # for a different reason. The message text itself is still
+            # never persisted -- `error_category` is a sanitized token,
+            # never free text, by the execution log's metadata-only
+            # design.
+            #
+            # Item 1 (PR-T3 fix round F): `"gate_denied"` itself is ALSO
+            # false for the `is_gate_error` case -- it means "the Hub's
+            # gate denied", and here the gate never resolved at all.
+            #
+            # Fix Round H (PR-T3 review), Item 3: corrected the arithmetic
+            # below -- `"policy_denied"` is a name this branch REJECTED
+            # (see the comment just above), never a token it produces, so
+            # it does not count toward "already distinguishes". `"gate_
+            # error"` is the THIRD token this branch actually produces,
+            # consistent with the TWO real ones that came before it
+            # (`"gate_denied"` = the Hub's own Allow/Ask/Off gate genuinely
+            # resolving to Off; `"governance_denied"` = the separate
+            # in-process runtime-governance profile, a few hundred lines
+            # up) -- matching the `EffectiveToolState.origin` value that
+            # produced it rather than inventing an unrelated word for the
+            # same fact. `"policy_denied"` stays named here ONLY as the
+            # rejected alternative -- naming it would have falsely cross-
+            # referenced the unrelated `runtime_policy` engine's own
+            # `PolicyDeniedError`.
+            self.record_tool_decision(
+                BUILTIN_SERVER_KEY,
+                normalized_tool_name,
+                decision="denied",
+                initiator="test",
+                error_category="gate_error" if is_gate_error else "gate_denied",
+            )
+            # Item 2 (PR-T3 fix round D): typed, not a bare `PermissionError`
+            # -- see `MCPHubGateDeniedError`'s own docstring for why this is
+            # a DIFFERENT type from `MCPGovernanceDenied` below.
+            raise MCPHubGateDeniedError(blocked_message)
+
+        return await self.execute_hub_tool(
+            BUILTIN_SERVER_KEY,
+            normalized_tool_name,
+            normalized_arguments,
+            initiator="test",
+            decision="allowed" if state.state == "allow" else "approved",
             timeout_seconds=self._lifecycle_timeout(),
         )
 
@@ -2396,6 +2892,7 @@ class UnifiedMCPControlPlaneService:
         decision: str,
         initiator: str = "agent",
         error: str | None = None,
+        error_category: str | None = None,
     ) -> None:
         """Best-effort log a tool-call decision that never executed.
 
@@ -2407,6 +2904,22 @@ class UnifiedMCPControlPlaneService:
         lesson, the ``self.execution_log`` property access happens
         *inside* the try, since the property itself can raise.
 
+        Fix Round B, Item 1: ``error_category`` was added because the
+        pre-existing ``decision``/``error`` derivation below has exactly
+        one vocabulary slot for "denied, and we have a reason" --
+        ``"approval_cancelled"`` -- and that term has a real, narrower
+        meaning: a user actively dismissing/cancelling an approval that
+        was genuinely OFFERED (see ``test_record_tool_decision_writes_
+        denied_record`` and ``console_chat_controller.py``'s shutdown-
+        mid-approval recorder, both of which keep using the derivation
+        below unchanged). A permission GATE denying a call outright --
+        no approval was ever offered, nobody cancelled anything -- is a
+        different fact and needs its own token; forcing it through
+        ``error=`` to hit the same branch produced a row that was
+        specific and FALSE rather than generic and true (the bug this
+        parameter exists to close -- see ``execute_advanced_tool()``'s
+        deny branch).
+
         Args:
             server_key: Prefixed server key the tool belongs to.
             tool_name: Name of the tool the decision applies to.
@@ -2414,7 +2927,18 @@ class UnifiedMCPControlPlaneService:
                 ``"timeout"``).
             initiator: Who/what produced the decision; defaults to
                 ``"agent"``.
-            error: Optional human-readable detail for the record.
+            error: Optional human-readable detail for the record. Only
+                used, together with ``decision``, to *derive*
+                ``error_category`` when ``error_category`` itself is not
+                supplied -- the text is never persisted.
+            error_category: Optional explicit category token, used
+                verbatim (through ``safe_metadata_token()``) instead of
+                the ``decision``/``error`` derivation below. Because
+                ``safe_metadata_token()`` rejects any value containing
+                whitespace, this can only ever carry a single bare token
+                (e.g. ``"gate_denied"``), never a sentence -- do not
+                retry passing prose here, it will just come back as
+                ``"invalid"``.
         """
         try:
             log = self.execution_log
@@ -2429,15 +2953,19 @@ class UnifiedMCPControlPlaneService:
                 status="blocked",
                 duration_ms=0,
                 error_category=(
-                    "approval_timeout"
-                    if "timeout" in decision
-                    else "approval_cancelled"
-                    if decision == "denied" and error
-                    else "denied"
-                    if decision == "denied"
-                    else "execution_bridge_failed"
-                    if error
-                    else "blocked"
+                    error_category
+                    if error_category is not None
+                    else (
+                        "approval_timeout"
+                        if "timeout" in decision
+                        else "approval_cancelled"
+                        if decision == "denied" and error
+                        else "denied"
+                        if decision == "denied"
+                        else "execution_bridge_failed"
+                        if error
+                        else "blocked"
+                    )
                 ),
             )
             log.append(record)

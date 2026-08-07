@@ -13,7 +13,13 @@ from textual.widgets import Button, Collapsible, Input, Select, Static, TextArea
 import tldw_chatbook
 import tldw_chatbook.UI.MCP_Modules.mcp_inspector as mcp_inspector_module
 from tldw_chatbook.MCP.hub_tool_catalog import HubTool
+from tldw_chatbook.MCP.local_control_service import MCPGovernanceDenied
+from tldw_chatbook.MCP.local_runtime_delegate import RawToolCallRefusedError
 from tldw_chatbook.MCP.permission_store import EffectiveToolState
+from tldw_chatbook.MCP.unified_control_plane_service import (
+    MCPHubGateDeniedError,
+    _ADVANCED_EXECUTE_GATE_ERROR_MESSAGE,
+)
 from tldw_chatbook.MCP.readiness import (
     REASON_LABELS,
     STATE_CSS_CLASSES,
@@ -73,8 +79,16 @@ def _default_advanced_open(monkeypatch):
 
 
 class FakeAdvService:
-    def __init__(self) -> None:
+    def __init__(self, *, error: Exception | None = None) -> None:
         self.action_calls: list[tuple[str, dict]] = []
+        # Fix Round H (PR-T3 review), Item 2c: this fake used to return
+        # `{"ok": True}` unconditionally, so no test built on `InspectorApp`
+        # could ever drive `_run_advanced_action()`'s refusal-rendering
+        # branch (`except (MCPGovernanceDenied, MCPHubGateDeniedError,
+        # RawToolCallRefusedError)`) -- mirrors `ToolExecuteAdvService`'s
+        # own `error` constructor param below, the established pattern in
+        # this file for a raising service double.
+        self.error = error
 
     async def load_section(self, section=None):
         return {"source": "local", "section": section or "overview"}
@@ -91,13 +105,15 @@ class FakeAdvService:
 
     async def run_action(self, action_name, payload):
         self.action_calls.append((action_name, dict(payload or {})))
+        if self.error is not None:
+            raise self.error
         return {"ok": True}
 
 
 class InspectorApp(App):
-    def __init__(self) -> None:
+    def __init__(self, *, error: Exception | None = None) -> None:
         super().__init__()
-        self.service = FakeAdvService()
+        self.service = FakeAdvService(error=error)
         self.events: list[object] = []
 
     def compose(self) -> ComposeResult:
@@ -1407,6 +1423,20 @@ def _tool(**overrides: Any) -> HubTool:
     return HubTool(**base)
 
 
+def _capture_notifications(app: App) -> list[tuple[str, str]]:
+    """Shadow `app.notify` with a recorder; returns the (message, severity)
+    list it appends to. Mirrors `Tests/UI/test_mcp_workbench.py`'s own
+    helper of the same name -- kept as a separate copy since these are
+    independent test modules with no shared fixture file."""
+    notifications: list[tuple[str, str]] = []
+
+    def recording_notify(message, *, title="", severity="information", **kwargs):
+        notifications.append((str(message), severity))
+
+    app.notify = recording_notify
+    return notifications
+
+
 @pytest.mark.asyncio
 async def test_show_tool_renders_executable_tool_with_test_button():
     app = InspectorApp()
@@ -1550,6 +1580,28 @@ async def test_test_run_value_error_shows_message_and_does_not_post():
         assert events == []
         result = app.query_one("#mcp-inspector-test-result", Static)
         assert "required" in str(result.renderable)
+
+
+@pytest.mark.asyncio
+async def test_test_run_value_error_result_gets_failed_prefix():
+    """F4 (PR-T3 task 3): this was the ONE result write in this module
+    with no status prefix at all -- `_handle_test_run()`'s `except
+    ValueError` branch used to write the bare exception message
+    (`result_widget.update(str(exc))`), unlike every other write here
+    ("OK"/"Failed"/"Blocked · not run"). It now leads with "Failed"."""
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        await inspector.show_tool(_tool())
+        await pilot.pause()
+        await pilot.click("#mcp-inspector-test-tool")
+        await pilot.pause()
+        # required "query" field left empty
+        await pilot.click("#mcp-inspector-test-run")
+        await pilot.pause()
+        result = str(app.query_one("#mcp-inspector-test-result", Static).renderable)
+        assert result.startswith("Failed\n")
+        assert "required" in result
 
 
 @pytest.mark.asyncio
@@ -1752,6 +1804,134 @@ async def test_show_tool_result_raw_body_truncated_over_20000_chars():
         assert len(raw_body) < 25_000
 
 
+# PR-T3 task 2 (F1): the MCP result says what it found. `_summarize_tool_
+# result()` is generic across every MCP tool -- only a result whose rows
+# ALL carry a "score" key (the RAG-search row shape) may grow the honest
+# all-weak notice; every other tool's rows (e.g. `list_characters`) must
+# render byte-identical to today. These four cover the task's own test
+# list verbatim: (a) all-weak -> notice; (b) mixed incl. a strong/moderate
+# score -> no notice; (c) no "score" key at all -> byte-identical; (d)
+# empty list -> today's quiet line, unchanged.
+class TestSummarizeToolResultAllWeakNotice:
+    """Pure, UI-harness-free coverage of `_summarize_tool_result()` --
+    mirrors `test_error_shape_detection()`'s pattern below."""
+
+    def test_all_rows_scoring_below_moderate_threshold_adds_all_weak_notice(self):
+        from tldw_chatbook.Library.library_rag_state import (
+            LIBRARY_RAG_ALL_WEAK_COVERAGE_PREFIX,
+        )
+        from tldw_chatbook.UI.MCP_Modules.mcp_inspector import (
+            _summarize_tool_result,
+        )
+
+        rows = [{"id": i, "score": 0.19 - i * 0.01} for i in range(10)]
+        status_line, interpretation = _summarize_tool_result(
+            ok=True, duration_ms=50, source="local", result=rows,
+        )
+        assert status_line == "OK · local · 50ms · 10 results"
+        assert interpretation == LIBRARY_RAG_ALL_WEAK_COVERAGE_PREFIX
+
+    def test_mixed_scores_including_a_strong_match_adds_no_notice(self):
+        from tldw_chatbook.UI.MCP_Modules.mcp_inspector import (
+            _summarize_tool_result,
+        )
+
+        rows = [{"id": 1, "score": 0.05}, {"id": 2, "score": 0.5}]
+        status_line, interpretation = _summarize_tool_result(
+            ok=True, duration_ms=50, source="local", result=rows,
+        )
+        assert status_line == "OK · local · 50ms · 2 results"
+        assert interpretation is None
+
+    def test_rows_without_a_score_key_are_byte_identical_to_today(self):
+        """`list_characters`-shaped rows -- must never grow banding."""
+        from tldw_chatbook.UI.MCP_Modules.mcp_inspector import (
+            _summarize_tool_result,
+        )
+
+        rows = [
+            {"id": "1", "name": "Alice", "description": "", "message_count": 0},
+            {"id": "2", "name": "Bob", "description": "", "message_count": 3},
+        ]
+        status_line, interpretation = _summarize_tool_result(
+            ok=True, duration_ms=50, source="local", result=rows,
+        )
+        assert status_line == "OK · local · 50ms · 2 results"
+        assert interpretation is None
+
+    def test_empty_list_keeps_its_existing_quiet_line(self):
+        from tldw_chatbook.UI.MCP_Modules.mcp_inspector import (
+            _summarize_tool_result,
+        )
+
+        status_line, interpretation = _summarize_tool_result(
+            ok=True, duration_ms=50, source="local", result=[],
+        )
+        assert status_line == "OK · local · 50ms · 0 results"
+        assert interpretation == "The tool ran and returned no results."
+
+
+@pytest.mark.asyncio
+async def test_show_tool_result_ok_all_weak_rows_renders_all_weak_notice():
+    """End-to-end (not just the pure function): a real `show_tool_result()`
+    call with all-weak scored rows renders the notice in the note Static,
+    markup=False, alongside the unchanged raw Collapsible evidence."""
+    from tldw_chatbook.Library.library_rag_state import (
+        LIBRARY_RAG_ALL_WEAK_COVERAGE_PREFIX,
+    )
+
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        tool = _tool()
+        await inspector.show_tool(tool)
+        await pilot.pause()
+        await pilot.click("#mcp-inspector-test-tool")
+        await pilot.pause()
+        inspector.show_tool_result(
+            server_key=tool.server_key, tool_name=tool.name, ok=True,
+            duration_ms=50, source="local",
+            result=[{"id": 1, "score": 0.1}, {"id": 2, "score": 0.05}],
+            raw='[{"id": 1, "score": 0.1}, {"id": 2, "score": 0.05}]',
+        )
+        await pilot.pause()
+        result = str(app.query_one("#mcp-inspector-test-result", Static).renderable)
+        assert result == "OK · local · 50ms · 2 results"
+        note_widget = app.query_one("#mcp-inspector-test-result-note", Static)
+        assert str(note_widget.renderable) == LIBRARY_RAG_ALL_WEAK_COVERAGE_PREFIX
+        assert note_widget.display is True
+        raw_body = str(
+            app.query_one("#mcp-inspector-test-result-raw-body", Static).renderable
+        )
+        assert '"score": 0.1' in raw_body
+
+
+@pytest.mark.asyncio
+async def test_show_tool_result_ok_rows_without_score_key_unaffected():
+    """End-to-end guard for the `list_characters` case: no "score" key on
+    any row must render exactly as it did before this task -- no note
+    widget content, nothing new."""
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        tool = _tool()
+        await inspector.show_tool(tool)
+        await pilot.pause()
+        await pilot.click("#mcp-inspector-test-tool")
+        await pilot.pause()
+        inspector.show_tool_result(
+            server_key=tool.server_key, tool_name=tool.name, ok=True,
+            duration_ms=50, source="local",
+            result=[{"id": "1", "name": "Alice"}, {"id": "2", "name": "Bob"}],
+        )
+        await pilot.pause()
+        result = str(app.query_one("#mcp-inspector-test-result", Static).renderable)
+        assert result == "OK · local · 50ms · 2 results"
+        note_widget = app.query_one("#mcp-inspector-test-result-note", Static)
+        assert str(note_widget.renderable) == ""
+        assert note_widget.display is False
+
+
 def test_error_shape_detection():
     """Unit test for the pure MCP/tools.py:326 tool-error-contract detector
     (a length-1 list whose single element is a mapping with exactly one
@@ -1893,6 +2073,32 @@ async def test_show_tool_result_decision_note_on_blocked_path():
         assert note == "This tool is set to Off. From this tool's override."
         result = str(app.query_one("#mcp-inspector-test-result", Static).renderable)
         assert result.startswith("Blocked · not run")
+
+
+@pytest.mark.asyncio
+async def test_show_tool_result_blocked_heading_uses_the_shared_constant(monkeypatch):
+    """Fix Round A, Minor #4: `_ADVANCED_BLOCKED_HEADING` is documented as
+    "reused verbatim" by `show_tool_result()`'s blocked path -- this pins
+    that it is actually SOURCED from the constant, not a second hand-typed
+    copy of the same string that could silently drift from it."""
+    monkeypatch.setattr(
+        mcp_inspector_module, "_ADVANCED_BLOCKED_HEADING", "Blocked · patched"
+    )
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        tool = _tool()
+        await inspector.show_tool(tool)
+        await pilot.pause()
+        await pilot.click("#mcp-inspector-test-tool")
+        await pilot.pause()
+        inspector.show_tool_result(
+            server_key=tool.server_key, tool_name=tool.name, ok=False,
+            text="boom", duration_ms=0, blocked=True,
+        )
+        await pilot.pause()
+        result = str(app.query_one("#mcp-inspector-test-result", Static).renderable)
+        assert result.startswith("Blocked · patched")
 
 
 @pytest.mark.asyncio
@@ -2067,6 +2273,149 @@ async def test_show_tool_result_same_tool_is_not_dropped():
 
         result = str(app.query_one("#mcp-inspector-test-result", Static).renderable)
         assert "matching payload" in result
+
+
+# -- Task 3 (PR-T3): "a run that ran always says something" -- the two
+# stale-drop guards above keep dropping the RENDER (protected -- the tests
+# above pin that silence, unmodified), but now also toast, so a completed
+# run is never truly silent. `_handle_test_run()`'s own two silent early
+# returns get the same treatment.
+
+
+@pytest.mark.asyncio
+async def test_show_tool_result_for_a_different_tool_still_toasts():
+    """The stale-drop guard's render stays dropped (see the protected
+    `test_show_tool_result_for_a_different_tool_is_dropped` above,
+    unmodified) but now also fires a toast naming the tool whose result
+    arrived late -- a toast is a different surface from the render."""
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        notifications = _capture_notifications(app)
+        tool_b = _tool(name="fetch", server_key="local:docs", input_schema=None)
+        await inspector.show_tool(tool_b)
+        await pilot.pause()
+        await pilot.click("#mcp-inspector-test-tool")
+        await pilot.pause()
+
+        inspector.show_tool_result(
+            server_key="local:docs", tool_name="search", ok=True,
+            text="A's payload", duration_ms=10,
+        )
+        await pilot.pause()
+
+        result = str(app.query_one("#mcp-inspector-test-result", Static).renderable)
+        assert result == ""  # render still dropped -- protected silence
+        assert any("search" in msg for msg, _severity in notifications), (
+            f"expected a toast naming the late-arriving tool, got: {notifications!r}"
+        )
+
+
+@pytest.mark.asyncio
+async def test_show_tool_result_panel_closed_still_toasts():
+    """The second silent drop (`NoMatches` on the result Static -- the SAME
+    tool is still selected, but its Test Tool panel was closed, e.g. via
+    Close, while the run was in flight) also toasts."""
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        tool = _tool(name="search", server_key="local:docs")
+        await inspector.show_tool(tool)
+        await pilot.pause()
+        await pilot.click("#mcp-inspector-test-tool")
+        await pilot.pause()
+        await pilot.click("#mcp-inspector-test-close")
+        await pilot.pause()
+        assert not list(app.query("#mcp-inspector-test-result"))
+
+        notifications = _capture_notifications(app)
+        inspector.show_tool_result(
+            server_key="local:docs", tool_name="search", ok=True,
+            text="late payload", duration_ms=12,
+        )
+        await pilot.pause()
+
+        assert not list(app.query("#mcp-inspector-test-result"))
+        assert any("search" in msg for msg, _severity in notifications), (
+            f"expected a toast naming the tool, got: {notifications!r}"
+        )
+
+
+@pytest.mark.asyncio
+async def test_handle_test_run_no_tool_selected_toasts():
+    """`_handle_test_run()`'s `tool is None` early return -- defensive
+    (the Run button only exists inside a panel `show_tool()` mounts for a
+    real tool), but silent isn't the same thing as safe."""
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        notifications = _capture_notifications(app)
+        assert inspector.current_tool is None
+        inspector._handle_test_run()
+        await pilot.pause()
+        assert notifications, "expected a toast for the no-tool-selected guard"
+
+
+@pytest.mark.asyncio
+async def test_handle_test_run_panel_not_mounted_toasts():
+    """`_handle_test_run()`'s `NoMatches` early return (the form/result/
+    run-button widgets aren't mounted -- a tool is selected, but its Test
+    Tool panel was never opened)."""
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        await inspector.show_tool(_tool())
+        await pilot.pause()
+        assert not list(app.query("#mcp-inspector-test-run"))
+
+        notifications = _capture_notifications(app)
+        inspector._handle_test_run()
+        await pilot.pause()
+        assert notifications, "expected a toast for the missing-panel guard"
+
+
+@pytest.mark.asyncio
+async def test_reenable_test_run_reenables_button_for_the_current_tool():
+    """`reenable_test_run()` (Task 3): undoes `_handle_test_run()`'s own
+    disable for a press whose dispatch was swallowed by the workbench's
+    in-flight-duplicate guard."""
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        tool = _tool()
+        await inspector.show_tool(tool)
+        await pilot.pause()
+        await pilot.click("#mcp-inspector-test-tool")
+        await pilot.pause()
+        run_button = app.query_one("#mcp-inspector-test-run", Button)
+        run_button.disabled = True
+
+        inspector.reenable_test_run(tool.server_key, tool.name)
+        await pilot.pause()
+
+        assert run_button.disabled is False
+
+
+@pytest.mark.asyncio
+async def test_reenable_test_run_is_a_noop_for_a_different_tool():
+    """I1-style tolerance: must never re-enable a DIFFERENT tool's Run
+    button on this one's behalf (mirrors `show_tool_result()`'s own
+    stale-drop guard)."""
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        tool = _tool(name="search", server_key="local:docs")
+        await inspector.show_tool(tool)
+        await pilot.pause()
+        await pilot.click("#mcp-inspector-test-tool")
+        await pilot.pause()
+        run_button = app.query_one("#mcp-inspector-test-run", Button)
+        run_button.disabled = True
+
+        inspector.reenable_test_run("local:docs", "some-other-tool")
+        await pilot.pause()
+
+        assert run_button.disabled is True
 
 
 @pytest.mark.asyncio
@@ -2303,6 +2652,135 @@ async def test_close_button_disarms_pending_confirm():
         assert inspector.test_run_armed is False
 
 
+# -- Fix Round I, Item 1: an argument-form edit disarms the pending confirm --
+#
+# The armed hint promises "press again to run; anything else cancels" -- and
+# the confirm was granted against the arguments on screen WHEN it was
+# granted. Before this fix `_test_run_armed` survived argument edits, and
+# `_handle_test_run()` re-collects CURRENT form values, so the confirming
+# press ran arguments no confirm was ever rendered for (verified live: arm
+# against `{"id": 1}`, edit to `{"id": 999, "danger": true}`, one press ran
+# it). Every control kind `MCPSchemaForm` can mount gets its own test --
+# `Input` (string/number), `Checkbox` (boolean), `Select` (enum), and the
+# raw-JSON `TextArea` fallback -- because each disarm lives in a DIFFERENT
+# handler (`on_input_changed()` / `on_checkbox_changed()` /
+# `on_select_changed()`'s schema-field branch /
+# `_on_test_form_raw_payload_changed()`), and dropping any one of them must
+# redden its own test, not hide behind a sibling's.
+
+
+@pytest.mark.asyncio
+async def test_editing_an_argument_input_disarms_pending_confirm():
+    """A genuine keystroke in a schema-form `Input` cancels the armed
+    confirm -- the Test Tool arm's twin of the Advanced pane's own
+    disarm-on-payload-edit."""
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        await inspector.show_tool(_tool())  # string "query" -> Input
+        await pilot.pause()
+        await pilot.click("#mcp-inspector-test-tool")
+        await pilot.pause()
+        inspector.require_confirm(None)
+        await pilot.pause()
+        assert inspector.test_run_armed is True
+
+        await pilot.click("#mcp-schema-field-0")
+        await pilot.press("x")
+        await pilot.pause()
+
+        assert inspector.test_run_armed is False
+        hint = app.query_one("#mcp-inspector-test-armed-hint", Static)
+        assert str(hint.renderable) == ""
+
+
+@pytest.mark.asyncio
+async def test_toggling_an_argument_checkbox_disarms_pending_confirm():
+    """The boolean field rides alongside a string one because an
+    ALL-boolean schema crashes `_mount_test_tool_panel()`'s focus code
+    outright (`panel.query("Input, Select, TextArea").first()` -- no
+    `Checkbox` in the query, and `DOMQuery.first()` raises `NoMatches` on
+    an empty result rather than returning None, so the `is None` fallback
+    to the Close button is dead code): a pre-existing defect found by this
+    test's first draft, filed separately rather than fixed under this
+    item. The mixed schema keeps THIS test pointed at its own claim --
+    `on_checkbox_changed()`'s disarm."""
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        await inspector.show_tool(_tool(input_schema={
+            "type": "object",
+            "properties": {
+                "query": {"type": "string"},
+                "verbose": {"type": "boolean", "default": False},
+            },
+        }))
+        await pilot.pause()
+        await pilot.click("#mcp-inspector-test-tool")
+        await pilot.pause()
+        inspector.require_confirm(None)
+        await pilot.pause()
+        assert inspector.test_run_armed is True
+
+        await pilot.click("#mcp-schema-field-1")  # the Checkbox
+        await pilot.pause()
+
+        assert inspector.test_run_armed is False
+
+
+@pytest.mark.asyncio
+async def test_changing_an_argument_enum_select_disarms_pending_confirm():
+    """Value assignment posts the same `Select.Changed` a user pick does
+    (the section-select tests in this file rely on the identical
+    delivery), and `on_select_changed()`'s schema-field branch must catch
+    it -- enum fields are the one control kind that routes through that
+    shared handler rather than a dedicated one."""
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        await inspector.show_tool(_tool(input_schema={
+            "type": "object",
+            "properties": {"mode": {"type": "string", "enum": ["fast", "thorough"]}},
+        }))
+        await pilot.pause()
+        await pilot.click("#mcp-inspector-test-tool")
+        await pilot.pause()
+        inspector.require_confirm(None)
+        await pilot.pause()
+        assert inspector.test_run_armed is True
+
+        app.query_one("#mcp-schema-field-0", Select).value = "thorough"
+        await pilot.pause()
+
+        assert inspector.test_run_armed is False
+
+
+@pytest.mark.asyncio
+async def test_editing_the_raw_json_fallback_disarms_pending_confirm():
+    """A nested-object property makes `parse_schema()` return None, so the
+    form mounts the raw `#mcp-schema-raw` `TextArea` -- the fallback where
+    an unnoticed edit-after-arm would be WORST (the whole payload is
+    free-text), so it must disarm like every rendered control."""
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        await inspector.show_tool(_tool(input_schema={
+            "type": "object",
+            "properties": {"config": {"type": "object"}},
+        }))
+        await pilot.pause()
+        await pilot.click("#mcp-inspector-test-tool")
+        await pilot.pause()
+        inspector.require_confirm(None)
+        await pilot.pause()
+        assert inspector.test_run_armed is True
+
+        app.query_one("#mcp-schema-raw", TextArea).text = '{"config": {"x": 1}}'
+        await pilot.pause()
+
+        assert inspector.test_run_armed is False
+
+
 @pytest.mark.asyncio
 async def test_confirming_press_reposts_tool_test_requested():
     """The confirming press is a plain second Run/Confirm-run click -- the
@@ -2440,6 +2918,42 @@ async def test_show_permission_origin_sentence_falls_back_for_unrecognized_origi
         await pilot.pause()
         origin = str(app.query_one("#mcp-inspector-permission-origin", Static).renderable)
         assert origin == "Permission state could not be resolved."
+
+
+@pytest.mark.asyncio
+async def test_show_permission_state_line_reads_unknown_not_off_for_gate_error():
+    """Fix Round J (review of Fix Round H): the test above always pinned
+    the gate_error ORIGIN sentence while the state line ONE WIDGET ABOVE
+    it read "Permission: Off" -- `ui_label` maps the synthesized
+    fail-closed `state="deny"` to "Off" with no origin awareness, so the
+    block stacked a confident configuration claim directly on top of an
+    admission that the configuration could not be read. Exactly the
+    contradiction shape earlier rounds removed from the Test Tool body
+    and the Advanced hatch, reassembled by composition of two
+    individually-truthful widgets. The state line must say what is known
+    ("Unknown"), and a GENUINE deny must keep saying "Off" -- both
+    directions pinned so the fix cannot silently overreach."""
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        await inspector.show_permission(
+            _tool(), EffectiveToolState(state="deny", origin="gate_error")
+        )
+        await pilot.pause()
+        state_line = str(
+            app.query_one("#mcp-inspector-permission-state", Static).renderable
+        )
+        assert state_line == "Permission: Unknown"
+        assert "Off" not in state_line
+
+        await inspector.show_permission(
+            _tool(), EffectiveToolState(state="deny", origin="tool_override")
+        )
+        await pilot.pause()
+        state_line = str(
+            app.query_one("#mcp-inspector-permission-state", Static).renderable
+        )
+        assert state_line == "Permission: Off"
 
 
 # -- Task 3 (MCP Hub Phase 6): cascade provenance ----------------------------
@@ -3323,3 +3837,1251 @@ async def test_update_readiness_does_not_resurrect_badge_over_displayed_tool():
         await inspector.show_tool(None)
         await pilot.pause()
         assert badge.display is True
+
+
+# -- Task 6 (PR-T3), Route B: the Advanced runner's `tool.execute` hatch -----
+# Every OTHER Advanced action reads or mutates control-plane config; this one
+# EXECUTES a tool. It ran on a single press, ungated and unlogged. The service
+# now enforces the permission gate (`execute_advanced_tool()`); this pane
+# supplies the per-run consent that gate's "ask" verdict requires, and renders
+# a refusal as a refusal instead of an "Action failed:" dump.
+
+
+class ToolExecuteAdvService(FakeAdvService):
+    """Advanced service offering the real inventory-section `tool.execute`
+    descriptor (unified_control_plane_service.py's own payload template)."""
+
+    def __init__(self, *, error: Exception | None = None) -> None:
+        super().__init__()
+        self.error = error
+        # Fix Round E, Item 4: an explicit, observable call count for
+        # `load_section()` -- the surface `_load_advanced_section()`'s
+        # scheduled worker calls once it actually runs. Used by the
+        # isolation tests below as direct proof the worker has NOT run yet
+        # at the point they check `_advanced_confirm_key`, rather than
+        # inferring that purely from `set_service_context()`'s own
+        # synchronous clear also happening to leave the key `None`.
+        self.load_section_calls = 0
+
+    async def load_section(self, section=None):
+        self.load_section_calls += 1
+        return await super().load_section(section)
+
+    def available_actions(self):
+        return [
+            {
+                "name": "tool.execute",
+                "label": "Execute Local Tool",
+                "action_id": "mcp.runtime.trigger.local",
+                "payload_template": '{"tool_name":"search_notes","arguments":{"query":"example"}}',
+            }
+        ]
+
+    async def run_action(self, action_name, payload):
+        self.action_calls.append((action_name, dict(payload or {})))
+        if self.error is not None:
+            raise self.error
+        return {"ok": True}
+
+
+class ToolExecuteInspectorApp(App):
+    def __init__(self, *, error: Exception | None = None) -> None:
+        super().__init__()
+        self.service = ToolExecuteAdvService(error=error)
+
+    def compose(self) -> ComposeResult:
+        yield MCPInspector(id="mcp-inspector")
+
+    def on_mount(self) -> None:
+        self.query_one(MCPInspector).set_service_context(
+            self.service, [("Inventory", "inventory")]
+        )
+
+
+class ToolExecuteAndReadAdvService(ToolExecuteAdvService):
+    """Fix Round E, Item 2: adds a second, SAME-SECTION action
+    (`resource.read`) alongside `tool.execute` -- mirrors the real
+    inventory section's actual membership (`tool.execute` shares
+    `inventory` only with `resource.read` and `prompt.get`, both reads)
+    so a test can switch the action Select WITHOUT also switching
+    section, isolating Item 2's action-switch fix from Item 1's
+    section-change fix."""
+
+    def available_actions(self):
+        return super().available_actions() + [
+            {
+                "name": "resource.read",
+                "label": "Read Resource",
+                "action_id": "mcp.runtime.resource.read.local",
+                "payload_template": '{"uri":"note://example"}',
+            }
+        ]
+
+    async def run_action(self, action_name, payload):
+        self.action_calls.append((action_name, dict(payload or {})))
+        if self.error is not None:
+            raise self.error
+        return {"ok": True, "action": action_name}
+
+
+class ToolExecuteAndReadInspectorApp(App):
+    def __init__(self, *, error: Exception | None = None) -> None:
+        super().__init__()
+        self.service = ToolExecuteAndReadAdvService(error=error)
+
+    def compose(self) -> ComposeResult:
+        yield MCPInspector(id="mcp-inspector")
+
+    def on_mount(self) -> None:
+        self.query_one(MCPInspector).set_service_context(
+            self.service, [("Inventory", "inventory")]
+        )
+
+
+def _adv_result(app) -> str:
+    return str(app.query_one("#mcp-adv-result", Static).renderable)
+
+
+async def _press_run_again(pilot) -> None:
+    """Press Run Action a second time, past Button's own active-effect window.
+
+    `Button._on_click()` ignores a click while the widget still carries the
+    0.2s `-active` press-animation class (textual/widgets/_button.py), so
+    back-to-back `pilot.click()` calls in one pump window silently drop every
+    other press -- nothing to do with the confirm arm under test here.
+    """
+    await pilot.pause(0.3)
+    await pilot.click("#mcp-adv-run")
+    await pilot.pause()
+
+
+@pytest.mark.asyncio
+async def test_advanced_tool_execute_first_press_confirms_instead_of_running():
+    app = ToolExecuteInspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        await pilot.click("#mcp-adv-run")
+        await pilot.pause()
+        assert app.service.action_calls == []
+        result = _adv_result(app)
+        assert "again" in result
+        assert "search_notes" in result
+
+
+@pytest.mark.asyncio
+async def test_advanced_tool_execute_second_press_runs_it():
+    app = ToolExecuteInspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        await pilot.click("#mcp-adv-run")
+        await pilot.pause()
+        await _press_run_again(pilot)
+        assert app.service.action_calls == [
+            ("tool.execute", {"tool_name": "search_notes", "arguments": {"query": "example"}})
+        ]
+        assert "ok" in _adv_result(app)
+
+
+@pytest.mark.asyncio
+async def test_advanced_tool_execute_payload_edit_rearms_the_confirm():
+    """The confirm covers the payload it was shown for: editing the tool name
+    between presses must re-confirm, never run the thing that was confirmed
+    a moment ago with different arguments."""
+    app = ToolExecuteInspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        await pilot.click("#mcp-adv-run")
+        await pilot.pause()
+        app.query_one("#mcp-adv-payload", TextArea).text = (
+            '{"tool_name":"delete_everything","arguments":{}}'
+        )
+        await _press_run_again(pilot)
+        assert app.service.action_calls == []
+        assert "delete_everything" in _adv_result(app)
+
+        await _press_run_again(pilot)
+        assert app.service.action_calls == [
+            ("tool.execute", {"tool_name": "delete_everything", "arguments": {}})
+        ]
+
+
+@pytest.mark.asyncio
+async def test_advanced_tool_execute_refusal_reads_as_blocked_not_failed():
+    """An Off tool's `MCPHubGateDeniedError` (the Hub's own gate refusal --
+    what `execute_advanced_tool()` really raises for this case, item 2, PR-T3
+    fix round D) is a refusal, not a crash: same "Blocked · not run" heading
+    `show_tool_result()` gives a blocked test run, never the generic "Action
+    failed:" dump.
+
+    Item 2: before fix round D, `_run_advanced_action()`'s `except
+    PermissionError` matched the BASE class, so this fake's error object
+    only needed to BE a `PermissionError` to prove the rendering -- it used
+    a bare one. Now that the handler is narrowed to typed refusals only, the
+    fake must raise the SAME type production code raises, or this test would
+    no longer describe a reachable scenario (see the sibling `test_advanced_
+    tool_execute_tool_body_permission_error_reads_as_failed_not_blocked`
+    just below for the case a bare `PermissionError` now falls through to)."""
+    app = ToolExecuteInspectorApp(
+        error=MCPHubGateDeniedError("search_notes is set to Off in Permissions.")
+    )
+    async with app.run_test(size=(100, 60)) as pilot:
+        await pilot.click("#mcp-adv-run")
+        await pilot.pause()
+        await _press_run_again(pilot)
+        result = _adv_result(app)
+        assert "Blocked · not run" in result
+        assert "set to Off in Permissions" in result
+        assert "Action failed" not in result
+
+
+@pytest.mark.asyncio
+async def test_advanced_tool_execute_tool_body_permission_error_reads_as_failed_not_blocked():
+    """Item 2 (PR-T3 fix round D) regression guard: a bare `PermissionError`
+    -- what a BUILT-IN TOOL'S OWN body raises for an unrelated reason (e.g. a
+    genuine OS EACCES reading a permission-denied path), NOT one of the
+    three typed refusals -- must fall through to the generic "Action
+    failed:" dump, not misrender as "Blocked · not run" (which would falsely
+    claim the call never reached the tool, when it reached the tool and the
+    tool is what failed). Mirrors `mcp_workbench.py`'s own
+    `test_is_permission_refusal_bare_permission_error_from_tool_body_is_not_
+    a_refusal` for the Test Tool surface -- this is the Advanced surface's
+    twin of that same guard."""
+    app = ToolExecuteInspectorApp(
+        error=PermissionError("EACCES: permission denied reading /etc/shadow")
+    )
+    async with app.run_test(size=(100, 60)) as pilot:
+        await pilot.click("#mcp-adv-run")
+        await pilot.pause()
+        await _press_run_again(pilot)
+        result = _adv_result(app)
+        assert "Action failed" in result
+        assert "EACCES" in result
+        assert "Blocked · not run" not in result
+
+
+@pytest.mark.asyncio
+async def test_advanced_tool_execute_governance_denial_reads_as_blocked_not_failed():
+    """Item 2 (PR-T3 fix round D): `MCPGovernanceDenied` -- the in-process
+    runtime-governance profile's own denial, raised further down inside
+    `execute_hub_tool()`'s `coro` -- is a genuine refusal on the Advanced
+    surface too, not just the Test Tool panel `_is_permission_refusal()`
+    already covers."""
+    app = ToolExecuteInspectorApp(
+        error=MCPGovernanceDenied("Denied by local governance: tool.execute")
+    )
+    async with app.run_test(size=(100, 60)) as pilot:
+        await pilot.click("#mcp-adv-run")
+        await pilot.pause()
+        await _press_run_again(pilot)
+        result = _adv_result(app)
+        assert "Blocked · not run" in result
+        assert "Denied by local governance" in result
+        assert "Action failed" not in result
+
+
+@pytest.mark.asyncio
+async def test_advanced_raw_tool_call_refusal_reads_as_blocked_not_failed():
+    """Item 2 (PR-T3 fix round D): a raw `tools/call` refused by the
+    `runtime.request`/`runtime.batch` pre-dispatch scan
+    (`RawToolCallRefusedError`) is a genuine refusal on the Advanced
+    surface -- both of those are Advanced action descriptors too (Task 6,
+    Route B, second door), reachable through this same `run_action()` call
+    and this same except clause."""
+    app = ToolExecuteInspectorApp(
+        error=RawToolCallRefusedError(
+            "Tool calls run through the Execute Local Tool action, which "
+            "applies your Permissions settings and records the run."
+        )
+    )
+    async with app.run_test(size=(100, 60)) as pilot:
+        await pilot.click("#mcp-adv-run")
+        await pilot.pause()
+        await _press_run_again(pilot)
+        result = _adv_result(app)
+        assert "Blocked · not run" in result
+        assert "Execute Local Tool" in result
+        # Fix Round J: restored. 60f2f0f7d (round H) inserted new tests
+        # above this line and the diff re-parented it into the inserted
+        # function -- it vanished with no `-` line, caught only by the
+        # reviewer's AST assertion inventory (a per-commit COUNT sweep
+        # misses it too: the same commit added two other copies, so the
+        # file total still rose).
+        assert "Action failed" not in result
+
+
+@pytest.mark.asyncio
+async def test_advanced_gate_error_refusal_renders_the_unresolved_clause_end_to_end():
+    """Fix Round H (PR-T3 review), Item 2c. Two earlier rounds converged the
+    Advanced hatch's OWN copy for a resolver failure onto
+    `_ADVANCED_EXECUTE_GATE_ERROR_MESSAGE` ("Permission state could not be
+    resolved.", derived from `local_runtime_delegate.PERMISSION_STATE_
+    UNRESOLVED_CLAUSE`) -- but before this test, nothing drove that
+    sentence through `_run_advanced_action()`'s actual render path: the
+    ONLY fake capable of raising through `run_action()` (`ToolExecuteAdv
+    Service`) was always exercised with the GENUINE-deny message ("... is
+    set to Off in Permissions.") or an unrelated refusal type, never this
+    one. `execute_advanced_tool()` raises `MCPHubGateDeniedError` with
+    EITHER message depending on `state.origin` -- both are the SAME typed
+    exception, so this only needed a different message, not a different
+    type."""
+    app = ToolExecuteInspectorApp(
+        error=MCPHubGateDeniedError(_ADVANCED_EXECUTE_GATE_ERROR_MESSAGE)
+    )
+    async with app.run_test(size=(100, 60)) as pilot:
+        await pilot.click("#mcp-adv-run")
+        await pilot.pause()
+        await _press_run_again(pilot)
+        result = _adv_result(app)
+        assert "Blocked · not run" in result
+        assert "Permission state could not be resolved." in result
+        assert "is set to Off in Permissions" not in result
+        assert "Action failed" not in result
+
+
+@pytest.mark.asyncio
+async def test_fake_adv_service_run_action_raises_when_configured():
+    """Fix Round H (PR-T3 review), Item 2c. `FakeAdvService` -- the fake
+    `InspectorApp` wires by default, used far more broadly across this file
+    than `ToolExecuteAdvService` -- used to return `{"ok": True}`
+    unconditionally, so no test built on `InspectorApp` could exercise
+    `_run_advanced_action()`'s refusal-rendering branch at all. Proves the
+    new `error` constructor param actually reaches `run_action()`'s raise,
+    using the single-press `profile.connect` action already wired on this
+    fake (no `tool.execute` confirm-arm to press through first)."""
+    app = InspectorApp(error=MCPGovernanceDenied("Denied by local governance: profile.connect"))
+    async with app.run_test(size=(100, 60)) as pilot:
+        await pilot.click("#mcp-adv-run")
+        await pilot.pause()
+        result = _adv_result(app)
+        assert "Blocked · not run" in result
+        assert "Denied by local governance" in result
+        assert app.service.action_calls == [("profile.connect", {"profile_id": "demo"})]
+        assert "Action failed" not in result
+
+
+@pytest.mark.asyncio
+async def test_advanced_non_execute_action_still_runs_on_the_first_press():
+    """The confirm is scoped to the one action that executes a tool -- the
+    read/config actions keep their single-press behavior."""
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        await pilot.click("#mcp-adv-run")
+        await pilot.pause()
+        assert app.service.action_calls == [("profile.connect", {"profile_id": "demo"})]
+
+
+# -- Fix Round A, Item 3: the confirm arm has no lifecycle reset -------------
+#
+# `_advanced_confirm_key` was cleared only on a run (any outcome) or a JSON
+# parse error -- never on `set_service_context()` (called UNCONDITIONALLY by
+# the workbench on every reload/source-target switch/selection change, per
+# that method's own docstring), Advanced panel hide/show, or a section
+# change. A same-`(action, payload)` collision across two of those --
+# entirely plausible, since `tool.execute`'s default template is often
+# identical text regardless of which object is showing -- let a stale arm
+# from a PREVIOUS object satisfy a DIFFERENT object's very first press, with
+# no confirm text ever shown for it: a raw-JSON tool execution firing from a
+# single click.
+#
+# Fix Round C, Item 3 (review of Fix Round A): the fix clears the arm in
+# THREE places -- `set_service_context()`, `_load_advanced_section()`
+# (which `set_service_context()` also schedules as a worker on every call),
+# and `_hide_advanced()`. Mutation-testing each clear individually found
+# `set_service_context()`'s own clear and `_hide_advanced()`'s own clear
+# were NOT independently pinned: reverting either one alone left every test
+# in this section green, because `set_service_context()`'s scheduled
+# `_load_advanced_section()` worker clears the arm again before any test's
+# assertions ran (both the rebind test and the hide-then-REVEAL test call
+# `set_service_context()`, directly or via `_reveal_advanced()`). Only
+# `_load_advanced_section()`'s own clear was actually pinned, by
+# `test_section_change_disarms_a_pending_confirm` below (its only trigger
+# between arm and check is a direct section-value change, which never
+# touches the other two clears). This inverts the original commit
+# message's framing of `set_service_context()` as "the headline case" and
+# `_load_advanced_section()` as "redundant with the above, harmless" -- the
+# opposite was true of the tests, not the code (the belt-and-braces clears
+# are all real and correct; only the evidence for two of them was hollow).
+#
+# Fixed by isolating each seam so reverting THAT clear alone turns THAT
+# test red, confirmed by re-running the same revert-and-check mutation
+# table below.
+
+
+@pytest.mark.asyncio
+async def test_set_service_context_disarms_a_pending_confirm():
+    """`set_service_context()`'s OWN clear, isolated from the
+    `_load_advanced_section()` worker it also schedules (which clears too --
+    see the section banner comment above). Checks `_advanced_confirm_key`
+    immediately after the synchronous `set_service_context()` call returns,
+    with no intervening `await`: `run_worker(...)` schedules the section
+    worker onto the event loop but cannot run it inline, so at that exact
+    point only `set_service_context()`'s own body has had a chance to run.
+
+    Also exercises the full round-trip (a real re-arm and a real run) so
+    this remains the end-to-end regression test the original title
+    promised, not just a white-box state peek.
+
+    Uses `_press_run_again` (not a bare second `pilot.click`) for every
+    press past the first -- `Button._on_click()` ignores a click still
+    inside the widget's 0.2s active-effect window, and a silently-dropped
+    click would leave `action_calls == []` for the WRONG reason, making a
+    broken fix look like a passing test.
+    """
+    app = ToolExecuteInspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        await pilot.click("#mcp-adv-run")  # arms against the default payload
+        await pilot.pause()
+        assert app.service.action_calls == []
+        assert inspector._advanced_confirm_key is not None  # sanity: really armed
+
+        # Fix Round E, Item 4: baseline BEFORE the rebind -- the initial
+        # `on_mount()` schedule already ran `_load_advanced_section()` once
+        # during app startup, so `load_section_calls` is not zero here; the
+        # observable is the DELTA across this call, not an absolute count.
+        calls_before_rebind = app.service.load_section_calls
+
+        # The workbench rebinds Advanced on every reload/selection change --
+        # simulate that here with the SAME service, so the re-rendered
+        # tool.execute template is byte-identical to what was just armed.
+        inspector.set_service_context(app.service, [("Inventory", "inventory")])
+        # No `await` between the call above and this assertion: the
+        # `_load_advanced_section` worker `set_service_context()` schedules
+        # cannot have run yet, so this can only be `set_service_context()`'s
+        # own clear at work.
+        #
+        # Fix Round E, Item 4: that ordering guarantee holds TODAY only
+        # because `Worker._start` uses `asyncio.create_task`.
+        #
+        # Fix Round G, Item 4 (review of Fix Round E): the rationale above
+        # used to continue "...if a future change added `thread=True` to
+        # the `run_worker(...)` call below, a real OS thread could race
+        # ahead and run `_load_advanced_section` (and its own
+        # `_advanced_confirm_key = None` clear) before this assertion,
+        # silently re-hollowing this test's isolation WITHOUT EITHER
+        # ASSERTION HERE GOING RED." Not reproducible: adding `thread=True`
+        # to that `run_worker(...)` call reddened 5/5 runs, but at a
+        # DIFFERENT, PRE-EXISTING assertion three lines above this one --
+        # `assert inspector._advanced_confirm_key is not None  # sanity:
+        # really armed` -- because the initial on-MOUNT `set_service_
+        # context()` call (`ToolExecuteInspectorApp.on_mount()`) ALSO
+        # schedules a `_load_advanced_section` worker, and a genuine OS
+        # thread can win the race against the pilot's own arming click:
+        # the mount-time worker's clear lands AFTER the click has armed the
+        # key, wiping it back to `None` before this test ever reaches the
+        # code below. So a real thread does reddened the suite -- just not
+        # silently, and not at the pin this comment worried about.
+        #
+        # The pin below is still worth keeping regardless: it is genuinely
+        # non-vacuous (fires on the simulated `thread=True` race just
+        # demonstrated in a DIFFERENT reachable way, and on the realistic
+        # re-hollowing of a maintainer inserting `await pilot.pause()`
+        # before this assertion, which lets the ALREADY-SCHEDULED
+        # `asyncio.create_task` worker run first even without `thread=True`
+        # -- verified separately: adding a bare `await pilot.pause()` here
+        # reddens this exact assertion, 5/5, with no code mutation at all).
+        # Residual, not fixed here (cheap-only per this round's brief): the
+        # observable is `load_section()`, which `_load_advanced_section()`
+        # reaches a few statements AFTER the clear being isolated -- under
+        # a genuine thread there is a narrow window where the clear has
+        # landed but the counter has not yet incremented, which this
+        # delta-based pin cannot see. No cheap fix found that doesn't move
+        # the production clear's own position; noted here for the next
+        # round rather than worked around.
+        assert app.service.load_section_calls == calls_before_rebind, (
+            "the scheduled _load_advanced_section worker must not have run "
+            "yet at this point -- if it had, the assertion below would no "
+            "longer isolate set_service_context()'s own clear from that "
+            "worker's independent one"
+        )
+        assert inspector._advanced_confirm_key is None, (
+            "set_service_context() itself must clear the arm synchronously -- "
+            "this must not depend on the _load_advanced_section worker it "
+            "separately schedules"
+        )
+        await pilot.pause()
+
+        await _press_run_again(pilot)
+        assert app.service.action_calls == [], (
+            "a rebind must disarm -- the first press after it must "
+            "re-confirm, not execute"
+        )
+        assert "again" in _adv_result(app)
+
+        # A second (genuinely fresh) press DOES run it -- proving this is a
+        # real re-arm, not a button stuck disabled some other way.
+        await _press_run_again(pilot)
+        assert app.service.action_calls == [
+            ("tool.execute", {"tool_name": "search_notes", "arguments": {"query": "example"}})
+        ]
+
+
+@pytest.mark.asyncio
+async def test_hide_advanced_disarms_a_pending_confirm():
+    """`_hide_advanced()`'s OWN clear, isolated from `_reveal_advanced()`'s
+    subsequent `set_service_context()` replay (which independently clears
+    too -- see the section banner comment above, and
+    `test_advanced_hide_then_reveal_disarms_a_pending_confirm` below for the
+    full round trip). Calls `_hide_advanced()` directly and checks
+    immediately, with the panel never revealed again in this test, so only
+    `_hide_advanced()`'s own clear can be responsible for the result."""
+    app = ToolExecuteInspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        await pilot.click("#mcp-adv-run")  # arms against the default payload
+        await pilot.pause()
+        assert app.service.action_calls == []
+        assert inspector._advanced_confirm_key is not None  # sanity: really armed
+
+        await inspector._hide_advanced()
+
+        assert inspector._advanced_confirm_key is None, (
+            "_hide_advanced() itself must clear the arm -- this must not "
+            "depend on a later reveal's set_service_context() replay"
+        )
+
+
+@pytest.mark.asyncio
+async def test_advanced_hide_then_reveal_disarms_a_pending_confirm():
+    """End-to-end coverage of the full F-053 toggle round trip: the
+    Advanced panel's hide/show is an attention-moved transition, and a user
+    backing out of the legacy runner and returning later must not find a
+    stale arm ready to fire on the first press after showing it again.
+
+    This exercises BOTH clears in the hide-then-reveal path
+    (`_hide_advanced()`'s own, and `_reveal_advanced()`'s
+    `set_service_context()` replay) together, so on its own it does not
+    prove which one is responsible -- that isolation is
+    `test_hide_advanced_disarms_a_pending_confirm` above (hide) and
+    `test_set_service_context_disarms_a_pending_confirm` (the replay)."""
+    app = ToolExecuteInspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        await pilot.click("#mcp-adv-run")  # arms
+        await pilot.pause()
+        assert app.service.action_calls == []
+
+        await pilot.click("#mcp-inspector-advanced-reveal")  # hide
+        await pilot.pause()
+        # Same Button active-effect cooldown as `_press_run_again` guards
+        # against, this time on the reveal/hide toggle button itself --
+        # two clicks on the SAME button back to back would otherwise drop
+        # this second one and leave the panel hidden.
+        await pilot.pause(0.3)
+        await pilot.click("#mcp-inspector-advanced-reveal")  # reveal again
+        await pilot.pause()
+
+        await _press_run_again(pilot)
+        assert app.service.action_calls == [], (
+            "hide-then-reveal must disarm -- the first press after "
+            "revealing must re-confirm, not execute"
+        )
+        assert "again" in _adv_result(app)
+
+        await _press_run_again(pilot)
+        assert app.service.action_calls == [
+            ("tool.execute", {"tool_name": "search_notes", "arguments": {"query": "example"}})
+        ]
+
+
+@pytest.mark.asyncio
+async def test_section_change_disarms_a_pending_confirm():
+    """A section change within the SAME service (no rebind at all) is the
+    narrowest version of the collision: `ToolExecuteAdvService.
+    available_actions()` is not itself keyed by section (mirroring the real
+    inventory-section template), so switching sections while `tool.execute`
+    is still offered reproduces the identical payload template -- exactly
+    the case a same-`(action, payload)` confirm key would otherwise
+    silently satisfy."""
+    app = ToolExecuteInspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        inspector.set_service_context(
+            app.service, [("Inventory", "inventory"), ("Overview", "overview")]
+        )
+        await pilot.pause()
+        await pilot.click("#mcp-adv-run")  # arms
+        await pilot.pause()
+        assert app.service.action_calls == []
+
+        section_select = app.query_one("#mcp-adv-section-select", Select)
+        section_select.value = "overview"
+        await pilot.pause()
+        await pilot.pause()
+
+        await _press_run_again(pilot)
+        assert app.service.action_calls == [], (
+            "a section change must disarm -- the first press in the new "
+            "section must re-confirm, not execute"
+        )
+        assert "again" in _adv_result(app)
+
+        await _press_run_again(pilot)
+        assert app.service.action_calls == [
+            ("tool.execute", {"tool_name": "search_notes", "arguments": {"query": "example"}})
+        ]
+
+
+class _TallSectionAdvService(ToolExecuteAdvService):
+    """`load_section()` returns a payload that renders ~200+ rows -- the
+    shape the REAL Inventory section produces (every builtin tool's full
+    schema) and the one shape no other fake in this file produces. Fix
+    Round K exists because that gap hid a live defect: with a tall
+    payload, `#mcp-adv-scroll`'s `height: 1fr` (inside the T12
+    Collapsible) resolved without subtracting the rows above the
+    collapsible, so the box hung past the screen bottom and the Run
+    Action button was unreachable at ANY terminal height."""
+
+    async def load_section(self, section=None):
+        self.load_section_calls += 1
+        return {
+            "tools": [
+                {
+                    "name": f"tool_{i}",
+                    "description": "A long wrapping description. " * 4,
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {
+                            "alpha": {"type": "string"},
+                            "beta": {"type": ["integer", "null"]},
+                        },
+                        "required": ["alpha"],
+                    },
+                }
+                for i in range(10)
+            ]
+        }
+
+
+class _TallSectionInspectorApp(App):
+    """Bundled CSS + real workbench id, like `InspectorAppWithBundledCSS`
+    above -- geometry claims are meaningless against Textual's defaults."""
+
+    CSS_PATH = _BUNDLED_CSS_PATH
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.service = _TallSectionAdvService()
+
+    def compose(self) -> ComposeResult:
+        yield MCPInspector(id="mcp-hub-inspector")
+
+    def on_mount(self) -> None:
+        self.query_one(MCPInspector).set_service_context(
+            self.service, [("Inventory", "inventory")]
+        )
+
+
+@pytest.mark.asyncio
+async def test_run_action_is_reachable_under_a_tall_section_payload():
+    """Fix Round K (live walkthrough of PR #1385): with a real-sized
+    section payload, `scroll_visible()` must be able to bring
+    `#mcp-adv-run` fully on screen and a real click must land on it --
+    before the fix the box's own region hung below the screen bottom and
+    the click raised OutOfBounds no matter how far the scroll went
+    (reproduced live at 300 terminal rows; this test red-verifies by
+    restoring `height: 1fr` on `#mcp-adv-scroll`/`#mcp-adv-collapsible`).
+    The press must also be the ARM press (confirm sentence, no
+    execution): reachability that ran the tool unconfirmed would be a
+    worse defect than the one this fixes."""
+    app = _TallSectionInspectorApp()
+    async with app.run_test(size=(120, 50)) as pilot:
+        await pilot.pause()
+        await pilot.pause()
+        run_button = app.query_one("#mcp-adv-run", Button)
+        run_button.scroll_visible(animate=False)
+        await pilot.pause()
+        await pilot.pause()
+
+        await pilot.click("#mcp-adv-run")  # raises OutOfBounds when clipped
+        await pilot.pause()
+
+        assert app.service.action_calls == []  # armed, not executed
+        assert inspector_confirm_key(app) is not None
+
+
+def inspector_confirm_key(app: App):
+    return app.query_one(MCPInspector)._advanced_confirm_key
+
+
+class _ArmDuringLoadAdvService(ToolExecuteAdvService):
+    """`load_section()` blocks (once, when told to via `block_next`) until
+    the test releases it -- opening a REAL await window inside
+    `_load_advanced_section()`, between that method's own deliberate disarm
+    (before the await) and `_refresh_advanced_actions()`'s payload rewrite
+    (after it). Fix Round I, Item 2 lives entirely inside that window."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.block_next = False
+        self.entered = asyncio.Event()
+        self.release = asyncio.Event()
+
+    async def load_section(self, section=None):
+        if self.block_next:
+            self.block_next = False
+            self.entered.set()
+            await self.release.wait()
+        return await super().load_section(section)
+
+
+@pytest.mark.asyncio
+async def test_arming_during_a_section_load_survives_the_post_load_refresh():
+    """Fix Round I, Item 2 (review of Fix Round G): the previous round's
+    `_on_advanced_payload_changed()` docstring claimed every programmatic
+    `payload.text = ...` write "always runs AFTER that call site's own
+    clear, so this is a no-op" -- FALSE for `_load_advanced_section()`,
+    whose clear runs BEFORE `await self._service.load_section(...)` while
+    `_refresh_advanced_actions()`'s payload write lands AFTER it. A user
+    who armed during that window (the Run button is not disabled during a
+    load) was silently disarmed by the post-await write, with no user
+    action at all -- the exact inverse of the copy's "anything else
+    cancels" promise (nothing-the-user-did cancelled), and a fresh copy of
+    the "button reads as dead for one press" symptom Fix Round G, Item 2
+    existed to eliminate. The write is now wrapped in
+    `payload.prevent(TextArea.Changed)`; the arm must survive the refresh
+    AND still be a live arm (the follow-up press really runs).
+
+    Counterpoint to `test_section_change_disarms_a_pending_confirm` just
+    above: an arm from BEFORE the section change is deliberately cleared
+    (attention moved), but an arm placed DURING the load belongs to the
+    user standing right there, and background plumbing must not eat it."""
+    app = ToolExecuteInspectorApp()
+    app.service = _ArmDuringLoadAdvService()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        inspector.set_service_context(
+            app.service, [("Inventory", "inventory"), ("Overview", "overview")]
+        )
+        await pilot.pause()
+        await pilot.pause()  # let the rebind's own initial load settle
+
+        app.service.block_next = True
+        app.query_one("#mcp-adv-section-select", Select).value = "overview"
+        await asyncio.wait_for(app.service.entered.wait(), timeout=2)
+        # Inside the await window: `_load_advanced_section()` has already
+        # done its own deliberate pre-await disarm; the user arms NOW.
+        await pilot.click("#mcp-adv-run")
+        await pilot.pause()
+        assert inspector._advanced_confirm_key is not None  # sanity: armed
+        assert app.service.action_calls == []
+
+        app.service.release.set()
+        await pilot.pause()
+        await pilot.pause()  # post-await refresh (payload rewrite) runs here
+
+        assert inspector._advanced_confirm_key is not None, (
+            "the background load's own payload rewrite disarmed a confirm "
+            "the user armed during the load window"
+        )
+        assert "again" in _adv_result(app)
+
+        await _press_run_again(pilot)
+        assert app.service.action_calls == [
+            ("tool.execute", {"tool_name": "search_notes", "arguments": {"query": "example"}})
+        ], "the surviving arm must be LIVE -- the confirming press runs"
+
+
+# -- Fix Round C, Item 4: the confirm sentence survives the disarm -----------
+#
+# `set_service_context()` and `_load_advanced_section()` both clear
+# `_advanced_confirm_key` (Item 3 above) but only ever blanked
+# `#mcp-adv-content` -- never `#mcp-adv-result`, which is where
+# `_ADVANCED_EXECUTE_CONFIRM` ("Runs <tool> now — press Run Action again to
+# confirm...") actually renders. A disarm therefore left the confirm
+# sentence on screen describing an arm that no longer existed: the next
+# press silently RE-armed (rendering the identical string back) instead of
+# running, so the button read as dead for one press with no visible change
+# to explain why.
+
+
+@pytest.mark.asyncio
+async def test_set_service_context_blanks_the_stale_confirm_sentence():
+    """A rebind must clear the confirm sentence, not just the arm behind
+    it -- otherwise the screen still reads "press Run Action again to
+    confirm" for a confirm that set_service_context() just disarmed.
+
+    Checked immediately after the synchronous `set_service_context()` call
+    returns, with no intervening `await` -- same isolation as
+    `test_set_service_context_disarms_a_pending_confirm` above, and for the
+    same reason: `set_service_context()` also SCHEDULES
+    `_load_advanced_section()` as a worker, which blanks
+    `#mcp-adv-result` too, so a version of this check that let the worker
+    run first would pass even with `set_service_context()`'s own blank
+    removed."""
+    app = ToolExecuteInspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        await pilot.click("#mcp-adv-run")  # arms; renders the confirm sentence
+        await pilot.pause()
+        assert "again" in _adv_result(app)
+
+        # Fix Round E, Item 4: baseline BEFORE the rebind -- see
+        # `test_set_service_context_disarms_a_pending_confirm`'s matching
+        # comment for why this is a delta, not an absolute-zero check (the
+        # initial `on_mount()` schedule already ran the worker once).
+        calls_before_rebind = app.service.load_section_calls
+
+        inspector.set_service_context(app.service, [("Inventory", "inventory")])
+        # No `await` here -- see the docstring above. Fix Round E, Item 4:
+        # same observable-call-count pin as
+        # `test_set_service_context_disarms_a_pending_confirm` above -- see
+        # that test for why an inference from state alone would not notice
+        # a future `thread=True` letting the scheduled worker win the race.
+        assert app.service.load_section_calls == calls_before_rebind, (
+            "the scheduled _load_advanced_section worker must not have run "
+            "yet at this point -- if it had, this check would no longer "
+            "isolate set_service_context()'s own blank from that worker's "
+            "independent one"
+        )
+        assert _adv_result(app) == "", (
+            "the stale confirm sentence must be cleared along with the arm, "
+            "not just the arm's internal state -- and not by relying on the "
+            "_load_advanced_section worker set_service_context() separately "
+            "schedules"
+        )
+
+
+@pytest.mark.asyncio
+async def test_section_change_blanks_the_stale_confirm_sentence():
+    """Same as above for `_load_advanced_section()`'s own disarm, triggered
+    by a direct section change (no rebind)."""
+    app = ToolExecuteInspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        inspector.set_service_context(
+            app.service, [("Inventory", "inventory"), ("Overview", "overview")]
+        )
+        await pilot.pause()
+        await pilot.click("#mcp-adv-run")  # arms; renders the confirm sentence
+        await pilot.pause()
+        assert "again" in _adv_result(app)
+
+        section_select = app.query_one("#mcp-adv-section-select", Select)
+        section_select.value = "overview"
+        await pilot.pause()
+        await pilot.pause()
+
+        assert _adv_result(app) == "", (
+            "the stale confirm sentence must be cleared along with the arm, "
+            "not just the arm's internal state"
+        )
+
+
+def test_advanced_execute_confirm_copy_does_not_enumerate_cancel_triggers():
+    """Fix Round E, Item 2 (review of Fix Round C): the confirm sentence
+    used to enumerate cancel triggers ("Editing, switching object, or
+    changing section cancels") -- an incomplete list even after Fix Round
+    C's own pass (it omitted switching the action, and hiding the panel),
+    and any enumeration here is one more trigger away from being wrong
+    again. The corrected copy adopts the house's existing complete
+    formulation (`_TEST_RUN_ARMED_HINT`: "anything else cancels") instead,
+    which stays true regardless of how many triggers exist or are added."""
+    rendered = mcp_inspector_module._ADVANCED_EXECUTE_CONFIRM.format(tool="search_notes")
+    assert "press Run Action again to confirm" in rendered
+    assert "anything else cancels" in rendered
+    # Regression guard: no version of this copy should go back to naming
+    # triggers by enumeration -- if it does, it is incomplete again.
+    assert "Editing" not in rendered
+    assert "switching object" not in rendered
+    assert "changing section" not in rendered
+
+
+# -- Fix Round E, Item 1: the disarm blank must not eat real output ----------
+#
+# Fix Round C's blanking fix for the stale confirm sentence (`#mcp-adv-result`
+# above) ran UNCONDITIONALLY in both `set_service_context()` and
+# `_load_advanced_section()` -- but that widget is also where genuine RUN
+# OUTPUT and refusal text land. Reverting Fix Round E's conditional blank
+# (making it unconditional again) is what a reviewer demonstrated makes each
+# of the three tests below fail: real output/refusal text present while
+# UNARMED must survive a section change or a rebind; only a LIVE arm's
+# confirm sentence may be blanked away.
+
+
+@pytest.mark.asyncio
+async def test_section_change_preserves_real_run_output_when_not_armed():
+    """Run `tool.execute` to completion (arm, then confirm), THEN change
+    section -- the tool's real JSON result must still be on screen.
+    Re-reading it by re-running the tool is the exact loss this guards."""
+    app = ToolExecuteInspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        inspector.set_service_context(
+            app.service, [("Inventory", "inventory"), ("Overview", "overview")]
+        )
+        await pilot.pause()
+        await pilot.click("#mcp-adv-run")  # arms
+        await pilot.pause()
+        await _press_run_again(pilot)  # runs it -- real output now showing
+        assert app.service.action_calls == [
+            ("tool.execute", {"tool_name": "search_notes", "arguments": {"query": "example"}})
+        ]
+        result_before = _adv_result(app)
+        assert "ok" in result_before
+
+        section_select = app.query_one("#mcp-adv-section-select", Select)
+        section_select.value = "overview"
+        await pilot.pause()
+        await pilot.pause()
+
+        assert _adv_result(app) == result_before, (
+            "a section change while UNARMED must not blank real run output -- "
+            "the confirm-sentence blank is only correct while an arm is live"
+        )
+
+
+@pytest.mark.asyncio
+async def test_rebind_preserves_real_run_output_when_not_armed():
+    """Same defect via the OTHER blanking site: a workbench rebind
+    (`set_service_context()`, called unconditionally on every
+    reload/source-or-target switch, per that method's own docstring) must
+    not erase real run output either."""
+    app = ToolExecuteInspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        await pilot.click("#mcp-adv-run")  # arms
+        await pilot.pause()
+        await _press_run_again(pilot)  # runs it -- real output now showing
+        result_before = _adv_result(app)
+        assert "ok" in result_before
+
+        # Simulate a workbench rebind with the same service, same as the
+        # existing disarm tests above.
+        inspector.set_service_context(app.service, [("Inventory", "inventory")])
+        await pilot.pause()
+
+        assert _adv_result(app) == result_before, (
+            "a rebind while UNARMED must not blank real run output"
+        )
+
+
+@pytest.mark.asyncio
+async def test_section_change_preserves_blocked_refusal_when_not_armed():
+    """The third loss: a "Blocked · not run" refusal explaining WHY nothing
+    ran must not be erased by a section change exactly as the user
+    navigates to go act on it."""
+    app = ToolExecuteInspectorApp(
+        error=MCPHubGateDeniedError("search_notes is set to Off in Permissions.")
+    )
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        inspector.set_service_context(
+            app.service, [("Inventory", "inventory"), ("Overview", "overview")]
+        )
+        await pilot.pause()
+        await pilot.click("#mcp-adv-run")  # arms
+        await pilot.pause()
+        await _press_run_again(pilot)  # blocked
+        result_before = _adv_result(app)
+        assert "Blocked · not run" in result_before
+
+        section_select = app.query_one("#mcp-adv-section-select", Select)
+        section_select.value = "overview"
+        await pilot.pause()
+        await pilot.pause()
+
+        assert _adv_result(app) == result_before, (
+            "a section change while UNARMED must not erase a refusal "
+            "explaining why nothing ran"
+        )
+
+
+# -- Fix Round E, Item 2: switching the action is a fourth disarm trigger ----
+
+
+@pytest.mark.asyncio
+async def test_action_switch_disarms_a_pending_confirm():
+    """Switching the Advanced action Select must disarm a pending
+    `tool.execute` confirm -- `_run_advanced_action()`'s own docstring
+    already promised it ("switching action ... re-arms"), but
+    `on_select_changed()` never actually cleared `_advanced_confirm_key` on
+    an action switch. Live-verified defect: arm `tool.execute`, switch to
+    `resource.read` (its own same-section sibling -- both reads, see the
+    item's honest scoping), and the FIRST press after the switch used to
+    run `resource.read` immediately with no confirm, while the pane still
+    read the `tool.execute` confirm sentence. Scoped deliberately to a
+    same-section READ action, never a destructive one: this is a
+    truthfulness defect on the confirm text, not a path to an unconfirmed
+    destructive call (the destructive actions live in other sections, which
+    a section change already disarms)."""
+    app = ToolExecuteAndReadInspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        await pilot.click("#mcp-adv-run")  # arms tool.execute
+        await pilot.pause()
+        assert app.service.action_calls == []
+        assert "again" in _adv_result(app)
+
+        action_select = app.query_one("#mcp-adv-action-select", Select)
+        action_select.value = "resource.read"
+        await pilot.pause()
+
+        assert _adv_result(app) == "", (
+            "switching the action must blank the stale confirm sentence, "
+            "not just clear the internal arm -- otherwise the pane still "
+            "promises a confirm the next press will not give"
+        )
+
+        await _press_run_again(pilot)
+        # A disarmed action switch means the first press on the NEW action
+        # runs it directly -- resource.read never required a confirm of its
+        # own (only tool.execute does), so this is the ordinary
+        # single-press behavior, not a second confirm cycle.
+        assert app.service.action_calls == [
+            ("resource.read", {"uri": "note://example"})
+        ]
+
+
+@pytest.mark.asyncio
+async def test_action_switch_clears_the_confirm_key_synchronously():
+    """Item 3 (PR-T3 fix round G, review of Fix Round E): isolates
+    `on_select_changed()`'s OWN clear (`self._advanced_confirm_key = None`
+    on the action-switch branch) from BOTH of the two things that can now
+    mask a dropped clear:
+
+    1. Its own blank (the `_was_armed`-gated `#mcp-adv-result.update("")`
+       a few lines below) -- `test_action_switch_disarms_a_pending_
+       confirm` (pre-existing, above) only checks that visible blank and
+       a later run of `resource.read` (which never confirms at all
+       regardless of the arm -- `_run_advanced_action()`'s confirm logic
+       only runs for `action_name == _ADVANCED_EXECUTE_ACTION`), so it
+       passes with this clear deleted.
+    2. Item 2's OWN new `TextArea.Changed` handler
+       (`_on_advanced_payload_changed()`), which independently clears the
+       SAME key -- `on_select_changed()`'s action-switch branch always
+       reassigns `#mcp-adv-payload.text` to the new action's template
+       (when `event.value` isn't blank, the only reachable case via real
+       UI), and `TextArea.load_text()` posts a `Changed` message
+       UNCONDITIONALLY, even when the new text is byte-identical to the
+       old. Discovered by mutation: dropping ONLY this clear (Item 2's
+       clear intact) and driving the switch through the real Select
+       (`action_select.value = ...` + `await pilot.pause()`, draining the
+       whole cascade including the queued `TextArea.Changed`) left this
+       test GREEN -- Item 2's cascade silently covers for Item 3's own
+       clear on every action switch reachable via the UI. That is a
+       genuine, additional belt-and-braces safety net (see Item 6 of this
+       same fix round's report), not a reason to leave THIS clear
+       unpinned -- a future change to either `TextArea`'s posting
+       behavior or this branch's unconditional reassignment would silently
+       remove that net.
+
+    Isolated by calling `on_select_changed()` DIRECTLY (bypassing the
+    message queue entirely) and checking immediately after, no
+    `await`/`pilot.pause()` in between -- `post_message()` queues the
+    payload's cascaded `TextArea.Changed` for LATER delivery, so at this
+    exact point only `on_select_changed()`'s own body has had a chance to
+    run. Mirrors `test_set_service_context_disarms_a_pending_confirm`'s
+    own no-intervening-await isolation technique.
+
+    See `test_action_switch_round_trip_does_not_execute_tool_execute_
+    unconfirmed` below for the genuine-UI reachable consequence -- which,
+    because of the same masking, now requires dropping Item 2's clear
+    TOO to reproduce via real interaction."""
+    app = ToolExecuteAndReadInspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        await pilot.click("#mcp-adv-run")  # arms tool.execute
+        await pilot.pause()
+        assert inspector._advanced_confirm_key is not None  # sanity: really armed
+
+        action_select = app.query_one("#mcp-adv-action-select", Select)
+        inspector.on_select_changed(Select.Changed(action_select, "resource.read"))
+
+        assert inspector._advanced_confirm_key is None, (
+            "on_select_changed() must clear the arm itself on an action "
+            "switch -- not merely blank the rendered confirm sentence, and "
+            "not merely rely on the cascaded TextArea.Changed its own "
+            "payload-template reassignment will eventually deliver"
+        )
+
+
+@pytest.mark.asyncio
+async def test_action_switch_round_trip_does_not_execute_tool_execute_unconfirmed():
+    """Item 3 (PR-T3 fix round G, review of Fix Round E): the genuine-UI
+    reachable safety consequence the original review demonstrated --
+    `tool.execute -> resource.read -> tool.execute`, one press, must never
+    execute unconfirmed.
+
+    Reality differed from the brief here: the brief's own mutation
+    ("drop `self._advanced_confirm_key = None` at 2603, keep the
+    `_was_armed` blank -> executes on one press") was proven against the
+    code as Fix Round E left it, BEFORE this same round's Item 2 added
+    `_on_advanced_payload_changed()`. With Item 2 also in place, dropping
+    ONLY `on_select_changed()`'s own clear no longer reproduces this via
+    real UI interaction -- switching to `resource.read` and back to
+    `tool.execute` reassigns `#mcp-adv-payload.text` each time, and that
+    reassignment's cascaded `TextArea.Changed` clears the arm independently
+    (see `test_action_switch_clears_the_confirm_key_synchronously`'s own
+    docstring for the mechanism). Reproducing the ORIGINAL finding via
+    genuine UI interaction now requires dropping BOTH clears together --
+    verified directly: with `on_select_changed()`'s clear (2684) AND
+    `_on_advanced_payload_changed()`'s clear (2721) both dropped, this
+    exact test goes RED, with `action_calls` showing `tool.execute` ran on
+    the single post-round-trip press. `on_select_changed()`'s own clear
+    remains correct and worth keeping regardless (defense in depth,
+    consistent with this class's established belt-and-braces philosophy --
+    see `test_action_switch_clears_the_confirm_key_synchronously` for its
+    OWN, still-vacuous-without-it isolation); this test instead pins the
+    OBSERVABLE safety property end to end, independent of which internal
+    mechanism is doing the disarming."""
+    app = ToolExecuteAndReadInspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        await pilot.click("#mcp-adv-run")  # arms tool.execute
+        await pilot.pause()
+        assert app.service.action_calls == []
+
+        action_select = app.query_one("#mcp-adv-action-select", Select)
+        action_select.value = "resource.read"
+        await pilot.pause()
+        action_select.value = "tool.execute"
+        await pilot.pause()
+
+        assert _adv_result(app) == "", (
+            "switching back to tool.execute must not resurrect a stale "
+            "confirm sentence"
+        )
+
+        await _press_run_again(pilot)
+        assert app.service.action_calls == [], (
+            "a single press after the round trip must re-arm, never "
+            "execute tool.execute unconfirmed"
+        )
+        assert "again" in _adv_result(app)
+
+        # A genuinely fresh confirm DOES run it -- proving this is a real
+        # re-arm, not a button stuck disabled some other way.
+        await _press_run_again(pilot)
+        assert app.service.action_calls == [
+            ("tool.execute", {"tool_name": "search_notes", "arguments": {"query": "example"}})
+        ]
+
+
+# -- Fix Round G, Item 1: collapsing the disclosure disarms a pending -------
+# confirm too -- `_ADVANCED_EXECUTE_CONFIRM`'s "anything else cancels" was
+# untrue for this one interaction: `_on_advanced_collapsible_toggled()` only
+# ever persisted the open/collapsed preference. Live-verified: arm
+# `tool.execute`, collapse the disclosure, expand it again -- a single press
+# ran the tool with the arm still set, no confirm ever shown for that
+# viewing.
+
+
+@pytest.mark.asyncio
+async def test_collapsing_advanced_disarms_a_pending_confirm():
+    """Direct-state isolation (the RED condition mutation-verified against
+    dropping `_on_advanced_collapsible_toggled()`'s clear while keeping its
+    `_was_armed` blank) plus the end-to-end behavioral consequence in one
+    test: `Collapsible.collapsed = True/False` fires the SAME
+    `Collapsible.Toggled` message a real click on the disclosure's title
+    does -- this file's own established technique, see e.g.
+    `test_advanced_collapsible_toggle_persists_state`."""
+    app = ToolExecuteInspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        await pilot.click("#mcp-adv-run")  # arms
+        await pilot.pause()
+        assert app.service.action_calls == []
+
+        collapsible = app.query_one("#mcp-adv-collapsible", Collapsible)
+        collapsible.collapsed = True
+        await pilot.pause()
+        assert inspector._advanced_confirm_key is None, (
+            "collapsing the disclosure must clear the arm itself, not "
+            "merely be inert"
+        )
+        collapsible.collapsed = False
+        await pilot.pause()
+
+        await _press_run_again(pilot)
+        assert app.service.action_calls == [], (
+            "collapse-then-expand must disarm -- the first press after "
+            "must re-confirm, not execute"
+        )
+        assert "again" in _adv_result(app)
+
+        await _press_run_again(pilot)
+        assert app.service.action_calls == [
+            ("tool.execute", {"tool_name": "search_notes", "arguments": {"query": "example"}})
+        ]
+
+
+@pytest.mark.asyncio
+async def test_collapsing_advanced_preserves_real_run_output_when_not_armed():
+    """Same UNARMED-preservation discipline as `test_section_change_
+    preserves_real_run_output_when_not_armed`/`test_rebind_preserves_real_
+    run_output_when_not_armed` (Fix Round E, Item 1) -- collapsing after a
+    completed run (unarmed) must not blank the real result; only a LIVE
+    arm's confirm sentence is ever cleared. The Collapsible's children stay
+    mounted across a collapse (only CSS display toggles), so this is the
+    same "preserve" branch of the Fix Round G, Item 6 rule, not the
+    `_hide_advanced()` teardown branch."""
+    app = ToolExecuteInspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        await pilot.click("#mcp-adv-run")  # arms
+        await pilot.pause()
+        await _press_run_again(pilot)  # runs it -- real output now showing
+        result_before = _adv_result(app)
+        assert "ok" in result_before
+
+        collapsible = app.query_one("#mcp-adv-collapsible", Collapsible)
+        collapsible.collapsed = True
+        await pilot.pause()
+
+        assert _adv_result(app) == result_before, (
+            "collapsing while UNARMED must not blank real run output"
+        )
+
+
+# -- Fix Round G, Item 2: editing the payload disarms a pending confirm -----
+# too -- `_run_advanced_action()`'s own docstring has always promised
+# "switching action or editing the payload re-arms"; the action-switch half
+# was implemented (Fix Round E, Item 2), the payload-edit half had no
+# handler at all.
+
+
+@pytest.mark.asyncio
+async def test_editing_the_payload_disarms_a_pending_confirm_immediately():
+    """Checked immediately after the edit, no Run press in between -- proves
+    the new `TextArea.Changed` handler disarms on its own, not merely that
+    `_run_advanced_action()`'s pre-existing confirm-key mismatch happens to
+    save the day the next time Run is pressed (see `test_advanced_tool_
+    execute_payload_edit_rearms_the_confirm`, which pins that pre-existing
+    safety net and stays green either way -- it is not this gap's guard)."""
+    app = ToolExecuteInspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        await pilot.click("#mcp-adv-run")  # arms; renders "Runs search_notes..."
+        await pilot.pause()
+        assert "search_notes" in _adv_result(app)
+
+        app.query_one("#mcp-adv-payload", TextArea).text = (
+            '{"tool_name":"delete_everything","arguments":{}}'
+        )
+        await pilot.pause()
+
+        assert inspector._advanced_confirm_key is None, (
+            "editing the payload must clear the arm itself, immediately -- "
+            "not merely be discovered stale the next time Run is pressed"
+        )
+        assert _adv_result(app) == "", (
+            "the stale confirm sentence (naming the OLD tool) must not "
+            "survive a payload edit the user hasn't confirmed yet"
+        )
+
+
+@pytest.mark.asyncio
+async def test_editing_the_payload_preserves_real_run_output_when_not_armed():
+    """Same UNARMED-preservation discipline as the other disarm sites --
+    editing the payload after a completed run (unarmed) must not blank the
+    real result."""
+    app = ToolExecuteInspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        await pilot.click("#mcp-adv-run")  # arms
+        await pilot.pause()
+        await _press_run_again(pilot)  # runs it -- real output now showing
+        result_before = _adv_result(app)
+        assert "ok" in result_before
+
+        app.query_one("#mcp-adv-payload", TextArea).text = (
+            '{"tool_name":"search_notes","arguments":{"query":"other"}}'
+        )
+        await pilot.pause()
+
+        assert _adv_result(app) == result_before, (
+            "editing the payload while UNARMED must not blank real run output"
+        )

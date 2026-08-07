@@ -749,3 +749,57 @@ classify WHAT the failure would mean for a user if the tested path were driven l
 otherwise. Budget one live drive of the affected surface the FIRST time a failure gets the
 "pre-existing" label — that is when it is cheapest, and every later dismissal inherits the
 first one's diligence or its negligence.
+
+---
+
+## A green result is not evidence until you have confirmed it could have gone red (2026-08-06)
+
+**What happened, twice, on the same feature (PR-T3 fix rounds A and B).**
+
+**Instance 1.** Fix round A added three tests for the Advanced runner's confirm-arm
+behavior, each simulating "press Run, then press it again." Two of the three showed a
+false PASS on first write — not because the code was right, but because Textual's
+`Button._on_click()` ignores a click while the widget still carries the 0.2s
+`-active` press-animation class (`textual/widgets/_button.py`). A bare second
+`pilot.click()` inside one pump window landed on a still-cooling-down button and was
+silently dropped, so the second half of the test never ran at all — the assertion
+checked state that the first press had already produced, and the bug under test (does
+the SECOND press do the right thing) was invisible. Caught only by comparing against
+`_press_run_again` (`Tests/UI/test_mcp_inspector.py`), a helper an earlier test in the
+same file already built for exactly this trap (`await pilot.pause(0.3)` before the
+second click, with a comment naming the cooldown).
+
+**Instance 2.** Reviewing fix round A, a reviewer who had JUST been told about
+Instance 1 built a mutation harness specifically to check whether those three tests
+actually pin their fix — reverting the fix and confirming the tests go red. The first
+run reported all-green: reverting the fix changed nothing, which would itself have
+been a serious finding (the tests pin nothing). The cause was a second, unrelated
+mechanism: Python served stale `__pycache__` bytecode instead of the mutated source,
+so the mutation never took effect and the "tests" exercised the OLD, already-fixed
+code both times. Fixed by overriding `get_code` (forcing recompilation) rather than
+trusting the file on disk had been re-read.
+
+**The shared shape.** Two unrelated mechanisms — a UI framework's click-debounce, and
+Python's bytecode cache — each silently prevented the code under test from being
+exercised at all, while the harness reported success. Neither is specific to this
+feature; both recur anywhere a test fires two rapid interactions through real Textual
+widgets, or anywhere a mutation/characterization check edits a `.py` file and reruns
+pytest without clearing `__pycache__`. And Instance 2 happened to someone who was
+*specifically hunting* for exactly this class of false pass, one incident report old —
+knowing the trap exists did not protect against a different instance of it. The
+mitigation has to be mechanical, not a mental note.
+
+**What to do.**
+1. When a test simulates two rapid interactions through a real widget (double-click,
+   press-then-confirm, retry), use a helper that waits out any framework-level
+   debounce/cooldown before the second interaction, and name the cooldown in the
+   helper's docstring so the next person does not have to rediscover it.
+2. Before trusting ANY mutation/characterization test result — your own or a
+   reviewer's — clear `__pycache__` for the touched modules (or run with `python -B`,
+   or override `get_code`) and confirm the specific new/changed assertions go RED
+   against the reverted code, not just that "some tests failed somewhere." A run count
+   or an exit code is not enough; read which tests failed and why.
+3. Treat "the mutation test passed on the first try" as itself slightly suspicious —
+   it is the same shape as a guard that cannot fail (see "Mutation-test every guard
+   you add," above), and here the false-positive mechanism was in the test harness's
+   plumbing, not the guard's logic.

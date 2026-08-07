@@ -36,9 +36,11 @@ selection.
 
 Every one of the app's built-in tools, and any server tool with a
 straightforward JSON-Schema, renders as a real form instead of a raw JSON
-textarea: text/number inputs with defaults already filled in, checkboxes
-for booleans, dropdowns for enums, and a comma-separated text input for a
-simple list parameter (e.g. `a, b, c`). A field marked `*` is required.
+textarea: text/number inputs with defaults already filled in, a labeled,
+clickable checkbox for each boolean (the toggle glyph is invisible against
+the panel when off and colored when on — not just a bare empty box),
+dropdowns for enums, and a comma-separated text input for a simple list
+parameter (e.g. `a, b, c`). A field marked `*` is required.
 
 A schema the form can't represent faithfully — a nested object, a real
 mixed-type union, an array of non-simple items — falls back to a raw JSON
@@ -66,9 +68,27 @@ A completed run shows:
   or on its own — a line naming *why* the run was allowed to happen, e.g.
   "Ran because you approved this run (the tool is set to Ask)." or "Ran
   because this tool is set to Allow. Inherited from the global default."
+- **A weak-match notice**, when every scored row in the result bands weak:
+  "No strong semantic matches — results below are weak." beside the
+  summary line — so a nonsense `search_rag` query that still comes back
+  with rows reads as the weak match it is, not a bare `OK · N results`
+  that looks like a real hit. Keyword-mode rows carry no score at all
+  (FTS relevance is misleading, so no band beats a wrong one) — the notice
+  only ever fires for scored (semantic) rows, never for a pure
+  keyword-mode result, whatever it finds. A tool whose rows carry no
+  `score` at all (e.g. `list_characters`) never shows this notice either.
 - **A collapsed "Raw response" section** with the full result as JSON —
   secrets redacted, capped at 20,000 characters — for whenever the summary
   isn't enough.
+
+A run that finished but can't be shown where you're looking — you closed
+the panel, picked a different tool, or switched to Audit mode while it was
+still in flight — still tells you: a toast reads "\<tool\> finished
+running, but its result isn't shown here." A run that never reached the
+tool at all — a hard **Off** gate, a runtime-governance denial, or the
+Advanced panel's own refusal (below) — always reads "Blocked · not run",
+never "Failed"; "Failed" is reserved for a call that genuinely reached the
+tool and came back an error.
 
 ### Permission continuity for built-in tools
 
@@ -82,7 +102,35 @@ must never silently turn your "Allow" back into "Ask".
 In Audit mode, a run you confirmed under an Ask gate is recorded with the
 decision **approved**, distinct from **allowed** (a tool already set to
 Allow) — so the log shows not just that a call reached the tool, but
-whether it needed your confirmation first.
+whether it needed your confirmation first. The table repopulates as soon
+as a run finishes — no need to press **r** — and each row records the
+argument *names* the run supplied (e.g. `query`, `limit`, `use_semantic`),
+never the values.
+
+## Advanced (legacy control plane)
+
+Opt in from the inspector's **Advanced…** toggle (it persists across
+sessions; **Hide advanced** reverses it). The `tool.execute` action there
+runs a tool directly: build a JSON payload naming the tool and its
+arguments, pick `tool.execute` from the action list, and press **Run
+Action**. It goes through the same
+permission gate and the same execution log as every other tool run —
+a tool set to **Off** is refused ("Blocked · not run"), and the refusal is
+recorded in Audit mode just like any other blocked run.
+
+Because this route resolves permissions by key rather than a stored
+definition hash, almost everything it touches needs a per-run confirm —
+so **Run Action takes two presses**: the first states what will run
+("Runs \<tool\> now — press Run Action again to confirm. Editing anything
+cancels."), the second runs it. Editing the payload or switching the
+action between the two presses cancels the arm, so a stale confirm can
+never fire against different arguments than the ones you read.
+
+Raw `runtime.request` and `runtime.batch` payloads that try to execute a
+tool directly — a JSON body shaped like `{"method": "tools/call"}` — are
+refused and pointed at `tool.execute` instead. Those two actions are for
+inspecting the protocol (`tools/list`, `prompts/list`, `status/get`), not
+a second, ungated way to run a tool.
 
 ## Running more than one copy of the app
 
@@ -96,4 +144,12 @@ never deleted once created — safe to ignore if you notice it.
 
 ---
 
-*Verified against a953e4c1e — 2026-08-04 (PR-5 live check).*
+*Verified against a953e4c1e — 2026-08-04 (PR-5 live check). Verified
+against 9f90e17b8 — 2026-08-06 (PR-T3, docs pass against shipped
+code/tests: weak-match notice, always-reports toasts, live Audit
+refresh + argument names, the gated/logged Advanced panel, readable
+boolean fields — live check pending Task 9). Fix round I, 2026-08-06:
+"do anything else to cancel" on the Test Tool confirm now genuinely
+covers editing the argument form (it previously did not), and a
+background section load can no longer cancel an Advanced confirm you
+armed while it loaded — only your own actions cancel, as written.*

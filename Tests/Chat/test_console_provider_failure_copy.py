@@ -13,13 +13,18 @@ from types import SimpleNamespace
 import httpx
 import pytest
 
+from tldw_chatbook.Chat.Chat_Deps import ChatBadRequestError, ChatProviderError
 from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
 from tldw_chatbook.Chat.console_chat_controller import (
     ConsoleChatController,
     describe_stream_failure,
 )
-from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+from tldw_chatbook.Chat.console_chat_models import (
+    ConsoleMessageRole,
+    ConsoleProviderSelection,
+)
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderGateway
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
 MMPROJ_BODY = (
@@ -111,3 +116,72 @@ async def test_agent_failure_row_carries_body_and_image_recovery_hint(tmp_path):
     # rejecting — point at it and at the existing remove/switch affordances.
     assert "image" in failure_row.lower()
     assert "remove" in failure_row.lower() or "vision" in failure_row.lower()
+
+
+# F5: one status per error. The stream worker used to stringify the adapter
+# exception into prose (baking the REAL status into text), then the
+# consumer re-raised with only that text -- dropping the status code, so
+# ChatProviderError's 502 wrapper default won and describe_stream_failure
+# read "HTTP 502" while the baked-in prose said "Status: 400." in the same
+# sentence.
+
+
+@pytest.mark.asyncio
+async def test_stream_chat_provider_400_reports_one_consistent_status() -> None:
+    def fake_chat_api_call(**_kwargs):
+        raise ChatBadRequestError("invalid temperature", provider="openai")
+
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: {"api_settings": {"openai": {"api_key": "sk-test"}}},
+        chat_api_call_fn=fake_chat_api_call,
+    )
+    resolution = await gateway.resolve_for_send(
+        ConsoleProviderSelection(provider="openai", explicit_model="gpt-4.1")
+    )
+
+    with pytest.raises(ChatProviderError) as exc_info:
+        _ = [
+            item
+            async for item in gateway.stream_chat(
+                resolution, [{"role": "user", "content": "hi"}]
+            )
+        ]
+
+    err = exc_info.value
+    # The real adapter status (400) must survive onto the re-raised wrapper
+    # -- not the wrapper's own 502 upstream-error default.
+    assert err.status_code == 400
+
+    copy = describe_stream_failure(err)
+    assert "HTTP 400" in copy
+    assert "502" not in copy
+
+
+@pytest.mark.asyncio
+async def test_stream_chat_generic_failure_without_status_still_defaults_502() -> (
+    None
+):
+    """A failure with no real HTTP status (e.g. a bare RuntimeError from the
+    adapter layer) keeps the wrapper's 502 upstream-error default -- there is
+    no real status to carry, so this is not a regression of the same bug."""
+
+    def fake_chat_api_call(**_kwargs):
+        raise RuntimeError("adapter exploded before any HTTP response")
+
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: {"api_settings": {"openai": {"api_key": "sk-test"}}},
+        chat_api_call_fn=fake_chat_api_call,
+    )
+    resolution = await gateway.resolve_for_send(
+        ConsoleProviderSelection(provider="openai", explicit_model="gpt-4.1")
+    )
+
+    with pytest.raises(ChatProviderError) as exc_info:
+        _ = [
+            item
+            async for item in gateway.stream_chat(
+                resolution, [{"role": "user", "content": "hi"}]
+            )
+        ]
+
+    assert exc_info.value.status_code == 502

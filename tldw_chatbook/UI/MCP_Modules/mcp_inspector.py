@@ -9,16 +9,36 @@ from functools import partial
 from typing import Any
 
 from loguru import logger
+from rich.markup import escape as escape_markup
 from textual import on
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical, VerticalScroll
 from textual.css.query import NoMatches
 from textual.message import Message
-from textual.widgets import Button, Collapsible, Label, Select, Static, TextArea
+from textual.widgets import (
+    Button,
+    Checkbox,
+    Collapsible,
+    Input,
+    Label,
+    Select,
+    Static,
+    TextArea,
+)
 
 from tldw_chatbook.config import get_cli_setting, save_setting_to_cli_config
+from tldw_chatbook.Library.library_rag_state import (
+    LIBRARY_RAG_ALL_WEAK_COVERAGE_PREFIX,
+    library_rag_all_matches_weak,
+)
 from tldw_chatbook.MCP.hub_tool_catalog import HubTool
+from tldw_chatbook.MCP.local_control_service import MCPGovernanceDenied
+from tldw_chatbook.MCP.local_runtime_delegate import (
+    PERMISSION_STATE_UNRESOLVED_CLAUSE,
+    RawToolCallRefusedError,
+    capitalize_first,
+)
 from tldw_chatbook.MCP.permission_store import EffectiveToolState
 from tldw_chatbook.MCP.readiness import (
     REASON_LABELS,
@@ -29,6 +49,7 @@ from tldw_chatbook.MCP.readiness import (
     is_off_opt_in,
 )
 from tldw_chatbook.MCP.redaction import redact_mapping
+from tldw_chatbook.MCP.unified_control_plane_service import MCPHubGateDeniedError
 from tldw_chatbook.UI.MCP_Modules.mcp_permissions_mode import tool_state_kind
 from tldw_chatbook.UI.MCP_Modules.mcp_schema_form import MCPSchemaForm, parse_schema
 
@@ -139,7 +160,23 @@ _ORIGIN_SENTENCES: dict[str, str] = {
 # `.get(effective.origin, "")` used to render a blank line here instead of
 # ANY explanation, which reads as a broken UI rather than "we don't know
 # why, but don't trust it".
-_UNKNOWN_ORIGIN_SENTENCE = "Permission state could not be resolved."
+#
+# Fix Round I, Item 4: this was a THIRD independently-maintained literal
+# stating the same "permission state could not be resolved" claim
+# `unified_control_plane_service._ADVANCED_EXECUTE_GATE_ERROR_MESSAGE` and
+# `mcp_workbench._TOOL_TEST_BLOCKED_UNKNOWN_TEXT` already derive from
+# `local_runtime_delegate.PERMISSION_STATE_UNRESOLVED_CLAUSE` -- and, unlike
+# `_decision_note()`'s own former `gate_error` branch (proven dead and
+# removed the round before this one), this one is genuinely live: reachable
+# via `show_tool()`'s `effective` keyword whenever `MCPWorkbench.
+# _effective_for_display()`'s single-tool `gate_tool_test()` fallback
+# raises (`on_mcp_tools_mode_tool_selected()`, no `cascade` at that call
+# site, so `_render_permission_container()` falls through to THIS sentence
+# rather than `_cascade_rungs()`). Derived the same way as the other two --
+# `capitalize_first()`, not `.capitalize()`, for the reason given on that
+# function's own docstring -- so mutating the shared clause reddens a test
+# for this surface too, not just the other two.
+_UNKNOWN_ORIGIN_SENTENCE = f"{capitalize_first(PERMISSION_STATE_UNRESOLVED_CLAUSE)}."
 _CONFIG_CHANGED_NOTICE = "Definition changed since you allowed it."
 _RISK_FLOORED_NOTICE = "High-risk tool — asks even though the inherited default is Allow."
 _REALLOW_TOOLTIP = "Store the new definition hash and allow again."
@@ -153,6 +190,86 @@ _REALLOW_TOOLTIP = "Store the new definition hash and allow again."
 # copy, so the two call sites can never drift.
 _GOTO_PERMISSION_TOOLTIP = "Switch to Permissions mode and select this tool's row."
 
+# Task 6 (PR-T3), Route B: every other Advanced action reads or mutates
+# control-plane config; `tool.execute` EXECUTES a tool -- and used to do it on
+# a single press with no permission gate and no execution-log record.
+# `UnifiedMCPControlPlaneService.execute_advanced_tool()` now enforces the
+# gate's hard "Off" verdict and records the run; this pane supplies the
+# per-run consent that gate's "ask" verdict requires (the same Ask mechanic
+# the Test Tool runner's `require_confirm()` arm implements, minus its
+# dedicated button -- here the Run Action button itself is the arm), keyed to
+# the exact payload it was shown for so an edited payload re-confirms.
+_ADVANCED_EXECUTE_ACTION = "tool.execute"
+# Fix Round C, Item 4: "Editing anything cancels" undersold what actually
+# cancels the arm -- switching the object Advanced is showing
+# (`set_service_context()`) or the section (`_load_advanced_section()`)
+# disarms too, invisibly, same as an edit. Named all three, still short.
+#
+# Fix Round E, Item 2 (review of Fix Round C): that enumeration was STILL
+# incomplete -- switching the ACTION (`on_select_changed()`) disarms too
+# (`_run_advanced_action()`'s own docstring already named it: "switching
+# action or editing the payload re-arms"), and hiding the panel
+# (`_hide_advanced()`) disarms as well; neither was named. An enumeration
+# that omits a real trigger reads as complete and is not, and a fourth or
+# fifth one can always surface later. The house already has the correct
+# formulation 46 lines above (`_TEST_RUN_ARMED_HINT`: "anything else
+# cancels") -- adopted here instead of maintaining a list that cannot stay
+# complete.
+#
+# Fix Round G, Items 1-2 (review of Fix Round E): "anything else cancels"
+# was STILL not true -- collapsing this disclosure's own triangle
+# (`_on_advanced_collapsible_toggled()`) and editing the payload
+# (`#mcp-adv-payload`, no `TextArea.Changed` handler existed at all) both
+# left a live arm untouched. Rather than extend the enumeration this
+# comment already rejected once, both are now wired to disarm
+# (`_on_advanced_collapsible_toggled()`, `_on_advanced_payload_changed()`),
+# closing the two remaining gaps between what this sentence claims and
+# what the code does.
+#
+# Fix Round I, Item 1 (review of Fix Round G): the paragraph this replaces
+# claimed the two arms' sentence was "genuinely true of each arm on its
+# own terms" because `_test_run_armed` "deliberately does NOT disarm on an
+# argument-form edit" -- and defended that as safe because
+# `_handle_test_run()` "always re-collects CURRENT form values rather than
+# confirming a snapshot." That defence was backwards: re-collecting
+# CURRENT values is exactly why the old behavior was UNSAFE, not why it
+# was fine -- the whole point of a same-payload confirm is that the run
+# executes against what the user was SHOWN, and an edit after arming meant
+# the confirming press ran arguments no confirm was ever rendered for.
+# Verified live: an "ask" tool armed against `{"id": 1}`, the argument
+# form then edited to `{"id": 999, "danger": true}`, ran on the very next
+# press with no second confirm for the edited payload. `MCPSchemaForm`'s
+# controls (`Input`, `Select`, `Checkbox`, and the raw-JSON `TextArea`
+# fallback -- the only source of any of those four widget types anywhere
+# in this pane) are now wired to `disarm_test_run()` the same way
+# `#mcp-adv-payload` disarms the Advanced arm (`on_select_changed()`'s
+# schema-field branch, `on_input_changed()`, `on_checkbox_changed()`, and
+# the `#mcp-schema-raw` `TextArea.Changed` handler, all near
+# `_handle_test_run()` below). Both arms now disarm on every meaningful
+# interaction with THEIR OWN widget, for real -- not merely by assertion.
+#
+# The two arms still differ in one respect, left as-is on purpose: the
+# Advanced arm keys on `(action, payload)` (`_run_advanced_action()`
+# below) so a payload that happens to round-trip back to what was armed
+# (e.g. switching sections and back) does not force a redundant re-arm;
+# `_test_run_armed` stays a bare boolean, so ANY edit disarms it, even one
+# that reproduces the original text byte-for-byte. Widening the boolean
+# into a keyed arm would need `_handle_test_run()` to snapshot the
+# argument dict at ARM time and compare it at CONFIRM time (today it
+# always collects fresh, by design, so a confirming run reflects whatever
+# the form currently shows) -- a real behavior change, not a truthfulness
+# fix, and out of this item's scope. Disarm-on-edit alone already closes
+# the actual defect (an edited payload can never run under a stale
+# confirm); the byte-identical round-trip case it leaves un-optimized
+# costs the user one extra press, never an unconfirmed execution.
+_ADVANCED_EXECUTE_CONFIRM = (
+    "Runs {tool} now — press Run Action again to confirm; anything else cancels."
+)
+# The refusal heading `show_tool_result()` gives a blocked test run (":2254"),
+# reused verbatim so a refusal reads the same wherever it surfaces -- a
+# refusal is not a failure, and must never render as "Action failed:".
+_ADVANCED_BLOCKED_HEADING = "Blocked · not run"
+
 # F-054: the nothing-selected header copy, shared by compose() and
 # update_readiness(None) so the two can never drift. Contextual instead of
 # a bare "Select an item to inspect." -- it says what picking a row gets
@@ -161,6 +278,35 @@ _GOTO_PERMISSION_TOOLTIP = "Switch to Permissions mode and select this tool's ro
 _EMPTY_STATE_COPY = (
     "Pick a server, tool, or entry to see what's wrong and what you can do."
 )
+
+# Task 3 (PR-T3): "a run that ran always says something" -- a completed
+# tool test that can't be RENDERED (its panel moved on, or was closed)
+# must still be heard about via a toast, even though `show_tool_result()`'s
+# render itself stays dropped (I1; the protected stale-drop tests pin that
+# silence -- a toast is a different surface).
+
+
+def _toast(text: str) -> str:
+    """Escape a `notify()`-bound message before Rich's markup interpreter
+    sees it.
+
+    A small, separate copy of `mcp_workbench.py`'s own `_toast()` --
+    `mcp_workbench.py` already imports FROM this module (`_ORIGIN_
+    SENTENCES`, `MCPInspector`); importing back the other way would create
+    the exact import cycle PR-T2 shipped a real regression from.
+    """
+    return escape_markup(text)
+
+
+def _stale_result_toast_text(tool_name: str) -> str:
+    """Toast copy for a Test Tool result that arrived but isn't shown --
+    covers BOTH `show_tool_result()` silent-drop guards (a different tool
+    now selected/nothing selected, or the same tool's panel was closed) --
+    deliberately reason-agnostic (this function only ever sees `tool_name`,
+    not WHY the render was dropped), so it never asserts a specific cause
+    it can't verify.
+    """
+    return f"{tool_name} finished running, but its result isn't shown here."
 
 
 def _cascade_rungs(
@@ -353,6 +499,61 @@ def _is_tool_error_shape(result: object) -> bool:
     return list(item.keys()) == ["error"]
 
 
+class _ScoredRow:
+    """Minimal `.score`-bearing shim, nothing more.
+
+    `library_rag_all_matches_weak()` is typed for `LibraryRagResultRow`
+    but at runtime only ever reads `.score` off each row -- duck typing,
+    not a hard dependency on the Library dataclass. This lets MCP tool
+    result rows (plain `Mapping`s) feed the same, one, canonical
+    all-weak check the Library evidence list uses, without copying its
+    logic (PR-T3 task 2 / Global Constraints: "reuse the vocabulary,
+    don't reinvent it").
+    """
+
+    __slots__ = ("score",)
+
+    def __init__(self, score: object) -> None:
+        # Defensive coercion: anything that isn't a real number (or is a
+        # bool -- `isinstance(True, int)` is True in Python) is treated
+        # as unscored rather than risking a `<` comparison against a
+        # non-numeric value inside `library_rag_all_matches_weak()`.
+        self.score = (
+            score
+            if isinstance(score, (int, float)) and not isinstance(score, bool)
+            else None
+        )
+
+
+def _extract_scored_rows(rows: list) -> list[_ScoredRow] | None:
+    """Whether `rows` is shaped like a scored result list (RAG-search's
+    row shape), and if so, the `.score`-bearing shim rows for
+    `library_rag_all_matches_weak()`.
+
+    Global Constraints: "Band vocabulary is gated on result shape." --
+    `_summarize_tool_result()` is generic across every MCP tool (a
+    `list_characters` result must never grow match-band vocabulary), so
+    this only recognizes a result as scored when EVERY row is a mapping
+    carrying a `"score"` key (value may legitimately be `None` --
+    keyword-mode rows post PR-T3 task 1). One row missing the key at all
+    (a different tool's row shape) means "not a scored result" -- no
+    signal is fabricated from a shape this wasn't designed for.
+
+    Returns:
+        `None` when `rows` isn't uniformly scored-shaped (including the
+        empty-list case, handled separately by the caller); otherwise
+        the `.score` shim list.
+    """
+    if not rows:
+        return None
+    scored_rows: list[_ScoredRow] = []
+    for row in rows:
+        if not isinstance(row, Mapping) or "score" not in row:
+            return None
+        scored_rows.append(_ScoredRow(row.get("score")))
+    return scored_rows
+
+
 def _summarize_tool_result(
     *, ok: bool, duration_ms: float | None, source: str | None, result: object
 ) -> tuple[str, str | None]:
@@ -363,8 +564,9 @@ def _summarize_tool_result(
     Returns:
         `(status_line, interpretation)` -- `interpretation` is `None` when
         there is nothing further to say (a non-list result, or a
-        non-empty, non-error-shaped list -- the count segment alone is
-        the whole story there).
+        non-empty, non-error-shaped list whose rows aren't uniformly
+        scored, or whose scores aren't all weak -- the count segment
+        alone is the whole story there).
     """
     segments = ["OK" if ok else "Failed"]
     if source:
@@ -382,6 +584,14 @@ def _summarize_tool_result(
         else:
             count = len(result)
             segments.append(f"{count} result" + ("s" if count != 1 else ""))
+            # F1: a result that "found" nothing useful must say so instead
+            # of reporting a bare `OK · N results` that implies success.
+            # Only rows carrying a numeric score participate -- an
+            # unrelated tool's rows (no "score" key at all) are left
+            # exactly as they render today.
+            scored_rows = _extract_scored_rows(result)
+            if scored_rows is not None and library_rag_all_matches_weak(scored_rows):
+                interpretation = LIBRARY_RAG_ALL_WEAK_COVERAGE_PREFIX
     return " · ".join(segments), interpretation
 
 
@@ -588,20 +798,40 @@ class MCPInspector(Vertical):
     to claim directly (so it still fills the remaining pane height when
     expanded) and drop back to auto when collapsed (Contents is display:
     none then -- reserving 1fr of empty space below the title bar would
-    waste most of the pane). #mcp-adv-scroll keeps height:1fr for when it
-    IS visible; nested inside Collapsible's own auto-height Contents this
-    mostly falls back to intrinsic sizing, but VerticalScroll still scrolls
-    on overflow regardless, so nothing breaks -- exact geometry polish is
-    T13's job. */
+    waste most of the pane).
+
+    Fix Round K (live walkthrough of PR #1385): the T12 comment here used
+    to claim the auto-height Contents "mostly falls back to intrinsic
+    sizing, but VerticalScroll still scrolls on overflow regardless, so
+    nothing breaks -- exact geometry polish is T13's job." REFUTED LIVE:
+    with a real section loaded (Inventory's ~200-row JSON), the Action
+    select, the Payload editor, and the Run Action button were
+    unreachable at ANY terminal height (reproduced at 300 rows; wheel and
+    PageDown both bottom out mid-JSON) -- the very hatch this branch
+    spent rounds making truthful could not be operated. Tests never saw
+    it because every fake service returns a few-line payload. Measured
+    with a bundled-CSS probe: `1fr` on this chain resolves without
+    subtracting the rows ABOVE the collapsible inside the pane, so
+    #mcp-adv-scroll's region hung 3+ rows past the screen bottom and its
+    max scroll could never bring the tail rows into view
+    (`pilot.click("#mcp-adv-run")` -> OutOfBounds). A `> Contents
+    { height: 1fr }` bridge did not even apply (styles.height stayed
+    auto). The robust fix drops the fr chain entirely: the collapsible is
+    auto-height and the scroll caps itself (`max-height`), so the box
+    always fits on screen whole and scrolls its overflow inside a real
+    viewport -- probe click goes green, and live the runner is reachable
+    again (End key / wheel, then arm-confirm verified). T13 never ran;
+    this is that geometry debt, paid where it bit. */
     #mcp-adv-collapsible {
-        height: 1fr;
+        height: auto;
         min-height: 0;
     }
     #mcp-adv-collapsible.-collapsed {
         height: auto;
     }
     #mcp-adv-scroll {
-        height: 1fr;
+        height: auto;
+        max-height: 24;
         min-height: 0;
     }
     #mcp-adv-payload {
@@ -813,6 +1043,13 @@ class MCPInspector(Vertical):
         # `Collapsible(collapsed=False)` posts (see the handler); default
         # True matches Collapsible's own reactive default.
         self._advanced_last_collapsed: bool = True
+        # Task 6 (PR-T3): the `(action, payload)` the Advanced runner's Run
+        # Action button is currently armed to execute, or None when unarmed.
+        # Only the executing descriptor (`tool.execute`) ever sets it -- see
+        # `_run_advanced_action()`. Keyed on the payload, not just the
+        # action, so an edited payload re-arms instead of running under a
+        # confirm the user gave for different arguments.
+        self._advanced_confirm_key: tuple[str, str] | None = None
         # Task 4: serializes `update_readiness()`'s remove+mount cycle. Two
         # calls awaited concurrently (a worker-driven refresh interleaved
         # with a pump-driven one) previously could both be mid-flight at
@@ -1071,10 +1308,34 @@ class MCPInspector(Vertical):
         (re-enabled). The `advanced_open` disclosure preference is left
         untouched -- collapsing-vs-expanded is a separate, already
         reversible choice the Collapsible's own triangle owns.
+
+        Fix Round G, Item 6: this panel's real-output policy, stated once.
+        `collapsible.remove()` below is a genuine TEARDOWN -- the whole
+        widget tree (including `#mcp-adv-result`'s run output/refusal
+        text) is destroyed, and `_reveal_advanced()` rebuilds a fresh one
+        from scratch (`_build_advanced_collapsible()`, a blank `Static("",
+        id="mcp-adv-result", ...)`) on the next reveal. Output does not,
+        and structurally cannot, survive a hide/reveal cycle. Every OTHER
+        interaction with this pane -- section change, rebind, action
+        switch, payload edit, collapse/expand of the disclosure triangle
+        (Fix Round E, Item 1; Fix Round G, Items 1-2) -- keeps the widget
+        tree mounted and therefore preserves real output, clearing only a
+        LIVE confirm arm/sentence (`_was_armed`-gated at each of those
+        sites). The rule: destroying the DOM subtree destroys its
+        content, by construction; anything short of that destruction
+        preserves it, by choice.
         """
         if not self._advanced_visible:
             return
         self._advanced_visible = False
+        # Fix Round A, Item 3: hiding the panel is the user backing out of
+        # the legacy runner entirely -- disarm immediately rather than
+        # waiting for the next reveal's `set_service_context()` replay
+        # (`_reveal_advanced()` below) to do it. Defense in depth: that
+        # replay already covers the reveal path on its own, but a stale arm
+        # should not linger in memory for the whole time the panel is
+        # hidden either.
+        self._advanced_confirm_key = None
         try:
             await asyncio.to_thread(
                 save_setting_to_cli_config, "mcp.hub_state", "advanced_visible", False
@@ -1112,6 +1373,29 @@ class MCPInspector(Vertical):
         if collapsed == self._advanced_last_collapsed:
             return
         self._advanced_last_collapsed = collapsed
+        # Fix Round G, Item 1 (review of Fix Round E): a real collapse/
+        # expand of this disclosure's own triangle used to be invisible to
+        # the arm entirely -- `_ADVANCED_EXECUTE_CONFIRM` promises "anything
+        # else cancels", but this handler only ever persisted the open/
+        # collapsed preference. Live-verified: arm `tool.execute`, collapse,
+        # then expand -- the arm survived, so ONE press ran the tool with no
+        # confirm ever shown for that viewing. The Collapsible's own child
+        # widgets (`#mcp-adv-result` included) stay mounted across a
+        # collapse -- only their CSS display toggles (see `_build_advanced_
+        # collapsible()`'s `.-collapsed` rule) -- so this is the same
+        # "attention moved" trigger `_hide_advanced()`'s own clear (:1226)
+        # already treats as arm-cancelling, just a lighter-touch version of
+        # it (tuck away, not tear down; see that method's own docstring for
+        # the teardown-vs-preserve rule this class follows). Same `_was_
+        # armed` gate every other disarm site in this class uses: a real
+        # run result/refusal sitting in `#mcp-adv-result` while UNARMED
+        # must survive a collapse/expand exactly as it survives a section
+        # change or a rebind (Fix Round E, Item 1) -- only a LIVE confirm
+        # sentence is ever cleared away.
+        _was_armed = self._advanced_confirm_key is not None
+        self._advanced_confirm_key = None
+        if _was_armed:
+            self.query_one("#mcp-adv-result", Static).update("")
         self.run_worker(
             self._persist_advanced_open(not collapsed),
             group="mcp-adv-open",
@@ -1429,8 +1713,30 @@ class MCPInspector(Vertical):
             # (the `"muted"` fallback never fires here -- `state` is always
             # one of `allow|ask|deny`), so `mcp-status-{kind}` always
             # resolves to one of the three classes the bundle defines.
+            #
+            # Fix Round J: `origin == "gate_error"` is the synthesized
+            # fail-closed verdict (the permission RESOLVER raised, not a
+            # configured Off) -- `ui_label` maps its `state="deny"` to
+            # "Off", which stacked "Permission: Off" (a confident
+            # configuration claim) one line above "Permission state could
+            # not be resolved." (an admission we don't know it) -- the
+            # exact contradiction shape rounds B/D/F removed from the Test
+            # Tool body and the Advanced hatch, reassembled here by two
+            # truthful-in-isolation widgets. The label now says what is
+            # actually known ("Unknown"); the `error` status class is KEPT
+            # on purpose -- the color encodes the EFFECT (fail-closed, the
+            # tool will not run; don't trust it), which is true, while the
+            # label no longer misstates the CAUSE. The other `ui_label`
+            # renderers (Permissions matrix rows, Tools-mode State column
+            # via `format_tool_state_label()`) still print "Off ·" for
+            # gate_error rows -- that is task-2270's scope (gate_error copy
+            # across the views), not silently expanded here.
             Static(
-                f"Permission: {effective.ui_label}",
+                (
+                    "Permission: Unknown"
+                    if effective.origin == "gate_error"
+                    else f"Permission: {effective.ui_label}"
+                ),
                 id="mcp-inspector-permission-state",
                 classes=f"ds-field-row mcp-status-{tool_state_kind(effective)}",
                 markup=False,
@@ -1963,23 +2269,122 @@ class MCPInspector(Vertical):
         else:
             goto_button.display = False
 
+    def reenable_test_run(self, server_key: str, tool_name: str) -> None:
+        """Re-enable the Run button for one tool whose Run press produced
+        no run of its own.
+
+        Task 3 (PR-T3): `MCPWorkbench`'s in-flight-duplicate guard
+        (`on_mcp_inspector_tool_test_requested()`) swallows a SECOND
+        `ToolTestRequested` for a tool that already has a run outstanding
+        with just a toast -- but `_handle_test_run()` already disabled the
+        Run button as a side effect of THAT press. Since this press's own
+        dispatch never reached the worker, that disable must be undone for
+        the panel it belongs to; the earlier, still-in-flight run is
+        unaffected and re-enables the button again itself, harmlessly, on
+        its own completion via `show_tool_result()`.
+
+        I1-style tolerance, mirroring `show_tool_result()`'s own stale-drop
+        guard: a no-op if the panel has since moved on to a different tool
+        (or nothing), or if the Run button isn't mounted at all (panel
+        closed) -- never re-enables a DIFFERENT tool's Run button on this
+        one's behalf.
+        """
+        current = self._current_tool
+        if current is None or current.server_key != server_key or current.name != tool_name:
+            return
+        try:
+            run_button = self.query_one("#mcp-inspector-test-run", Button)
+        except NoMatches:
+            return
+        run_button.disabled = False
+
     def _handle_test_run(self) -> None:
+        """Handle a Run press: collect arguments and dispatch a test run.
+
+        Task 3 (PR-T3): both early returns below used to be silent -- a
+        stray Run press reaching this method with no tool selected, or
+        with the panel's own widgets not (yet, or no longer) mounted,
+        produced no run AND no explanation. Both are defensive guards
+        (the Run button only exists inside the panel `show_tool()` mounts
+        for `self._current_tool`, so neither should be reachable via
+        normal UI interaction), but "defensive" and "silent" don't have to
+        mean the same thing -- a toast costs nothing and closes the last
+        gap between "Run pressed" and "nothing visible happened".
+
+        Review fix (Minor #6): the `tool is None` toast reuses
+        `MCPWorkbench.open_test_for_selected_tool()`'s own house sentence
+        for the identical "nothing selected" situation
+        (`mcp_workbench.py`'s `"Select a tool in Tools mode first."`)
+        rather than inventing a weaker synonym -- verb-first, matching the
+        plan's register, and consistent copy for the same fact wherever it
+        surfaces. Not imported (would reach into `mcp_workbench.py`, the
+        wrong import direction -- see this module's own `_toast()`
+        docstring); a small literal duplicate instead, same as `_toast()`.
+        """
         tool = self._current_tool
         if tool is None:
+            self.app.notify(
+                _toast("Select a tool in Tools mode first."), severity="warning"
+            )
             return
         try:
             form = self.query_one("#mcp-inspector-test-form", MCPSchemaForm)
             result_widget = self.query_one("#mcp-inspector-test-result", Static)
             run_button = self.query_one("#mcp-inspector-test-run", Button)
         except NoMatches:
+            self.app.notify(
+                _toast(f"{tool.name}: the test panel isn't ready — reopen it and try again."),
+                severity="warning",
+            )
             return
         try:
             arguments = form.collect_arguments()
         except ValueError as exc:
-            result_widget.update(str(exc))
+            # F4 (PR-T3 task 3): this used to be the one result write in
+            # this module with NO status prefix at all -- every other
+            # write here leads with "OK"/"Failed"/"Blocked · not run"; a
+            # bare exception message read as if the whole panel were
+            # broken rather than "fix your input and press Run again".
+            result_widget.update(f"Failed\n{exc}")
             return
         run_button.disabled = True
         self.post_message(self.ToolTestRequested(tool.server_key, tool.name, arguments))
+
+    # -- Fix Round I, Item 1: disarm the Test Tool confirm on any argument
+    # edit, mirroring `#mcp-adv-payload`'s own disarm-on-edit for the
+    # Advanced arm (`_on_advanced_payload_changed()` below). `MCPSchemaForm`
+    # (mounted once, as `#mcp-inspector-test-form`, by `_mount_test_tool_
+    # panel()`) is the ONLY source of `Input`/`Checkbox`/(non-`#mcp-adv-
+    # payload`) `TextArea` widgets anywhere in this pane -- verified by
+    # grep, not assumed -- so these three handlers need no extra ID/
+    # ancestor check to know an event came from the argument form.
+    # `disarm_test_run()` is already a no-op when nothing is armed, so a
+    # form's own initial mount (default values passed via each control's
+    # constructor, never a later `.value =`/`.text =` assignment) is safe
+    # even on the off chance a widget posts a spurious Changed at mount.
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        """A string/number/integer/array field's `Input` changed -- disarm
+        (see the module comment above `_ADVANCED_EXECUTE_ACTION` for the
+        full "why disarm-on-edit" reasoning, shared by both arms)."""
+        event.stop()
+        self.disarm_test_run()
+
+    def on_checkbox_changed(self, event: Checkbox.Changed) -> None:
+        """A boolean field's `Checkbox` changed -- disarm, same reasoning
+        as `on_input_changed()` just above."""
+        event.stop()
+        self.disarm_test_run()
+
+    @on(TextArea.Changed, "#mcp-schema-raw")
+    def _on_test_form_raw_payload_changed(self, event: TextArea.Changed) -> None:
+        """The raw-JSON fallback `MCPSchemaForm` mounts when
+        `parse_schema()` can't render the tool's schema faithfully --
+        disarm, same reasoning as `on_input_changed()` above. A distinct id
+        (`#mcp-schema-raw`) and its own `@on` selector from `#mcp-adv-
+        payload`'s handler just below, so the two can never cross-fire."""
+        event.stop()
+        self.disarm_test_run()
 
     def show_tool_result(
         self, *, server_key: str, tool_name: str, ok: bool,
@@ -1990,6 +2395,7 @@ class MCPInspector(Vertical):
         raw: str | None = None,
         blocked: bool = False,
         decision_note: str | None = None,
+        show_permission_jump: bool = True,
     ) -> None:
         """Render one Test Tool run's outcome, and re-enable Run.
 
@@ -2003,8 +2409,24 @@ class MCPInspector(Vertical):
         switched the inspector to tool B's panel must never render under B
         (and must never re-enable B's Run button, which has nothing to do
         with A's completion). A mismatched result is dropped silently
-        (debug-logged only); it belongs to a panel that is no longer
-        showing.
+        (debug-logged only) -- render-wise, it belongs to a panel that is no
+        longer showing, and the protected stale-drop tests
+        (`Tests/UI/test_mcp_inspector.py`) pin that silence deliberately.
+        Task 3 (PR-T3): the render drop is NOT the whole story though -- the
+        run itself really did complete, so this (and the sibling `NoMatches`
+        drop just below, the panel-closed-but-same-tool case) now ALSO
+        fires a toast naming the tool. A toast is a different surface from
+        the dropped render; it does not touch the protected pin.
+
+        `show_permission_jump` (Task 3, F4): the "Change in Permissions"
+        jump button is only meaningful for the ONE Hub Tool Permissions
+        matrix `blocked=True` already covers (the deny-gate short-circuit,
+        Task 5) -- a refusal from a DIFFERENT permission system entirely
+        (e.g. runtime governance's `PermissionError`, reclassified to
+        `blocked=True` by `MCPWorkbench._run_tool_test()`) has no matching
+        Hub Permissions row to jump to, so that call site passes `False`.
+        Defaults `True` to reproduce every pre-Task-3 `blocked=True` call
+        site's behavior unchanged.
 
         `blocked` (Task 5, UX batch item 5): True for the permissions
         deny-gate's synthetic result -- the call never reached the tool at
@@ -2055,15 +2477,25 @@ class MCPInspector(Vertical):
                 f"(current tool is "
                 f"{(current.server_key, current.name) if current else None!r})"
             )
+            # Task 3 (PR-T3): the RENDER stays dropped (protected pin --
+            # this belongs to a panel that is no longer showing, and
+            # showing it under a different tool's panel would be wrong,
+            # not just late) but the run genuinely completed, so the user
+            # hears about it via a toast instead of nothing at all.
+            self.app.notify(_toast(_stale_result_toast_text(tool_name)))
             return
         try:
             result_widget = self.query_one("#mcp-inspector-test-result", Static)
         except NoMatches:
+            # Same tool, but its Test Tool panel isn't mounted (e.g. Close
+            # was pressed while this run was still in flight) -- nothing to
+            # render into, but the run still completed.
+            self.app.notify(_toast(_stale_result_toast_text(tool_name)))
             return
 
         interpretation: str | None = None
         if blocked:
-            result_widget.update(f"Blocked · not run\n{text or ''}")
+            result_widget.update(f"{_ADVANCED_BLOCKED_HEADING}\n{text or ''}")
         elif not ok:
             status_line = f"Failed{_duration_segment(duration_ms)}"
             result_widget.update(f"{status_line}\n{text or ''}")
@@ -2121,12 +2553,15 @@ class MCPInspector(Vertical):
         # covering the ask-then-confirmed-run case too (the Run press that
         # consumed the arm already disarmed it via `disarm_test_run()`, but
         # this keeps the button's state correct even if that ever changes).
+        # Task 3 (PR-T3): `show_permission_jump=False` further suppresses it
+        # for a `blocked=True` result that has nothing to do with the Hub
+        # Permissions matrix (see this method's own docstring).
         try:
             goto_button = self.query_one("#mcp-inspector-goto-permission-test", Button)
         except NoMatches:
             pass
         else:
-            goto_button.display = blocked
+            goto_button.display = blocked and show_permission_jump
 
     # -- advanced escape hatch -----------------------------------------------
 
@@ -2162,10 +2597,46 @@ class MCPInspector(Vertical):
         self._sections = sections or [("Overview", "overview")]
         self._advanced_source = source
         self._advanced_target_label = target_label
+        # Fix Round A, Item 3: a rebind means the user's attention moved to
+        # a (possibly different) object -- any confirm armed for a
+        # PREVIOUS `set_service_context()` call must not silently satisfy a
+        # first press against whatever is showing now, even when the new
+        # object's `tool.execute` template happens to render byte-identical
+        # JSON to what was just armed (two default templates that are the
+        # same text is entirely plausible, not a contrived edge case).
+        # Cleared unconditionally, before the `_advanced_visible` early
+        # return, since a rebind while hidden must not leave a stale arm
+        # for the next reveal to (re-)inherit either.
+        #
+        # Fix Round E, Item 1: capture whether an arm existed BEFORE
+        # clearing it -- the result-pane blank a few lines down must be
+        # conditional on this (see that blank's own comment for why).
+        _was_armed = self._advanced_confirm_key is not None
+        self._advanced_confirm_key = None
         if not self._advanced_visible:
             return
         self.query_one("#mcp-adv-object", Static).update(self._advanced_object_label())
         self.query_one("#mcp-adv-content", Static).update("")
+        # Fix Round C, Item 4: the confirm sentence
+        # (`_ADVANCED_EXECUTE_CONFIRM`) renders into `#mcp-adv-result`, not
+        # `#mcp-adv-content` -- blanking only the latter left "Runs <tool>
+        # now — press Run Action again to confirm." on screen after a
+        # rebind that had just disarmed it, so the very next press silently
+        # re-arms and re-renders the identical string: the button reads as
+        # dead for one press. Blank both on disarm.
+        #
+        # Fix Round E, Item 1 (review of Fix Round C): that blank used to
+        # run UNCONDITIONALLY, which also erases genuine RUN OUTPUT sitting
+        # in this same widget -- a completed `tool.execute` result, or a
+        # "Blocked · not run" refusal -- the instant the user switches
+        # section or object to go act on it (re-reading it then means
+        # running the tool again). The confirm sentence only ever occupies
+        # this pane while an arm is live, so only blank when one WAS live
+        # (`_was_armed`, captured above before the clear) -- output left
+        # behind while unarmed is never the stale confirm sentence, and
+        # must survive the rebind.
+        if _was_armed:
+            self.query_one("#mcp-adv-result", Static).update("")
         section_select = self.query_one("#mcp-adv-section-select", Select)
         with section_select.prevent(Select.Changed):
             section_select.set_options(self._sections)
@@ -2199,7 +2670,17 @@ class MCPInspector(Vertical):
             str(d["name"]): str(d.get("payload_template") or "{}") for d in descriptors
         }
         hint = self.query_one("#mcp-adv-empty-hint", Static)
-        with action_select.prevent(Select.Changed):
+        # Fix Round I, Item 2: `payload.text = ...` below is a PROGRAMMATIC
+        # rewrite, not a user edit -- `payload.prevent(TextArea.Changed)`
+        # (mirroring `action_select`'s own `Select.Changed` prevent, an
+        # instance-scoped guard that does nothing for a DIFFERENT widget's
+        # messages, hence the separate call here) stops it from reaching
+        # `_on_advanced_payload_changed()` at all, so a confirm armed
+        # during THIS call's caller's own `await` (`_load_advanced_
+        # section()` awaits `self._service.load_section()` before calling
+        # this method) can never be silently disarmed by this rewrite --
+        # see that handler's own docstring for the race this closes.
+        with action_select.prevent(Select.Changed), payload.prevent(TextArea.Changed):
             if not descriptors:
                 action_select.set_options([("No actions available", Select.BLANK)])
                 action_select.value = Select.BLANK
@@ -2251,6 +2732,37 @@ class MCPInspector(Vertical):
         return bool(getattr(decision, "allowed", True))
 
     async def _load_advanced_section(self, section: str) -> None:
+        # Fix Round A, Item 3: a section change is an attention-moved
+        # transition too -- called both from `set_service_context()`'s own
+        # initial section load (already cleared there; redundant but
+        # harmless here) and from `on_select_changed()` when the user picks
+        # a DIFFERENT section directly, which `set_service_context()` never
+        # sees. Same rug-pull-adjacent reasoning as that clear: a section's
+        # `tool.execute` template can render byte-identical JSON to another
+        # section's, and a stale arm from before the switch must not
+        # silently satisfy this section's first press.
+        # Fix Round E, Item 1: capture whether an arm existed BEFORE
+        # clearing it, same as `set_service_context()`'s matching capture --
+        # the blank below must not fire for a section change that finds
+        # nothing armed.
+        _was_armed = self._advanced_confirm_key is not None
+        self._advanced_confirm_key = None
+        # Fix Round C, Item 4: same reasoning as `set_service_context()`'s
+        # own blank -- the confirm sentence lives in `#mcp-adv-result`, not
+        # `#mcp-adv-content`, so clearing the arm without blanking this too
+        # would leave a stale "press Run Action again to confirm" on screen
+        # describing an arm that no longer exists. This method only ever
+        # runs while Advanced is visible (`set_service_context()`'s own
+        # guard, and `on_select_changed()`'s section-select can't fire
+        # unmounted), so `#mcp-adv-result` is always present to blank.
+        #
+        # Fix Round E, Item 1 (review of Fix Round C): that blank used to be
+        # unconditional, which erased genuine run output/refusal text on
+        # every section change, armed or not -- see the identical fix and
+        # fuller reasoning on `set_service_context()`'s own blank above.
+        # Conditional on `_was_armed` for the same reason.
+        if _was_armed:
+            self.query_one("#mcp-adv-result", Static).update("")
         if self._service is None:
             return
         payload = await self._service.load_section(section)
@@ -2275,10 +2787,137 @@ class MCPInspector(Vertical):
                             group="mcp-adv-section", exclusive=True)
         elif select_id == "mcp-adv-action-select":
             event.stop()
+            # Fix Round E, Item 2: switching the action is a FOURTH trigger
+            # that disarms a pending `tool.execute` confirm --
+            # `_run_advanced_action()`'s own docstring already named it
+            # ("switching action or editing the payload re-arms"), but this
+            # handler never actually cleared `_advanced_confirm_key` on an
+            # action switch, so a stale arm (and its rendered confirm
+            # sentence) survived it: pressing Run then executed the NEWLY
+            # selected action immediately, no confirm, under a sentence
+            # still promising one. Section membership: `tool.execute` only
+            # shares its `inventory` section with `resource.read` and
+            # `prompt.get` (both reads) -- the destructive actions live in
+            # other sections, which a section change already disarms (see
+            # `_load_advanced_section()`).
+            #
+            # Fix Round G, Item 3 (review of Fix Round E): the closing
+            # sentence here used to call this "a truthfulness defect on the
+            # confirm text, not a path to an unconfirmed destructive
+            # action." That is FALSE, and was verified false by mutation
+            # (drop this clear, keep the `_was_armed` blank below): arm
+            # `tool.execute`, switch to `resource.read`, switch BACK to
+            # `tool.execute` -- `_refresh_advanced_actions()`/this handler
+            # regenerate `tool.execute`'s payload template from the same
+            # fixed string every time, so the round trip reproduces
+            # BYTE-IDENTICAL JSON. Without this clear (and, as of Fix Round
+            # G, Item 2, ALSO without `_on_advanced_payload_changed()`'s
+            # independent clear below -- see that method's own docstring:
+            # its cascade now covers for a dropped clear here on every
+            # reachable action switch), the stale (never-cleared)
+            # `_advanced_confirm_key` from the FIRST arm still equals the
+            # confirm key `_run_advanced_action()` recomputes for the
+            # second `tool.execute` selection, so its `!=` comparison is
+            # False, the "arm and return" branch is skipped, and the very
+            # next press runs `tool.execute` -- which executes arbitrary
+            # built-in tools from raw JSON -- with NO confirm and a
+            # completely blank pane. This clear is a genuine, independently
+            # worth-keeping safety boundary (belt-and-braces with Item 2's
+            # cascade, not superseded by it -- a future change to either
+            # side could silently remove the OTHER'S coverage), not merely
+            # cosmetic; see `test_action_switch_clears_the_confirm_key_
+            # synchronously` (isolates THIS clear specifically) and
+            # `test_action_switch_round_trip_does_not_execute_tool_execute_
+            # unconfirmed` (the combined, genuine-UI-reachable consequence)
+            # in test_mcp_inspector.py.
+            _was_armed = self._advanced_confirm_key is not None
+            self._advanced_confirm_key = None
+            if _was_armed:
+                self.query_one("#mcp-adv-result", Static).update("")
             if not _is_blank(event.value):
-                self.query_one("#mcp-adv-payload", TextArea).text = (
-                    self._action_templates.get(str(event.value), "{}")
-                )
+                # Fix Round I, Item 2: programmatic rewrite, not a user
+                # edit -- see `_refresh_advanced_actions()`'s matching
+                # `payload.prevent(...)` for the full rationale (this call
+                # site's own clear two lines up already runs synchronously
+                # right before this write with no `await` between them, so
+                # in practice this was already a no-op; the prevent makes
+                # that mechanical instead of order-dependent, the same
+                # guarantee `_refresh_advanced_actions()` now carries).
+                payload = self.query_one("#mcp-adv-payload", TextArea)
+                with payload.prevent(TextArea.Changed):
+                    payload.text = self._action_templates.get(str(event.value), "{}")
+        elif select_id.startswith("mcp-schema-field-"):
+            # Fix Round I, Item 1: an enum-kind field in the Test Tool
+            # argument form (`MCPSchemaForm`'s only other `Select` source
+            # in this pane, id template "mcp-schema-field-{index}") disarms
+            # a pending confirm on edit -- same fix, and same reasoning
+            # (module comment above `_ADVANCED_EXECUTE_ACTION`), as
+            # `on_input_changed()`/`on_checkbox_changed()`/
+            # `_on_test_form_raw_payload_changed()` near `_handle_test_run()`.
+            event.stop()
+            self.disarm_test_run()
+
+    @on(TextArea.Changed, "#mcp-adv-payload")
+    def _on_advanced_payload_changed(self, event: TextArea.Changed) -> None:
+        """A genuine user edit to the Advanced payload disarms a pending
+        `tool.execute` confirm. Item 2 (PR-T3 fix round G):
+        `_run_advanced_action()`'s own docstring has always promised
+        "switching action or editing the payload re-arms" -- the
+        action-switch half was implemented (Fix Round E, Item 2,
+        `on_select_changed()` above); the payload-edit half had NO handler
+        at all (there was no `TextArea.Changed` listener anywhere in this
+        module), so a `tool.execute` arm survived a payload edit with the
+        STALE confirm sentence still on screen -- naming the OLD tool and
+        promising a confirm the very next press would not give
+        (`_run_advanced_action()`'s own `confirm_key` mismatch already
+        made that outcome SAFE -- an edited payload always re-arms instead
+        of running, never the reverse -- just not TRUTHFUL about what the
+        pane was about to do).
+
+        Fix Round I, Item 2 (review of Fix Round G): this docstring used to
+        claim every programmatic `payload.text = ...` write "always runs
+        AFTER that call site's own clear, so `_was_armed` is already False
+        there and this is a no-op." True for `on_select_changed()`'s
+        action-switch branch and `set_service_context()` (both clear, then
+        write, with no `await` between the two) -- FALSE for
+        `_load_advanced_section()`: its own clear runs BEFORE `await
+        self._service.load_section(section)`, and `_refresh_advanced_
+        actions()`'s payload write happens AFTER that await, a real yield
+        point during which a Run Action press can arm a NEW confirm
+        against whatever the OLD section still shows on screen. When that
+        race landed, this handler saw the LATE, post-await write as an
+        "edit" and silently disarmed a confirm the user never touched --
+        the button reverting to "Run" and the confirm sentence vanishing
+        through no action of theirs, direction-wise fail-safe (never an
+        extra execution) but reintroducing the "button reads as dead for
+        one press" symptom Fix Round G, Item 2 existed to eliminate, from
+        the opposite side (a background load cancelling the user's arm,
+        instead of an edit failing to cancel it).
+
+        Fixed at the SOURCE rather than by inspecting who's calling: every
+        programmatic write to `#mcp-adv-payload` (`_refresh_advanced_
+        actions()`'s two `payload.text = ...` assignments, and
+        `on_select_changed()`'s own) is now wrapped in
+        `payload.prevent(TextArea.Changed)`, so `TextArea.load_text()`
+        (what the `.text` setter calls, and what a real keystroke's
+        `Edit()` also posts through) never even posts the message for a
+        programmatic write. This handler now fires ONLY for a genuine user
+        edit, unconditionally -- a mechanical guarantee, not an accounting
+        of call-site ordering a future call site could silently violate
+        again.
+
+        Same `_was_armed` gate as every other disarm site in this class:
+        only touch `#mcp-adv-result` when an arm was actually live, so
+        real run output/a refusal sitting there while UNARMED survives
+        ordinary typing. Deliberately does not touch `event.text_area`
+        itself -- clearing state and updating a DIFFERENT widget never
+        fights the user's cursor or selection in this one.
+        """
+        event.stop()
+        _was_armed = self._advanced_confirm_key is not None
+        self._advanced_confirm_key = None
+        if _was_armed:
+            self.query_one("#mcp-adv-result", Static).update("")
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         button_id = event.button.id or ""
@@ -2399,19 +3038,107 @@ class MCPInspector(Vertical):
             return
 
     async def _run_advanced_action(self) -> None:
+        """Run the selected Advanced action, confirming the executing one.
+
+        Task 6 (PR-T3), Route B: `tool.execute` is the only descriptor here
+        that runs a tool rather than reading or writing control-plane
+        config, and the Hub's permission gate resolves nearly every tool to
+        "ask" from this pane (`gate_tool_test_by_key()` cannot verify an
+        `allow` without a live definition to hash, so it collapses one to
+        "ask"). "Ask" needs a per-run approval, and this legacy panel has
+        no confirm control of its own -- so the Run Action button IS the
+        arm: the first press states what will run and arms; the second
+        runs it. The arm is keyed to `(action, payload)`, so switching
+        action or editing the payload re-arms rather than executing
+        something the user never read.
+
+        A REFUSAL -- the gate's hard "Off" refusal from
+        `execute_advanced_tool()` (`MCPHubGateDeniedError`), the in-process
+        runtime-governance profile's own denial (`local_control_service.
+        MCPGovernanceDenied`), or a raw `tools/call` refused by the
+        `runtime.request`/`runtime.batch` pre-dispatch scan
+        (`RawToolCallRefusedError`) -- renders under `show_tool_result()`'s
+        "Blocked · not run" heading. Nothing ran, so the generic "Action
+        failed:" dump (which reads as an attempted, crashed call) would
+        misdescribe it.
+
+        Item 2 (PR-T3 fix round D): this used to match the bare
+        `PermissionError` base class, which is too broad the same way Fix
+        Round B narrowed the Test Tool runner's OWN classifier
+        (`mcp_workbench._is_permission_refusal()`) -- a `PermissionError` a
+        BUILT-IN TOOL'S OWN body raises (this pane can execute arbitrary
+        built-in tools via raw JSON) would misrender as a refusal that
+        never reached the tool, when the tool ran and that IS its failure.
+        Narrowed to the three TYPED refusals above instead (matching
+        `_is_permission_refusal()`'s own type-based precedent); an
+        untyped/tool-body `PermissionError` now falls through to the
+        generic `except Exception` branch below, same as any other crash.
+        The three typed exceptions are each imported from where they are
+        DEFINED (`local_control_service`, `unified_control_plane_service`,
+        `local_runtime_delegate`), not reused from `mcp_workbench.py`'s own
+        classifier -- `mcp_workbench.py` imports FROM this module, so the
+        reverse import would be circular.
+
+        Item 6 (PR-T3 fix round F): this tuple is DELIBERATELY narrower
+        than it could be, and DIFFERENT from `mcp_workbench.
+        _is_permission_refusal()`'s own set (`MCPGovernanceDenied,
+        MCPServerSourceDisplayOnlyError`) -- the two independently encode
+        refusal-type knowledge and nothing besides this comment (and its
+        twin over there) ties them together, so a fifth typed refusal
+        added later has both to update. Not a defect today:
+        `MCPServerSourceDisplayOnlyError` is excluded here because it is
+        unreachable from every action this runner can dispatch --
+        `execute_advanced_tool()` (the `tool.execute` action) hardcodes
+        `BUILTIN_SERVER_KEY` when it calls `execute_hub_tool()`, so the
+        server-source branch that raises it can never fire from this path,
+        and `runtime.request`/`runtime.batch` never call `execute_hub_
+        tool()` at all. Do not merge the two sets into one: each is
+        correct for its own surface, and the asymmetry is what's true, not
+        an oversight -- see `_is_permission_refusal()`'s own comment for
+        why `MCPHubGateDeniedError`/`RawToolCallRefusedError` are excluded
+        there.
+        """
         result_widget = self.query_one("#mcp-adv-result", Static)
         action_select = self.query_one("#mcp-adv-action-select", Select)
         if self._service is None or _is_blank(action_select.value):
             return
+        action_name = str(action_select.value)
         raw = self.query_one("#mcp-adv-payload", TextArea).text or "{}"
         try:
             payload = json.loads(raw)
         except json.JSONDecodeError as exc:
+            self._advanced_confirm_key = None
             result_widget.update(f"Invalid JSON payload: {exc}")
             return
+        if action_name == _ADVANCED_EXECUTE_ACTION:
+            # `default=str` for the same reason the result dump below uses
+            # it: this is arbitrary user JSON, and an un-dumpable payload
+            # must re-arm, not raise out of the Run button's worker.
+            confirm_key = (action_name, json.dumps(payload, sort_keys=True, default=str))
+            if self._advanced_confirm_key != confirm_key:
+                self._advanced_confirm_key = confirm_key
+                tool_label = (
+                    str(payload.get("tool_name") or "").strip()
+                    if isinstance(payload, Mapping)
+                    else ""
+                )
+                result_widget.update(
+                    _ADVANCED_EXECUTE_CONFIRM.format(tool=tool_label or "this tool")
+                )
+                return
+        self._advanced_confirm_key = None
         try:
-            result = await self._service.run_action(str(action_select.value), payload)
-        except Exception as exc:  # surface, never crash the inspector
+            result = await self._service.run_action(action_name, payload)
+        except (
+            MCPGovernanceDenied,
+            MCPHubGateDeniedError,
+            RawToolCallRefusedError,
+        ) as exc:  # a refusal is not a failure
+            result_widget.update(f"{_ADVANCED_BLOCKED_HEADING}\n{exc}")
+            return
+        except Exception as exc:  # surface, never crash the inspector -- a
+            # tool-body `PermissionError` (not one of the three typed
+            # refusals above) lands here too, same as any other crash.
             result_widget.update(f"Action failed: {exc}")
             return
         if isinstance(result, dict):

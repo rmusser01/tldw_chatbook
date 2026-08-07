@@ -17,6 +17,7 @@ from typing import Callable, Iterator
 from loguru import logger
 
 from tldw_chatbook.MCP.hub_tool_catalog import HubTool
+from tldw_chatbook.MCP.local_runtime_delegate import PERMISSION_STATE_UNRESOLVED_CLAUSE
 from tldw_chatbook.MCP.permission_store import EffectiveToolState
 
 from .agent_models import ToolCatalogEntry, ToolResult, ToolSchema
@@ -30,6 +31,26 @@ LOCAL_SERVER_LABEL = "Local workspace"
 LOCAL_DENY_REFUSAL = "blocked by local tool permissions (set to Off)"
 LOCAL_TIMEOUT_REFUSAL = "user did not approve within the time limit; do not retry"
 LOCAL_KILL_SWITCH_REFUSAL = "blocked — local tools are switched off"
+# Fix Round H (PR-T3 review), Item 1. `_verdict_for()`'s permission-resolver
+# `except` used to collapse a RAISE into the SAME "deny" verdict as a
+# genuine configured Off -- which then rendered `LOCAL_DENY_REFUSAL`, a
+# confident, false claim about the tool's configuration. A recurrence of
+# the exact pattern earlier rounds already removed from the Test Tool
+# panel (`mcp_workbench._TOOL_TEST_BLOCKED_UNKNOWN_TEXT`) and the
+# Advanced hatch (`unified_control_plane_service._ADVANCED_EXECUTE_GATE_
+# ERROR_MESSAGE`) -- except THIS string reaches a MODEL, not a human: an
+# agent told its tool is "set to Off" will relay that as fact and stop
+# retrying a tool that may in fact be Allow, and the user then "fixes" a
+# setting that was never wrong.
+#
+# Derived from the SAME shared clause those two surfaces already derive
+# from (`local_runtime_delegate.PERMISSION_STATE_UNRESOLVED_CLAUSE`) so a
+# reword changes all three or none compiles/matches. Written for the actual
+# reader: no configuration-state assertion (unlike `LOCAL_DENY_REFUSAL`),
+# and no "permanently unavailable" implication (unlike `LOCAL_TIMEOUT_
+# REFUSAL`'s "do not retry" -- a resolver crash is plausibly transient,
+# where a genuine unapproved timeout is not).
+LOCAL_GATE_ERROR_REFUSAL = f"blocked — {PERMISSION_STATE_UNRESOLVED_CLAUSE}; retrying may succeed"
 
 _MAX_RESULT_BYTES = 32 * 1024
 _MAX_ERROR_CHARS = 300
@@ -226,7 +247,19 @@ class LocalToolProvider:
             self._stamps = saved
 
     def pending_gate_for(self, name: str, args: dict) -> MCPPendingCall | None:
-        """The approval payload when this call needs human gating, else None."""
+        """The approval payload when this call needs human gating, else None.
+
+        Args:
+            name: Catalog id (``local:<name>``) or bare LLM-facing tool
+                name -- same prefix tolerance as ``invoke()``.
+            args: The call's arguments, echoed into the pending payload.
+
+        Returns:
+            The ``MCPPendingCall`` to render for approval, or ``None``
+            when there is nothing to confirm (unknown tool, resolver
+            failure -- fail closed, ``invoke()`` decides the copy --
+            state no longer "ask", or a live session approval).
+        """
         # Same `local:`-prefix tolerance as invoke()/load_schema(): the
         # registry invokes by catalog id ("local:fs_list") while the review
         # hook resolves by LLM-facing name ("fs_list").
@@ -234,26 +267,63 @@ class LocalToolProvider:
         spec = self._specs.get(name)
         if spec is None:
             return None
-        hub = self.hub_tool_for(name)
+        gate, _resolve_failed = self._resolve_pending_gate(name, args, self.hub_tool_for(name))
+        return gate
+
+    def _resolve_pending_gate(
+        self, name: str, args: dict, hub: HubTool
+    ) -> tuple[MCPPendingCall | None, bool]:
+        """Shared resolution behind `pending_gate_for()`, plus (Fix Round I,
+        Item 5) whether a `None` result came from the resolver RAISING.
+
+        `pending_gate_for()`'s own public contract (`MCPPendingCall |
+        None`) is unchanged for its other callers (`console_chat_
+        controller.py`'s batch-review flow, MCPToolProvider parity tests)
+        -- none of them need to distinguish WHY there's nothing to
+        confirm, only whether there is. `_verdict_for()`'s "ask" branch is
+        the one caller that does: a `None` from a genuine state change (no
+        longer "ask", or a session grant that raced in -- both handled
+        below, same as before) is a legitimate "nothing to confirm now",
+        but a `None` from the resolver raising a SECOND time (this call's
+        own resolve, moments after `_verdict_for()`'s own top-of-function
+        resolve already succeeded with "ask") means the tool's state is
+        UNKNOWN, not settled. Collapsing that into the same "timeout"
+        verdict a genuine unapproved wait produces was the bug this item
+        fixes: `invoke()` renders "timeout" as LOCAL_TIMEOUT_REFUSAL ("...
+        do not retry"), the most costly possible false claim to hand an
+        agent for a transient failure that might succeed on retry.
+
+        Args:
+            name: Bare LLM-facing tool name (prefix already stripped by
+                the caller).
+            args: The call's arguments, echoed into the pending payload.
+            hub: The tool's ``HubTool`` view for permission resolution.
+
+        Returns:
+            ``(gate, resolve_failed)`` -- ``gate`` is the pending call to
+            confirm or ``None``; ``resolve_failed`` is True ONLY when the
+            ``None`` came from ``resolve_state`` raising, never for a
+            legitimate state flip or a session approval.
+        """
         try:
             state = self._resolve_state(hub)
         except Exception as exc:  # noqa: BLE001 — fail closed to "let invoke handle it"
             logger.warning(
                 f"LocalToolProvider: resolve_state failed for {name}: {exc}"
             )
-            return None
+            return None, True
         if state.state != "ask":
-            return None
+            return None, False
         # Finding I1 parity: a live session approval makes invoke() execute
         # without a stamp, so asking again here would be a pure re-prompt.
         if self._is_session_approved_safe(hub):
-            return None
+            return None, False
         reason = (
             "config_changed" if state.config_changed
             else "risk_floored" if state.risk_floored
             else "ask"
         )
-        return MCPPendingCall(
+        gate = MCPPendingCall(
             llm_name=name,
             server_key=LOCAL_SERVER_KEY,
             tool_name=name,
@@ -261,6 +331,7 @@ class LocalToolProvider:
             arguments=args,
             reason=reason,
         )
+        return gate, False
 
     # -- invocation -----------------------------------------------------
 
@@ -269,17 +340,21 @@ class LocalToolProvider:
 
         Fail-closed: only an explicit "allow" verdict executes; "deny" and
         any unrecognized verdict refuse with LOCAL_DENY_REFUSAL (mirrors
-        MCPToolProvider._apply_verdict's fallthrough), "timeout" with
-        LOCAL_TIMEOUT_REFUSAL, and "no_callback" with the constructor's
-        ``no_callback_refusal`` override when set (LOCAL_TIMEOUT_REFUSAL
-        otherwise).
+        MCPToolProvider._apply_verdict's fallthrough), "gate_error" (Fix
+        Round H, Item 1: the permission resolver raised rather than
+        genuinely resolving) with LOCAL_GATE_ERROR_REFUSAL -- a DIFFERENT
+        string from LOCAL_DENY_REFUSAL, since the tool's actual configured
+        state was never determined and LOCAL_DENY_REFUSAL's "set to Off"
+        claim would be false -- "timeout" with LOCAL_TIMEOUT_REFUSAL, and
+        "no_callback" with the constructor's ``no_callback_refusal``
+        override when set (LOCAL_TIMEOUT_REFUSAL otherwise).
 
         Audit (MCP parity): refusals are recorded via the optional
-        ``record_decision`` seam -- "denied" for kill-switch/deny outcomes,
-        "denied-timeout" for timeout/no_callback (matching the refusal copy
-        the model actually saw). Successful executions record nothing:
-        MCPToolProvider records those service-side via execute_hub_tool,
-        which has no local analogue.
+        ``record_decision`` seam -- "denied" for kill-switch/deny/gate_error
+        outcomes, "denied-timeout" for timeout/no_callback (matching the
+        refusal copy the model actually saw). Successful executions record
+        nothing: MCPToolProvider records those service-side via
+        execute_hub_tool, which has no local analogue.
         """
         name = tool_id.split(":", 1)[1] if ":" in tool_id else tool_id
         spec = self._specs.get(name)
@@ -305,6 +380,17 @@ class LocalToolProvider:
                 else LOCAL_TIMEOUT_REFUSAL
             )
             return ToolResult(ok=False, error=refusal)
+        if verdict == "gate_error":
+            # Fix Round H, Item 1: the resolver raised rather than
+            # genuinely resolving to "deny" -- still fails closed (the tool
+            # does not run), but the reason told to the model is honest:
+            # the permission check itself failed, not a configured Off.
+            # Audit vocabulary is unchanged ("denied" is this seam's only
+            # refusal decision besides "denied-timeout" -- see this
+            # provider's own `record_decision` docstring); only the
+            # returned TEXT distinguishes the two cases.
+            self._record_decision_safe(self.hub_tool_for(name), "denied")
+            return ToolResult(ok=False, error=LOCAL_GATE_ERROR_REFUSAL)
         # "deny" and any unrecognized verdict fail closed the same way.
         self._record_decision_safe(self.hub_tool_for(name), "denied")
         return ToolResult(ok=False, error=LOCAL_DENY_REFUSAL)
@@ -339,7 +425,11 @@ class LocalToolProvider:
             state = self._resolve_state(hub)
         except Exception as exc:  # noqa: BLE001 — fail closed on a resolution failure
             logger.warning(f"LocalToolProvider: resolve_state failed for {name}: {exc}")
-            return "deny"
+            # Fix Round H, Item 1: a distinct verdict from "deny" -- the
+            # resolver crashed, so the tool's actual state was never
+            # determined; it is not necessarily Off at all. invoke() renders
+            # this as LOCAL_GATE_ERROR_REFUSAL, not LOCAL_DENY_REFUSAL.
+            return "gate_error"
         if state.state == "allow":
             return "allow"
         if state.state == "deny":
@@ -358,9 +448,29 @@ class LocalToolProvider:
         if self._is_session_approved_safe(hub):
             return "allow"
         if self._approval_callback is not None:
-            gate = self.pending_gate_for(name, args)
+            # Fix Round H, Item 1 (checked, not fixed -- reported) / Fix
+            # Round I, Item 5 (fixed): this is a SECOND, narrower resolve_
+            # state collapse than the one at the top of this method. A
+            # resolver crash HERE (this call's own resolve, moments after
+            # the top-of-function resolve already succeeded with "ask")
+            # used to render LOCAL_TIMEOUT_REFUSAL ("... do not retry") via
+            # the "timeout" verdict below -- the same harm class the
+            # top-of-function branch above was fixed for: an agent told a
+            # false, terminal reason for a tool being unavailable abandons
+            # a tool that actually works. `_resolve_pending_gate()` (the
+            # helper `pending_gate_for()` itself now delegates to) exposes
+            # WHY it returned no gate -- `resolve_failed=True` only for a
+            # genuine resolver exception, never for a legitimate state
+            # flip or a session approval racing in (ruled out immediately
+            # above, since that check just ran moments earlier and cannot
+            # have changed without another resolve in between).
+            gate, resolve_failed = self._resolve_pending_gate(name, args, hub)
             if gate is None:
-                # state re-resolution failed or flipped mid-call; fail closed.
+                if resolve_failed:
+                    return "gate_error"
+                # state re-resolution genuinely flipped away from "ask"
+                # (or a session approval raced in) -- nothing to confirm,
+                # fail closed the same way an unapproved wait would.
                 return "timeout"
             try:
                 decisions = self._approval_callback([gate])

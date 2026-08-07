@@ -111,7 +111,13 @@ class TestKeywordSearchRealRowMapping:
         assert "knownmarker" in result["content"]
         assert result["media_type"] == "article"
         assert result["url"] == "https://example.com/known-word-article"
-        assert result["score"] == 1.0
+        # Deliberate contract change (PR-T3 task-1, controller-authorized):
+        # this used to pin `score == 1.0`, the fabricated "Default score for
+        # keyword search" this task removes. A test asserting a fabricated
+        # relevance score is pinning a lie about match quality, not a
+        # contract worth preserving -- see search_service.py's keyword_search
+        # and the task-1 report for the consumer enumeration and rationale.
+        assert result["score"] is None
         assert result["metadata"]["author"] == "Ada Lovelace"
         assert "ingestion_date" in result["metadata"]
 
@@ -346,3 +352,52 @@ class TestSemanticSearchFallback:
 
         with pytest.raises(RuntimeError, match="simulated media_db failure"):
             await service.semantic_search("anything")
+
+
+class TestKeywordSearchScoreIsHonest:
+    """PR-T3 task-1: keyword_search must not fabricate `score: 1.0`.
+
+    The Library's own precedent (`library_rag_state.py:604-611`,
+    `library_local_rag_search_service.py`) nulls the score at the service
+    boundary for keyword-mode rows because FTS relevance was judged
+    misleading -- a wrong band is worse than no band. Mirrors that
+    judgment here so every consumer of `SimplifiedRAGSearchService`
+    (not just the MCP payload) gets the honest value.
+
+    NOTE: this is additive coverage alongside
+    `TestKeywordSearchRealRowMapping.test_returns_seeded_item_with_correctly_mapped_fields`
+    (`:114` in this file), whose own `score` assertion was updated in the
+    same change (a deliberate, controller-authorized contract change, not
+    a silent absorb) -- see the task-1 report for the consumer enumeration
+    and why the fix lands at the service boundary rather than only in
+    `MCP/tools.py`.
+    """
+
+    @pytest.mark.asyncio
+    async def test_keyword_search_rows_carry_no_score(self, media_db):
+        _seed(
+            media_db,
+            title="Honest Score Item",
+            content="honestscoremarker appears in this content",
+        )
+        service = _make_service(media_db)
+
+        results = await service.keyword_search("honestscoremarker", limit=10)
+
+        assert len(results) == 1
+        assert results[0]["score"] is None
+
+    @pytest.mark.asyncio
+    async def test_multiple_keyword_rows_all_carry_no_score(self, media_db):
+        for i in range(3):
+            _seed(
+                media_db,
+                title=f"Honest Score Item {i}",
+                content=f"honestscoreplural appears in item {i}",
+            )
+        service = _make_service(media_db)
+
+        results = await service.keyword_search("honestscoreplural", limit=10)
+
+        assert len(results) == 3
+        assert all(result["score"] is None for result in results)

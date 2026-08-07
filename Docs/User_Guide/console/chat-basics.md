@@ -190,6 +190,11 @@ Transcript:
 - **Regenerate goes deeper than this page** — ♻ never overwrites the old
   answer; it creates a variant you can step back to with < >. Details and
   known limitations live in [branching & rewind](branching-and-rewind.md).
+- **A "[failed]" reply's message reports one status, the real one.** The
+  detail text names the HTTP status the provider actually returned — it no
+  longer pairs that with a mismatched generic status elsewhere in the same
+  message.
 
 —
-*Verified against dev @ ff435772c — 2026-07-31*
+*Verified against dev @ ff435772c — 2026-07-31. Verified against
+9f90e17b8 — 2026-08-06 (PR-T3, docs pass against shipped code/tests).*

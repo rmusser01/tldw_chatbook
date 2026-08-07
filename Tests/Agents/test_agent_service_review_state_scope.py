@@ -124,6 +124,7 @@ class FakeMCPService:
         initiator: str = "test",
         decision: str = "allowed",
         timeout_seconds: float | None = None,
+        registered_argument_names: set[str] | None = None,
     ) -> dict:
         self.execute_calls.append(
             (server_key, tool_name, dict(arguments or {}), initiator, decision)

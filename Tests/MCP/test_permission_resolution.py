@@ -14,6 +14,9 @@ import json
 
 from tldw_chatbook.MCP.hub_tool_catalog import HubTool
 from tldw_chatbook.MCP.permission_store import (
+    BUILTIN_TOOL_SERVER_KEY,
+    BY_KEY_HASH_FREE_SERVER_KEYS,
+    HASH_FREE_SERVER_KEYS,
     HIGH_RISK_TAGS,
     EffectiveToolState,
     cycle_global,
@@ -454,6 +457,163 @@ def test_resolve_by_key_invalid_global_default_falls_back_to_ask():
 
     assert result.state == "ask"
     assert result.origin == "global_default"
+
+
+# -- BY_KEY_HASH_FREE_SERVER_KEYS exemption at the by-key collapse ------------
+#
+# `resolve_effective_state()` (the live-`HubTool` resolver) never downgrades
+# an explicit `allow` for a server in `HASH_FREE_SERVER_KEYS` -- those keys
+# are in-process code (the agent-runtime built-in tools, and the built-in MCP
+# server) that changes only via an app update, so the hash-staleness guard
+# protects nothing for them and would only produce rug-pull false positives.
+# `resolve_effective_state_by_key()`'s unconditional "any allow collapses to
+# ask" final step used to ignore that exemption entirely, so the SAME tool
+# set to Allow recorded `decision="approved"` (asked-and-approved) when
+# resolved by key (the Advanced pane's `tool.execute` route) and
+# `decision="allowed"` (no ask needed) when resolved with a live `HubTool`
+# (the Test Tool panel) -- a cross-surface split in the audit trail this
+# programme exists to close.
+#
+# Fix Round C, Item 2: the exemption at the by-key seam is narrower than
+# `HASH_FREE_SERVER_KEYS` -- `BY_KEY_HASH_FREE_SERVER_KEYS` covers only
+# `"builtin:tldw_chatbook"`, NOT `BUILTIN_TOOL_SERVER_KEY`
+# (`"agent:builtin"`). Unlike `resolve_effective_state()`, this function has
+# no `HubTool.tags` to floor a high-risk inherited allow with, so exempting
+# a key here means "an inherited/explicit allow for this key returns with
+# NO floor of any kind." That is safe for `builtin:tldw_chatbook` only
+# because its `HubTool`s always carry `tags=()` (see
+# `test_hub_tool_catalog.py`'s tripwire) -- it would NOT be safe for
+# `agent:builtin`, whose real resolver (`resolve_builtin_state`) floors
+# `BUILTIN_HIGH_RISK_TAGS`. The three fixtures below pin the narrowed
+# exemption directly (no loop over the wider `HASH_FREE_SERVER_KEYS`, which
+# would incorrectly pin "allow survives" for `agent:builtin` too), and the
+# two control cases pin that the exemption stays narrow at both edges: a
+# ordinary key never gets it, and the wider-but-excluded hash-free key
+# (`agent:builtin`) does not either, even though it's exempt from the
+# hash-staleness guard in `resolve_effective_state()`.
+
+
+def test_resolve_by_key_hash_free_server_explicit_allow_is_not_downgraded():
+    payload = _payload(
+        servers={
+            "builtin:tldw_chatbook": {"tools": {"calculator": {"state": "allow"}}}
+        }
+    )
+
+    result = resolve_effective_state_by_key(
+        payload, "builtin:tldw_chatbook", "calculator"
+    )
+
+    assert result.state == "allow"
+    assert result.origin == "tool_override"
+    assert result.config_changed is False
+
+
+def test_resolve_by_key_hash_free_server_inherited_allow_is_not_downgraded():
+    payload = _payload(
+        global_default="allow", servers={"builtin:tldw_chatbook": {}}
+    )
+
+    result = resolve_effective_state_by_key(
+        payload, "builtin:tldw_chatbook", "calculator"
+    )
+
+    assert result.state == "allow"
+    assert result.origin == "global_default"
+    assert result.config_changed is False
+
+
+def test_resolve_by_key_hash_free_server_default_allow_is_not_downgraded():
+    payload = _payload(servers={"builtin:tldw_chatbook": {"default": "allow"}})
+
+    result = resolve_effective_state_by_key(
+        payload, "builtin:tldw_chatbook", "calculator"
+    )
+
+    assert result.state == "allow"
+    assert result.origin == "server_default"
+    assert result.config_changed is False
+
+
+def test_resolve_by_key_non_hash_free_server_allow_still_downgrades():
+    """Control: a server key NOT in ``BY_KEY_HASH_FREE_SERVER_KEYS`` keeps
+    the existing "can't verify without a live tool, so ask" collapse -- the
+    exemption above must be narrow, scoped to the pinned in-process key,
+    not a general relaxation of the by-key rug-pull-safety collapse."""
+    payload = _payload(servers={"local:demo": {"tools": {"search": {"state": "allow"}}}})
+
+    result = resolve_effective_state_by_key(payload, "local:demo", "search")
+
+    assert result.state == "ask"
+    assert result.origin == "tool_override"
+    assert result.config_changed is True
+
+
+def test_resolve_by_key_agent_builtin_allow_still_downgrades():
+    """Control: `BUILTIN_TOOL_SERVER_KEY` (`"agent:builtin"`) IS in the
+    wider `HASH_FREE_SERVER_KEYS` (exempt from the hash-staleness guard in
+    `resolve_effective_state()`) but must NOT be in the narrower
+    `BY_KEY_HASH_FREE_SERVER_KEYS` this resolver checks -- this function has
+    no tags to floor an inherited allow with, and the real resolver for
+    this key (`resolve_builtin_state`) DOES floor high-risk tags, so
+    exempting it here would silently bypass that floor if this seam were
+    ever reached for an `agent:builtin` key. Confirms both that
+    `agent:builtin` keeps the "ask" collapse here, and that it is genuinely
+    absent from the narrower set (not just coincidentally behaving the
+    same)."""
+    assert BUILTIN_TOOL_SERVER_KEY in HASH_FREE_SERVER_KEYS
+    assert BUILTIN_TOOL_SERVER_KEY not in BY_KEY_HASH_FREE_SERVER_KEYS
+
+    payload = _payload(
+        servers={BUILTIN_TOOL_SERVER_KEY: {"tools": {"calculator": {"state": "allow"}}}}
+    )
+
+    result = resolve_effective_state_by_key(
+        payload, BUILTIN_TOOL_SERVER_KEY, "calculator"
+    )
+
+    assert result.state == "ask"
+    assert result.origin == "tool_override"
+    assert result.config_changed is True
+
+
+def test_resolve_by_key_agent_builtin_server_default_allow_still_downgrades():
+    """Fix Round E, Item 3: restores coverage Round C's narrowing dropped.
+    The control test above only pins `agent:builtin` at the
+    ``tool_override`` origin; this pins the INHERITED ``server_default``
+    origin -- exactly the case this function's own docstring argues about
+    ("this function has no tags to floor an inherited allow with", and
+    unlike ``builtin:tldw_chatbook``, `agent:builtin`'s real resolver
+    (``resolve_builtin_state``) DOES floor high-risk tags). This asserts
+    the by-key path's own strict behaviour (it downgrades to ``ask`` here);
+    it does NOT assert that behaviour matches ``resolve_builtin_state`` --
+    the two resolvers diverge on this exact shape (an untagged inherited
+    allow), with the by-key path being the stricter of the two."""
+    payload = _payload(servers={BUILTIN_TOOL_SERVER_KEY: {"default": "allow"}})
+
+    result = resolve_effective_state_by_key(
+        payload, BUILTIN_TOOL_SERVER_KEY, "calculator"
+    )
+
+    assert result.state == "ask"
+    assert result.origin == "server_default"
+    assert result.config_changed is True
+
+
+def test_resolve_by_key_agent_builtin_global_default_allow_still_downgrades():
+    """Fix Round E, Item 3: the other inherited origin the narrowing
+    dropped coverage for -- ``global_default``. Same reasoning as the
+    ``server_default`` sibling above: this is the by-key path's own strict
+    behaviour, not a claim that it matches ``resolve_builtin_state``."""
+    payload = _payload(global_default="allow", servers={BUILTIN_TOOL_SERVER_KEY: {}})
+
+    result = resolve_effective_state_by_key(
+        payload, BUILTIN_TOOL_SERVER_KEY, "calculator"
+    )
+
+    assert result.state == "ask"
+    assert result.origin == "global_default"
+    assert result.config_changed is True
 
 
 # -- hand-edited store: null/malformed intermediates never crash --------------
