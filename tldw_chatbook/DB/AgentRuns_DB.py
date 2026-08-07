@@ -1,15 +1,19 @@
 """SQLite persistence for agent run records (primary + sub-agent).
 
-Follows the Workspace_DB pattern: BaseDB, per-call connections (reads get
-their own connection automatically), transaction() for writes.
+Follows the Workspace_DB pattern (task-3011 form): BaseDB with a
+thread-local held connection — the earlier per-call shape paid full
+private-SQLite connection setup on every read/write, per agent step —
+and ``transaction()`` (BEGIN IMMEDIATE) for writes.
 """
 
 from __future__ import annotations
 
 import json
 import sqlite3
+import threading
+import time
 import uuid
-from contextlib import closing, contextmanager
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Sequence, Iterator, Union
@@ -29,7 +33,13 @@ class AgentRunsDB(BaseDB):
     _CURRENT_SCHEMA_VERSION = 3
     _swept_paths: set[str] = set()  # DB files already reconciled this process
 
+    #: Liveness-ping gate (mirrors ChaChaNotes/WorkspaceDB, task-261/3011):
+    #: a per-call ``SELECT 1`` would double statement count on the per-step
+    #: persistence path; a recently-used held connection is known-good.
+    _LIVENESS_PING_IDLE_SECONDS = 30.0
+
     def __init__(self, db_path: Union[str, Path], client_id: str = "default") -> None:
+        self._thread_local = threading.local()
         super().__init__(db_path, client_id)
         # After super().__init__: the agent_runs table exists (base_db ran
         # _initialize_schema) and self.is_memory_db is set. Reconcile once per
@@ -59,18 +69,68 @@ class AgentRunsDB(BaseDB):
         if not self.is_memory_db:
             conn.execute("PRAGMA journal_mode = WAL")
         conn.row_factory = sqlite3.Row
+        # task-3012: the held (long-lived) connection needs true autocommit.
+        # Python's default isolation mode auto-BEGINs on any DML, and an
+        # implicit transaction accumulated outside `transaction()` makes the
+        # explicit `BEGIN IMMEDIATE` there fail with "cannot start a
+        # transaction within a transaction" (per-call connections masked
+        # this — and silently ROLLED BACK any bare DML on close). Audited:
+        # every `connection()` site is read-only except `_initialize_schema`,
+        # whose `executescript` self-commits under either mode.
+        conn.isolation_level = None
+        return conn
+
+    def _held_connection(self) -> sqlite3.Connection:
+        """Return this thread's held connection, opening or reviving it.
+
+        task-3012: mirrors ``WorkspaceDB._held_connection`` (itself the
+        ChaChaNotes idiom). Every per-connection property this DB relies on
+        — WAL, busy_timeout, foreign keys, row factory — is applied by
+        ``_get_connection`` when the held connection is (re)opened.
+        """
+        conn = getattr(self._thread_local, "conn", None)
+        if conn is not None:
+            last_used = getattr(self._thread_local, "conn_last_used", None)
+            if (
+                last_used is None
+                or (time.monotonic() - last_used)
+                >= self._LIVENESS_PING_IDLE_SECONDS
+            ):
+                try:
+                    conn.execute("SELECT 1")
+                except (sqlite3.ProgrammingError, sqlite3.OperationalError):
+                    try:
+                        conn.close()
+                    except Exception:  # noqa: BLE001 - already unusable
+                        pass
+                    conn = None
+        if conn is None:
+            conn = self._get_connection()
+            self._thread_local.conn = conn
+        self._thread_local.conn_last_used = time.monotonic()
         return conn
 
     @contextmanager
     def connection(self) -> Iterator[sqlite3.Connection]:
-        """Yield a fresh read connection, closed on exit.
+        """Yield the calling thread's held read connection.
 
         Yields:
-            A ``sqlite3.Connection`` scoped to this ``with`` block; every
-            caller gets its own connection (no shared/cached state).
+            The thread's held ``sqlite3.Connection`` (per-thread isolation
+            replaces the old per-call isolation; WAL keeps concurrent
+            reader/writer threads and processes non-blocking).
         """
-        with closing(self._get_connection()) as conn:
-            yield conn
+        yield self._held_connection()
+
+    def close(self) -> None:
+        """Close the current thread's held connection, if any."""
+
+        conn = getattr(self._thread_local, "conn", None)
+        self._thread_local.conn = None
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:  # noqa: BLE001 - best-effort teardown
+                pass
 
     @contextmanager
     def transaction(self) -> Iterator[sqlite3.Connection]:
@@ -91,15 +151,15 @@ class AgentRunsDB(BaseDB):
             Exception: Re-raised after rolling back, on any error inside
                 the ``with`` block. On clean exit the transaction commits.
         """
-        with closing(self._get_connection()) as conn:
-            conn.execute("BEGIN IMMEDIATE")
-            try:
-                yield conn
-            except Exception:
-                conn.rollback()
-                raise
-            else:
-                conn.commit()
+        conn = self._held_connection()
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            yield conn
+        except Exception:
+            conn.rollback()
+            raise
+        else:
+            conn.commit()
 
     def _initialize_schema(self) -> None:
         with self.connection() as conn:
