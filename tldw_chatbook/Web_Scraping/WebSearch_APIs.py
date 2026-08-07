@@ -1196,6 +1196,9 @@ def perform_websearch(
         elif search_engine.lower() == "kagi":
             web_search_results = search_web_kagi(search_query, content_country)
 
+        elif search_engine.lower() == "exa":
+            web_search_results = search_web_exa(search_query, result_count)
+
         elif search_engine.lower() == "serper":
             web_search_results = search_web_serper(
                 search_query, content_country, search_lang, result_count
@@ -1536,6 +1539,8 @@ def process_web_search_results(search_results: Dict, search_engine: str) -> Dict
             parse_brave_results(search_results, web_search_results_dict)
         elif search_engine.lower() == "duckduckgo":
             parse_duckduckgo_results(search_results, web_search_results_dict)
+        elif search_engine.lower() == "exa":
+            parse_exa_results(search_results, web_search_results_dict)
         elif search_engine.lower() == "google":
             parse_google_results(search_results, web_search_results_dict)
         elif search_engine.lower() == "kagi":
@@ -2882,6 +2887,65 @@ def parse_serper_results(serper_search_results, web_search_results_dict):
                 "relevance_score": None,
                 "position": result.get("position", None),
                 "snippet": result.get("snippet", None),
+            },
+        })
+
+
+######################### Exa Search #########################
+#
+# https://exa.ai/docs/reference/search
+def search_web_exa(search_query, result_count=None):
+    """Query the Exa search API and return its raw JSON.
+
+    Requests `contents.highlights` — billed as contents retrieval on top of
+    the search call; a deliberate paid trade for snippet text (spec
+    2026-08-06 §2), since a result without a snippet is nearly useless to
+    the model.
+
+    Args:
+        search_query: The query string.
+        result_count: numResults (default 10).
+
+    Returns:
+        dict: Raw Exa response JSON (results under "results").
+
+    Raises:
+        ValueError: when no Exa API key is configured.
+        requests.exceptions.HTTPError: on non-2xx responses.
+    """
+    exa_api_key = loaded_config_data["search_engines"].get("exa_search_api_key", "")
+    if not exa_api_key:
+        raise ValueError("Please provide a valid Exa API key ([SearchEngines] exa_search_api_key)")
+    headers = {"x-api-key": exa_api_key, "Content-Type": "application/json"}
+    payload = {
+        "query": search_query,
+        "numResults": int(result_count) if result_count else 10,
+        "type": "auto",
+        "contents": {"highlights": True},
+    }
+    response = requests.post("https://api.exa.ai/search", headers=headers, json=payload)
+    response.raise_for_status()
+    return response.json()
+
+
+def parse_exa_results(exa_search_results, web_search_results_dict):
+    """Parse Exa results into the standardized shape (first highlight = snippet)."""
+    if "results" not in web_search_results_dict:
+        web_search_results_dict["results"] = []
+    for result in (exa_search_results or {}).get("results", []):
+        highlights = result.get("highlights") or []
+        snippet = highlights[0] if highlights else ""
+        web_search_results_dict["results"].append({
+            "title": result.get("title", ""),
+            "url": result.get("url", ""),
+            "content": snippet,
+            "metadata": {
+                "date_published": result.get("publishedDate", None),
+                "author": result.get("author", None),
+                "source": None,
+                "language": None,
+                "relevance_score": None,
+                "snippet": snippet or None,
             },
         })
 

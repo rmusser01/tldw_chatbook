@@ -117,3 +117,56 @@ def test_serper_end_to_end_through_process(monkeypatch):
     result = WebSearch_APIs.process_web_search_results(raw, "serper")
     assert result["processing_error"] is None
     assert [r["url"] for r in result["results"]] == ["https://one.example/", "https://two.example/"]
+
+
+# ---------------------------------------------------------------------------
+# Exa
+# ---------------------------------------------------------------------------
+
+_EXA_PAYLOAD = {
+    "results": [
+        {"title": "Exa One", "url": "https://exa-one.example/", "publishedDate": "2026-02-02",
+         "author": "Ada", "highlights": ["highlight text one", "second highlight"]},
+        {"title": "Exa Two", "url": "https://exa-two.example/", "author": None, "highlights": []},
+    ]
+}
+
+
+def test_exa_request_shape(monkeypatch):
+    _set_key(monkeypatch, "exa_search_api_key", "test-exa-key")
+    fake = _patch_requests(monkeypatch, _EXA_PAYLOAD)
+    WebSearch_APIs.search_web_exa("cherry cake", 5)
+    call = fake.calls[0]
+    assert call["url"] == "https://api.exa.ai/search"
+    assert call["headers"]["x-api-key"] == "test-exa-key"
+    body = call.get("json") or json.loads(call["data"])
+    assert body == {"query": "cherry cake", "numResults": 5, "type": "auto",
+                    "contents": {"highlights": True}}
+
+
+def test_exa_missing_key_raises(monkeypatch):
+    _set_key(monkeypatch, "exa_search_api_key", "")
+    _patch_requests(monkeypatch, _EXA_PAYLOAD)
+    with pytest.raises(ValueError, match="[Ee]xa"):
+        WebSearch_APIs.search_web_exa("q", 5)
+
+
+def test_exa_parser_standard_shape():
+    out = {}
+    WebSearch_APIs.parse_exa_results(_EXA_PAYLOAD, out)
+    assert len(out["results"]) == 2
+    first, second = out["results"]
+    assert first["content"] == "highlight text one"
+    assert first["metadata"]["snippet"] == "highlight text one"
+    assert first["metadata"]["date_published"] == "2026-02-02"
+    assert first["metadata"]["author"] == "Ada"
+    assert second["content"] == ""  # empty highlights tolerated
+
+
+def test_exa_end_to_end_through_process(monkeypatch):
+    _set_key(monkeypatch, "exa_search_api_key", "test-exa-key")
+    _patch_requests(monkeypatch, _EXA_PAYLOAD)
+    raw = WebSearch_APIs.search_web_exa("q", 5)
+    result = WebSearch_APIs.process_web_search_results(raw, "exa")
+    assert result["processing_error"] is None
+    assert len(result["results"]) == 2

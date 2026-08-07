@@ -2185,6 +2185,9 @@ def load_settings(force_reload: bool = False) -> Dict:
             "serper_search_api_key": _get_typed_value(
                 search_engines_section, "serper_search_api_key", ""
             ),
+            "exa_search_api_key": _get_typed_value(
+                search_engines_section, "exa_search_api_key", ""
+            ),
             "yandex_search_api_key": _get_typed_value(
                 search_engines_section, "yandex_search_api_key", ""
             ),
@@ -3698,6 +3701,8 @@ kagi_search_api_key = ""
 tavily_search_api_key = ""
 # Serper (google.serper.dev) API key
 serper_search_api_key = ""
+# Exa (exa.ai) API key
+exa_search_api_key = ""
 
 # API URLs
 bing_search_api_url = "https://api.bing.microsoft.com/v7.0/search"
