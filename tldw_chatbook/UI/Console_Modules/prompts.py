@@ -2,8 +2,10 @@
 
 Extracted out of `ChatScreen` (wave-3 console decomposition, task 3): the
 Console shell's PROMPT cluster -- the source-aware Prompt Library modal
-(`_open_console_prompts_modal`, 397 lines, the largest non-`__init__`
-method the pre-move class had), `/prompt` and `/system` name resolution
+(`_open_console_prompts_modal`, 397 lines at the time of the move and the
+largest non-`__init__` method the pre-move class had; 82 since task 2766
+split its 17 nested closures into the two collaborators below), `/prompt`
+and `/system` name resolution
 and their shared refuse-a-Recipe guard, both prompt-picker launches, the
 system-prompt editor and its save-to-Library flow, the Library "Use in
 Console" staged-insert handoff, and the shared prompt-history store.
@@ -23,7 +25,7 @@ fan-in; restated briefly here):
    matters concretely here: `Tests/UI/test_console_workbench_contract.py`
    replaces `_open_console_provider_recovery` and `_console_provider_
    blocker_copy` on the SCREEN INSTANCE and then calls the modal opener,
-   and eleven of the eighteen dependencies below are monkeypatched by name
+   and eleven of the sixteen dependencies below are monkeypatched by name
    somewhere in the pre-existing suite. A constructor snapshot would
    silently stop observing every one of those.
 3. `app_instance` is a plain snapshot, for the same reason `dictation.py`
@@ -34,7 +36,7 @@ fan-in; restated briefly here):
 **Zero DOM.** No `query_one`/`query` traffic reaches through `screen` here.
 That is why `_insert_prompt_text_into_composer` -- which does a raw
 `self.query_one("#console-native-composer", ConsoleComposerBar)` -- did NOT
-move and is instead one of the eighteen injected callables, even though it
+move and is instead one of the sixteen injected callables, even though it
 is the single most prompt-shaped helper on the screen. (Six pre-existing
 test sites also replace it on the screen by name, so it has to keep
 resolving through the screen either way.)
@@ -156,6 +158,532 @@ CONSOLE_SYSTEM_PROMPT_SAVE_STATUS_COPY = {
 CONSOLE_SYSTEM_PROMPT_NO_SYSTEM_PART_TEMPLATE = 'Prompt "{name}" has no system part.'
 
 
+def _provider_resolution_identity(resolution: Any) -> tuple[str, str, str, str, str]:
+    """The five fields that decide whether two resolutions are one target.
+
+    Equal identities mean the user is still spending against the target the
+    modal disclosed; any difference means they were shown one thing and would
+    get another, which every guard in the improvement flow treats as stale.
+
+    Args:
+        resolution: A `ConsoleProviderResolution`, or anything shaped like
+            one -- the guards compare whatever the gateway handed back.
+
+    Returns:
+        tuple[str, str, str, str, str]: provider, model, base URL, readiness
+        key and execution key, each coerced to `str` (missing fields empty).
+    """
+    return (
+        str(getattr(resolution, "provider", "")),
+        str(getattr(resolution, "model", "")),
+        str(getattr(resolution, "base_url", "")),
+        str(getattr(resolution, "readiness_key", "")),
+        str(getattr(resolution, "execution_key", "")),
+    )
+
+
+class _ConsolePromptSource:
+    """The Prompt Library modal's data adapter over one prompt scope service.
+
+    Five of `_open_console_prompts_modal`'s closures captured exactly one
+    thing -- `app_instance.prompt_scope_service` -- and did exactly one thing
+    with it: look up a method, refuse in user-visible copy when the source
+    cannot serve, and forward the call with this cluster's own contract
+    (browse pages of 10, searches capped at 25, `save`'s `source` routed into
+    the service's `mode`). That is a collaborator with one field, so it is
+    one here rather than five closures over a 397-line scope (task 2766).
+
+    One instance per modal open; its bound methods are what
+    `ConsolePromptsModal` receives, and `detail`/`record_usage` are also what
+    the improvement flow's saved-artifact guards run against.
+
+    The service is duck-typed deliberately: `getattr` + `callable` per call,
+    so an absent or partially-implemented source degrades into the refusal
+    copy the modal has always rendered instead of an `AttributeError`.
+    """
+
+    def __init__(self, service: Any) -> None:
+        """Bind the scope service this modal open will read.
+
+        Args:
+            service: `app_instance.prompt_scope_service`, or `None` when the
+                app exposes none -- every method below then refuses.
+        """
+        self._service = service
+
+    def _require(self, attribute: str, unavailable_copy: str) -> Any:
+        """Return a callable service method, or refuse in user-visible copy.
+
+        Args:
+            attribute: The scope-service method name to resolve.
+            unavailable_copy: What the user is told when it is missing.
+
+        Returns:
+            Any: The bound service method.
+
+        Raises:
+            ValueError: When the service has no callable under that name.
+        """
+        method = getattr(self._service, attribute, None)
+        if not callable(method):
+            raise ValueError(unavailable_copy)
+        return method
+
+    async def capabilities(self, source: str) -> Any:
+        """Report what `source` can store, so the editor can gate its kinds."""
+        method = self._require(
+            "get_capabilities", f"{source.title()} Prompt source is unavailable."
+        )
+        return await method(mode=source)
+
+    async def list_page(self, source: str, page: int) -> Any:
+        """Return one browse page of `source` at this cluster's page size."""
+        method = self._require(
+            "list_prompts", f"{source.title()} Prompt source is unavailable."
+        )
+        return await method(mode=source, page=page, per_page=10)
+
+    async def search(self, source: str, query: str) -> Any:
+        """Search `source`, bounded to the modal's 25-row contract."""
+        method = self._require(
+            "search_prompts", f"{source.title()} Prompt search is unavailable."
+        )
+        return await method(mode=source, query=query, limit=25)
+
+    async def detail(self, source: str, identifier: str) -> Any:
+        """Fetch one record -- also the freshness probe the apply guards use."""
+        method = self._require(
+            "get_prompt", f"{source.title()} Prompt source is unavailable."
+        )
+        return await method(mode=source, prompt_identifier=identifier)
+
+    async def save(self, **payload: Any) -> Any:
+        """Persist the editor's working copy to the payload's own source."""
+        method = self._require("save_prompt", "The selected Prompt source cannot save.")
+        source = str(payload.pop("source", "local"))
+        return await method(mode=source, **payload)
+
+    async def record_usage(self, source: str, identifier: str) -> None:
+        """Record one Library usage, skipping a source that cannot track it.
+
+        A source with no recorder is not a failure -- it is a source that
+        does not count usage -- so this returns quietly. A recorder that
+        raises propagates: the caller owns what the user is told about it.
+
+        Args:
+            source: The scope the applied record came from.
+            identifier: That record's source-scoped identity.
+        """
+        recorder = getattr(self._service, "record_prompt_usage", None)
+        if not callable(recorder):
+            return
+        await recorder(mode=source, prompt_identifier=identifier)
+
+
+class _ConsolePromptImprovementFlow:
+    """The Prompt Library modal's improvement sub-flow, scoped to ONE open.
+
+    Eleven of `_open_console_prompts_modal`'s closures were a single
+    stateful conversation: pin and disclose a provider target, build a
+    request snapshot against it, validate a reviewed result against the
+    artifact it came from, apply it to the live session, and retry a
+    System-prompt persist that failed. They shared eight captured values
+    plus one `nonlocal` -- the pinned resolution -- that nothing else in that
+    scope touched. That is an object with state, so it is one here
+    (task 2766); the `nonlocal` becomes `self._pinned_resolution`.
+
+    One instance per modal open, built by
+    `ConsolePromptsController._open_console_prompts_modal`; six of its bound
+    methods are what `ConsolePromptsModal` receives. Everything it needs from
+    outside this cluster arrives as a named constructor argument and stays a
+    CALLABLE, following the rule the controller itself follows (see the
+    module docstring), so a screen-level replacement made after the modal
+    opened is still observed.
+    """
+
+    def __init__(
+        self,
+        *,
+        source: _ConsolePromptSource,
+        store: Any,
+        session_id: Any,
+        composer: Any,
+        composer_snapshot: Any,
+        current_system: str,
+        current_system_fingerprint: str,
+        gateway: Any,
+        improvement_context: Any,
+        app_instance: Any,
+        active_session_settings: Callable[[], Any],
+        build_provider_selection: Callable[[], Any],
+        sync_system_prompt_surfaces: Callable[[], None],
+    ) -> None:
+        """Capture the facts this open was disclosed against.
+
+        Args:
+            source: The open's `_ConsolePromptSource`; the saved-artifact
+                guards re-fetch through it and usage is recorded through it.
+            store: The Console chat store, live -- `active_session_id` is
+                re-read on every guard, never trusted from open time.
+            session_id: The session the modal was opened over.
+            composer: The Console composer widget the draft belongs to.
+            composer_snapshot: That draft, captured at open, and the thing
+                every projection and validation runs against.
+            current_system: The System prompt as disclosed at open.
+            current_system_fingerprint: Its fingerprint, the guard the live
+                System prompt is re-checked against.
+            gateway: The Console provider gateway that resolves targets.
+            improvement_context: The opening disclosure the activation
+                returns a `replace`d copy of.
+            app_instance: Held (not snapshotted into a bound `notify`) so a
+                later `app.notify` replacement is still observed.
+            active_session_settings: Returns the LIVE session settings --
+                `ConsoleSessionController._ensure_active_console_session_
+                settings`, through the controller's own named dependency.
+            build_provider_selection: Rebuilds the provider selection per
+                resolve, so staleness compares against a LIVE selection.
+            sync_system_prompt_surfaces: Re-syncs the three screen surfaces
+                that display the System prompt, after it is persisted.
+        """
+        self._source = source
+        self._store = store
+        self._session_id = session_id
+        self._composer = composer
+        self._composer_snapshot = composer_snapshot
+        self._current_system = current_system
+        self._current_system_fingerprint = current_system_fingerprint
+        self._gateway = gateway
+        self._improvement_context = improvement_context
+        self._app_instance = app_instance
+        self._active_session_settings = active_session_settings
+        self._build_provider_selection = build_provider_selection
+        self._sync_system_prompt_surfaces = sync_system_prompt_surfaces
+        #: The disclosed target, pinned by `activate_improvement_context` (or
+        #: by a model-free `capture_manual_resolution`) and compared against a
+        #: freshly resolved one before anything is sent or applied.
+        self._pinned_resolution: Any | None = None
+
+    # -- Staleness -----------------------------------------------------------
+
+    def _active_system_fingerprint(self) -> str:
+        """Fingerprint the LIVE System prompt, re-read on every guard."""
+        live_settings = self._active_session_settings()
+        return fingerprint_text(str(live_settings.system_prompt or ""))
+
+    def _stale_reason(self) -> str:
+        """Why this open can no longer act, or `""` while it still can.
+
+        Both facts were fixed when the modal opened -- the session it was
+        opened over and the System prompt it disclosed. Either moving means
+        the user is deciding about a state that no longer exists.
+
+        Returns:
+            str: User-visible copy naming what moved, or `""`.
+        """
+        if self._store.active_session_id != self._session_id:
+            return "The active Console session changed."
+        if self._active_system_fingerprint() != self._current_system_fingerprint:
+            return "The Console System prompt changed."
+        return ""
+
+    # -- Pinning the disclosed target ---------------------------------------
+
+    async def activate_improvement_context(self) -> Any:
+        """Pin and disclose the exact target before any model path can run."""
+
+        stale = self._stale_reason()
+        if stale:
+            raise ValueError(stale)
+        projection = None
+        projection_blocker = ""
+        try:
+            projection = self._composer.project_snapshot_for_model(
+                self._composer_snapshot,
+                request_nonce=f"prompt-preview-{uuid.uuid4().hex}",
+            )
+        except ValueError:
+            projection_blocker = (
+                "Model improvement is unavailable because the draft contains "
+                "reserved protected-placeholder text. Remove or rename that "
+                "literal token, then reopen Improve."
+            )
+        try:
+            resolution = await self._gateway.resolve_for_send(
+                self._build_provider_selection()
+            )
+        except Exception:
+            self._pinned_resolution = None
+            return replace(
+                self._improvement_context,
+                current_user_projection=projection,
+                endpoint_label="Unavailable",
+                model_unavailable_reason=(
+                    projection_blocker
+                    or "Prompt improvement could not resolve the current provider "
+                    "target. Review Console provider settings and reopen Improve."
+                ),
+            )
+        self._pinned_resolution = resolution
+        blocker = projection_blocker
+        if not blocker and (
+            not resolution.ready or not str(resolution.model or "").strip()
+        ):
+            blocker = str(
+                resolution.visible_copy
+                or "Choose a ready provider and model, then reopen Improve."
+            )
+        return replace(
+            self._improvement_context,
+            current_user_projection=projection,
+            provider_label=str(resolution.provider or "Not configured"),
+            model_label=str(resolution.model or "Not configured"),
+            endpoint_label=(
+                safe_endpoint_display(resolution.base_url) or "Provider default"
+            ),
+            model_unavailable_reason=blocker,
+            pinned_resolution=resolution,
+        )
+
+    async def capture_manual_resolution(self) -> Any:
+        """Capture the effective target once for a later model-free Apply."""
+
+        if self._pinned_resolution is None:
+            self._pinned_resolution = await self._gateway.resolve_for_send(
+                self._build_provider_selection()
+            )
+        return self._pinned_resolution
+
+    async def build_improvement_snapshot(self, **values: Any) -> Any:
+        """Build the request snapshot, against the pinned target only."""
+        stale = self._stale_reason()
+        if stale:
+            raise ValueError(stale)
+        request_id = str(values["request_id"])
+        projection = self._composer.project_snapshot_for_model(
+            self._composer_snapshot,
+            request_nonce=request_id,
+        )
+        self._composer.validate_improvement(self._composer_snapshot, projection.text)
+        pinned_resolution = self._pinned_resolution
+        if pinned_resolution is None:
+            raise ValueError(
+                "The provider target is no longer pinned. Reopen Improve to refresh disclosure."
+            )
+        live_resolution = await self._gateway.resolve_for_send(
+            self._build_provider_selection()
+        )
+        if _provider_resolution_identity(
+            live_resolution
+        ) != _provider_resolution_identity(pinned_resolution):
+            raise ValueError(
+                "The provider, model, or endpoint changed. Reopen Improve to refresh disclosure."
+            )
+        if not pinned_resolution.ready or not str(pinned_resolution.model or "").strip():
+            raise ValueError(pinned_resolution.visible_copy or "Provider is unavailable.")
+        include_system = bool(values.get("include_system"))
+        recipe_definition = values.get("recipe_definition")
+        return PromptImprovementRequestSnapshot(
+            request_id=request_id,
+            mode=values["mode"],
+            session_id=self._session_id,
+            composer_snapshot=self._composer_snapshot,
+            projection=projection,
+            system_prompt=self._current_system if include_system else None,
+            system_fingerprint=(
+                self._current_system_fingerprint if include_system else None
+            ),
+            resolution=pinned_resolution,
+            provider_label=pinned_resolution.provider,
+            model_label=str(pinned_resolution.model),
+            recipe_source=values.get("recipe_source"),
+            recipe_source_id=values.get("recipe_source_id"),
+            recipe_version=values.get("recipe_version"),
+            recipe_definition=recipe_definition,
+            recipe_fingerprint=(
+                fingerprint_block_definition(recipe_definition)
+                if recipe_definition is not None
+                else None
+            ),
+        )
+
+    # -- Validating what came back ------------------------------------------
+
+    def validate_improvement(self, captured: Any, text: str) -> None:
+        """Validate reviewed text against the snapshot the request captured."""
+        snapshot = getattr(captured, "composer_snapshot", self._composer_snapshot)
+        self._composer.validate_improvement(snapshot, text)
+
+    async def _validate_saved_recipe(self, captured: Any) -> None:
+        """Refuse to apply a Recipe that moved since it was selected.
+
+        Raises:
+            ValueError: Naming what drifted -- source, identity, version,
+                compatibility or content.
+        """
+        recipe_source_id = str(getattr(captured, "recipe_source_id", "") or "")
+        if not recipe_source_id or recipe_source_id.startswith("builtin:"):
+            return
+        source = getattr(captured, "recipe_source", None)
+        if source not in {"local", "server"}:
+            raise ValueError("The selected Recipe source changed.")
+        latest = await self._source.detail(source, recipe_source_id)
+        if not isinstance(latest, Mapping):
+            raise ValueError("The selected Recipe is no longer available.")
+        latest_identity = (
+            latest.get("source_id") or latest.get("id") or latest.get("uuid")
+        )
+        if str(latest_identity or "") != recipe_source_id:
+            raise ValueError("The selected Recipe identity changed.")
+        latest_version = latest.get("version", latest.get("optimistic_version"))
+        if latest_version != getattr(captured, "recipe_version", None):
+            raise ValueError("The selected Recipe version changed.")
+        decoded = decode_prompt_artifact(latest)
+        if decoded.artifact_type != "recipe" or decoded.definition is None:
+            raise ValueError("The selected Recipe is no longer compatible.")
+        if fingerprint_block_definition(decoded.definition) != getattr(
+            captured, "recipe_fingerprint", None
+        ):
+            raise ValueError("The selected Recipe changed.")
+
+    async def _validate_saved_prompt(self, captured: Any) -> None:
+        """Refuse to apply a saved Prompt that moved since it was selected.
+
+        Raises:
+            ValueError: Naming what drifted -- availability, identity,
+                version, compatibility or content.
+        """
+        if not isinstance(captured, ConsoleSavedPromptApplyGuard):
+            return
+        latest = await self._source.detail(captured.source, captured.prompt_source_id)
+        if not isinstance(latest, Mapping):
+            raise ValueError("The selected Prompt is no longer available.")
+        latest_identity = (
+            latest.get("source_id") or latest.get("id") or latest.get("uuid")
+        )
+        if str(latest_identity or "") != captured.prompt_source_id:
+            raise ValueError("The selected Prompt identity changed.")
+        latest_version = latest.get("version", latest.get("optimistic_version"))
+        if latest_version != captured.prompt_version:
+            raise ValueError("The selected Prompt version changed.")
+        decoded = decode_prompt_artifact(latest)
+        if decoded.artifact_type != "prompt" or decoded.definition is None:
+            raise ValueError("The selected Prompt is no longer compatible.")
+        if fingerprint_block_definition(decoded.definition) != captured.prompt_fingerprint:
+            raise ValueError("The selected Prompt changed.")
+
+    async def _record_applied_usage(self, captured: Any) -> None:
+        """Record Library usage for an applied saved Prompt, never fatally.
+
+        The apply already landed by the time this runs, so a recorder failure
+        is a warning about bookkeeping -- never a rollback.
+        """
+        if (
+            not isinstance(captured, ConsoleSavedPromptApplyGuard)
+            or not captured.record_usage
+        ):
+            return
+        try:
+            await self._source.record_usage(
+                captured.source,
+                captured.prompt_source_id,
+            )
+        except Exception:
+            self._app_instance.notify(
+                "The prompt was applied, but Library usage could not be recorded.",
+                severity="warning",
+            )
+
+    # -- Applying it --------------------------------------------------------
+
+    async def apply_improvement_result(
+        self, result: ConsolePromptsResult, captured: Any
+    ) -> ConsolePromptsApplyOutcome:
+        """Apply a reviewed result to the live session, or refuse as stale."""
+        stale = self._stale_reason()
+        if stale:
+            return ConsolePromptsApplyOutcome("stale", stale)
+        if isinstance(captured, PromptImprovementRequestSnapshot):
+            live_resolution = await self._gateway.resolve_for_send(
+                self._build_provider_selection()
+            )
+            if _provider_resolution_identity(
+                live_resolution
+            ) != _provider_resolution_identity(captured.resolution):
+                return ConsolePromptsApplyOutcome(
+                    "stale", "The provider, model, or endpoint changed."
+                )
+        elif isinstance(
+            captured, (ConsoleRecipeApplyGuard, ConsoleSavedPromptApplyGuard)
+        ):
+            captured_resolution = captured.provider_resolution
+            if captured_resolution is None:
+                return ConsolePromptsApplyOutcome(
+                    "stale",
+                    "The provider target was not captured. Reopen the Prompt and retry.",
+                )
+            live_resolution = await self._gateway.resolve_for_send(
+                self._build_provider_selection()
+            )
+            if _provider_resolution_identity(
+                live_resolution
+            ) != _provider_resolution_identity(captured_resolution):
+                return ConsolePromptsApplyOutcome(
+                    "stale", "The provider, model, or endpoint changed."
+                )
+        try:
+            await self._validate_saved_recipe(captured)
+            await self._validate_saved_prompt(captured)
+            if result.apply_user:
+                if result.user_text is None:
+                    raise ValueError("The reviewed User prompt is missing.")
+                self._composer.validate_improvement(
+                    result.composer_snapshot, result.user_text
+                )
+            elif self._composer.capture_draft_snapshot() != result.composer_snapshot:
+                raise ValueError("The Console draft changed.")
+        except Exception:
+            return ConsolePromptsApplyOutcome(
+                "stale",
+                "The draft or Recipe changed. Review the working copy and retry.",
+            )
+
+        if result.apply_user and result.user_text is not None:
+            self._composer.apply_improvement(
+                result.composer_snapshot,
+                result.user_text,
+            )
+            self._store.set_session_draft(self._session_id, self._composer.draft_text())
+        persisted = True
+        if result.apply_system:
+            _session, persisted = self._store.set_session_system_prompt(
+                self._session_id, result.system_text
+            )
+            self._sync_system_prompt_surfaces()
+        await self._record_applied_usage(captured)
+        if not persisted:
+            return ConsolePromptsApplyOutcome("persistence_failed")
+        return ConsolePromptsApplyOutcome("applied")
+
+    async def retry_improvement_persistence(
+        self, result: ConsolePromptsResult
+    ) -> ConsolePromptsApplyOutcome:
+        """Re-attempt a System-prompt persist that failed, and only that."""
+        if self._store.active_session_id != self._session_id or not result.apply_system:
+            return ConsolePromptsApplyOutcome(
+                "stale", "The active Console session changed."
+            )
+        live_settings = self._active_session_settings()
+        if str(live_settings.system_prompt or "") != str(result.system_text or ""):
+            return ConsolePromptsApplyOutcome("stale", "The live System prompt changed.")
+        _session, persisted = self._store.set_session_system_prompt(
+            self._session_id, result.system_text
+        )
+        self._sync_system_prompt_surfaces()
+        return ConsolePromptsApplyOutcome(
+            "applied" if persisted else "persistence_failed"
+        )
+
+
 class ConsolePromptsController:
     """Owns the Console shell's prompt cluster: the Prompt Library modal,
     `/prompt` + `/system` resolution and their pickers, the system-prompt
@@ -198,25 +726,27 @@ class ConsolePromptsController:
         insert_prompt_text_into_composer: Callable[..., bool],
         clear_console_composer_draft: Callable[[], None],
         append_native_console_system_message: Callable[[str], Any],
-        sync_console_chat_core_state: Callable[[], None],
-        sync_console_rail_system_line: Callable[[], None],
-        sync_console_settings_summary: Callable[[], None],
+        sync_console_system_prompt_surfaces: Callable[[], None],
     ) -> None:
         """Build the controller and bind everything its moved bodies need.
 
-        Every one of the 13 method bodies below is a byte-for-byte copy of
-        the pre-extraction `ChatScreen` method, EXCEPT the three documented
+        Every one of the method bodies below is a byte-for-byte copy of the
+        pre-extraction `ChatScreen` method, EXCEPT the three documented
         `self._session.X(...)` seam call sites (dropping that prefix for a
         same-named property here, per the module docstring's
-        "Controller-to-controller seam" section) and every
+        "Controller-to-controller seam" section), every
         `self.app.push_screen(...)` call site (dropping the `.app.` for the
         `push_screen` framework property below, the same transformation
-        `session.py` and `message.py`'s own moved bodies already made).
+        `session.py` and `message.py`'s own moved bodies already made), and
+        `_open_console_prompts_modal`, whose closures task 2766 moved into
+        `_ConsolePromptSource` and `_ConsolePromptImprovementFlow`.
 
-        Eighteen named dependencies is squarely in the band waves 1-3 have
-        established (dictation: 12; message: 19). Fifteen of the eighteen
+        Sixteen named dependencies is squarely in the band waves 1-3 have
+        established (dictation: 12; message: 19). Thirteen of the sixteen
         are needed by `_open_console_prompts_modal` alone -- it is the
-        cluster's whole fan-in, not a sprawl across many methods.
+        cluster's whole fan-in, not a sprawl across many methods. The count
+        was eighteen until task 2766 collapsed the post-apply re-sync trio
+        (see `sync_console_system_prompt_surfaces` below).
 
         Args:
             screen: The Console screen. Used ONLY for the framework
@@ -287,13 +817,16 @@ class ConsolePromptsController:
             append_native_console_system_message: `ChatScreen._append_
                 native_console_system_message` -- the inline transcript
                 error channel both command handlers use to refuse a Recipe.
-            sync_console_chat_core_state: `ChatScreen._sync_console_chat_
-                core_state`, one of the three post-apply re-sync bridges
-                (all DOM-adjacent, all staying screen-owned).
-            sync_console_rail_system_line: `ChatScreen._sync_console_rail_
-                system_line`, ditto.
-            sync_console_settings_summary: `ChatScreen._sync_console_
-                settings_summary`, ditto.
+            sync_console_system_prompt_surfaces: The post-apply re-sync
+                bridge. Three separate screen methods (`_sync_console_chat_
+                core_state`, `_sync_console_rail_system_line`, `_sync_
+                console_settings_summary`, all DOM-adjacent and all staying
+                screen-owned) sit behind ONE dependency because this cluster
+                only ever needs the trio, in that order, at the two moments
+                the store accepted a new System prompt -- never any of them
+                individually. Task 2766 collapsed them; `wiring.py` still
+                reaches each screen method by name at CALL time, so the
+                late-binding property every one of them had is unchanged.
         """
         self._screen = screen
         self.app_instance = app_instance
@@ -322,9 +855,9 @@ class ConsolePromptsController:
         self._append_native_console_system_message_fn = (
             append_native_console_system_message
         )
-        self._sync_console_chat_core_state_fn = sync_console_chat_core_state
-        self._sync_console_rail_system_line_fn = sync_console_rail_system_line
-        self._sync_console_settings_summary_fn = sync_console_settings_summary
+        self._sync_console_system_prompt_surfaces_fn = (
+            sync_console_system_prompt_surfaces
+        )
 
         # This cluster's own state, moved verbatim from `ChatScreen.__init__`.
         # Nothing outside this cluster ever read the attribute directly (only
@@ -423,16 +956,8 @@ class ConsolePromptsController:
         return self._append_native_console_system_message_fn
 
     @property
-    def _sync_console_chat_core_state(self) -> Any:
-        return self._sync_console_chat_core_state_fn
-
-    @property
-    def _sync_console_rail_system_line(self) -> Any:
-        return self._sync_console_rail_system_line_fn
-
-    @property
-    def _sync_console_settings_summary(self) -> Any:
-        return self._sync_console_settings_summary_fn
+    def _sync_console_system_prompt_surfaces(self) -> Any:
+        return self._sync_console_system_prompt_surfaces_fn
 
     # -- Moved bodies -------------------------------------------------------
 
@@ -457,9 +982,33 @@ class ConsolePromptsController:
             self._console_prompt_history = history
         return history
 
+    def _restore_console_composer_focus(
+        self, _result: ConsolePromptsResult | None = None
+    ) -> None:
+        """Return focus to the composer when a prompt modal closes.
+
+        The `push_screen` callback for the Prompt Library modal: the modal's
+        result is irrelevant to focus, so it is accepted and ignored.
+
+        Args:
+            _result: Whatever the modal dismissed with; unused.
+        """
+        self._focus_console_composer_if_needed(force=True)
+
     def _open_console_prompts_modal(self) -> None:
-        """Open the source-aware Prompt Library without changing the draft."""
-        service = getattr(self.app_instance, "prompt_scope_service", None)
+        """Open the source-aware Prompt Library without changing the draft.
+
+        Builds the modal's two collaborators for this one open -- a
+        `_ConsolePromptSource` over the app's prompt scope service, and a
+        `_ConsolePromptImprovementFlow` holding everything the improvement
+        sub-flow was disclosed against -- and hands their bound methods to
+        `ConsolePromptsModal`. Before task 2766 those were 17 closures over
+        this method's scope; see each class's docstring for why they split
+        where they do.
+        """
+        source = _ConsolePromptSource(
+            getattr(self.app_instance, "prompt_scope_service", None)
+        )
         composer = self._console_composer_or_none()
         if composer is None:
             return
@@ -477,7 +1026,6 @@ class ConsolePromptsController:
         opening_selection = self._build_console_provider_selection()
         gateway = self._ensure_console_provider_gateway()
         improvement_service = PromptImprovementService(gateway=gateway)
-        pinned_improvement_resolution: Any | None = None
         improvement_context = ConsolePromptImprovementContext(
             session_id=session_id,
             composer_snapshot=composer_snapshot,
@@ -493,366 +1041,41 @@ class ConsolePromptsController:
             model_unavailable_reason=self._console_provider_blocker_copy(),
         )
 
-        async def capabilities(source: str) -> Any:
-            method = getattr(service, "get_capabilities", None)
-            if not callable(method):
-                raise ValueError(f"{source.title()} Prompt source is unavailable.")
-            return await method(mode=source)
-
-        async def list_page(source: str, page: int) -> Any:
-            method = getattr(service, "list_prompts", None)
-            if not callable(method):
-                raise ValueError(f"{source.title()} Prompt source is unavailable.")
-            return await method(mode=source, page=page, per_page=10)
-
-        async def search(source: str, query: str) -> Any:
-            method = getattr(service, "search_prompts", None)
-            if not callable(method):
-                raise ValueError(f"{source.title()} Prompt search is unavailable.")
-            return await method(mode=source, query=query, limit=25)
-
-        async def detail(source: str, identifier: str) -> Any:
-            method = getattr(service, "get_prompt", None)
-            if not callable(method):
-                raise ValueError(f"{source.title()} Prompt source is unavailable.")
-            return await method(mode=source, prompt_identifier=identifier)
-
-        async def save(**payload: Any) -> Any:
-            method = getattr(service, "save_prompt", None)
-            if not callable(method):
-                raise ValueError("The selected Prompt source cannot save.")
-            source = str(payload.pop("source", "local"))
-            return await method(mode=source, **payload)
-
-        def _active_system_fingerprint() -> str:
-            live_settings = self._ensure_active_console_session_settings()
-            return fingerprint_text(str(live_settings.system_prompt or ""))
-
-        def _resolution_identity(resolution: Any) -> tuple[str, str, str, str, str]:
-            return (
-                str(getattr(resolution, "provider", "")),
-                str(getattr(resolution, "model", "")),
-                str(getattr(resolution, "base_url", "")),
-                str(getattr(resolution, "readiness_key", "")),
-                str(getattr(resolution, "execution_key", "")),
-            )
-
-        async def activate_improvement_context() -> Any:
-            """Pin and disclose the exact target before any model path can run."""
-
-            nonlocal pinned_improvement_resolution
-            if store.active_session_id != session_id:
-                raise ValueError("The active Console session changed.")
-            if _active_system_fingerprint() != current_system_fingerprint:
-                raise ValueError("The Console System prompt changed.")
-            projection = None
-            projection_blocker = ""
-            try:
-                projection = composer.project_snapshot_for_model(
-                    composer_snapshot,
-                    request_nonce=f"prompt-preview-{uuid.uuid4().hex}",
-                )
-            except ValueError:
-                projection_blocker = (
-                    "Model improvement is unavailable because the draft contains "
-                    "reserved protected-placeholder text. Remove or rename that "
-                    "literal token, then reopen Improve."
-                )
-            try:
-                resolution = await gateway.resolve_for_send(
-                    self._build_console_provider_selection()
-                )
-            except Exception:
-                pinned_improvement_resolution = None
-                return replace(
-                    improvement_context,
-                    current_user_projection=projection,
-                    endpoint_label="Unavailable",
-                    model_unavailable_reason=(
-                        projection_blocker
-                        or "Prompt improvement could not resolve the current provider "
-                        "target. Review Console provider settings and reopen Improve."
-                    ),
-                )
-            pinned_improvement_resolution = resolution
-            blocker = projection_blocker
-            if not blocker and (
-                not resolution.ready or not str(resolution.model or "").strip()
-            ):
-                blocker = str(
-                    resolution.visible_copy
-                    or "Choose a ready provider and model, then reopen Improve."
-                )
-            return replace(
-                improvement_context,
-                current_user_projection=projection,
-                provider_label=str(resolution.provider or "Not configured"),
-                model_label=str(resolution.model or "Not configured"),
-                endpoint_label=(
-                    safe_endpoint_display(resolution.base_url)
-                    or "Provider default"
-                ),
-                model_unavailable_reason=blocker,
-                pinned_resolution=resolution,
-            )
-
-        async def capture_manual_resolution() -> Any:
-            """Capture the effective target once for a later model-free Apply."""
-
-            nonlocal pinned_improvement_resolution
-            if pinned_improvement_resolution is None:
-                pinned_improvement_resolution = await gateway.resolve_for_send(
-                    self._build_console_provider_selection()
-                )
-            return pinned_improvement_resolution
-
-        async def build_improvement_snapshot(**values: Any) -> Any:
-            if store.active_session_id != session_id:
-                raise ValueError("The active Console session changed.")
-            if _active_system_fingerprint() != current_system_fingerprint:
-                raise ValueError("The Console System prompt changed.")
-            request_id = str(values["request_id"])
-            projection = composer.project_snapshot_for_model(
-                composer_snapshot,
-                request_nonce=request_id,
-            )
-            composer.validate_improvement(composer_snapshot, projection.text)
-            pinned_resolution = pinned_improvement_resolution
-            if pinned_resolution is None:
-                raise ValueError(
-                    "The provider target is no longer pinned. Reopen Improve to refresh disclosure."
-                )
-            live_resolution = await gateway.resolve_for_send(
-                self._build_console_provider_selection()
-            )
-            if _resolution_identity(live_resolution) != _resolution_identity(
-                pinned_resolution
-            ):
-                raise ValueError(
-                    "The provider, model, or endpoint changed. Reopen Improve to refresh disclosure."
-                )
-            if not pinned_resolution.ready or not str(
-                pinned_resolution.model or ""
-            ).strip():
-                raise ValueError(
-                    pinned_resolution.visible_copy or "Provider is unavailable."
-                )
-            include_system = bool(values.get("include_system"))
-            recipe_definition = values.get("recipe_definition")
-            return PromptImprovementRequestSnapshot(
-                request_id=request_id,
-                mode=values["mode"],
-                session_id=session_id,
-                composer_snapshot=composer_snapshot,
-                projection=projection,
-                system_prompt=current_system if include_system else None,
-                system_fingerprint=(
-                    current_system_fingerprint if include_system else None
-                ),
-                resolution=pinned_resolution,
-                provider_label=pinned_resolution.provider,
-                model_label=str(pinned_resolution.model),
-                recipe_source=values.get("recipe_source"),
-                recipe_source_id=values.get("recipe_source_id"),
-                recipe_version=values.get("recipe_version"),
-                recipe_definition=recipe_definition,
-                recipe_fingerprint=(
-                    fingerprint_block_definition(recipe_definition)
-                    if recipe_definition is not None
-                    else None
-                ),
-            )
-
-        def validate_improvement(captured: Any, text: str) -> None:
-            snapshot = getattr(captured, "composer_snapshot", composer_snapshot)
-            composer.validate_improvement(snapshot, text)
-
-        async def validate_saved_recipe(captured: Any) -> None:
-            recipe_source_id = str(
-                getattr(captured, "recipe_source_id", "") or ""
-            )
-            if not recipe_source_id or recipe_source_id.startswith("builtin:"):
-                return
-            source = getattr(captured, "recipe_source", None)
-            if source not in {"local", "server"}:
-                raise ValueError("The selected Recipe source changed.")
-            latest = await detail(source, recipe_source_id)
-            if not isinstance(latest, Mapping):
-                raise ValueError("The selected Recipe is no longer available.")
-            latest_identity = (
-                latest.get("source_id") or latest.get("id") or latest.get("uuid")
-            )
-            if str(latest_identity or "") != recipe_source_id:
-                raise ValueError("The selected Recipe identity changed.")
-            latest_version = latest.get("version", latest.get("optimistic_version"))
-            if latest_version != getattr(captured, "recipe_version", None):
-                raise ValueError("The selected Recipe version changed.")
-            decoded = decode_prompt_artifact(latest)
-            if decoded.artifact_type != "recipe" or decoded.definition is None:
-                raise ValueError("The selected Recipe is no longer compatible.")
-            if fingerprint_block_definition(decoded.definition) != getattr(
-                captured, "recipe_fingerprint", None
-            ):
-                raise ValueError("The selected Recipe changed.")
-
-        async def validate_saved_prompt(captured: Any) -> None:
-            if not isinstance(captured, ConsoleSavedPromptApplyGuard):
-                return
-            latest = await detail(captured.source, captured.prompt_source_id)
-            if not isinstance(latest, Mapping):
-                raise ValueError("The selected Prompt is no longer available.")
-            latest_identity = (
-                latest.get("source_id") or latest.get("id") or latest.get("uuid")
-            )
-            if str(latest_identity or "") != captured.prompt_source_id:
-                raise ValueError("The selected Prompt identity changed.")
-            latest_version = latest.get("version", latest.get("optimistic_version"))
-            if latest_version != captured.prompt_version:
-                raise ValueError("The selected Prompt version changed.")
-            decoded = decode_prompt_artifact(latest)
-            if decoded.artifact_type != "prompt" or decoded.definition is None:
-                raise ValueError("The selected Prompt is no longer compatible.")
-            if fingerprint_block_definition(decoded.definition) != captured.prompt_fingerprint:
-                raise ValueError("The selected Prompt changed.")
-
-        async def record_applied_usage(captured: Any) -> None:
-            if not isinstance(
-                captured, ConsoleSavedPromptApplyGuard
-            ) or not captured.record_usage:
-                return
-            recorder = getattr(service, "record_prompt_usage", None)
-            if not callable(recorder):
-                return
-            try:
-                await recorder(
-                    mode=captured.source,
-                    prompt_identifier=captured.prompt_source_id,
-                )
-            except Exception:
-                self.app_instance.notify(
-                    "The prompt was applied, but Library usage could not be recorded.",
-                    severity="warning",
-                )
-
-        async def apply_improvement_result(
-            result: ConsolePromptsResult, captured: Any
-        ) -> ConsolePromptsApplyOutcome:
-            if store.active_session_id != session_id:
-                return ConsolePromptsApplyOutcome(
-                    "stale", "The active Console session changed."
-                )
-            if _active_system_fingerprint() != current_system_fingerprint:
-                return ConsolePromptsApplyOutcome(
-                    "stale", "The Console System prompt changed."
-                )
-            if isinstance(captured, PromptImprovementRequestSnapshot):
-                live_resolution = await gateway.resolve_for_send(
-                    self._build_console_provider_selection()
-                )
-                if _resolution_identity(live_resolution) != _resolution_identity(
-                    captured.resolution
-                ):
-                    return ConsolePromptsApplyOutcome(
-                        "stale", "The provider, model, or endpoint changed."
-                    )
-            elif isinstance(
-                captured, (ConsoleRecipeApplyGuard, ConsoleSavedPromptApplyGuard)
-            ):
-                captured_resolution = captured.provider_resolution
-                if captured_resolution is None:
-                    return ConsolePromptsApplyOutcome(
-                        "stale",
-                        "The provider target was not captured. Reopen the Prompt and retry.",
-                    )
-                live_resolution = await gateway.resolve_for_send(
-                    self._build_console_provider_selection()
-                )
-                if _resolution_identity(live_resolution) != _resolution_identity(
-                    captured_resolution
-                ):
-                    return ConsolePromptsApplyOutcome(
-                        "stale", "The provider, model, or endpoint changed."
-                    )
-            try:
-                await validate_saved_recipe(captured)
-                await validate_saved_prompt(captured)
-                if result.apply_user:
-                    if result.user_text is None:
-                        raise ValueError("The reviewed User prompt is missing.")
-                    composer.validate_improvement(
-                        result.composer_snapshot, result.user_text
-                    )
-                elif composer.capture_draft_snapshot() != result.composer_snapshot:
-                    raise ValueError("The Console draft changed.")
-            except Exception:
-                return ConsolePromptsApplyOutcome(
-                    "stale",
-                    "The draft or Recipe changed. Review the working copy and retry.",
-                )
-
-            if result.apply_user and result.user_text is not None:
-                composer.apply_improvement(
-                    result.composer_snapshot,
-                    result.user_text,
-                )
-                store.set_session_draft(session_id, composer.draft_text())
-            persisted = True
-            if result.apply_system:
-                _session, persisted = store.set_session_system_prompt(
-                    session_id, result.system_text
-                )
-                self._sync_console_chat_core_state()
-                self._sync_console_rail_system_line()
-                self._sync_console_settings_summary()
-            await record_applied_usage(captured)
-            if not persisted:
-                return ConsolePromptsApplyOutcome("persistence_failed")
-            return ConsolePromptsApplyOutcome("applied")
-
-        async def retry_improvement_persistence(
-            result: ConsolePromptsResult,
-        ) -> ConsolePromptsApplyOutcome:
-            if store.active_session_id != session_id or not result.apply_system:
-                return ConsolePromptsApplyOutcome(
-                    "stale", "The active Console session changed."
-                )
-            live_settings = self._ensure_active_console_session_settings()
-            if str(live_settings.system_prompt or "") != str(result.system_text or ""):
-                return ConsolePromptsApplyOutcome(
-                    "stale", "The live System prompt changed."
-                )
-            _session, persisted = store.set_session_system_prompt(
-                session_id, result.system_text
-            )
-            self._sync_console_chat_core_state()
-            self._sync_console_rail_system_line()
-            self._sync_console_settings_summary()
-            return ConsolePromptsApplyOutcome(
-                "applied" if persisted else "persistence_failed"
-            )
-
-        def restore_focus(_result: ConsolePromptsResult | None) -> None:
-            self._focus_console_composer_if_needed(force=True)
+        flow = _ConsolePromptImprovementFlow(
+            source=source,
+            store=store,
+            session_id=session_id,
+            composer=composer,
+            composer_snapshot=composer_snapshot,
+            current_system=current_system,
+            current_system_fingerprint=current_system_fingerprint,
+            gateway=gateway,
+            improvement_context=improvement_context,
+            app_instance=self.app_instance,
+            active_session_settings=self._ensure_active_console_session_settings,
+            build_provider_selection=self._build_console_provider_selection,
+            sync_system_prompt_surfaces=self._sync_console_system_prompt_surfaces,
+        )
 
         self.push_screen(
             ConsolePromptsModal(
-                capabilities=capabilities,
-                list_page=list_page,
-                search=search,
-                detail=detail,
-                save=save,
+                capabilities=source.capabilities,
+                list_page=source.list_page,
+                search=source.search,
+                detail=source.detail,
+                save=source.save,
                 improve_unavailable_reason=self._console_provider_blocker_copy(),
                 configure_provider=self._open_console_provider_recovery,
                 improvement_context=improvement_context,
-                activate_improvement_context=activate_improvement_context,
-                capture_manual_resolution=capture_manual_resolution,
-                build_improvement_snapshot=build_improvement_snapshot,
+                activate_improvement_context=flow.activate_improvement_context,
+                capture_manual_resolution=flow.capture_manual_resolution,
+                build_improvement_snapshot=flow.build_improvement_snapshot,
                 improve=improvement_service.improve,
-                validate_improvement=validate_improvement,
-                apply_improvement_result=apply_improvement_result,
-                retry_improvement_persistence=retry_improvement_persistence,
+                validate_improvement=flow.validate_improvement,
+                apply_improvement_result=flow.apply_improvement_result,
+                retry_improvement_persistence=flow.retry_improvement_persistence,
             ),
-            callback=restore_focus,
+            callback=self._restore_console_composer_focus,
         )
 
     @staticmethod
