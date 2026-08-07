@@ -1,4 +1,5 @@
 import socket
+import sys
 from types import SimpleNamespace
 
 import httpx
@@ -12,6 +13,24 @@ from tldw_chatbook.Tools.web_tool_impls import (
     validate_outbound_url,
     web_fetch,
 )
+
+
+# ---------------------------------------------------------------------------
+# Module ephemerality: spec §5 guards against persistence layer coupling
+# ---------------------------------------------------------------------------
+
+
+def test_module_never_imports_persistence():
+    """Verify web_tool_impls never imports database or media-storage modules.
+
+    Spec §5 requirement: web_tool_impls is a pure-helper module with no
+    coupling to the application's persistence layer (Client_Media_DB_v2,
+    ChaChaNotes_DB, Local_Ingestion, RAG_Indexing, sqlite3, etc.).
+    """
+    import inspect
+    import re
+    src = inspect.getsource(web_tool_impls)
+    assert re.search(r"Client_Media_DB|ChaChaNotes|Local_Ingestion|RAG_Indexing|sqlite3", src) is None
 
 
 def test_accepts_public_https(monkeypatch):
@@ -390,6 +409,26 @@ def test_fetch_pdf_over_ceiling_refused(fetch_env, monkeypatch):
         web_fetch("http://example.com/huge.pdf")
 
 
+def test_fetch_pdf_too_large_message_reflects_configured_ceiling(fetch_env, monkeypatch):
+    """The [too-large] message must render the number FROM PDF_MAX_BYTES,
+    not a hardcoded '20 MB' string — a caller that monkeypatches the
+    constant to a non-default value must see THAT value quoted back, not
+    the module's original default. Uses raw sniffable bytes (not a real
+    pymupdf PDF): the [too-large] refusal fires on size alone, before any
+    parse. Forces _pymupdf_available() True regardless of the real
+    environment: this test is about MESSAGE RENDERING in the [too-large]
+    branch, not extraction, and sub-item (f) made that branch reachable
+    only when pymupdf is (believed) present — without this patch, a plain
+    `.[dev]` install (no pdf extra) would take the [missing-dep] branch
+    instead and this test would fail, not skip."""
+    monkeypatch.setattr(web_tool_impls, "_pymupdf_available", lambda: True)
+    monkeypatch.setattr(web_tool_impls, "PDF_MAX_BYTES", 3 * 1024 * 1024)
+    body = b"%PDF-1.4\n" + b"x" * (3 * 1024 * 1024 + 100)
+    fetch_env.routes["http://example.com/huge3.pdf"] = _pdf_response(body)
+    with pytest.raises(LocalToolError, match=r"too-large.*3 MB.*media ingestion"):
+        web_fetch("http://example.com/huge3.pdf")
+
+
 @requires_pymupdf
 def test_fetch_pdf_extracted_text_truncated_with_page_count(fetch_env):
     body = _make_pdf([f"page {i} " + "words " * 200 for i in range(30)])
@@ -447,6 +486,45 @@ def test_fetch_pdf_missing_dep_message(fetch_env, monkeypatch):
     fetch_env.routes["http://example.com/doc.pdf"] = _pdf_response(_make_pdf(["hi"]))
     with pytest.raises(LocalToolError, match=r"missing-dep.*tldw_chatbook\[pdf\]"):
         web_fetch("http://example.com/doc.pdf")
+
+
+def test_pymupdf_available_spec_less_stub_returns_false_not_valueerror(fetch_env, monkeypatch):
+    """_pymupdf_available() must be TOTAL: importlib.util.find_spec raises a
+    raw ValueError (not caught anywhere else in this module) when
+    sys.modules holds a stub entry with __spec__ = None — e.g. a test or
+    a bad partial-import elsewhere in the process leaves such a stub
+    behind. That must not escape web_fetch as an uncaught ValueError; the
+    module's failure contract is all-LocalToolError."""
+    monkeypatch.setitem(sys.modules, "pymupdf", SimpleNamespace(__spec__=None))
+    fetch_env.routes["http://example.com/doc.pdf"] = _pdf_response(b"%PDF-1.4 stub")
+    with pytest.raises(LocalToolError, match=r"missing-dep"):
+        web_fetch("http://example.com/doc.pdf")
+
+
+def test_fetch_pdf_missing_dep_skips_20mb_download(fetch_env, monkeypatch):
+    """When pymupdf is absent, web_fetch must decide that BEFORE opening the
+    20 MB PDF read ceiling: pass pdf_max_bytes=None so the stream aborts at
+    the caller's ordinary max_bytes cap, then raise [missing-dep] — never
+    download up to 20 MB of a PDF it cannot parse anyway. Guard iterator
+    proves the byte cap actually in effect: it raises if pulled past the
+    default FETCH_MAX_BYTES cap, which only happens if the 20 MB ceiling
+    were (wrongly) still in play."""
+    monkeypatch.setattr(web_tool_impls, "_pymupdf_available", lambda: False)
+
+    def guarded_chunks():
+        # One oversized chunk, already past FETCH_MAX_BYTES: _fetch_once
+        # must break out of the read loop without pulling a second chunk.
+        yield b"%PDF-" + b"a" * (FETCH_MAX_BYTES + 5000)
+        raise AssertionError(
+            "guarded iterator pulled past the caller's byte cap — the 20 MB "
+            "PDF ceiling was used despite pymupdf being unavailable"
+        )
+
+    fetch_env.routes["http://example.com/huge.pdf"] = httpx.Response(
+        200, content=guarded_chunks(), headers={"content-type": "application/pdf"}
+    )
+    with pytest.raises(LocalToolError, match=r"missing-dep"):
+        web_fetch("http://example.com/huge.pdf")
 
 
 @requires_pymupdf

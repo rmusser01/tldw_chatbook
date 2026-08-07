@@ -15,12 +15,14 @@ rewritten as a small sync function, not a line port.
 
 import codecs
 import html as html_lib
+import importlib.util
 import ipaddress
 import re
 import socket
 import time
 from collections import deque
 from html.parser import HTMLParser
+from typing import NamedTuple
 from urllib.parse import urljoin, urlsplit
 
 import httpx
@@ -34,8 +36,11 @@ from .local_tool_impls import LocalToolError
 # stdlib parser rather than hard-failing this core module when it's absent.
 # defusedxml.ElementTree re-exports xml.etree.ElementTree's ParseError object
 # unchanged (verified: `xET.ParseError is xml.etree.ElementTree.ParseError`
-# == True across both branches), so `_parse_sitemap`'s `except xET.ParseError`
-# catches parse failures from either library without modification.
+# == True across both branches). defusedxml's own refusals (EntitiesForbidden
+# etc.) are a SEPARATE hierarchy that subclasses ValueError, not ParseError,
+# so `_parse_sitemap` catches `(xET.ParseError, ValueError)` to cover both a
+# malformed document and a hardening refusal with the same structured
+# [crawl-failed] error, regardless of which library is in use.
 try:
     import defusedxml.ElementTree as xET
 except ImportError:
@@ -214,8 +219,11 @@ def _fetch_once(
     decided MID-STREAM (spec §1): a response identified as PDF — by header
     or by a %PDF- prefix sniff on the first >=5 buffered bytes — reads up
     to ``pdf_max_bytes`` instead of ``max_bytes``, because a byte-truncated
-    PDF is unparseable. ``html_only`` (web_crawl) stops the body read after
-    the sniff buffer when the declared main type is non-empty and not HTML.
+    PDF is unparseable. ``html_only`` (web_crawl) stops the body read once
+    the type is KNOWN (after the sniff buffer) and it is not HTML — either
+    the sniff resolved ``is_pdf`` True, or a non-empty declared type is not
+    an HTML type. A response that sniffs as non-PDF and declares HTML (or
+    nothing) keeps reading for the caller's later ``<html`` sniff.
     """
     with client.stream("GET", url) as response:
         status = response.status_code
@@ -230,8 +238,8 @@ def _fetch_once(
             downloaded += len(chunk)
             if is_pdf is None and downloaded >= len(_PDF_MAGIC):
                 is_pdf = b"".join(chunks)[: len(_PDF_MAGIC)] == _PDF_MAGIC
-            if html_only and declared and declared not in _HTML_TYPES:
-                break  # crawl only needs the type (PDFs included); don't drain the body
+            if html_only and is_pdf is not None and (is_pdf or (declared and declared not in _HTML_TYPES)):
+                break  # crawl only needs the type; don't drain the body
             cap = pdf_max_bytes if (is_pdf and pdf_max_bytes is not None) else max_bytes
             if downloaded > cap:
                 break  # overshoot by at most one chunk; sliced below
@@ -298,6 +306,24 @@ def _extract_text(body: bytes, content_type: str) -> str:
     return cleaned
 
 
+def _pymupdf_available() -> bool:
+    """Cheap availability probe (no import): the 20 MB PDF read ceiling and
+    the [missing-dep] refusal must be decided before the GET starts — the probe
+    chooses the read CAP; it does not skip the download itself. optional_deps.check_dependency()
+    eagerly imports the module — wrong cost for the fetch hot path.
+
+    Total, not just cheap: find_spec raises ValueError (not ImportError) when
+    sys.modules already holds an entry for the name with __spec__ = None —
+    e.g. a stubbed/partial module left behind by another import path. This
+    module's failure contract is all-LocalToolError, so that must degrade to
+    "unavailable" rather than escape as a raw ValueError.
+    """
+    try:
+        return importlib.util.find_spec("pymupdf") is not None
+    except (ImportError, ValueError):
+        return False
+
+
 def _extract_pdf_text(body: bytes, max_bytes: int) -> str:
     """Ephemeral PDF text extraction: bytes in, text out, nothing on disk.
 
@@ -352,17 +378,45 @@ def _extract_pdf_text(body: bytes, max_bytes: int) -> str:
 
 
 def web_fetch(url: str, *, max_bytes: int = FETCH_MAX_BYTES) -> str:
-    """Fetch ``url`` and return extracted text (trafilatura), byte-capped.
+    """Fetch ``url`` and return extracted text (trafilatura for HTML, PyMuPDF for PDF).
+
+    Args:
+        url: public http(s) URL to fetch.
+        max_bytes: response-read cap for text, clamped to
+            [1, FETCH_HARD_MAX_BYTES]; for PDFs it caps the EXTRACTED text,
+            not the download.
 
     SSRF-guarded per hop (validate_outbound_url), redirect-capped,
-    rate-limited per domain, cached in-memory for FETCH_CACHE_TTL_SECONDS.
-    Result ends with a truncation marker when capped. All failures raise
-    LocalToolError with structured reasons ("invalid-url", "ssrf",
-    "redirect-limit", "timeout", "http-<status>", "too-large", "rate-limited").
+    rate-limited per domain, cached in-memory by (url, max_bytes) key
+    (256-entry bound, earliest-expiry eviction, FETCH_CACHE_TTL_SECONDS expiry).
+
+    HTML/plain-text extracted via trafilatura with fallback tag-strip;
+    script/style tags removed. Result ends with a truncation marker when
+    capped at max_bytes (default FETCH_MAX_BYTES=1 MiB).
+
+    PDF detection: declared type "application/pdf" or %PDF- magic sniff.
+    Text extracted via PyMuPDF if available. The 20 MB PDF ceiling applies only
+    when pymupdf is installed; when it is absent the body still downloads under
+    the ordinary ``max_bytes`` cap and the fetch is then refused with
+    ``[missing-dep]``. Extracted text is truncated per-page if total exceeds
+    max_bytes; the result includes page count.
+
+    All failures raise LocalToolError with structured reasons:
+        - "invalid-url", "ssrf", "redirect-limit", "timeout",
+          "http-<status>", "rate-limited", "fetch-failed" (general fetch)
+        - "empty-content" (unextractable HTML/text/PDF)
+        - "missing-dep" (PDF requires pymupdf extra)
+        - "pdf-error" (PyMuPDF extraction or encryption failure)
+        - "too-large" (PDF exceeds 20 MB ceiling when pymupdf available)
+
+    Returns:
+        str: extracted text — trafilatura/tag-strip for HTML, raw for plain
+        types, pymupdf text for PDFs — with a truncation marker when capped.
 
     Raises:
         LocalToolError: on invalid/SSRF URLs, redirect overflow, timeouts,
-            HTTP error statuses, rate limiting, or unextractable content.
+            HTTP error statuses, rate limiting, PDF processing errors, or
+            unextractable content.
     """
     if not isinstance(url, str) or not url.strip():
         raise LocalToolError("[invalid-url] url must be a non-empty string")
@@ -389,6 +443,11 @@ def web_fetch(url: str, *, max_bytes: int = FETCH_MAX_BYTES) -> str:
         # and connects on our behalf, bypassing the SSRF guard entirely.
         trust_env=False,
     )
+    # Probed ONCE per call, not per redirect hop: a mid-call sys.modules
+    # mutation could otherwise make the pre-fetch cap decision and the
+    # post-fetch [missing-dep]-vs-[too-large] verdict disagree with each
+    # other (and find_spec gains nothing from re-probing every hop).
+    pymupdf_ok = _pymupdf_available()
     try:
         current_url = url
         for _hop in range(FETCH_MAX_REDIRECTS + 1):
@@ -397,7 +456,8 @@ def web_fetch(url: str, *, max_bytes: int = FETCH_MAX_BYTES) -> str:
             _validate_hop(current_url)
             _enforce_rate_limit(urlsplit(current_url).hostname or "unknown")
             status, headers, body, truncated, is_pdf = _fetch_once(
-                client, current_url, max_bytes, pdf_max_bytes=PDF_MAX_BYTES
+                client, current_url, max_bytes,
+                pdf_max_bytes=PDF_MAX_BYTES if pymupdf_ok else None,
             )
             if status in _REDIRECT_STATUSES:
                 location = headers.get("location")
@@ -425,8 +485,19 @@ def web_fetch(url: str, *, max_bytes: int = FETCH_MAX_BYTES) -> str:
         raise LocalToolError(f"[http-{status}] upstream returned status {status} for {url!r}")
 
     if is_pdf:
+        if not pymupdf_ok:
+            # Decided BEFORE the size check: pdf_max_bytes was already None
+            # for this fetch (above), so `truncated` reflects the ordinary
+            # max_bytes cap, not the 20 MB ceiling — a [too-large] verdict
+            # here would be meaningless (and dishonest about the cap used).
+            raise LocalToolError(
+                "[missing-dep] PDF support requires pymupdf — pip install tldw_chatbook[pdf]"
+            )
         if truncated:  # hit the 20 MB PDF ceiling: refuse, never truncate bytes
-            raise LocalToolError("[too-large] PDF exceeds 20 MB — use media ingestion for large documents")
+            raise LocalToolError(
+                f"[too-large] PDF exceeds {PDF_MAX_BYTES // (1024 * 1024)} MB — "
+                "use media ingestion for large documents"
+            )
         text = _extract_pdf_text(body, max_bytes)
     else:
         text = _extract_text(body, headers.get("content-type", ""))
@@ -575,6 +646,7 @@ CRAWL_EXCERPT_MAX_CHARS = 200
 CRAWL_RESULT_MAX_BYTES = 24 * 1024
 CRAWL_BLOCK_MAX_BYTES = 1024
 CRAWL_MAX_LINKS_PER_PAGE = 500      # frontier bound: cap links enqueued FROM one page
+CRAWL_TITLE_MAX_CHARS = 512         # bound on <title> accumulation (see _CrawlLinkParser.handle_data)
 SITEMAP_MAX_BYTES = 5 * 1024 * 1024
 SITEMAP_MAX_CHILDREN = 20           # cap child sitemaps actually fetched from an index
 
@@ -611,7 +683,11 @@ class _CrawlLinkParser(HTMLParser):
 
     def handle_data(self, data: str) -> None:
         if self._in_title:
-            self.title += data
+            # Bounded: an unclosed <title> would otherwise concatenate the
+            # rest of the page's text data unboundedly (handle_data fires
+            # once per chunk of text). The excerpt/title only ever needs a
+            # display-sized prefix.
+            self.title = (self.title + data)[:CRAWL_TITLE_MAX_CHARS]
 
 
 def _crawl_host(url: str) -> str:
@@ -653,22 +729,43 @@ def _coerce_budget(value, default: int, ceiling: int) -> int:
 
 
 def _parse_sitemap(xml_bytes: bytes) -> tuple[list[str], list[str]]:
-    """Return (page_urls, child_sitemap_urls) from a urlset/sitemapindex."""
+    """Return (page_urls, child_sitemap_urls) from a urlset/sitemapindex.
+
+    Sitemaps without the sitemaps.org namespace (some generators emit
+    these) are also accepted: the namespaced findall is tried first, and
+    an un-namespaced `.//loc` fallback runs only when it comes back empty.
+    """
     try:
         root = xET.fromstring(xml_bytes)
-    except xET.ParseError as exc:
+    # defusedxml's refusals (EntitiesForbidden, etc.) subclass ValueError,
+    # not xET.ParseError, so a hardening refusal must be caught here too —
+    # otherwise it escapes as a raw, untyped exception instead of the
+    # structured [crawl-failed] every other sitemap failure produces.
+    except (xET.ParseError, ValueError) as exc:
         raise LocalToolError(f"[crawl-failed] sitemap could not be parsed: {exc}") from exc
     locs = [
         loc.text.strip()
         for loc in root.findall(f".//{_SITEMAP_NS}loc")
         if loc.text and loc.text.strip()
     ]
-    if root.tag == f"{_SITEMAP_NS}sitemapindex":
+    if not locs:
+        locs = [
+            loc.text.strip()
+            for loc in root.findall(".//loc")
+            if loc.text and loc.text.strip()
+        ]
+    if root.tag.rsplit("}", 1)[-1] == "sitemapindex":
         return [], locs
     return locs, []
 
 
-def _format_crawl_result(pages: list[dict], failed: int, blocked: int, stop_reason: str) -> str:
+def _format_crawl_result(
+    pages: list[dict],
+    failed: int,
+    blocked: int,
+    stop_reason: str,
+    children_skipped: int = 0,
+) -> str:
     blocks: list[str] = []
     total = 0
     for i, page in enumerate(pages, 1):
@@ -685,7 +782,10 @@ def _format_crawl_result(pages: list[dict], failed: int, blocked: int, stop_reas
             break
         blocks.append(block)
         total += block_bytes
-    footer = f"Crawled {len(pages)} pages ({failed} failed, {blocked} blocked). Stopped: {stop_reason}."
+    counts = f"{failed} failed, {blocked} blocked"
+    if children_skipped > 0:
+        counts += f"; {children_skipped} child sitemaps skipped"
+    footer = f"Crawled {len(pages)} pages ({counts}). Stopped: {stop_reason}."
     return "\n\n".join(blocks + [footer]) if blocks else footer
 
 
@@ -743,13 +843,39 @@ def _crawl_fetch_page(
     raise LocalToolError(f"[redirect-limit] exceeded {FETCH_MAX_REDIRECTS} redirects for {url!r}")
 
 
+class _SitemapSeed(NamedTuple):
+    """Result of consulting a sitemap (or sitemapindex) for page URLs.
+
+    children_capped: True when the SITEMAP_MAX_CHILDREN break fired, so the
+        caller can report an honest stop reason instead of claiming the
+        sitemap was exhausted when children were actually left unfetched.
+    budget_truncated: True when `take()`'s max_pages cap stopped with
+        candidates (page URLs or, in the child loop, child sitemaps)
+        actually left over — i.e. the seed was cut short by the page
+        budget, not because the sitemap was fully consulted. False when
+        every candidate was considered, even if that consumed exactly
+        max_pages slots.
+    children_skipped: count of child sitemaps that were fetched-or-attempted
+        but excluded from `urls` for a reason OTHER than the host filter or
+        the SITEMAP_MAX_CHILDREN cap — i.e. every `continue` below that
+        represents a child that failed to contribute: fetch/redirect error,
+        oversized body, or a parse refusal (including a defusedxml
+        hardening refusal).
+    """
+
+    urls: list[str]
+    children_capped: bool
+    budget_truncated: bool
+    children_skipped: int
+
+
 def _seed_from_sitemap(
     client: httpx.Client,
     sitemap_url: str,
     scope_host: str,
     max_pages: int,
     deadline: float,
-) -> list[str]:
+) -> _SitemapSeed:
     """Collect up to max_pages same-host page URLs from a sitemap.
 
     Sitemap fetches are discovery overhead — they do NOT consume the page
@@ -767,30 +893,49 @@ def _seed_from_sitemap(
 
     urls: list[str] = []
     seen: set[str] = set()
+    budget_truncated = False
 
     def take(candidates: list[str]) -> None:
+        nonlocal budget_truncated
         for candidate in candidates:
-            if len(urls) >= max_pages:
-                return
+            # Host/dedup filters run BEFORE the budget check: a trailing
+            # off-host or duplicate candidate would be discarded anyway, so
+            # it must not flip budget_truncated and claim the page budget —
+            # not the sitemap itself — cut the seed short.
             if _crawl_host(candidate) != scope_host:
                 continue
             norm = _normalize_crawl_url(candidate)
             if norm in seen:
                 continue
+            if len(urls) >= max_pages:
+                # This candidate (and anything after it that would pass the
+                # filters above) was never considered: the cap, not
+                # exhaustion, ended this pass.
+                budget_truncated = True
+                return
             seen.add(norm)
             urls.append(candidate)
 
     take(page_urls)
     children_fetched = 0
+    children_capped = False
+    children_skipped = 0
     for child in children:
-        if len(urls) >= max_pages or time.monotonic() >= deadline:
+        if time.monotonic() >= deadline:
             break
+        # Off-host filter runs BEFORE the budget check, mirroring take(): a
+        # trailing off-host child would be skipped regardless, so it must
+        # not flip budget_truncated on its own.
         if _crawl_host(child) != sitemap_host:
             continue
+        if len(urls) >= max_pages:
+            budget_truncated = True
+            break
         if children_fetched >= SITEMAP_MAX_CHILDREN:
             # Amplification guard: a pathological same-host index (~119
             # children measured in the review, ~600 MB at 5 MiB each) is
             # bounded here instead of relying solely on the deadline.
+            children_capped = True
             break
         children_fetched += 1
         try:
@@ -798,15 +943,18 @@ def _seed_from_sitemap(
                 client, child, deadline, max_bytes=SITEMAP_MAX_BYTES, html_only=False
             )
         except (LocalToolError, _CrawlDeadline):
+            children_skipped += 1
             continue
         if child_truncated:
+            children_skipped += 1
             continue
         try:
             child_pages, _nested = _parse_sitemap(child_body)  # one level: nested indexes ignored
         except LocalToolError:
+            children_skipped += 1
             continue
         take(child_pages)
-    return urls
+    return _SitemapSeed(urls, children_capped, budget_truncated, children_skipped)
 
 
 def web_crawl(
@@ -822,6 +970,11 @@ def web_crawl(
     expected to follow up with web_fetch on pages that matter (spec §2).
     Every URL is egress-guarded; budgets bound fetch ATTEMPTS; a wall-clock
     deadline bounds the whole crawl. Ephemeral: no database writes.
+
+    Attempt/row invariant: a redirect that lands on an already-listed final
+    URL still spends its own attempt slot but produces no row (deduped
+    against the already-listed URL), so "Crawled N pages" can legitimately
+    be smaller than the number of fetch attempts spent.
 
     When ``sitemap_url`` is given, sitemap mode replaces link-discovery BFS:
     the page list comes from the sitemap (urlset, or a one-level
@@ -847,10 +1000,12 @@ def web_crawl(
     deadline = time.monotonic() + CRAWL_DEADLINE_SECONDS
     queue: "deque[tuple[str, int]]" = deque([(url, 0)])
     visited = {_normalize_crawl_url(url)}
+    listed: set[str] = set()  # normalized final URLs actually appended to `pages`
     pages: list[dict] = []
     failed = blocked = 0
     attempts = 0
     stop_reason = "no more links within depth"
+    children_skipped = 0
 
     client = httpx.Client(
         follow_redirects=False,
@@ -865,22 +1020,38 @@ def web_crawl(
             if not isinstance(sitemap_url, str) or not sitemap_url.strip():
                 raise LocalToolError("[invalid-args] sitemap_url must be a non-empty string")
             try:
-                seeded = _seed_from_sitemap(client, sitemap_url.strip(), scope_host, max_pages, deadline)
+                seed = _seed_from_sitemap(
+                    client, sitemap_url.strip(), scope_host, max_pages, deadline
+                )
             except _CrawlDeadline:
-                seeded = []
+                seed = _SitemapSeed(urls=[], children_capped=False, budget_truncated=False, children_skipped=0)
             except LocalToolError as exc:
                 if "[crawl-failed]" in str(exc):
                     raise
                 raise LocalToolError(f"[crawl-failed] sitemap could not be fetched: {exc}") from exc
-            queue = deque((u, 0) for u in seeded)
-            visited = {_normalize_crawl_url(u) for u in seeded}
-            # Two non-exceptional paths can leave `seeded` short/empty because
-            # the clock ran out, not because the sitemap was exhausted: the
-            # root fetch's _CrawlDeadline (caught above) and the child-sitemap
-            # loop's plain `break` on time.monotonic() >= deadline. Both leave
-            # the clock past the deadline, so read it back here rather than
-            # assuming "empty seed" always means "sitemap exhausted".
-            stop_reason = "deadline reached" if time.monotonic() >= deadline else "sitemap exhausted"
+            queue = deque((u, 0) for u in seed.urls)
+            visited = {_normalize_crawl_url(u) for u in seed.urls}
+            children_skipped = seed.children_skipped
+            # Four non-exceptional paths can leave `seed.urls` short/empty for
+            # a reason other than "the sitemap was fully consulted": the clock
+            # ran out (root fetch's _CrawlDeadline, caught above, and the
+            # child-sitemap loop's plain `break` on time.monotonic() >=
+            # deadline both leave the clock past the deadline, read back
+            # here); the SITEMAP_MAX_CHILDREN break fired and left child
+            # sitemaps unfetched (children_capped); or `take()`'s max_pages
+            # cap left page-URL or child-sitemap candidates unconsidered
+            # (budget_truncated). Priority reflects which budget is "harder":
+            # deadline (wall-clock, non-negotiable) > children_capped (an
+            # amplification guard) > budget_truncated (the ordinary page
+            # budget) > exhausted (every candidate was actually considered).
+            if time.monotonic() >= deadline:
+                stop_reason = "deadline reached"
+            elif seed.children_capped:
+                stop_reason = "sitemap child budget reached"
+            elif seed.budget_truncated:
+                stop_reason = "page budget reached"
+            else:
+                stop_reason = "sitemap exhausted"
 
         while queue:
             if attempts >= max_pages:
@@ -900,12 +1071,29 @@ def web_crawl(
             except LocalToolError as exc:
                 if is_start and sitemap_url is None:
                     raise LocalToolError(f"[crawl-failed] start URL could not be fetched: {exc}") from exc
-                if "[ssrf]" in str(exc):
+                # Prefix check, not substring: _validate_hop puts the reason
+                # at position 0 of ITS message, but a URL echoed into an
+                # unrelated error (e.g. an http-404 message quoting the
+                # failing URL) can contain the literal text "[ssrf]"
+                # anywhere in the string without being an SSRF refusal.
+                if str(exc).startswith("[ssrf]"):
                     blocked += 1
                 else:
                     failed += 1
                 continue
-            visited.add(_normalize_crawl_url(final_url))
+            final_norm = _normalize_crawl_url(final_url)
+            if final_norm in listed:
+                # This exact final URL was already appended to `pages` —
+                # via its own fetch or another page's redirect onto it.
+                # `visited` is NOT the right set to dedup against here: it
+                # holds every ENQUEUED url (marked at discovery time), so a
+                # page that redirects onto a separately-enqueued sibling
+                # link would otherwise be discarded even though nothing had
+                # listed it yet — the start page's own final URL can't be
+                # in `listed` before it's listed, so no `!= current` carve-out
+                # is needed here.
+                continue
+            visited.add(final_norm)
 
             ctype = (headers.get("content-type") or "").split(";", 1)[0].strip().lower()
             # is_pdf (the %PDF- sniff) takes priority over the declared
@@ -923,6 +1111,7 @@ def web_crawl(
             if is_pdf or (ctype and ctype not in _HTML_TYPES):
                 marker = "[application/pdf]" if is_pdf else f"[{ctype}]"
                 pages.append({"url": final_url, "title": "", "excerpt": "", "marker": marker})
+                listed.add(final_norm)
                 continue
 
             html = _decode_body(body, headers.get("content-type", ""))
@@ -950,6 +1139,7 @@ def web_crawl(
                 "excerpt": full_text[:CRAWL_EXCERPT_MAX_CHARS].strip(),
                 "marker": None,
             })
+            listed.add(final_norm)
 
             # Expansion: same-host pages only, within the depth budget. A page
             # that redirected off-host is listed but its links are not followed.
@@ -989,4 +1179,4 @@ def web_crawl(
     finally:
         client.close()
 
-    return _format_crawl_result(pages, failed, blocked, stop_reason)
+    return _format_crawl_result(pages, failed, blocked, stop_reason, children_skipped)
