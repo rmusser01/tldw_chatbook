@@ -3898,6 +3898,128 @@ async def test_update_readiness_does_not_resurrect_badge_over_displayed_tool():
         assert badge.display is True
 
 
+# -- task-2270: the RAG-50 badge fix covered Tools mode ONLY. The other -----
+# three detail views (Permissions matrix row, Audit entry, Finding) each
+# toggled only their own container and never touched `#mcp-inspector-state`,
+# so selecting any of them with no server selected left "Pick a server,
+# tool, or entry…" sitting above fully populated detail. Confirmed by
+# direct code read in the PR-5 task-6 review; fixed here by a single badge
+# owner (`_sync_state_badge_display()`): the badge shows exactly when NO
+# detail view is displayed, every view's show/clear path funnels through
+# it, and `update_readiness()` stays content-only in every mode.
+
+
+def _audit_entry() -> dict[str, Any]:
+    return {"server_key": "local:docs", "tool_name": "search"}
+
+
+@pytest.mark.asyncio
+async def test_empty_state_badge_hidden_when_permission_row_shown():
+    """Permissions-matrix row selection (`show_permission()`) must hide
+    the badge like Tools mode does, and the shared clear path
+    (`show_tool(None)`, which also blanks the permission container via
+    `_render_permission_container(None, None)`) must restore it."""
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        await inspector.show_permission(
+            _tool(), EffectiveToolState(state="ask", origin="global_default")
+        )
+        await pilot.pause()
+        badge = app.query_one("#mcp-inspector-state", Static)
+        assert badge.display is False
+
+        await inspector.show_tool(None)
+        await pilot.pause()
+        assert badge.display is True
+
+
+@pytest.mark.asyncio
+async def test_empty_state_badge_hidden_when_audit_entry_shown():
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        await inspector.show_audit_entry(_audit_entry())
+        await pilot.pause()
+        badge = app.query_one("#mcp-inspector-state", Static)
+        assert badge.display is False
+
+        await inspector.show_audit_entry(None)
+        await pilot.pause()
+        assert badge.display is True
+
+
+@pytest.mark.asyncio
+async def test_empty_state_badge_hidden_when_finding_shown():
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        await inspector.show_finding(_finding(), server_key="local:docs")
+        await pilot.pause()
+        badge = app.query_one("#mcp-inspector-state", Static)
+        assert badge.display is False
+
+        await inspector.show_finding(None)
+        await pilot.pause()
+        assert badge.display is True
+
+
+@pytest.mark.asyncio
+async def test_empty_state_badge_stays_hidden_while_any_detail_remains():
+    """Audit mode can display an execution entry and a finding at once --
+    clearing ONE must not resurrect the badge while the other still shows
+    populated detail; only clearing the last one restores it."""
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        await inspector.show_audit_entry(_audit_entry())
+        await inspector.show_finding(_finding(), server_key="local:docs")
+        await pilot.pause()
+        badge = app.query_one("#mcp-inspector-state", Static)
+        assert badge.display is False
+
+        await inspector.show_finding(None)
+        await pilot.pause()
+        assert badge.display is False, (
+            "finding cleared but the audit entry still shows detail -- "
+            "the badge must stay hidden"
+        )
+
+        await inspector.show_audit_entry(None)
+        await pilot.pause()
+        assert badge.display is True
+
+
+@pytest.mark.asyncio
+async def test_update_readiness_does_not_resurrect_badge_over_other_detail_views():
+    """AC3, beyond Tools mode: a background readiness sync while a
+    permission row / audit entry shows detail must not force the badge
+    back over it -- `update_readiness()` stays content-only."""
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        badge = app.query_one("#mcp-inspector-state", Static)
+
+        await inspector.show_permission(
+            _tool(), EffectiveToolState(state="ask", origin="global_default")
+        )
+        await pilot.pause()
+        await inspector.update_readiness(_ready_snap())
+        await pilot.pause()
+        assert badge.display is False
+
+        await inspector.show_tool(None)
+        await inspector.show_audit_entry(_audit_entry())
+        await pilot.pause()
+        await inspector.update_readiness(_stale_snap())
+        await pilot.pause()
+        assert badge.display is False
+
+        await inspector.show_audit_entry(None)
+        await pilot.pause()
+        assert badge.display is True
+
+
 # -- Task 6 (PR-T3), Route B: the Advanced runner's `tool.execute` hatch -----
 # Every OTHER Advanced action reads or mutates control-plane config; this one
 # EXECUTES a tool. It ran on a single press, ungated and unlogged. The service
