@@ -33,6 +33,7 @@ from textual.app import App
 
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
 
+from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderResolution
 from tldw_chatbook.UI.Console_Modules.prompts import ConsolePromptsController
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.Widgets.Console import ConsoleComposerBar, ConsolePromptsModal
@@ -225,6 +226,286 @@ async def test_prompts_modal_reads_provider_recovery_off_the_screen_at_open() ->
 
         assert modal._configure_provider is recovery
         assert modal._improve_unavailable_reason == "No provider configured."
+
+
+# ---------------------------------------------------------------------------
+# The callback bundle the modal opener hands to `ConsolePromptsModal`
+#
+# Written BEFORE task-2766 decomposed `_open_console_prompts_modal`'s 17
+# nested closures into named collaborators, so every assertion below is a
+# statement about behaviour that must survive that change byte-identically:
+# the exact prompt-source contract each data callable forwards, the copy each
+# raises when the source cannot serve, the pinned-target lifecycle the
+# improvement flow shares across callbacks, and the dismissal focus restore.
+# ---------------------------------------------------------------------------
+
+
+class _RecordingPromptScopeService(_PromptScopeService):
+    """Records the exact keyword contract each source callable forwards."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.calls: list[tuple[str, dict[str, object]]] = []
+
+    async def get_capabilities(self, *, mode: str):
+        self.calls.append(("get_capabilities", {"mode": mode}))
+        return await super().get_capabilities(mode=mode)
+
+    async def list_prompts(self, *, mode: str, page: int, per_page: int):
+        self.calls.append(
+            ("list_prompts", {"mode": mode, "page": page, "per_page": per_page})
+        )
+        return await super().list_prompts(mode=mode, page=page, per_page=per_page)
+
+    async def search_prompts(self, *, mode: str, query: str, limit: int, **kwargs):
+        self.calls.append(
+            ("search_prompts", {"mode": mode, "query": query, "limit": limit, **kwargs})
+        )
+        return await super().search_prompts(
+            mode=mode, query=query, limit=limit, **kwargs
+        )
+
+    async def get_prompt(self, *, mode: str, prompt_identifier: str, **kwargs):
+        self.calls.append(
+            (
+                "get_prompt",
+                {"mode": mode, "prompt_identifier": prompt_identifier, **kwargs},
+            )
+        )
+        return await super().get_prompt(
+            mode=mode, prompt_identifier=prompt_identifier, **kwargs
+        )
+
+    async def save_prompt(self, *, mode: str, **payload):
+        self.calls.append(("save_prompt", {"mode": mode, **payload}))
+        return await super().save_prompt(mode=mode, **payload)
+
+    def payloads(self, name: str) -> list[dict[str, object]]:
+        return [payload for called, payload in self.calls if called == name]
+
+
+class _CountingResolutionGateway:
+    """A ready provider whose `resolve_for_send` count is observable."""
+
+    def __init__(self) -> None:
+        self.resolve_calls = 0
+
+    async def resolve_for_send(self, selection):
+        self.resolve_calls += 1
+        return ConsoleProviderResolution(
+            provider="llama_cpp",
+            base_url=selection.base_url or "http://127.0.0.1:9099",
+            model=(
+                selection.explicit_model
+                or selection.configured_model
+                or "local-model"
+            ),
+            ready=True,
+            readiness_key="llama_cpp",
+            execution_key="llama_cpp",
+        )
+
+
+async def _open_prompts_modal(host, pilot, console) -> ConsolePromptsModal:
+    console._open_console_prompts_modal()
+    await pilot.pause()
+    modal = host.screen_stack[-1]
+    assert isinstance(modal, ConsolePromptsModal)
+    return modal
+
+
+@pytest.mark.asyncio
+async def test_prompt_source_callables_forward_the_exact_service_contract() -> None:
+    """Page size, search limit and the `source`-to-`mode` rename are the
+    contract the Prompt Library modal is built against."""
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    service = _RecordingPromptScopeService()
+    app.prompt_scope_service = service
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 40)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+
+        modal = await _open_prompts_modal(host, pilot, console)
+        service.calls.clear()
+
+        await modal._capabilities("server")
+        await modal._list_page("server", 3)
+        await modal._search("local", "terse")
+        await modal._detail("local", "11")
+        await modal._save(source="server", name="Fresh", system_prompt="Be terse.")
+
+        assert service.payloads("get_capabilities") == [{"mode": "server"}]
+        assert service.payloads("list_prompts") == [
+            {"mode": "server", "page": 3, "per_page": 10}
+        ]
+        assert service.payloads("search_prompts") == [
+            {"mode": "local", "query": "terse", "limit": 25}
+        ]
+        assert service.payloads("get_prompt") == [
+            {"mode": "local", "prompt_identifier": "11"}
+        ]
+        # `save` routes the payload's own `source` into the service's `mode`.
+        assert service.payloads("save_prompt") == [
+            {"mode": "server", "name": "Fresh", "system_prompt": "Be terse."}
+        ]
+
+
+@pytest.mark.asyncio
+async def test_prompt_source_callables_name_the_source_they_cannot_reach() -> None:
+    """A scope service missing a method is a user-visible refusal, per
+    callable and per source -- never an AttributeError."""
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    app.prompt_scope_service = SimpleNamespace()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 40)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+
+        modal = await _open_prompts_modal(host, pilot, console)
+
+        with pytest.raises(ValueError, match="Local Prompt source is unavailable"):
+            await modal._capabilities("local")
+        with pytest.raises(ValueError, match="Server Prompt source is unavailable"):
+            await modal._list_page("server", 1)
+        with pytest.raises(ValueError, match="Local Prompt search is unavailable"):
+            await modal._search("local", "terse")
+        with pytest.raises(ValueError, match="Server Prompt source is unavailable"):
+            await modal._detail("server", "11")
+        with pytest.raises(ValueError, match="selected Prompt source cannot save"):
+            await modal._save(source="local", name="Fresh")
+
+
+@pytest.mark.asyncio
+async def test_prompts_modal_dismissal_restores_composer_focus() -> None:
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    app.prompt_scope_service = _PromptScopeService()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 40)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+
+        modal = await _open_prompts_modal(host, pilot, console)
+        focus_calls: list[dict[str, object]] = []
+        console._focus_console_composer_if_needed = (
+            lambda **kwargs: focus_calls.append(kwargs)
+        )
+
+        modal.dismiss(None)
+        await pilot.pause()
+
+        assert focus_calls == [{"force": True}]
+
+
+@pytest.mark.asyncio
+async def test_improvement_target_is_pinned_once_and_shared_across_callbacks() -> None:
+    """`activate` pins the disclosed target; the model-free manual path must
+    reuse that same pin rather than resolve a second, possibly different one."""
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    app.prompt_scope_service = _PromptScopeService()
+    gateway = _CountingResolutionGateway()
+    app.console_provider_gateway_factory = lambda: gateway
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 40)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.insert_text("draft body")
+
+        modal = await _open_prompts_modal(host, pilot, console)
+
+        first = await modal._capture_manual_resolution()
+        resolved_once = gateway.resolve_calls
+        second = await modal._capture_manual_resolution()
+
+        assert first is second
+        assert gateway.resolve_calls == resolved_once
+
+        activated = await modal._activate_improvement_context()
+        assert activated.pinned_resolution is not None
+        assert await modal._capture_manual_resolution() is activated.pinned_resolution
+
+
+@pytest.mark.asyncio
+async def test_improvement_activation_refuses_a_moved_system_prompt() -> None:
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    app.prompt_scope_service = _PromptScopeService()
+    app.console_provider_gateway_factory = lambda: _CountingResolutionGateway()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 40)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        store = console._ensure_console_chat_store()
+        session_id = store.active_session_id
+
+        modal = await _open_prompts_modal(host, pilot, console)
+        store.set_session_system_prompt(session_id, "Changed elsewhere.")
+
+        with pytest.raises(ValueError, match="The Console System prompt changed"):
+            await modal._activate_improvement_context()
+
+
+@pytest.mark.asyncio
+async def test_improvement_snapshot_refuses_an_unpinned_provider_target() -> None:
+    """No disclosure, no request: the snapshot builder must not fall back to
+    resolving a target the user was never shown."""
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    app.prompt_scope_service = _PromptScopeService()
+    app.console_provider_gateway_factory = lambda: _CountingResolutionGateway()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 40)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.insert_text("draft body")
+
+        modal = await _open_prompts_modal(host, pilot, console)
+
+        with pytest.raises(ValueError, match="no longer pinned"):
+            await modal._build_improvement_snapshot(request_id="req-1", mode="auto")
+
+
+@pytest.mark.asyncio
+async def test_improvement_validation_prefers_the_captured_snapshot() -> None:
+    """The reviewed working copy is validated against the snapshot the request
+    captured; a captured object without one falls back to the opening draft."""
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    app.prompt_scope_service = _PromptScopeService()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 40)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.insert_text("draft body")
+        opening_snapshot = composer.capture_draft_snapshot()
+
+        modal = await _open_prompts_modal(host, pilot, console)
+        seen: list[tuple[object, str]] = []
+        composer.validate_improvement = lambda snapshot, text: seen.append(
+            (snapshot, text)
+        )
+
+        modal._validate_improvement(
+            SimpleNamespace(composer_snapshot="captured"), "reviewed"
+        )
+        modal._validate_improvement(object(), "fallback")
+
+        assert seen[0] == ("captured", "reviewed")
+        assert seen[1] == (opening_snapshot, "fallback")
 
 
 # ---------------------------------------------------------------------------
@@ -498,3 +779,46 @@ def test_moved_methods_are_gone_from_the_screen() -> None:
     ):
         assert not hasattr(ChatScreen, name), name
         assert hasattr(ConsolePromptsController, name), name
+
+
+def test_stale_reason_reports_the_session_change_before_the_system_change() -> None:
+    """Order matters here, and nothing else pins it.
+
+    `_stale_reason` checks two facts pinned when the modal opened: the session
+    it was opened over, and the System prompt it disclosed. When BOTH have
+    moved the user sees only the first message, so the order chooses the copy.
+    A task-2766 review mutated this ordering and all 28 controller tests plus
+    all 304 native-chat-flow tests still passed -- the branch that reports the
+    session change was reachable in no test where the fingerprint had also
+    moved.
+
+    Session-before-System is the right order because the session change is the
+    larger fact: the System prompt the modal disclosed belongs TO a session, so
+    naming the System prompt while the user has actually switched sessions
+    describes a consequence rather than the cause.
+    """
+    from tldw_chatbook.UI.Console_Modules.prompts import (
+        _ConsolePromptImprovementFlow,
+    )
+
+    flow = _ConsolePromptImprovementFlow.__new__(_ConsolePromptImprovementFlow)
+    flow._session_id = "session-a"
+    flow._current_system_fingerprint = "fingerprint-a"
+    flow._store = SimpleNamespace(active_session_id="session-a")
+    flow._active_system_fingerprint = lambda: "fingerprint-a"
+
+    assert flow._stale_reason() == ""
+
+    # Only the System prompt moved.
+    flow._active_system_fingerprint = lambda: "fingerprint-b"
+    assert flow._stale_reason() == "The Console System prompt changed."
+
+    # Only the session moved.
+    flow._active_system_fingerprint = lambda: "fingerprint-a"
+    flow._store = SimpleNamespace(active_session_id="session-b")
+    assert flow._stale_reason() == "The active Console session changed."
+
+    # BOTH moved -- the session is reported, not the System prompt. This is
+    # the assertion the mutation slipped past.
+    flow._active_system_fingerprint = lambda: "fingerprint-b"
+    assert flow._stale_reason() == "The active Console session changed."

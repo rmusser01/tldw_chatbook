@@ -2022,7 +2022,7 @@
     },
     {
       "call_count": 3,
-      "diagnostic_digest": "542edfd662c59a16f67f",
+      "diagnostic_digest": "2fee300efb749f9af99f",
       "owner": "TASK-494",
       "path": "tldw_chatbook/UI/Console_Modules/prompts.py",
       "reason": "remaining Chatbook production diagnostic owner"

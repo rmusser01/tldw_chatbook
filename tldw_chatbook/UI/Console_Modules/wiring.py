@@ -520,12 +520,27 @@ def build_console_controllers(screen: "ChatScreen") -> None:
     #: resolution and their pickers, the system-prompt editor and its
     #: save-to-Library flow, the Library staged-insert handoff, and the
     #: shared prompt-history store (wave-3 console decomposition, task
-    #: 3). Every dependency below is a LATE-BINDING lambda, never a
-    #: bound method: eleven of the eighteen are replaced by name on the
-    #: screen instance somewhere in the pre-existing suite, and a
-    #: constructor snapshot would silently stop observing every one of
-    #: those. See `Console_Modules/prompts.py`'s `__init__` docstring
+    #: 3). Every dependency below is a LATE-BINDING lambda (or, for the
+    #: post-apply re-sync trio, a nested function that reads the same
+    #: way), never a bound method: eleven of the sixteen are replaced by
+    #: name on the screen instance somewhere in the pre-existing suite,
+    #: and a constructor snapshot would silently stop observing every one
+    #: of those. See `Console_Modules/prompts.py`'s `__init__` docstring
     #: for the per-parameter rationale.
+
+    def _sync_console_system_prompt_surfaces() -> None:
+        """Re-sync the three surfaces that display the System prompt.
+
+        One dependency rather than three because the prompt cluster only
+        ever needs the trio, in this order, at the two moments the store
+        accepted a new System prompt (task 2766). Each name is still
+        resolved on the screen at CALL time, so the instance-level
+        replacements the suite makes are observed exactly as before.
+        """
+        screen._sync_console_chat_core_state()
+        screen._sync_console_rail_system_line()
+        screen._sync_console_settings_summary()
+
     screen._prompts = ConsolePromptsController(
         screen,
         app_instance=screen.app_instance,
@@ -589,15 +604,7 @@ def build_console_controllers(screen: "ChatScreen") -> None:
         append_native_console_system_message=(
             lambda text: screen._append_native_console_system_message(text)
         ),
-        sync_console_chat_core_state=(
-            lambda: screen._sync_console_chat_core_state()
-        ),
-        sync_console_rail_system_line=(
-            lambda: screen._sync_console_rail_system_line()
-        ),
-        sync_console_settings_summary=(
-            lambda: screen._sync_console_settings_summary()
-        ),
+        sync_console_system_prompt_surfaces=_sync_console_system_prompt_surfaces,
     )
     #: The agent runtime's screen-side cluster -- the lazily-built
     #: `ConsoleAgentBridge`, the Agent rail section's text derivation, the
