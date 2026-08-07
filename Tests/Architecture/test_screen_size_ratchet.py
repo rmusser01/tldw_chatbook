@@ -44,15 +44,17 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 
 #: path -> (class name, max lines, max methods in that class).
 #: LOWER these when a decomposition wave lands. Never raise them.
-#: Lowered 2026-08-06 at the wave-3 close (message + transcript + prompts):
-#: 20,964/612 -> 18,909/598. First recorded immediately after wave 2 (PR #1381).
-#: The odd trailing 9 is real and worth leaving. The wave itself earned
-#: 18,904; `c1c9146b7` and `86ea8fcd5` on dev added a net 5 lines to the
-#: screen while wave 3 was in review -- in a single week, which is the whole
-#: reason this file exists. Always MEASURE after the final rebase: a budget
-#: set against a stale base is a budget that fails the moment it lands.
+#: Lowered 2026-08-07 at the wave-4 close (controller wiring out of
+#: `__init__`, button-dispatch routing, the agent cluster): 18,930/600 ->
+#: 17,743/593. Wave 3 recorded 18,909/598; dev grew the screen by 21 lines
+#: and 2 methods while wave 4 was in flight, which is the whole reason this
+#: file exists. First recorded after wave 2 (PR #1381) at 20,964/612.
+#:
+#: Always MEASURE after the final rebase. Wave 3 set its budget twice from a
+#: pre-rebase measurement and both landed red, because dev moved underneath
+#: it -- a budget derived from a stale base fails the moment it merges.
 _BUDGETS: dict[str, tuple[str, int, int]] = {
-    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 18909, 598),
+    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 17743, 593),
 }
 
 
