@@ -29,6 +29,7 @@ from tldw_chatbook.UI.Watchlists_Modules.sources_pane import (
     ExportOpmlRequested,
     ImportOpmlRequested,
     SourceSelected,
+    SourcesPane,
 )
 from tldw_chatbook.UI.Watchlists_Modules.watchlist_tree import TreeScope, TreeScopeChanged
 
@@ -717,6 +718,40 @@ async def test_space_in_items_search_input_still_types():
         assert search.value == "f o"
         assert search.has_focus, "typing must not lose the search box"
         assert screen._selected_content_item is None
+
+
+@pytest.mark.asyncio
+async def test_typing_in_sources_search_survives_the_recompose():
+    """task-3071: the SourcesPane sibling of the items-search bug pinned
+    above. `SourcesPane.search_query` is likewise `reactive(...,
+    recompose=True)`, so every keystroke rebuilt the pane and destroyed
+    the focused input -- and its `recompose()` only re-homed CREATE-FORM
+    focus, so the box was lost (and with Textual's default
+    `select_on_focus=True`, any programmatic refocus would have
+    selected-all, replacing the half-typed query on the next keystroke).
+    """
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+        db = app.watchlist_bundle_service._db
+        db.add_subscription(name="ArXiv", type="rss", source="https://a.example/f")
+        db.add_subscription(name="Krebs", type="rss", source="https://b.example/f")
+
+        screen.active_section = "sources"
+        await pilot.pause(0.3)
+        pane = screen.query_one("#watchlists-sources-pane", SourcesPane)
+        pane.query_one("#sources-search-input", Input).focus()
+        await pilot.press("k", "r", "e", "b", "s")
+        await pilot.pause(0.2)
+
+        # Re-query: each keystroke recomposes the pane, so the input that
+        # was focused at the start was destroyed; this is the live
+        # replacement.
+        search = pane.query_one("#sources-search-input", Input)
+        assert search.value == "krebs"
+        assert search.has_focus, "typing must not lose the sources search box"
 
 
 @pytest.mark.asyncio
