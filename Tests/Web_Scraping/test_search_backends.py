@@ -376,6 +376,33 @@ def test_tavily_end_to_end_through_process(monkeypatch):
     ]
 
 
+def test_tavily_parser_non_dict_item_raises_value_error():
+    """Per-item shape validation: a list element that is not a dict must raise ValueError
+    with the index, RED-first test to prove the index is reported."""
+    bad_payload = {
+        "results": [
+            {"title": "Good", "url": "https://good.example/", "content": "ok"},
+            "not a dict",  # Bad: string at index 1
+            {"title": "Also Good", "url": "https://also.example/", "content": "ok"},
+        ]
+    }
+    with pytest.raises(ValueError, match="index 1"):
+        WebSearch_APIs.parse_tavily_results(bad_payload, {})
+
+
+def test_tavily_non_dict_item_surfaces_as_processing_error():
+    """Non-dict items in tavily results must surface as processing_error via the seam."""
+    bad_payload = {
+        "results": [
+            "not a dict",  # Bad: string at index 0
+        ]
+    }
+    result = WebSearch_APIs.process_web_search_results(bad_payload, "tavily")
+    assert result["processing_error"] is not None
+    assert "index 0" in result["processing_error"]
+    assert result["results"] == []
+
+
 # ---------------------------------------------------------------------------
 # Searx (task-2990)
 # ---------------------------------------------------------------------------
@@ -467,6 +494,29 @@ def test_searx_error_dict_raises_and_surfaces_as_processing_error():
     result = WebSearch_APIs.process_web_search_results(_SEARX_ERROR_PAYLOAD, "searx")
     assert result["processing_error"] is not None
     assert "No information" in result["processing_error"]
+    assert result["results"] == []
+
+
+def test_searx_parser_non_dict_item_raises_value_error():
+    """Per-item shape validation: a list element that is not a dict must raise ValueError
+    with the index, RED-first test to prove the index is reported."""
+    bad_payload = [
+        {"title": "Good", "link": "https://good.example/", "snippet": "ok"},
+        "not a dict",  # Bad: string at index 1
+        {"title": "Also Good", "link": "https://also.example/", "snippet": "ok"},
+    ]
+    with pytest.raises(ValueError, match="index 1"):
+        WebSearch_APIs.parse_searx_results(bad_payload, {})
+
+
+def test_searx_non_dict_item_surfaces_as_processing_error():
+    """Non-dict items in searx results must surface as processing_error via the seam."""
+    bad_payload = json.dumps([
+        "not a dict",  # Bad: string at index 0
+    ])
+    result = WebSearch_APIs.process_web_search_results(bad_payload, "searx")
+    assert result["processing_error"] is not None
+    assert "index 0" in result["processing_error"]
     assert result["results"] == []
 
 

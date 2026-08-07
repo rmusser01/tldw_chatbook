@@ -44,7 +44,7 @@ from html import unescape
 import random
 import re
 import time
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Union
 from urllib.parse import urlparse, urlencode, unquote
 
 #
@@ -1399,7 +1399,7 @@ def test_perform_websearch_yandex():
 #
 
 
-def process_web_search_results(search_results: Dict, search_engine: str) -> Dict:
+def process_web_search_results(search_results: Union[Dict, str], search_engine: str) -> Dict:
     """
     Process raw search results into standardized format.
 
@@ -1407,7 +1407,7 @@ def process_web_search_results(search_results: Dict, search_engine: str) -> Dict
     for consistent handling across different search providers.
 
     Args:
-        search_results (Dict): Raw results from search engine
+        search_results (Union[Dict, str]): Raw results from search engine; dict of raw results; for tavily/searx a raw string payload is also accepted
         search_engine (str): Name of the search engine
 
     Returns:
@@ -1496,7 +1496,7 @@ def process_web_search_results(search_results: Dict, search_engine: str) -> Dict
     if not isinstance(search_results, dict) and not (
         isinstance(search_results, str) and search_engine.lower() in ("tavily", "searx")
     ):
-        raise TypeError("search_results must be a dictionary")
+        raise TypeError("search_results must be a dictionary (or a string for tavily/searx)")
 
     # Only a dict carries this request-echo metadata; a string payload (see
     # above) has none of it, so every field below falls back to its default.
@@ -2847,8 +2847,8 @@ def parse_searx_results(searx_search_results: "list | dict | str", web_search_re
 
     Raises:
         ValueError: when a string payload cannot be parsed as JSON, the
-            decoded payload is an error dict, or the decoded payload is
-            anything other than a list.
+            decoded payload is an error dict, the decoded payload is
+            anything other than a list, or a list element is not a dict.
     """
     if isinstance(searx_search_results, str):
         try:
@@ -2865,7 +2865,9 @@ def parse_searx_results(searx_search_results: "list | dict | str", web_search_re
     if "results" not in web_search_results_dict:
         web_search_results_dict["results"] = []
 
-    for item in searx_search_results:
+    for i, item in enumerate(searx_search_results):
+        if not isinstance(item, dict):
+            raise ValueError(f"Unexpected Searx result item at index {i}: expected an object")
         url = item.get("link") or item.get("url") or ""
         snippet = item.get("snippet") or item.get("content") or ""
         web_search_results_dict["results"].append({
@@ -3090,7 +3092,8 @@ def parse_tavily_results(tavily_search_results: "dict | str", web_search_results
             standardized result entries to its "results" list.
 
     Raises:
-        ValueError: when `tavily_search_results` is an error string.
+        ValueError: when `tavily_search_results` is an error string, or when
+            a list element in results is not a dict.
     """
     if isinstance(tavily_search_results, str):
         raise ValueError(tavily_search_results)
@@ -3098,7 +3101,9 @@ def parse_tavily_results(tavily_search_results: "dict | str", web_search_results
     if "results" not in web_search_results_dict:
         web_search_results_dict["results"] = []
 
-    for result in (tavily_search_results or {}).get("results", []):
+    for i, result in enumerate((tavily_search_results or {}).get("results", [])):
+        if not isinstance(result, dict):
+            raise ValueError(f"Unexpected Tavily result item at index {i}: expected an object")
         content = result.get("content", "")
         web_search_results_dict["results"].append({
             "title": result.get("title", ""),
