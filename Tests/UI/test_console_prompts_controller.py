@@ -779,3 +779,46 @@ def test_moved_methods_are_gone_from_the_screen() -> None:
     ):
         assert not hasattr(ChatScreen, name), name
         assert hasattr(ConsolePromptsController, name), name
+
+
+def test_stale_reason_reports_the_session_change_before_the_system_change() -> None:
+    """Order matters here, and nothing else pins it.
+
+    `_stale_reason` checks two facts pinned when the modal opened: the session
+    it was opened over, and the System prompt it disclosed. When BOTH have
+    moved the user sees only the first message, so the order chooses the copy.
+    A task-2766 review mutated this ordering and all 28 controller tests plus
+    all 304 native-chat-flow tests still passed -- the branch that reports the
+    session change was reachable in no test where the fingerprint had also
+    moved.
+
+    Session-before-System is the right order because the session change is the
+    larger fact: the System prompt the modal disclosed belongs TO a session, so
+    naming the System prompt while the user has actually switched sessions
+    describes a consequence rather than the cause.
+    """
+    from tldw_chatbook.UI.Console_Modules.prompts import (
+        _ConsolePromptImprovementFlow,
+    )
+
+    flow = _ConsolePromptImprovementFlow.__new__(_ConsolePromptImprovementFlow)
+    flow._session_id = "session-a"
+    flow._current_system_fingerprint = "fingerprint-a"
+    flow._store = SimpleNamespace(active_session_id="session-a")
+    flow._active_system_fingerprint = lambda: "fingerprint-a"
+
+    assert flow._stale_reason() == ""
+
+    # Only the System prompt moved.
+    flow._active_system_fingerprint = lambda: "fingerprint-b"
+    assert flow._stale_reason() == "The Console System prompt changed."
+
+    # Only the session moved.
+    flow._active_system_fingerprint = lambda: "fingerprint-a"
+    flow._store = SimpleNamespace(active_session_id="session-b")
+    assert flow._stale_reason() == "The active Console session changed."
+
+    # BOTH moved -- the session is reported, not the System prompt. This is
+    # the assertion the mutation slipped past.
+    flow._active_system_fingerprint = lambda: "fingerprint-b"
+    assert flow._stale_reason() == "The active Console session changed."

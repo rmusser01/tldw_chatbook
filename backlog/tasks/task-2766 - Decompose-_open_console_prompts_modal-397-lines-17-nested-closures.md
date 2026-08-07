@@ -55,3 +55,25 @@ Wave 3 moved this method verbatim into ConsolePromptsController. Review judged i
 
 **Files**: `tldw_chatbook/UI/Console_Modules/prompts.py`, `tldw_chatbook/UI/Console_Modules/wiring.py`, `Tests/UI/test_console_prompts_controller.py`.
 <!-- SECTION:NOTES:END -->
+
+### Review addenda (task-2766 review)
+
+- Report numbers were stale by one commit: `prompts.py` is **1,484** lines, not
+  1,474; docstrings **+168**, code-only **804 -> 841 (+37)**.
+- "5 byte-identical bodies" is inexact -- the identical set is **6** different
+  bodies (`capture_manual_resolution` drops its `nonlocal` line).
+- The review confirmed the two disclosed risks are narrower than advertised:
+  the `record_prompt_usage` non-identity drops no usage record in EITHER arm
+  (the old path let the raise escape into a modal that showed "capture it
+  again" *after* the apply had landed), and the flow object's lifetime is
+  exactly one per modal open -- mutation-proved.
+- Two findings actioned here: the duplicate search-limit constant introduced
+  while addressing Qodo is collapsed to one number with two readers, and
+  `_stale_reason`'s ordering now has a test. The review mutated that ordering
+  and 28 controller + 304 native-chat-flow tests all still passed; the new
+  test fails on exactly that mutation.
+- One residual, unreachable and recorded rather than changed: the three deps
+  handed to the flow are property reads evaluated at flow construction, where
+  the old closures re-read per call. Screen-level late binding is preserved by
+  the `wiring.py` lambdas, and nothing rebinds the controller's `_..._fn`
+  attributes.

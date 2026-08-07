@@ -142,7 +142,9 @@ CONSOLE_PROMPT_PAGE_SIZE = 10
 
 #: Row cap for a prompt SEARCH, as distinct from a browse page. The modal
 #: renders a single unpaged result list for a search, so this bounds what a
-#: user can be shown at once rather than what one page holds.
+#: user can be shown at once rather than what one page holds. The controller
+#: aliases this as `_CONSOLE_PROMPT_SEARCH_LIMIT` for `/prompt` resolution --
+#: one number, two readers.
 CONSOLE_PROMPT_SEARCH_LIMIT = 25
 
 if TYPE_CHECKING:
@@ -707,8 +709,11 @@ class ConsolePromptsController:
 
     # Bounded prompt-search page size for `/prompt` resolution and the
     # picker's own search callable -- mirrors Task 11's picker contract
-    # (PromptScopeService.search_prompts, FTS-ranked, <= 25 rows).
-    _CONSOLE_PROMPT_SEARCH_LIMIT = 25
+    # (PromptScopeService.search_prompts, FTS-ranked, <= 25 rows). Aliases
+    # the module-level constant rather than repeating the number: the two
+    # were briefly separate copies, which is one tuning edit away from the
+    # picker and `/prompt` disagreeing about how many rows a search returns.
+    _CONSOLE_PROMPT_SEARCH_LIMIT = CONSOLE_PROMPT_SEARCH_LIMIT
 
     _LIBRARY_PROMPT_INSERT_BLOCKED_COPY = "Finish provider setup to insert prompts."
     _RECIPE_EXECUTION_BLOCKED_COPY = (
