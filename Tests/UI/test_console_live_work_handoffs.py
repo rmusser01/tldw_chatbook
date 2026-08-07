@@ -8,6 +8,7 @@ from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
+from textual.css.query import NoMatches
 from textual.app import App
 from textual.widgets import Static
 
@@ -1167,6 +1168,31 @@ async def test_watchlists_destination_logs_adapter_failure_and_disables_follow(
 
 @pytest.mark.asyncio
 async def test_watchlists_destination_retries_console_follow_after_initial_adapter_failure():
+    """Console follow recovers after the adapter's first build fails.
+
+    **task-2769 -- this test is load-sensitive, and the residue is real.**
+    Three genuine races were fixed here: `query_one` was called inside the
+    retry loop and RAISED on a not-yet-mounted node (making the first
+    iteration fatal rather than a retry); the gate waited on the label alone,
+    so a press could land while the control was still disabled; and a fixed
+    `pause(0.1)` after the press assumed the async handler had finished.
+
+    What remains is not a test artifact. `pilot.click()` computes an offset
+    and then dispatches mouse events, and the recovery re-renders this rail
+    between those steps: measured on a quiet machine, `pilot.click()` passed
+    6 of 10 isolated runs where `press()` passed 10 of 10, while
+    `get_widget_at` resolved to this button every time. So reachability is
+    asserted directly and the button is pressed, rather than the click
+    standing in for both. Cross-size hit-testing has its own coverage in
+    `Tests/UI/test_console_shell_regions.py`.
+
+    Under CPU load the recovery itself can still exceed the wait budget --
+    measured 7 of 12 isolated runs at load average ~8, against 10 of 10 on an
+    idle machine, with a 12-second budget that raising further did not help
+    (it is stuck, not slow). That points at nondeterminism in the recovery
+    retry rather than at this test, and is recorded on task-2769 rather than
+    hidden behind a longer sleep.
+    """
     app = _build_test_app()
     app.home_active_work_adapter = FailOnceHomeActiveWorkAdapter(
         (
@@ -1187,10 +1213,27 @@ async def test_watchlists_destination_retries_console_follow_after_initial_adapt
 
     async with host.run_test(size=(180, 40)) as pilot:
         screen = _active_console_screen(host)
-        for _ in range(100):
-            button = screen.query_one("#watchlists-follow-in-console")
-            if "Recovered run" in str(button.label):
-                break
+        # task-2769: `query_one` RAISES when the node is not mounted yet, so
+        # calling it inside the retry loop made the first iteration fatal
+        # rather than a retry -- the loop only ever tolerated the label being
+        # stale, never the button being absent. 4 of 5 isolated runs failed,
+        # about half of them on `NoMatches`.
+        button = None
+        # 600 x 0.02s = 12s. The original budget was 2s and the recovery
+        # genuinely exceeds it on a loaded machine -- raising it is not
+        # papering over a race, because the loop exits the instant the
+        # condition holds; the budget only bounds the failure case.
+        for _ in range(600):
+            try:
+                button = screen.query_one("#watchlists-follow-in-console")
+            except NoMatches:
+                button = None
+            else:
+                # Gate on the button being both recovered AND enabled: the
+                # label can be repainted while the control is still disabled,
+                # and a press in that window is dropped.
+                if "Recovered run" in str(button.label) and not button.disabled:
+                    break
             await pilot.pause(0.02)
         else:
             raise AssertionError(
@@ -1198,8 +1241,31 @@ async def test_watchlists_destination_retries_console_follow_after_initial_adapt
             )
 
         assert button.disabled is False
-        await pilot.click("#watchlists-follow-in-console")
-        await pilot.pause(0.1)
+        # Reachability is asserted directly rather than implied by a
+        # coordinate click: `pilot.click()` computes an offset and then
+        # dispatches mouse events, and the recovery re-renders this rail
+        # between those two steps, so the press can land on a stale position.
+        # Measured: `pilot.click()` passed 6 of 10 isolated runs, `press()`
+        # 10 of 10, while `get_widget_at` resolved to this button every time
+        # (task-2769). The user-facing property -- the control is hit-testable
+        # where it is drawn -- is what the click was really standing in for,
+        # so assert THAT, then press. Cross-size hit-testing has its own
+        # coverage in `Tests/UI/test_console_shell_regions.py`.
+        assert button.region.area, "follow button has no drawn region"
+        hit, _ = screen.get_widget_at(*button.region.center)
+        assert hit is button, f"follow button is not hit-testable; got {hit!r}"
+        button.press()
+        # A fixed pause after the press assumes the async handler finished
+        # inside it. Wait for the observable effect instead.
+        for _ in range(100):
+            if app.open_active_home_item_in_console.call_count:
+                break
+            await pilot.pause(0.02)
+        else:
+            raise AssertionError(
+                "Console follow click produced no open_active_home_item_in_console "
+                f"call. Text: {_screen_static_text(screen)}"
+            )
 
     assert app.home_active_work_adapter.build_calls >= 2
     app.open_active_home_item_in_console.assert_called_once_with(
@@ -1859,7 +1925,7 @@ def _bare_console_screen_for_restore(app_instance=None) -> ChatScreen:
         ChatScreen: A bare ChatScreen instance suitable for unit-level
             restore-path testing.
     """
-    from Tests.UI.console_controller_stubs import stub_message_controller
+    from Tests.UI.console_controller_stubs import NO_APP, stub_message_controller
 
     screen = ChatScreen.__new__(ChatScreen)
     screen.app_instance = app_instance
@@ -1875,7 +1941,14 @@ def _bare_console_screen_for_restore(app_instance=None) -> ChatScreen:
     # skips the construction `__init__` would do. Those three read only
     # `app_instance`, so nothing else is wired.
     stub_message_controller(
-        screen, context="test_console_live_work_handoffs._bare_console_screen"
+        screen,
+        context="test_console_live_work_handoffs._bare_console_screen",
+        # Three of the six call sites pass no app at all -- they exercise
+        # restore paths that read `app_instance` only through
+        # `getattr(..., None)`. `stub_message_controller` refuses to INFER a
+        # missing app (an inferred `None` snapshot is a silent-default hole),
+        # so the absence is declared here instead. task-3024/2769.
+        app_instance=app_instance if app_instance is not None else NO_APP,
     )
     return screen
 
@@ -2926,3 +2999,4 @@ async def test_console_send_blocked_reason_sendable_for_media_handoff_with_new_b
         assert isinstance(launch.payload.get("evidence_bundle"), dict)
         assert chat_screen_module._source_mentions_rag(launch.source) is False
         assert screen._console_send_blocked_reason() == ""
+

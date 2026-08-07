@@ -1303,6 +1303,58 @@ async def test_console_conversation_star_press_confirms_the_toggle():
 
 
 @pytest.mark.asyncio
+async def test_console_conversation_star_confirms_an_untitled_conversation():
+    """task-3024: an empty title must still confirm, not crash after the write.
+
+    `"".splitlines()` is `[]`, so the first-line read raised `IndexError` on an
+    untitled conversation -- and it did so AFTER the durable star write, so the
+    star landed while the user saw no confirmation and the context rail never
+    re-synced. The toast is supposed to simply omit the quoted name here, which
+    the suffix logic already handled; only the first-line read was unguarded.
+    """
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workspace-context")
+        tray = console.query_one(
+            "#console-workspace-context", ConsoleWorkspaceContextTray
+        )
+        tray.sync_state(_base_grouped_workspace_state())
+        await pilot.pause()
+
+        star = next(
+            s
+            for s in console.query(".console-conversation-star")
+            if not getattr(s, "starred", False)
+        )
+        star.conversation_title = ""
+
+        starred: list[str] = []
+
+        class _Marks:
+            def is_starred(self, conversation_id):
+                return False
+
+            def star_conversation(self, conversation_id):
+                starred.append(conversation_id)
+
+            def unstar_conversation(self, conversation_id):
+                return None
+
+        console.app_instance.conversation_local_marks_service = _Marks()
+        notes: list[str] = []
+        console.app_instance.notify = lambda message, **kwargs: notes.append(message)
+
+        await console.on_button_pressed(Button.Pressed(star))
+
+        # The durable write always landed; the confirmation is what was lost.
+        assert starred, "the star write did not happen"
+        assert notes == ["Starred."], notes
+
+
+@pytest.mark.asyncio
 async def test_console_workspace_context_preserves_duplicate_starred_workspace_row_keys() -> (
     None
 ):

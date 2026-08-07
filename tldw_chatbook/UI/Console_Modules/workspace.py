@@ -2006,7 +2006,13 @@ class ConsoleWorkspaceController:
             return
         # TASK-357: confirm the toggle so a star/unstar is not a silent state
         # change (the review saw an accidental star go unnoticed).
-        title = str(conversation_title or "").splitlines()[0].strip()
+        # `"".splitlines()` is `[]`, so indexing [0] raised IndexError on an
+        # untitled conversation -- after the durable star write, which meant
+        # the toggle landed but the user got no confirmation and the context
+        # rail never re-synced (task-3024). The empty case was always
+        # intended: `title_suffix` below already drops the quoted name when
+        # `title` is falsy.
+        title = next(iter(str(conversation_title or "").splitlines()), "").strip()
         # notify() interprets Rich markup, so escape the stored title before
         # interpolating it (a title like "[red]x[/red]" would otherwise inject
         # styling into the toast) — matches the escape_markup convention used
