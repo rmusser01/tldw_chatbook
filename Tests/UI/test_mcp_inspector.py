@@ -4418,6 +4418,88 @@ async def test_section_change_disarms_a_pending_confirm():
         ]
 
 
+class _TallSectionAdvService(ToolExecuteAdvService):
+    """`load_section()` returns a payload that renders ~200+ rows -- the
+    shape the REAL Inventory section produces (every builtin tool's full
+    schema) and the one shape no other fake in this file produces. Fix
+    Round K exists because that gap hid a live defect: with a tall
+    payload, `#mcp-adv-scroll`'s `height: 1fr` (inside the T12
+    Collapsible) resolved without subtracting the rows above the
+    collapsible, so the box hung past the screen bottom and the Run
+    Action button was unreachable at ANY terminal height."""
+
+    async def load_section(self, section=None):
+        self.load_section_calls += 1
+        return {
+            "tools": [
+                {
+                    "name": f"tool_{i}",
+                    "description": "A long wrapping description. " * 4,
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {
+                            "alpha": {"type": "string"},
+                            "beta": {"type": ["integer", "null"]},
+                        },
+                        "required": ["alpha"],
+                    },
+                }
+                for i in range(10)
+            ]
+        }
+
+
+class _TallSectionInspectorApp(App):
+    """Bundled CSS + real workbench id, like `InspectorAppWithBundledCSS`
+    above -- geometry claims are meaningless against Textual's defaults."""
+
+    CSS_PATH = _BUNDLED_CSS_PATH
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.service = _TallSectionAdvService()
+
+    def compose(self) -> ComposeResult:
+        yield MCPInspector(id="mcp-hub-inspector")
+
+    def on_mount(self) -> None:
+        self.query_one(MCPInspector).set_service_context(
+            self.service, [("Inventory", "inventory")]
+        )
+
+
+@pytest.mark.asyncio
+async def test_run_action_is_reachable_under_a_tall_section_payload():
+    """Fix Round K (live walkthrough of PR #1385): with a real-sized
+    section payload, `scroll_visible()` must be able to bring
+    `#mcp-adv-run` fully on screen and a real click must land on it --
+    before the fix the box's own region hung below the screen bottom and
+    the click raised OutOfBounds no matter how far the scroll went
+    (reproduced live at 300 terminal rows; this test red-verifies by
+    restoring `height: 1fr` on `#mcp-adv-scroll`/`#mcp-adv-collapsible`).
+    The press must also be the ARM press (confirm sentence, no
+    execution): reachability that ran the tool unconfirmed would be a
+    worse defect than the one this fixes."""
+    app = _TallSectionInspectorApp()
+    async with app.run_test(size=(120, 50)) as pilot:
+        await pilot.pause()
+        await pilot.pause()
+        run_button = app.query_one("#mcp-adv-run", Button)
+        run_button.scroll_visible(animate=False)
+        await pilot.pause()
+        await pilot.pause()
+
+        await pilot.click("#mcp-adv-run")  # raises OutOfBounds when clipped
+        await pilot.pause()
+
+        assert app.service.action_calls == []  # armed, not executed
+        assert inspector_confirm_key(app) is not None
+
+
+def inspector_confirm_key(app: App):
+    return app.query_one(MCPInspector)._advanced_confirm_key
+
+
 class _ArmDuringLoadAdvService(ToolExecuteAdvService):
     """`load_section()` blocks (once, when told to via `block_next`) until
     the test releases it -- opening a REAL await window inside

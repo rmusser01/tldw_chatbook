@@ -798,20 +798,40 @@ class MCPInspector(Vertical):
     to claim directly (so it still fills the remaining pane height when
     expanded) and drop back to auto when collapsed (Contents is display:
     none then -- reserving 1fr of empty space below the title bar would
-    waste most of the pane). #mcp-adv-scroll keeps height:1fr for when it
-    IS visible; nested inside Collapsible's own auto-height Contents this
-    mostly falls back to intrinsic sizing, but VerticalScroll still scrolls
-    on overflow regardless, so nothing breaks -- exact geometry polish is
-    T13's job. */
+    waste most of the pane).
+
+    Fix Round K (live walkthrough of PR #1385): the T12 comment here used
+    to claim the auto-height Contents "mostly falls back to intrinsic
+    sizing, but VerticalScroll still scrolls on overflow regardless, so
+    nothing breaks -- exact geometry polish is T13's job." REFUTED LIVE:
+    with a real section loaded (Inventory's ~200-row JSON), the Action
+    select, the Payload editor, and the Run Action button were
+    unreachable at ANY terminal height (reproduced at 300 rows; wheel and
+    PageDown both bottom out mid-JSON) -- the very hatch this branch
+    spent rounds making truthful could not be operated. Tests never saw
+    it because every fake service returns a few-line payload. Measured
+    with a bundled-CSS probe: `1fr` on this chain resolves without
+    subtracting the rows ABOVE the collapsible inside the pane, so
+    #mcp-adv-scroll's region hung 3+ rows past the screen bottom and its
+    max scroll could never bring the tail rows into view
+    (`pilot.click("#mcp-adv-run")` -> OutOfBounds). A `> Contents
+    { height: 1fr }` bridge did not even apply (styles.height stayed
+    auto). The robust fix drops the fr chain entirely: the collapsible is
+    auto-height and the scroll caps itself (`max-height`), so the box
+    always fits on screen whole and scrolls its overflow inside a real
+    viewport -- probe click goes green, and live the runner is reachable
+    again (End key / wheel, then arm-confirm verified). T13 never ran;
+    this is that geometry debt, paid where it bit. */
     #mcp-adv-collapsible {
-        height: 1fr;
+        height: auto;
         min-height: 0;
     }
     #mcp-adv-collapsible.-collapsed {
         height: auto;
     }
     #mcp-adv-scroll {
-        height: 1fr;
+        height: auto;
+        max-height: 24;
         min-height: 0;
     }
     #mcp-adv-payload {
