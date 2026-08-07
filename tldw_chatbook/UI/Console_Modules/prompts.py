@@ -336,7 +336,14 @@ class ConsolePromptsController:
 
     @property
     def push_screen(self) -> Any:
-        """`Screen.app.push_screen`, bound. See `__init__`'s docstring."""
+        """`Screen.app.push_screen`, live-read rather than snapshotted.
+
+        See `__init__`'s docstring for why a framework service is reached
+        through a property on every access instead of captured once.
+
+        Returns:
+            Any: The screen's app-level `push_screen`, bound.
+        """
         return self._screen.app.push_screen
 
     # -- Named constructor dependencies -------------------------------------

@@ -1017,7 +1017,22 @@ class ConsoleMessageController:
         await self._sync_native_console_chat_ui()
 
     async def handle_console_message_action(self, event: Button.Pressed) -> bool:
-        """Route selected transcript message actions through the native action service."""
+        """Route a transcript message action through the native action service.
+
+        The dispatcher for the transcript's per-message buttons: it decodes
+        the button id, then routes to the cluster that owns that action. It
+        stays one method because the routing table IS the unit -- splitting
+        it would relocate the switch, not remove it.
+
+        Args:
+            event: The `Button.Pressed` from a transcript message action
+                button, whose id encodes `<action>-<message id>`.
+
+        Returns:
+            bool: True when the id parsed and the action was dispatched
+                (the event is then stopped); False when the button is not a
+                message action, leaving the event to propagate.
+        """
         button_id = event.button.id or ""
         action_id, message_id = self._parse_console_message_action_button_id(button_id)
         if action_id is None or message_id is None:

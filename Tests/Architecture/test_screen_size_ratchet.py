@@ -35,6 +35,7 @@ that made it hard to change.
 from __future__ import annotations
 
 import ast
+from functools import lru_cache
 from pathlib import Path
 
 import pytest
@@ -54,8 +55,15 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
 }
 
 
+@lru_cache(maxsize=None)
 def _measure(rel_path: str, class_name: str) -> tuple[int, int]:
     """Line count of a module and method count of one class inside it.
+
+    Cached: both tests below run over the same parametrization, so an
+    uncached version reads and `ast.parse`s every budgeted file twice
+    per session for no extra coverage. The cache is per-process, so
+    mutation-testing this ratchet (edit the file, re-run) still works --
+    just not by editing a file from inside a running test.
 
     Args:
         rel_path: Repo-relative path to the module.
@@ -90,6 +98,19 @@ def _measure(rel_path: str, class_name: str) -> tuple[int, int]:
 @pytest.mark.unit
 @pytest.mark.parametrize("rel_path", sorted(_BUDGETS))
 def test_screen_does_not_grow_past_its_budget(rel_path: str) -> None:
+    """The ceiling itself: a budgeted screen may not exceed its numbers.
+
+    Args:
+        rel_path: Repo-relative path of the budgeted module, supplied by
+            the parametrization over `_BUDGETS`.
+
+    Raises:
+        AssertionError: If the module grew past its line budget or the
+            class grew past its method budget. The message names
+            `UI/Console_Modules/` and `DESIGN.md` section 7, because the
+            fix is to put the new code somewhere else -- never to raise
+            the number.
+    """
     class_name, max_lines, max_methods = _BUDGETS[rel_path]
     lines, methods = _measure(rel_path, class_name)
 
