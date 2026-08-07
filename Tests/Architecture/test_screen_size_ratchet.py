@@ -44,6 +44,10 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 
 #: path -> (class name, max lines, max methods in that class).
 #: LOWER these when a decomposition wave lands. Never raise them.
+#: Lowered 2026-08-07 again by task-3023, which repointed the tests that
+#: patched controllers through this module's namespace and so freed the
+#: wave-4 re-export imports for deletion: 17,749 -> 17,727 lines (methods
+#: unchanged at 593 — only imports went).
 #: Lowered 2026-08-07 at the wave-4 close (controller wiring out of
 #: `__init__`, button-dispatch routing, the agent cluster): 18,930/600 ->
 #: 17,749/593. Wave 3 recorded 18,909/598; dev grew the screen by 21 lines
@@ -54,7 +58,7 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 #: pre-rebase measurement and both landed red, because dev moved underneath
 #: it -- a budget derived from a stale base fails the moment it merges.
 _BUDGETS: dict[str, tuple[str, int, int]] = {
-    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 17749, 593),
+    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 17727, 593),
 }
 
 

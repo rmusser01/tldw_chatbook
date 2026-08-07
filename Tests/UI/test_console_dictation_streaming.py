@@ -27,6 +27,7 @@ from Tests.UI.test_console_dictation import (
 from tldw_chatbook.Chat import console_voice_input as voice_module
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Chat.console_voice_input import VoiceCommand, VoiceFailed
+from tldw_chatbook.UI.Console_Modules import dictation as dictation_module
 from tldw_chatbook.UI.Screens import chat_screen as chat_screen_module
 from tldw_chatbook.Widgets.Console import ConsoleComposerBar
 
@@ -227,7 +228,7 @@ def _install_streaming_session(monkeypatch, service: FakeDictationService) -> li
         return service
 
     def factory(self):
-        session = chat_screen_module.ConsoleStreamingDictationSession(
+        session = dictation_module.ConsoleStreamingDictationSession(
             on_event=self._emit_console_dictation_event,
             service_factory=_service_factory,
         )
@@ -235,7 +236,7 @@ def _install_streaming_session(monkeypatch, service: FakeDictationService) -> li
         return session
 
     monkeypatch.setattr(
-        chat_screen_module.ConsoleDictationController,
+        dictation_module.ConsoleDictationController,
         "_create_console_dictation_session",
         factory,
     )
@@ -730,7 +731,7 @@ def test_speech_resumed_is_forwarded_without_touching_recognizer_state():
     `VoiceFinal`/`VoiceCommand`/a non-blank `VoicePartial`.
     """
     events: list = []
-    session = chat_screen_module.ConsoleStreamingDictationSession(
+    session = dictation_module.ConsoleStreamingDictationSession(
         on_event=lambda _session, event: events.append(event),
     )
     session._capture_generation = 3
@@ -749,7 +750,7 @@ def test_a_stale_speech_resumed_is_dropped_by_the_session_adapter():
     must never reach the screen.
     """
     events: list = []
-    session = chat_screen_module.ConsoleStreamingDictationSession(
+    session = dictation_module.ConsoleStreamingDictationSession(
         on_event=lambda _session, event: events.append(event),
     )
     session._capture_generation = 5
@@ -1585,14 +1586,14 @@ async def test_the_console_capture_is_given_a_bounded_pcm_budget(monkeypatch):
         await _wait_for_mic_label(composer, pilot, "Rec ●")
 
         bound = service.factory_kwargs.get("max_buffer_bytes")
-        assert bound == chat_screen_module.CONSOLE_DICTATION_MAX_BYTES
+        assert bound == dictation_module.CONSOLE_DICTATION_MAX_BYTES
         # Derived from the session cap, not a magic number: 60s of 16kHz mono
         # 16-bit PCM plus headroom, so the wall timer always ends an ordinary
         # capture first and this stays a memory backstop.
         assert bound >= int(
-            chat_screen_module.CONSOLE_DICTATION_SAMPLE_RATE
-            * chat_screen_module.CONSOLE_DICTATION_SAMPLE_WIDTH
-            * chat_screen_module.CONSOLE_DICTATION_MAX_SECONDS
+            dictation_module.CONSOLE_DICTATION_SAMPLE_RATE
+            * dictation_module.CONSOLE_DICTATION_SAMPLE_WIDTH
+            * dictation_module.CONSOLE_DICTATION_MAX_SECONDS
         )
         assert service.factory_kwargs.get("on_buffer_limit") is not None
 
@@ -1710,7 +1711,7 @@ async def test_cancelling_releases_the_microphone_off_the_ui_thread(monkeypatch)
     """
     session = _GatedDiscardSession()
     monkeypatch.setattr(
-        chat_screen_module.ConsoleDictationController,
+        dictation_module.ConsoleDictationController,
         "_create_console_dictation_session",
         lambda self: session,
     )
@@ -1766,14 +1767,14 @@ async def test_cancelling_releases_the_microphone_off_the_ui_thread(monkeypatch)
 def test_join_segments_concatenates_break_entries_without_padding():
     """A plain `" ".join` would sandwich a break in spaces: `"one. \n\n two"`."""
     assert (
-        chat_screen_module._join_segments(["one.", "\n\n", "two"]) == "one.\n\ntwo"
+        dictation_module._join_segments(["one.", "\n\n", "two"]) == "one.\n\ntwo"
     )
     assert (
-        chat_screen_module._join_segments(["one", "\n", "two", "\n\n", "three"])
+        dictation_module._join_segments(["one", "\n", "two", "\n\n", "three"])
         == "one\ntwo\n\nthree"
     )
-    assert chat_screen_module._join_segments([]) == ""
-    assert chat_screen_module._join_segments(["\n\n"]) == "\n\n"
+    assert dictation_module._join_segments([]) == ""
+    assert dictation_module._join_segments(["\n\n"]) == "\n\n"
 
 
 @pytest.mark.asyncio

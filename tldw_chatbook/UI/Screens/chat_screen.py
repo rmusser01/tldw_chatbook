@@ -51,52 +51,30 @@ from ..Console_Modules.frame import (
     CONSOLE_QUIET_FRAME_BORDER,
     frame_console_region,
 )
-# Symbols below marked `# noqa: F401  (alias re-export; ...)` are NOT
-# referenced by this module's code -- the decomposition moved their users into
-# `..Console_Modules/` -- but they are load-bearing anyway: tests reach them
-# through THIS module's namespace, as `chat_screen_module.<Name>` or as
-# `setattr(chat_screen_module, "<Name>", ...)`. Neither form is visible to an
-# import-grep, and the quoted one is not even an identifier. Deleting them --
-# by hand, or via `ruff --fix` / autoflake acting on the F401s they raise --
-# fails those tests with `AttributeError`. That was tripped once while making
-# the wave-4 move, and the first attempt to mark them got the set wrong in
-# BOTH directions (four classes marked that nothing reaches; six symbols
-# reached that were unmarked, one in this very block). So the set is now
-# DERIVED, not hand-maintained:
-# `Tests/Architecture/test_module_alias_reexports.py` recomputes it and fails
-# if an at-risk import is unmarked. Add or remove markers in response to that
-# test, not by eye. The clean fix is repointing the test sites at the owning
-# modules (task-3023); the markers are the holding position until then.
-from ..Console_Modules.agent import ConsoleAgentController
+# The Console controller classes themselves are deliberately NOT imported
+# here: `..Console_Modules.wiring.build_console_controllers` constructs every
+# one of them, so this module needs only the handful of helper symbols its own
+# body actually uses. Tests that steer a controller patch it on the module
+# that defines it (`..Console_Modules.dictation` and friends) rather than
+# through this module's namespace -- see task-3023, which repointed them.
 from ..Console_Modules.dictation import (
-    CONSOLE_DICTATION_MAX_BYTES,  # noqa: F401  (alias re-export; see note above)
-    CONSOLE_DICTATION_MAX_SECONDS,  # noqa: F401  (alias re-export; see note above)
-    CONSOLE_DICTATION_SAMPLE_RATE,  # noqa: F401  (alias re-export; see note above)
-    CONSOLE_DICTATION_SAMPLE_WIDTH,  # noqa: F401  (alias re-export; see note above)
-    ConsoleDictationController,  # noqa: F401  (alias re-export; see note above)
     ConsoleDictationEvent,
     ConsoleDictationLimitSignal,
-    ConsoleStreamingDictationSession,  # noqa: F401  (alias re-export; see note above)
-    _join_segments,  # noqa: F401  (alias re-export; see note above)
     _VOICE_ACK_NOT_SENT,
     _VOICE_ACK_SESSION_CHANGED,
 )
 from ..Console_Modules.hands_free import (
-    ConsoleHandsFreeController,
     ConsoleHandsFreeSession,
 )
 from ..Console_Modules.left_rail import ConsoleLeftRail
 from ..Console_Modules.message import ConsoleMessageController
-from ..Console_Modules.prompts import ConsolePromptsController
 from ..Console_Modules.right_rail import ConsoleInspectorRail
 from ..Console_Modules.transcript import (
     ConsoleTranscriptRegion,
     _ConsoleTranscriptReadingState,
 )
 from ..Console_Modules.wiring import build_console_controllers
-from ..Console_Modules.workspace import ConsoleWorkspaceController  # noqa: F401  (alias re-export; see note above)
 from ..Console_Modules.session import (
-    ConsoleSessionController,
     _canonical_card_character_id,
     _character_session_prompt_seed,
     _has_selected_text,
