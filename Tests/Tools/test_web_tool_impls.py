@@ -772,3 +772,126 @@ def test_fetch_robots_txt_fetch_is_itself_rate_limited(fetch_env, monkeypatch):
     fetch_env.routes["http://example.com/page"] = _text_page(b"hello")
     web_fetch("http://example.com/page")
     assert fetch_env.clock.sleeps == [pytest.approx(1.0)]
+
+
+# ---------------------------------------------------------------------------
+# robots.txt enforcement -- fix round 1 (review findings)
+# ---------------------------------------------------------------------------
+
+def test_fetch_robots_txt_redirect_is_followed_and_enforced(fetch_env, monkeypatch):
+    """Important 1: a redirecting robots.txt (e.g. HTTP canonicalization)
+    must be FOLLOWED, not treated as an unreachable fetch -- the latter
+    negative-caches the host (fail open) for ROBOTS_CACHE_TTL_SECONDS,
+    silently disabling enforcement for any host whose robots.txt 3xxs."""
+    _enable_robots(monkeypatch)
+    fetch_env.routes["http://example.com/robots.txt"] = httpx.Response(
+        301, headers={"location": "http://example.com/static/robots.txt"}
+    )
+    fetch_env.routes["http://example.com/static/robots.txt"] = _text_page(
+        b"User-agent: *\nDisallow: /\n"
+    )
+    fetch_env.routes["http://example.com/page"] = _text_page(b"hello")
+    with pytest.raises(LocalToolError, match=r"\[robots-disallowed\]"):
+        web_fetch("http://example.com/page")
+    # The redirect target must have actually been followed and consulted,
+    # not just the initial 301 response.
+    assert "http://example.com/robots.txt" in fetch_env.calls
+    assert "http://example.com/static/robots.txt" in fetch_env.calls
+
+
+def test_fetch_robots_txt_redirect_loop_exhausts_cap_and_fails_open(fetch_env, monkeypatch):
+    """A robots.txt redirect chain that never resolves must still fail open
+    once the bounded hop cap is exhausted, not raise or hang."""
+    _enable_robots(monkeypatch)
+    for i in range(FETCH_MAX_REDIRECTS + 2):
+        fetch_env.routes[f"http://example.com/robots{i}.txt"] = httpx.Response(
+            301, headers={"location": f"http://example.com/robots{i + 1}.txt"}
+        )
+    # The FIRST hop must be at the well-known /robots.txt location.
+    fetch_env.routes["http://example.com/robots.txt"] = httpx.Response(
+        301, headers={"location": "http://example.com/robots0.txt"}
+    )
+    fetch_env.routes["http://example.com/page"] = _text_page(b"hello")
+    assert web_fetch("http://example.com/page") == "hello"
+
+
+def test_webfetch_settings_defaults_to_true_with_no_config_override():
+    """Important 2a: _webfetch_settings() itself is otherwise exercised by
+    ZERO tests -- every fixture/helper in this file replaces the whole
+    seam, so a section-name typo or a flipped default in the real function
+    would ship robots-off with every other test green. This calls the REAL
+    function against the per-test sandboxed config (autouse
+    isolate_test_environment in Tests/conftest.py provides a fresh
+    per-test config dir with no [webfetch] respect_robots_txt override
+    present, i.e. the shipped default)."""
+    assert web_tool_impls._webfetch_settings() == {"respect_robots_txt": True}
+
+
+def test_webfetch_settings_raw_string_false_disables(monkeypatch):
+    """Important 2b."""
+    import tldw_chatbook.config as config_module
+
+    def fake_get_cli_setting(section, key, default):
+        if (section, key) == ("webfetch", "respect_robots_txt"):
+            return "false"
+        return default
+
+    monkeypatch.setattr(config_module, "get_cli_setting", fake_get_cli_setting)
+    assert web_tool_impls._webfetch_settings() == {"respect_robots_txt": False}
+
+
+def test_webfetch_settings_raw_string_true_uppercase_stays_enabled(monkeypatch):
+    """Important 2c: an uppercase "TRUE" must not be misread as disabled --
+    the same lesson _deep_search_settings recorded, applied to a flag whose
+    default is already True."""
+    import tldw_chatbook.config as config_module
+
+    def fake_get_cli_setting(section, key, default):
+        if (section, key) == ("webfetch", "respect_robots_txt"):
+            return "TRUE"
+        return default
+
+    monkeypatch.setattr(config_module, "get_cli_setting", fake_get_cli_setting)
+    assert web_tool_impls._webfetch_settings() == {"respect_robots_txt": True}
+
+
+@pytest.fixture
+def fetch_env_default_settings(monkeypatch):
+    """Like fetch_env, but deliberately does NOT monkeypatch
+    _webfetch_settings -- used for the one composition test (Important 2d)
+    that proves the REAL, unpatched settings seam defaults robots
+    enforcement ON end-to-end against the per-test sandboxed config."""
+    routes: dict[str, object] = {}
+    calls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        url = str(request.url)
+        calls.append(url)
+        item = routes[url]
+        if isinstance(item, Exception):
+            raise item
+        return item
+
+    monkeypatch.setattr(
+        socket, "getaddrinfo", lambda *a, **k: [(2, 1, 6, "", (_PUBLIC_IP, 80))]
+    )
+    monkeypatch.setattr(
+        web_tool_impls, "_transport", httpx.MockTransport(handler)
+    )
+    clock = _FakeClock()
+    monkeypatch.setattr(web_tool_impls, "time", clock)
+    web_tool_impls._reset_state_for_tests()
+    yield SimpleNamespace(routes=routes, calls=calls, clock=clock)
+    web_tool_impls._reset_state_for_tests()
+
+
+def test_webfetch_default_on_end_to_end_refuses_without_patching_seam(fetch_env_default_settings):
+    """Important 2d: composition test -- sandboxed default config (no
+    monkeypatch of _webfetch_settings anywhere in this test) plus a
+    disallowing robots route means web_fetch must refuse, proving the
+    real default really is on end-to-end, not just at the unit level."""
+    env = fetch_env_default_settings
+    env.routes["http://example.com/robots.txt"] = _text_page(b"User-agent: *\nDisallow: /\n")
+    env.routes["http://example.com/page"] = _text_page(b"hello")
+    with pytest.raises(LocalToolError, match=r"\[robots-disallowed\]"):
+        web_fetch("http://example.com/page")

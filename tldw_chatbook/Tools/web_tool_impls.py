@@ -442,56 +442,133 @@ def _robots_disallowed_message(url: str) -> str:
     )
 
 
+def _fetch_robots_parser(client: httpx.Client, cache_key: str) -> "RobotFileParser | None":
+    """Fetch+parse the robots.txt at ``cache_key`` (``scheme://host[:port]``).
+
+    Own bounded redirect loop (fix round 1, Important 1): a 3xx robots.txt
+    response must not be treated as an unreachable fetch. ``_fetch_once``
+    never follows redirects itself, so a bare non-2xx check previously
+    negative-cached (i.e. DISABLED enforcement for) any host whose
+    robots.txt redirects, for the full ``ROBOTS_CACHE_TTL_SECONDS`` --
+    silently defeating the feature for exactly the hosts (CDN-fronted,
+    HTTP->HTTPS canonicalized) most likely to redirect it. Up to
+    ``FETCH_MAX_REDIRECTS`` hops, each hop re-validated (SSRF) before the
+    GET; a chain that exhausts the cap still fails open, same as any other
+    unreachable-robots outcome.
+
+    Fail-open (design doc ruling 2, "compat" semantics): anything short of
+    a clean 2xx fetch under the byte cap -- network error, non-2xx status
+    after following redirects, a body TRUNCATED at ROBOTS_MAX_BYTES (a
+    half-file could silently drop trailing Disallow lines -- refusing to
+    trust a truncated policy is the honest reading), or a parse failure --
+    returns ``None`` (no restrictions), via broad ``except Exception``
+    around each network step: a robots.txt outage must not brick fetching,
+    and in the shipped code this same broad catch is what keeps every
+    pre-existing route-less-robots test passing unchanged once the fixture
+    opts back into enforcement. Every genuine fail-open exit logs a debug
+    line (fix round 1, Minor 5) so operators can distinguish "allowed
+    because the site's policy says so" from "allowed because robots.txt
+    was unreachable".
+
+    Rate-limited per hop like any other request to that hop's host (design
+    doc ruling 5 -- the politeness probe is itself polite), and — unlike
+    the network/parse steps above — a ``[rate-limited]`` LocalToolError
+    (pathological frozen clock) is NOT caught here: it propagates out of
+    this function exactly like it does for an ordinary page fetch, instead
+    of being swallowed into an accidental ``ROBOTS_CACHE_TTL_SECONDS``
+    enforcement-off window (fix round 1, Minor 5).
+    """
+    current = f"{cache_key}/robots.txt"
+    for _hop in range(FETCH_MAX_REDIRECTS + 1):
+        try:
+            _validate_hop(current)  # symmetry with every other request (design doc Minor 9)
+        except Exception as exc:  # noqa: BLE001 - broad by design: fails open
+            logger.debug(f"robots.txt unreachable for {cache_key}: {exc} — failing open")
+            return None
+        _enforce_rate_limit(urlsplit(current).hostname or "unknown")  # propagates; see docstring
+        try:
+            status, headers, body, truncated, _is_pdf = _fetch_once(client, current, ROBOTS_MAX_BYTES)
+        except Exception as exc:  # noqa: BLE001 - broad by design: fails open
+            logger.debug(f"robots.txt unreachable for {cache_key}: {exc} — failing open")
+            return None
+        if status in _REDIRECT_STATUSES:
+            location = headers.get("location")
+            if not location:
+                logger.debug(
+                    f"robots.txt unreachable for {cache_key}: "
+                    f"redirect (status {status}) without a Location header — failing open"
+                )
+                return None
+            try:
+                current = urljoin(current, location)
+            except ValueError as exc:
+                logger.debug(
+                    f"robots.txt unreachable for {cache_key}: "
+                    f"malformed redirect Location {location!r}: {exc} — failing open"
+                )
+                return None
+            continue
+        if not (200 <= status < 300) or truncated:
+            reason = "truncated body" if truncated else f"status {status}"
+            logger.debug(f"robots.txt unreachable for {cache_key}: {reason} — failing open")
+            return None
+        try:
+            text = _decode_body(body, headers.get("content-type", ""))
+            parser = RobotFileParser()
+            parser.parse(text.splitlines())
+        except Exception as exc:  # noqa: BLE001 - broad by design: fails open
+            logger.debug(f"robots.txt for {cache_key} could not be parsed: {exc} — failing open")
+            return None
+        return parser
+    logger.debug(
+        f"robots.txt unreachable for {cache_key}: "
+        f"exceeded {FETCH_MAX_REDIRECTS} redirects — failing open"
+    )
+    return None
+
+
 def _robots_allows(client: httpx.Client, url: str, user_agent: str) -> bool:
     """True if ``user_agent`` may fetch ``url`` per its host's robots.txt.
 
-    Cache lookup keyed by ``scheme://netloc`` (host-level; the UA is only a
-    parameter to the *query*, ``can_fetch()``, not the cache key -- the
-    fetched policy is shared across callers). On a miss, rate-limits like
-    any other request to the host (design doc ruling 5 -- the politeness
-    probe is itself polite), fetches ``{scheme}://{netloc}/robots.txt``
-    through ``_fetch_once`` under a dedicated ``ROBOTS_MAX_BYTES`` cap (not
-    the page cap), and parses it with the stdlib ``RobotFileParser``.
-
-    Fail-open (design doc ruling 2, "compat" semantics): anything short of
-    a clean 2xx fetch under the byte cap -- network error, non-2xx status,
-    a body TRUNCATED at ROBOTS_MAX_BYTES (a half-file could silently drop
-    trailing Disallow lines -- refusing to trust a truncated policy is the
-    honest reading), or a parse failure -- is cached as ``None`` (no
-    restrictions) for the same TTL as a successful fetch, via one broad
-    ``except Exception``: a robots.txt outage must not brick fetching, and
-    in the shipped code this same broad catch is what keeps every
-    pre-existing route-less-robots test passing unchanged once the fixture
-    opts back into enforcement.
+    Cache lookup keyed by a NORMALIZED ``scheme://host[:port]`` (fix round
+    1, Minor 4 -- lowercase host, no userinfo, matching the per-domain rate
+    limiter's own normalization via ``urlsplit(...).hostname``): the UA is
+    only a parameter to the *query*, ``can_fetch()``, not the cache key --
+    the fetched policy is shared across callers, and the constructed
+    robots.txt URL must never carry credentials that happened to be present
+    in the original ``url``. Fetch/parse/redirect-following and fail-open
+    semantics live in ``_fetch_robots_parser``.
 
     Synchronous, no locks -- matches the module's existing idiom (single
     call per tool invocation; a cross-call stampede costs at most one
     duplicate robots.txt fetch, accepted).
     """
     parts = urlsplit(url)
-    cache_key = f"{parts.scheme}://{parts.netloc}"
+    host = (parts.hostname or "").lower()
+    port = f":{parts.port}" if parts.port else ""
+    cache_key = f"{parts.scheme.lower()}://{host}{port}"
     cached = _robots_cache.get(cache_key)
     now = time.monotonic()
     if cached is not None and now < cached[0]:
         parser = cached[1]
     else:
-        robots_url = f"{cache_key}/robots.txt"
-        parser = None
-        try:
-            _validate_hop(robots_url)  # symmetry with every other request (design doc Minor 9)
-            _enforce_rate_limit(parts.hostname or "unknown")
-            status, headers, body, truncated, _is_pdf = _fetch_once(client, robots_url, ROBOTS_MAX_BYTES)
-            if 200 <= status < 300 and not truncated:
-                text = _decode_body(body, headers.get("content-type", ""))
-                candidate = RobotFileParser()
-                candidate.parse(text.splitlines())
-                parser = candidate
-        except Exception:  # noqa: BLE001 - broad by design: any robots fetch/parse failure fails open
-            parser = None
+        parser = _fetch_robots_parser(client, cache_key)
         _robots_cache_put(cache_key, parser)
     if parser is None:
         return True
     return parser.can_fetch(user_agent, url)
+
+
+def _new_web_fetch_client() -> httpx.Client:
+    return httpx.Client(
+        follow_redirects=False,
+        timeout=FETCH_TIMEOUT_SECONDS,
+        headers={"User-Agent": _USER_AGENT},
+        transport=_transport,
+        # trust_env=False: with HTTP(S)_PROXY set, the proxy does its own DNS
+        # and connects on our behalf, bypassing the SSRF guard entirely.
+        trust_env=False,
+    )
 
 
 def web_fetch(url: str, *, max_bytes: int = FETCH_MAX_BYTES) -> str:
@@ -551,15 +628,11 @@ def web_fetch(url: str, *, max_bytes: int = FETCH_MAX_BYTES) -> str:
     # Read once per invocation, not per hop (design doc ruling 6).
     respect_robots = _webfetch_settings()["respect_robots_txt"]
 
-    client = httpx.Client(
-        follow_redirects=False,
-        timeout=FETCH_TIMEOUT_SECONDS,
-        headers={"User-Agent": _USER_AGENT},
-        transport=_transport,
-        # trust_env=False: with HTTP(S)_PROXY set, the proxy does its own DNS
-        # and connects on our behalf, bypassing the SSRF guard entirely.
-        trust_env=False,
-    )
+    # Lazy client (fix round 1, Minor 6): a warm cache hit with robots
+    # enforcement OFF must do zero client setup, same as before robots.txt
+    # support existed -- httpx.Client() is built only where first actually
+    # needed (a robots.txt consult on a cache hit, or the real fetch below).
+    client: "httpx.Client | None" = None
     try:
         cached = _fetch_cache.get((url, max_bytes))
         if cached is not None:
@@ -568,12 +641,19 @@ def web_fetch(url: str, *, max_bytes: int = FETCH_MAX_BYTES) -> str:
                 _validate_hop(url)  # re-check policy on cache hits (cheap, no body)
                 # Robots re-checked exactly like _validate_hop above: rules
                 # may have changed since the body was cached (design doc
-                # ruling 3).
-                if respect_robots and not _robots_allows(client, url, _USER_AGENT):
-                    raise LocalToolError(_robots_disallowed_message(url))
+                # ruling 3). Known hole shared with the _validate_hop check
+                # right above (fix round 1, Minor 3): this judges the
+                # REQUESTED url only -- a cached body that was actually
+                # fetched via a redirect is keyed and re-checked here under
+                # the ORIGINAL start url, not the final redirect target.
+                if respect_robots:
+                    client = _new_web_fetch_client()
+                    if not _robots_allows(client, url, _USER_AGENT):
+                        raise LocalToolError(_robots_disallowed_message(url))
                 return text
             _fetch_cache.pop((url, max_bytes), None)
 
+        client = _new_web_fetch_client()
         # Probed ONCE per call, not per redirect hop: a mid-call sys.modules
         # mutation could otherwise make the pre-fetch cap decision and the
         # post-fetch [missing-dep]-vs-[too-large] verdict disagree with each
@@ -614,7 +694,8 @@ def web_fetch(url: str, *, max_bytes: int = FETCH_MAX_BYTES) -> str:
     except httpx.HTTPError as exc:
         raise LocalToolError(f"[fetch-failed] {exc}") from exc
     finally:
-        client.close()
+        if client is not None:
+            client.close()
 
     if status >= 400:
         raise LocalToolError(f"[http-{status}] upstream returned status {status} for {url!r}")
