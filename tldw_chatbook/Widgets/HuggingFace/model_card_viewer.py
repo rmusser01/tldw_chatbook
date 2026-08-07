@@ -9,7 +9,8 @@ from urllib.parse import urljoin
 
 from textual import on
 from textual.app import ComposeResult
-from textual.containers import Container, VerticalScroll
+from textual.containers import Container, Horizontal, VerticalScroll
+from textual.widgets.markdown import MarkdownTableOfContents
 from textual.widgets import (
     Label,
     Button,
@@ -158,10 +159,38 @@ class ModelCardViewer(Container):
         padding: 1;
         background: $background;
     }
-    
+
     ModelCardViewer #readme-display {
         height: auto;
         padding: 1;
+    }
+
+    ModelCardViewer .readme-body {
+        height: 1fr;
+        layout: horizontal;
+    }
+
+    ModelCardViewer .readme-toolbar {
+        height: auto;
+        layout: horizontal;
+    }
+
+    ModelCardViewer #readme-toc-toggle {
+        height: 1;
+        min-width: 14;
+        border: none;
+    }
+
+    ModelCardViewer #readme-toc {
+        width: 32;
+        max-width: 40%;
+        height: 1fr;
+        border-right: solid $surface-lighten-1;
+    }
+
+    ModelCardViewer #readme-toc Tree {
+        width: 1fr;
+        padding: 0;
     }
     
     ModelCardViewer .model-card-container {
@@ -247,16 +276,32 @@ class ModelCardViewer(Container):
 
                 # README tab
                 with TabPane("README", id="readme-tab"):
-                    with VerticalScroll(classes="tab-content"):
-                        # open_links=False: link handling goes through the
-                        # tiered resolver below (TASK-1991) — relative links
-                        # and #anchors were dead with the default auto-open.
-                        yield Markdown(
-                            "",
-                            id="readme-display",
-                            classes="readme-content",
-                            open_links=False,
+                    # open_links=False: link handling goes through the
+                    # tiered resolver below (TASK-1991) — relative links
+                    # and #anchors were dead with the default auto-open.
+                    readme_display = Markdown(
+                        "",
+                        id="readme-display",
+                        classes="readme-content",
+                        open_links=False,
+                    )
+                    # TASK-1992: heading-tree TOC for long READMEs. Hidden by
+                    # default (compact layouts stay clean); the toolbar button
+                    # toggles it and selection scrolls the document.
+                    toc = MarkdownTableOfContents(readme_display, id="readme-toc")
+                    toc.display = False
+                    with Horizontal(classes="readme-toolbar"):
+                        yield Button(
+                            "☰ Contents",
+                            id="readme-toc-toggle",
+                            variant="default",
                         )
+                    with Horizontal(classes="readme-body"):
+                        yield toc
+                        with VerticalScroll(
+                            classes="tab-content", id="readme-scroll"
+                        ):
+                            yield readme_display
 
                 # Model Card tab
                 with TabPane("Model Card", id="model-card-tab"):
@@ -349,6 +394,44 @@ class ModelCardViewer(Container):
                 severity="warning",
                 timeout=6,
             )
+
+    def on_markdown_table_of_contents_updated(
+        self, event: Markdown.TableOfContentsUpdated
+    ) -> None:
+        """Feed the README's heading tree into the TOC pane (TASK-1992)."""
+        if getattr(event.markdown, "id", None) != "readme-display":
+            return
+        event.stop()
+        try:
+            toc = self.query_one("#readme-toc", MarkdownTableOfContents)
+        except Exception:
+            return
+        toc.table_of_contents = event.table_of_contents
+
+    def on_markdown_table_of_contents_selected(
+        self, event: Markdown.TableOfContentsSelected
+    ) -> None:
+        """Scroll the README to the heading chosen in the TOC (TASK-1992)."""
+        if getattr(event.markdown, "id", None) != "readme-display":
+            return
+        event.stop()
+        try:
+            scroll = self.query_one("#readme-scroll", VerticalScroll)
+            target = event.markdown.query_one(f"#{event.block_id}")
+        except Exception:
+            logger.warning(f"README TOC target not found: {event.block_id}")
+            return
+        scroll.scroll_to_widget(target, top=True)
+
+    @on(Button.Pressed, "#readme-toc-toggle")
+    def _toggle_readme_toc(self, event: Button.Pressed) -> None:
+        """Show or hide the README table of contents (hidden by default)."""
+        event.stop()
+        try:
+            toc = self.query_one("#readme-toc", MarkdownTableOfContents)
+        except Exception:
+            return
+        toc.display = not toc.display
 
     def watch_selected_file(self, selected: Optional[str]) -> None:
         """Update UI when file selection changes."""
