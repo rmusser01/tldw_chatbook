@@ -604,12 +604,15 @@ def build_console_controllers(screen: "ChatScreen") -> None:
     #: cache, and resume-time TOOL-marker re-derivation -- moved to
     #: `ConsoleAgentController` (wave-4 console decomposition, task 3).
     #: `self._console_agent_bridge`/`_console_agent_drilldown_run_id`/
-    #: `_console_agent_drilldown_conversation_id`/`_agent_section_user_
-    #: dismissed_while_busy` stay readable/writable via the four proxy
-    #: properties defined near `_console_composer_or_none`, so nothing
-    #: outside this cluster (compose, `_toggle_console_rail_section`, the
-    #: two sibling controllers' own drill-down clears, `on_button_pressed`,
-    #: tests) had to change. `_sync_console_agent_section` stays on the
+    #: `_agent_section_user_dismissed_while_busy` stay readable/writable via
+    #: THREE read-write proxy properties defined near
+    #: `_console_composer_or_none`, so nothing outside this cluster (compose,
+    #: `_toggle_console_rail_section`, the two sibling controllers' own
+    #: drill-down clears, `on_button_pressed`, tests) had to change.
+    #: `_console_agent_drilldown_conversation_id` is deliberately NOT among
+    #: them: it had no reader outside the cluster, so it lives only on the
+    #: controller and `screen._console_agent_drilldown_conversation_id`
+    #: raises `AttributeError`. Reach it as `screen._agent.` + the name. `_sync_console_agent_section` stays on the
     #: screen (nine `query_one` calls); only its payload derivation moved.
     #: See `agent.py`'s module docstring for the full map of what moved and
     #: why, including the one method that name-matched but is not part of
