@@ -149,7 +149,14 @@ def test_web_deep_search_row_present_in_tool_settings_source():
     row for web_deep_search using the same id convention as the
     _GATEABLE_BUILTINS rows above it, and its description must name the
     restart-to-apply requirement (the provider builds its tool list once at
-    construction -- see Agents/local_tool_provider.py's _default_specs)."""
+    construction -- see Agents/local_tool_provider.py's _default_specs).
+
+    Scoped to the row's exact restart sentence (fix-wave M6, 2026-08-07
+    review): a bare `"restart" in src.lower()` is vacuous -- this file's
+    unrelated DEPRECATED (TASK-1346) module docstring already says
+    "not reachable through normal navigation" and other restart mentions
+    exist elsewhere in the file, none of which say anything about this row.
+    """
     import pathlib
 
     src = pathlib.Path("tldw_chatbook/UI/Tools_Settings_Window.py").read_text(
@@ -157,4 +164,10 @@ def test_web_deep_search_row_present_in_tool_settings_source():
     )
     assert "WEB_DEEP_SEARCH_GATE_KEY" in src
     assert 'f"tool-switch-{WEB_DEEP_SEARCH_TOOL_NAME}"' in src
-    assert "restart" in src.lower()
+    # `src` is the raw .py SOURCE text (not the evaluated widget string), so
+    # this must match how the description's f-string is actually broken
+    # across source lines -- these two fragments together anchor the row's
+    # restart clause specifically, rather than matching any "restart"
+    # mention anywhere in the ~4000-line file.
+    assert 'WEB_DEEP_SEARCH_GATE_KEY} -- restart "' in src
+    assert "list once at startup, so this switch has no effect " in src

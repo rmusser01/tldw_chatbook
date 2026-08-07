@@ -71,6 +71,7 @@ from tldw_chatbook.config import (
     get_rag_indexing_db_path,
     get_subscriptions_db_path,
     get_user_data_dir,
+    coerce_bool_setting,
 )
 from loguru import logger
 from ..DB.ChaChaNotes_DB import CharactersRAGDB
@@ -3356,8 +3357,19 @@ class ToolsSettingsWindow(Container):
             # [tools] table as the GateableTool rows above but is not itself
             # a GateableTool entry (see WEB_DEEP_SEARCH_GATE_KEY docstring),
             # so it gets its own row here rather than joining that loop.
-            is_web_deep_search_enabled = bool(
-                tools_config.get(WEB_DEEP_SEARCH_GATE_KEY, False)
+            #
+            # coerce_bool_setting, NOT bool() (fix-wave Important 1,
+            # 2026-08-07 review): the provider's own runtime gate
+            # (Agents/local_tool_provider.py) reads this same key through
+            # coerce_bool_setting, which is fail-closed -- a TOML string
+            # value like "false" coerces to False there. A raw bool() read
+            # here truthy-coerces ANY non-empty string, including the
+            # literal string "false", to True -- rendering the switch ON
+            # while the real gate stays OFF, and laundering it into a real
+            # `true` the moment Save Tool Settings is pressed (even
+            # untouched) -- silently enabling a paid, network-egress tool.
+            is_web_deep_search_enabled = coerce_bool_setting(
+                tools_config.get(WEB_DEEP_SEARCH_GATE_KEY, False), False
             )
             with Horizontal(classes="tool-item"):
                 yield Switch(
@@ -3368,7 +3380,9 @@ class ToolsSettingsWindow(Container):
                 with Container(classes="tool-info"):
                     yield Label(WEB_DEEP_SEARCH_TOOL_NAME, classes="tool-name")
                     yield Static(
-                        "Multi-query web research (double opt-in). Config "
+                        "Multi-query web research (double opt-in); each "
+                        "call makes ~2x-results+3 LLM calls plus page "
+                        "fetches -- real money on paid providers. Config "
                         f"key: tools.{WEB_DEEP_SEARCH_GATE_KEY} -- restart "
                         "the app after saving: the provider builds its tool "
                         "list once at startup, so this switch has no effect "

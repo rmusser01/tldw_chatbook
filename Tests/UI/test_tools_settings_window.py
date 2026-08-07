@@ -494,6 +494,28 @@ async def test_web_deep_search_switch_reflects_an_enabled_config(
 
 
 @pytest.mark.asyncio
+async def test_web_deep_search_switch_renders_off_for_string_false_config(
+    monkeypatch, temp_config_path
+):
+    """Important 1 (fix-wave, 2026-08-07 review): the provider's own runtime
+    gate (Agents/local_tool_provider.py) reads this same [tools] key through
+    coerce_bool_setting, which is fail-closed -- a TOML string value like
+    "false" coerces to False there. This row used to read the same key with
+    a raw bool(), which truthy-coerces ANY non-empty string -- including the
+    literal string "false" -- to True. That rendered the switch ON while the
+    real gate stayed OFF, and pressing Save Tool Settings (even without
+    touching the switch) would then write a real `true`, silently enabling
+    a paid, network-egress tool the user never asked to turn on."""
+    config = {"tools": {WEB_DEEP_SEARCH_GATE_KEY: "false"}}
+    async with mount_settings_window(config, temp_config_path, monkeypatch) as (
+        window,
+        pilot,
+    ):
+        switch = window.query_one(f"#tool-switch-{WEB_DEEP_SEARCH_TOOL_NAME}", Switch)
+        assert switch.value is False
+
+
+@pytest.mark.asyncio
 async def test_web_deep_search_switch_round_trips_on_save(
     settings_window: ToolsSettingsWindow, temp_config_path: Path
 ):
@@ -512,6 +534,30 @@ async def test_web_deep_search_switch_round_trips_on_save(
         saved_content_on_disk = toml.load(f)
 
     assert saved_content_on_disk["tools"][WEB_DEEP_SEARCH_GATE_KEY] is True
+
+
+@pytest.mark.asyncio
+async def test_web_deep_search_switch_off_round_trips_to_false_on_save(
+    settings_window: ToolsSettingsWindow, temp_config_path: Path
+):
+    """M7 (fix-wave, 2026-08-07 review): the off-direction round trip --
+    complements test_web_deep_search_switch_round_trips_on_save's ON
+    direction, which is what Important 1 was actually about: a switch left
+    (or explicitly set) OFF must persist a real `false` to DISK, not merely
+    read back False off the in-memory widget."""
+    switch = settings_window.query_one(
+        f"#tool-switch-{WEB_DEEP_SEARCH_TOOL_NAME}", Switch
+    )
+    switch.value = True  # flip ON first so OFF below is a genuine change, not a no-op default
+    switch.value = False
+
+    save_button = settings_window.query_one("#save-tool-settings", Button)
+    await settings_window.on_button_pressed(Button.Pressed(save_button))
+
+    with open(temp_config_path, "r") as f:
+        saved_content_on_disk = toml.load(f)
+
+    assert saved_content_on_disk["tools"][WEB_DEEP_SEARCH_GATE_KEY] is False
 
 
 @pytest.mark.asyncio
