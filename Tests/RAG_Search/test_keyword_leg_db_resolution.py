@@ -68,3 +68,91 @@ def test_default_resolution_uses_get_media_db_path(monkeypatch, tmp_path):
     results = asyncio.run(service._keyword_search("anything", top_k=5))
     assert results == []                                   # sentinel absent
     assert not sentinel.exists()                           # still no writes
+
+
+def test_keyword_search_orders_strongest_match_first(tmp_path):
+    """FTS5's hidden `rank` column is smaller-is-better (more negative =
+    stronger match). Review finding on this task's PR: `_perform_fts5_search`
+    selected `-rank as rank` and then `ORDER BY rank` -- ordering ASCENDING
+    on the NEGATED alias, which is worst-match-first. That bug was invisible
+    while the leg always returned [] (pre-fix), but is now live and actively
+    selects the worst matches, including when a small `top_k` truncates the
+    (already over-fetched, wrongly-ordered) row list -- silently dropping the
+    single best match in favor of noise.
+
+    Seeds three real media rows with deliberately lopsided relevance for the
+    same query term: a short document saturated with the term (strong), a
+    medium document mentioning it once amid modest filler (medium), and a
+    long document mentioning it exactly once buried in heavy filler (weak,
+    penalized hard by bm25's document-length normalization).
+    """
+    from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
+
+    db_path = tmp_path / "tldw_cli_media_v2.db"
+    db = MediaDatabase(db_path=str(db_path), client_id="test_keyword_leg_rank")
+
+    strong_id, _, msg = db.add_media_with_keywords(
+        title="platypus platypus platypus field study",
+        content=(
+            ("platypus " * 40)
+            + "Extensive notes on platypus behavior, platypus colonies, "
+            "and platypus diet in the wild."
+        ),
+        media_type="article",
+        author="A. Strong",
+        url="https://example.com/strong-platypus",
+    )
+    assert strong_id is not None, f"seed failed: {msg}"
+
+    medium_id, _, msg = db.add_media_with_keywords(
+        title="Field Notes",
+        content=(
+            ("Several unrelated observations were logged today. " * 5)
+            + "A single platypus was spotted near the creek bank. "
+            + ("Weather conditions remained mild throughout. " * 5)
+        ),
+        media_type="article",
+        author="B. Medium",
+        url="https://example.com/medium-platypus",
+    )
+    assert medium_id is not None, f"seed failed: {msg}"
+
+    weak_id, _, msg = db.add_media_with_keywords(
+        title="Annual Wildlife Survey Report",
+        content=(
+            (
+                "This section of the report covers general survey "
+                "methodology and background unrelated to any single "
+                "species observation. "
+                * 60
+            )
+            + "A platypus was mentioned once in passing near the end of "
+            "this very long report."
+        ),
+        media_type="article",
+        author="C. Weak",
+        url="https://example.com/weak-platypus",
+    )
+    assert weak_id is not None, f"seed failed: {msg}"
+    db.close_connection()
+
+    service = _make_service(tmp_path, media_db_path=db_path)
+
+    # Full result set: strongest match must be FIRST, not last.
+    results = asyncio.run(service._keyword_search("platypus", top_k=5))
+    ids = [r.metadata["doc_id"] for r in results]
+    assert ids and ids[0] == str(strong_id), (
+        f"expected strongest match ({strong_id}) first, got order {ids}"
+    )
+
+    # Small top_k: the single best match must survive truncation, not be
+    # silently dropped in favor of the weak match.
+    top2 = asyncio.run(service._keyword_search("platypus", top_k=2))
+    top2_ids = {r.metadata["doc_id"] for r in top2}
+    assert str(strong_id) in top2_ids, (
+        f"strongest match ({strong_id}) dropped from top_k=2 results: {top2_ids}"
+    )
+    assert str(weak_id) not in top2_ids, (
+        f"weak match ({weak_id}) preferentially kept over a stronger match "
+        f"under top_k=2: {top2_ids}"
+    )

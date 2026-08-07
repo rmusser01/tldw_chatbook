@@ -1288,6 +1288,15 @@ class RAGService:
         # a nonexistent `m.tags`, which raised `OperationalError: no such
         # column: m.tags` on every real DB (silently swallowed by the outer
         # exception handler, so keyword search always returned []).
+        # Review finding (Task 3 PR): this used to SELECT `-rank as rank` and
+        # `ORDER BY rank` -- ascending on the NEGATED alias, i.e.
+        # worst-match-first (fts5's raw `rank` column is smaller/more
+        # negative = better; negating it and sorting ascending flips that).
+        # Order on the raw `media_fts.rank` column instead -- ascending is
+        # already best-match-first, the canonical fts5 usage. `rank` is not
+        # read from the result rows anywhere downstream (keyword results use
+        # a fixed KEYWORD_SEARCH_SCORE, not a rank-derived score), so it does
+        # not need to be selected at all, only ordered on.
         sql = """
         SELECT
             m.id,
@@ -1296,13 +1305,12 @@ class RAGService:
             m.url,
             m.type,
             m.author,
-            m.ingestion_date,
-            -rank as rank
+            m.ingestion_date
         FROM Media m
         JOIN media_fts ON m.id = media_fts.rowid
         WHERE media_fts MATCH ?
         AND m.is_trash = 0
-        ORDER BY rank
+        ORDER BY media_fts.rank
         LIMIT ?
         """
 
