@@ -73,11 +73,18 @@ class EnhancedRAGServiceV2(EnhancedRAGService):
             self.reranking_config = profile.reranking_config
             self.processing_config = profile.processing_config
         elif isinstance(config, ProfileConfig):
-            # Use provided profile
+            # Use provided profile. Capture reranking_config/processing_config
+            # off the ProfileConfig BEFORE reassigning the local `config` name
+            # to its `.rag_config` below -- reading them off the reassigned
+            # variable instead (a plain RAGConfig, which has neither
+            # attribute) raised AttributeError unconditionally on every call
+            # through this branch, i.e. every from_profile()/
+            # create_rag_from_profile() call, for every profile, reranking or
+            # not (task-3170 P0).
             self.profile = config
-            config = config.rag_config
             self.reranking_config = config.reranking_config
             self.processing_config = config.processing_config
+            config = config.rag_config
             self.profile_manager = profile_manager or get_profile_manager()
         else:
             # Direct RAG config

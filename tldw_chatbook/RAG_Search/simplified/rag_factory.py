@@ -5,6 +5,7 @@ This module provides a unified interface for creating RAG services
 using the V2 implementation with different configuration profiles.
 """
 
+from dataclasses import replace
 from typing import Optional
 from loguru import logger
 
@@ -76,9 +77,22 @@ def create_rag_service(
     except Exception as e:  # never block service creation on migration
         logger.debug(f"Legacy collection adoption skipped: {e}")
 
+    # Pass the profile itself, not just its `rag_config`, so
+    # EnhancedRAGServiceV2.__init__ actually picks up reranking_config /
+    # processing_config: passing a bare RAGConfig hits its `else` branch,
+    # which forces `self.reranking_config = None` unconditionally -- so no
+    # reranker EVER constructed via this factory (the app's real RAG-service
+    # entry point, see search_service.py) regardless of the enable_reranking
+    # flag computed above (task-3170 P0). When an explicit `config` override
+    # was given, swap it in for the profile's own rag_config (via
+    # `dataclasses.replace`, a shallow copy) so a caller overriding e.g. the
+    # embedding backend still gets that override, while the profile's
+    # reranking_config/processing_config still make it through.
+    effective_profile = replace(profile, rag_config=rag_config) if config else profile
+
     # Create service with profile configuration
     return EnhancedRAGServiceV2(
-        config=rag_config,
+        config=effective_profile,
         enable_parent_retrieval=enable_parent_retrieval,
         enable_reranking=enable_reranking,
         enable_parallel_processing=enable_parallel_processing,
