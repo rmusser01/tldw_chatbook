@@ -1740,21 +1740,49 @@ class LibraryScreen(BaseAppScreen):
         # autosave even though the user never typed anything. Re-armed via
         # ``call_after_refresh`` after every notes-editor (re)compose.
         self._library_note_editor_armed: bool = False
-        # LIB-14: the id of a note created via "Blank note" that has not
-        # been touched since (title/body/keywords Input.Changed never fired
-        # past the mount-time armed guard, and Save was never explicitly
-        # pressed) -- both clear this. Read by ``_flush_library_note_save``
-        # (the single choke point every editor-exit path already calls) to
-        # quietly delete the row instead of leaving a permanent literal
-        # "Untitled" row behind. ``None`` means "nothing pending" -- either
-        # no blank note is open, or it has already been edited/saved/GC'd.
-        # Also drives the title Input's placeholder-vs-value rendering (see
+        # LIB-14: display-only flag for a note created via "Blank note"
+        # that has not been touched YET -- cleared on the FIRST real edit
+        # (``_mark_library_note_dirty``) or an explicit Save. Drives ONLY
+        # the title Input's placeholder-vs-value rendering (see
         # ``LibraryNotesCanvas``'s ``title_placeholder_only``): while this
         # is set for the open note, the title Input shows empty with an
         # "Untitled" placeholder instead of a literal editable "Untitled"
         # value -- the fix for typing landing at the cursor's end and
-        # producing e.g. "UntitledAtlas follow-ups".
+        # producing e.g. "UntitledAtlas follow-ups". Deliberately NOT used
+        # to decide GC-vs-save at exit (see ``_library_note_session_blank_id``
+        # below) -- clearing on the first keystroke is correct for "stop
+        # showing the placeholder" but wrong for "should this be GC'd",
+        # since a user can type then delete everything back to empty
+        # (review round 1, task-2858 T3): that sequence must still GC, so
+        # the GC decision needs a flag that survives edits.
         self._library_note_pending_blank_gc_id: str | None = None
+        # LIB-14 (review round 1 fix): the id of a note created via "Blank
+        # note" THIS SESSION, tracked for the whole session regardless of
+        # intermediate edits -- unlike ``_library_note_pending_blank_gc_id``
+        # above, ``_mark_library_note_dirty`` never clears this. Read by
+        # ``_flush_library_note_save`` to decide GC-vs-save at exit: when
+        # the note being flushed IS this session's blank AND its FINAL live
+        # state (title/body/keywords, read fresh, never the stale detail)
+        # is empty, the row is GC'd even if it was typed into and emptied
+        # out again mid-session (dirty=True) -- covering "type then delete
+        # everything" the same as "never touched", which the narrower
+        # dirty-gated check above could not. A PRE-EXISTING note the user
+        # empties out is never a session blank (this is only ever set by
+        # the "Blank note" create path), so it still saves via the normal
+        # branch -- the scope guard is structural, not a runtime check.
+        # Cleared by: an explicit Save (the user's own "keep it" act,
+        # regardless of emptiness -- mirrors ``_library_note_pending_blank_
+        # gc_id``'s existing Save-press exemption), or a full editor
+        # reset/note switch (``_reset_library_note_editor_state``, the
+        # note-row-selection and note_id-deep-link switch sites).
+        # Deliberately NOT cleared by autosave persisting non-empty content
+        # mid-session: an autosave is not a deliberate "keep this" signal
+        # the way an explicit Save press is, so a session blank that got
+        # autosaved with real text and was then emptied out again before
+        # exit must still GC -- the row is session-created and finally
+        # empty, which is exactly the row AC#5 forbids, regardless of what
+        # happened to it in between.
+        self._library_note_session_blank_id: str | None = None
         # Notes sync panel state. Seeded from config lazily on first entry
         # into sync mode (``_ensure_library_notes_sync_config_loaded``), not
         # here in __init__, so tests/screens that never open the sync panel
@@ -2894,6 +2922,12 @@ class LibraryScreen(BaseAppScreen):
             self._library_note_preview = False
             self._library_note_preview_snapshot = None
             self._library_note_editor_armed = False
+            # LIB-14: a deep link always lands on a note by explicit id
+            # (never "Blank note"), so neither flag ever applies to it --
+            # clear both defensively in case a still-open session blank
+            # from a DIFFERENT note is left behind by this jump.
+            self._library_note_pending_blank_gc_id = None
+            self._library_note_session_blank_id = None
             if self.is_mounted:
                 self.run_worker(
                     self._refresh_library_note_detail(note_id),
@@ -5804,12 +5838,14 @@ class LibraryScreen(BaseAppScreen):
         self._library_note_preview_snapshot = None
         self._library_note_editor_armed = False
         # Defense in depth: the normal exit path is ``_flush_library_note_
-        # save`` (which GCs a still-pending blank note and clears this
-        # itself, before this reset ever runs); this catches the other
-        # "note is gone" fallback paths that reach this reset without going
-        # through that flush first, so the flag can never outlive the
-        # editor session it was armed for.
+        # save`` (which GCs a still-pending blank note and clears both
+        # flags itself, before this reset ever runs); this catches the
+        # other "note is gone" fallback paths that reach this reset
+        # without going through that flush first, and every full editor
+        # exit generally, so neither flag can outlive the editor session
+        # it was armed for.
         self._library_note_pending_blank_gc_id = None
+        self._library_note_session_blank_id = None
         if self._library_notes_autosave_timer is not None:
             self._library_notes_autosave_timer.stop()
             self._library_notes_autosave_timer = None
@@ -7345,12 +7381,15 @@ class LibraryScreen(BaseAppScreen):
             return
         self._library_note_dirty = True
         # LIB-14: a real edit (this is only reached once armed, i.e. never
-        # for the mount-time phantom Input/TextArea.Changed) disqualifies a
-        # "Blank note" from GC-on-exit and drops it back to a normal,
-        # literal title on the next recompose -- no recompose is forced
-        # here, matching this method's existing silent (no per-keystroke
-        # recompose) discipline; the mounted Input already shows whatever
-        # the user is typing regardless of this flag.
+        # for the mount-time phantom Input/TextArea.Changed) stops the
+        # title Input from showing the "Untitled" placeholder on the next
+        # recompose -- no recompose is forced here, matching this method's
+        # existing silent (no per-keystroke recompose) discipline; the
+        # mounted Input already shows whatever the user is typing
+        # regardless of this flag. Deliberately does NOT clear
+        # ``_library_note_session_blank_id`` -- that flag's whole purpose
+        # is to survive edits so a later "typed then deleted everything"
+        # exit still GCs (see that flag's own docstring).
         self._library_note_pending_blank_gc_id = None
         if self._library_note_autosave_state == "conflict":
             return
@@ -7406,8 +7445,11 @@ class LibraryScreen(BaseAppScreen):
         event.stop()
         # LIB-14: an explicit Save is the user's own deliberate "keep it"
         # act, even if the note is still blank -- never GC a note the user
-        # just told the app to save.
+        # just told the app to save (unlike autosave, which is not a
+        # deliberate signal -- see ``_library_note_session_blank_id``'s
+        # docstring for why autosave alone must NOT clear it).
         self._library_note_pending_blank_gc_id = None
+        self._library_note_session_blank_id = None
         if self._library_notes_autosave_timer is not None:
             self._library_notes_autosave_timer.stop()
             self._library_notes_autosave_timer = None
@@ -7643,12 +7685,16 @@ class LibraryScreen(BaseAppScreen):
 
         LIB-14 (AC#5): this is also the single choke point every editor-exit
         path already awaits before tearing the editor down, so it doubles
-        as the GC point for a "Blank note" that was never touched -- see
-        ``_gc_pending_blank_note``. GC runs before the dirty check below
-        (an untouched blank note is never dirty, so it would otherwise hit
-        the early return and never be considered) and only when nothing is
-        dirty, so a real in-progress edit is never at risk of being
-        mistaken for GC-eligible.
+        as the GC point for this session's "Blank note" whenever it ends
+        up empty -- see ``_gc_pending_blank_note``. The GC check runs
+        BEFORE the dirty check below and is gated on final live emptiness,
+        not on ``_library_note_dirty``, so it covers both a note that was
+        never touched (never dirty) AND one that was typed into and then
+        emptied back out again (dirty, but finally empty) -- the latter
+        being the case the first version of this fix (dirty-gated) missed.
+        A real in-progress edit that leaves genuine content behind is
+        never at risk of being mistaken for GC-eligible, since the
+        emptiness check reads the live fields, not the dirty flag.
         """
         if self._library_notes_autosave_timer is not None:
             self._library_notes_autosave_timer.stop()
@@ -7661,44 +7707,112 @@ class LibraryScreen(BaseAppScreen):
                     logger.opt(exception=True).debug(
                         "In-flight note-save worker errored while flushing; continuing.",
                     )
+        # LIB-14 (review round 1 fix, task-2858 T3): decide GC-vs-save on
+        # this session's blank note (if any is open) from its FINAL live
+        # state, not from ``_library_note_dirty`` -- a dirty-gated check
+        # would route "typed then deleted everything back to empty"
+        # through the save branch below, persisting exactly the stray
+        # "Untitled" row AC#5 forbids. Reading live fields (never the
+        # stale ``_library_note_detail``) covers both "never touched"
+        # (fields are trivially empty) and "typed then emptied" (fields
+        # are empty again after edits) with the ONE check -- no separate
+        # not-dirty branch is needed any more. The scope guard is
+        # structural: ``_library_note_session_blank_id`` is only ever set
+        # by the "Blank note" create path, so a pre-existing note that the
+        # user empties out never matches here and always falls through to
+        # the normal save branch.
         if (
-            self._library_note_pending_blank_gc_id
-            and self._library_note_pending_blank_gc_id == self._selected_note_id
-            and not self._library_note_dirty
+            self._library_note_session_blank_id
+            and self._library_note_session_blank_id == self._selected_note_id
         ):
-            await self._gc_pending_blank_note()
+            fields = self._read_library_note_editor_fields()
+            if fields is not None:
+                raw_title, raw_content, raw_keywords_text = fields
+                # "Effectively empty" = title, body, AND keywords all blank
+                # -- keywords count too (a user-provided tag on an
+                # otherwise-blank note is still user content worth
+                # keeping, not noise). The title Input never actually
+                # holds the literal string "Untitled" unless the user
+                # typed it themselves (LIB-14a renders it as an empty
+                # value + a placeholder, never a real value) -- so a
+                # plain ``.strip()`` emptiness check already captures
+                # "still showing the placeholder" with no separate
+                # "Untitled"-string special case needed.
+                if (
+                    not raw_title.strip()
+                    and not raw_content.strip()
+                    and not raw_keywords_text.strip()
+                ):
+                    await self._gc_pending_blank_note()
+                    return
         if not self._library_note_dirty:
             return
         await self._save_library_note(explicit=False)
 
     async def _gc_pending_blank_note(self) -> None:
-        """Delete an untouched "Blank note" row before it is left behind (LIB-14).
+        """Delete this session's now-empty "Blank note" row before it is left behind (LIB-14).
 
         "Blank note" still commits its DB row immediately on click (the
         create-note seam has no create-on-first-edit branch -- see the
         AC#5 decision recorded on task-2858); this is the smaller-diff
-        alternative the task allows instead: if the editor is left again
-        with the row never having been touched (no title/body/keywords
-        edit ever passed the mount-time armed guard, and Save was never
-        explicitly pressed -- both clear ``_library_note_pending_blank_gc_id``
-        before this can run), the row is quietly removed here rather than
-        surviving as a permanent literal "Untitled" row the user has to
-        find and delete by hand.
+        alternative the task allows instead: whenever the editor is left
+        with this session's blank note in an effectively-empty final state
+        (title/body/keywords all blank -- see the caller,
+        ``_flush_library_note_save``, which covers both "never touched"
+        and "typed then deleted everything"), the row is quietly removed
+        here rather than surviving as a permanent literal "Untitled" row
+        the user has to find and delete by hand.
 
-        A freshly created note is always at version 1 (the create seam's
-        own contract; nothing else has saved to it yet, since any save
-        would have cleared the pending-GC flag). Best-effort: any failure
-        (including a version conflict from a vanishingly-unlikely
-        concurrent external change) is swallowed -- GC must never block the
-        exit it runs inside, and the worst case on failure is the
-        pre-existing behavior (the row survives), not a new regression. On
-        success, kicks the same full local-source snapshot reload the
-        create/delete flows already use, so the notes list/rail count drop
-        the now-gone row on the next recompose instead of a stale one
-        lingering in the cached snapshot.
+        Reads ``_library_note_session_blank_id`` (not the narrower,
+        edit-cleared ``_library_note_pending_blank_gc_id``) so this still
+        fires after the note was typed into and then emptied out again --
+        which, unlike the "never touched" case, may well have gone
+        through one or more real autosaves in between (deliberately: see
+        that flag's own docstring on why autosave alone must not exempt a
+        session blank from GC). Each of those autosaves bumps the row's
+        real DB version, so the delete below sends
+        ``self._library_note_version`` (the screen's own up-to-date
+        tracking of it, updated by every successful save) rather than a
+        hardcoded 1 -- an earlier version of this fix hardcoded 1 and the
+        delete silently failed on a version mismatch whenever a
+        mid-session autosave had already bumped the row past v1 (found by
+        the dedicated autosave-then-empty test). Falls back to 1 only for
+        the genuinely-never-saved case, where ``_library_note_version`` is
+        still ``None``. Best-effort: any failure (including a version
+        conflict from a still-possible concurrent EXTERNAL change) is
+        swallowed -- GC must never block the exit it runs inside, and the
+        worst case on failure is the pre-existing behavior (the row
+        survives), not a new regression. On success, kicks the same full
+        local-source snapshot reload the create/delete flows already use,
+        so the notes list/rail
+        count drop the now-gone row on the next recompose instead of a
+        stale one lingering in the cached snapshot -- exclusive within its
+        own worker group (``library_source_snapshot``), so a caller that
+        also queues its own refresh right after this returns (e.g.
+        ``_exit_library_note_editor_guarded``) simply supersedes this one
+        rather than running both.
+
+        Also clears ``_library_note_dirty`` unconditionally (review round
+        1 fix): the caller, ``_flush_library_note_save``, is reached via
+        the "typed then deleted everything" path with ``_library_note_
+        dirty`` still ``True`` -- every exit seam (e.g.
+        ``_exit_library_note_editor_guarded``) vetoes on that flag, so
+        without clearing it here a successful GC would still leave the
+        editor stuck open. Cleared regardless of whether the delete call
+        itself succeeds, matching "GC must never block the exit it runs
+        inside": on the rare failure path the row survives with its
+        pre-exit content (the emptied edit is not separately persisted
+        either), but the user is never trapped in the editor over it.
         """
-        note_id = self._library_note_pending_blank_gc_id
+        note_id = self._library_note_session_blank_id
+        # The row's current version -- NOT hardcoded to 1 -- since a
+        # mid-session autosave (deliberately still possible before GC;
+        # see the docstring above) may already have bumped it past its
+        # initial create-time version.
+        current_version = self._library_note_version or 1
+        self._library_note_session_blank_id = None
         self._library_note_pending_blank_gc_id = None
+        self._library_note_dirty = False
         if not note_id:
             return
         service = getattr(self.app_instance, "notes_scope_service", None)
@@ -7710,7 +7824,7 @@ class LibraryScreen(BaseAppScreen):
                 delete_note,
                 scope="local_note",
                 note_id=note_id,
-                version=1,
+                version=current_version,
                 user_id=self._library_notes_user_id(),
                 isolate_in_worker=True,
             )
@@ -16169,6 +16283,15 @@ class LibraryScreen(BaseAppScreen):
         self._library_note_preview = False
         self._library_note_preview_snapshot = None
         self._library_note_editor_armed = False
+        # LIB-14: switching to a (possibly different) note by row press --
+        # the flush above already resolved the PREVIOUS note's own
+        # save-vs-GC decision by id equality before this reassigns
+        # ``_selected_note_id``, but clear both flags explicitly here too
+        # (rather than relying solely on the id-equality guard elsewhere
+        # never matching a future note) so neither can read as "this note"
+        # for whatever gets opened next.
+        self._library_note_pending_blank_gc_id = None
+        self._library_note_session_blank_id = None
         if note_id:
             # Exclusive in its own group so rapidly switching rows cancels the
             # previous in-flight detail fetch instead of letting a slower older
@@ -16269,6 +16392,12 @@ class LibraryScreen(BaseAppScreen):
         edit saved during this editor visit from the DB's own truth -- the
         immediate recompose below renders the save-time in-memory patch
         (see ``_save_library_note``), and the refetch then confirms it.
+        When the flush above just GC'd a now-empty session blank
+        (``_gc_pending_blank_note``), that already queued the identical
+        refetch on success -- harmless, not a double-fetch: both calls
+        target the same ``@work(exclusive=True, group="library_source_
+        snapshot")`` worker, so this second call simply supersedes
+        (cancels-and-restarts) the first rather than running both.
 
         Returns:
             ``True`` when the editor was exited; ``False`` on a dirty veto.
@@ -16314,11 +16443,12 @@ class LibraryScreen(BaseAppScreen):
         event.stop()
         # LIB-14: the user is now explicitly managing this note's deletion
         # themselves via the normal confirm-then-delete flow below -- clear
-        # any pending blank-note GC first so ``_flush_library_note_save``
-        # (called next) does not delete it out from under that flow (which
-        # would otherwise make the confirm button's own delete call fail
-        # against an already-gone row and surface a spurious warning).
+        # any pending blank-note GC state first so ``_flush_library_note_
+        # save`` (called next) does not delete it out from under that flow
+        # (which would otherwise make the confirm button's own delete call
+        # fail against an already-gone row and surface a spurious warning).
         self._library_note_pending_blank_gc_id = None
+        self._library_note_session_blank_id = None
         await self._flush_library_note_save()
         if self._library_note_dirty:
             return
@@ -16679,6 +16809,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_note_preview_snapshot = None
         self._library_note_editor_armed = False
         self._library_note_pending_blank_gc_id = created_id if blank else None
+        self._library_note_session_blank_id = created_id if blank else None
         self._library_notes_filter = ""
         self._library_notes_filter_records = None
         # Reuses the same full local-source reload the initial mount load

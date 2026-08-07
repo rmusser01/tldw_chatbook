@@ -445,4 +445,104 @@ Tests/Library/test_library_media_viewer_state.py,
 Tests/UI/test_library_shell.py,
 Docs/User_Guide/library/notes.md,
 Docs/User_Guide/library/media-and-conversations.md.
+
+Task 3 fix round 1 (review) -- AC#5 gap: "type then delete everything"
+still committed a stray row:
+
+Review finding: ``_mark_library_note_dirty`` cleared
+``_library_note_pending_blank_gc_id`` on the FIRST edit regardless of
+final content, and ``_flush_library_note_save`` branched on
+``_library_note_dirty`` (not final emptiness) -- so typing into a blank
+note then deleting everything back to empty exited through the SAVE
+branch, persisting `title="Untitled"` + empty content: exactly the row
+AC#5 forbids. No test covered the sequence.
+
+Fix (matches the directed approach): added a second, edit-surviving flag
+``_library_note_session_blank_id`` (set only by the "Blank note" create
+path; NOT cleared by ``_mark_library_note_dirty``, unlike the older
+``_library_note_pending_blank_gc_id`` which still exists but now drives
+ONLY the title-placeholder UI). ``_flush_library_note_save`` now decides
+GC-vs-save by reading the LIVE editor fields (title/body/keywords, never
+the stale detail) and checking "all three blank" -- gated on session-blank
+id equality, not on the dirty flag -- which subsumes both "never touched"
+and "typed then emptied" with one check. Scope guard is structural: the
+flag is only ever set by the Blank-note path, so a pre-existing note that
+gets emptied out always falls through to the normal save branch (own
+test, real DB: row survives with title falling back to "Untitled" and
+content=""). Keywords count toward "empty" (documented decision: a
+user-provided tag on an otherwise-blank note is still content worth
+keeping). Autosave-interaction decision (explicitly asked for): an
+intermediate autosave does NOT clear the session-blank flag -- only an
+explicit Save press does (mirroring the older flag's existing exemption)
+-- so a session blank that got autosaved with real text and was then
+emptied out again before exit still GCs, since AC#5 cares about the FINAL
+state, not what happened mid-session (own test, real DB, with
+`LIBRARY_NOTES_AUTOSAVE_SECONDS` monkeypatched short and a poll loop that
+waits for the autosave to actually land before emptying).
+
+Two real bugs surfaced by writing the directed tests (not by inspection --
+both were caught by a failing assertion, fixed, re-run to green):
+ 1. GC'ing the row left ``_library_note_dirty`` at its pre-GC ``True``
+    value, so ``_exit_library_note_editor_guarded``'s own dirty-veto
+    (`if self._library_note_dirty: return False`) blocked the exit right
+    after a SUCCESSFUL GC -- the DB row was gone but the editor stayed
+    open on "editor" instead of returning to "list". Fixed by clearing
+    `_library_note_dirty` unconditionally inside `_gc_pending_blank_note`
+    (GC must never block the exit it runs inside, matching the function's
+    own existing best-effort philosophy).
+ 2. `_gc_pending_blank_note` hardcoded `version=1` for the delete call --
+    correct for "never touched," wrong for "autosaved then emptied": a
+    mid-session autosave (which the design above deliberately still
+    allows before GC) bumps the row's real DB version, so the delete
+    silently failed on a version mismatch (`NotesScopeService.delete_note`
+    normalizes a stale-version `ConflictError` to a quiet `False`) and the
+    row survived. Fixed by sending `self._library_note_version` (the
+    screen's own up-to-date tracking, bumped by every successful save)
+    instead of the hardcoded literal.
+Both were found by the `_typed_then_deleted_all_is_gc_from_real_db` and
+`_autosaved_then_emptied_still_gcs_on_back` tests respectively, RED before
+each fix, GREEN after -- exactly the kind of thing a shallower
+(assertion-only, no real-DB-round-trip) test would have missed, and
+exactly why the review asked for the real-sequence tests rather than
+accepting the design on inspection alone.
+
+Minor finding addressed: `_gc_pending_blank_note()` and
+`_exit_library_note_editor_guarded()` both call
+`_refresh_local_source_snapshot()` on the same Back/Escape exit path --
+documented (both docstrings now say so explicitly) that this is
+intentional and harmless: both target the same
+`@work(exclusive=True, group="library_source_snapshot")` worker, so the
+second call supersedes (cancels-and-restarts) the first rather than
+running both; no skip-if-queued logic was added since the existing
+`exclusive=True` already provides it for free.
+
+Also added explicit clearing of both flags at two more "switching to a
+different note" sites that had an inline reset block rather than routing
+through the shared `_reset_library_note_editor_state()` helper
+(`handle_library_notes_row`'s row-press switch,
+`_apply_navigation_context_state`'s note_id deep-link branch) -- belt and
+suspenders: the id-equality guard in `_flush_library_note_save` already
+prevents any wrong behavior even without this (a stale flag value can
+never coincidentally equal a DIFFERENT future note's real id), but
+clearing eagerly avoids a harmless-but-untidy stale string sitting in
+memory between visits.
+
+New tests (TDD, real DB via the same `_real_notes_scope_service` fixture
+the earlier round used): `test_library_shell_blank_note_typed_then_
+deleted_all_is_gc_from_real_db` (the exact reviewer-directed sequence:
+blank -> type -> delete all -> Back -> real-DB count asserted back to 0,
+never sticking at 1), `test_library_shell_pre_existing_note_emptied_out_
+still_saves_in_real_db` (the scope-guard counter-case: a pre-seeded real
+note emptied out still saves, exactly 1 row survives with the emptied
+content), `test_library_shell_blank_note_autosaved_then_emptied_still_
+gcs_on_back` (the autosave-interaction case, and the test that caught bug
+#2 above).
+
+Verification: Tests/UI/test_library_shell.py full file -- 365 passed, 1
+failed (same pre-existing `test_landing_footer_advertises_the_landing_
+keyboard_story`, task-3022's named ambient debt, unrelated). Targeted
+note/blank-note sweep (95 tests) green.
+
+Files changed (fix round 1): tldw_chatbook/UI/Screens/library_screen.py,
+Tests/UI/test_library_shell.py.
 <!-- SECTION:NOTES:END -->

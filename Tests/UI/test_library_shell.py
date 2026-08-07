@@ -9656,6 +9656,219 @@ async def test_library_shell_blank_note_edited_then_back_survives_in_real_db(
 
 
 @pytest.mark.asyncio
+async def test_library_shell_blank_note_typed_then_deleted_all_is_gc_from_real_db(
+    tmp_path,
+):
+    """LIB-14 review round 1 fix: typing into a Blank note and then deleting
+    everything back to empty -- title AND body both end up blank -- must
+    still GC the row on exit, exactly like never touching it at all. The
+    original (dirty-gated) fix missed this: ``_library_note_dirty`` stays
+    True once armed, so a naive check would route this through the save
+    branch and persist an empty "Untitled" row -- exactly what AC#5
+    forbids. Real DB: asserts the row count goes 0->1 (create) and lands
+    back at 0 after Back, never sticking at 1."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    app.notes_scope_service = _real_notes_scope_service(tmp_path)
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one("#library-row-create-note").press()
+        await _wait_for_selector(screen, pilot, "#library-notes-create-blank")
+        screen.query_one("#library-notes-create-blank").press()
+        await _wait_for_selector(screen, pilot, "#library-note-title")
+        await pilot.pause()
+        await pilot.pause()
+
+        assert (
+            await app.notes_scope_service.count_notes(
+                scope="local_note", user_id="default_user"
+            )
+            == 1
+        )
+        note_id = screen._selected_note_id
+        assert screen._library_note_session_blank_id == note_id
+
+        # Type real content into the body...
+        screen.query_one("#library-note-body", TextArea).text = "temp scratch text"
+        await pilot.pause()
+        assert screen._library_note_dirty is True
+        # ...the FIRST edit already cleared the display-only placeholder
+        # flag (unrelated to the GC decision)...
+        assert screen._library_note_pending_blank_gc_id is None
+        # ...but the session-blank id must survive the edit: it's what the
+        # fix now reads to decide GC-vs-save, and it must still be armed
+        # for THIS note.
+        assert screen._library_note_session_blank_id == note_id
+
+        # ...then delete it all back to empty.
+        screen.query_one("#library-note-body", TextArea).text = ""
+        await pilot.pause()
+        assert screen._library_note_dirty is True, (
+            "The note must still read as dirty after emptying it back out "
+            "-- this is the exact condition the old dirty-gated check "
+            "mishandled."
+        )
+
+        screen.query_one("#library-note-back").press()
+        for _ in range(150):
+            if (
+                await app.notes_scope_service.count_notes(
+                    scope="local_note", user_id="default_user"
+                )
+                == 0
+            ):
+                break
+            await pilot.pause(0.02)
+        else:
+            raise AssertionError(
+                "A blank note typed into and then emptied out again was "
+                "not GC'd -- an empty 'Untitled' row survived, exactly "
+                "what AC#5 forbids."
+            )
+        assert screen._library_notes_view == "list"
+        assert screen._library_note_session_blank_id is None
+
+
+@pytest.mark.asyncio
+async def test_library_shell_pre_existing_note_emptied_out_still_saves_in_real_db(
+    tmp_path,
+):
+    """Scope guard for the fix above: a PRE-EXISTING note (never created
+    via "Blank note" this session) that the user empties out completely is
+    a legitimate edit, not a session-blank GC candidate -- it must still
+    save (survive) even though its final state is title="" / body=""."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    real_service = _real_notes_scope_service(tmp_path)
+    app.notes_scope_service = real_service
+    created_id = await real_service.save_note(
+        scope="local_note",
+        title="Pre-existing note",
+        content="pre-existing content",
+        user_id="default_user",
+    )
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one("#library-row-browse-notes").press()
+        await _wait_for_selector(screen, pilot, "#library-notes-row-0")
+        screen.query_one("#library-notes-row-0").press()
+        await _wait_for_selector(screen, pilot, "#library-note-title")
+        await pilot.pause()
+        await pilot.pause()
+
+        # Never a session blank: only the "Blank note" create path sets this.
+        assert screen._library_note_session_blank_id is None
+        assert screen._selected_note_id == created_id
+
+        screen.query_one("#library-note-title", Input).value = ""
+        screen.query_one("#library-note-body", TextArea).text = ""
+        await pilot.pause()
+        assert screen._library_note_dirty is True
+
+        screen.query_one("#library-note-back").press()
+        for _ in range(150):
+            if screen._library_notes_view == "list":
+                break
+            await pilot.pause(0.02)
+        else:
+            raise AssertionError("Back never returned to the list view.")
+
+        assert (
+            await real_service.count_notes(scope="local_note", user_id="default_user")
+            == 1
+        ), "A pre-existing note the user emptied out must still be saved, not GC'd."
+        detail = await real_service.get_note_detail(
+            scope="local_note", note_id=created_id, user_id="default_user"
+        )
+        assert detail is not None
+        # Empty title falls back to "Untitled" at the save seam (unrelated
+        # to GC -- see ``_save_library_note``'s existing fallback); content
+        # genuinely saved as empty.
+        assert detail["title"] == "Untitled"
+        assert detail["content"] == ""
+
+
+@pytest.mark.asyncio
+async def test_library_shell_blank_note_autosaved_then_emptied_still_gcs_on_back(
+    tmp_path, monkeypatch
+):
+    """Documents and locks in the autosave-interaction decision: if
+    autosave already persisted real content for a session-blank note
+    mid-session, and the user THEN empties it out again before exiting,
+    the row must still be GC'd -- the row is session-created and finally
+    empty, which is exactly what AC#5 forbids, regardless of what
+    happened to it in between. An intermediate autosave is not a
+    deliberate "keep this" signal the way an explicit Save press is, so
+    it must not exempt the note from GC the way explicit Save does."""
+    monkeypatch.setattr(library_screen_module, "LIBRARY_NOTES_AUTOSAVE_SECONDS", 0.05)
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    real_service = _real_notes_scope_service(tmp_path)
+    app.notes_scope_service = real_service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one("#library-row-create-note").press()
+        await _wait_for_selector(screen, pilot, "#library-notes-create-blank")
+        screen.query_one("#library-notes-create-blank").press()
+        await _wait_for_selector(screen, pilot, "#library-note-title")
+        await pilot.pause()
+        await pilot.pause()
+        note_id = screen._selected_note_id
+
+        screen.query_one("#library-note-body", TextArea).text = "will be autosaved"
+        await pilot.pause()
+
+        # Wait for the debounced autosave to actually persist it -- proves
+        # this is genuinely a mid-session autosave, not just a dirty flag.
+        for _ in range(150):
+            detail = await real_service.get_note_detail(
+                scope="local_note", note_id=note_id, user_id="default_user"
+            )
+            if detail is not None and detail.get("content") == "will be autosaved":
+                break
+            await pilot.pause(0.02)
+        else:
+            raise AssertionError("Autosave never persisted the mid-session content.")
+
+        # An intermediate autosave must NOT exempt this note from GC --
+        # only an explicit Save press does that (see
+        # ``handle_library_note_save``).
+        assert screen._library_note_session_blank_id == note_id
+
+        # Now empty it back out and exit without an explicit Save.
+        screen.query_one("#library-note-body", TextArea).text = ""
+        await pilot.pause()
+
+        screen.query_one("#library-note-back").press()
+        for _ in range(150):
+            if (
+                await real_service.count_notes(
+                    scope="local_note", user_id="default_user"
+                )
+                == 0
+            ):
+                break
+            await pilot.pause(0.02)
+        else:
+            raise AssertionError(
+                "A session-blank note that was autosaved with content mid-"
+                "session, then emptied out again, was not GC'd on exit."
+            )
+
+
+@pytest.mark.asyncio
 async def test_library_shell_create_from_template_uses_template_fields():
     """Pressing a template row creates a note using that template's title/
     content with ``{date}``/``{time}``/``{datetime}`` placeholders resolved
