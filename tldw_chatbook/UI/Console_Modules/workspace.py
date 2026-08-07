@@ -195,7 +195,7 @@ class ConsoleWorkspaceController:
         note_follow_intent: Callable[[], None],
         focus_composer_if_needed: Callable[..., None],
         conversation_section_config_accessor: Callable[[], dict],
-        set_conversation_browser_group_collapsed: Callable[[str, bool], None],
+        conversation_browser_config: Callable[[], dict[str, Any]],
         focus_conversation_search: Callable[[], None],
         sync_workspace_context: Callable[[], None],
     ) -> None:
@@ -280,15 +280,13 @@ class ConsoleWorkspaceController:
                 accepts the same keyword, not a value baked in here.
             conversation_section_config_accessor: `ChatScreen._console_
                 conversation_section_config`.
-            set_conversation_browser_group_collapsed: `ChatScreen._set_
-                console_conversation_browser_group_collapsed` -- writes one
-                grouped-browser collapse preference into `app_config`.
-                Screen-owned because the preference dict it reaches
-                (`_console_conversation_browser_config`) hangs off the
-                screen's own config accessors, alongside the rail-state and
-                browser-search preferences that are not this cluster's; the
-                two toggle branches moved in wave-4 task 2 are its only
-                callers on this side.
+            conversation_browser_config: `ChatScreen._console_conversation_
+                browser_config`, the mutable grouped-browser preference
+                tree. The tree stays on the screen (it also holds
+                rail-state and search preferences this cluster does not
+                own); the collapse WRITE lives here, because no screen
+                code calls it.
+
             focus_conversation_search: `ChatScreen._focus_console_
                 workspace_conversation_search` -- stays on the screen (DOM:
                 `query_one`), reached as a named callable rather than a
@@ -334,9 +332,7 @@ class ConsoleWorkspaceController:
         self._conversation_section_config_accessor = (
             conversation_section_config_accessor
         )
-        self._set_conversation_browser_group_collapsed_fn = (
-            set_conversation_browser_group_collapsed
-        )
+        self._conversation_browser_config_fn = conversation_browser_config
         self._focus_conversation_search_fn = focus_conversation_search
         self._sync_workspace_context_fn = sync_workspace_context
 
@@ -493,11 +489,35 @@ class ConsoleWorkspaceController:
         return self._conversation_section_config_accessor
 
     @property
-    def _set_console_conversation_browser_group_collapsed(self) -> Any:
-        """The injected `set_conversation_browser_group_collapsed`. Stays
-        on `ChatScreen` (its own `app_config` preference accessors). See
-        `__init__`'s docstring."""
-        return self._set_conversation_browser_group_collapsed_fn
+    def _console_conversation_browser_config(self) -> Any:
+        """The injected `conversation_browser_config`. The config TREE stays
+        on `ChatScreen` (it holds rail-state and search preferences this
+        cluster does not own); only the grouped-browser collapse write below
+        moved here, since nothing on the screen calls it. See `__init__`'s
+        docstring."""
+        return self._conversation_browser_config_fn
+
+    def _set_console_conversation_browser_group_collapsed(
+        self,
+        group_id: str,
+        collapsed: bool,
+    ) -> None:
+        """Store one grouped browser collapse preference.
+
+        Args:
+            group_id: The browser group whose state is being recorded; blank
+                or whitespace-only ids are ignored.
+            collapsed: True to record the group as collapsed.
+        """
+        normalized_group_id = str(group_id or "").strip()
+        if not normalized_group_id:
+            return
+        browser_config = self._console_conversation_browser_config()
+        collapsed_groups = browser_config.get("collapsed_groups")
+        if not isinstance(collapsed_groups, dict):
+            collapsed_groups = {}
+            browser_config["collapsed_groups"] = collapsed_groups
+        collapsed_groups[normalized_group_id] = bool(collapsed)
 
     @property
     def _focus_console_workspace_conversation_search(self) -> Any:

@@ -184,12 +184,8 @@ def build_console_controllers(screen: "ChatScreen") -> None:
         # preferences that are not this cluster's), so the write stays
         # there and the two toggle branches moved in wave-4 task 2 reach
         # it by name.
-        set_conversation_browser_group_collapsed=(
-            lambda group_id, collapsed: (
-                screen._set_console_conversation_browser_group_collapsed(
-                    group_id, collapsed
-                )
-            )
+        conversation_browser_config=(
+            lambda: screen._console_conversation_browser_config()
         ),
         focus_conversation_search=(
             lambda: screen._focus_console_workspace_conversation_search()

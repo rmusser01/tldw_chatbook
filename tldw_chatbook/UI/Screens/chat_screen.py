@@ -9733,22 +9733,6 @@ class ChatScreen(BaseAppScreen):
             for group_id, collapsed in collapsed_groups.items()
         }
 
-    def _set_console_conversation_browser_group_collapsed(
-        self,
-        group_id: str,
-        collapsed: bool,
-    ) -> None:
-        """Store one grouped browser collapse preference."""
-        normalized_group_id = str(group_id or "").strip()
-        if not normalized_group_id:
-            return
-        browser_config = self._console_conversation_browser_config()
-        collapsed_groups = browser_config.get("collapsed_groups")
-        if not isinstance(collapsed_groups, dict):
-            collapsed_groups = {}
-            browser_config["collapsed_groups"] = collapsed_groups
-        collapsed_groups[normalized_group_id] = bool(collapsed)
-
     def _console_rail_state_config(self) -> dict[str, Any]:
         """Return mutable Console rail-state config, initializing it if needed."""
         console_config = self._console_config()
