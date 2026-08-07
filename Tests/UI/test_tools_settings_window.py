@@ -9,7 +9,7 @@ import pytest
 import pytest_asyncio
 import toml
 
-from textual.widgets import Button, Checkbox, Input, Select, Static, TextArea
+from textual.widgets import Button, Checkbox, Input, Label, Select, Static, Switch, TextArea
 
 from Tests.UI.app_factory import _build_test_app
 import tldw_chatbook.app as app_module
@@ -412,6 +412,123 @@ async def test_save_raw_toml_config_roundtrips_with_no_profile_override(
 
     saved = toml.load(config_path)
     assert saved == new_config_dict
+
+
+# ===========================================
+# task-3222: web_deep_search's [tools] gate row.
+#
+# web_deep_search (Agents/local_tool_provider.py) is a LocalToolSpec, not a
+# builtin Tool ABC subclass, so it cannot be added to _GATEABLE_BUILTINS
+# (Agents/tool_catalog.py) -- but it is gated through the SAME [tools] table
+# the GateableTool switches above it write. These tests pin that its row
+# exists, states the restart-to-apply requirement documented in
+# local_tool_provider.py's _default_specs, and round-trips through the same
+# Save/Reset Tool Settings buttons the sibling switches use.
+# ===========================================
+
+from tldw_chatbook.UI.Tools_Settings_Window import (
+    WEB_DEEP_SEARCH_GATE_KEY,
+    WEB_DEEP_SEARCH_TOOL_NAME,
+)
+
+
+@pytest.mark.asyncio
+async def test_web_deep_search_row_present_and_states_restart_requirement(
+    settings_window: ToolsSettingsWindow,
+):
+    """AC#1/#2: the row exists, is labeled with the tool name, names the
+    config key, and states the restart-to-apply requirement.
+
+    Queries the whole Tool Settings view rather than scoping to the row's
+    Horizontal wrapper: `_compose_tool_settings` builds each row with
+    `with Horizontal(classes="tool-item"): yield Switch(...)`, but that
+    context manager only groups children when the generator runs directly
+    inside Textual's own `compose()` walk -- here it's drained early by the
+    `*self._compose_tool_settings()` splat (materialized as a tuple argument
+    to the outer `Container(...)` before that Container is ever entered), so
+    every row's Switch/Label/Static end up flat siblings under the view
+    Container, not nested under a Horizontal. Pre-existing behavior of every
+    sibling row (read_file, write_file, ...), not something this row
+    changes -- so this test matches the real tree instead of an assumed one.
+    """
+    switch = settings_window.query_one(
+        f"#tool-switch-{WEB_DEEP_SEARCH_TOOL_NAME}", Switch
+    )
+    assert switch is not None
+
+    content_area = settings_window.query_one("#ts-view-tool-settings")
+    names = [str(label.renderable) for label in content_area.query(Label)]
+    assert WEB_DEEP_SEARCH_TOOL_NAME in names
+
+    descriptions = [str(s.renderable) for s in content_area.query(Static)]
+    matching = [d for d in descriptions if WEB_DEEP_SEARCH_GATE_KEY in d]
+    assert len(matching) == 1, descriptions
+    assert "restart" in matching[0].lower()
+
+
+@pytest.mark.asyncio
+async def test_web_deep_search_switch_defaults_off_with_no_config(
+    settings_window: ToolsSettingsWindow,
+):
+    """Matches the provider's own fail-closed default (coerce_bool_setting,
+    Agents/local_tool_provider.py) when the config has no [tools] section."""
+    switch = settings_window.query_one(
+        f"#tool-switch-{WEB_DEEP_SEARCH_TOOL_NAME}", Switch
+    )
+    assert switch.value is False
+
+
+@pytest.mark.asyncio
+async def test_web_deep_search_switch_reflects_an_enabled_config(
+    monkeypatch, temp_config_path
+):
+    """AC#1: the row reflects the CURRENT [tools] web_deep_search_enabled
+    value, same as the sibling GateableTool rows."""
+    config = {"tools": {WEB_DEEP_SEARCH_GATE_KEY: True}}
+    async with mount_settings_window(config, temp_config_path, monkeypatch) as (
+        window,
+        pilot,
+    ):
+        switch = window.query_one(f"#tool-switch-{WEB_DEEP_SEARCH_TOOL_NAME}", Switch)
+        assert switch.value is True
+
+
+@pytest.mark.asyncio
+async def test_web_deep_search_switch_round_trips_on_save(
+    settings_window: ToolsSettingsWindow, temp_config_path: Path
+):
+    """AC#3: toggling the switch and pressing Save Tool Settings writes
+    [tools] web_deep_search_enabled to config.toml, the same save path the
+    _GATEABLE_BUILTINS switches use."""
+    switch = settings_window.query_one(
+        f"#tool-switch-{WEB_DEEP_SEARCH_TOOL_NAME}", Switch
+    )
+    switch.value = True
+
+    save_button = settings_window.query_one("#save-tool-settings", Button)
+    await settings_window.on_button_pressed(Button.Pressed(save_button))
+
+    with open(temp_config_path, "r") as f:
+        saved_content_on_disk = toml.load(f)
+
+    assert saved_content_on_disk["tools"][WEB_DEEP_SEARCH_GATE_KEY] is True
+
+
+@pytest.mark.asyncio
+async def test_web_deep_search_switch_resets_to_off(
+    settings_window: ToolsSettingsWindow,
+):
+    """Reset Tool Settings must floor web_deep_search to OFF too, not just
+    the _GATEABLE_BUILTINS rows (mirrors their own reset-to-OFF contract)."""
+    switch = settings_window.query_one(
+        f"#tool-switch-{WEB_DEEP_SEARCH_TOOL_NAME}", Switch
+    )
+    switch.value = True
+
+    reset_button = settings_window.query_one("#reset-tool-settings", Button)
+    await settings_window.on_button_pressed(Button.Pressed(reset_button))
+
+    assert switch.value is False
 
 
 # ===========================================

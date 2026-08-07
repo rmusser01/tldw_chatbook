@@ -124,6 +124,15 @@ SETTINGS_DATABASES = (
     ("subscriptions", "Subscriptions", "tldw_cli_subscriptions"),
 )
 
+#: task-3222: web_deep_search's own [tools] gate. It is a LocalToolSpec
+#: (Agents/local_tool_provider.py), not a builtin Tool ABC subclass, so it
+#: cannot simply be added to _GATEABLE_BUILTINS below -- but its gate lives
+#: in the SAME [tools] table the GateableTool switches write, so the Tool
+#: Settings view gets it its own row plus explicit save/reset handling
+#: instead of a GateableTool table entry.
+WEB_DEEP_SEARCH_GATE_KEY = "web_deep_search_enabled"
+WEB_DEEP_SEARCH_TOOL_NAME = "web_deep_search"
+
 #: TASK-2775: the About text's canonical home is Utils/about_text (rendered by
 #: the F9 Settings screen's About category); re-exported here for back-compat.
 from tldw_chatbook.Utils.about_text import ABOUT_MARKDOWN  # noqa: E402,F401
@@ -3343,6 +3352,30 @@ class ToolsSettingsWindow(Container):
                         yield Label(label, classes="tool-name")
                         yield Static(description, classes="tool-description")
 
+            # task-3222: web_deep_search is config-gated through the same
+            # [tools] table as the GateableTool rows above but is not itself
+            # a GateableTool entry (see WEB_DEEP_SEARCH_GATE_KEY docstring),
+            # so it gets its own row here rather than joining that loop.
+            is_web_deep_search_enabled = bool(
+                tools_config.get(WEB_DEEP_SEARCH_GATE_KEY, False)
+            )
+            with Horizontal(classes="tool-item"):
+                yield Switch(
+                    value=is_web_deep_search_enabled,
+                    id=f"tool-switch-{WEB_DEEP_SEARCH_TOOL_NAME}",
+                    classes="tool-switch",
+                )
+                with Container(classes="tool-info"):
+                    yield Label(WEB_DEEP_SEARCH_TOOL_NAME, classes="tool-name")
+                    yield Static(
+                        "Multi-query web research (double opt-in). Config "
+                        f"key: tools.{WEB_DEEP_SEARCH_GATE_KEY} -- restart "
+                        "the app after saving: the provider builds its tool "
+                        "list once at startup, so this switch has no effect "
+                        "on the current session.",
+                        classes="tool-description",
+                    )
+
             # Save and reset buttons
             with Horizontal(classes="button-row"):
                 yield Button(
@@ -4238,6 +4271,19 @@ class ToolsSettingsWindow(Container):
                     continue
                 updates[entry.gate_key] = switch.value
 
+            # task-3222: web_deep_search's switch lives outside
+            # gateable_builtin_tools() (it isn't a GateableTool entry -- see
+            # WEB_DEEP_SEARCH_GATE_KEY's docstring), so it needs its own
+            # explicit save handling to reach the same [tools] update dict.
+            try:
+                web_deep_search_switch = self.query_one(
+                    f"#tool-switch-{WEB_DEEP_SEARCH_TOOL_NAME}", Switch
+                )
+            except Exception:  # noqa: BLE001 — row not mounted
+                web_deep_search_switch = None
+            if web_deep_search_switch is not None:
+                updates[WEB_DEEP_SEARCH_GATE_KEY] = web_deep_search_switch.value
+
             # Merges: [tools] keys with no switch here are left untouched, so
             # a save can never silently disable a hand-edited flag. The old
             # single-key save helper, called with a dict value and no key,
@@ -4272,6 +4318,18 @@ class ToolsSettingsWindow(Container):
                 # Defaults are DISABLED. The previous implementation reset every
                 # switch to True, which would now enable mutating tools.
                 switch.value = False
+                reset_count += 1
+
+            # task-3222: web_deep_search's switch is outside
+            # gateable_builtin_tools() -- reset it to its own OFF default too.
+            try:
+                web_deep_search_switch = self.query_one(
+                    f"#tool-switch-{WEB_DEEP_SEARCH_TOOL_NAME}", Switch
+                )
+            except Exception:  # noqa: BLE001 — row not mounted
+                web_deep_search_switch = None
+            if web_deep_search_switch is not None:
+                web_deep_search_switch.value = False
                 reset_count += 1
 
             self.app_instance.notify(

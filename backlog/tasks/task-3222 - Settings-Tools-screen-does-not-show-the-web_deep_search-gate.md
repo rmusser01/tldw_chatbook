@@ -1,9 +1,11 @@
 ---
 id: TASK-3222
 title: Settings Tools screen does not show the web_deep_search gate
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@claude'
 created_date: '2026-08-07 16:30'
+updated_date: '2026-08-07 19:14'
 labels:
   - web-tools
   - ux
@@ -19,7 +21,29 @@ web_deep_search's enable switch is the TOML key [tools] web_deep_search_enabled 
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Settings ▸ Tools shows the web_deep_search opt-in state (at minimum read-only with the config key named)
-- [ ] #2 The restart-to-apply requirement is stated wherever the state is shown
-- [ ] #3 Toggling (if editable) round-trips to [tools] web_deep_search_enabled in config.toml
+- [x] #1 Settings ▸ Tools shows the web_deep_search opt-in state (at minimum read-only with the config key named)
+- [x] #2 The restart-to-apply requirement is stated wherever the state is shown
+- [x] #3 Toggling (if editable) round-trips to [tools] web_deep_search_enabled in config.toml
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Locate Settings ▸ Tools switch derivation (_GATEABLE_BUILTINS)\n2. Add a row for web_deep_search's [tools] web_deep_search_enabled gate (editable switch writing the same key, matching sibling rows) with restart-to-apply note\n3. Tests: row present, round-trips the key, restart note visible
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Shipped an editable switch row, not read-only: ToolsSettingsWindow's existing save/reset machinery (Save Tool Settings / Reset Tool Settings buttons, [tools] round trip via save_settings_to_cli_config) made it cheap, and the pre-existing controller plan called for editable.
+
+web_deep_search (Agents/local_tool_provider.py, a LocalToolSpec) is NOT a builtin Tool ABC subclass, so it cannot join _GATEABLE_BUILTINS (Agents/tool_catalog.py) -- GateableTool requires a module/class to instantiate. Added it as a standalone row in Tools_Settings_Window.py's _compose_tool_settings, right after the gateable_builtin_tools() loop, using the same tool-switch-{name} id convention, Horizontal(classes="tool-item") structure, and [tools] table. _save_tool_settings and _reset_tool_settings each got a small explicit branch (query the extra switch by id, fold it into the same updates dict / reset-to-False pass) since it falls outside the gateable_builtin_tools() loop those methods iterate.
+
+Two new module constants (WEB_DEEP_SEARCH_GATE_KEY = "web_deep_search_enabled", WEB_DEEP_SEARCH_TOOL_NAME = "web_deep_search") avoid hardcoding the string in five places. The row's description states the config key as dotted tools.web_deep_search_enabled (not bracketed [tools] ...) to avoid Rich/Textual markup parsing -- the file's own existing comment already flags this exact bracket-as-markup trap for risk tags. Restart-to-apply text: "restart the app after saving: the provider builds its tool list once at startup, so this switch has no effect on the current session" -- matches local_tool_provider.py's own _default_specs comment.
+
+Architecture note worth flagging: Tools_Settings_Window.py carries a DEPRECATED (TASK-1346) banner ("Do not add new settings here... not reachable through normal navigation") -- the canonical settings surface is UI/Screens/settings_screen.py, whose MCP Defaults category deliberately stays read-only ("add MCP defaults only after server-first settings are exposed without flattening tools into Settings"). No _GATEABLE_BUILTINS switch is reachable through live navigation today; ToolsSettingsWindow is exercised only by its own direct-push test harness (Tests/UI/test_tools_settings_window.py). This task's own pre-approved Implementation Plan pointed at _GATEABLE_BUILTINS' UI (this file) explicitly, matching CLAUDE.md's "New Tool" guidance verbatim, so followed that rather than re-litigating the migration -- but a future cleanup of ToolsSettingsWindow must carry this row (and the whole Tool Settings section) forward, not drop it silently.
+
+Found and fixed a test-authoring trap while writing the widget-level tests: with Horizontal(classes="tool-item"): yield Switch(...) inside _compose_tool_settings does NOT nest children under the Horizontal in the live tree -- *self._compose_tool_settings() is spliced as a pre-materialized tuple into the outer Container(...) call, so the generator (and every Horizontal it enters/exits) fully drains before that Container is ever mounted/entered. Every row's Switch/Label/Static end up flat siblings directly under Container(id="ts-view-tool-settings"), not nested -- true for every existing GateableTool row too, not just this one. Tests query the whole view and match by content instead of assuming a scoped Horizontal wrapper.
+
+Files: tldw_chatbook/UI/Tools_Settings_Window.py (row + save/reset + constants); Tests/UI/test_tools_settings_window.py (5 widget-mount tests: row+restart-note present, default-off, reflects-enabled-config, save round-trip, reset-to-off); Tests/UI/test_settings_tools_section.py (2 tests: config-to-provider round trip via _default_specs, source-scan regression pin).
+<!-- SECTION:NOTES:END -->
