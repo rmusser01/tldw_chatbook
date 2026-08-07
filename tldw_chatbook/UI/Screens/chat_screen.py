@@ -17978,41 +17978,14 @@ class ChatScreen(BaseAppScreen):
                 ),
             )
             return
-        if button_id == "console-workspace-conversations-toggle":
-            event.stop()
-            try:
-                workspace_context = self.query_one(
-                    "#console-workspace-context",
-                    ConsoleWorkspaceContextTray,
-                )
-            except (NoMatches, QueryError):
-                self._sync_console_workspace_context()
-                return
-            state = getattr(workspace_context, "state", None)
-            if (
-                state is not None
-                and getattr(state, "conversation_browser", None) is None
-            ):
-                section = getattr(state, "conversation_section", None)
-                if section is None:
-                    return
-                collapsed = not bool(section.collapsed)
-                self._workspace._set_console_workspace_conversations_collapsed(
-                    section.workspace_id,
-                    collapsed,
-                )
-                workspace_context.sync_state(
-                    replace(
-                        state,
-                        conversation_section=replace(
-                            section,
-                            collapsed=collapsed,
-                        ),
-                    )
-                )
-                return
-            self._sync_console_workspace_context()
-            return
+        # NOTE: the `console-workspace-conversations-toggle` branch that stood
+        # here was deleted in wave 4. Commit 3b0374479 removed the only button
+        # carrying that id; the string survives only as a CSS class on toggles
+        # whose ids are `console-conversation-browser-{section,group}-toggle-*`,
+        # and those take their own branches below. The body was dead twice over:
+        # it also required `state.conversation_browser is None`, a state that
+        # same commit retired. `Tests/UI/test_console_button_routing.py` pins the
+        # id's absence so it cannot quietly come back as a branch nobody reaches.
         if button_id == "console-new-workspace-conversation":
             event.stop()
             await self._session._create_native_console_session_from_active_context()
