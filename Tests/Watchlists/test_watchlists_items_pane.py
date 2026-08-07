@@ -340,7 +340,7 @@ async def test_the_published_column_header_and_cells_are_wired_end_to_end():
         assert cell != escape_markup("2026-08-04T18:15:22.123456+00:00")
 
 
-# --- task-2511 Task 10: `space` = next unread, pane-bound -------------------
+# --- task-2513 Task 10: `space` = next unread, pane-bound -------------------
 #
 # `space` is bound on the PANE, not the screen: the rail's tree is made of
 # Buttons and a screen-level space binding would fire while the rail has

@@ -140,7 +140,7 @@ class WatchlistsWorkbench(Horizontal):
                 snapshot's own loading/error/empty markers are cross-
                 cutting chrome, not region content, so they must survive
                 CONTENT being hidden on every non-Read tab. Since
-                task-2511 removed the FEEDS region (whose own inline copy
+                task-2513 removed the FEEDS region (whose own inline copy
                 used to carry that chrome on Read), the screen wires this
                 on EVERY tab — Read included; `None` is for callers (and
                 tests) that genuinely have no header to show. This class
@@ -153,7 +153,7 @@ class WatchlistsWorkbench(Horizontal):
         self._content: dict[Region, Callable[[], Widget]] = dict(content or {})
         self._hidden = frozenset(hidden)
         self._header = header
-        # Extra text appended to a collapsed region's header (task-2511 Task
+        # Extra text appended to a collapsed region's header (task-2513 Task
         # 9): "▸ Watchlists  12 unread". Mutable via `set_collapsed_suffixes`
         # because counts change while the region stays collapsed.
         self._collapsed_suffixes: dict[Region, str] = dict(collapsed_suffixes or {})
@@ -366,7 +366,7 @@ class WatchlistsWorkbench(Horizontal):
         layout would tear down and remount every region, including the
         Inspector, which `watch_tree_scope` deliberately avoids (see its
         own docstring). The header is the only surface that carries the
-        tab strip and the snapshot's scoped markers (since task-2511, on
+        tab strip and the snapshot's scoped markers (since task-2513, on
         every tab), so a header-only refresh path is the one that keeps
         that readout current between recomposes.
 

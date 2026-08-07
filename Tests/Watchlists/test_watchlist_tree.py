@@ -130,7 +130,7 @@ async def test_permanent_roots_render_their_unread_counts():
 
 @pytest.mark.asyncio
 async def test_source_node_shows_unread_badge_only_when_positive():
-    """task-2511 Task 8: per-feed unread badges, NNW-style.
+    """task-2513 Task 8: per-feed unread badges, NNW-style.
 
     A source with unread items shows the number after its name; a source
     with none shows no number at all (roots and watchlists keep their

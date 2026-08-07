@@ -17132,7 +17132,7 @@ CodingWindow {
 
 /* The always-rendered centre header (section tab strip + the snapshot's
  * loading/error/empty/summary marker), shown above the regions on EVERY
- * tab since task-2511 -- see
+ * tab since task-2513 -- see
  * `WatchlistsCollectionsScreen._build_centre_status_header`. `Vertical`'s
  * own `DEFAULT_CSS` claims `height: 1fr` (textual/containers.py), and an
  * `fr` sibling here would compete with ITEMS's own `1fr`/`2fr` share for

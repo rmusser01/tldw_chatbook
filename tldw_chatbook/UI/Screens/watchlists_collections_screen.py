@@ -411,7 +411,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         ("p", "preview_selected", "Preview"),
         ("j", "next_item", "Next item"),
         ("k", "previous_item", "Previous item"),
-        # task-2511 Task 10, the reading-loop verbs. `space` (next unread) is
+        # task-2513 Task 10, the reading-loop verbs. `space` (next unread) is
         # deliberately NOT here — it is bound on ItemsPane so it cannot fire
         # from the rail (see `NextUnreadRequested`).
         ("m", "toggle_read_selected", "Read/Unread"),
@@ -535,7 +535,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         # unrelated navigation happened to trigger a reload.
         self._loaded_sources: list[dict[str, Any]] = []
         self._loaded_items: list[dict[str, Any]] = []
-        # The undo batch for `action_mark_all_read` (task-2511 Task 10): the
+        # The undo batch for `action_mark_all_read` (task-2513 Task 10): the
         # raw DB ids the last catch-up touched, cleared on undo. Raw ids —
         # `mark_all_read` returns database ids, which the loaded item dicts
         # carry as `item_id` (their `id` is the normalized table row key).
@@ -1126,7 +1126,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         self._apply_tree_data_to_live_surfaces()
 
     def _rail_unread_suffix(self) -> str:
-        """The collapsed left rail's "N unread" suffix (task-2511 Task 9).
+        """The collapsed left rail's "N unread" suffix (task-2513 Task 9).
 
         Empty when there is nothing unread — a permanent "0 unread" is
         chrome, not information, and an expanded rail already shows the
@@ -1215,7 +1215,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         except NoMatches:
             pass
         else:
-            # task-2511 Task 9: the collapsed left rail's "N unread" header
+            # task-2513 Task 9: the collapsed left rail's "N unread" header
             # suffix tracks the counts this loader just refreshed. In place,
             # never a recompose — same discipline as every other push here.
             workbench.set_collapsed_suffixes(
@@ -1316,7 +1316,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
 
         The snapshot's loading/error/empty/summary marker
         (`_watchlists_status_marker_widgets`) is rendered in exactly one
-        place -- the centre header, mounted on every tab since task-2511 --
+        place -- the centre header, mounted on every tab since task-2513 --
         and this rebuilds it. (The Read tab used to have a second, inline
         copy inside the FEEDS region; that region is gone.)
 
@@ -1760,7 +1760,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         readout could also live inline in the FEEDS region's Read-tab body --
         avoiding a real regression, Sources/Runs/... silently losing all
         visibility into "snapshot still loading" / "service unavailable" /
-        "no sources yet"; task-2511 removed that region, leaving the header
+        "no sources yet"; task-2513 removed that region, leaving the header
         as the only home.)
 
         Keyed on the async snapshot, NOT on `scoped_source_rows()`: the
@@ -1877,7 +1877,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         The tab strip and the snapshot markers are cross-cutting chrome,
         not region content, so they live here rather than inside any
         region: `WatchlistsWorkbench`'s `header=` factory, wired
-        unconditionally (`compose_content`) since task-2511 removed the
+        unconditionally (`compose_content`) since task-2513 removed the
         FEEDS region, whose Read-tab body used to carry an identical-
         looking inline copy of both — mounting both would duplicate
         `#wl-tabs`.
@@ -2502,13 +2502,13 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                     Region.RIGHT_RAIL: self._build_inspector_region,
                 },
                 hidden=self._hidden_centre_regions(),
-                # Unconditional since task-2511: the tab strip and the
+                # Unconditional since task-2513: the tab strip and the
                 # snapshot markers are cross-cutting chrome carried by the
                 # centre header on every tab, Read included -- see
                 # `_build_centre_status_header`. (They used to ride inside
                 # the FEEDS region's own body on Read; that region is gone.)
                 header=self._build_centre_status_header,
-                # task-2511 Task 9: the collapsed left rail keeps the total
+                # task-2513 Task 9: the collapsed left rail keeps the total
                 # unread count visible; `_load_tree_data` refreshes it in
                 # place via `set_collapsed_suffixes`.
                 collapsed_suffixes={Region.LEFT_RAIL: self._rail_unread_suffix()},
@@ -2527,7 +2527,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         unambiguously the one with an items-to-read relationship). CONTENT
         (the reader) is meaningless outside that relationship, so it is
         hidden on every other tab (Task 4's gating; the FEEDS region, gated
-        the same way by TASK-1344, was removed outright in task-2511).
+        the same way by TASK-1344, was removed outright in task-2513).
 
         TASK-1344 AC#4: hidden means UNMOUNTED, not collapsed to a one-row
         header — see `_rendered_region_layout`'s docstring for why a header
@@ -3476,7 +3476,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     def watch_tree_scope(self) -> None:
         """Keep the scope-driven surfaces in step with the tree selection
         (Task 7; header half added task-1344 fix wave; items reload added
-        task-2511).
+        task-2513).
 
         Deliberately does NOT do what `watch_active_section` does
         (`self.refresh(recompose=True)`): that rebuilds every region,
@@ -3490,11 +3490,11 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         What moves instead, in place:
 
         * The centre header (`_refresh_centre_header_for_scope`), which
-          carries the scoped summary on every tab since task-2511. (The
+          carries the scoped summary on every tab since task-2513. (The
           FEEDS region, whose inline copy this used to refresh, is gone.)
         * The items list on the Read tab: a scope move changes which items
           are in view, so `_load_items` is re-dispatched — and the reload
-          itself is scope-plumbed through `_items_scope_query` (task-2511).
+          itself is scope-plumbed through `_items_scope_query` (task-2513).
         * The Sources table (`_push_scoped_sources_to_pane`), an in-place
           push on the pane's own reactive, not a region rebuild.
         * The still-mounted `WatchlistTree` itself (task-876): since this
@@ -3539,7 +3539,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     def _refresh_centre_header_for_scope(self) -> None:
         """Queue a centre-header rebuild so the scoped summary follows the
         tree selection (task-1344 fix wave, Qodo correctness; made the only
-        scoped readout by task-2511).
+        scoped readout by task-2513).
 
         Records intent on the shared surface queue rather than swapping the
         DOM itself: `_apply_local_wc_snapshot` and `_load_tree_data` also
@@ -3784,7 +3784,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     def _load_active_section_data(self) -> None:
         """Start the loader owned by the currently visible section."""
         if self.active_section == "items":
-            # Own group (task-2511), as in `watch_tree_scope`:
+            # Own group (task-2513), as in `watch_tree_scope`:
             # `exclusive=True` in the default group would cancel every
             # in-flight default-group worker (`_create_source`, ...).
             self.run_worker(self._load_items(), exclusive=True, group="wc_items")
@@ -9518,7 +9518,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             # not an oversight. The `refresh=False` callers are the silent
             # mark-read-on-open (`_mark_item_read_on_open`), which fires on
             # EVERY item selection including each `j`/`k` keystroke, and
-            # `action_toggle_read_selected` (task-2511's `m` verb) -- neither
+            # `action_toggle_read_selected` (task-2513's `m` verb) -- neither
             # carries a reload of any kind, which is the whole reason the
             # flag exists (a full refresh per selection was proven live to
             # detach the mounted `ItemsPane` and drop keyboard focus). So the
@@ -9961,7 +9961,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         return self.active_section != "items"
 
     def action_toggle_read_selected(self) -> None:
-        """`m`: flip the open item between new and reviewed (task-2511 Task 10).
+        """`m`: flip the open item between new and reviewed (task-2513 Task 10).
 
         Only the read/unread pair is togglable: `ingested`/`ignored`/`error`
         record deliberate user actions and are never rewritten by a verb key
@@ -10035,7 +10035,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             notify("All caught up.", severity="information")
 
     def action_mark_all_read(self) -> None:
-        """`a`: catch the current scope up. Undoable with `u` (task-2511 Task 10)."""
+        """`a`: catch the current scope up. Undoable with `u` (task-2513 Task 10)."""
         if self._reader_verb_blocked():
             return
         self.run_worker(
@@ -10070,7 +10070,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             notify(f"Marked {len(ids)} read — press u to undo.")
 
     def action_undo_mark_all_read(self) -> None:
-        """`u`: restore the most recent mark-all-read batch (task-2511 Task 10)."""
+        """`u`: restore the most recent mark-all-read batch (task-2513 Task 10)."""
         if self._reader_verb_blocked():
             return
         if not self._last_mark_all_read_batch:

@@ -33,7 +33,7 @@ class RefreshItemsRequested(Message):
 class NextUnreadRequested(Message):
     """Posted when the user asks for the next unread item (`space`).
 
-    Pane-bound rather than screen-bound (task-2511 Task 10): the rail's
+    Pane-bound rather than screen-bound (task-2513 Task 10): the rail's
     `WatchlistTree` is made of `Button`s, so a SCREEN-level `space` binding
     would fire while the rail has focus and hijack it. Bound here, the key
     exists only while focus is inside the items region — `Input` consumes

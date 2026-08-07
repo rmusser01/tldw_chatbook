@@ -22,7 +22,7 @@ class _StripApp(App):
 
 
 def test_read_is_the_first_section():
-    # Reader-first IA (task-2511): Read leads the strip; Overview closes it.
+    # Reader-first IA (task-2513): Read leads the strip; Overview closes it.
     assert SECTIONS[0] == ("items", "Read")
     assert SECTIONS[-1] == ("overview", "Overview")
     assert [section_id for section_id, _label in SECTIONS] == [

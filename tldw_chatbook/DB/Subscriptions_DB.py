@@ -1807,7 +1807,7 @@ class SubscriptionsDB(BaseDB):
         untouched; only a caller that deliberately passes `None` sees the new
         behaviour.
 
-        TASK-2511 adds the rail's scope dimensions: `watchlist_id` and
+        TASK-2513 adds the rail's scope dimensions: `watchlist_id` and
         `unassigned_only` filter by watchlist membership (independently of
         every other predicate, and of each other), and `statuses` is the
         multi-status form of `status` for a caller that wants more than one

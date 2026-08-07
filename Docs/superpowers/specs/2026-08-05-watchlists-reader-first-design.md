@@ -1,7 +1,7 @@
 # Watchlists Reader-First Re-IA Design
 
 Date: 2026-08-05
-Status: Phase 1 implemented (2026-08-06, task-2511; later phases pending)
+Status: Phase 1 implemented (2026-08-06, task-2513; later phases pending)
 Amends: [ADR-018](../../../backlog/decisions/018-watchlists-tui-screen.md) — the section IA and pane set, again; a new ADR-042 records this change at plan time
 Builds on: [2026-07-25 watchlists console rebuild](2026-07-25-watchlists-console-rebuild-design.md) (implemented), [2026-07-29 noise-not-volume](2026-07-29-watchlists-noise-not-volume-design.md) (implemented), [2026-07-30 briefings](2026-07-30-watchlists-briefings-design.md) (implemented), [ADR-019](../../../backlog/decisions/019-watchlist-scheduler-migration.md), [decision 031](../../../backlog/decisions/031-tui-keybinding-and-footer-hint-conventions.md) (keybindings)
 

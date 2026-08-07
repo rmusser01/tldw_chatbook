@@ -120,7 +120,7 @@ async def test_export_opml_handler_calls_controller(fake_controller):
         assert isinstance(screen.app.screen, OpmlExportDialog)
 
 
-# --- task-2511: Read-first IA -- Read is tab 1, the default section, and ---
+# --- task-2513: Read-first IA -- Read is tab 1, the default section, and ---
 # the tab strip lives in the centre header on EVERY tab; the FEEDS region
 # (and its `#watchlists-list-pane`) is gone entirely.
 
@@ -279,7 +279,7 @@ async def test_the_header_summary_names_the_scope_with_a_live_count():
         await pilot.pause(0.1)
         screen = host.screen_stack[-1]
 
-        # task-2511: the scope readout lives in the centre header's summary
+        # task-2513: the scope readout lives in the centre header's summary
         # line (`#wc-watchlists-summary`), mounted on every tab -- Read is
         # the default, so no section switch is needed here anymore.
         assert screen.active_section == "items"
@@ -299,7 +299,7 @@ async def test_the_header_summary_names_the_scope_with_a_live_count():
         assert summary == "Local Watchlists snapshot: Morning AI Brief (2 sources)"
 
 
-# --- task-2511 Task 7: the tree scope drives the items list -----------------
+# --- task-2513 Task 7: the tree scope drives the items list -----------------
 #
 # Before this task `_load_items` fetched the newest 100 items of ANY source
 # regardless of the rail selection; `_items_scope_query` is the wiring that
@@ -483,7 +483,7 @@ async def test_tree_move_triggers_items_reload_on_read_tab():
             screen._load_items = original_load_items
 
 
-# --- task-2511 Task 10: reader verbs (m / space / a / u) --------------------
+# --- task-2513 Task 10: reader verbs (m / space / a / u) --------------------
 #
 # The keyboard half of the reading loop: `m` toggles read on the open item,
 # `space` opens the next unread, `a` catches the scope up (undo with `u`).
@@ -792,7 +792,7 @@ async def test_mark_all_read_scoped_to_watchlist():
             if len(pane.displayed_items()) == 2:
                 break
         assert len(pane.displayed_items()) == 2, (
-            "precondition: the scope shows only the member's items (task-2511 Task 7)"
+            "precondition: the scope shows only the member's items (task-2513 Task 7)"
         )
 
         await pilot.press("a")
@@ -849,7 +849,7 @@ async def test_selecting_a_pane_row_keeps_the_header_summary_on_the_tree_scope()
     an interaction in one region discarding the user's navigation in
     another, with no selection highlight in the tree to fall back on.
 
-    task-2511: the scoped readout is the centre header's summary line now
+    task-2513: the scoped readout is the centre header's summary line now
     that the FEEDS region is gone; the behaviour being pinned is unchanged.
     """
     app = _build_test_app()
@@ -987,7 +987,7 @@ async def test_staged_console_payload_follows_the_tree_scope():
 async def test_the_all_scope_summary_is_a_single_line_in_the_header():
     """Finding 1's headline symptom was the unscoped staging block printing
     every source a second time in the same box, in identical typography. The
-    per-source rows died with the FEEDS region (task-2511); what remains on
+    per-source rows died with the FEEDS region (task-2513); what remains on
     screen is exactly one summary line naming the scope, carried by the
     centre header on every tab.
     """
@@ -1029,7 +1029,7 @@ async def test_the_header_summary_escapes_an_untrusted_source_name():
     async with host.run_test(size=(180, 50)) as pilot:
         await pilot.pause(0.1)
         screen = host.screen_stack[-1]
-        # task-2511: the scoped readout lives in the centre header's summary
+        # task-2513: the scoped readout lives in the centre header's summary
         # line, mounted on every tab; Read is the default now.
         assert screen.active_section == "items"
         service = app.watchlist_bundle_service
@@ -1062,7 +1062,7 @@ async def test_the_header_summary_escapes_an_untrusted_source_name():
 
 @pytest.mark.asyncio
 async def test_centre_header_summary_follows_the_tree_scope_off_the_read_tab():
-    """task-1344 fix wave (Qodo correctness), kept current by task-2511:
+    """task-1344 fix wave (Qodo correctness), kept current by task-2513:
     `#wl-centre-status` (`_build_centre_status_header`) carries the scoped
     summary on EVERY tab now -- the FEEDS region that used to have its own
     inline copy on Read is gone. `watch_tree_scope` must still rebuild that
@@ -1126,7 +1126,7 @@ async def test_centre_header_summary_follows_the_tree_scope_on_the_read_tab_too(
     showing the PREVIOUS scope's summary -- silently, since nothing else
     on that tab would ever touch it.
 
-    Kept current by task-2511: the FEEDS region itself is gone (the
+    Kept current by task-2513: the FEEDS region itself is gone (the
     sibling test's docstring covers that removal); what this test still
     protects is the unconditional on-Read header refresh."""
     app = _build_test_app()
@@ -1145,7 +1145,7 @@ async def test_centre_header_summary_follows_the_tree_scope_on_the_read_tab_too(
         service.add_source(morning["id"], arxiv)
         screen._tree_watchlists = [{"id": morning["id"], "name": "Morning AI Brief"}]
 
-        # task-2511 made Read ("items") the DEFAULT section, so the section
+        # task-2513 made Read ("items") the DEFAULT section, so the section
         # write the sibling tests use to force a rebuild would be a no-op
         # here -- the watcher only fires on a real change. Recompose
         # directly instead: exactly what the watcher's
@@ -1441,7 +1441,7 @@ async def test_renaming_a_watchlist_updates_the_rail():
     service = app.watchlist_bundle_service
     watchlist = service.create("Mroning AI Brief")
     # One member source, so the header's scoped summary (the FEEDS heading's
-    # successor, task-2511) renders at all -- it only exists once there is
+    # successor, task-2513) renders at all -- it only exists once there is
     # anything to stage.
     source_id = service._db.add_subscription(
         name="ArXiv", type="rss", source="https://a.example/f"
@@ -1452,7 +1452,7 @@ async def test_renaming_a_watchlist_updates_the_rail():
     async with host.run_test(size=(180, 50)) as pilot:
         await pilot.pause(0.1)
         screen = host.screen_stack[-1]
-        # task-2511: the scope readout (asserted below) is the centre
+        # task-2513: the scope readout (asserted below) is the centre
         # header's summary line, mounted on every tab -- Read, the default,
         # included.
         assert screen.active_section == "items"

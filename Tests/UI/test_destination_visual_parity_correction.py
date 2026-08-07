@@ -974,7 +974,7 @@ SOURCE_PREP_WORKBENCHES = {
     # from the two horizontal-geometry parametrizations below via
     # `SOURCE_PREP_WORKBENCHES_HORIZONTAL`, the same way "personas" above
     # excluded itself from the retired snapshot-worker markers.
-    # task-2511: `#watchlists-list-pane` died with the FEEDS region; the
+    # task-2513: `#watchlists-list-pane` died with the FEEDS region; the
     # snapshot markers live in the always-mounted centre header now.
     "watchlists_collections": {
         "workbench": "#wl-workbench",
@@ -1084,7 +1084,7 @@ async def test_watchlists_screen_matches_approved_control_plane_columns():
     async with host.run_test(size=(160, 42)) as pilot:
         screen = _active_destination_screen(host)
         await _wait_for_selector(screen, pilot, "#wc-empty-state")
-        # The default section is Read since task-2511; the Overview pane's
+        # The default section is Read since task-2513; the Overview pane's
         # own copy ("Alert rules active:", ...) lives behind its tab now.
         screen.active_section = "overview"
         await pilot.pause(0.2)
@@ -1124,7 +1124,7 @@ async def test_watchlists_screen_matches_approved_control_plane_columns():
         #
         # CONTENT is unmounted on every tab except Read
         # (`WatchlistsCollectionsScreen._hidden_centre_regions`), and the
-        # FEEDS region was removed outright in task-2511, so it has no DOM
+        # FEEDS region was removed outright in task-2513, so it has no DOM
         # presence anywhere. ITEMS is the one centre region that is always
         # present; the tab strip and snapshot markers this test already
         # asserted above ("Sources"/"State: ready"/... in `visible_text`)
@@ -1159,7 +1159,7 @@ async def test_watchlists_centre_regions_stack_vertically_in_order():
     (which asserts `left.region.x < right.region.x`) can never apply — but
     that must not mean Watchlists has zero automated geometry coverage.
 
-    task-2511: the always-mounted centre header (`#wl-centre-status`, the
+    task-2513: the always-mounted centre header (`#wl-centre-status`, the
     tab strip + snapshot markers) sits above the stack on every tab.
     """
     app = _build_test_app()
@@ -1171,7 +1171,7 @@ async def test_watchlists_centre_regions_stack_vertically_in_order():
 
         # CONTENT only occupies space on the Items (Read) tab -- Task 4 fix
         # round 1. This test is specifically about the centre stack, so it
-        # must be on that tab (the default since task-2511), independent of
+        # must be on that tab (the default since task-2513), independent of
         # whatever the section otherwise defaults to.
         screen.active_section = "items"
         await pilot.pause()
@@ -1226,7 +1226,7 @@ async def test_watchlists_collapsing_both_rails_keeps_every_region_in_viewport()
         screen = _active_destination_screen(host)
         await _wait_for_selector(screen, pilot, "#wl-workbench")
 
-        # Read (the default since task-2511) is where every centre region
+        # Read (the default since task-2513) is where every centre region
         # is present for the "every region stays inside the viewport"
         # sweep.
         screen.active_section = "items"
@@ -1263,7 +1263,7 @@ async def test_watchlists_collapsing_both_rails_keeps_every_region_in_viewport()
 
 @pytest.mark.asyncio
 async def test_watchlists_items_region_is_taller_than_content_region_when_idle():
-    """Reader-first geometry (task-2511): with nothing open in the reader,
+    """Reader-first geometry (task-2513): with nothing open in the reader,
     CONTENT idles at its structural floor (border 2 + the generic "Content"
     heading 1 + the one-line placeholder 1 = 4 rows, via `height: auto` +
     `max-height: 12` on `.watchlists-region-content` in `_watchlists.tcss`)
@@ -1280,7 +1280,7 @@ async def test_watchlists_items_region_is_taller_than_content_region_when_idle()
         await _wait_for_selector(screen, pilot, "#wl-workbench")
 
         # Both centre regions only occupy space together on the Read tab --
-        # the default since task-2511.
+        # the default since task-2513.
         screen.active_section = "items"
         await pilot.pause()
 
@@ -1307,7 +1307,7 @@ async def test_watchlists_empty_state_fits_inside_the_centre_header(size):
     header (`#wl-centre-status`, `height: auto` in `_watchlists.tcss`) --
     fully, on the default Read tab as on every other, with nothing clipped
     and nothing left to scroll. (The FEEDS-cap regression this assertion
-    used to run against died with the region in task-2511.)
+    used to run against died with the region in task-2513.)
     """
     app = _build_test_app()
     host = _visual_destination_harness(app, "watchlists_collections")
@@ -1351,7 +1351,7 @@ async def test_watchlists_every_region_draws_exactly_one_round_border():
     in `features/_watchlists.tcss` (an ID rule that beats the shared block in
     `components/_agentic_terminal.tcss` on source order, touching no other
     destination). (`#watchlists-list-pane` was the third stripped id; it
-    died with the FEEDS region in task-2511.)
+    died with the FEEDS region in task-2513.)
 
     Counting corners in the compositor's output catches both failure modes at
     once: a doubled border shows more than four corners inside a region, and a
@@ -1490,7 +1490,7 @@ async def test_watchlists_active_section_tab_label_is_visible():
 @pytest.mark.parametrize("size", [(160, 42), (100, 40)])
 @pytest.mark.asyncio
 async def test_watchlists_soloed_centre_region_fills_the_centre(size):
-    """Task 6 fix round 3, Finding 3, kept current by task-2511: a soloed
+    """Task 6 fix round 3, Finding 3, kept current by task-2513: a soloed
     region must fill the centre, not stay pinned at its cap.
 
     Solo (`action_solo_region` -> `RegionLayout.solo`) collapses the other
@@ -1513,7 +1513,7 @@ async def test_watchlists_soloed_centre_region_fills_the_centre(size):
         await _wait_for_selector(screen, pilot, "#wl-workbench")
 
         # CONTENT only occupies space on the Items (Read) tab -- the
-        # default since task-2511. Soloing/un-soloing it below needs it
+        # default since task-2513. Soloing/un-soloing it below needs it
         # genuinely present.
         screen.active_section = "items"
         await pilot.pause()
@@ -2572,7 +2572,7 @@ COMPACT_DESTINATION_CONTRACTS = {
     "watchlists_collections": {
         "identity": "#watchlists-collections-title",
         "workbench": "#wl-workbench",
-        # `#watchlists-list-pane` died with the FEEDS region in task-2511.
+        # `#watchlists-list-pane` died with the FEEDS region in task-2513.
         # `#wl-region-left_rail` (the watchlist tree) is the rail-as-"object"
         # analogue "chat" and "library" already use above for the same
         # reason -- always present, regardless of active section.
@@ -2785,7 +2785,7 @@ VISIBLE_FOCUS_TARGETS = {
 #: individually focusable (`can_focus = True`, so `z` can target whichever
 #: one has focus — see `watchlists_workbench.py`), and the Read tab's own
 #: Items toolbar (refresh/search/status/table) adds four more stops on the
-#: default section since task-2511 made it the landing tab. Measured
+#: default section since task-2513 made it the landing tab. Measured
 #: empirically at 35 presses to `wc-open-watchlists` with the default
 #: `_build_test_app()` empty-state fixture; 38 leaves a small margin.
 TAB_ORDER_ATTEMPTS = {
@@ -3432,7 +3432,7 @@ async def test_watchlists_tab_strip_hit_regions_match_its_painted_labels(size):
             # Recomputed every iteration, not captured once up front: the
             # tab strip's own row can legitimately move between tabs -- it
             # lives in the borderless `#wl-centre-status` header on every
-            # tab since task-2511, and the panes below it change height
+            # tab since task-2513, and the panes below it change height
             # section by section. A stale row/painted pair captured on one
             # tab and reused after switching to a structurally different
             # one is exactly the kind of harness coordinate error this test
@@ -3611,7 +3611,7 @@ async def test_watchlists_first_run_replaces_empty_cards_with_guidance():
 
     async with host.run_test(size=(160, 42)) as pilot:
         screen = _active_destination_screen(host)
-        # The default section is Read since task-2511; the overview
+        # The default section is Read since task-2513; the overview
         # first-run panel lives behind its own tab now.
         screen.active_section = "overview"
         await pilot.pause(0.2)
@@ -3687,7 +3687,7 @@ async def test_watchlists_populated_overview_and_inspector_are_unchanged():
 
     async with host.run_test(size=(160, 42)) as pilot:
         screen = _active_destination_screen(host)
-        # The default section is Read since task-2511; the Overview pane
+        # The default section is Read since task-2513; the Overview pane
         # lives behind its own tab now.
         screen.active_section = "overview"
         await pilot.pause(0.2)
@@ -3747,7 +3747,7 @@ async def test_watchlists_overview_cards_paint_their_labels_and_numbers(size):
 
     async with host.run_test(size=size) as pilot:
         screen = _active_destination_screen(host)
-        # The default section is Read since task-2511; the Overview pane
+        # The default section is Read since task-2513; the Overview pane
         # lives behind its own tab now.
         screen.active_section = "overview"
         await pilot.pause(0.2)

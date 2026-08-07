@@ -649,7 +649,7 @@ def test_counts_use_a_single_query_regardless_of_watchlist_count(db, monkeypatch
     assert counting.execute_count == 1
 
 
-# --- TASK-2511: scoped item queries + per-source counts ----------------------
+# --- TASK-2513: scoped item queries + per-source counts ----------------------
 
 
 @pytest.fixture
@@ -725,7 +725,7 @@ def test_get_source_item_counts(db_with_memberships):
     assert counts[unassigned] == {"total": 2, "unread": 2}
 
 
-# --- TASK-2511: bulk mark-all-read + undo restore -----------------------------
+# --- TASK-2513: bulk mark-all-read + undo restore -----------------------------
 
 
 def _item_id(db, url):

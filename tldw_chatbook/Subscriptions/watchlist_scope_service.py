@@ -238,10 +238,10 @@ class WatchlistScopeService:
                 ``items.list`` like every other item read: it narrows which
                 items come back, it does not read the run record.
             watchlist_id: Optional watchlist whose sources' items to return
-                (TASK-2511).
+                (TASK-2513).
             unassigned_only: When true, return only items of sources in no
-                watchlist (TASK-2511).
-            statuses: Optional list of statuses to match any of (TASK-2511);
+                watchlist (TASK-2513).
+            statuses: Optional list of statuses to match any of (TASK-2513);
                 combine only with a falsey ``status``.
 
         Returns:
@@ -364,7 +364,7 @@ class WatchlistScopeService:
     ) -> list[int]:
         """Mark every ``new`` item in scope ``reviewed``; return the affected ids.
 
-        The reader's mark-all-read affordance (TASK-2511). Routed as
+        The reader's mark-all-read affordance (TASK-2513). Routed as
         ``items.update`` like `update_item`: it is the same write, batched.
         The returned ids are the undo batch for `restore_items_new`.
 

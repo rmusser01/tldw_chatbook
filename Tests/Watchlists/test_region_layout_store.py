@@ -298,7 +298,7 @@ def test_load_ignores_unknown_region_names(monkeypatch):
 
 
 def test_load_drops_the_retired_feeds_region(monkeypatch):
-    # task-2511 removed the FEEDS region with no migration code: a persisted
+    # task-2513 removed the FEEDS region with no migration code: a persisted
     # "feeds" string from before the removal is just an unknown region name
     # now, dropped by the same guard the test above pins (ADR-042).
     monkeypatch.setattr(

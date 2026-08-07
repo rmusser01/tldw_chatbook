@@ -2,7 +2,7 @@
 
 Status: Accepted
 Date: 2026-08-05
-Related Task: [backlog/tasks/task-2511 - Watchlists-reader-first-re-IA-phase-1-reading-loop.md](../tasks/task-2511%20-%20Watchlists-reader-first-re-IA-phase-1-reading-loop.md)
+Related Task: [backlog/tasks/task-2513 - Watchlists-reader-first-re-IA-phase-1-reading-loop.md](../tasks/task-2513%20-%20Watchlists-reader-first-re-IA-phase-1-reading-loop.md)
 Supersedes: N/A (amends ADR-018's pane set and section IA)
 
 ## Decision

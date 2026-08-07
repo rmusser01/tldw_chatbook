@@ -24,7 +24,7 @@ class _WorkbenchApp(App):
 
 
 def test_region_titles_cover_exactly_the_live_regions():
-    # No FEEDS entry left over from the five-region era (task-2511), and no
+    # No FEEDS entry left over from the five-region era (task-2513), and no
     # live region missing a title -- `_region_widget` would KeyError.
     assert set(REGION_TITLES) == set(Region)
 
@@ -48,7 +48,7 @@ async def test_collapsed_region_renders_a_header_instead_of_a_body():
 
 @pytest.mark.asyncio
 async def test_collapsed_header_shows_suffix():
-    """task-2511 Task 9: a collapsed rail advertises what it hides.
+    """task-2513 Task 9: a collapsed rail advertises what it hides.
 
     NNW's sidebar toggle keeps the unread total visible while collapsed;
     here the collapsed left rail's header carries "N unread" so the user
@@ -356,7 +356,7 @@ async def test_a_soloed_centre_region_is_marked_for_css():
 @pytest.mark.asyncio
 async def test_content_height_is_capped_and_scrollable_when_content_overflows():
     """`.watchlists-region-content` is the one capped region left (FEEDS is
-    gone, task-2511): `height: auto` + `max-height: 12` + `overflow-y: auto`
+    gone, task-2513): `height: auto` + `max-height: 12` + `overflow-y: auto`
     in `_watchlists.tcss`, so the reader grows to fit small content, stops at
     the cap, and scrolls past it rather than either clipping silently or
     displacing ITEMS.
@@ -641,7 +641,7 @@ async def test_refresh_region_content_never_leaves_the_region_empty_on_a_build_f
 #
 # The workbench's `header=` carries the section tab strip plus the snapshot
 # summary on EVERY tab (`WatchlistsCollectionsScreen._build_centre_status_
-# header` is wired unconditionally since task-2511). Nothing used to rebuild
+# header` is wired unconditionally since task-2513). Nothing used to rebuild
 # that header in place when its content went stale (e.g. the tree scope
 # moving) -- these pin the primitive independent of the screen, the same way
 # the `refresh_region_content` tests above do for a region.

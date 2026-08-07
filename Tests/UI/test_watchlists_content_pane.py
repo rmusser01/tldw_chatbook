@@ -392,7 +392,7 @@ async def test_content_region_is_gated_to_the_items_read_tab():
         await pilot.pause(0.2)
         screen = host.screen_stack[-1]
 
-        # Default section is Read ("items") since task-2511, so CONTENT is
+        # Default section is Read ("items") since task-2513, so CONTENT is
         # mounted at rest...
         assert not screen.region_layout.is_collapsed(Region.CONTENT)
         assert screen.query("#wl-region-content")
@@ -1680,7 +1680,7 @@ async def test_pressing_expand_actually_solos_content_and_restores_on_a_second_p
         items_pane.select_item_by_id("11")
         await pilot.pause(0.3)
 
-        # task-2511 removed the FEEDS region; the ITEMS region is now the
+        # task-2513 removed the FEEDS region; the ITEMS region is now the
         # neighbour whose collapse proves the solo actually happened.
         assert screen.query("#wl-region-items"), "precondition: ITEMS starts visible"
         content_pane = screen.query_one("#watchlists-content-pane", ContentPane)

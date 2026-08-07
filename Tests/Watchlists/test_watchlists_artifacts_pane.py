@@ -374,7 +374,7 @@ async def test_artifacts_is_a_section_and_opening_it_leaves_content_unmounted():
         # TASK-1344 AC#4: gated regions UNMOUNT rather than keep a one-row
         # header, so CONTENT has no DOM presence here at all, not even a
         # collapsed one. (The FEEDS region that used to be gated the same
-        # way was removed outright in task-2511.)
+        # way was removed outright in task-2513.)
         assert not screen.query("#wl-region-content"), (
             "Artifacts must not mount the CONTENT reader"
         )
@@ -383,7 +383,7 @@ async def test_artifacts_is_a_section_and_opening_it_leaves_content_unmounted():
         )
         assert not screen.query("#wl-region-feeds") and not screen.query(
             "#wl-header-feeds"
-        ), "the FEEDS region no longer exists at all (task-2511)"
+        ), "the FEEDS region no longer exists at all (task-2513)"
         assert screen.query_one("#wl-region-items"), (
             "ITEMS is the one centre region that is always mounted"
         )

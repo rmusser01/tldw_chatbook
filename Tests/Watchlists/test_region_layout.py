@@ -17,7 +17,7 @@ def test_default_layout_has_everything_visible():
 
 
 def test_the_centre_regions_are_items_and_content():
-    # Reader-first IA (task-2511): the FEEDS region is gone; the centre
+    # Reader-first IA (task-2513): the FEEDS region is gone; the centre
     # stack is the items list over the reader, nothing else.
     assert CENTRE_REGIONS == (Region.ITEMS, Region.CONTENT)
 

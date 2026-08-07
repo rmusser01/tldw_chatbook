@@ -160,7 +160,7 @@ class WatchlistTree(Vertical):
         self._watchlists = list(watchlists)
         self._counts = dict(counts)
         self._load_source_rows = source_rows_loader
-        # Per-source {total, unread} for the source-node badges (task-2511
+        # Per-source {total, unread} for the source-node badges (task-2513
         # Task 8). `counts` above is keyed by watchlist/bucket and cannot
         # answer for a source; a source missing here renders no badge,
         # which is the honest state for "no items yet".
@@ -437,7 +437,7 @@ class WatchlistTree(Vertical):
                 # ambiguous besides.
                 source_id = int(row["id"])
                 source_name = escape_markup(str(row["name"]))
-                # task-2511 Task 8: the per-feed unread badge. Unlike roots
+                # task-2513 Task 8: the per-feed unread badge. Unlike roots
                 # and watchlists (which always show their count), a source
                 # shows the number only when it is positive — a permanent
                 # "0" on every feed is noise in the rail's narrowest indent,

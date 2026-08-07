@@ -738,7 +738,7 @@ def isolate_test_environment(monkeypatch, tmp_path):
         monkeypatch.setattr(ii, "_first_run_import_attempted", True, raising=False)
 
     # Pre-expand the Watchlists workbench's right rail (the Inspector) for
-    # screen-level tests. task-2511 (reader-first Phase 1) changed the
+    # screen-level tests. task-2513 (reader-first Phase 1) changed the
     # first-run default so a genuinely new user's RIGHT_RAIL starts collapsed
     # (`region_layout_store._FIRST_RUN_DEFAULT`), and every watchlists screen
     # test written before that change mounts the screen with the per-test

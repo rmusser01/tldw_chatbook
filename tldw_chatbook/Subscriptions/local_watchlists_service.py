@@ -397,10 +397,10 @@ class LocalWatchlistsService:
             run_id: Restrict to the items one run produced (TASK-2306), or
                 `None` for every run's.
             watchlist_id: Restrict to items of the sources in one watchlist
-                (TASK-2511), or `None` for every watchlist's.
+                (TASK-2513), or `None` for every watchlist's.
             unassigned_only: Restrict to items of sources belonging to no
-                watchlist (TASK-2511).
-            statuses: Restrict to any of several statuses (TASK-2511), or
+                watchlist (TASK-2513).
+            statuses: Restrict to any of several statuses (TASK-2513), or
                 `None` to defer to `status`. Safe to combine with the default
                 falsey `status` only -- `get_new_items` rejects passing both
                 a truthy `status` and `statuses`.
@@ -583,7 +583,7 @@ class LocalWatchlistsService:
     ) -> list[int]:
         """Mark every ``new`` item in scope ``reviewed``; return the affected ids.
 
-        The bulk half of the reader's mark-all-read affordance (TASK-2511).
+        The bulk half of the reader's mark-all-read affordance (TASK-2513).
         Thin delegate to `SubscriptionsDB.mark_all_read`, with the same
         ``int(...) if ... is not None else None`` id normalization
         `list_items` applies to its scope arguments. The returned ids are the

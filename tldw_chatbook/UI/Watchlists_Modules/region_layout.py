@@ -8,7 +8,7 @@ Every mutator returns a new instance; the type is frozen and hashable, so a
 Textual reactive can hold it and equality comparison decides whether to
 re-render.
 
-The FEEDS region was removed in task-2511 (reader-first IA, ADR-042) with no
+The FEEDS region was removed in task-2513 (reader-first IA, ADR-042) with no
 migration code: a persisted ``"feeds"`` string from before the removal is an
 unknown region name now, dropped with a debug log by
 `region_layout_store.load_region_layout`'s existing guard.
