@@ -72,6 +72,10 @@ from ..Console_Modules.hands_free import (
 from ..Console_Modules.left_rail import ConsoleLeftRail
 from ..Console_Modules.message import ConsoleMessageController
 from ..Console_Modules.right_rail import ConsoleInspectorRail
+from ..Console_Modules.transcript import (
+    ConsoleTranscriptRegion,
+    _ConsoleTranscriptReadingState,
+)
 from ..Console_Modules.workspace import ConsoleWorkspaceController
 from ..Console_Modules.session import (
     ConsoleSessionController,
@@ -1000,13 +1004,6 @@ class ConsoleRealtimeSession:
     adopt_capture: bool = False
     failure_text: str = ""
     transcript_dirty: bool = False
-
-
-@dataclass(frozen=True)
-class _ConsoleTranscriptReadingState:
-    anchored: bool
-    scroll_y: float
-    selected_message_id: str | None
 
 
 CONSOLE_WORKBENCH_SHORTCUTS = (
@@ -8083,43 +8080,54 @@ class ChatScreen(BaseAppScreen):
         self._dictation._request_console_dictation_start()
 
 
+    def _console_transcript_region_or_none(self) -> ConsoleTranscriptRegion | None:
+        """Return the mounted transcript region, or ``None`` before compose.
+
+        A region widget only exists once the screen has composed, and a
+        recompose replaces the instance -- so it is reached by id, never
+        stored on the screen (the same way ``_sync_console_rail_visibility``
+        reaches ``ConsoleLeftRail``).
+
+        Returns:
+            The ``#console-main-column`` region widget, or ``None`` when the
+            shell is not (yet) mounted.
+        """
+        try:
+            return self.query_one("#console-main-column", ConsoleTranscriptRegion)
+        except (NoMatches, QueryError):
+            return None
+
     def _capture_console_transcript_reading_state(
         self,
     ) -> _ConsoleTranscriptReadingState | None:
-        """Capture the semantic reading position before composer layout changes."""
-        try:
-            transcript = self.query_one("#console-native-transcript", ConsoleTranscript)
-        except QueryError:
-            return None
-        return _ConsoleTranscriptReadingState(
-            anchored=bool(
-                transcript.is_anchored
-                and not getattr(transcript, "_anchor_released", False)
-            ),
-            scroll_y=float(transcript.scroll_y),
-            selected_message_id=transcript.selected_message_id,
-        )
+        """Capture the semantic reading position before composer layout changes.
+
+        Delegates to ``ConsoleTranscriptRegion.capture_reading_state`` (wave-3
+        task 2); kept as a screen method because
+        ``_set_console_composer_collapsed`` and a mounted composer-collapse
+        regression both call it by this name.
+
+        Returns:
+            The transcript's reading state, or ``None`` when no transcript
+            region is mounted.
+        """
+        region = self._console_transcript_region_or_none()
+        return None if region is None else region.capture_reading_state()
 
     def _restore_console_transcript_reading_state(
         self,
         state: _ConsoleTranscriptReadingState | None,
     ) -> None:
-        """Restore the transcript anchor, offset, and selected message."""
-        if state is None:
-            return
-        try:
-            transcript = self.query_one("#console-native-transcript", ConsoleTranscript)
-        except QueryError:
-            return
-        transcript.selected_message_id = state.selected_message_id
-        if state.anchored:
-            transcript.anchor()
-            return
-        transcript.release_anchor()
-        transcript.scroll_to(
-            y=min(state.scroll_y, float(transcript.max_scroll_y)),
-            animate=False,
-        )
+        """Restore the transcript anchor, offset, and selected message.
+
+        Delegates to ``ConsoleTranscriptRegion.restore_reading_state``.
+
+        Args:
+            state: The reading state captured before the layout change.
+        """
+        region = self._console_transcript_region_or_none()
+        if region is not None:
+            region.restore_reading_state(state)
 
     def _set_console_composer_collapsed(self, collapsed: bool) -> None:
         """Synchronize screen-owned collapse state with the mounted composer."""
@@ -13536,19 +13544,30 @@ class ChatScreen(BaseAppScreen):
                     left_rail.styles.display = "none"
                 yield self._frame_console_region(left_rail)
 
-                main_column = Vertical(id="console-main-column")
+                # `session_surface_builder` hands `ConsoleTranscriptRegion` a
+                # zero-arg callable, not a pre-built widget, for the same
+                # reason `character_avatar_widget_builder` does above -- and
+                # with a sharper edge here: `_ensure_console_session_surface`
+                # CACHES its result on `self.console_session_surface` and
+                # returns the same instance every time, so a stored instance
+                # would re-yield a widget Textual may already have removed on
+                # the next recompose, and would skip the background-effect
+                # re-sync that call performs. The lambda closes over `self`
+                # and resolves at CALL time (matching
+                # `ConsoleDictationController`'s late-binding constructor rule
+                # -- see `dictation.py`'s module docstring).
+                main_column = ConsoleTranscriptRegion(
+                    session_surface_builder=(
+                        lambda: self._ensure_console_session_surface()
+                    ),
+                )
+                # Sizing stays here, not in the region: these are facts about
+                # this pane's place among its `#console-workspace-grid`
+                # siblings (3fr / 13fr / 4fr), exactly as both rails are wired.
                 main_column.styles.width = "13fr"
                 main_column.styles.min_width = 56
                 main_column.styles.min_height = 0
-                with main_column:
-                    transcript_region = self._frame_console_region(
-                        Vertical(
-                            id="console-transcript-region", classes="console-region"
-                        ),
-                        top=False,
-                    )
-                    with transcript_region:
-                        yield self._ensure_console_session_surface()
+                yield main_column
 
                 # The live-work card is the one piece of this rail's content
                 # that reaches beyond rail-local state (self.app_instance,
@@ -15547,21 +15566,15 @@ class ChatScreen(BaseAppScreen):
     def _note_console_follow_intent(self) -> None:
         """Stamp a programmatic jump-to-tail intent on the transcript (TASK-336).
 
-        Task 3b audit: stays singular/view-only on purpose. Unlike the
-        stash maps above, this never carries session-owned DATA across a
-        send's lifetime -- it is a one-shot directive consumed by whichever
-        session's transcript happens to be `#console-native-transcript`
-        (a single widget instance reflecting the ACTIVE session) at the
-        next render. A background session's send stamping this while a
-        different session is viewed just requests an extra, harmless
-        tail-follow on whatever the transcript renders next; there is no
-        cross-session data to leak or clobber.
+        Delegates to ``ConsoleTranscriptRegion.note_follow_intent`` (wave-3
+        task 2), which carries the task-3b audit note about why this stays
+        singular/view-only. Kept as a screen method because the session and
+        workspace controllers are both wired to it by this name
+        (``note_follow_intent=lambda: self._note_console_follow_intent()``).
         """
-        try:
-            transcript = self.query_one("#console-native-transcript", ConsoleTranscript)
-        except QueryError:
-            return
-        transcript.note_follow_intent()
+        region = self._console_transcript_region_or_none()
+        if region is not None:
+            region.note_follow_intent()
 
     def _restore_console_send_stash(self, stash: "ConsoleDraftStash | None") -> None:
         """Hand a keypress-captured draft back to the composer (TASK-340)."""
