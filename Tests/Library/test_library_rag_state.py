@@ -21,6 +21,7 @@ from tldw_chatbook.Library.library_rag_state import (
     library_rag_coverage_note,
     library_rag_empty_state_quiet_copy,
     library_rag_paid_mode_notice,
+    library_rag_results_count_line,
     library_rag_score_suffix,
     library_rag_scope_summary,
     searching_status_line,
@@ -1864,6 +1865,44 @@ class TestLibraryRagCoverageNote:
             )
             == ""
         )
+
+
+class TestLibraryRagResultsCountLine:
+    """(task-2859 item 10) `library_rag_results_count_line` builds the
+    Evidence region's "N results for 'query'" headline -- previously
+    missing entirely, so the row cards had no line naming how many landed
+    or what query produced them."""
+
+    @staticmethod
+    def _row(title: str = "A") -> LibraryRagResultRow:
+        return LibraryRagResultRow.from_result({"title": title})
+
+    def test_empty_results_render_no_line(self):
+        assert library_rag_results_count_line((), "cats") == ""
+
+    def test_singular_noun_for_exactly_one_result(self):
+        rows = (self._row(),)
+        assert library_rag_results_count_line(rows, "cats") == "1 result for 'cats'."
+
+    def test_plural_noun_for_multiple_results(self):
+        rows = (self._row("A"), self._row("B"), self._row("C"))
+        assert (
+            library_rag_results_count_line(rows, "cats")
+            == "3 results for 'cats'."
+        )
+
+    def test_query_is_markup_escaped(self):
+        rows = (self._row(),)
+        line = library_rag_results_count_line(rows, "[bold]cats[/bold]")
+        # Rich's escape_markup only needs to escape the opening bracket.
+        assert "\\[bold]cats\\[/bold]" in line
+
+    def test_long_query_is_clamped(self):
+        rows = (self._row(),)
+        long_query = "x" * 500
+        line = library_rag_results_count_line(rows, long_query)
+        # Same clamp budget `library_rag_empty_state_quiet_copy` uses.
+        assert len(line) < len(long_query)
 
 
 class TestLibraryRagEmptyStateQuietCopy:

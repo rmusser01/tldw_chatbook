@@ -88,10 +88,15 @@ class LibraryCollectionsPanel(Vertical):
                     )
 
     def compose(self) -> ComposeResult:
+        # task-2859 item 7: match the sibling "Name (n)" pattern
+        # (Media/Notes/Prompts/Skills) and drop the "Library " prefix --
+        # the canvas already lives inside the Library destination, so
+        # "Library Collections" restated the destination twice.
         yield Static(
-            "Library Collections",
+            f"Collections ({len(self.state.collections)})",
             id="library-collections-title",
             classes="destination-section",
+            markup=False,
         )
         if self.state.status == "error":
             yield Static(

@@ -965,6 +965,39 @@ class PromptEditorState:
     capabilities: PromptSourceCapabilities | None = None
 
 
+#: task-2859 item 2: plain-language labels for ``ArtifactDefinitionState``
+#: values shown in the prompt editor's artifact-status line. Every NEW
+#: prompt starts life as ``"legacy"`` -- the internal name for the flat
+#: system/user-text storage format, as opposed to the structured v2 block
+#: format -- so a brand-new prompt was stamped "legacy" verbatim, reading as
+#: "this is an old/deprecated prompt" rather than "this is the plain-text
+#: format". Any state not listed here (there should be none) falls back to
+#: the raw ``definition_state.replace('_', ' ')`` this dict replaces.
+_DEFINITION_STATE_DISPLAY_LABELS: dict[str, str] = {
+    "legacy": "text format",
+    "supported_v2": "structured format",
+    "foreign_v1": "external format",
+    "unsupported": "unsupported format",
+    "malformed": "malformed",
+    "mismatched": "mismatched format",
+}
+
+
+def definition_state_display_label(definition_state: str) -> str:
+    """Return the plain-language label for an ``ArtifactDefinitionState``.
+
+    Args:
+        definition_state: The raw internal state value (e.g. ``"legacy"``).
+
+    Returns:
+        The matching plain-language label, or ``definition_state`` with
+        underscores replaced by spaces when the value is unrecognized.
+    """
+    return _DEFINITION_STATE_DISPLAY_LABELS.get(
+        definition_state, definition_state.replace("_", " ")
+    )
+
+
 def _text(value: Any) -> str:
     return "" if value is None else str(value).strip()
 

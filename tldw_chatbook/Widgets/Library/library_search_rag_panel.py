@@ -45,10 +45,19 @@ class LibrarySearchRagPanel(VerticalScroll):
         self.state = state
 
     def compose(self) -> ComposeResult:
+        # task-2859 item 7: drop the "Library " prefix (this canvas already
+        # lives inside the Library destination) and match the rail row's
+        # own spaced "Search / RAG" (library_shell_state.py) -- the canvas
+        # used to say "Library Search/RAG", disagreeing with the rail on
+        # both the prefix and the slash spacing. NOT the same string as
+        # the cross-app "Library Search/RAG" evidence-provenance label
+        # (``OWNER_LIBRARY_RAG``/``source=`` on staged Console evidence) --
+        # that vocabulary is deliberately unchanged here.
         yield Static(
-            "Library Search/RAG",
+            "Search / RAG",
             id="library-rag-panel-title",
             classes="destination-section",
+            markup=False,
         )
         with Vertical(
             id="library-rag-query-controls",
@@ -829,7 +838,29 @@ def library_rag_results_body_children(state: LibraryRagPanelState) -> list[Widge
     # prepend an empty list, i.e. are unchanged.
     note_children: list[Widget] = list(library_rag_coverage_note_children(state))
     if state.results:
-        children: list[Widget] = list(note_children)
+        # task-2859 item 10: "N results for 'query'" headline -- the
+        # Evidence region used to jump straight from the mode/top-k
+        # heading into the row cards with no line naming how many actually
+        # landed or what query produced them.
+        children: list[Widget] = []
+        if state.results_count_line:
+            # NOT markup=False: `results_count_line` is already
+            # `escape_markup`-escaped (matching `coverage_note`/the empty-
+            # state quiet copy below) -- disabling markup parsing here
+            # would show the escape backslashes verbatim instead of
+            # un-escaping them back to literal brackets.
+            children.append(
+                Static(
+                    state.results_count_line,
+                    id="library-rag-results-count-line",
+                    classes="library-rag-quiet-line",
+                )
+            )
+        # (rebase note) Reuse the already-computed `note_children` rather
+        # than recomputing `library_rag_coverage_note_children(state)` --
+        # dev's variable and the branch's headline are both real; only the
+        # redundant recomputation was dropped.
+        children.extend(note_children)
         for index, result in enumerate(state.results):
             children.extend(
                 library_rag_result_row_children(result, index, state.selected_result_id)

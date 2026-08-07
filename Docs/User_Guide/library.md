@@ -138,7 +138,8 @@ the **Database** link) returns to the notes list — see
 
 ### Details
 
-Collapsed by default; click the **Details** header to open it.
+Collapsed by default; click anywhere on the **Details** header — the label
+text or the **▾**/**▸** chip — to open it.
 
 | Group | Contents |
 |---|---|
@@ -306,3 +307,16 @@ substituted the generic global "F6 panes" text instead. The footer now
 renders the screen's own copy, live-verified at 170 and 100 columns; at
 80 columns the whole screen-hint cluster (not just F6) already yields to
 the width ladder described above, unchanged by this fix).*
+*Verified against dev @ 023a04a48 — 2026-08-07 (task-2859 UAT P3 polish
+batch, live-verified at 170x50: the Conversations canvas now opens with a
+"Conversations (N)" title matching every sibling, and its filter box
+renders above the empty-state text instead of below; the Collections
+canvas title reads "Collections (N)" (was "Library Collections"); clicking
+the Details header's LABEL (not just its **▾**/**▸** chip) now opens/closes
+it too; the export quality caption ("keeps a small preview image…" /
+"shrinks media files…" / "copies full media files…") now matches whichever
+option is actually selected, not always "original"; the ingest queue tally
+reads "This queue: N done" instead of the self-contradicting "N done — in
+queue"; DB sizes in the Details disclosure include their `-wal`/`-shm`
+sidecars, and the number/unit pair ("144.0KB") no longer wraps across two
+lines at the rail's narrow width).*

@@ -149,7 +149,7 @@ def test_jargon_rows_carry_plain_language_subtitles():
         for row in section.rows
     }
     assert subtitles["browse-media"] == "your files"
-    assert subtitles[LIBRARY_ROW_BROWSE_PROMPTS] == "AI asks"
+    assert subtitles[LIBRARY_ROW_BROWSE_PROMPTS] == "reuse"
     assert subtitles[LIBRARY_ROW_BROWSE_SKILLS] == "AI add-ons"
     assert subtitles["browse-collections"] == "item sets"
     assert subtitles["browse-search"] == "find all"

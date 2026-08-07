@@ -28,6 +28,7 @@ from tldw_chatbook.Library.library_export_state import (
     default_export_name,
     export_button_tooltip,
     format_last_export_line,
+    media_quality_helper_copy,
     next_media_quality,
     normalize_export_destination,
 )
@@ -269,6 +270,26 @@ def test_next_media_quality_cycles_and_wraps():
     assert next_media_quality("compressed") == "original"
     assert next_media_quality("original") == "thumbnail"
     assert next_media_quality("bogus") == MEDIA_QUALITY_OPTIONS[0]
+
+
+# --- media_quality_helper_copy -------------------------------------------------
+# task-2859 item 3: the helper line used to be ONE fixed sentence describing
+# "original" quality, shown under the quality button no matter which value
+# was actually selected -- so "quality: thumbnail ▸" was captioned with
+# "original copies full media files into the zip". Each option now gets its
+# own honest caption naming its own effect.
+
+
+def test_media_quality_helper_copy_matches_each_option_to_its_own_effect():
+    assert "small preview" in media_quality_helper_copy("thumbnail")
+    assert "shrinks" in media_quality_helper_copy("compressed")
+    assert "full media files" in media_quality_helper_copy("original")
+    # A thumbnail caption never claims to keep full files, and vice versa.
+    assert "full media files" not in media_quality_helper_copy("thumbnail")
+
+
+def test_media_quality_helper_copy_degrades_to_original_for_unknown_value():
+    assert media_quality_helper_copy("bogus") == media_quality_helper_copy("original")
 
 
 # --- normalize_export_destination ---------------------------------------------

@@ -1794,6 +1794,46 @@ def library_rag_coverage_note(
     return " ".join(parts)
 
 
+def library_rag_results_count_line(
+    results: Sequence[LibraryRagResultRow], searched_query: str
+) -> str:
+    """Return the Evidence region's "N results for 'query'" headline.
+
+    task-2859 item 10: the Evidence region used to have no headline naming
+    how many results actually landed or what query produced them -- only
+    the mode/top-k-driven "Evidence · top 5" line (`results_heading_text`,
+    in `library_search_rag_panel.py`), which is deliberately STABLE across
+    a client-side scope toggle (Task 8: "the heading is mode/top_k-driven,
+    not row-count-driven"). This is a separate, additive line that DOES
+    track `results` -- it renders directly above the row cards it counts,
+    so it must agree with what the user can actually see below it,
+    including right after a scope toggle hides a row.
+
+    Args:
+        results: The panel's current, already-scope-filtered evidence rows
+            (`LibraryRagPanelState.results` -- what is actually rendered).
+        searched_query: The query that produced `results`
+            (`LibraryRagPanelState.searched_query`, NOT the live query box
+            text -- mirrors `library_rag_empty_state_quiet_copy`'s same
+            distinction, RAG-33/task-15 finding I3).
+
+    Returns:
+        `""` when `results` is empty (the empty/searching/recovery states
+        have their own copy -- this line is Evidence-row-count territory
+        only). Otherwise `"N result(s) for 'query'."`, escaped and clamped
+        the same way `library_rag_empty_state_quiet_copy` quotes a query.
+    """
+    if not results:
+        return ""
+    count = len(results)
+    noun = "result" if count == 1 else "results"
+    display_query = _clamp_display_text(
+        searched_query, LIBRARY_RAG_EMPTY_QUERY_QUOTE_MAX_CHARS
+    )
+    escaped_query = escape_markup(display_query)
+    return f"{count} {noun} for '{escaped_query}'."
+
+
 @dataclass(frozen=True)
 class LibraryRagPanelState:
     """Display state for the destination-native Library Search/RAG panel."""
@@ -1815,6 +1855,10 @@ class LibraryRagPanelState:
     #: `diagnostics["semantic_scope_coverage"]` and the panel's own
     #: `results`. Empty string when there is nothing to say.
     coverage_note: str = ""
+    #: Evidence region "N results for 'query'" headline (task-2859 item
+    #: 10), built by `library_rag_results_count_line` from `results` and
+    #: `searched_query`. Empty string whenever `results` is empty.
+    results_count_line: str = ""
     #: The query the CURRENT `retrieval_status`/`results` were actually
     #: retrieved for -- independent of `query_state.query`, which tracks
     #: live, not-yet-submitted input text (task-15 finding I3). The two
@@ -2023,6 +2067,9 @@ class LibraryRagPanelState:
             or row.scope_source_type in scope.selected_source_types
         )
         coverage_note = library_rag_coverage_note(diagnostics, result_rows)
+        results_count_line = library_rag_results_count_line(
+            result_rows, normalized_searched_query
+        )
         normalized_selected_result_id = _clean_text(selected_result_id)
         selected_result = next(
             (
@@ -2167,6 +2214,7 @@ class LibraryRagPanelState:
             history=tuple(str(h) for h in history),
             history_collapsed=bool(history_collapsed),
             coverage_note=coverage_note,
+            results_count_line=results_count_line,
             searched_query=normalized_searched_query,
             answer=answer,
             in_flight_answer_provider=str(in_flight_answer_provider or ""),

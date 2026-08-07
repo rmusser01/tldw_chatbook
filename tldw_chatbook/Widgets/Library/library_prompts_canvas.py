@@ -21,6 +21,7 @@ from tldw_chatbook.Library.library_prompts_state import (
     PromptEditorState,
     PromptHistoryState,
     PromptsListState,
+    definition_state_display_label,
     prompt_editor_meta_line,
 )
 from tldw_chatbook.UI.Library_Modules.prompt_history_region import (
@@ -305,7 +306,7 @@ class LibraryPromptsListCanvas(Vertical):
                     (
                         f"{editor_state.artifact_type.title()} · "
                         f"{editor_state.source.title()} · "
-                        f"{editor_state.definition_state.replace('_', ' ')}"
+                        f"{definition_state_display_label(editor_state.definition_state)}"
                     ),
                     id="library-prompt-artifact-status",
                     classes="destination-purpose",

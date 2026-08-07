@@ -388,9 +388,14 @@ async def test_skill_editor_renders_all_field_ids_populated():
         model_hint = str(
             pilot.app.query_one("#library-skill-model-hint", Static).renderable
         )
+        # task-2859 item 9: plain language, not internal-version talk --
+        # a user has no "v1" to compare against.
         assert (
-            model_hint == "Not applied in v1 — shown for SKILL.md round-tripping only."
+            model_hint
+            == "Not used when running this skill — kept so saving doesn't lose the value."
         )
+        assert "v1" not in model_hint
+        assert "round-trip" not in model_hint
         body_area = pilot.app.query_one("#library-skill-body", TextArea)
         assert body_area.text == "Review the diff."
         supporting = str(

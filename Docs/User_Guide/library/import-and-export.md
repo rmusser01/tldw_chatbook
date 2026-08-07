@@ -63,9 +63,12 @@ In server mode the **Export** rail row is disabled, with the tooltip
 - **Start** — a quiet gate line ("Enter a file path or URL to start.")
   and the "Start import" button.
 - **Queue** — the "Queue" heading, a per-state count line while jobs
-  exist ("1 parsing · 2 queued · 1 done"), one line per job with action
-  buttons underneath, "Clear finished", and a collapsed "Recent imports"
-  fold listing the last finished jobs. Empty state: "No import jobs yet."
+  exist ("This queue: 1 parsing · 2 queued · 1 done" — task-2859: the
+  "This queue:" prefix replaced a trailing "— in queue" suffix that
+  self-contradicted whenever every listed job was already done or
+  failed), one line per job with action buttons underneath,
+  "Clear finished", and a collapsed "Recent imports" fold listing the
+  last finished jobs. Empty state: "No import jobs yet."
   Pressing "Start import" scrolls the Queue heading into view, so the
   freshly queued rows are the first thing you see after a submit.
 - **Fold indicator** — while the form is taller than the pane, a pinned
@@ -76,8 +79,13 @@ In server mode the **Export** rail row is disabled, with the tooltip
 header, a scope line ("Everything: 128 media · 542 conversations · 87
 notes", or "Notes · 87 items" when you arrived scoped; "Counting…" while
 it tallies), the "Export name" and "Description (optional)" fields, a
-"quality: … ▸" button with the helper "original copies full media files
-into the zip" (shown only when media is in scope), "Choose destination…"
+"quality: … ▸" button with a helper line matching whichever option is
+actually selected (task-2859: "keeps a small preview image instead of the
+full file" / "shrinks media files before adding them to the zip" /
+"copies full media files into the zip" for thumbnail/compressed/original
+respectively — a single fixed "original copies full media files…" caption
+used to show regardless of the selected option) (shown only when media is
+in scope), "Choose destination…"
 above "No destination chosen", and the "Export bundle (.zip)" submit
 button. A "Cancel" button appears while an export is running. Once an
 export finishes, a "Last export: <path> · <relative time>" line appears
@@ -117,7 +125,7 @@ installing.
 | Export control | What it does |
 |---|---|
 | "Export name" | Pre-filled "Library export 2026-07-31" (today's date); becomes the bundle's display name. |
-| "quality: thumbnail ▸" | Cycles thumbnail → compressed → original. Only "original" copies full media files into the zip; the others keep the package small. |
+| "quality: thumbnail ▸" | Cycles thumbnail → compressed → original; the helper line underneath always describes the option currently showing. Only "original" copies full media files into the zip; the others keep the package small. |
 | "Choose destination…" | Opens "Choose Export Destination". Whatever you pick is normalized to end in `.zip`; if that file already exists, an "Overwrites <name>" note appears (informational — exporting proceeds and replaces it). |
 | "Export bundle (.zip)" | Enabled once counting has finished, the scope is non-empty, and a destination is chosen. "Nothing to export in this scope." appears when the scope is empty; either way, hovering the button always shows a tooltip naming the same reason it's disabled (or "Write the bundle to the chosen destination." once it's ready) — a disabled press can never look like it silently did nothing. |
 | "Cancel" | Visible only while an export is running; stops it. |
@@ -233,6 +241,11 @@ files may fail to import:" dialog now renders every warning line and its
 warning rows collapsed to an empty full-height column; counts read
 "1 file" / "N files"; "Start import anyway" fits on one line; Cancel is
 no longer styled red)*
+
+*Verified against dev @ 023a04a48 — 2026-08-07 (task-2859: the export
+quality helper line now matches the selected option instead of always
+describing "original"; the queue count line reads "This queue: …" instead
+of the self-contradicting "… — in queue" suffix)*
 
 *Verified against dev @ 023a04a48 — 2026-08-07 (task-3302: the Keyboard
 & commands section above is new behavior — entering Import media now

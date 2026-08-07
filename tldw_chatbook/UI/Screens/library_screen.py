@@ -803,6 +803,30 @@ def _library_carries_forward_line(titles: Sequence[str]) -> str:
     return f"Carries forward: {joined}"
 
 
+def _unbreakable_size_text(size_text: str) -> str:
+    """Drop the space between a formatted size's number and its unit, so
+    the rail's narrow Details column never wraps mid-unit (task-2859 item
+    5: "Prompts 144.0 / KB").
+
+    A non-breaking space (U+00A0) was the first thing tried here and does
+    NOT work: Rich's own word-wrap splitter (``rich._wrap.words``, used by
+    every plain ``Static``) tokenizes on ``re.compile(r"\\s*\\S+\\s*")``,
+    and Python's ``re`` module's Unicode-aware ``\\s`` matches U+00A0 the
+    same as an ordinary space -- confirmed by reproducing the exact wrap
+    live (rail width ~24-26 cells still split "144.0" from "KB" with the
+    NBSP already in place) and again directly against ``rich._wrap`` at
+    that width. Removing the space entirely denies the wrapper any
+    character to split on there at all -- verified stable across widths
+    20-29.
+
+    ``get_formatted_file_size``/``get_formatted_db_size_with_wal`` values
+    (e.g. ``"144.0 KB"``, ``"512 B"``) carry exactly one space; a fallback
+    value with no space at all (``"?"``, ``"N/A"``, ``"Error"``) passes
+    through unchanged.
+    """
+    return size_text.replace(" ", "")
+
+
 def _active_library_sync_scope(app_instance: Any) -> dict[str, str | None]:
     runtime_policy = getattr(app_instance, "runtime_policy", None)
     runtime_state = runtime_policy.state if runtime_policy is not None else None
@@ -7829,10 +7853,15 @@ class LibraryScreen(BaseAppScreen):
             )
         db_sizes = getattr(self.app_instance, "db_sizes_status", None)
         if isinstance(db_sizes, dict) and db_sizes:
+            prompts_size = _unbreakable_size_text(str(db_sizes.get("prompts", "?")))
+            chachanotes_size = _unbreakable_size_text(
+                str(db_sizes.get("chachanotes", "?"))
+            )
+            media_size = _unbreakable_size_text(str(db_sizes.get("media", "?")))
             sizes_line = (
-                f"Prompts {db_sizes.get('prompts', '?')} · "
-                f"Chats/Notes {db_sizes.get('chachanotes', '?')} · "
-                f"Media {db_sizes.get('media', '?')}"
+                f"Prompts {prompts_size} · "
+                f"Chats/Notes {chachanotes_size} · "
+                f"Media {media_size}"
             )
             return (runtime_value, counts_or_error, sizes_line)
         return (runtime_value, counts_or_error)

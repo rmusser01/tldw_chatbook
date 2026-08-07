@@ -5863,6 +5863,15 @@ ListItem.personas-library-row.is-active.-highlight {
     text-style: bold;
 }
 
+/* task-2859 item 10: the snippet had no rule of its own at all, so it sat
+ * flush against the card's left border -- unlike its siblings above/below
+ * (`.library-rag-result-row`, `.library-rag-result-badges`), both of which
+ * already carry `padding: 0 1`. Matches that same padding for visual
+ * consistency down the card. */
+.library-rag-result-snippet {
+    padding: 0 1;
+}
+
 /* C1: content-first result rows -- Open (primary emphasis, reuses the live
  * `.console-action-primary` colors directly since that class is not
  * Console-screen-scoped) then Select evidence, as a Horizontal of

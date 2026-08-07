@@ -33,7 +33,6 @@ from tldw_chatbook.Library.library_export_scope import ExportScope, export_scope
 EXPORT_HEADER_COPY = "Export bundle (.zip)"
 COUNTING_COPY = "Counting…"
 EMPTY_SCOPE_COPY = "Nothing to export in this scope."
-MEDIA_QUALITY_HELPER_COPY = "original copies full media files into the zip"
 CHOOSE_DESTINATION_COPY = "Choose destination…"
 DESTINATION_PLACEHOLDER_COPY = "No destination chosen"
 EXPORT_BUTTON_COPY = "Export bundle (.zip)"
@@ -55,6 +54,33 @@ EXPORT_BUTTON_NO_DESTINATION_TOOLTIP = "Choose a destination before exporting."
 # is the cheapest one, matching the design spec.
 MEDIA_QUALITY_OPTIONS = ("thumbnail", "compressed", "original")
 DEFAULT_MEDIA_QUALITY = "thumbnail"
+
+# task-2859 item 3: the helper line used to be one FIXED sentence describing
+# "original" quality ("original copies full media files into the zip"),
+# shown verbatim no matter which option the cycle button actually had
+# selected -- so picking "thumbnail ▸" was captioned with a description of
+# "original". Each option now gets its own honest caption.
+_MEDIA_QUALITY_HELPER_COPY: dict[str, str] = {
+    "thumbnail": "keeps a small preview image instead of the full file",
+    "compressed": "shrinks media files before adding them to the zip",
+    "original": "copies full media files into the zip",
+}
+
+
+def media_quality_helper_copy(media_quality: str) -> str:
+    """Return the helper line describing ``media_quality``'s actual effect.
+
+    Args:
+        media_quality: The quality control's current value (one of
+            ``MEDIA_QUALITY_OPTIONS``).
+
+    Returns:
+        The matching one-line caption, or the "original" caption for an
+        unrecognized value (the safest/most conservative description).
+    """
+    return _MEDIA_QUALITY_HELPER_COPY.get(
+        media_quality, _MEDIA_QUALITY_HELPER_COPY["original"]
+    )
 
 # Scope kinds whose export includes media at all -- everything and
 # media-scoped exports show the quality control + helper line;

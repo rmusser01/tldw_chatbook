@@ -662,6 +662,26 @@ never what the screen shows; the composited screen is the only authority (third
 recorded instance of this lesson class). When a live report contradicts a green suite,
 suspect the harness before the reporter.
 
+**Fourth instance (2026-08-07, task-2859 item 10, padding not clipping this time).** A
+`.library-rag-result-snippet { padding: 0 1; }` bundle rule (fixing a snippet sitting
+flush against its card border) tested green with `snippet.region.x ==
+title_row.region.x` under `DestinationHarness` (`Tests/UI/test_library_content_hub.py`)
+— because `region` never reflects padding at all (only layout position/size;
+`content_region = region.shrink(styles.gutter)` is the one that does), AND because
+`DestinationHarness` is a bare `App` with no `CSS_PATH`, so `title_row.styles.padding`
+itself came back `Spacing(0,0,0,0)` regardless of what the .tcss said. Direct proof:
+`screen.app.css_path == []` and `type(screen.app).CSS_PATH is None` under this harness,
+vs. the real string when `TldwCli` is imported and inspected directly outside any test.
+Moving the exact same assertion to `LibraryHarness` (`Tests/UI/test_library_shell.py`,
+which sets `CSS_PATH` to the real bundle — "Mount a single LibraryScreen with the real
+app stylesheet" is literally its docstring) reproduced the missing-padding RED
+correctly and went GREEN once the CSS rule existed. Two independent traps stacked here,
+either one alone would have hidden the bug: use `content_region`, not `region`, for
+padding; and know which harness in a file actually loads CSS before trusting geometry
+from it — `Tests/UI/test_library_content_hub.py` uses `DestinationHarness` (no CSS) for
+most of its tests, `Tests/UI/test_library_shell.py` uses `LibraryHarness` (real CSS) —
+same directory, same screen under test, opposite answer to "does this rule apply".
+
 ---
 
 ## A zero-latency fake makes loop-starvation bugs invisible (2026-07-30)
@@ -1457,3 +1477,76 @@ pass) without actually depending on any other test.
    matches is just "not yet") before reading it — never a bare `query_one` right after a
    state-only poll, since it raises the moment the DOM lags the state by even one tick.
    Cheap enough to apply proactively, not just after a failure is observed.
+
+---
+
+## A non-breaking space does NOT stop Rich/Textual from wrapping there (2026-08-07)
+
+**Incident.** Task-2859 item 5's mid-unit wrap fix ("Prompts 144.0 / KB" splitting a
+size number from its unit in the Library rail's narrow Details column) was first
+"fixed" by replacing the space between number and unit with U+00A0 (non-breaking
+space) — the textbook answer, and it read correctly in two quick manual checks (widths
+20 and 29). A live tmux capture at the batch's own required 170x50 caught it still
+broken: `"144.0"` on one line, `"KB"` alone starting the next, NBSP already in place.
+Direct proof against `rich._wrap` (the module every plain `Static` wraps through):
+`rich._wrap.words()` tokenizes with `re_word = re.compile(r"\s*\S+\s*")`, and Python's
+`re` module's Unicode-aware `\s` **matches U+00A0 identically to an ordinary space** —
+confirmed with `re.match(r"\s", "\xa0")` returning a match. So `"144.0\xa0KB"` is parsed
+as TWO separate "words" for wrap purposes exactly like `"144.0 KB"` was; NBSP only
+prevented the SPECIFIC widths tried by accident (enough room remained either way, or
+"Prompts" itself already pushed the whole tail to the next line together). At the
+rail's real width, exactly enough room remained for "144.0" alone but not "144.0" plus
+"KB", so the split happened right where NBSP was supposed to prevent it.
+
+**What to do.** Never assume a non-breaking space stops Rich/Textual `Static` word-wrap
+— it does not, because Rich's own wrap tokenizer uses a plain Unicode-aware `\s` regex
+that does not special-case U+00A0. If a number/unit (or any two-token) pair must never
+split, either remove the space between them entirely (verified stable at every width
+20-29 for this exact case — `_unbreakable_size_text` in `library_screen.py`), or use a
+genuinely non-whitespace-classified character (e.g. U+2060 WORD JOINER, category `Cf`,
+zero-width) if a visible gap must be preserved. Test the actual wrap behavior against
+`rich._wrap.divide_line`/`words` (or a live capture at the real target width) — a
+narrower or wider width than the one actually shipped can hide this exact bug either
+way, which is why two quick manual checks at the wrong widths both looked fine.
+
+---
+
+## `Button.press()` called from an ancestor's own click handler silently breaks message bubbling one hop early (2026-08-07)
+
+**Incident.** Task-2859 item 5: making a rail section header's LABEL (not just its
+`▸`/`▾` toggle chip) clickable, by adding `DestinationRailSectionHeader._on_click`
+that resolves the toggle `Button` and calls `.press()` on it. A live capture showed the
+toggle's own CSS class flip to `-active` (proof `.press()` ran) but the section never
+opened — no `Button.Pressed` handler anywhere fired, in the widget, the screen, or the
+app. Reproduced deterministically in isolation with a minimal `Horizontal` header
+wrapping a `Static` + `Button`: calling `child_button.press()` FROM the container's own
+`_on_click` (itself invoked because the Static's Click bubbled there) breaks
+propagation; calling the exact same `.press()` from the Static's own `_on_click`, or
+from a plain test coroutine, works fine. Root cause, found by monkeypatching
+`Message._bubble_to` to log every hop: `Message.__post_init__` stamps `self._sender =
+active_message_pump.get(None)` — a CONTEXTVAR tracking whichever widget's message
+dispatch is CURRENTLY executing, not the widget whose code literally calls
+`post_message()`. Since `Button.Pressed(self)` is constructed inside `Button.press()`
+while `active_message_pump` still reads as the HEADER (we are executing inside the
+header's own dispatch of the bubbled Click), the new message's `_sender` becomes the
+header. `MessagePump._on_message`'s bubble step has a special case: `if
+message._sender is not None and message._sender == self._parent: message.stop()` —
+"parent is sender, so we stop propagation after parent" (an optimization to avoid a
+widget's own self-directed message re-bubbling past the ancestor that sent it) — and
+this exact shape matches by coincidence, so the Pressed message reaches the header (one
+hop) and then dies, never reaching the screen-level handler every real consumer
+(Console/Home/Library rails) expects it at.
+
+**What to do.** Calling `widget.press()` (or constructing/posting any `Message`) from
+inside ANOTHER widget's own event-handler execution is not equivalent to the target
+widget doing it itself — the message's `_sender` provenance silently changes, and
+Textual's own "parent is sender" bubble-stop can misfire as a result. Fix: reset the
+`active_message_pump` contextvar (`from textual.message_pump import
+active_message_pump`) to the actual sending widget around the call —
+`token = active_message_pump.set(target_widget); try: target_widget.press() finally:
+active_message_pump.reset(token)` (see `DestinationRailSectionHeader._on_click` in
+`tldw_chatbook/Widgets/destination_rail.py`). Proving this class of bug needs watching
+the FULL bubble chain, not just checking that `.press()` "ran" — the visual `-active`
+class flip is a false-positive signal; instrument `Message._bubble_to` (or count how
+far a message travels) when a `Button.Pressed` handler mysteriously never fires despite
+the button visibly reacting to the press.

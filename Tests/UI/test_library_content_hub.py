@@ -162,6 +162,16 @@ async def test_library_stage_c_search_rag_promotes_query_scope_and_evidence_regi
 
         visible = _visible_text(screen)
 
+        # task-2859 item 7: the canvas title drops the "Library " prefix
+        # and matches the rail row's own "Search / RAG" spacing (it used
+        # to read "Library Search/RAG", disagreeing with the rail on both
+        # counts).
+        assert (
+            str(screen.query_one("#library-rag-panel-title", Static).renderable)
+            == "Search / RAG"
+        )
+        assert "Library Search/RAG" not in visible
+
         # A1: exactly one quiet line for the empty-query gate; no callout,
         # no summary Static, no "Run disabled:" reason, no recovery dump.
         assert screen.query_one("#library-rag-query-input")
@@ -275,6 +285,17 @@ async def test_library_stage_c_search_rag_selected_evidence_updates_inspector_co
             str(screen.query_one("#library-rag-select-result-0", Button).label)
             == "Selected evidence"
         )
+        # task-2859 item 10: "N results for 'query'" headline above the
+        # evidence cards -- there used to be no line naming the result
+        # count or the query that produced it.
+        assert (
+            str(
+                screen.query_one(
+                    "#library-rag-results-count-line", Static
+                ).renderable
+            )
+            == "1 result for 'What does the research note say?'."
+        )
         # B3: the carry-through jargon line is retired outright -- selecting
         # evidence needs no permanent caption.
         assert not screen.query("#library-rag-attribution-placeholder")
@@ -285,6 +306,15 @@ async def test_library_stage_c_search_rag_selected_evidence_updates_inspector_co
             screen.query_one("#library-rag-use-selected-in-console", Button).disabled
             is False
         )
+        # Note on the snippet-padding half of task-2859 item 10: this
+        # harness (`DestinationHarness`) hosts the screen under a bare
+        # `App` with no `CSS_PATH` of its own -- only widget-level
+        # `DEFAULT_CSS` Python blocks are loaded, never the app bundle
+        # (`css/tldw_cli_modular.tcss`), so `.library-rag-result-snippet`'s
+        # new padding rule (bundle-only CSS) cannot be observed via
+        # rendered geometry here. That check lives in
+        # `Tests/UI/test_library_shell.py`, whose `LibraryHarness` sets
+        # `CSS_PATH` to the real bundle for exactly this reason.
 
 
 @pytest.mark.asyncio
