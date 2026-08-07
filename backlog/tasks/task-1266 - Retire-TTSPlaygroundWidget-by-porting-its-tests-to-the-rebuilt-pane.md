@@ -108,3 +108,29 @@ what the pane actually mounts.
 295 speech/stts tests pass; the lone failure fails identically at the
 merge-base. Driven live after deletion: axes populate from the catalog, the
 text area is seeded, language reads "Not used by this provider".
+
+### Correction (2026-08-06/07, found during voice-profiles slice 2 task 4)
+
+**AC#4 ("`TTSPlaygroundWidget` is deleted") is FALSE on `dev`.** Reconciliation
+commit `f9d7e6269` ("refactor(speech): land the rebuild alongside dev's
+profile work, unmerged") explicitly restored `TTSPlaygroundWidget` so it
+could keep owning the `playground` view while this branch's rebuild and
+dev's profile work were reconciled ("dev's `TTSPlaygroundWidget` is restored
+and owns the `playground` view again... Its 94 playground tests, 51
+profile-library tests and the audio_cpp generation tests are back to dev's
+versions verbatim and all pass.") — and no later commit re-deleted it. The
+class still exists (`tldw_chatbook/UI/STTS_Window.py`, `class
+TTSPlaygroundWidget(Widget)`), with its own duplicate copy of the
+profile-preview/adoption-copy paths, and 14 of its own 94 tests
+(`Tests/UI/test_stts_playground_audio_cpp.py`) are red at the current
+dev-equivalent state — confirmed independently during voice-profiles slice
+2 task 4's gate run (734 passed, 14 failed across the branch's targeted
+suite; same 14 test IDs task 3 had already isolated as pre-existing and
+unrelated to that slice's changes).
+
+Filed as **task-2951** (finish the second deletion pass: re-port anything
+not already on `SpeechPlaygroundPane`, then delete the widget and its test
+file). This task's status stays Done as the historical record of the first
+retirement pass, which really did happen and really was reverted by a later,
+independent branch-reconciliation decision — not by a defect in this task's
+own work.
