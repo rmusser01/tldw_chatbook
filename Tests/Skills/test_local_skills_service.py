@@ -730,3 +730,217 @@ async def test_local_skills_service_execute_rejects_read_and_restore_content_rac
     with pytest.raises(SkillTrustBlockedError, match="skill_modified"):
         await service.execute_skill("demo-skill", args="x")
     assert original_read_bytes(skill_path) == trusted_content
+
+
+# ---------------------------------------------------------------------------
+# Library read seams (task-1337 plan Task 3)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_library_skills_list_enumerates_with_exact_total_and_safe_projection(
+    tmp_path,
+):
+    service, trust = _trusted_local_service(tmp_path)
+    await service.create_skill(name="alpha-skill", content="# Alpha\nbody")
+    await service.create_skill(name="beta-skill", content="# Beta\nbody")
+    trust.bootstrap_trust()
+
+    page = await service.list_library_skills(limit=1, offset=0)
+    assert page["total"] == 2
+    assert page["offset"] == 0
+    assert page["limit"] == 1
+    assert [item["name"] for item in page["items"]] == ["alpha-skill"]
+    item = page["items"][0]
+    assert item["trust_blocked"] is False
+    for forbidden in ("content", "body", "supporting_files", "preview", "files"):
+        assert forbidden not in item
+
+    page_two = await service.list_library_skills(limit=1, offset=1)
+    assert page_two["total"] == 2
+    assert [item["name"] for item in page_two["items"]] == ["beta-skill"]
+
+
+@pytest.mark.asyncio
+async def test_library_skills_search_matches_casefolded_name_description_body(tmp_path):
+    service, trust = _trusted_local_service(tmp_path)
+    await service.create_skill(name="alpha-skill", content="# Alpha\nbody")
+    await service.create_skill(
+        name="beta-notes",
+        content="---\ndescription: Quarterly Digest helper\n---\n# Beta\nbody",
+    )
+    await service.create_skill(name="gamma-deep", content="# Gamma\nquarterly body hit")
+    trust.bootstrap_trust()
+
+    payload = await service.search_library_skills(query="QUARTERLY", limit=10, offset=0)
+    assert payload["total"] == 2
+    by_name = {item["name"]: item for item in payload["items"]}
+    assert set(by_name) == {"beta-notes", "gamma-deep"}
+    assert "description" in by_name["beta-notes"]["matched_fields"]
+    assert "body" in by_name["gamma-deep"]["matched_fields"]
+
+    exact = await service.search_library_skills(query="alpha-skill", limit=10, offset=0)
+    assert exact["items"][0]["name"] == "alpha-skill"
+    assert "name" in exact["items"][0]["matched_fields"]
+
+
+@pytest.mark.asyncio
+async def test_library_skills_search_never_matches_blocked_bodies(tmp_path):
+    service, trust = _trusted_local_service(tmp_path)
+    await service.create_skill(name="blocked-skill", content="# Blocked\noriginal body")
+    trust.bootstrap_trust()
+    # Out-of-band tamper: the skill is now trust-blocked (skill_modified).
+    (tmp_path / "skills" / "blocked-skill" / "SKILL.md").write_text(
+        "# Blocked\nbody now contains uniqueterm"
+    )
+
+    payload = await service.search_library_skills(query="uniqueterm", limit=10, offset=0)
+    assert payload["total"] == 0
+
+    # Safe fields (name/description/trust) still surface the blocked skill.
+    by_name = await service.search_library_skills(
+        query="blocked-skill", limit=10, offset=0
+    )
+    assert [item["name"] for item in by_name["items"]] == ["blocked-skill"]
+    item = by_name["items"][0]
+    assert item["trust_blocked"] is True
+    assert "body" not in item["matched_fields"]
+
+
+@pytest.mark.asyncio
+async def test_library_skills_list_and_search_skip_eager_supporting_reads(
+    tmp_path, monkeypatch
+):
+    service, trust = _trusted_local_service(tmp_path)
+    await service.create_skill(name="alpha-skill", content="# Alpha\nbody")
+    trust.bootstrap_trust()
+
+    def _explode(skill_dir):
+        raise AssertionError("eager _read_supporting_files must not run for Library reads")
+
+    monkeypatch.setattr(
+        "tldw_chatbook.Skills_Interop.local_skills_service.LocalSkillsService._read_supporting_files",
+        staticmethod(_explode),
+    )
+
+    await service.list_library_skills(limit=10, offset=0)
+    await service.search_library_skills(query="alpha", limit=10, offset=0)
+
+
+@pytest.mark.asyncio
+async def test_library_skill_detail_returns_bounded_manifest_with_file_tokens(tmp_path):
+    service, trust = _trusted_local_service(tmp_path)
+    body = "# Alpha\n" + "body text " * 200  # > 2000 chars
+    await service.create_skill(
+        name="alpha-skill",
+        content=body,
+        supporting_files={"references/guide.md": "guide content " * 50},
+    )
+    trust.bootstrap_trust()
+
+    detail = await service.get_library_skill("alpha-skill")
+    assert detail["name"] == "alpha-skill"
+    assert detail["trust_blocked"] is False
+    assert detail["body_total_chars"] == len(body)
+    assert len(detail["body_preview"]) <= 241
+    paths = {entry["path"] for entry in detail["files"]}
+    assert "SKILL.md" in paths
+    assert "references/guide.md" in paths
+    for entry in detail["files"]:
+        assert entry["file_token"].startswith("file:")
+        assert isinstance(entry["size"], int)
+        # The manifest never inlines content.
+        assert "content" not in entry
+        assert "preview" not in entry
+    assert "content" not in detail
+    assert "supporting_files" not in detail
+
+
+@pytest.mark.asyncio
+async def test_library_skill_file_windows_text_and_revision_tracks_content(tmp_path):
+    service, trust = _trusted_local_service(tmp_path)
+    body = "abcdef" * 900  # 5400 chars
+    await service.create_skill(name="alpha-skill", content=body)
+    trust.bootstrap_trust()
+
+    detail = await service.get_library_skill("alpha-skill")
+    main_token = next(
+        entry["file_token"] for entry in detail["files"] if entry["path"] == "SKILL.md"
+    )
+
+    page = await service.get_library_skill_file(
+        "alpha-skill", main_token, start=1200, max_chars=2000
+    )
+    assert page["path"] == "SKILL.md"
+    assert page["text"] == body[1200:3200]
+    assert page["total_chars"] == len(body)
+    assert page["start"] == 1200
+    assert page["returned_chars"] == 2000
+    assert page["has_more"] is True
+    assert page["revision"]
+
+    tail = await service.get_library_skill_file(
+        "alpha-skill", main_token, start=5000, max_chars=2000
+    )
+    assert tail["text"] == body[5000:]
+    assert tail["has_more"] is False
+    assert tail["revision"] == page["revision"]
+
+    # A legitimate update re-trusts and changes the content revision.
+    await service.update_skill("alpha-skill", content=body + "MORE", trust_approved=True)
+    updated = await service.get_library_skill_file(
+        "alpha-skill", main_token, start=0, max_chars=10
+    )
+    assert updated["revision"] != page["revision"]
+
+
+@pytest.mark.asyncio
+async def test_library_skill_file_rejects_traversal_and_garbage_tokens(tmp_path):
+    import base64
+
+    service, trust = _trusted_local_service(tmp_path)
+    await service.create_skill(name="alpha-skill", content="# A\nbody")
+    trust.bootstrap_trust()
+
+    traversal = (
+        "file:"
+        + base64.urlsafe_b64encode(b"../../etc/passwd").decode("ascii").rstrip("=")
+    )
+    with pytest.raises(ValueError):
+        await service.get_library_skill_file(
+            "alpha-skill", traversal, start=0, max_chars=100
+        )
+    with pytest.raises(ValueError):
+        await service.get_library_skill_file(
+            "alpha-skill", "file:not-valid-base64!!!", start=0, max_chars=100
+        )
+    with pytest.raises(ValueError):
+        await service.get_library_skill_file(
+            "alpha-skill", "absolute:/etc/passwd", start=0, max_chars=100
+        )
+    with pytest.raises(ValueError):
+        await service.get_library_skill_file(
+            "alpha-skill", "file:bm8tc3VjaC1maWxlLm1k", start=0, max_chars=100
+        )
+
+
+@pytest.mark.asyncio
+async def test_library_skill_detail_and_file_are_fail_closed_for_blocked_skills(
+    tmp_path,
+):
+    service = LocalSkillsService(store_dir=tmp_path)  # fail-closed: all blocked
+    await service.create_skill(name="blocked-skill", content="# Blocked\nsecret body")
+
+    detail = await service.get_library_skill("blocked-skill")
+    assert detail["name"] == "blocked-skill"
+    assert detail["trust_blocked"] is True
+    for forbidden in ("body_preview", "body_total_chars", "files", "content"):
+        assert forbidden not in detail
+
+    detail_list = await service.list_library_skills(limit=10, offset=0)
+    assert detail_list["items"][0]["trust_blocked"] is True
+
+    with pytest.raises((SkillTrustBlockedError, ValueError)):
+        await service.get_library_skill_file(
+            "blocked-skill", "file:U0tJTEwubWQ", start=0, max_chars=100
+        )

@@ -128,6 +128,48 @@ class LocalPromptService:
         )
         return int(total_items)
 
+    # --- Library read seams (task-1337) ---
+
+    async def list_library_prompts(
+        self, *, limit: int = 20, offset: int = 0
+    ) -> dict[str, Any]:
+        """Page the active local prompt library for agent-facing list tools."""
+        payload = self.interop.list_library_prompts_page(limit=limit, offset=offset)
+        return {
+            "items": payload["items"],
+            "total": payload["total"],
+            "offset": offset,
+            "limit": limit,
+        }
+
+    async def search_library_prompts(
+        self, query: str, *, limit: int = 20, offset: int = 0
+    ) -> dict[str, Any]:
+        """Search the local prompt library, forwarding totals and match fields."""
+        payload = self.interop.search_library_prompts_page(
+            query=query, limit=limit, offset=offset
+        )
+        return {
+            "items": payload["items"],
+            "total": payload["total"],
+            "offset": offset,
+            "limit": limit,
+        }
+
+    async def get_library_prompt_overview(
+        self, prompt_uuid: str
+    ) -> dict[str, Any] | None:
+        """Return a bounded overview of one active prompt."""
+        return self.interop.get_library_prompt_overview(prompt_uuid)
+
+    async def get_library_prompt_section(
+        self, prompt_uuid: str, section: str, *, start: int = 0, max_chars: int = 8000
+    ) -> dict[str, Any] | None:
+        """Return a windowed section segment of one active prompt."""
+        return self.interop.get_library_prompt_section(
+            prompt_uuid, section=section, start=start, max_chars=max_chars
+        )
+
     async def create_prompt(
         self,
         *,

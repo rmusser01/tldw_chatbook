@@ -282,6 +282,39 @@ def fetch_prompt_details(
     return db.fetch_prompt_details(prompt_id_or_name_or_uuid, include_deleted)
 
 
+# --- Library read seams (task-1337) ---
+
+
+def list_library_prompts_page(*, limit: int, offset: int) -> Dict[str, Any]:
+    """Pages active library prompts with an exact total. See PromptsDatabase.list_library_prompts_page."""
+    db = get_db_instance()
+    return db.list_library_prompts_page(limit=limit, offset=offset)
+
+
+def search_library_prompts_page(
+    *, query: str, limit: int, offset: int
+) -> Dict[str, Any]:
+    """Searches active library prompts, forwarding totals and match evidence. See PromptsDatabase.search_library_prompts_page."""
+    db = get_db_instance()
+    return db.search_library_prompts_page(query=query, limit=limit, offset=offset)
+
+
+def get_library_prompt_overview(prompt_uuid: str) -> Optional[Dict[str, Any]]:
+    """Returns a bounded overview of one active prompt. See PromptsDatabase.get_library_prompt_overview."""
+    db = get_db_instance()
+    return db.get_library_prompt_overview(prompt_uuid)
+
+
+def get_library_prompt_section(
+    prompt_uuid: str, *, section: str, start: int, max_chars: int
+) -> Optional[Dict[str, Any]]:
+    """Returns a windowed section segment of one active prompt. See PromptsDatabase.get_library_prompt_section."""
+    db = get_db_instance()
+    return db.get_library_prompt_section(
+        prompt_uuid, section=section, start=start, max_chars=max_chars
+    )
+
+
 def export_prompt_to_server_payload(
     prompt_id_or_name_or_uuid: Union[int, str],
 ) -> Dict[str, Any]:

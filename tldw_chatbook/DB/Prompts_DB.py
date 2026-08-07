@@ -2370,6 +2370,402 @@ class PromptsDatabase:
             logger.error(f"Error listing prompts: {e}")
             raise DatabaseError(f"Failed to list prompts: {e}") from e
 
+    # ============================= Library read seams (task-1337) =========================================
+    #
+    # Additive, read-only queries backing the local Library agent tools.
+    # Same discipline as the Media/Notes seams: single-transaction count+page,
+    # agent-safe projections (bounded details preview and section presence
+    # flags only; full section text is reachable solely through the windowed
+    # section reader), escaped-LIKE + tokenized safe-FTS search with
+    # exact-name precedence, and exact keyword counts.
+
+    _LIBRARY_PROMPT_PREVIEW_CHARS = 241
+    _LIBRARY_PROMPT_KEYWORD_CAP = 20
+    _LIBRARY_PROMPT_FTS_TOKEN_LIMIT = 20
+    _LIBRARY_PROMPT_SECTIONS = (
+        "details",
+        "system_prompt",
+        "user_prompt",
+        "prompt_definition",
+    )
+
+    @staticmethod
+    def _escape_library_prompt_like(value: str) -> str:
+        """Escape LIKE metacharacters so user input matches literally."""
+        return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+    @classmethod
+    def _library_prompt_fts_query(cls, raw_query: str) -> Optional[str]:
+        """Build a safe FTS5 MATCH query from raw user text (operators inert)."""
+        tokens = re.findall(r"\w+", raw_query, flags=re.UNICODE)
+        if not tokens:
+            return None
+        tokens = tokens[: cls._LIBRARY_PROMPT_FTS_TOKEN_LIMIT]
+        return " ".join(f'"{token}"' for token in tokens)
+
+    def _library_keywords_for_prompts(
+        self, conn: sqlite3.Connection, prompt_ids: List[int]
+    ) -> Dict[int, List[str]]:
+        """Fetch active keywords for a page of prompt ids, grouped by prompt id."""
+        if not prompt_ids:
+            return {}
+        placeholders = ",".join("?" * len(prompt_ids))
+        query = f"""
+            SELECT pkl.prompt_id, k.keyword
+            FROM PromptKeywordLinks pkl
+            JOIN PromptKeywordsTable k ON pkl.keyword_id = k.id
+            WHERE pkl.prompt_id IN ({placeholders}) AND k.deleted = 0
+            ORDER BY k.keyword COLLATE NOCASE
+        """
+        cursor = conn.execute(query, tuple(prompt_ids))
+        keywords_by_prompt: Dict[int, List[str]] = {}
+        for row in cursor.fetchall():
+            keywords_by_prompt.setdefault(row["prompt_id"], []).append(row["keyword"])
+        return keywords_by_prompt
+
+    def _library_prompt_item(
+        self, row: sqlite3.Row, keywords_by_prompt: Dict[int, List[str]]
+    ) -> Dict[str, Any]:
+        """Project a Prompts row into the agent-safe library item shape."""
+        all_keywords = keywords_by_prompt.get(row["id"], [])
+        visible = all_keywords[: self._LIBRARY_PROMPT_KEYWORD_CAP]
+        return {
+            "id": row["id"],
+            "uuid": row["uuid"],
+            "name": row["name"],
+            "author": row["author"],
+            "last_modified": row["last_modified"],
+            "version": row["version"],
+            "details_preview": row["details_preview"],
+            "has_system_prompt": row["has_system_prompt"],
+            "has_user_prompt": row["has_user_prompt"],
+            "has_prompt_definition": row["has_prompt_definition"],
+            "keywords": visible,
+            "keyword_total": len(all_keywords),
+            "keywords_truncated": len(all_keywords) > len(visible),
+        }
+
+    @classmethod
+    def _library_prompt_page_columns(cls) -> str:
+        # The preview bound is a class constant baked into the SQL text so
+        # callers can use plain positional parameters throughout.
+        return f"""
+        id, uuid, name, author, last_modified, version,
+        substr(coalesce(details, ''), 1, {cls._LIBRARY_PROMPT_PREVIEW_CHARS}) AS details_preview,
+        CASE WHEN length(trim(coalesce(system_prompt, ''))) > 0 THEN 1 ELSE 0 END
+            AS has_system_prompt,
+        CASE WHEN length(trim(coalesce(user_prompt, ''))) > 0 THEN 1 ELSE 0 END
+            AS has_user_prompt,
+        CASE WHEN length(trim(coalesce(prompt_definition, ''))) > 0 THEN 1 ELSE 0 END
+            AS has_prompt_definition
+    """
+
+    @staticmethod
+    def _library_prompt_fts_fields(
+        conn: sqlite3.Connection, prompt_id: int, fts_query: str
+    ) -> List[str]:
+        """Per-column FTS probes attributing a combined-FTS hit honestly.
+
+        Only the columns present in ``prompts_fts`` are probed (author hits
+        are not part of the Library matched-fields vocabulary and
+        prompt_definition is not indexed).
+        """
+        matched: List[str] = []
+        for column in ("name", "details", "system_prompt", "user_prompt"):
+            cursor = conn.execute(
+                "SELECT 1 FROM prompts_fts WHERE prompts_fts MATCH ? "
+                "AND rowid = ? LIMIT 1",
+                (f"{column} : {fts_query}", prompt_id),
+            )
+            if cursor.fetchone():
+                matched.append(column)
+        return matched
+
+    def list_library_prompts_page(self, *, limit: int, offset: int) -> Dict[str, Any]:
+        """Return one page of active library prompts plus the exact active total.
+
+        Active means ``deleted = 0``. Ordering is stable:
+        ``last_modified DESC, id DESC``. The count and the page are read in
+        one transaction.
+
+        Args:
+            limit: Maximum number of items to return.
+            offset: Number of items to skip (SQL OFFSET, not Python slicing).
+
+        Returns:
+            Dict with ``items`` (agent-safe projections) and ``total``.
+
+        Raises:
+            DatabaseError: If a database error occurs.
+        """
+        try:
+            with self.transaction() as conn:
+                total = conn.execute(
+                    "SELECT COUNT(*) AS count FROM Prompts WHERE deleted = 0"
+                ).fetchone()["count"]
+                cursor = conn.execute(
+                    f"""
+                    SELECT {self._library_prompt_page_columns()}
+                    FROM Prompts
+                    WHERE deleted = 0
+                    ORDER BY last_modified DESC, id DESC
+                    LIMIT ? OFFSET ?
+                    """,
+                    (limit, offset),
+                )
+                rows = cursor.fetchall()
+                keywords_by_prompt = self._library_keywords_for_prompts(
+                    conn, [row["id"] for row in rows]
+                )
+            items = [self._library_prompt_item(row, keywords_by_prompt) for row in rows]
+            return {"items": items, "total": total}
+        except sqlite3.Error as e:
+            logger.error(f"Error listing library prompts page: {e}")
+            raise DatabaseError(f"Failed to list library prompts page: {e}") from e
+
+    def search_library_prompts_page(
+        self, *, query: str, limit: int, offset: int
+    ) -> Dict[str, Any]:
+        """Search active library prompts, returning one page plus exact total.
+
+        Match branches (OR, deduplicated by Prompts row): case-insensitive
+        exact name, escaped-LIKE substring over name/details/system_prompt/
+        user_prompt/prompt_definition, tokenized safe FTS over the same
+        fields, and keyword substring via PromptKeywordLinks. Exact-name hits
+        rank first, then recency, then id.
+
+        Args:
+            query: Raw user search text.
+            limit: Maximum number of items to return.
+            offset: Number of items to skip.
+
+        Returns:
+            Dict with ``items`` (library projections plus ``matched_fields``
+            and ``matched_keywords``) and ``total``.
+
+        Raises:
+            DatabaseError: If a database error occurs.
+        """
+        like_pattern = f"%{self._escape_library_prompt_like(query)}%"
+        fts_query = self._library_prompt_fts_query(query)
+        keyword_branch = (
+            "id IN (SELECT pkl.prompt_id FROM PromptKeywordLinks pkl "
+            "JOIN PromptKeywordsTable k ON pkl.keyword_id = k.id "
+            "WHERE k.deleted = 0 AND k.keyword LIKE ? ESCAPE '\\')"
+        )
+        section_columns = (
+            ("details", 2),
+            ("system_prompt", 3),
+            ("user_prompt", 4),
+            ("prompt_definition", 5),
+        )
+
+        branches = [
+            "LOWER(name) = LOWER(?)",
+            "name LIKE ? ESCAPE '\\'",
+        ]
+        params: List[Any] = [query, like_pattern]
+        for column, _index in section_columns:
+            branches.append(f"coalesce({column}, '') LIKE ? ESCAPE '\\'")
+            params.append(like_pattern)
+        fts_index: Optional[int] = None
+        if fts_query is not None:
+            fts_index = len(branches)
+            branches.append(
+                "id IN (SELECT rowid FROM prompts_fts WHERE prompts_fts MATCH ?)"
+            )
+            params.append(fts_query)
+        keyword_index = len(branches)
+        branches.append(keyword_branch)
+        params.append(like_pattern)
+
+        where_clause = " OR ".join(f"({branch})" for branch in branches)
+        hit_selects = ", ".join(
+            f"({branch}) AS hit_{index}" for index, branch in enumerate(branches)
+        )
+        hit_params = list(params)
+
+        try:
+            with self.transaction() as conn:
+                total = conn.execute(
+                    f"SELECT COUNT(*) AS count FROM Prompts "
+                    f"WHERE deleted = 0 AND ({where_clause})",
+                    tuple(params),
+                ).fetchone()["count"]
+                cursor = conn.execute(
+                    f"""
+                    SELECT {self._library_prompt_page_columns()},
+                           {hit_selects}
+                    FROM Prompts
+                    WHERE deleted = 0 AND ({where_clause})
+                    ORDER BY (LOWER(name) = LOWER(?)) DESC,
+                             last_modified DESC, id DESC
+                    LIMIT ? OFFSET ?
+                    """,
+                    tuple(hit_params + params + [query, limit, offset]),
+                )
+                rows = cursor.fetchall()
+                keywords_by_prompt = self._library_keywords_for_prompts(
+                    conn, [row["id"] for row in rows]
+                )
+                # FTS can hit across token boundaries where no LIKE branch
+                # fires; attribute those rows honestly with per-column probes.
+                fts_only_fields: Dict[int, List[str]] = {}
+                if fts_index is not None and fts_query is not None:
+                    for row in rows:
+                        literal_hit = any(
+                            row[f"hit_{index}"]
+                            for index in range(len(branches))
+                            if index != fts_index
+                        )
+                        if row[f"hit_{fts_index}"] and not literal_hit:
+                            fts_only_fields[row["id"]] = (
+                                self._library_prompt_fts_fields(
+                                    conn, row["id"], fts_query
+                                )
+                            )
+            lowered_query = query.lower()
+            items = []
+            for row in rows:
+                item = self._library_prompt_item(row, keywords_by_prompt)
+                matched_fields = set()
+                if row["hit_0"] or row["hit_1"]:
+                    matched_fields.add("name")
+                for column, index in section_columns:
+                    if row[f"hit_{index}"]:
+                        matched_fields.add(column)
+                if fts_index is not None and row[f"hit_{fts_index}"]:
+                    matched_fields.update(fts_only_fields.get(row["id"], []))
+                if row[f"hit_{keyword_index}"]:
+                    matched_fields.add("keywords")
+                item["matched_fields"] = sorted(matched_fields)
+                item["matched_keywords"] = [
+                    keyword
+                    for keyword in keywords_by_prompt.get(row["id"], [])
+                    if lowered_query in keyword.lower()
+                ][: self._LIBRARY_PROMPT_KEYWORD_CAP]
+                items.append(item)
+            return {"items": items, "total": total}
+        except sqlite3.Error as e:
+            logger.error(f"Error searching library prompts: {e}")
+            raise DatabaseError(f"Failed to search library prompts: {e}") from e
+
+    def get_library_prompt_overview(self, prompt_uuid: str) -> Optional[Dict[str, Any]]:
+        """Return a bounded overview of one active prompt.
+
+        Every present section is independently bounded: its exact total
+        character length plus a 241-char preview. Full section text and
+        version history are never included.
+
+        Args:
+            prompt_uuid: The prompt UUID to read.
+
+        Returns:
+            Dict with identity, ``version``, and a ``sections`` map; or None
+            when no active prompt matches the UUID.
+
+        Raises:
+            DatabaseError: If a database error occurs.
+        """
+        selects = ", ".join(
+            f"length(coalesce({column}, '')) AS {column}_total, "
+            f"substr(coalesce({column}, ''), 1, {self._LIBRARY_PROMPT_PREVIEW_CHARS}) "
+            f"AS {column}_preview"
+            for column in self._LIBRARY_PROMPT_SECTIONS
+        )
+        try:
+            cursor = self.execute_query(
+                f"""
+                SELECT uuid, name, author, last_modified, version, {selects}
+                FROM Prompts
+                WHERE uuid = ? AND deleted = 0
+                """,
+                (prompt_uuid,),
+            )
+            row = cursor.fetchone()
+            if row is None:
+                return None
+            sections = {}
+            for column in self._LIBRARY_PROMPT_SECTIONS:
+                total = row[f"{column}_total"] or 0
+                if total > 0:
+                    sections[column] = {
+                        "total_chars": total,
+                        "preview": row[f"{column}_preview"] or "",
+                    }
+            return {
+                "uuid": row["uuid"],
+                "name": row["name"],
+                "author": row["author"],
+                "last_modified": row["last_modified"],
+                "version": row["version"],
+                "sections": sections,
+            }
+        except sqlite3.Error as e:
+            logger.error(f"Error reading library prompt overview: {e}")
+            raise DatabaseError(f"Failed to read library prompt overview: {e}") from e
+
+    def get_library_prompt_section(
+        self, prompt_uuid: str, *, section: str, start: int, max_chars: int
+    ) -> Optional[Dict[str, Any]]:
+        """Return a windowed text segment of one prompt section.
+
+        Reads only ``substr(<section>, start + 1, max_chars)`` and
+        ``length(<section>)`` — never the whole section, never other
+        sections, never version-history rows.
+
+        Args:
+            prompt_uuid: The prompt UUID to read.
+            section: One of ``details``, ``system_prompt``, ``user_prompt``,
+                ``prompt_definition``.
+            start: Zero-based character offset into the section.
+            max_chars: Maximum number of characters to return.
+
+        Returns:
+            Dict with identity, ``section``, ``version``, ``total_chars``,
+            ``start``, ``returned_chars``, ``has_more``, and ``text``; or
+            None when no active prompt matches the UUID.
+
+        Raises:
+            InputError: If ``section`` is not a known prompt section.
+            DatabaseError: If a database error occurs.
+        """
+        if section not in self._LIBRARY_PROMPT_SECTIONS:
+            raise InputError(
+                f"Unknown prompt section {section!r}; expected one of "
+                f"{', '.join(self._LIBRARY_PROMPT_SECTIONS)}."
+            )
+        try:
+            cursor = self.execute_query(
+                f"""
+                SELECT uuid, name, version,
+                       length(coalesce({section}, '')) AS total_chars,
+                       substr(coalesce({section}, ''), ?, ?) AS text
+                FROM Prompts
+                WHERE uuid = ? AND deleted = 0
+                """,
+                (start + 1, max_chars, prompt_uuid),
+            )
+            row = cursor.fetchone()
+            if row is None:
+                return None
+            text = row["text"] or ""
+            total_chars = row["total_chars"] or 0
+            return {
+                "uuid": row["uuid"],
+                "name": row["name"],
+                "section": section,
+                "version": row["version"],
+                "total_chars": total_chars,
+                "start": start,
+                "returned_chars": len(text),
+                "has_more": start + len(text) < total_chars,
+                "text": text,
+            }
+        except sqlite3.Error as e:
+            logger.error(f"Error reading library prompt section: {e}")
+            raise DatabaseError(f"Failed to read library prompt section: {e}") from e
+
     def fetch_prompt_details(
         self, prompt_id_or_name_or_uuid: Union[int, str], include_deleted: bool = False
     ) -> Optional[Dict]:
