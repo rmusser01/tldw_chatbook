@@ -44,7 +44,7 @@ from html import unescape
 import random
 import re
 import time
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Union
 from urllib.parse import urlparse, urlencode, unquote
 
 #
@@ -1399,7 +1399,7 @@ def test_perform_websearch_yandex():
 #
 
 
-def process_web_search_results(search_results: Dict, search_engine: str) -> Dict:
+def process_web_search_results(search_results: Union[Dict, str], search_engine: str) -> Dict:
     """
     Process raw search results into standardized format.
 
@@ -1407,7 +1407,7 @@ def process_web_search_results(search_results: Dict, search_engine: str) -> Dict
     for consistent handling across different search providers.
 
     Args:
-        search_results (Dict): Raw results from search engine
+        search_results (Union[Dict, str]): Raw results from search engine; dict of raw results; for tavily/searx a raw string payload is also accepted
         search_engine (str): Name of the search engine
 
     Returns:
@@ -1481,31 +1481,48 @@ def process_web_search_results(search_results: Dict, search_engine: str) -> Dict
         "processing_error": None
         ]
     """
-    # Validate input parameters
-    if not isinstance(search_results, dict):
-        raise TypeError("search_results must be a dictionary")
+    # Validate input parameters. Every backend but tavily/searx always
+    # returns a dict; a string payload for those two is a valid input too
+    # (tavily: a request-error message; searx: its ENTIRE payload, success
+    # or failure, is JSON-encoded as a string), deferred to the
+    # engine-specific parser below, which raises ValueError to surface it as
+    # processing_error (task-2990). The str allowance is deliberately scoped
+    # to just these two engines: widening it for every engine would let a
+    # stray string reach e.g. parse_brave_results, whose `"query" in
+    # raw_results`-style membership checks against a str run silently and
+    # can produce zero results with no error at all -- the exact defect
+    # class this task exists to close, just relocated. Reject anything else
+    # outright.
+    if not isinstance(search_results, dict) and not (
+        isinstance(search_results, str) and search_engine.lower() in ("tavily", "searx")
+    ):
+        raise TypeError("search_results must be a dictionary (or a string for tavily/searx)")
+
+    # Only a dict carries this request-echo metadata; a string payload (see
+    # above) has none of it, so every field below falls back to its default.
+    _meta = search_results if isinstance(search_results, dict) else {}
 
     # Initialize the output dictionary with default values
     web_search_results_dict = {
         "search_engine": search_engine,
-        "search_query": search_results.get("search_query", ""),
-        "content_country": search_results.get("content_country", ""),
-        "search_lang": search_results.get("search_lang", ""),
-        "output_lang": search_results.get("output_lang", ""),
-        "result_count": search_results.get("result_count", 0),
-        "date_range": search_results.get("date_range", None),
-        "safesearch": search_results.get("safesearch", None),
-        "site_blacklist": search_results.get("site_blacklist", None),
-        "exactTerms": search_results.get("exactTerms", None),
-        "excludeTerms": search_results.get("excludeTerms", None),
-        "filter": search_results.get("filter", None),
-        "geolocation": search_results.get("geolocation", None),
-        "search_result_language": search_results.get("search_result_language", None),
-        "sort_results_by": search_results.get("sort_results_by", None),
+        "search_query": _meta.get("search_query", ""),
+        "content_country": _meta.get("content_country", ""),
+        "search_lang": _meta.get("search_lang", ""),
+        "output_lang": _meta.get("output_lang", ""),
+        "result_count": _meta.get("result_count", 0),
+        "date_range": _meta.get("date_range", None),
+        "safesearch": _meta.get("safesearch", None),
+        "site_blacklist": _meta.get("site_blacklist", None),
+        "exactTerms": _meta.get("exactTerms", None),
+        "excludeTerms": _meta.get("excludeTerms", None),
+        "filter": _meta.get("filter", None),
+        "geolocation": _meta.get("geolocation", None),
+        "search_result_language": _meta.get("search_result_language", None),
+        "sort_results_by": _meta.get("sort_results_by", None),
         "results": [],
-        "total_results_found": search_results.get("total_results_found", 0),
-        "search_time": search_results.get("search_time", 0.0),
-        "error": search_results.get("error", None),
+        "total_results_found": _meta.get("total_results_found", 0),
+        "search_time": _meta.get("search_time", 0.0),
+        "error": _meta.get("error", None),
         "processing_error": None,
     }
     try:
@@ -2801,12 +2818,71 @@ def test_search_searx():
     print(result)
 
 
-def parse_searx_results(searx_search_results, web_search_results_dict):
-    pass
+def parse_searx_results(searx_search_results: "list | dict | str", web_search_results_dict: dict) -> None:
+    """Parse SearX/SearXNG results into the standardized shape.
 
+    Unlike every other backend in this file, the local `search_web_searx`
+    always returns a JSON-encoded STRING: `json.dumps(hits)` on success
+    (a list of `{title, link, snippet, publishedDate}` dicts), or
+    `json.dumps({"error": ...})` when nothing was found or the request
+    failed. A string is decoded first; an already-parsed list is also
+    accepted defensively for direct/test callers. Only a decoded list is
+    tolerated as real results -- a decoded dict never is: `{"error": ...}`
+    re-raises with that message, and any other dict (or any non-list
+    scalar) raises a generic shape error, both surfacing via the
+    `process_web_search_results` seam as `processing_error` instead of
+    silently producing zero results (task-2990).
 
-def test_parse_searx_results():
-    pass
+    `link`/`url` and `snippet`/`content` are each read with the OR-fallback
+    pair (search_web_searx's own hits use link/snippet; a raw SearXNG API
+    hit -- as a caller might hand this parser directly -- uses url/content),
+    matching the port reference this parser was adapted from.
+
+    Args:
+        searx_search_results: Raw Searx response, as returned by
+            `search_web_searx` -- a JSON string encoding either a list of
+            hits or an error dict, or an already-decoded list.
+        web_search_results_dict: Output dict; mutated in place, appending
+            standardized result entries to its "results" list.
+
+    Raises:
+        ValueError: when a string payload cannot be parsed as JSON, the
+            decoded payload is an error dict, the decoded payload is
+            anything other than a list, or a list element is not a dict.
+    """
+    if isinstance(searx_search_results, str):
+        try:
+            searx_search_results = json.loads(searx_search_results)
+        except (json.JSONDecodeError, TypeError) as e:
+            raise ValueError(f"Invalid Searx response: {e}") from e
+
+    if isinstance(searx_search_results, dict) and "error" in searx_search_results:
+        raise ValueError(searx_search_results["error"])
+
+    if not isinstance(searx_search_results, list):
+        raise ValueError("Unexpected Searx payload shape: expected a list of results")
+
+    if "results" not in web_search_results_dict:
+        web_search_results_dict["results"] = []
+
+    for i, item in enumerate(searx_search_results):
+        if not isinstance(item, dict):
+            raise ValueError(f"Unexpected Searx result item at index {i}: expected an object")
+        url = item.get("link") or item.get("url") or ""
+        snippet = item.get("snippet") or item.get("content") or ""
+        web_search_results_dict["results"].append({
+            "title": item.get("title", ""),
+            "url": url,
+            "content": snippet,
+            "metadata": {
+                "date_published": item.get("publishedDate", None),
+                "author": None,
+                "source": None,
+                "language": None,
+                "relevance_score": None,
+                "snippet": snippet or None,
+            },
+        })
 
 
 ######################### Serper.dev Search #########################
@@ -2992,12 +3068,56 @@ def test_search_tavily():
     print(result)
 
 
-def parse_tavily_results(tavily_search_results, web_search_results_dict):
-    pass
+def parse_tavily_results(tavily_search_results: "dict | str", web_search_results_dict: dict) -> None:
+    """Parse Tavily results into the standardized shape.
 
+    The local `search_web_tavily` backend returns `response.json()` (a
+    dict with hits under "results") on success, or a plain error STRING
+    on request failure (e.g. "There was an error searching for content.
+    ...") -- unlike every other backend in this file, which always
+    returns a dict. A string input is re-raised as ValueError so its text
+    survives the `process_web_search_results` seam as `processing_error`,
+    instead of silently producing zero results (task-2990).
 
-def test_parse_tavily_results():
-    pass
+    Tavily's `score` is a real 0-1 relevance score (unlike serper's
+    `position`, which is a SERP rank and would invert the meaning of
+    "relevance" if stored there), so it maps directly to
+    `metadata.relevance_score`.
+
+    Args:
+        tavily_search_results: Raw Tavily response, as returned by
+            `search_web_tavily` -- a dict with hits under "results", or an
+            error string.
+        web_search_results_dict: Output dict; mutated in place, appending
+            standardized result entries to its "results" list.
+
+    Raises:
+        ValueError: when `tavily_search_results` is an error string, or when
+            a list element in results is not a dict.
+    """
+    if isinstance(tavily_search_results, str):
+        raise ValueError(tavily_search_results)
+
+    if "results" not in web_search_results_dict:
+        web_search_results_dict["results"] = []
+
+    for i, result in enumerate((tavily_search_results or {}).get("results", [])):
+        if not isinstance(result, dict):
+            raise ValueError(f"Unexpected Tavily result item at index {i}: expected an object")
+        content = result.get("content", "")
+        web_search_results_dict["results"].append({
+            "title": result.get("title", ""),
+            "url": result.get("url", ""),
+            "content": content,
+            "metadata": {
+                "date_published": result.get("published_date") or result.get("publishedDate") or None,
+                "author": None,
+                "source": None,
+                "language": None,
+                "relevance_score": result.get("score", None),
+                "snippet": content or None,
+            },
+        })
 
 
 ######################### Yandex Search #########################
