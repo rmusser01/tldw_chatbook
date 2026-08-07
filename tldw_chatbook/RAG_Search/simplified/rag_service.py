@@ -31,7 +31,6 @@ from tldw_chatbook.Metrics.metrics_logger import (
     log_gauge,
     timeit,
 )
-from tldw_chatbook.Utils.path_validation import validate_path
 from .embeddings_wrapper import EmbeddingsServiceWrapper
 from .vector_store import create_vector_store, SearchResult, SearchResultWithCitations
 from .citations import Citation, CitationType, merge_citations
@@ -786,68 +785,21 @@ class RAGService:
         for efficient keyword-based search with proper connection pooling.
         """
         try:
-            # Get database path from vector store persist directory
-            db_path = None
-            from tldw_chatbook.config import get_user_data_dir
+            # Resolve the media DB path -- explicit override wins, otherwise
+            # defer to the single authoritative resolver. No guessing across
+            # a list of candidate filenames, and no create-on-miss: a search
+            # must never have the side effect of creating a database.
+            from tldw_chatbook.config import get_media_db_path
 
-            base_dir = get_user_data_dir()
-            possible_paths = [base_dir / "chacha_notes.db"]
+            db_path = self.config.search.media_db_path or get_media_db_path()
+            db_path = Path(db_path)
 
-            if self.config.persist_directory:
-                # Try common locations for the media database
-                possible_paths = [
-                    self.config.persist_directory.parent / "media_db.db",
-                    self.config.persist_directory.parent / "chacha_notes.db",
-                    base_dir / "chacha_notes.db",
-                ]
-
-                for path in possible_paths:
-                    # Validate path to prevent traversal attacks
-                    try:
-                        validated_path = validate_path(str(path), str(base_dir))
-                        validated_path_obj = Path(validated_path)
-
-                        # Check if path exists and is not a symlink (security check)
-                        if (
-                            validated_path_obj.exists()
-                            and not validated_path_obj.is_symlink()
-                        ):
-                            # Additional check: ensure it's a regular file
-                            if validated_path_obj.is_file():
-                                db_path = validated_path
-                                logger.debug(f"Found media database at: {db_path}")
-                                break
-                            else:
-                                logger.warning(
-                                    f"Path {validated_path} is not a regular file"
-                                )
-                        elif validated_path_obj.is_symlink():
-                            logger.warning(
-                                f"Skipping symlink at {validated_path} for security reasons"
-                            )
-                    except ValueError as e:
-                        logger.warning(f"Invalid path {path}: {e}")
-                        continue
-
-            if not db_path:
-                logger.error(
-                    f"Could not find media database for keyword search. Searched in: {[str(p) for p in possible_paths]}"
+            if not db_path.exists() or not db_path.is_file():
+                logger.warning(
+                    f"Media database not found at {db_path}; keyword search "
+                    "returning no results (a search never creates a database)."
                 )
-                # Try to create or ensure FTS5 tables exist
-                try:
-                    # Use the first valid path that we can create
-                    default_path = base_dir / "chacha_notes.db"
-                    if not default_path.exists():
-                        logger.info(f"Creating new media database at: {default_path}")
-                        from tldw_chatbook.DB.Client_Media_DB_v2 import (
-                            Database as MediaDatabase,
-                        )
-
-                        MediaDatabase(str(default_path), "rag_service")
-                    db_path = str(default_path)
-                except Exception as e:
-                    logger.error(f"Failed to create media database: {e}")
-                    return []
+                return []
 
             # Get connection pool for this database
             pool_size = getattr(
@@ -855,7 +807,7 @@ class RAGService:
                 "fts5_connection_pool_size",
                 FTS5_CONNECTION_POOL_SIZE,
             )
-            pool = get_connection_pool(db_path, pool_size=pool_size)
+            pool = get_connection_pool(str(db_path), pool_size=pool_size)
 
             # Perform FTS5 search directly using connection pool with retry
             loop = asyncio.get_event_loop()
@@ -1136,6 +1088,8 @@ class RAGService:
                     "author": item.get("author"),
                     "ingestion_date": item.get("ingestion_date"),
                     "text_preview": content[:200],
+                    "source_type": "media",
+                    "source": "media",
                 },
             )
             results.append(base_result)
@@ -1212,6 +1166,8 @@ class RAGService:
             "author": item.get("author"),
             "ingestion_date": item.get("ingestion_date"),
             "text_preview": content[:200],
+            "source_type": "media",
+            "source": "media",
         }
 
         # Find citations
@@ -1326,8 +1282,14 @@ class RAGService:
             limit = DEFAULT_FTS5_LIMIT  # Safe default
         limit = min(limit, MAX_FTS5_LIMIT)  # Cap maximum results
 
+        # Note: `Media` has no `tags` column and `media_fts` only indexes
+        # (title, content) -- see Client_Media_DB_v2's `_FTS_TABLES_SQL` and
+        # its `Media` CREATE TABLE. An earlier version of this query selected
+        # a nonexistent `m.tags`, which raised `OperationalError: no such
+        # column: m.tags` on every real DB (silently swallowed by the outer
+        # exception handler, so keyword search always returned []).
         sql = """
-        SELECT 
+        SELECT
             m.id,
             m.title,
             m.content,
@@ -1335,7 +1297,6 @@ class RAGService:
             m.type,
             m.author,
             m.ingestion_date,
-            m.tags,
             -rank as rank
         FROM Media m
         JOIN media_fts ON m.id = media_fts.rowid
@@ -1363,7 +1324,6 @@ class RAGService:
                             "type": row["type"],
                             "author": row["author"],
                             "ingestion_date": row["ingestion_date"],
-                            "tags": row["tags"],
                         }
                     )
         except Exception as e:

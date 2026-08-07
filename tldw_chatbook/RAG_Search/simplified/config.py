@@ -327,6 +327,13 @@ class SearchConfig:
     hybrid_cache_ttl: Optional[float] = None  # TTL for hybrid search results
     # Database connection settings
     fts5_connection_pool_size: int = 3  # Connection pool size for FTS5 searches
+    # Explicit override for the keyword (FTS5) leg's media database path.
+    # None (the default) means "resolve via tldw_chatbook.config.get_media_db_path()"
+    # -- the single authoritative resolver for the real on-disk media DB
+    # (honors TLDW_CONFIG_PATH scratch profiles and any user-configured
+    # custom path). Only set this to point the keyword leg at a specific
+    # file (e.g. tests); never guessed/derived from other paths.
+    media_db_path: Optional[Path] = None
 
     # Parent document inclusion settings (RAG pipeline feature)
     include_parent_docs: bool = False
