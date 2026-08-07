@@ -4001,6 +4001,76 @@ async def test_console_rag_action_inherits_active_profile_top_k(monkeypatch):
         ]
 
 
+@pytest.mark.asyncio
+async def test_console_rag_action_falls_back_to_default_top_k_when_profile_unavailable(
+    monkeypatch,
+):
+    """TASK-3170 task 9: the chip run's OTHER branch -- profile unresolvable.
+
+    ``_console_library_rag_profile_top_k`` degrades to
+    ``CONSOLE_LIBRARY_RAG_FALLBACK_TOP_K`` when the active RAG profile can't
+    be read (broken/absent profile), so a manual chip run must never raise
+    inside a send just because profile resolution failed. Patches
+    ``resolve_active_rag_config`` itself (what the helper actually reads,
+    imported lazily inside it) rather than the helper, so this exercises the
+    real try/except fallback path end to end -- not a mock standing in for
+    it.
+    """
+    from tldw_chatbook.RAG_Search.simplified import active_config
+
+    def _raise_profile_unavailable():
+        raise RuntimeError("simulated: active RAG profile unresolvable")
+
+    monkeypatch.setattr(
+        active_config, "resolve_active_rag_config", _raise_profile_unavailable
+    )
+
+    app = _build_test_app()
+    service = StaticConsoleLibraryRagSearchService(
+        {
+            "results": [
+                {
+                    "document_title": "Incident Review",
+                    "snippet": "Expired credential caused the incident.",
+                    "score": 0.93,
+                    "source_id": "note-42",
+                    "chunk_id": "chunk-7",
+                    "runtime_backend": "local-fts",
+                    "citations": [{"label": "Incident Review p.2"}],
+                }
+            ],
+            "runtime_backend": "local-fts",
+        }
+    )
+    app.library_rag_search_service = service
+    host = ConsoleHarness(app)
+    query = "Why did the incident happen?"
+
+    async with host.run_test(size=(196, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _open_console_inspector(console, pilot)
+        await _wait_for_selector(console, pilot, "#console-run-library-rag")
+
+        query_input = console.query_one("#console-library-rag-query-input", Input)
+        query_input.value = query
+        await pilot.pause(0.1)
+
+        run_button = console.query_one("#console-run-library-rag", Button)
+        assert run_button.disabled is False
+        run_button.press()
+        await _wait_for_selector(console, pilot, "#console-live-work-payload-source-id")
+
+        assert service.calls == [
+            {
+                "query": query,
+                "scope": ("notes", "media", "conversations"),
+                "mode": "rag",
+                "top_k": chat_screen_module.CONSOLE_LIBRARY_RAG_FALLBACK_TOP_K,
+                "include_citations": True,
+            }
+        ]
+
+
 def test_console_evidence_display_state_sanitizes_markup_fields():
     launch = ConsoleLiveWorkLaunch.from_values(
         source="Library Search/RAG",
