@@ -71,7 +71,9 @@ statement, not a confirmation gate; nothing blocks Run because of it.
 
 - **Search** — keyword matching over your sources; works with nothing extra
   installed.
-- **RAG Answer** — semantic retrieval. If embeddings support isn't
+- **RAG Answer** — retrieval driven by your active RAG profile (see
+  [Retrieval mode follows your RAG profile](#retrieval-mode-follows-your-rag-profile)
+  below), then a generated answer. If embeddings support isn't
   installed, the run blocks as "RAG unavailable" with the next step
   `Install RAG support: pip install "tldw_chatbook[embeddings_rag]", then
   restart, or switch mode to Search.` and the recovery pointer
@@ -79,6 +81,39 @@ statement, not a confirmation gate; nothing blocks Run because of it.
   "Index empty" — "The semantic index has no content yet" — with the
   recovery "Ingest content to index it automatically, run a semantic index
   backfill, or switch mode to Search".
+
+### Retrieval mode follows your RAG profile
+
+RAG Answer's retrieval step is no longer fixed to "always semantic" — it
+follows whichever **search mode** your active RAG profile
+([Settings ▸ RAG](../settings/rag.md)) is set to:
+
+- **Plain keyword** profiles (e.g. the built-in "BM25 Only") route the
+  query through the same keyword search Search mode uses, honestly
+  labeled — no vector index required, and no `match: strong`-style
+  similarity band on the resulting rows (they read `| keyword match`
+  instead — see [Evidence rows](#evidence-rows) below).
+- **Semantic** profiles run vector retrieval, same as before.
+- **Hybrid** profiles blend keyword and vector retrieval when the query
+  is unscoped and Media is a selected source. A query narrowed by a RAG
+  scope, or one with Media toggled off, falls back to semantic-only
+  retrieval for now — scope-aware and multi-source hybrid retrieval are
+  later work — and that fallback is disclosed rather than silent.
+
+A quiet one-line disclosure can appear above the evidence rows,
+alongside the "No strong semantic matches" / "Semantic search found
+nothing from…" lines described below, when the route taken is worth
+naming: `Profile 'BM25 Only': keyword search (no vectors).`,
+`Scope active — semantic only until scope-aware hybrid lands.`,
+`Media excluded — semantic only.`, or `Semantic leg empty — keyword-only
+results.` (shown when a hybrid profile's vector leg came back empty but
+its keyword leg still found rows — the "Index empty" recovery state is
+withheld in that case, since the index genuinely isn't empty).
+
+RAG Answer mode still needs embeddings support installed regardless of
+which mode the active profile resolves to, and generating the answer
+itself still calls your configured LLM provider either way — only the
+*retrieval* step's behavior depends on the profile.
 
 ### Sources scope
 
@@ -329,8 +364,14 @@ indexes — if RAG Answer mode reports an empty index, go there to backfill.
 
 - **"top 5" is fixed here.** The tunable top-k in Settings ▸ RAG does not
   change this canvas. "Per source" only appears in Search mode — RAG
-  Answer mode runs one merged semantic query across sources, not one per
-  source, so the heading doesn't claim it.
+  Answer mode runs one merged query across sources (semantic, keyword, or
+  hybrid depending on the active profile — see [Retrieval mode follows
+  your RAG profile](#retrieval-mode-follows-your-rag-profile)), not one
+  per source, so the heading doesn't claim it.
+- **Which retrieval mode RAG Answer actually uses depends on your active
+  profile**, not a fixed "always semantic" assumption — see [Retrieval
+  mode follows your RAG profile](#retrieval-mode-follows-your-rag-profile)
+  above.
 - **The scope summary line tracks the toggles.** Deselecting a source (e.g.
   turning Media off) updates "Scope: …" to name what's still in scope and
   what's off — it's a live summary of the ✓/○ toggles below it, not a fixed

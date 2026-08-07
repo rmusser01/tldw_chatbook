@@ -10,6 +10,14 @@ search comes back empty (you need **Backfill**), or when you want to change how
 sources are chunked, embedded, ranked, or cited. The profiles that ship with
 the app are read-only, so tuning always starts by cloning one.
 
+The active profile's **Search mode** now genuinely drives retrieval, not
+just a stored preference: Library's Search/RAG canvas and Console's
+Library RAG evidence handoff (manual or auto-retrieve) both resolve it
+and route accordingly — a `Plain keyword` profile searches keyword-only,
+`Hybrid` blends keyword and vector search, and `Semantic` runs vector
+search — see [Library Search/RAG](../library/search-and-rag.md#retrieval-mode-follows-your-rag-profile)
+and [Console: Context & RAG](../console/context-and-rag.md#auto-retrieve-on-send).
+
 ## Getting there
 
 Open **Settings** — press **F9**, click "F9 Settings" in the nav bar, or
@@ -118,7 +126,14 @@ not:
   removes that config entirely." With it off the two fields dim and gain
   " (enable reranking to edit)". **Rerank results** above **Default results**
   warns without blocking the save: "Rerank results (`n`) exceeds default
-  results (`m`); reranking will not see all requested results."
+  results (`m`); reranking will not see all requested results." **Cost:**
+  the default reranking strategy scores every candidate individually, so
+  enabling it means one extra LLM provider call per result (up to
+  **Rerank results** many) on every search this profile runs — a profile
+  with **Rerank results** at 15 can issue up to 15 provider calls per
+  query. If the reranker can't run (missing model or dependency), search
+  results still come back — reranking is skipped, disclosed, and never
+  fails the search outright.
 
 ### The four dialogs
 
@@ -169,7 +184,8 @@ testing a connection ("RAG check started." → "RAG check: `<state>` index ·
 5. **Turn on reranking.** With your own profile active, expand **Reranking**,
    tick **Enable reranking**, optionally name a **Reranker model** (blank uses
    the reranker's default), keep **Rerank results** at or below **Default
-   results**, and **Save (s)** — no backfill needed.
+   results**, and **Save (s)** — no backfill needed. Every search this profile
+   runs will now spend one extra provider call per candidate result.
 6. **Delete a profile you no longer want.** With a profile *of your own* active
    (see Quirks), pick the one to remove, press **Delete**, confirm — delete the
    active one and the pointer falls back to a built-in.
@@ -223,6 +239,11 @@ field has focus the footer relabels the hints as `Esc, s` / `Esc, r` /
   the next Library query does, not anything already rendered. Library Search's
   "top 5 per source" ignores **Default results** entirely — see
   [Library Search/RAG](../library/search-and-rag.md).
+- **Reranking is not free.** The default (pointwise) strategy scores every
+  candidate result with a separate provider call, so a profile with
+  **Rerank results** at 15 can spend up to 15 calls on a single search —
+  every surface that reads this profile (Library, Console manual/auto
+  retrieval) pays that cost, not just this pane.
 - **Backfill needs embeddings support.** Without it you get "Semantic indexing
   is unavailable (missing embeddings extras, or disabled in config)." and the
   index never builds; keyword search keeps working regardless. "RAG backfill
