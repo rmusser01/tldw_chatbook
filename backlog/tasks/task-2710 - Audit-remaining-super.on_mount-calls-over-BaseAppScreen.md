@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-08-06 20:35'
-updated_date: '2026-08-07 03:48'
+updated_date: '2026-08-07 04:04'
 labels:
   - ui
   - tech-debt
@@ -110,4 +110,20 @@ Widgets/enhanced_file_picker.py, Widgets/tooltip.py, Widgets/toast_notification.
 (removed super() call), Tests/Architecture/test_on_mount_super_guard.py (new).
 Full per-site census with category (a)/(b)/(c) breakdown, dispatch-mechanics
 citations, and gate output in .task-2710-report.md (worktree-local, git-excluded).
+
+Review follow-up (3 minors, all folded in, stacked commit e23b27fa2):
+1. Guard was BaseAppScreen-only and missed the one real bug found
+   (WizardContainer). Added test_no_wizardcontainer_subclass_calls_super_on_mount
+   reusing the existing root= parameter; mutation-tested against
+   SetupWizardContainer (re-added the pattern, confirmed failure, Edit-restored).
+2. Pinned show_step(0) running exactly once per wizard mount behaviorally
+   (not just via the AST guard): test_show_step_runs_exactly_once_on_wizard_mount
+   monkeypatch-counts WizardContainer.show_step through a real pilot mount;
+   mutation-tested the same way (assert [0, 0] == [0] on the reintroduced bug).
+3. Report's test_library_screen.py writeup wrongly attributed all 3
+   pre-existing failures to 2 shared attributes; corrected -- 3 different
+   attributes, one per test (verified by re-running the third test and
+   reading its traceback: _library_ingest_clear_finished_armed).
+
+Guard file + wizard file re-run together post-fix: 101 passed (4 + 97).
 <!-- SECTION:NOTES:END -->
