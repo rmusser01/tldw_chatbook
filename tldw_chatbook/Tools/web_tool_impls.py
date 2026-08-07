@@ -974,14 +974,13 @@ def web_crawl(
     Every URL is egress-guarded; budgets bound fetch ATTEMPTS; a wall-clock
     deadline bounds the whole crawl. Ephemeral: no database writes.
 
-    Attempt/row invariant: an attempt can spend its slot without producing a
-    row for two reasons — a redirect that lands on an already-listed final
-    URL, or (the more common case in practice) a plain, non-redirecting
-    fetch of a URL that an earlier page's redirect already listed as ITS
-    final URL — both deduped against the same `listed` set, so "Crawled N
-    pages" can legitimately be smaller than the number of fetch attempts
-    spent. Both cases are counted and surfaced via the footer's "N
-    duplicate redirects skipped" clause.
+    Attempt/row invariant: A row-less attempt arises two ways: a redirect
+    that lands on an already-listed final URL, or a plain fetch of a URL
+    that an earlier page's redirect already listed (which occurs first
+    depends on discovery order); both are surfaced in the footer's
+    duplicate-redirects clause. Both cases are deduped against the same
+    `listed` set, so "Crawled N pages" can legitimately be smaller than the
+    number of fetch attempts spent.
 
     When ``sitemap_url`` is given, sitemap mode replaces link-discovery BFS:
     the page list comes from the sitemap (urlset, or a one-level

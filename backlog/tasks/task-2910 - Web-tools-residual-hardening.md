@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-08-06'
-updated_date: '2026-08-07 02:57'
+updated_date: '2026-08-07 03:06'
 labels:
   - web-tools
   - tech-debt
@@ -94,6 +94,8 @@ Files touched:
 Test evidence: `pytest Tests/Tools/test_web_crawl.py
 Tests/Tools/test_web_tool_impls.py -v -p no:randomly` -> 107 passed. Full
 Tests/Tools/ --collect-only sweep: 325 collected, no import errors.
+
+Follow-up (coordinator review): dropped the unverified '(the more common case in practice)' frequency ranking from web_crawl's docstring and spec Sec.2 -- which row-less-attempt shape is commoner depends on BFS discovery order and was never measured; replaced with neutral both-ways wording in both places.
 <!-- SECTION:NOTES:END -->
 
 ## Additional residuals (final fix-wave re-review, 2026-08-06)
