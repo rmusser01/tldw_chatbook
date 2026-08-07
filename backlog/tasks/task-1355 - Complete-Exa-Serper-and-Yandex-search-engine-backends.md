@@ -1,7 +1,7 @@
 ---
 id: TASK-1355
 title: 'Complete Exa, Serper, and Yandex search engine backends'
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-08-05 06:03'
@@ -32,6 +32,8 @@ Spec `Docs/superpowers/specs/2026-08-06-search-backends-exa-serper-yandex-design
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
+**Live verification (2026-08-06, controller run, triple gate satisfied once):** serper PASS and exa PASS against the real endpoints (real results with URLs; ~1.3s exa call); yandex SKIPPED honestly — `missing key file(s): yandex-api-key.txt, yandex-folder-id.txt` — its request shape remains proto-verified only, and the live test lights up whenever the key pair lands at a checkout root.
+
 **Approach.** Executed as 6 SDD tasks per the spec/plan referenced above: a
 gitignore security prerequisite (credential scratch files), then Serper, Exa,
 and Yandex each as their own implement-then-review round, then an engine-surface
