@@ -123,6 +123,63 @@ def _classify_ip(ip_str: str) -> str:
     return "public" if ip.is_global else "private"
 
 
+def is_public_http_url(url: str) -> bool:
+    """Strict "is this genuinely a public internet address" check (task-1356).
+
+    Unlike :func:`evaluate_url_policy`, this ignores ``trusted_origins`` and
+    the ``[web_security]`` ``allowed_hosts``/``enabled`` config -- it answers
+    the narrower question a pre-fetch guard needs when it must refuse
+    REGARDLESS of user-configured trust (e.g. deep-search's relevance phase,
+    which browses arbitrary search-result URLs with Playwright and must
+    refuse a result pointing at ``http://169.254.169.254/`` even though the
+    egress policy might otherwise be relaxed for this run). Reuses this
+    module's own IP classification (``_classify_ip``, built on
+    ``ipaddress.is_global`` -- which already excludes the CGNAT
+    ``100.64.0.0/10`` and ``192.0.0.0/24`` ranges per the stdlib's
+    documented exception, matching ``Tools/web_tool_impls._is_public_ip``'s
+    classification without a second, hand-rolled network list) so a
+    public/private/metadata verdict is computed in exactly one place.
+
+    Args:
+        url: The URL to classify.
+
+    Returns:
+        ``True`` iff ``url`` is http(s), has a host, that host resolves (or
+        is already an IP literal), and every resolved IP classifies as
+        public. ``False`` for anything else -- bad scheme, unparseable URL,
+        DNS failure, or any private/loopback/link-local/multicast/reserved/
+        unspecified/CGNAT/metadata IP. Never raises.
+    """
+    try:
+        parsed = urlparse(url)
+    except ValueError:
+        return False
+    host = parsed.hostname
+    if parsed.scheme not in ("http", "https") or not host:
+        return False
+    try:
+        _ = parsed.port
+    except ValueError:
+        return False
+    h = host.lower()
+    if h in METADATA_HOSTNAMES:
+        return False
+    try:
+        ipaddress.ip_address(h)
+        ips: List[str] = [h]
+    except ValueError:
+        try:
+            ips = _resolve(h)
+        except (OSError, socket.gaierror):
+            return False
+    if not ips:
+        return False
+    try:
+        return all(_classify_ip(ip) == "public" for ip in ips)
+    except ValueError:
+        return False
+
+
 def _log_origin(url: str) -> str:
     """Return a credential- and query-free URL label for transport logs."""
     try:

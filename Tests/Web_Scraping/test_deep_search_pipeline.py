@@ -273,6 +273,29 @@ async def test_relevance_llm_timeout_counts_as_not_relevant(monkeypatch):
     assert out == {}  # timed out -> skipped, not crashed
 
 
+@pytest.mark.asyncio
+async def test_relevance_refuses_private_url_scrape(monkeypatch):
+    # Pre-scrape SSRF guard (task-1356): a relevant result pointing at a
+    # cloud metadata IP must never be navigated to by scrape_article --
+    # scrape_article is faked here as a spy solely to prove it's never
+    # called; the guard refuses BEFORE any fetch, so this test performs
+    # no real network I/O either way.
+    monkeypatch.setattr(WebSearch_APIs, "chat_api_call",
+                        _fake_chat(["Selected Answer: True\nReasoning: relevant"]))
+    scraped = []
+
+    async def spy_scrape(url, **k):
+        scraped.append(url)
+        return {"content": "should not happen", "extraction_successful": True}
+
+    monkeypatch.setattr(WebSearch_APIs, "scrape_article", spy_scrape)
+    results = [_std_result("Internal", "http://169.254.169.254/latest", "metadata snippet")]
+    out = await WebSearch_APIs.search_result_relevance(results, "q", [], "openai")
+    assert scraped == []                                  # never navigated
+    entry = next(iter(out.values()))
+    assert "metadata snippet" in entry["content"] or "Internal" in entry["content"]  # fallback kept
+
+
 # --- pure review ---------------------------------------------------------------
 
 def test_review_no_selector_passes_all():

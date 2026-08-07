@@ -71,6 +71,7 @@ except ImportError:
 from tldw_chatbook.Web_Scraping.Article_Extractor_Lib import scrape_article
 from tldw_chatbook.Chat.Chat_Functions import chat_api_call
 from tldw_chatbook.Internal_Prompts import render_internal_prompt
+from tldw_chatbook.Utils.egress import is_public_http_url
 
 # `analyze` (LLM_Calls.Summarization_General_Lib) pulls in the summarization
 # stack (nltk/scipy/sklearn/pandas via Chunking/Chunk_Lib). It is imported
@@ -924,16 +925,33 @@ async def search_result_relevance(
                         source_content = content
 
                         try:
-                            scraped_content = await asyncio.wait_for(
-                                scrape_article(result["url"]), timeout=scrape_timeout_s
-                            )
-                            scraped_text = ""
-                            if isinstance(scraped_content, dict):
-                                scraped_text = str(scraped_content.get("content") or "").strip()
-                            elif isinstance(scraped_content, str):
-                                scraped_text = scraped_content.strip()
-                            if scraped_text:
-                                source_content = scraped_text
+                            # Pre-scrape SSRF guard (task-1356): scrape_article's
+                            # own validation (input_validation.validate_url) is
+                            # well-formedness only -- no DNS resolution, no
+                            # private-range blocking. This phase browses arbitrary
+                            # search-result URLs with Playwright, so a result
+                            # pointing at e.g. http://169.254.169.254/ must be
+                            # refused BEFORE navigation, not after. A refusal is
+                            # counted exactly like a scrape failure -- never an
+                            # exception -- and falls through to the existing
+                            # snippet/title/url fallback below.
+                            if not is_public_http_url(result["url"]):
+                                logger.warning(
+                                    f"Refusing to scrape non-public URL for result "
+                                    f"{result_id}: {result.get('url')!r}; falling "
+                                    "back to search snippet/title/url"
+                                )
+                            else:
+                                scraped_content = await asyncio.wait_for(
+                                    scrape_article(result["url"]), timeout=scrape_timeout_s
+                                )
+                                scraped_text = ""
+                                if isinstance(scraped_content, dict):
+                                    scraped_text = str(scraped_content.get("content") or "").strip()
+                                elif isinstance(scraped_content, str):
+                                    scraped_text = scraped_content.strip()
+                                if scraped_text:
+                                    source_content = scraped_text
                         except asyncio.CancelledError:
                             raise
                         except Exception as scrape_error:
