@@ -620,6 +620,22 @@ class EffectiveToolState:
 
     @property
     def ui_label(self) -> str:
+        # task-2870: `origin == "gate_error"` is the synthesized
+        # fail-closed verdict -- the permission RESOLVER raised, not a
+        # configured Off (`MCPWorkbench._resolve_test_gate()`/
+        # `_effective_for_display()` pair it unconditionally with
+        # `state="deny"`). Mapping it to "Off" made every renderer of this
+        # property (Permissions matrix State cells, Tools-mode State
+        # column, the inspector's permission block) print a confident
+        # configuration claim about a state that could not be read -- the
+        # contradiction PR #1385's round J removed from the inspector one
+        # surface at a time. Owned HERE so every renderer tells the same
+        # truth; severity/color is deliberately NOT this property's job
+        # (`tool_state_kind()` keeps the fail-closed deny in the "error"
+        # bucket -- the blocked EFFECT is real, only the causal label
+        # lied).
+        if self.origin == "gate_error":
+            return "Unknown"
         # I2: second layer of defense against a hand-edited/corrupted
         # `mcp_permissions.json` whose `global_default` is some non-store
         # value (e.g. "banana") -- `resolve_effective_state()` itself now

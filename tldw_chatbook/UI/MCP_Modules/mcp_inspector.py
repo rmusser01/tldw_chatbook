@@ -1750,29 +1750,21 @@ class MCPInspector(Vertical):
             # one of `allow|ask|deny`), so `mcp-status-{kind}` always
             # resolves to one of the three classes the bundle defines.
             #
-            # Fix Round J: `origin == "gate_error"` is the synthesized
-            # fail-closed verdict (the permission RESOLVER raised, not a
-            # configured Off) -- `ui_label` maps its `state="deny"` to
-            # "Off", which stacked "Permission: Off" (a confident
+            # Fix Round J (PR #1385) found the stacked contradiction here:
+            # a gate_error verdict rendered "Permission: Off" (a confident
             # configuration claim) one line above "Permission state could
-            # not be resolved." (an admission we don't know it) -- the
-            # exact contradiction shape rounds B/D/F removed from the Test
-            # Tool body and the Advanced hatch, reassembled here by two
-            # truthful-in-isolation widgets. The label now says what is
-            # actually known ("Unknown"); the `error` status class is KEPT
-            # on purpose -- the color encodes the EFFECT (fail-closed, the
-            # tool will not run; don't trust it), which is true, while the
-            # label no longer misstates the CAUSE. The other `ui_label`
-            # renderers (Permissions matrix rows, Tools-mode State column
-            # via `format_tool_state_label()`) still print "Off ·" for
-            # gate_error rows -- that is task-2270's scope (gate_error copy
-            # across the views), not silently expanded here.
+            # not be resolved." (an admission we don't know it), and this
+            # site grew its own origin-aware label branch. task-2870 moved
+            # that ownership INTO `EffectiveToolState.ui_label` (gate_error
+            # -> "Unknown") so the matrix/State-column renderers tell the
+            # same truth -- the branch here collapsed back to the plain
+            # read, and round J's test now pins the behavior through
+            # `ui_label` like every other surface. The `error` status
+            # class is KEPT on purpose: the color encodes the EFFECT
+            # (fail-closed, the tool will not run), which is true; only
+            # the causal label lied.
             Static(
-                (
-                    "Permission: Unknown"
-                    if effective.origin == "gate_error"
-                    else f"Permission: {effective.ui_label}"
-                ),
+                f"Permission: {effective.ui_label}",
                 id="mcp-inspector-permission-state",
                 classes=f"ds-field-row mcp-status-{tool_state_kind(effective)}",
                 markup=False,

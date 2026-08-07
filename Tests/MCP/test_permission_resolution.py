@@ -114,6 +114,24 @@ def test_ui_label_is_defensive_against_unknown_state():
     assert EffectiveToolState(state="", origin="global_default").ui_label == "Ask"
 
 
+def test_ui_label_reads_unknown_not_off_for_a_gate_error_origin():
+    """task-2870: `origin="gate_error"` is the synthesized fail-closed
+    verdict -- the permission RESOLVER raised, not a configured Off
+    (`MCPWorkbench._resolve_test_gate()`/`_effective_for_display()` pair it
+    unconditionally with `state="deny"`). Mapping it to "Off" made every
+    `ui_label` renderer (Permissions matrix State cells, Tools-mode State
+    column) print a confident configuration claim about a state that could
+    not be read -- the same lie PR #1385's round J removed from the
+    inspector's permission block one surface at a time. Owning it HERE
+    fixes every renderer at once; a genuine deny keeps "Off"."""
+    assert (
+        EffectiveToolState(state="deny", origin="gate_error").ui_label == "Unknown"
+    )
+    # Genuine denies -- any non-gate_error origin -- keep the honest "Off".
+    assert EffectiveToolState(state="deny", origin="tool_override").ui_label == "Off"
+    assert EffectiveToolState(state="deny", origin="global_default").ui_label == "Off"
+
+
 # -- HIGH_RISK_TAGS ------------------------------------------------------------
 
 
