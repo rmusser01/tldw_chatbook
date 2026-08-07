@@ -117,3 +117,57 @@ def test_every_gateable_tool_gets_a_switch_id():
     )
     assert "gateable_builtin_tools()" in src
     assert 'f"tool-switch-{entry.tool_name}"' in src
+
+
+def test_web_deep_search_gate_key_round_trips_to_config(tmp_path, monkeypatch):
+    """task-3222: web_deep_search is a LocalToolSpec, not a _GATEABLE_
+    BUILTINS entry, so it isn't covered by the round trip above -- but it
+    shares the same [tools] table and must round-trip the same way.
+    """
+    cfg = tmp_path / "config.toml"
+    cfg.write_text('[general]\nusers_name = "t"\n', encoding="utf-8")
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(cfg))
+
+    import tldw_chatbook.config as config_module
+    from tldw_chatbook.Agents.local_tool_provider import _default_specs
+
+    config_module.load_settings(force_reload=True)
+    try:
+        assert config_module.save_settings_to_cli_config(
+            {"tools": {"web_deep_search_enabled": True}}
+        )
+        config_module.load_settings(force_reload=True)
+        specs = _default_specs(tmp_path)
+        assert "web_deep_search" in {s.name for s in specs}
+    finally:
+        config_module._SETTINGS_CACHE = None
+        config_module._SETTINGS_CACHE_SOURCE = None
+
+
+def test_web_deep_search_row_present_in_tool_settings_source():
+    """Regression pin: the Tool Settings compose loop must build a switch
+    row for web_deep_search using the same id convention as the
+    _GATEABLE_BUILTINS rows above it, and its description must name the
+    restart-to-apply requirement (the provider builds its tool list once at
+    construction -- see Agents/local_tool_provider.py's _default_specs).
+
+    Scoped to the row's exact restart sentence (fix-wave M6, 2026-08-07
+    review): a bare `"restart" in src.lower()` is vacuous -- this file's
+    unrelated DEPRECATED (TASK-1346) module docstring already says
+    "not reachable through normal navigation" and other restart mentions
+    exist elsewhere in the file, none of which say anything about this row.
+    """
+    import pathlib
+
+    src = pathlib.Path("tldw_chatbook/UI/Tools_Settings_Window.py").read_text(
+        encoding="utf-8"
+    )
+    assert "WEB_DEEP_SEARCH_GATE_KEY" in src
+    assert 'f"tool-switch-{WEB_DEEP_SEARCH_TOOL_NAME}"' in src
+    # `src` is the raw .py SOURCE text (not the evaluated widget string), so
+    # this must match how the description's f-string is actually broken
+    # across source lines -- these two fragments together anchor the row's
+    # restart clause specifically, rather than matching any "restart"
+    # mention anywhere in the ~4000-line file.
+    assert 'WEB_DEEP_SEARCH_GATE_KEY} -- restart "' in src
+    assert "list once at startup, so this switch has no effect " in src

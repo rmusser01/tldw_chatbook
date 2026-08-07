@@ -39,10 +39,12 @@ Main Functions:
 # Imports
 import asyncio
 import base64
+import concurrent.futures
 import json
 from html import unescape
 import random
 import re
+import threading
 import time
 from typing import Optional, Dict, Any, List, Union, Callable, TypedDict
 from urllib.parse import urlparse, urlencode, unquote
@@ -459,10 +461,24 @@ def generate_and_search(question: str, search_params: Dict) -> Dict:
         "analysis_prompt": None,
     }
 
+    # Set only when subquery_generation is on AND analyze_question exhausted
+    # every attempt without producing a single sub-question (task-3221): up
+    # to _SUBQUERY_GENERATION_MAX_ATTEMPTS paid LLM calls were made and none
+    # of them yielded anything, which is otherwise indistinguishable from
+    # the feature being off. Appended to warnings below, once the dict
+    # exists.
+    subquery_generation_failure_warning: Optional[str] = None
     if search_params.get("subquery_generation", False):
         logger.info("Sub-query generation enabled")
         api_endpoint = search_params.get("subquery_generation_llm", "openai")
         sub_query_dict = analyze_question(question, api_endpoint)
+        if not sub_query_dict.get("sub_questions"):
+            subquery_generation_failure_warning = (
+                f"sub-query generation failed after "
+                f"{_SUBQUERY_GENERATION_MAX_ATTEMPTS} attempts; searched only "
+                "the original query"
+            )
+            logger.warning(subquery_generation_failure_warning)
 
     # Merge original question with sub-queries, dropping any sub-query that's
     # just the original question again (case-insensitive) before fan-out
@@ -572,11 +588,36 @@ def generate_and_search(question: str, search_params: Dict) -> Dict:
             f"Total results found so far: {len(web_search_results_dict['results'])}"
         )
 
+    # Promote a provider error to the top-level `error` field BEFORE the
+    # sub-query-generation notice (below) ever joins `warnings` (fix-wave
+    # Important 2, 2026-08-07 review). The old code appended that notice at
+    # warnings[0] -- BEFORE the fan-out loop even ran -- which this
+    # promotion check then treated as the first-provider-error slot. Two
+    # regressions followed: (1) a REAL provider error landing at warnings[1]
+    # got silently demoted/misattributed as the sub-query notice instead,
+    # and (2) an empty-without-error run (every provider legitimately
+    # returned zero results, no processing_error at all) got a FALSE
+    # top-level `error` -- the notice itself isn't a provider error and must
+    # never be promoted to one, including when it's the only entry.
+    # Evaluating this check against only the loop's own provider warnings --
+    # before the notice is appended just below -- keeps `warnings[0]`
+    # meaning exactly what the port comment says (the first provider
+    # error) and leaves `error` at its None default whenever no provider
+    # actually errored, sub-query notice or not.
+    #
     # If every query came back empty and at least one provider errored,
     # surface the first such error as the top-level error (port of server
     # generate_and_search ~:624-627).
     if not web_search_results_dict["results"] and web_search_results_dict["warnings"]:
         web_search_results_dict["error"] = web_search_results_dict["warnings"][0]
+
+    # Append the sub-query-generation-exhausted notice LAST -- after the
+    # promotion check above has already run -- so it rides at the end of
+    # `warnings` for the caller's warning COUNT/footer display, exactly
+    # like any other non-error warning, without ever being eligible for
+    # promotion to `error` itself.
+    if subquery_generation_failure_warning:
+        web_search_results_dict["warnings"].append(subquery_generation_failure_warning)
 
     return {
         "web_search_results_dict": web_search_results_dict,
@@ -713,7 +754,13 @@ async def analyze_and_aggregate(
 
 ######################### Question Analysis #########################
 #
-#
+_SUBQUERY_GENERATION_MAX_ATTEMPTS = 3
+"""Number of paid LLM attempts `analyze_question` makes at generating
+sub-questions before giving up. Shared with `generate_and_search`'s
+total-failure warning (task-3221) so the "N attempts" the user is told
+about can never drift from the loop bound that actually produced it."""
+
+
 def analyze_question(question: str, api_endpoint) -> Dict:
     """
     Analyze a question and generate relevant sub-queries.
@@ -761,7 +808,7 @@ def analyze_question(question: str, api_endpoint) -> Dict:
     input_data = "Follow the above instructions."
 
     sub_questions: List[str] = []
-    for attempt in range(3):
+    for attempt in range(_SUBQUERY_GENERATION_MAX_ATTEMPTS):
         try:
             logger.info(f"Generating sub-questions (attempt {attempt + 1})")
 
@@ -854,6 +901,61 @@ def _build_result_fallback_content(result: Dict[str, Any]) -> str:
 
 ######################### Relevance Analysis #########################
 #
+_DNS_GUARD_EXECUTOR_MAX_WORKERS = 4
+
+_DNS_GUARD_EXECUTOR_LOCK = threading.Lock()
+"""Guards creation of the module-level DNS-guard executor below."""
+
+_DNS_GUARD_EXECUTOR: Optional[concurrent.futures.ThreadPoolExecutor] = None
+"""Dedicated, lazily-created, bounded executor for the pre-scrape SSRF DNS
+guard (`is_public_http_url`) offload in `search_result_relevance` (task-3220).
+
+Constraint: that guard does synchronous `socket.getaddrinfo` and is wrapped
+in `asyncio.wait_for`; when the timeout fires, the abandoned resolver thread
+keeps occupying its executor slot until the OS resolver itself gives up --
+which can far outlast `scrape_timeout_s`. Routing it through
+`asyncio.to_thread` would put it on the DEFAULT executor, the same one this
+loop's other offloads (the relevance/summarization `chat_api_call` calls,
+`aggregate_results`) share -- so a result set full of slow-DNS hosts could
+queue paid LLM calls behind dead resolvers. A small, separate pool isolates
+the abandoned threads so they can never crowd out those offloads."""
+
+
+def _get_dns_guard_executor() -> concurrent.futures.ThreadPoolExecutor:
+    """Return the shared DNS-guard executor, creating it on first use."""
+    global _DNS_GUARD_EXECUTOR
+    if _DNS_GUARD_EXECUTOR is None:
+        with _DNS_GUARD_EXECUTOR_LOCK:
+            if _DNS_GUARD_EXECUTOR is None:
+                _DNS_GUARD_EXECUTOR = concurrent.futures.ThreadPoolExecutor(
+                    max_workers=_DNS_GUARD_EXECUTOR_MAX_WORKERS,
+                    thread_name_prefix="deep-search-dns-guard",
+                )
+    return _DNS_GUARD_EXECUTOR
+
+
+def _reset_dns_guard_executor_for_tests() -> None:
+    """TEST-ONLY: force-recreate the module-level DNS-guard executor.
+
+    `_DNS_GUARD_EXECUTOR` is a process-wide singleton by design (see its
+    docstring above) -- production code never wants to discard in-flight
+    guard calls. But a test that saturates the pool with blocked callables
+    to prove non-starvation (fix-wave Important 3, task-3220) leaves that
+    saturation sitting in the singleton for every test that runs afterward
+    in the same process, since nothing else ever resets it. Shuts the old
+    executor down with `cancel_futures=True` (drops anything still queued
+    but not yet started) and clears the singleton so the next
+    `_get_dns_guard_executor()` call lazily rebuilds a clean pool. No
+    production code path calls this.
+    """
+    global _DNS_GUARD_EXECUTOR
+    with _DNS_GUARD_EXECUTOR_LOCK:
+        executor = _DNS_GUARD_EXECUTOR
+        _DNS_GUARD_EXECUTOR = None
+    if executor is not None:
+        executor.shutdown(wait=True, cancel_futures=True)
+
+
 # FIXME - Ensure edge cases are handled properly / Structured outputs?
 async def search_result_relevance(
     search_results: List[Dict],
@@ -991,15 +1093,41 @@ async def search_result_relevance(
                             # is_public_http_url does synchronous DNS resolution
                             # (socket.getaddrinfo) -- its own docstring chain
                             # (evaluate_url_policy) warns never to call that kind
-                            # of check directly from an event loop. Offload to a
-                            # worker thread and bound it with the same timeout
-                            # used for the scrape itself; a guard timeout raises
-                            # asyncio.TimeoutError, which is an Exception (unlike
-                            # CancelledError) so it falls straight into the
-                            # `except Exception` below and is handled exactly
-                            # like a scrape failure -- no separate code path.
+                            # of check directly from an event loop. Offload it,
+                            # bounded by the same timeout used for the scrape
+                            # itself; a guard timeout raises asyncio.TimeoutError,
+                            # which is an Exception (unlike CancelledError) so it
+                            # falls straight into the `except Exception` below and
+                            # is handled exactly like a scrape failure -- no
+                            # separate code path.
+                            #
+                            # Routed through the dedicated `_get_dns_guard_executor`
+                            # pool (task-3220), NOT `asyncio.to_thread`'s shared
+                            # default executor: on a wait_for timeout the abandoned
+                            # getaddrinfo thread keeps occupying its slot until the
+                            # OS resolver gives up, and the default executor is
+                            # also where this loop's own chat_api_call/summarize
+                            # offloads run -- a run of slow-DNS hosts must not be
+                            # able to queue those paid LLM calls behind dead
+                            # resolvers. This bounds the BLAST RADIUS, not the
+                            # symptom for THIS call: under full saturation of the
+                            # dedicated pool (all `_DNS_GUARD_EXECUTOR_MAX_WORKERS`
+                            # slots already occupied by abandoned threads), a new
+                            # guard call submitted here queues unstarted behind
+                            # them, and `wait_for` below still fires once
+                            # `scrape_timeout_s` elapses -- it has no way to tell
+                            # "queued" from "running slow" apart. That still
+                            # correctly skips the scrape fail-safe (falls through
+                            # to the snippet/title/url fallback exactly like a
+                            # real guard timeout), it just does so without this
+                            # particular call ever having gotten a real DNS
+                            # answer -- the isolation guarantee above is about
+                            # protecting OTHER offloads, not about this call
+                            # getting to run promptly.
                             is_public = await asyncio.wait_for(
-                                asyncio.to_thread(is_public_http_url, result["url"]),
+                                asyncio.get_running_loop().run_in_executor(
+                                    _get_dns_guard_executor(), is_public_http_url, result["url"]
+                                ),
                                 timeout=scrape_timeout_s,
                             )
                             if not is_public:
