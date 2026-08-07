@@ -316,6 +316,9 @@ class SpeechCatalogMixin:
                     for key, value in self._voice_runtime_observed_at.items()
                     if key[0] != provider_id
                 }
+            previous_configuration_revision = self._catalog_configuration_revisions.get(
+                provider_id
+            )
             self._catalogs[provider_id] = catalog
             self._catalog_configuration_revisions[provider_id] = configuration_revision
             self._catalog_observed_at[provider_id] = datetime.now(timezone.utc)
@@ -329,8 +332,29 @@ class SpeechCatalogMixin:
                 self._catalog_unavailable_providers.add(provider_id)
             if catalog.health.fresh:
                 self._stale_providers.discard(provider_id)
-            else:
+            elif (
+                previous_configuration_revision is not None
+                and previous_configuration_revision != configuration_revision
+            ):
+                # TASK-2970: a genuine supersession -- this provider's
+                # configuration actually changed since our last successful
+                # catalog load (tracked via `_catalog_configuration_
+                # revisions`), and this fresh fetch itself hasn't caught up
+                # to that change yet (`health.fresh` is False). Mirror that
+                # as "stale" so the status line's settings-changed copy
+                # stays accurate. A load that merely reports non-fresh
+                # health with no revision history behind it -- most
+                # notably the very first load ever for this provider,
+                # where `previous_configuration_revision` is None -- is
+                # NOT a genuine supersession: nothing has changed, this is
+                # simply how the first read came back. The retired
+                # widget's equivalent success path never marked stale here
+                # at all (unconditional discard, no `health.fresh` branch);
+                # this narrower condition is the one case task-2970's own
+                # AC#3 calls out as still warranting it.
                 self._stale_providers.add(provider_id)
+            else:
+                self._stale_providers.discard(provider_id)
             preset = self._profile_preset
             if preset is not None and preset.provider_id == provider_id:
                 self._profile_effective_availability = (

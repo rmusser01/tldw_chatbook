@@ -1278,9 +1278,9 @@ async def test_higgs_saved_profile_is_prefixed_exactly_once_in_request(
         assert app.generation_events[0].request.voice_id == "profile:saved-voice"
 
 
-#: PANE DEFECT (see the `xfail`s below): `_load_provider_catalog_worker`
-#: adds a provider to `_stale_providers` whenever the *freshly-fetched*
-#: catalog itself reports `health.fresh is False` --
+#: TASK-2970 (fixed): `_load_provider_catalog_worker` used to add a
+#: provider to `_stale_providers` whenever the *freshly-fetched* catalog
+#: itself reported `health.fresh is False`, unconditionally --
 #:
 #:     if catalog.health.fresh:
 #:         self._stale_providers.discard(provider_id)
@@ -1288,28 +1288,22 @@ async def test_higgs_saved_profile_is_prefixed_exactly_once_in_request(
 #:         self._stale_providers.add(provider_id)
 #:
 #: -- and `_catalog_health_copy` checks `_stale_providers` FIRST, ahead of
-#: `health.state`, so any fresh (first-ever) load whose health happens to
+#: `health.state`, so any fresh (first-ever) load whose health happened to
 #: report `fresh=False` (a "reconfiguring" provider, or a naturally stale
-#: "available" catalog) is shown the generic "settings changed; refresh
+#: "available" catalog) was shown the generic "settings changed; refresh
 #: models" instead of the accurate, state-specific recovery copy -- even
-#: though nothing has changed; this is simply how the very first read came
-#: back. Confirmed NOT present in the retired widget: its equivalent
+#: though nothing had changed; this was simply how the very first read
+#: came back. Confirmed NOT present in the retired widget: its equivalent
 #: success path was an unconditional `self._stale_providers.discard(
 #: provider_id)` with no `health.fresh` branch at all (verified by diffing
 #: `git show HEAD:tldw_chatbook/UI/STTS_Window.py` against the pane before
-#: this branch's own sibling task deleted the widget). `_catalog_health_
-#: copy` itself is byte-for-byte identical between the two -- the
-#: divergence is entirely in what populates `_stale_providers`.
-_STALE_ON_FIRST_LOAD_DEFECT = (
-    "PANE DEFECT (TASK-2951 finding): a fresh (first-ever) catalog load "
-    "whose reported health.fresh is False is shown the generic 'settings "
-    "changed; refresh models' instead of the accurate state-specific "
-    "copy, because _load_provider_catalog_worker marks the provider "
-    "'stale' purely from health.fresh on ANY load, not only a load that "
-    "followed a real configuration change. The retired widget's "
-    "equivalent success path never did this (unconditional discard, no "
-    "health.fresh branch)."
-)
+#: TASK-2951 deleted the widget). Fixed by only adding to `_stale_
+#: providers` when this load's own configuration revision genuinely
+#: supersedes a previously recorded one for the same provider -- a real
+#: configuration change this particular fetch has not caught up to yet --
+#: not merely because this load's health happens to read non-fresh with no
+#: revision history behind it. The two health2/health3 parametrizations
+#: below were `xfail(strict=True)` against the pre-fix code; both now pass.
 
 
 @pytest.mark.asyncio
@@ -1324,21 +1318,13 @@ _STALE_ON_FIRST_LOAD_DEFECT = (
             ProviderHealth(state="not_configured", fresh=True),
             "not configured",
         ),
-        pytest.param(
+        (
             ProviderHealth(state="reconfiguring", fresh=False),
             "settings are being applied",
-            marks=pytest.mark.xfail(
-                reason=_STALE_ON_FIRST_LOAD_DEFECT,
-                strict=True,
-            ),
         ),
-        pytest.param(
+        (
             ProviderHealth(state="available", fresh=False),
             "catalog is stale",
-            marks=pytest.mark.xfail(
-                reason=_STALE_ON_FIRST_LOAD_DEFECT,
-                strict=True,
-            ),
         ),
     ),
 )
