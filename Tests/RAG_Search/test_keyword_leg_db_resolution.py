@@ -156,3 +156,51 @@ def test_keyword_search_orders_strongest_match_first(tmp_path):
         f"weak match ({weak_id}) preferentially kept over a stronger match "
         f"under top_k=2: {top2_ids}"
     )
+
+
+def test_keyword_rows_render_their_real_title_in_library_evidence(tmp_path):
+    """A keyword-leg row must reach the Library evidence list titled.
+
+    Found live (Task 11 walkthrough, Hybrid Full profile): a hybrid search
+    whose semantic leg was empty rendered its one FTS-leg row as
+    "1. Untitled source | keyword match" while its own citation line read
+    "Citations: meeting_notes" -- the title was there, under a key the
+    display layer does not read.
+
+    The vector leg's chunk metadata carries `title` (spread in from the
+    indexing call's document metadata); this leg builds its metadata from
+    scratch and stamped only `doc_title`, which
+    `library_local_rag_search_service._semantic_row` -- the mapper every
+    engine-backed Library row goes through -- does not consult. The symptom
+    was unreachable before this branch because the keyword leg could never
+    return a row at all.
+    """
+    from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
+    from tldw_chatbook.Library.library_local_rag_search_service import _semantic_row
+    from tldw_chatbook.Library.library_rag_state import LibraryRagResultRow
+
+    db_path = tmp_path / "tldw_cli_media_v2.db"
+    db = MediaDatabase(db_path=str(db_path), client_id="test_keyword_title")
+    media_id, _, message = db.add_media_with_keywords(
+        title="Quokka Census Notes",
+        content="Census notes recording quokka sightings across the island.",
+        media_type="article",
+        author="R. Surveyor",
+        url="https://example.com/quokka-census",
+    )
+    assert media_id is not None, f"seed failed: {message}"
+    db.close_connection()
+
+    service = _make_service(tmp_path, media_db_path=db_path)
+    results = asyncio.run(service._keyword_search("quokka", top_k=5))
+    assert results, "FTS row expected"
+
+    row = _semantic_row(results[0])
+    assert row["title"] == "Quokka Census Notes", (
+        "keyword-leg row lost its title on the way to the Library evidence "
+        f"list: {row['title']!r} (metadata keys: {sorted(results[0].metadata)})"
+    )
+    # And through the display-state normalizer the panel actually renders.
+    assert (
+        LibraryRagResultRow.from_result(row).title == "Quokka Census Notes"
+    ), "row renders as 'Untitled source' in the evidence list"

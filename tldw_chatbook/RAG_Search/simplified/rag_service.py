@@ -1083,6 +1083,15 @@ class RAGService:
                 metadata={
                     "doc_id": str(item["id"]),
                     "doc_title": item.get("title", "Untitled"),
+                    # The display key. The vector leg gets `title` for free
+                    # (the indexing call spreads the document's own metadata
+                    # into every chunk); this leg builds its metadata from
+                    # scratch, so without this a keyword-leg row reaches the
+                    # Library evidence list as "Untitled source" -- observed
+                    # live under Hybrid Full with an empty semantic leg.
+                    # `_semantic_row` (library_local_rag_search_service) reads
+                    # `title`/`document_title` and never `doc_title`.
+                    "title": item.get("title") or "",
                     "media_type": item.get("type"),
                     "url": item.get("url"),
                     "author": item.get("author"),
@@ -1161,6 +1170,9 @@ class RAGService:
         base_metadata = {
             "doc_id": str(item["id"]),
             "doc_title": item.get("title", "Untitled"),
+            # See the sibling metadata block in `_keyword_search`: `title` is
+            # the key the Library evidence row mapper reads, `doc_title` is not.
+            "title": item.get("title") or "",
             "media_type": item.get("type"),
             "url": item.get("url"),
             "author": item.get("author"),
