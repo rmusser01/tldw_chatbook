@@ -67,17 +67,6 @@ except ImportError:
     _Element = None
     document_fromstring = None
 
-# Handle optional defusedxml (Yandex XML parsing)
-try:
-    import defusedxml.ElementTree as _yandex_ET
-except ImportError:
-    import xml.etree.ElementTree as _yandex_ET
-
-    logger.warning(
-        "defusedxml not available, using standard xml.etree for Yandex result parsing. "
-        "Install defusedxml for better security."
-    )
-
 #
 # Local Imports
 from tldw_chatbook.Web_Scraping.Article_Extractor_Lib import scrape_article
@@ -93,6 +82,17 @@ from tldw_chatbook.Internal_Prompts import render_internal_prompt
 from loguru import logger
 from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram
 from tldw_chatbook.config import load_settings
+
+# Handle optional defusedxml (Yandex XML parsing)
+try:
+    import defusedxml.ElementTree as _yandex_ET
+except ImportError:
+    import xml.etree.ElementTree as _yandex_ET
+
+    logger.warning(
+        "defusedxml not available, using standard xml.etree for Yandex result parsing. "
+        "Install defusedxml for better security."
+    )
 
 
 # Common error handling and retry mechanisms
@@ -3045,10 +3045,10 @@ def search_web_yandex(search_query, result_count=None):
     """
     yandex_api_key = loaded_config_data["search_engines"].get("yandex_search_api_key", "")
     if not yandex_api_key:
-        raise ValueError("Please provide a valid Yandex Search API key ([search_engines] yandex_search_api_key)")
+        raise ValueError("Please provide a valid Yandex Search API key ([SearchEngines] yandex_search_api_key)")
     folder_id = loaded_config_data["search_engines"].get("yandex_search_folder_id", "")
     if not folder_id:
-        raise ValueError("Please provide the Yandex Cloud folder id ([search_engines] yandex_search_folder_id)")
+        raise ValueError("Please provide the Yandex Cloud folder id ([SearchEngines] yandex_search_folder_id)")
     headers = {"Authorization": f"Api-Key {yandex_api_key}", "Content-Type": "application/json"}
     payload = {
         "query": {"searchType": "SEARCH_TYPE_COM", "queryText": search_query},
