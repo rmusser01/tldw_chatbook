@@ -18,7 +18,7 @@ from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.events import Click
 from textual.screen import ModalScreen
-from textual.widgets import Button, Input, Static
+from textual.widgets import Button, Input, Static, Switch
 
 from tldw_chatbook.Library.library_rag_state import (
     LIBRARY_RAG_SCOPE_TOGGLE_SOURCE_TYPES,
@@ -45,6 +45,18 @@ CONSOLE_RAG_SOURCE_SUMMARY_PREFIX = "Sources"
 CONSOLE_RAG_SOURCE_TOGGLE_ID_PREFIX = "console-rag-settings-source-"
 CONSOLE_RAG_SOURCE_TOGGLE_CLASS = "console-rag-settings-source-toggle"
 _SOURCE_TYPE_LABELS = dict(LIBRARY_RAG_SOURCE_TYPES)
+
+#: TASK-3170 (RAG-port P0 task 7): the modal's own default when no
+#: constructor value is given. The CALLER (chat_screen.py's
+#: `_open_console_rag_settings`) is the one that reads the persisted
+#: `[chat_defaults] rag_auto_retrieve_on_send` config value and passes it
+#: in -- the modal never touches config directly.
+CONSOLE_RAG_AUTO_RETRIEVE_TOGGLE_ID = "console-rag-settings-auto-retrieve"
+CONSOLE_RAG_AUTO_RETRIEVE_LABEL = "Auto-retrieve on send"
+CONSOLE_RAG_AUTO_RETRIEVE_TOOLTIP = (
+    "When on, each plain text send first retrieves library evidence into "
+    "the staged-evidence strip"
+)
 
 
 def normalize_console_rag_source_types(value: Any) -> tuple[str, ...]:
@@ -109,11 +121,16 @@ class ConsoleRagSettingsResult:
             (RAG-44). Deliberately not the retrieval item scope
             (conversation ∩ workspace), which the Console resolves
             separately and this modal never touches.
+        auto_retrieve_on_send: The "Auto-retrieve on send" switch's value
+            (TASK-3170 / RAG-port P0 task 7). The screen persists this to
+            `[chat_defaults] rag_auto_retrieve_on_send`; the modal itself
+            never writes config.
     """
 
     query: str
     run: bool
     source_types: tuple[str, ...] = CONSOLE_RAG_DEFAULT_SOURCE_TYPES
+    auto_retrieve_on_send: bool = False
 
 
 class ConsoleRagSettingsModal(ModalScreen["ConsoleRagSettingsResult | None"]):
@@ -171,6 +188,15 @@ class ConsoleRagSettingsModal(ModalScreen["ConsoleRagSettingsResult | None"]):
         background: $panel;
     }
 
+    .console-rag-settings-auto-retrieve {
+        height: auto;
+        margin: 0 0 1 0;
+    }
+
+    .console-rag-settings-auto-retrieve Switch {
+        margin: 0 1 0 0;
+    }
+
     .console-rag-settings-actions {
         height: 3;
     }
@@ -194,6 +220,7 @@ class ConsoleRagSettingsModal(ModalScreen["ConsoleRagSettingsResult | None"]):
         source_types: Sequence[str] = CONSOLE_RAG_DEFAULT_SOURCE_TYPES,
         rag_active: bool = False,
         staged_title: str = "",
+        auto_retrieve_on_send: bool = False,
         **kwargs: Any,
     ) -> None:
         """Initialize the modal.
@@ -207,6 +234,10 @@ class ConsoleRagSettingsModal(ModalScreen["ConsoleRagSettingsResult | None"]):
             rag_active: Whether RAG currently reads "on" (staged evidence).
             staged_title: Title of the staged evidence when ``rag_active``,
                 for honest status copy.
+            auto_retrieve_on_send: Initial value for the "Auto-retrieve on
+                send" switch (TASK-3170). The caller reads this from
+                `[chat_defaults] rag_auto_retrieve_on_send`; the modal's own
+                default here is OFF.
             **kwargs: Forwarded to ``ModalScreen``.
         """
         super().__init__(**kwargs)
@@ -214,6 +245,7 @@ class ConsoleRagSettingsModal(ModalScreen["ConsoleRagSettingsResult | None"]):
         self._source_types = normalize_console_rag_source_types(source_types)
         self._rag_active = rag_active
         self._staged_title = staged_title
+        self._auto_retrieve_on_send = bool(auto_retrieve_on_send)
 
     def _status_copy(self) -> str:
         """Return honest Library-search-state copy for the top of the modal."""
@@ -280,6 +312,16 @@ class ConsoleRagSettingsModal(ModalScreen["ConsoleRagSettingsResult | None"]):
                         classes=CONSOLE_RAG_SOURCE_TOGGLE_CLASS,
                         tooltip=f"Include {label} in Library retrieval.",
                     )
+            with Horizontal(classes="console-rag-settings-auto-retrieve"):
+                yield Switch(
+                    value=self._auto_retrieve_on_send,
+                    id=CONSOLE_RAG_AUTO_RETRIEVE_TOGGLE_ID,
+                    tooltip=CONSOLE_RAG_AUTO_RETRIEVE_TOOLTIP,
+                )
+                yield Static(
+                    CONSOLE_RAG_AUTO_RETRIEVE_LABEL,
+                    markup=False,
+                )
             with Horizontal(classes="console-rag-settings-actions"):
                 yield Button(
                     "Search Library",
@@ -307,6 +349,7 @@ class ConsoleRagSettingsModal(ModalScreen["ConsoleRagSettingsResult | None"]):
             query=self._current_query(),
             run=True,
             source_types=self._source_types,
+            auto_retrieve_on_send=self._auto_retrieve_on_send,
         )
 
     def _refresh_run_availability(self, query: str | None = None) -> None:
@@ -344,6 +387,16 @@ class ConsoleRagSettingsModal(ModalScreen["ConsoleRagSettingsResult | None"]):
             self._scope_summary()
         )
         self._refresh_run_availability()
+
+    @on(Switch.Changed, f"#{CONSOLE_RAG_AUTO_RETRIEVE_TOGGLE_ID}")
+    def _auto_retrieve_toggled(self, event: Switch.Changed) -> None:
+        """Track the draft "Auto-retrieve on send" value (TASK-3170).
+
+        Committed to config by the screen's dismiss callback, same as the
+        query and source-type edits this modal already treats as a draft.
+        """
+        event.stop()
+        self._auto_retrieve_on_send = event.value
 
     @on(Input.Changed, "#console-rag-settings-query")
     def _sync_run_availability(self, event: Input.Changed) -> None:

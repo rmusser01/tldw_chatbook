@@ -10,7 +10,7 @@ from unittest.mock import Mock
 
 import pytest
 from textual.app import App
-from textual.widgets import Button, Input, Static
+from textual.widgets import Button, Input, Static, Switch
 
 from tldw_chatbook.Library.library_rag_state import (
     LIBRARY_RAG_SCOPE_TOGGLE_SOURCE_TYPES,
@@ -127,6 +127,107 @@ async def test_cancel_escape_and_backdrop_all_dismiss_without_changes():
         assert app.screen is not modal
 
     assert received == [None]
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_auto_retrieve_switch_defaults_off_when_not_given_a_value():
+    """TASK-3170 (task 7): the Switch defaults to the constructor value --
+    the modal never reads config itself, the caller does (see the
+    ``chat_screen`` tests below) -- and the modal's own default is OFF."""
+
+    class RagHost(App):
+        pass
+
+    app = RagHost()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(ConsoleRagSettingsModal())
+        await pilot.pause()
+        modal = app.screen
+        switch = modal.query_one("#console-rag-settings-auto-retrieve", Switch)
+        assert switch.value is False
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_auto_retrieve_switch_reflects_a_true_constructor_value():
+    """When the caller passes the persisted "on" value, the Switch opens on."""
+
+    class RagHost(App):
+        pass
+
+    app = RagHost()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(ConsoleRagSettingsModal(auto_retrieve_on_send=True))
+        await pilot.pause()
+        modal = app.screen
+        switch = modal.query_one("#console-rag-settings-auto-retrieve", Switch)
+        assert switch.value is True
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_toggling_auto_retrieve_on_and_running_returns_the_flag_set():
+    """Flipping the switch on, then running, carries ``auto_retrieve_on_send``
+    through in the dismiss result -- the caller (chat_screen) is the one
+    that persists it to config."""
+
+    class RagHost(App):
+        pass
+
+    received: list[ConsoleRagSettingsResult | None] = []
+    app = RagHost()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(
+            ConsoleRagSettingsModal(query="what changed in auth"),
+            callback=received.append,
+        )
+        await pilot.pause()
+
+        await pilot.click("#console-rag-settings-auto-retrieve")
+        await pilot.pause()
+
+        await pilot.click("#console-rag-settings-run")
+        await pilot.pause()
+        await pilot.pause()
+
+    assert received == [
+        ConsoleRagSettingsResult(
+            query="what changed in auth",
+            run=True,
+            auto_retrieve_on_send=True,
+        )
+    ]
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_leaving_auto_retrieve_untouched_returns_the_flag_unset():
+    """Sanity companion: not touching the switch keeps the flag False in
+    the result, matching the constructor default."""
+
+    class RagHost(App):
+        pass
+
+    received: list[ConsoleRagSettingsResult | None] = []
+    app = RagHost()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(
+            ConsoleRagSettingsModal(query="what changed in auth"),
+            callback=received.append,
+        )
+        await pilot.pause()
+        await pilot.click("#console-rag-settings-run")
+        await pilot.pause()
+        await pilot.pause()
+
+    assert received == [
+        ConsoleRagSettingsResult(
+            query="what changed in auth",
+            run=True,
+            auto_retrieve_on_send=False,
+        )
+    ]
 
 
 def _static_plain_text(widget: Static) -> str:
@@ -451,6 +552,69 @@ def test_modal_choice_stores_the_source_scope_before_running():
         ("notes", "prompts")
     )
     screen._run_console_library_rag_from_visible_action.assert_called_once()
+
+
+@pytest.mark.unit
+def test_choice_persists_the_auto_retrieve_toggle_and_it_round_trips_through_config():
+    """TASK-3170 (task 7): the caller is the persistence seam -- the modal
+    itself never touches config. Uses the real ``save_setting_to_cli_config``
+    / ``get_cli_setting`` pair (isolated per-test by the autouse
+    ``isolate_test_environment`` fixture in ``Tests/conftest.py``), not a
+    mock, so this is a genuine round trip through the config file."""
+    from tldw_chatbook.config import get_cli_setting
+    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+
+    # Nothing saved yet: the documented default is OFF.
+    assert (
+        get_cli_setting("chat_defaults", "rag_auto_retrieve_on_send", False) is False
+    )
+
+    screen = Mock()
+    ChatScreen._apply_console_rag_settings_choice(
+        screen,
+        ConsoleRagSettingsResult(
+            query="what changed", run=False, auto_retrieve_on_send=True
+        ),
+    )
+
+    assert (
+        get_cli_setting("chat_defaults", "rag_auto_retrieve_on_send", False) is True
+    )
+
+    # Turning it back off persists too -- not a one-way ratchet.
+    ChatScreen._apply_console_rag_settings_choice(
+        screen,
+        ConsoleRagSettingsResult(
+            query="what changed", run=False, auto_retrieve_on_send=False
+        ),
+    )
+
+    assert (
+        get_cli_setting("chat_defaults", "rag_auto_retrieve_on_send", False) is False
+    )
+
+
+@pytest.mark.unit
+def test_modal_open_prefills_auto_retrieve_switch_from_the_persisted_config():
+    """The chip-open site reads the persisted default and hands it to the
+    modal -- the modal's own default (OFF, tested at the modal layer above)
+    only applies when nothing has been saved yet."""
+    from tldw_chatbook.config import save_setting_to_cli_config
+    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+
+    save_setting_to_cli_config("chat_defaults", "rag_auto_retrieve_on_send", True)
+
+    screen = Mock()
+    screen._console_library_rag_query = ""
+    screen._pending_console_launch_context = None
+    composer = Mock()
+    composer.draft_text.return_value = ""
+    screen._console_composer_or_none.return_value = composer
+
+    ChatScreen._open_console_rag_settings(screen)
+
+    modal = screen.app.push_screen.call_args.args[0]
+    assert modal._auto_retrieve_on_send is True
 
 
 @pytest.mark.unit

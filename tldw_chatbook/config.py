@@ -3248,6 +3248,12 @@ prune_low_watermark = 12000
 # span renderer, which keeps roleplay speech/action flavor colors.
 assistant_markdown = true
 
+# Console's RAG chip settings modal: when true, each plain text send first
+# retrieves Library evidence into the staged-evidence strip before the
+# message goes out. Off by default -- retrieval only runs when a user
+# explicitly asks for it (the RAG chip / "Run Library RAG").
+rag_auto_retrieve_on_send = false
+
 # Image attachment settings for chat
 [chat.images]
 enabled = true

@@ -7988,6 +7988,9 @@ class ChatScreen(BaseAppScreen):
                     pending.source if pending else None
                 ),
                 staged_title=(pending.title if pending else ""),
+                auto_retrieve_on_send=get_cli_setting(
+                    "chat_defaults", "rag_auto_retrieve_on_send", False
+                ),
             ),
             callback=self._apply_console_rag_settings_choice,
         )
@@ -8040,13 +8043,33 @@ class ChatScreen(BaseAppScreen):
     def _apply_console_rag_settings_choice(
         self, result: ConsoleRagSettingsResult | None
     ) -> None:
-        """Store the modal's query and sources, then optionally run now."""
+        """Store the modal's query and sources, then optionally run now.
+
+        The "Auto-retrieve on send" toggle (TASK-3170 / RAG-port P0 task 7)
+        is written straight through to config here -- this is the one
+        write seam, reusing ``save_setting_to_cli_config`` the same way the
+        Console onboarding/rail-preference writers already do. It is a
+        module-level call (not routed through ``self``) so this stays the
+        single source of truth regardless of how the screen is constructed;
+        best-effort, since a write failure here must not block applying the
+        query/source-scope choice the user just made.
+        """
         if result is None:
             return
         self._set_console_library_rag_source_scope(result.source_types)
         self._set_console_library_rag_query(
             _sanitize_console_library_rag_query(result.query)
         )
+        try:
+            save_setting_to_cli_config(
+                "chat_defaults",
+                "rag_auto_retrieve_on_send",
+                bool(result.auto_retrieve_on_send),
+            )
+        except Exception as exc:
+            logger.warning(
+                "Failed to persist Console auto-retrieve-on-send setting: {}", exc
+            )
         if result.run:
             self._run_console_library_rag_from_visible_action()
 
