@@ -646,6 +646,7 @@ class ConsoleDictationController:
         enter_hands_free_loop: Callable[..., None],
         hands_free_force_immediate_send: Callable[[], None],
         deliver_hands_free_capture_ended: Callable[[Any, bool], Any],
+        realtime_session_accessor: Callable[[], Any],
         realtime_adopt_transcript: Callable[[str], bool],
         run_pending_voice_action: Callable[[str | None], Any],
         undo_histories_accessor: Callable[[], dict[str, Any]],
@@ -763,6 +764,16 @@ class ConsoleDictationController:
                 `ConsoleHandsFreeController` has an identically-shaped,
                 identically-named dependency pointed at the SAME screen
                 method.
+            realtime_session_accessor: Reads `ChatScreen._console_
+                realtime` -- the V4 realtime loop's live session, or None.
+                The realtime engine stays screen-owned (not extracted), so
+                this is the same disclosed shape as `realtime_adopt_
+                transcript` above and is named exactly as `ConsoleHandsFree
+                Controller`'s identical dependency is. Needed by
+                `_handle_console_dictation_button` (wave-4 task 2): a
+                running realtime session supersedes the mic button's
+                one-shot toggle, and falling through would open a SECOND
+                recorder alongside the live 24 kHz tap.
             undo_histories_accessor: Reads `ChatScreen._console_undo_
                 histories` -- per-session composer undo history, screen-
                 owned (not extracted this wave). Returns the actual dict
@@ -783,6 +794,7 @@ class ConsoleDictationController:
         self._hands_free_force_immediate_send_fn = hands_free_force_immediate_send
         self._deliver_hands_free_capture_ended_fn = deliver_hands_free_capture_ended
         self._realtime_adopt_transcript_fn = realtime_adopt_transcript
+        self._realtime_session_accessor = realtime_session_accessor
         self._run_pending_voice_action_fn = run_pending_voice_action
         self._undo_histories_accessor = undo_histories_accessor
         self._visible_draft_session_id_accessor = visible_draft_session_id_accessor
@@ -889,6 +901,12 @@ class ConsoleDictationController:
         """Calls the injected `hands_free_session_accessor`. The pipeline
         loop's live session, or None. See `__init__`'s docstring."""
         return self._hands_free_session_accessor()
+
+    @property
+    def _console_realtime(self) -> Any:
+        """Calls the injected `realtime_session_accessor`. The realtime
+        (V4) loop's live session, or None. See `__init__`'s docstring."""
+        return self._realtime_session_accessor()
 
     @property
     def _console_hands_free_vad_degraded(self) -> bool:
@@ -1899,4 +1917,51 @@ class ConsoleDictationController:
             exit_on_error=False,
         )
 
+    def _handle_console_dictation_button(self) -> None:
+        """Route a press of the composer's mic button (`#console-dictation`).
 
+        Moved verbatim out of `ChatScreen.on_button_pressed`'s
+        `console-dictation` branch (wave-4 console decomposition, task 2),
+        which was the fifth-largest of that method's 19 branches. Every
+        line below is the pre-move body unchanged -- including the two
+        loop-supersede guards, whose ordering (pipeline hands-free first,
+        realtime second) is behaviour, not style: a session can only be
+        installed in one of the two at a time, but the guards are the only
+        thing standing between a mic press and a second recorder opening
+        on top of a live one.
+
+        The screen's branch is now `event.stop()` plus a call to this.
+        `event` itself never crosses the boundary: the mic button carries
+        no per-press payload, so there is nothing for a controller to read
+        off it, and keeping Textual's event object on the screen is what
+        lets this method be reached directly by a test or a key binding.
+        """
+        if self._console_hands_free is not None:
+            # Task 5: mic press exits the hands-free loop from any
+            # state, exactly like Esc/spoken "stop" -- superseding the
+            # ordinary one-shot toggle below for as long as the loop is
+            # running.
+            self._console_hands_free.controller.on_exit_request()
+            return
+        if self._console_realtime is not None:
+            # V4 task 5 (final review C1): the SAME rule for the
+            # realtime engine, and it matters more here. Falling
+            # through to the dictation toggle below would open a
+            # second `AudioRecordingService` (at 16 kHz, alongside the
+            # tap's 24 kHz stream), load the entire STT stack the
+            # realtime engine exists to avoid, and arm the V2 spoken-
+            # command classifier mid-session -- all while the realtime
+            # session kept running and billing. The docs promise this
+            # button exits the loop; it exits the loop.
+            self._console_realtime.controller.on_exit_request()
+            return
+        if self._console_dictation_state == "idle":
+            self._request_console_dictation_start()
+        elif self._console_dictation_state == "starting":
+            # A first-run model load runs for minutes; this is the only
+            # in-app way out of it. "transcribing" has no cancel -- the
+            # capture is already recorded and worth finishing.
+            self._request_console_dictation_cancel()
+        elif self._console_dictation_state == "recording":
+            self._request_console_dictation_stop()
+        return

@@ -3832,6 +3832,24 @@ class ChatScreen(BaseAppScreen):
             )
         return self._console_image_view_state, self._console_image_cache
 
+    def _evict_console_image_cache(self, message_ids: list[str]) -> None:
+        """Drop cached inline-image renders for a set of message ids.
+
+        The named seam `ConsoleSessionController._close_console_session_
+        tab` reaches for when a tab closes (wave-4 task 2). The inline-
+        image cluster -- `_ensure_console_image_view` and the
+        `ConsoleImageRenderCache` it builds lazily -- stays screen-owned
+        this wave, so the controller gets this one callable instead of a
+        back-door through the screen.
+
+        Args:
+            message_ids: Message ids whose cached renders are no longer
+                reachable. Building the cache is a side effect of asking
+                for it, matching the pre-move body exactly.
+        """
+        _state, cache = self._ensure_console_image_view()
+        cache.evict_session(message_ids)
+
     def _recent_console_image_messages(self, messages) -> list[Any]:
         """Delegate to `ConsoleMessageController` (wave-3 task 1) -- kept
         for the image-view cluster's own staying callers and the
@@ -17921,34 +17939,7 @@ class ChatScreen(BaseAppScreen):
             return
         if button_id == "console-dictation":
             event.stop()
-            if self._console_hands_free is not None:
-                # Task 5: mic press exits the hands-free loop from any
-                # state, exactly like Esc/spoken "stop" -- superseding the
-                # ordinary one-shot toggle below for as long as the loop is
-                # running.
-                self._console_hands_free.controller.on_exit_request()
-                return
-            if self._console_realtime is not None:
-                # V4 task 5 (final review C1): the SAME rule for the
-                # realtime engine, and it matters more here. Falling
-                # through to the dictation toggle below would open a
-                # second `AudioRecordingService` (at 16 kHz, alongside the
-                # tap's 24 kHz stream), load the entire STT stack the
-                # realtime engine exists to avoid, and arm the V2 spoken-
-                # command classifier mid-session -- all while the realtime
-                # session kept running and billing. The docs promise this
-                # button exits the loop; it exits the loop.
-                self._console_realtime.controller.on_exit_request()
-                return
-            if self._console_dictation_state == "idle":
-                self._request_console_dictation_start()
-            elif self._console_dictation_state == "starting":
-                # A first-run model load runs for minutes; this is the only
-                # in-app way out of it. "transcribing" has no cancel -- the
-                # capture is already recorded and worth finishing.
-                self._request_console_dictation_cancel()
-            elif self._console_dictation_state == "recording":
-                self._request_console_dictation_stop()
+            self._dictation._handle_console_dictation_button()
             return
         if button_id in {
             "console-stop-generation",
@@ -17983,112 +17974,27 @@ class ChatScreen(BaseAppScreen):
             "console-conversation-browser-section-toggle-"
         ):
             event.stop()
-            group_id = str(getattr(event.button, "group_id", "") or "").strip()
-            state = self._workspace._build_console_workspace_context_state()
-            section_id = group_id.removeprefix("section:")
-            section = None
-            browser = state.conversation_browser
-            if browser is not None:
-                section = next(
-                    (
-                        candidate
-                        for candidate in browser.sections
-                        if candidate.section_id == section_id
-                    ),
-                    None,
-                )
-            collapsed = not bool(section.collapsed if section is not None else False)
-            self._set_console_conversation_browser_group_collapsed(group_id, collapsed)
-            self._sync_console_workspace_context()
+            self._workspace._toggle_console_conversation_browser_section(
+                str(getattr(event.button, "group_id", "") or "").strip()
+            )
             return
         if button_id and button_id.startswith(
             "console-conversation-browser-group-toggle-"
         ):
             event.stop()
-            group_id = str(getattr(event.button, "group_id", "") or "").strip()
-            state = self._workspace._build_console_workspace_context_state()
-            group = None
-            browser = state.conversation_browser
-            if browser is not None:
-                for section in browser.sections:
-                    group = next(
-                        (
-                            candidate
-                            for candidate in section.groups
-                            if candidate.group_id == group_id
-                        ),
-                        None,
-                    )
-                    if group is not None:
-                        break
-            collapsed = not bool(group.collapsed if group is not None else False)
-            self._set_console_conversation_browser_group_collapsed(group_id, collapsed)
-            self._sync_console_workspace_context()
+            self._workspace._toggle_console_conversation_browser_group(
+                str(getattr(event.button, "group_id", "") or "").strip()
+            )
             return
         if button_id and button_id.startswith("console-conversation-star-"):
             event.stop()
-            conversation_id = str(
-                getattr(event.button, "conversation_id", "") or ""
-            ).strip()
-            if not conversation_id:
-                self.app_instance.notify(
-                    "Save this conversation before starring it.",
-                    severity="warning",
-                )
-                return
-            marks_service = getattr(
-                self.app_instance,
-                "conversation_local_marks_service",
-                None,
+            self._workspace._toggle_console_conversation_star(
+                str(getattr(event.button, "conversation_id", "") or "").strip(),
+                starred=bool(getattr(event.button, "starred", False)),
+                conversation_title=str(
+                    getattr(event.button, "conversation_title", "") or ""
+                ),
             )
-            if marks_service is None:
-                self.app_instance.notify(
-                    "Local stars are unavailable.",
-                    severity="warning",
-                )
-                return
-            star_action = "resolve"
-            try:
-                is_starred = getattr(marks_service, "is_starred", None)
-                currently_starred = (
-                    bool(is_starred(conversation_id))
-                    if callable(is_starred)
-                    else bool(getattr(event.button, "starred", False))
-                )
-                star_action = "unstar" if currently_starred else "star"
-                if currently_starred:
-                    marks_service.unstar_conversation(conversation_id)
-                else:
-                    marks_service.star_conversation(conversation_id)
-            except Exception:
-                logger.exception(
-                    "Unable to update local conversation star "
-                    "conversation_id={} action={}",
-                    conversation_id,
-                    star_action,
-                )
-                self.app_instance.notify(
-                    "Unable to update local star.",
-                    severity="warning",
-                )
-                return
-            # TASK-357: confirm the toggle so a star/unstar is not a silent state
-            # change (the review saw an accidental star go unnoticed).
-            title = (
-                str(getattr(event.button, "conversation_title", "") or "")
-                .splitlines()[0]
-                .strip()
-            )
-            # notify() interprets Rich markup, so escape the stored title before
-            # interpolating it (a title like "[red]x[/red]" would otherwise inject
-            # styling into the toast) — matches the escape_markup convention used
-            # for the attachment toasts above.
-            title_suffix = f' "{escape_markup(title)}"' if title else ""
-            if star_action == "star":
-                self.app_instance.notify(f"Starred{title_suffix}.")
-            elif star_action == "unstar":
-                self.app_instance.notify(f"Unstarred{title_suffix}.")
-            self._sync_console_workspace_context()
             return
         if button_id == "console-workspace-conversations-toggle":
             event.stop()
@@ -18233,51 +18139,15 @@ class ChatScreen(BaseAppScreen):
             return
         if button_id and button_id.startswith("console-close-session-tab-"):
             event.stop()
-            session_id = button_id.removeprefix("console-close-session-tab-")
-            store = self._ensure_console_chat_store()
-            try:
-                messages = store.messages_for_session(session_id)
-            except KeyError:
-                messages = []
-            closing_ids = [m.id for m in messages]
-
-            def _evict_closing_session_images() -> None:
-                _state, cache = self._ensure_console_image_view()
-                cache.evict_session(closing_ids)
-
-            if messages:
-                from ...Widgets.confirmation_dialog import ConfirmationDialog
-
-                async def _do_close() -> None:
-                    self._ensure_console_chat_controller().close_session(session_id)
-                    # TASK-1281: drop the closed session's undo/redo history
-                    # too -- it can never be switched back into.
-                    self._console_undo_histories.pop(session_id, None)
-                    _evict_closing_session_images()
-                    await self._sync_native_console_chat_ui()
-
-                dialog = ConfirmationDialog(
-                    title="Close Tab",
-                    message="This tab has messages that will be lost.\n\nClose it anyway?",
-                    confirm_label="Close",
-                    cancel_label="Keep",
-                    confirm_callback=_do_close,
-                )
-                self.app.push_screen(dialog)
-            else:
-                self._ensure_console_chat_controller().close_session(session_id)
-                self._console_undo_histories.pop(session_id, None)
-                _evict_closing_session_images()
-                await self._sync_native_console_chat_ui()
+            await self._session._close_console_session_tab(
+                button_id.removeprefix("console-close-session-tab-")
+            )
             return
         if button_id and button_id.startswith("console-session-tab-"):
             event.stop()
-            session_id = button_id.removeprefix("console-session-tab-")
-            controller = self._ensure_console_chat_controller()
-            if controller.store.active_session_id == session_id:
-                self._session._open_console_session_rename_modal(session_id)
-                return
-            await self._session._activate_native_console_session(session_id)
+            await self._session._handle_console_session_tab_press(
+                button_id.removeprefix("console-session-tab-")
+            )
             return
         if button_id and button_id.startswith("console-message-action-"):
             handled = await self.handle_console_message_action(event)

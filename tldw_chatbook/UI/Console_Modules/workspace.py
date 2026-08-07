@@ -106,6 +106,7 @@ import asyncio
 import inspect
 
 from loguru import logger
+from rich.markup import escape as escape_markup
 
 from ...Chat.console_chat_models import (
     CONSOLE_GLOBAL_WORKSPACE_ID,
@@ -194,6 +195,7 @@ class ConsoleWorkspaceController:
         note_follow_intent: Callable[[], None],
         focus_composer_if_needed: Callable[..., None],
         conversation_section_config_accessor: Callable[[], dict],
+        set_conversation_browser_group_collapsed: Callable[[str, bool], None],
         focus_conversation_search: Callable[[], None],
         sync_workspace_context: Callable[[], None],
     ) -> None:
@@ -278,6 +280,15 @@ class ConsoleWorkspaceController:
                 accepts the same keyword, not a value baked in here.
             conversation_section_config_accessor: `ChatScreen._console_
                 conversation_section_config`.
+            set_conversation_browser_group_collapsed: `ChatScreen._set_
+                console_conversation_browser_group_collapsed` -- writes one
+                grouped-browser collapse preference into `app_config`.
+                Screen-owned because the preference dict it reaches
+                (`_console_conversation_browser_config`) hangs off the
+                screen's own config accessors, alongside the rail-state and
+                browser-search preferences that are not this cluster's; the
+                two toggle branches moved in wave-4 task 2 are its only
+                callers on this side.
             focus_conversation_search: `ChatScreen._focus_console_
                 workspace_conversation_search` -- stays on the screen (DOM:
                 `query_one`), reached as a named callable rather than a
@@ -322,6 +333,9 @@ class ConsoleWorkspaceController:
         self._focus_composer_if_needed_fn = focus_composer_if_needed
         self._conversation_section_config_accessor = (
             conversation_section_config_accessor
+        )
+        self._set_conversation_browser_group_collapsed_fn = (
+            set_conversation_browser_group_collapsed
         )
         self._focus_conversation_search_fn = focus_conversation_search
         self._sync_workspace_context_fn = sync_workspace_context
@@ -477,6 +491,13 @@ class ConsoleWorkspaceController:
     @property
     def _console_conversation_section_config(self) -> Any:
         return self._conversation_section_config_accessor
+
+    @property
+    def _set_console_conversation_browser_group_collapsed(self) -> Any:
+        """The injected `set_conversation_browser_group_collapsed`. Stays
+        on `ChatScreen` (its own `app_config` preference accessors). See
+        `__init__`'s docstring."""
+        return self._set_conversation_browser_group_collapsed_fn
 
     @property
     def _focus_console_workspace_conversation_search(self) -> Any:
@@ -1821,6 +1842,161 @@ class ConsoleWorkspaceController:
         key = str(workspace_id or "global").strip() or "global"
         section_config = self._console_conversation_section_config()
         section_config[key] = {"collapsed": bool(collapsed)}
+
+    # -- Conversation-browser press handling (wave-4 task 2) ----------------
+    #
+    # Three of `ChatScreen.on_button_pressed`'s 19 branches mutated nothing
+    # but this cluster's state, so their bodies moved here whole and the
+    # screen's branches became calls. Each takes the values the pressed
+    # button carried rather than the `Button.Pressed` event: Textual's
+    # event object stays on the screen (it is the screen that must
+    # `event.stop()`), and a controller that never sees a widget cannot
+    # start reading one.
+
+    def _toggle_console_conversation_browser_section(self, group_id: str) -> None:
+        """Flip one grouped-browser SECTION's collapse preference.
+
+        Args:
+            group_id: The pressed toggle's `group_id`, always
+                ``"section:<section_id>"`` (see
+                `ConsoleWorkspaceContextTray._compose_conversation_browser_
+                section_header`). A section whose id no longer appears in
+                current state collapses, matching the pre-move behaviour of
+                treating a missing section as expanded.
+        """
+        state = self._build_console_workspace_context_state()
+        section_id = group_id.removeprefix("section:")
+        section = None
+        browser = state.conversation_browser
+        if browser is not None:
+            section = next(
+                (
+                    candidate
+                    for candidate in browser.sections
+                    if candidate.section_id == section_id
+                ),
+                None,
+            )
+        collapsed = not bool(section.collapsed if section is not None else False)
+        self._set_console_conversation_browser_group_collapsed(group_id, collapsed)
+        self._sync_console_workspace_context()
+
+    def _toggle_console_conversation_browser_group(self, group_id: str) -> None:
+        """Flip one grouped-browser GROUP's collapse preference.
+
+        Deliberately not folded together with
+        `_toggle_console_conversation_browser_section` above: the two
+        search different levels of the same tree (sections by
+        `section_id`, groups by `group_id` across every section's
+        `groups`), and the pre-move branches were two separate bodies. A
+        shared helper here would hide exactly the difference a reader
+        comes to this pair to find.
+
+        Args:
+            group_id: The pressed toggle's `group_id` -- a workspace group
+                key, never the ``"section:"``-prefixed form.
+        """
+        state = self._build_console_workspace_context_state()
+        group = None
+        browser = state.conversation_browser
+        if browser is not None:
+            for section in browser.sections:
+                group = next(
+                    (
+                        candidate
+                        for candidate in section.groups
+                        if candidate.group_id == group_id
+                    ),
+                    None,
+                )
+                if group is not None:
+                    break
+        collapsed = not bool(group.collapsed if group is not None else False)
+        self._set_console_conversation_browser_group_collapsed(group_id, collapsed)
+        self._sync_console_workspace_context()
+
+    def _toggle_console_conversation_star(
+        self,
+        conversation_id: str,
+        *,
+        starred: bool,
+        conversation_title: str,
+    ) -> None:
+        """Star or unstar one conversation and confirm the change.
+
+        Moved verbatim out of `ChatScreen.on_button_pressed`'s
+        `console-conversation-star-` branch (wave-4 task 2), the
+        second-largest of its 19. The durable write goes through the app's
+        `conversation_local_marks_service`; everything else here is the
+        failure and confirmation copy that write needs to not be silent.
+
+        Args:
+            conversation_id: The pressed star's `conversation_id`. Blank
+                for a native session that has never been persisted -- the
+                tray disables those stars, so this guard only catches a
+                stale row, and it explains rather than no-ops.
+            starred: The pressed star's own `starred` attribute, used ONLY
+                as a fallback when the marks service cannot answer
+                `is_starred` -- current truth comes from the service, not
+                from whatever the button was painted with.
+            conversation_title: The pressed star's `conversation_title`,
+                for the confirmation toast.
+        """
+        if not conversation_id:
+            self.app_instance.notify(
+                "Save this conversation before starring it.",
+                severity="warning",
+            )
+            return
+        marks_service = getattr(
+            self.app_instance,
+            "conversation_local_marks_service",
+            None,
+        )
+        if marks_service is None:
+            self.app_instance.notify(
+                "Local stars are unavailable.",
+                severity="warning",
+            )
+            return
+        star_action = "resolve"
+        try:
+            is_starred = getattr(marks_service, "is_starred", None)
+            currently_starred = (
+                bool(is_starred(conversation_id))
+                if callable(is_starred)
+                else bool(starred)
+            )
+            star_action = "unstar" if currently_starred else "star"
+            if currently_starred:
+                marks_service.unstar_conversation(conversation_id)
+            else:
+                marks_service.star_conversation(conversation_id)
+        except Exception:
+            logger.exception(
+                "Unable to update local conversation star "
+                "conversation_id={} action={}",
+                conversation_id,
+                star_action,
+            )
+            self.app_instance.notify(
+                "Unable to update local star.",
+                severity="warning",
+            )
+            return
+        # TASK-357: confirm the toggle so a star/unstar is not a silent state
+        # change (the review saw an accidental star go unnoticed).
+        title = str(conversation_title or "").splitlines()[0].strip()
+        # notify() interprets Rich markup, so escape the stored title before
+        # interpolating it (a title like "[red]x[/red]" would otherwise inject
+        # styling into the toast) — matches the escape_markup convention used
+        # for the attachment toasts on the screen.
+        title_suffix = f' "{escape_markup(title)}"' if title else ""
+        if star_action == "star":
+            self.app_instance.notify(f"Starred{title_suffix}.")
+        elif star_action == "unstar":
+            self.app_instance.notify(f"Unstarred{title_suffix}.")
+        self._sync_console_workspace_context()
 
     # -- Misc toast helpers ----------------------------------------------------
 

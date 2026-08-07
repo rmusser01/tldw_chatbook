@@ -351,6 +351,7 @@ class ConsoleSessionController:
         workspace_initial_session_title: Callable[[str | None], str],
         merge_workspace_rows: Callable[[list, tuple], list],
         session_id_for_workspace_conversation: Callable[[str], str | None],
+        evict_console_image_cache: Callable[[list[str]], None],
     ) -> None:
         """Build the controller and bind everything its moved bodies need.
 
@@ -447,6 +448,13 @@ class ConsoleSessionController:
             session_id_for_workspace_conversation: `ConsoleWorkspace
                 Controller._console_session_id_for_workspace_conversation`
                 -- same seam, `_console_session_id_for_browser_row`.
+            evict_console_image_cache: `ChatScreen._evict_console_image_
+                cache` -- drops cached inline-image renders for a list of
+                message ids. The inline-image cluster (`_ensure_console_
+                image_view` and its lazily-built `ConsoleImageRenderCache`)
+                stays screen-owned and is out of scope this wave, so
+                `_close_console_session_tab` (wave-4 task 2) reaches it as
+                a named callable rather than through `self._screen`.
         """
         self._screen = screen
         self.app_instance = app_instance
@@ -474,6 +482,7 @@ class ConsoleSessionController:
         self._session_id_for_workspace_conversation_fn = (
             session_id_for_workspace_conversation
         )
+        self._evict_console_image_cache_fn = evict_console_image_cache
 
         # This cluster's own state, moved verbatim from `ChatScreen.__init__`.
         self._console_visible_draft_session_id: str | None = None
@@ -612,6 +621,13 @@ class ConsoleSessionController:
         return self._merge_workspace_rows_fn
 
     @property
+    def _evict_console_image_cache(self) -> Any:
+        """The injected `evict_console_image_cache`. Stays on `ChatScreen`
+        (the inline-image render cache is not this cluster's state). See
+        `__init__`'s docstring."""
+        return self._evict_console_image_cache_fn
+
+    @property
     def _session_id_for_workspace_conversation(self) -> Any:
         """`ConsoleWorkspaceController._console_session_id_for_workspace_
         conversation`. Same prefix-drop as above."""
@@ -711,6 +727,83 @@ class ConsoleSessionController:
                     )
             await self._sync_native_console_chat_ui()
         self._focus_console_composer_if_needed(force=True)
+
+    # -- Tab-strip press handling (wave-4 task 2) ---------------------------
+    #
+    # Two of `ChatScreen.on_button_pressed`'s 19 branches mutated nothing
+    # but this cluster's state (the chat controller's session set, the
+    # per-session undo histories), so their bodies moved here whole and the
+    # screen's branches became calls. Each takes the session id the pressed
+    # button's own id encodes rather than the `Button.Pressed` event:
+    # Textual's event object stays on the screen -- it is the screen that
+    # must `event.stop()` -- and the id parsing is one `removeprefix` that
+    # belongs with the id string it mirrors.
+
+    async def _close_console_session_tab(self, session_id: str) -> None:
+        """Close one native session tab, confirming first if it has messages.
+
+        Moved verbatim out of `ChatScreen.on_button_pressed`'s
+        `console-close-session-tab-` branch (wave-4 task 2), the
+        third-largest of its 19. One mechanical edit: the pre-move body's
+        two-line `_evict_closing_session_images` closure -- which reached
+        `self._ensure_console_image_view()` for its cache -- is now the
+        injected one-line `_evict_console_image_cache` call at both of its
+        sites, because the inline-image cluster stays screen-owned.
+
+        Args:
+            session_id: The session behind the pressed ``×``, parsed by the
+                screen from the button id.
+        """
+        store = self._ensure_console_chat_store()
+        try:
+            messages = store.messages_for_session(session_id)
+        except KeyError:
+            messages = []
+        closing_ids = [m.id for m in messages]
+
+        if messages:
+            from ...Widgets.confirmation_dialog import ConfirmationDialog
+
+            async def _do_close() -> None:
+                self._ensure_console_chat_controller().close_session(session_id)
+                # TASK-1281: drop the closed session's undo/redo history
+                # too -- it can never be switched back into.
+                self._console_undo_histories.pop(session_id, None)
+                self._evict_console_image_cache(closing_ids)
+                await self._sync_native_console_chat_ui()
+
+            dialog = ConfirmationDialog(
+                title="Close Tab",
+                message="This tab has messages that will be lost.\n\nClose it anyway?",
+                confirm_label="Close",
+                cancel_label="Keep",
+                confirm_callback=_do_close,
+            )
+            self.push_screen(dialog)
+        else:
+            self._ensure_console_chat_controller().close_session(session_id)
+            self._console_undo_histories.pop(session_id, None)
+            self._evict_console_image_cache(closing_ids)
+            await self._sync_native_console_chat_ui()
+
+    async def _handle_console_session_tab_press(self, session_id: str) -> None:
+        """Activate a tab, or rename it when it is already the active one.
+
+        Moved verbatim out of `ChatScreen.on_button_pressed`'s
+        `console-session-tab-` branch (wave-4 task 2). Small, but it
+        reaches nothing outside this cluster: the store's active session,
+        this controller's rename modal, and this controller's activation
+        path.
+
+        Args:
+            session_id: The session behind the pressed tab, parsed by the
+                screen from the button id.
+        """
+        controller = self._ensure_console_chat_controller()
+        if controller.store.active_session_id == session_id:
+            self._open_console_session_rename_modal(session_id)
+            return
+        await self._activate_native_console_session(session_id)
 
     async def _apply_console_switcher_choice(
         self, choice: ConsoleSwitcherChoice | None

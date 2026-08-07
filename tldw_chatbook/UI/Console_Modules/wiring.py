@@ -179,6 +179,18 @@ def build_console_controllers(screen: "ChatScreen") -> None:
         conversation_section_config_accessor=(
             lambda: screen._console_conversation_section_config()
         ),
+        # The grouped browser's collapse preferences live in the screen's
+        # own `app_config` accessors (alongside rail-state and search
+        # preferences that are not this cluster's), so the write stays
+        # there and the two toggle branches moved in wave-4 task 2 reach
+        # it by name.
+        set_conversation_browser_group_collapsed=(
+            lambda group_id, collapsed: (
+                screen._set_console_conversation_browser_group_collapsed(
+                    group_id, collapsed
+                )
+            )
+        ),
         focus_conversation_search=(
             lambda: screen._focus_console_workspace_conversation_search()
         ),
@@ -274,6 +286,13 @@ def build_console_controllers(screen: "ChatScreen") -> None:
                 )
             )
         ),
+        # The inline-image render cache stays screen-owned (out of scope
+        # this wave); `_close_console_session_tab` (wave-4 task 2) drops a
+        # closing tab's cached renders through this named callable rather
+        # than reaching `screen._ensure_console_image_view` itself.
+        evict_console_image_cache=(
+            lambda message_ids: screen._evict_console_image_cache(message_ids)
+        ),
     )
     #: Dictation's own state and lifecycle moved to
     #: `ConsoleDictationController` (wave-1 console decomposition,
@@ -336,6 +355,12 @@ def build_console_controllers(screen: "ChatScreen") -> None:
                 transcript
             )
         ),
+        # Same screen-owned realtime engine, read as a live session rather
+        # than called: `_handle_console_dictation_button` (wave-4 task 2)
+        # must see a loop that started AFTER this wiring ran, so this is a
+        # late-binding accessor, never a snapshot. `ConsoleHandsFree
+        # Controller` takes an identically-named, identically-shaped one.
+        realtime_session_accessor=lambda: screen._console_realtime,
         run_pending_voice_action=(
             lambda session_id: screen._run_pending_console_voice_action(
                 session_id
