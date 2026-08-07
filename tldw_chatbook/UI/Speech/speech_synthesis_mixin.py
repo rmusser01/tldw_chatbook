@@ -67,38 +67,41 @@ class SpeechSynthesisMixin:
         #: The in-flight generation, or None when idle.
         self._generation_operation_id: Any = None
 
+    def _effective_generation_selection(self) -> tuple[object, object]:
+        """The (provider_id, model_id) pair the readiness gate should judge.
+
+        An active profile preset's own exact values when one is set --
+        mirroring the override `_generate_tts` applies for the same reason
+        (a press generates against the preset, not against whatever the
+        controls happen to show) -- otherwise the tracked provider
+        selection and whatever the model control currently displays.
+        """
+        preset = self._profile_preset
+        if preset is not None:
+            return preset.provider_id, preset.model_id
+        model_select = self.query_one("#tts-model-select", Select)
+        model_id = self._get_select_key(model_select) or model_select.value
+        return self._selected_provider_id, model_id
+
     def _sync_generate_enabled(self) -> None:
+        """Keep the button's visual state and `_generate_tts`'s eligibility
+        from disagreeing by deriving both from the same gate.
+
+        Used to reimplement its own condition tree in parallel with
+        `_generation_readiness_error` -- profile-preset-aware here,
+        NOT profile-preset-aware there (that branch never existed in the
+        rebuilt mixin; the retired legacy widget had it, this file did
+        not). The split let a keyboard press reach `action_generate_tts()`
+        and fire a real generation while the button it mirrors sat
+        disabled -- TASK-2951's binding-mirror fix is what first made that
+        keyboard path reachable at all, which is what turned a latent gap
+        into a live bypass. Fixed by asking the one shared gate instead.
+        """
         text_present = bool(self.query_one("#tts-text-input", TextArea).text.strip())
-        provider_id = self._selected_provider_id
-        revision_matches = False
-        service = self._tts_service
-        if provider_id is not None and service is not None:
-            preset = self._profile_preset
-            expected_revision = (
-                self._profile_configuration_revision
-                if preset is not None and preset.provider_id == provider_id
-                else self._catalog_configuration_revisions.get(provider_id)
-            )
-            try:
-                revision_matches = (
-                    expected_revision is not None
-                    and expected_revision == service.configuration_revision(provider_id)
-                )
-            except (KeyError, TTSRegistryClosedError):
-                revision_matches = False
+        provider_id, model_id = self._effective_generation_selection()
         self.query_one("#tts-generate-btn", Button).disabled = not (
             text_present
-            and self._catalog_generation_allowed
-            and revision_matches
-            and (
-                provider_id not in self._stale_providers
-                or (
-                    self._profile_preset is not None
-                    and self._profile_preset.provider_id == provider_id
-                )
-            )
-            and self._generation_operation_id is None
-            and self._profile_voice_validation_token is None
+            and self._generation_readiness_error(provider_id, model_id) is None
             and not getattr(self.app, "_is_generating", False)
         )
 
@@ -107,7 +110,25 @@ class SpeechSynthesisMixin:
         provider_id: object,
         model_id: object,
     ) -> str | None:
-        """Return fixed UI copy when a generation snapshot is not authoritative."""
+        """Return fixed UI copy when a generation snapshot is not authoritative.
+
+        The single authoritative readiness gate: `_sync_generate_enabled`
+        (the button's visual state) and `_generate_tts` (what a press or a
+        keyboard `action_generate_tts()` actually attempts) both consult
+        this and only this, so they cannot disagree.
+
+        An active profile preset takes the branch below over entirely
+        rather than falling into the general provider/catalog checks: a
+        pending voice validation or a preset marked "unavailable" block
+        unconditionally, but a merely "unverified" preset (a naturally
+        stale catalog, not a real provider-configuration change) is
+        deliberately let through -- callers that care show the "unverified,
+        one exact attempt" warning themselves (`_generate_tts` does).
+        Ported verbatim from the retired legacy widget's own version of
+        this method (`git show HEAD:tldw_chatbook/UI/STTS_Window.py`, prior
+        to this branch's widget deletion) -- that branch never existed
+        here, which is the root cause TASK-2951's re-review found.
+        """
         if self._generation_operation_id is not None:
             return "TTS generation is already in progress"
 
@@ -119,6 +140,39 @@ class SpeechSynthesisMixin:
                     return "TTS generation is already in progress"
             except Exception:
                 return "The TTS service is unavailable"
+
+        preset = self._profile_preset
+        if preset is not None:
+            if self._profile_voice_validation_token is not None:
+                return (
+                    "The exact profile voice is still being checked; "
+                    "wait before generating"
+                )
+            if self._profile_effective_availability == "unavailable":
+                return (
+                    "The exact profile selection is unavailable; return to Voice "
+                    "profiles and choose Edit"
+                )
+            if provider_id != preset.provider_id or model_id != preset.model_id:
+                return "The exact profile selection changed; choose Preview again"
+            service = self._tts_service
+            if service is None:
+                return "The TTS service is unavailable"
+            try:
+                current_revision = service.configuration_revision(preset.provider_id)
+            except (KeyError, TTSRegistryClosedError):
+                return "The TTS service is unavailable"
+            if (
+                self._profile_configuration_revision is None
+                or current_revision != self._profile_configuration_revision
+            ):
+                return "TTS provider settings changed; refresh models"
+            if not self._catalog_generation_allowed:
+                return (
+                    "The exact profile selection is not ready; retry from Voice "
+                    "profiles"
+                )
+            return None
 
         if (
             not isinstance(provider_id, str)
@@ -192,20 +246,35 @@ class SpeechSynthesisMixin:
             self.app.notify("Please enter text to synthesize", severity="warning")
             return
 
-        provider_select = self.query_one("#tts-provider-select", Select)
         voice_select = self.query_one("#tts-voice-select", Select)
-        model_select = self.query_one("#tts-model-select", Select)
 
         # Get the actual keys, not display text
-        provider = self._get_select_key(provider_select) or provider_select.value
         voice = self._get_select_key(voice_select) or voice_select.value
-        model = self._get_select_key(model_select) or model_select.value
+
+        # A profile preset generates against its own exact selection, not
+        # whatever the controls currently display (which can transiently
+        # show a loading sentinel while a preset's own values are already
+        # known) -- the same override `_effective_generation_selection`
+        # applies for `_sync_generate_enabled`, so the two cannot disagree
+        # about which provider/model are actually in play.
+        preset = self._profile_preset
+        provider, model = self._effective_generation_selection()
+        if preset is not None:
+            voice = (
+                SERVER_DEFAULT_VOICE_ID if preset.voice_id is None else preset.voice_id
+            )
 
         readiness_error = self._generation_readiness_error(provider, model)
         if readiness_error is not None:
             self._sync_generate_enabled()
             self.app.notify(readiness_error, severity="warning")
             return
+        if preset is not None and self._profile_effective_availability == "unverified":
+            self.app.notify(
+                "Profile availability is unverified; attempting the exact "
+                "selection once without fallback.",
+                severity="warning",
+            )
 
         # Validate voice selection
         if not self._is_valid_voice(voice):

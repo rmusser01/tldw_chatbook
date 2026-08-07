@@ -12,7 +12,7 @@ from textual.screen import Screen
 from textual.widgets import Button, Collapsible, Input, Select, Static
 
 from Tests.UI.app_factory import _build_test_app
-from Tests.UI.test_stts_playground_audio_cpp import (
+from Tests.UI.speech_playground_fixtures import (
     FakeTTSService,
     _native_profile_artifact,
     _profile_preset,
@@ -46,11 +46,9 @@ from tldw_chatbook.Utils.optional_deps import DEPENDENCIES_AVAILABLE
 class _PaneScreen(Screen):
     """Hosts the pane on its own, under the real app CSS.
 
-    The pane is not the mounted `playground` view yet: dev's
-    `TTSPlaygroundWidget` keeps that while its profile presets and this
-    pane's axis row are reconciled. So these mount the pane directly rather
-    than navigating to Speech and asserting on whatever is there -- which
-    would be testing the routing, not the pane.
+    Mounts the pane directly rather than navigating to Speech and asserting
+    on whatever is there -- which would be testing the routing, not the
+    pane.
     """
 
     def compose(self):

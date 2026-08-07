@@ -1287,16 +1287,15 @@ class STTSEventHandler:
             or operation_id == self._retired_playground_operation_id
         ):
             return None
-        # Both playgrounds can be mounted: dev's widget still owns the
-        # `playground` view while its profile presets and the rebuilt pane's
-        # axis row are reconciled, and the pane is mounted by its own tests.
-        # Naming only one meant a generation could succeed and hand its
-        # audio to a widget that was not on screen -- no error, no log, the
-        # take simply never appeared.
+        # `STTSWindow._mount_view` only ever mounts `SpeechPlaygroundPane`
+        # for the `playground` view (this used to also try the retired
+        # legacy playground widget -- TASK-2951 -- which was already
+        # unreachable before that). Tried under both the active screen and
+        # the app itself, mirroring the pane's own tests, which mount it
+        # under a bare host with no screen.
         from tldw_chatbook.UI.Speech.speech_playground_pane import (
             SpeechPlaygroundPane,
         )
-        from tldw_chatbook.UI.STTS_Window import TTSPlaygroundWidget
 
         roots: list[Any] = []
         try:
@@ -1308,16 +1307,15 @@ class STTSEventHandler:
         roots.append(self.app)
 
         for root in roots:
-            for host in (SpeechPlaygroundPane, TTSPlaygroundWidget):
-                try:
-                    return root.query_one(host)
-                except Exception as error:
-                    logger.debug(
-                        "{} is not mounted under {} ({})",
-                        host.__name__,
-                        type(root).__name__,
-                        type(error).__name__,
-                    )
+            try:
+                return root.query_one(SpeechPlaygroundPane)
+            except Exception as error:
+                logger.debug(
+                    "{} is not mounted under {} ({})",
+                    SpeechPlaygroundPane.__name__,
+                    type(root).__name__,
+                    type(error).__name__,
+                )
         return None
 
     @staticmethod
@@ -2096,7 +2094,7 @@ class STTSEventHandler:
         event: STTSProviderConfigurationChanged,
     ) -> None:
         """Invalidate any mounted Playground for the changed provider."""
-        for widget in self.app.query("SpeechPlaygroundPane, TTSPlaygroundWidget"):
+        for widget in self.app.query("SpeechPlaygroundPane"):
             callback = getattr(widget, "mark_provider_configuration_changed", None)
             if callable(callback):
                 callback(event.provider_id, event.configuration_revision)

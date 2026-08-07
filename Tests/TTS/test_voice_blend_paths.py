@@ -13,7 +13,6 @@ from tldw_chatbook.TTS.voice_blend_paths import (
     kokoro_ui_blend_file,
     write_kokoro_ui_blends,
 )
-from tldw_chatbook.UI.STTS_Window import TTSPlaygroundWidget
 from tldw_chatbook.UI.Speech.speech_catalog_mixin import SpeechCatalogMixin
 
 
@@ -87,17 +86,11 @@ def test_production_blend_choice_readers_retarget_between_profiles(
     )
 
     monkeypatch.setenv("TLDW_CONFIG_PATH", str(first))
-    assert TTSPlaygroundWidget._kokoro_blend_choices() == [
-        ("Voice blend: first", "blend:first")
-    ]
     assert SpeechCatalogMixin._kokoro_blend_choices() == [
         ("Voice blend: first", "blend:first")
     ]
 
     monkeypatch.setenv("TLDW_CONFIG_PATH", str(second))
-    assert TTSPlaygroundWidget._kokoro_blend_choices() == [
-        ("Voice blend: second", "blend:second")
-    ]
     assert SpeechCatalogMixin._kokoro_blend_choices() == [
         ("Voice blend: second", "blend:second")
     ]
@@ -134,9 +127,6 @@ def test_production_blend_choice_readers_ignore_legacy_home_decoy(
     monkeypatch.setattr(Path, "read_text", reject_legacy_decoy_read)
 
     assert kokoro_ui_blend_file() == profile_config.parent / "kokoro_voice_blends.json"
-    assert TTSPlaygroundWidget._kokoro_blend_choices() == [
-        ("Voice blend: active", "blend:active")
-    ]
     assert SpeechCatalogMixin._kokoro_blend_choices() == [
         ("Voice blend: active", "blend:active")
     ]

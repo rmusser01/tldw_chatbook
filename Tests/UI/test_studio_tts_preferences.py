@@ -34,7 +34,7 @@ from tldw_chatbook.UI.Speech.speech_playground_pane import SpeechPlaygroundPane
 from tldw_chatbook.UI.Speech.speech_profile_mixin import (
     AdoptStudioPreferencesRequested,
 )
-from Tests.UI.test_stts_playground_audio_cpp import (
+from Tests.UI.speech_playground_fixtures import (
     FakeTTSService,
     _resolved,
     _wait_until,

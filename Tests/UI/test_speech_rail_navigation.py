@@ -85,16 +85,13 @@ async def test_each_rail_entry_switches_the_view(view_key):
 async def test_the_playground_view_mounts_a_playground():
     """The playground view must mount the rebuilt `SpeechPlaygroundPane`.
 
-    dev shipped a profile library into the legacy `TTSPlaygroundWidget`
-    while this rebuild was in flight; the pane took the view over once its
-    axis row and dev's profile presets were reconciled -- the ownership
-    ruling at
-    `Docs/superpowers/specs/2026-07-30-speech-preset-axis-ownership.md`
+    dev shipped a profile library into the legacy playground widget while
+    this rebuild was in flight; the pane took the view over once its axis
+    row and dev's profile presets were reconciled -- the ownership ruling
+    at `Docs/superpowers/specs/2026-07-30-speech-preset-axis-ownership.md`
     (`SpeechPlaygroundPane.axis_values`/`axis_defaults` are the model of
     record, every axis writer keeps the row's markers in step, and
-    defaults are seeded from persisted preferences at construction). Retiring
-    the legacy widget's own code is a separate task and not part of this
-    ruling.
+    defaults are seeded from persisted preferences at construction).
     """
     app = _build_test_app()
     async with app.run_test(size=(200, 60)) as pilot:

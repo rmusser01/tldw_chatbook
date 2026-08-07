@@ -1,10 +1,11 @@
 """dev's profile library must survive the Playground rebuild.
 
 While this rebuild was in flight, dev shipped a TTS profile library and
-built it into `TTSPlaygroundWidget` -- the class the rebuild retires. Merging
-the retirement without porting would have deleted the UI half of a feature
-someone shipped over eight commits, and git would not have said a word: the
-conflict resolves cleanly if you simply keep your own side.
+built it into the legacy playground widget -- the class the rebuild
+retires. Merging the retirement without porting would have deleted the UI
+half of a feature someone shipped over eight commits, and git would not
+have said a word: the conflict resolves cleanly if you simply keep your own
+side.
 
 So these assert the port, not the rebuild: the behaviour is dev's methods
 verbatim, inherited rather than reimplemented, and the controls they query
@@ -58,7 +59,7 @@ class _Harness(App[None]):
 def test_every_profile_method_survived(name):
     """A missing one is a piece of dev's feature deleted by the rebuild."""
     assert callable(getattr(SpeechPlaygroundPane, name, None)), (
-        f"{name} was lost when TTSPlaygroundWidget was retired"
+        f"{name} was lost when the legacy playground widget was retired"
     )
 
 
