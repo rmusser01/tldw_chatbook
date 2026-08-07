@@ -15,7 +15,7 @@ priority: high
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-UX UAT on merged dev (PR-1095): at 120x40 the Provider step shows only the provider RadioSet — the API-key input, discovery banner, and Use-this-server button are clipped below a non-scrolling fold with no indicator; the Full-track Summary exit buttons are never visible. Root cause: the wizard step region lacks overflow-y and internal lists are uncapped. Supersedes/expands TASK-1375 (which assumed long-path edge case).
+UX UAT on merged dev (PR-1095): at 120x40 the Provider step shows only the provider RadioSet — the API-key input, discovery banner, and Use-this-server button are clipped below a non-scrolling fold with no indicator; the Full-track Summary exit buttons are never visible. Root cause: the wizard step region lacks overflow-y and internal lists are uncapped. Supersedes/expands TASK-2836 (which assumed long-path edge case).
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria

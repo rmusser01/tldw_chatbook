@@ -1128,7 +1128,7 @@ class ChatbookExportManagementWindow(ModalScreen):
         chatbook = self.chatbook_files[self.selected_chatbook]
 
         try:
-            # Launched, never awaited (TASK-1373) -- same reasoning as the
+            # Launched, never awaited (TASK-2834) -- same reasoning as the
             # Chatbook wizard's open-folder button. This runs on Textual's
             # serialized message pump, and `subprocess.run` waits for the child:
             # `xdg-open` does not always return until the launched file manager

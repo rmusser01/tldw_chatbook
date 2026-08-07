@@ -3314,7 +3314,7 @@ async def test_settings_jk_never_steals_keys_from_select():
 
 @pytest.mark.asyncio
 async def test_settings_focus_surfaces_tooltip_in_focus_help_line():
-    """task-1374: keyboard focus mirrors the control's hover-only tooltip."""
+    """task-2835: keyboard focus mirrors the control's hover-only tooltip."""
     app = _build_test_app()
     host = DestinationHarness(app, "settings")
 

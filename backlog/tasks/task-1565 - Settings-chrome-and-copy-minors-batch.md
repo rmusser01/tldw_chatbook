@@ -47,5 +47,5 @@ tests updated.
 Declined with reasons: splash gallery casing/raw ids (display names are the
 cards' own metadata; normalizing would misrepresent card identity);
 RAG description-flyout overlap and the red Delete on a read-only built-in
-profile (both need RAG-pane layout/state work better scoped with task-1345's
+profile (both need RAG-pane layout/state work better scoped with task-2829's
 RAG follow-ups than this chrome batch).

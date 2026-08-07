@@ -2,7 +2,7 @@
 
 Status: Accepted
 Date: 2026-08-05
-Related Task: [TASK-1338 - Local agent tools phase 1: plumbing + fs_list pilot](../tasks/task-1338%20-%20Local-agent-tools-phase-1-plumbing-fs_list-pilot.md)
+Related Task: [TASK-2819 - Local agent tools phase 1: plumbing + fs_list pilot](../tasks/task-2819%20-%20Local-agent-tools-phase-1-plumbing-fs_list-pilot.md)
 Supersedes: N/A
 
 ## Decision
@@ -88,7 +88,7 @@ root confinement with hidden components explicitly allowed under it.
 
 ## Links
 
-- [TASK-1338](../tasks/task-1338%20-%20Local-agent-tools-phase-1-plumbing-fs_list-pilot.md)
+- [TASK-2819](../tasks/task-2819%20-%20Local-agent-tools-phase-1-plumbing-fs_list-pilot.md)
 - [Design specification](../../Docs/superpowers/specs/2026-08-04-local-agent-tools-design.md)
 - [Implementation plan](../../Docs/superpowers/plans/2026-08-04-local-agent-tools-phase1.md)
 - [ADR-030: Direct Local Library Tool Boundary for Console and MCP](030-local-library-agent-tool-boundary.md)

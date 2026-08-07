@@ -2,7 +2,7 @@
 
 Date: 2026-07-23
 Status: User-approved design
-Related Task: `TASK-403`
+Related Task: `TASK-2803`
 
 ## Summary
 

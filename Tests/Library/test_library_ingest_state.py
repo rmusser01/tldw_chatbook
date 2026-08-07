@@ -2129,7 +2129,7 @@ def test_unresolvable_path_gates_start_with_an_explanation() -> None:
 def test_matched_rows_and_tallies_use_the_forecast_vocabulary() -> None:
     """A dedup match reports as "matched", distinct from an import.
 
-    (task-2231) The forecast promises "will import · will match · will
+    (task-2837) The forecast promises "will import · will match · will
     skip"; the receipt used to fold match into "done" and render the two
     outcomes as byte-identical rows, so the promise could not be audited.
     """
@@ -2176,7 +2176,7 @@ def test_matched_rows_and_tallies_use_the_forecast_vocabulary() -> None:
 def test_active_rows_show_the_attempt_number_after_a_retry() -> None:
     """A re-attempt is visible while it runs, not only once it ends.
 
-    (task-2231) Requeue creates a new QUEUED job with an incremented
+    (task-2837) Requeue creates a new QUEUED job with an incremented
     count, but the in-flight rows never showed it — so pressing Retry
     looked identical to nothing happening.
     """
@@ -2213,7 +2213,7 @@ def test_active_rows_show_the_attempt_number_after_a_retry() -> None:
 def test_consent_line_requires_every_importable_file_to_match() -> None:
     """"Everything here" only renders when it is true.
 
-    (task-2231) The line rendered on a selection where only some files
+    (task-2837) The line rendered on a selection where only some files
     were predicted matches.
     """
     form = LibraryIngestFormState(path="/tmp/folder")
@@ -2254,7 +2254,7 @@ def test_consent_line_requires_every_importable_file_to_match() -> None:
 def test_queue_tally_and_group_header_agree_on_matched() -> None:
     """The tally buckets the way the headers and rows do.
 
-    (task-2231 Qodo round) The top-level counts line bucketed purely by
+    (task-2837 Qodo round) The top-level counts line bucketed purely by
     state, so it read "2 done" while a group header directly below it
     read "1 done · 1 matched" — two contradictory summaries on one
     screen.

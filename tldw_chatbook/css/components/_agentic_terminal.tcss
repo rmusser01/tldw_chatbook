@@ -4545,7 +4545,7 @@ _CredentialClearModal {
     background: $ds-surface-panel;
 }
 
-/* task-1374: keyboard-reachable mirror of the focused control's tooltip,
+/* task-2835: keyboard-reachable mirror of the focused control's tooltip,
    one muted line pinned under the Settings workbench. */
 #settings-focus-help {
     height: 1;

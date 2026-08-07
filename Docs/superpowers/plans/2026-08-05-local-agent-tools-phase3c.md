@@ -25,7 +25,7 @@
 
 - [ ] Create "Local agent tools phase 3c: web-research skill". ACs:
   1. Skill-run subagents can be narrowed against local tools (never granted beyond the parent's allow-list)
-  2. A skill declaring web_search/web_fetch in allowed-tools gets exactly those (plus requested builtins). ERRATUM (post-implementation): undeclared skills now pass the full builtins+local set through (was "behave as before"); intentional, approval-gated, matches native spawn inheritance — see Task 1 and the task-1344 Implementation Notes
+  2. A skill declaring web_search/web_fetch in allowed-tools gets exactly those (plus requested builtins). ERRATUM (post-implementation): undeclared skills now pass the full builtins+local set through (was "behave as before"); intentional, approval-gated, matches native spawn inheritance — see Task 1 and the task-2826 Implementation Notes
   3. web-research skill definition parses and passes trust scanning
   4. Install documentation exists
   5. All new tests pass
