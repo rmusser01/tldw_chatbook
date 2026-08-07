@@ -59,4 +59,35 @@ Tests (Tests/Web_Scraping/test_deep_search_pipeline.py):
 
 Files: tldw_chatbook/Web_Scraping/WebSearch_APIs.py,
 Tests/Web_Scraping/test_deep_search_pipeline.py.
+
+### Correction (fix-wave, 2026-08-07 review -- Important 3)
+
+The "behavioral proof" claim above for
+`test_dns_guard_executor_saturation_does_not_starve_default_executor_offloads`
+overstated what that test actually pinned. It saturated the dedicated pool
+from OUTSIDE via direct `executor.submit()` calls, then ran
+`asyncio.run(run())` -- a brand-new event loop with its own brand-new
+DEFAULT executor. Nothing that test asserted could ever be affected by the
+state of any other pool: the reviewer reproduced this by saturating a
+completely unrelated executor and getting the identical pass. AC#2's
+behavioral claim ("a test simulates N consecutive DNS timeouts and shows
+relevance LLM calls still proceed without waiting on abandoned resolver
+threads") was not actually evidenced by that test.
+
+Fixed by replacing it with a version that drives the REAL
+`search_result_relevance()` (the actual caller of
+`_get_dns_guard_executor()`) and blocks `is_public_http_url` itself, so
+every real guard call the function submits saturates the dedicated pool
+from the inside -- the first `_DNS_GUARD_EXECUTOR_MAX_WORKERS` calls occupy
+every pool worker, and (with `n_results = n_workers + 2`) the last two
+queue entirely unstarted behind them. It then proves the faked
+`chat_api_call` relevance offloads (real DEFAULT-executor `asyncio.to_thread`
+calls, exactly like production) all still complete, and that
+`search_result_relevance` returns in bounded time governed by
+`scrape_timeout_s` rather than hanging behind the saturated pool. This
+proves non-starvation of the pipeline under saturation -- not the guard's
+specific executor identity, which remains the wiring test's
+(`test_relevance_guard_runs_on_dedicated_dns_guard_executor`) job alone.
+See `.superpowers/sdd/deep-search-followups/tasks-3220-3221-report.md` for
+the matching correction to that report.
 <!-- SECTION:NOTES:END -->
