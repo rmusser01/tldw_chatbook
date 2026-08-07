@@ -400,7 +400,9 @@ def test_search_settings_timeout_keys_with_defaults(tmp_path, monkeypatch):
     Acceptance: search_settings_general contains three new int keys:
     - relevance_llm_timeout_s = 30
     - relevance_scrape_timeout_s = 30
-    - deep_search_timeout_s = 300
+    - deep_search_timeout_s = 240 (task-1356 review ruling: must undercut the
+      agent runtime's 300s max_tool_call_seconds so a deadline-hit run can
+      still return its partial synthesis instead of being killed first)
     """
     config_path = tmp_path / "config.toml"
     # Minimal config with no SearchSettings section
@@ -415,7 +417,7 @@ def test_search_settings_timeout_keys_with_defaults(tmp_path, monkeypatch):
     search_settings = settings["search_settings_general"]
     assert search_settings["relevance_llm_timeout_s"] == 30
     assert search_settings["relevance_scrape_timeout_s"] == 30
-    assert search_settings["deep_search_timeout_s"] == 300
+    assert search_settings["deep_search_timeout_s"] == 240
 
 
 def test_search_settings_timeout_keys_from_toml(tmp_path, monkeypatch):
@@ -490,7 +492,7 @@ def test_search_settings_timeout_keys_malformed_value_degrades_to_default(
     # Malformed values should degrade to defaults
     assert search_settings["relevance_llm_timeout_s"] == 30
     assert search_settings["relevance_scrape_timeout_s"] == 30
-    assert search_settings["deep_search_timeout_s"] == 300
+    assert search_settings["deep_search_timeout_s"] == 240
 
 
 # --- Config template and non-positive timeout guards -----------------------
@@ -545,3 +547,63 @@ def test_non_positive_timeout_values_degrade_to_default(tmp_path, monkeypatch, c
         assert "non-positive" in caplog.text.lower() or "not valid for timeout" in caplog.text.lower()
     finally:
         loguru_logger.remove(handler_id)
+
+
+# --- analyze_and_aggregate must not block the event loop (task-1356 review) --
+
+def test_analyze_and_aggregate_offloads_aggregate_results_so_wait_for_can_fire(monkeypatch):
+    """aggregate_results is synchronous; calling it directly on the event
+    loop thread blocks the whole loop for its duration, which means an
+    outer asyncio.wait_for wrapped around analyze_and_aggregate can never
+    actually fire its timeout -- the scheduled cancellation callback needs
+    the loop to be idle to run, and a synchronous call never yields it one.
+    Reproduced here with a blocking aggregate_results stand-in; the fix
+    (task-1356 review) offloads the real call via asyncio.to_thread.
+
+    Before the fix: this returns the LATE result (after the full 0.3s
+    block) without ever raising TimeoutError -- wait_for's deadline is
+    silently missed. After the fix: TimeoutError fires close to the
+    intended ~0.05s timeout.
+
+    Note on measurement: once aggregate_results is offloaded to a worker
+    thread, wait_for's cancellation of the *awaiting* coroutine is prompt,
+    but the underlying concurrent.futures.Future backing that thread cannot
+    actually be cancelled once it has started running (a documented
+    to_thread/run_in_executor limitation) -- so asyncio.run()'s own shutdown
+    sequence still blocks for the full 0.3s waiting for that orphaned
+    thread to finish before the process can unwind. That wait is measuring
+    asyncio's cleanup, not whether the fix worked, so this test times the
+    TimeoutError from INSIDE the coroutine (immediately when wait_for
+    raises it) rather than timing the outer asyncio.run() call.
+    """
+
+    def blocking_aggregate(relevant_results, question, sub_questions, api_endpoint):
+        time.sleep(0.3)  # simulates a slow synchronous LLM call
+        return {"text": "late", "evidence": [], "confidence": 0.5, "chunks": []}
+
+    async def fake_relevance(*_a, **_k):
+        return {"1": {"url": "https://e.com/", "title": "T", "content": "c"}}
+
+    monkeypatch.setattr(WebSearch_APIs, "aggregate_results", blocking_aggregate)
+    monkeypatch.setattr(WebSearch_APIs, "search_result_relevance", fake_relevance)
+
+    wsr = {"results": [{"title": "T", "url": "https://e.com/"}], "warnings": []}
+    sqd = {"main_goal": "q", "sub_questions": []}
+    params = {"relevance_analysis_llm": "openai", "final_answer_llm": "openai"}
+
+    async def run() -> float:
+        start_inner = time.monotonic()
+        try:
+            await asyncio.wait_for(
+                WebSearch_APIs.analyze_and_aggregate(wsr, sqd, params),
+                timeout=0.05,
+            )
+        except asyncio.TimeoutError:
+            return time.monotonic() - start_inner
+        raise AssertionError("expected analyze_and_aggregate to time out")
+
+    elapsed = asyncio.run(run())
+    assert elapsed < 0.2, (
+        f"wait_for did not fire near its 0.05s deadline (took {elapsed:.2f}s) -- "
+        "aggregate_results is still blocking the event loop"
+    )

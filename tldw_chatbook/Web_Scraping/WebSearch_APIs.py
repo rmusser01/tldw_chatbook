@@ -615,7 +615,19 @@ async def analyze_and_aggregate(
         relevant_results = review_and_select_results(relevant_results)
 
     # 6. Summarize/aggregate final answer
-    final_answer = aggregate_results(
+    # Offloaded to a worker thread (task-1356 review fix): aggregate_results
+    # is SYNCHRONOUS (chat_api_call/_analyze do blocking HTTP) -- calling it
+    # directly here would block this coroutine's event loop thread for the
+    # whole call, starving any outer asyncio.wait_for's timeout callback of
+    # a chance to ever run (a callback scheduled via call_later cannot fire
+    # while the loop is stuck inside a synchronous call), so a caller's
+    # deadline+grace backstop around this whole function could never
+    # actually cut in -- it would just return late. Mirrors
+    # search_result_relevance's own asyncio.to_thread(chat_api_call, ...)
+    # calls above, which offload the same kind of blocking call for the
+    # same reason.
+    final_answer = await asyncio.to_thread(
+        aggregate_results,
         relevant_results,
         sub_query_dict["main_goal"],
         sub_questions,

@@ -2127,8 +2127,13 @@ def load_settings(force_reload: bool = False) -> Dict:
             "relevance_scrape_timeout_s": _get_int_timeout_value(
                 search_settings_section, "relevance_scrape_timeout_s", 30
             ),
+            # 240, not 300 (task-1356 review ruling): must undercut the agent
+            # runtime's 300s max_tool_call_seconds (Agents/agent_models.py
+            # RunBudget.max_tool_call_seconds) so a deadline-hit deep search
+            # can still return its partial synthesis instead of being killed
+            # by the outer tool-call ceiling first.
             "deep_search_timeout_s": _get_int_timeout_value(
-                search_settings_section, "deep_search_timeout_s", 300
+                search_settings_section, "deep_search_timeout_s", 240
             ),
         },
         "search_engine_specific_settings": {  # API Keys for various search engines from 'SearchEngines' TOML table
@@ -3750,7 +3755,7 @@ log_unknown_models = true      # Whether to log when an unknown model is queried
 # search_result_max = 10
 # relevance_llm_timeout_s = 30
 # relevance_scrape_timeout_s = 30
-# deep_search_timeout_s = 300
+# deep_search_timeout_s = 240   # must undercut the agent runtime's 300s max_tool_call_seconds so a deadline-hit run can still return its partial synthesis
 
 # ==========================================================
 # Search Engines Configuration

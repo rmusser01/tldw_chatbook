@@ -1217,11 +1217,32 @@ def web_crawl(
 
 DEEP_SEARCH_ANSWER_MAX_BYTES = 16 * 1024
 DEEP_SEARCH_SOURCES_MAX = 20
-# Hard backstop beyond the deadline the phase-2 watchdog fires cancel_event
-# at: the pipeline has no circuit breaker (a dead relevance-LLM provider
-# costs N sequential llm_timeout_s calls), so cooperative cancellation via
-# cancel_event is the primary stop signal and this wait_for grace is only
-# the last-resort guard against a call that never checks it.
+# Sibling convention (SEARCH_TOTAL_MAX_BYTES / CRAWL_RESULT_MAX_BYTES, both
+# above): caps the SOURCES block specifically (not the answer, which has its
+# own DEEP_SEARCH_ANSWER_MAX_BYTES cap, and not the combined return value).
+# Without this, a handful of pathologically long evidence titles reproduced
+# a ~400KB tool result even with DEEP_SEARCH_SOURCES_MAX already bounding
+# the source COUNT (task-1356 review).
+DEEP_SEARCH_TOTAL_MAX_BYTES = 24 * 1024
+# Grace period asyncio.wait_for() adds on top of the remaining deadline when
+# awaiting analyze_and_aggregate. What this DOES bound: awaited work that
+# keeps yielding control back to the event loop between awaits (e.g. every
+# `await` inside search_result_relevance's per-result loop) -- the pipeline
+# has no circuit breaker (a dead relevance-LLM provider costs N sequential
+# llm_timeout_s calls), so cooperative cancellation via cancel_event is the
+# primary stop signal and this wait_for grace is the backstop for a call
+# that never checks it, PROVIDED it still yields. What this does NOT bound:
+# a synchronous call that blocks the loop thread outright -- wait_for's
+# timeout is delivered via a scheduled callback that can only run once the
+# loop is idle, and a blocking call never gives it that chance (task-1356
+# review, reproduced live: a blocking aggregate_results call made this
+# grace period a no-op, silently returning a LATE result instead of timing
+# out). That is why analyze_and_aggregate offloads its one genuinely
+# synchronous step via asyncio.to_thread. Bounding any ONE blocking call's
+# own wall-clock time (an LLM transport's connect/read timeout, say) is
+# that call's own job, not this watchdog's -- and if a pipeline call
+# somehow still doesn't yield in time, _run_coro_loop_safe's thread-join
+# path is the one backstop that CAN preempt it (see its docstring).
 _DEEP_SEARCH_DEADLINE_GRACE_S = 30.0
 # Extra slack given to the loop-safe runner's thread.join() backstop on top
 # of the coroutine's own wait_for(deadline + grace) so the join timeout
@@ -1235,19 +1256,59 @@ def _deep_search_settings() -> dict:
     A dedicated module function (rather than inline ``get_cli_setting``
     calls) so tests can monkeypatch config resolution wholesale instead of
     stubbing individual keys. Defaults mirror task-4's config revival.
+
+    ``get_cli_setting("SearchSettings", key, default)`` reads the RAW TOML
+    value with no type validation of its own -- it is NOT the same as the
+    typed ``search_settings_general`` bucket ``config.load_settings()``
+    builds (this seam deliberately bypasses that bucket, since it uses
+    different key names for some fields and this tool wants direct
+    ``[SearchSettings]`` control). Left unvalidated, a malformed TOML value
+    reaches the tool unfiltered (task-1356 review, three reproduced harms):
+    a non-numeric timeout crashes ``float(...)`` with a bare ``ValueError``;
+    a quoted ``search_enable_subquery = "false"`` reads as Python-truthy
+    (``bool("false") is True``), silently ENABLING paid sub-query
+    generation; and a negative timeout collapses the deadline to ~0. So
+    every value resolved here is coerced before being handed back:
+    ints/timeouts through the same reject-bool / reject-nonpositive /
+    default-on-malformed semantics as ``config._get_int_timeout_value``
+    (imported directly -- config.py has no dependency on this module, so
+    there is no import cycle); the one bool through a strict true-set
+    (``"true"`` / ``"1"`` / literal ``True`` -- deliberately narrower than
+    ``config._get_typed_value``'s bool coercion, since this flag gates a
+    paid LLM call); provider/engine strings stripped of surrounding
+    whitespace.
     """
-    from ..config import get_cli_setting  # local import: keep module import cheap
+    from ..config import _get_int_timeout_value, get_cli_setting  # local: keep module import cheap
+
+    def _str(key: str, default: str) -> str:
+        raw = get_cli_setting("SearchSettings", key, default)
+        return raw.strip() if isinstance(raw, str) and raw.strip() else default
+
+    def _bool(key: str, default: bool) -> bool:
+        raw = get_cli_setting("SearchSettings", key, default)
+        if isinstance(raw, bool):
+            return raw
+        if isinstance(raw, str):
+            return raw.strip().lower() in ("true", "1")
+        return default
+
+    def _int(key: str, default: int) -> int:
+        raw = get_cli_setting("SearchSettings", key, default)
+        return _get_int_timeout_value({key: raw}, key, default)
 
     return {
-        "search_provider_default": get_cli_setting("SearchSettings", "search_provider_default", "google"),
-        "relevance_analysis_llm": get_cli_setting("SearchSettings", "relevance_analysis_llm", "openai"),
-        "final_answer_llm": get_cli_setting("SearchSettings", "final_answer_llm", "openai"),
-        "search_enable_subquery": get_cli_setting("SearchSettings", "search_enable_subquery", False),
-        "search_default_max_queries": get_cli_setting("SearchSettings", "search_default_max_queries", 5),
-        "search_result_max": get_cli_setting("SearchSettings", "search_result_max", 10),
-        "relevance_llm_timeout_s": get_cli_setting("SearchSettings", "relevance_llm_timeout_s", 30),
-        "relevance_scrape_timeout_s": get_cli_setting("SearchSettings", "relevance_scrape_timeout_s", 30),
-        "deep_search_timeout_s": get_cli_setting("SearchSettings", "deep_search_timeout_s", 300),
+        "search_provider_default": _str("search_provider_default", "google"),
+        "relevance_analysis_llm": _str("relevance_analysis_llm", "openai"),
+        "final_answer_llm": _str("final_answer_llm", "openai"),
+        "search_enable_subquery": _bool("search_enable_subquery", False),
+        "search_default_max_queries": _int("search_default_max_queries", 5),
+        "search_result_max": _int("search_result_max", 10),
+        "relevance_llm_timeout_s": _int("relevance_llm_timeout_s", 30),
+        "relevance_scrape_timeout_s": _int("relevance_scrape_timeout_s", 30),
+        # 240, not 300 (task-1356 review ruling): must undercut the agent
+        # runtime's 300s max_tool_call_seconds so a deadline-hit run can
+        # still return its partial synthesis instead of being killed first.
+        "deep_search_timeout_s": _int("deep_search_timeout_s", 240),
     }
 
 
@@ -1255,20 +1316,33 @@ def _run_coro_loop_safe(coro, timeout_s: float):
     """Run ``coro`` to completion regardless of whether a loop is already running.
 
     No running loop on this thread (the common case -- a worker thread or a
-    plain sync caller): ``asyncio.run(coro)`` directly. A loop IS already
-    running (the tool invoked from inside async agent-runtime code):
-    ``asyncio.run`` cannot nest, so ``coro`` runs on a dedicated daemon
-    thread with its own fresh loop, and this thread blocks on ``join``
-    joined with a ``timeout_s`` hard backstop -- defense in depth alongside
-    whatever internal deadline ``coro`` itself enforces (e.g. an
-    ``asyncio.wait_for`` inside it), for the case where ``coro`` fails to
-    respect its own deadline.
+    plain sync caller): ``asyncio.run(coro)`` directly, with NOTHING here
+    bounding ``coro``'s wall-clock time -- whatever internal deadline
+    ``coro`` enforces on itself (e.g. its own ``asyncio.wait_for``) is the
+    only thing that can. A loop IS already running (the tool invoked from
+    inside async agent-runtime code): ``asyncio.run`` cannot nest, so
+    ``coro`` runs on a dedicated daemon thread with its own fresh loop, and
+    THIS thread blocks in ``thread.join(timeout_s)``.
+
+    That join is a genuinely different kind of backstop from ``coro``'s own
+    internal ``wait_for``: it is enforced by the OS thread scheduler on the
+    CALLING thread, not by the dedicated thread's event loop -- so it fires
+    on schedule even if that loop is completely wedged (e.g. stuck inside a
+    synchronous call that starves its own timeout callbacks; see
+    ``_DEEP_SEARCH_DEADLINE_GRACE_S``'s note on why that can happen). What
+    it does NOT do: reach into the dedicated thread and stop ``coro``. If
+    ``coro`` never returns, that thread keeps running as an orphaned daemon
+    after this function raises -- Python cannot forcibly kill a running
+    thread, and a real analyze_and_aggregate call would already be spending
+    real provider tokens on it by that point.
 
     Args:
         coro: A not-yet-awaited coroutine object.
-        timeout_s: Hard wall-clock backstop for the dedicated-thread path;
-            ignored on the direct ``asyncio.run`` path (nothing to bound
-            there beyond whatever ``coro`` does internally).
+        timeout_s: Hard wall-clock backstop for the ``thread.join()`` on
+            the dedicated-thread path ONLY -- bounds how long THIS calling
+            thread waits, not how long ``coro`` itself is allowed to run.
+            Ignored entirely on the direct ``asyncio.run(coro)`` path
+            (there is no second thread to join).
 
     Returns:
         Whatever ``coro`` returns.
@@ -1322,9 +1396,16 @@ def web_deep_search(question: str, engine: Optional[str] = None, max_results: Op
     deadline is reached, which the pipeline checks cooperatively between
     per-result relevance calls (task-1356's no-circuit-breaker design means
     a dead provider otherwise costs N sequential LLM timeouts) so a
-    deadline hit still yields a partial synthesis rather than nothing; a
-    hard ``asyncio.wait_for`` at deadline + 30s grace is the backstop if the
-    pipeline call never returns at all.
+    deadline hit still yields a partial synthesis rather than nothing.
+    ``asyncio.wait_for`` at deadline + grace is a second backstop, but it
+    only bounds work that keeps yielding control back to the loop -- see
+    ``_DEEP_SEARCH_DEADLINE_GRACE_S``'s note on why a synchronous pipeline
+    call would otherwise make it a no-op, and ``_run_coro_loop_safe``'s
+    docstring for the third, genuinely preemptive thread-join backstop that
+    applies when this tool is invoked from inside an already-running loop.
+    If the deadline fires before ANY result was confirmed relevant, the
+    zero-relevant return below says so explicitly and does not claim
+    coverage the run never had.
 
     Args:
         question: The research question. Must be non-empty.
@@ -1336,17 +1417,21 @@ def web_deep_search(question: str, engine: Optional[str] = None, max_results: Op
     Returns:
         str: On success, the synthesized answer (byte-capped at
         ``DEEP_SEARCH_ANSWER_MAX_BYTES``) followed by a ``Sources:`` list
-        (evidence id/title/url, capped at ``DEEP_SEARCH_SOURCES_MAX``) and a
-        one-line status footer. When phase 2 finds no relevant results,
-        returns an explanatory (non-error) string listing the queries tried
-        instead of raising -- the model is expected to read and act on it.
+        (evidence id/title/url, byte-capped at ``DEEP_SEARCH_TOTAL_MAX_BYTES``
+        and at most ``DEEP_SEARCH_SOURCES_MAX`` entries) and a one-line
+        status footer. When phase 2 finds no relevant results, returns an
+        explanatory (non-error) string -- listing the queries tried, or, on
+        a deadline hit, disclosing the cutoff instead -- rather than raising;
+        the model is expected to read and act on it.
 
     Raises:
-        LocalToolError: ``[invalid-args]`` for an empty question or an
-            unrecognized engine; ``[deep-search-failed] relevance: ...`` /
-            ``synthesis: ...`` if the corresponding LLM is not configured
-            (checked before any spend); ``[deep-search-failed] search: ...``
-            for a phase-1 failure or zero search results;
+        LocalToolError: ``[invalid-args]`` for an empty question or a
+            caller-supplied engine not in ``SEARCH_ENGINES``;
+            ``[deep-search-failed] relevance: ...`` / ``synthesis: ...`` if
+            the corresponding LLM is not configured (checked before any
+            spend); ``[deep-search-failed] search: ...`` for a phase-1
+            failure, zero search results, a misconfigured
+            ``search_provider_default``, or a malformed pipeline result;
             ``[deep-search-failed] relevance: ...`` for an unexpected
             phase-2 failure; ``[deep-search-failed] timeout: ...`` if the
             deadline backstop is hit.
@@ -1357,10 +1442,23 @@ def web_deep_search(question: str, engine: Optional[str] = None, max_results: Op
 
     settings = _deep_search_settings()
 
+    # Track provenance: an invalid engine the CALLER passed is the caller's
+    # mistake ([invalid-args], the model should retry with a different
+    # value); an invalid engine that came from [SearchSettings]
+    # search_provider_default is a config problem the caller had no part
+    # in -- blaming the caller's (absent) argument would misdirect a model
+    # into "fixing" an argument it never supplied (task-1356 review minor).
+    engine_from_caller = engine is not None
     if engine is None:
         engine = settings.get("search_provider_default", SEARCH_DEFAULT_ENGINE)
     if not isinstance(engine, str) or engine.strip().lower() not in SEARCH_ENGINES:
-        raise LocalToolError(f"[invalid-args] engine must be one of {SEARCH_ENGINES}: {engine!r}")
+        if engine_from_caller:
+            raise LocalToolError(f"[invalid-args] engine must be one of {SEARCH_ENGINES}: {engine!r}")
+        raise LocalToolError(
+            f"[deep-search-failed] search: configured [SearchSettings] "
+            f"search_provider_default {engine!r} is not a supported engine "
+            f"(one of {SEARCH_ENGINES})"
+        )
     engine = engine.strip().lower()
 
     try:
@@ -1405,12 +1503,19 @@ def web_deep_search(question: str, engine: Optional[str] = None, max_results: Op
 
     from ..Web_Scraping import WebSearch_APIs  # local import: keep module import cheap
 
-    deadline_s = float(settings.get("deep_search_timeout_s", 300) or 300)
+    deadline_s = float(settings.get("deep_search_timeout_s", 240) or 240)
     start = time.monotonic()
     try:
         phase1 = WebSearch_APIs.generate_and_search(question, search_params)
     except Exception as exc:  # noqa: BLE001 - structured per behavior 6
         raise LocalToolError(f"[deep-search-failed] search: {exc}") from exc
+
+    if (
+        not isinstance(phase1, dict)
+        or not isinstance(phase1.get("web_search_results_dict"), dict)
+        or not isinstance(phase1.get("sub_query_dict"), dict)
+    ):
+        raise LocalToolError("[deep-search-failed] search: malformed pipeline result")
 
     wsr = phase1["web_search_results_dict"]
     sub_query_dict = phase1["sub_query_dict"]
@@ -1467,39 +1572,87 @@ def web_deep_search(question: str, engine: Optional[str] = None, max_results: Op
     warnings = list((phase2_result.get("web_search_results_dict") or {}).get("warnings") or warnings)
 
     sub_questions = list(sub_query_dict.get("sub_questions") or [])
+    n_queries = 1 + len(sub_questions)
+    query_plural = "y" if n_queries == 1 else "ies"
 
     if not relevant_results:
+        if deadline_hit:
+            # CRITICAL fix (task-1356 review): a watchdog firing before the
+            # relevance loop confirms even one result must not claim
+            # "Analyzed N results" (it analyzed none) and must not advise
+            # rephrasing (the cause was a timeout, not a bad query -- a
+            # second full-price run at the same deadline would likely
+            # repeat it). The pipeline gives no "how many were actually
+            # scored before cancellation" signal here, so this states only
+            # what phase 1 actually delivered, per the footer's own
+            # coverage-honesty fix below.
+            return (
+                f"Deep search for {question!r} was cut off by the {deadline_s:.0f}s "
+                "deep-search deadline before relevance analysis confirmed any result. "
+                f"Found {len(results)} raw result(s) across {n_queries} "
+                f"quer{query_plural}, but none were scored in time. Try again with a "
+                "longer deep_search_timeout_s, or a narrower question that needs "
+                "fewer results analyzed -- rephrasing alone will not fix a timeout."
+            )
         queries_tried = "; ".join([question, *sub_questions]) if sub_questions else question
         return (
             f"No relevant results found for {question!r}. Analyzed {len(results)} "
-            f"result(s) across {1 + len(sub_questions)} quer{'y' if not sub_questions else 'ies'} "
+            f"result(s) across {n_queries} quer{query_plural} "
             f"tried: {queries_tried}. Try rephrasing the question or broadening it."
         )
 
-    text = _truncate_to_bytes(str(final_answer.get("text") or ""), DEEP_SEARCH_ANSWER_MAX_BYTES)
+    # Footer built first (task-1356 review): it always survives regardless
+    # of how large the sources block below turns out to be.
+    try:
+        confidence = float(final_answer.get("confidence"))
+    except (TypeError, ValueError):
+        confidence = 0.0
 
-    evidence = final_answer.get("evidence") or []
-    source_lines = []
-    for i, item in enumerate(evidence[:DEEP_SEARCH_SOURCES_MAX], 1):
-        if not isinstance(item, dict):
-            continue
-        sid = item.get("id", i)
-        title = item.get("title") or item.get("url") or "Untitled"
-        url = item.get("url") or ""
-        source_lines.append(f"[{sid}] {title} — {url}")
-    sources_block = "Sources:\n" + "\n".join(source_lines) if source_lines else "Sources: (none)"
-
-    confidence = final_answer.get("confidence") or 0.0
     chunks = final_answer.get("chunks") or []
     fallback_count = sum(1 for c in chunks if isinstance(c, dict) and c.get("generated") is False)
     fallback_note = f" · {fallback_count} chunk(s) used a fallback summary" if fallback_count else ""
     warning_note = f" · {len(warnings)} search warning(s)" if warnings else ""
     deadline_note = " · deadline reached: partial synthesis" if deadline_hit else ""
+    # "scored" is only accurate when the relevance loop ran to completion --
+    # a deadline hit means some of `results` were never examined at all, so
+    # say "found" instead of implying full coverage the run never had
+    # (task-1356 review minor; the wording was "Analyzed K of N", but K is
+    # the RELEVANT count, not an analyzed count either).
+    coverage_verb = "found" if deadline_hit else "scored"
 
     footer = (
         f"Confidence: {confidence:.2f} · Engine: {engine} · Sub-queries: {len(sub_questions)} · "
-        f"Analyzed {len(relevant_results)} of {len(results)} results"
+        f"Relevant: {len(relevant_results)} of {len(results)} {coverage_verb}"
         f"{fallback_note}{warning_note}{deadline_note}"
     )
+
+    text = _truncate_to_bytes(str(final_answer.get("text") or ""), DEEP_SEARCH_ANSWER_MAX_BYTES)
+
+    # Sources: count-capped (DEEP_SEARCH_SOURCES_MAX) THEN byte-budget-capped
+    # (DEEP_SEARCH_TOTAL_MAX_BYTES) -- a handful of pathologically long
+    # evidence titles reproduced a ~400KB result even with the count cap
+    # alone (task-1356 review), so each title is also truncated to a
+    # display-sized prefix via the same house byte-truncation helper used
+    # elsewhere in this module.
+    evidence = final_answer.get("evidence") or []
+    candidates = [item for item in evidence[:DEEP_SEARCH_SOURCES_MAX] if isinstance(item, dict)]
+    source_lines: list = []
+    sources_bytes = 0
+    emitted = 0
+    for i, item in enumerate(candidates, 1):
+        sid = item.get("id", i)
+        title = _truncate_to_bytes(str(item.get("title") or item.get("url") or "Untitled"), 200)
+        url = item.get("url") or ""
+        line = f"[{sid}] {title} — {url}"
+        line_bytes = len(line.encode("utf-8"))
+        if sources_bytes + line_bytes > DEEP_SEARCH_TOTAL_MAX_BYTES:
+            break
+        source_lines.append(line)
+        sources_bytes += line_bytes
+        emitted += 1
+    omitted = len(candidates) - emitted
+    if omitted > 0:
+        source_lines.append(f"… [{omitted} further source(s) omitted: size cap reached]")
+    sources_block = "Sources:\n" + "\n".join(source_lines) if source_lines else "Sources: (none)"
 
     return f"{text}\n\n{sources_block}\n\n{footer}"
