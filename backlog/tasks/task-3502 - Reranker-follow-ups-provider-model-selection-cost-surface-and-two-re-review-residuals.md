@@ -6,6 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-08-07 20:36'
+updated_date: '2026-08-07 22:05'
 labels:
   - rag
   - settings
@@ -27,3 +28,9 @@ TASK-3170's Task 4 fixed the reranker factory so a reranking-enabled profile act
 - [ ] #3 A regression test drives the real PairwiseReranker and ListwiseReranker strategies through the reranking_degraded copy-not-mutate path and confirms neither poisons a cached SearchResult
 - [ ] #4 BaseReranker's per-call failure counters are safe under concurrent search() calls on the shared reranker singleton, or the diagnostic disclosure is scoped so a race cannot misattribute one search's failures to another's disclosed tag
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Final whole-branch review (2026-08-07) surfaced two additional scope items to fold in here: (a) the reranking_skipped/reranking_degraded disclosure tags currently have ZERO UI consumers -- disclosure is metadata/log-only, so a Hybrid Full user with a dead reranker credential sees normal-looking results with no indication reranking silently skipped or degraded; (b) partial pointwise failure stamps rerank_score = original_score on failed rows, so a 14/15-failed rerank still renders " | reranked" on rows that were never actually rescored -- conservative in direction (no fabricated score), but an over-claim about what happened to those rows.
+<!-- SECTION:NOTES:END -->

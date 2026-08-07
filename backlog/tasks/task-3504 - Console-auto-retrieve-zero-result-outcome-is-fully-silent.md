@@ -4,6 +4,7 @@ title: Console auto-retrieve zero-result outcome is fully silent
 status: To Do
 assignee: []
 created_date: '2026-08-07 20:37'
+updated_date: '2026-08-07 22:05'
 labels:
   - console
   - rag
@@ -24,3 +25,9 @@ TASK-3170's Task 8 (Console send-path auto-retrieve injection) deliberately made
 - [ ] #2 The notice does not block the send and does not stage the manual run's recovery card
 - [ ] #3 A regression test confirms the notice fires exactly on the zero-result auto-retrieve path and not on the already-covered failed/timeout/success paths
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Final whole-branch review (2026-08-07): the blocked outcome (RAG deps missing) currently toasts the generic "Library Search/RAG retrieval failed" copy -- a user with the auto-retrieve toggle ON but embeddings_rag extras missing gets that generic failure copy on every send instead of being routed to setup/install guidance. Fold notice-copy routing for the deps-missing/blocked case into this task's scope alongside the zero-result notice.
+<!-- SECTION:NOTES:END -->

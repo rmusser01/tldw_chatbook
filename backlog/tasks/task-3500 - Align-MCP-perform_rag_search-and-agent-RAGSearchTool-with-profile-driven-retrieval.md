@@ -6,6 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-08-07 20:34'
+updated_date: '2026-08-07 22:05'
 labels:
   - rag
   - mcp
@@ -27,4 +28,5 @@ The RAG-port P0 programme (TASK-3170) made Library's rag-mode search honor the a
 - [ ] #3 A query issued through MCP/RAGSearchTool and the same query issued through Library's Search/RAG canvas return results with the same match-strength semantics (score-kind-aware bands, not a fabricated similarity) for the same active profile
 - [ ] #4 Reranking-enabled profiles apply reranking on the MCP/agent path exactly as they do on the Library path, with the same skip-on-unavailable disclosure rather than a hard failure
 - [ ] #5 Existing MCP/agent RAG search callers continue to work without a breaking API change
+- [ ] #6 mcp_inspector._ScoredRow no longer defaults score_kind to vector_similarity blindly -- fused/reranker kinds are handled before MCP routes through profiles (mcp_inspector.py:502)
 <!-- AC:END -->
