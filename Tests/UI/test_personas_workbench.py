@@ -10921,6 +10921,18 @@ async def test_character_tts_unverified_status_never_promises_an_impossible_refr
     assert state.status == expected_status.format(name=profile.display_name)
     for word in forbidden:
         assert word not in state.status.casefold()
+    # Pin the threading, not just its downstream effect: the status line
+    # above is derived from `current_availability.recovery_action`, a local
+    # read off `snapshot.availability` -- it says nothing about whether the
+    # *option row* for this same profile (`state.profiles[0]`) carries the
+    # real value too. personas_screen.py:1753-1756 is the only call site
+    # that threads it into `CharacterTTSProfileOption`; the dataclass
+    # default ("refresh") would silently paper over a dropped argument
+    # there, leaving the Select option reading "· unverified" beside a
+    # status line that correctly says "· No catalog check" -- with every
+    # other test in this suite (which construct options directly) still
+    # green.
+    assert state.profiles[0].recovery_action == recovery_action
 
 
 async def test_character_tts_assignment_worker_still_refuses_unavailable_profile(
