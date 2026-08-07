@@ -1367,6 +1367,7 @@ def aggregate_results(
                 "never renumber, merge, or drop them.\n\n"
                 f"<chunk index=\"{info['index']}\">\n{info['text']}\n</chunk>"
             )
+            chunk_used_fallback = False
             try:
                 chunk_summary = _analyze(
                     input_data=info["text"],
@@ -1389,17 +1390,28 @@ def aggregate_results(
                 )
                 chunk_summary = info["text"][:1500]
                 generated = False
+                chunk_used_fallback = True
 
-            chunk_metadata.append(
-                {
-                    "chunk_index": info["index"],
-                    "evidence_ids": info["item_indices"],
-                    "summary": chunk_summary,
-                    "generated": generated,
-                    "source_characters": len(info["text"]),
-                    "truncated_source": info["truncated"],
-                }
-            )
+            chunk_meta_entry = {
+                "chunk_index": info["index"],
+                "evidence_ids": info["item_indices"],
+                "summary": chunk_summary,
+                # "generated" means only "an LLM produced this summary" -- it
+                # is NOT a failure signal on its own (the single-chunk skip
+                # path above also sets it False with nothing having failed).
+                # "fallback" (below, set ONLY here) is the ONE field that
+                # means "summarization actually failed and truncated raw
+                # text was substituted" -- final review, Important 1: the
+                # footer used to read "generated" as a failure signal and
+                # falsely called the healthiest possible run (single-chunk,
+                # nothing failed) a fallback.
+                "generated": generated,
+                "source_characters": len(info["text"]),
+                "truncated_source": info["truncated"],
+            }
+            if chunk_used_fallback:
+                chunk_meta_entry["fallback"] = True
+            chunk_metadata.append(chunk_meta_entry)
             summarized_chunks.append(f"Chunk {info['index']} Summary:\n{chunk_summary}")
 
         synthesis_source = "\n\n".join(summarized_chunks)

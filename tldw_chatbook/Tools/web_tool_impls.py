@@ -1689,7 +1689,15 @@ def web_deep_search(question: str, engine: Optional[str] = None, max_results: Op
         confidence = 0.0
 
     chunks = final_answer.get("chunks") or []
-    fallback_count = sum(1 for c in chunks if isinstance(c, dict) and c.get("generated") is False)
+    # "fallback" (not "generated") is the failure signal (final review,
+    # Important 1): "generated" only means "an LLM produced this summary" --
+    # the single-chunk skip path in aggregate_results also sets it False
+    # with nothing having failed, so reading it here falsely called the
+    # healthiest possible run (single chunk, synthesis succeeded) a
+    # "fallback summary". "fallback": True is set ONLY when a per-chunk
+    # summarization call actually failed and truncated raw text was
+    # substituted (WebSearch_APIs.py's per-chunk except branch).
+    fallback_count = sum(1 for c in chunks if isinstance(c, dict) and c.get("fallback"))
     fallback_note = f" · {fallback_count} chunk(s) used a fallback summary" if fallback_count else ""
     warning_note = f" · {len(warnings)} search warning(s)" if warnings else ""
     # "may be incomplete", not a definite "partial synthesis" claim

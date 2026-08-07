@@ -166,13 +166,79 @@ def test_deep_search_sources_capped_at_max(deep_env, monkeypatch):
 
 
 def test_deep_search_footer_fallback_note(deep_env, monkeypatch):
+    # "fallback" is a DISTINCT field from "generated" (final review, Important
+    # 1): "generated" just means "an LLM produced this summary" -- it is NOT
+    # a failure signal on its own (the single-chunk skip path also sets it to
+    # False without anything having failed). Only "fallback": True (set by
+    # the per-chunk except branch) means "summarization failed, truncated
+    # raw text was substituted" -- that's what the footer counts.
     async def fake_aa_fallback(wsr, sqd, params, cancel_event=None):
-        final = dict(_FINAL, chunks=[{"generated": False}, {"generated": True}])
+        final = dict(_FINAL, chunks=[{"generated": False, "fallback": True}, {"generated": True}])
         return {"final_answer": final, "relevant_results": {"1": {}}, "web_search_results_dict": wsr}
 
     monkeypatch.setattr(WebSearch_APIs, "analyze_and_aggregate", fake_aa_fallback)
     out = web_deep_search("what is love")
     assert "fallback" in out.lower()
+
+
+# --- Important 1 (final review): fallback-field composition -----------------
+# "Tool tests fake analyze_and_aggregate with 'chunks': [{}]  so the
+# composition [of aggregate_results' real chunk metadata with the footer's
+# reading of it] is never exercised" -- these two tests close that gap by
+# running the REAL aggregate_results output through the REAL footer code,
+# faking only chat_api_call / Summarization_General_Lib.analyze (the
+# established seams), not the chunk-metadata shape itself.
+
+_REL_SINGLE_CHUNK = {"1": {"content": "sum one", "original_content": "orig", "reasoning": "r1",
+                            "url": "https://one.example/", "title": "One"}}
+
+_REL_MULTI_CHUNK = {
+    "a": {"content": "A" * 4000, "reasoning": "ra", "url": "https://a.example/", "title": "A"},
+    "b": {"content": "B" * 4000, "reasoning": "rb", "url": "https://b.example/", "title": "B"},
+}
+
+
+def test_deep_search_footer_no_fallback_mention_for_healthy_single_chunk_run(deep_env, monkeypatch):
+    """The single-chunk skip path is the MAJORITY, healthiest case
+    (synthesis succeeded, nothing failed) -- reproduced bug: it used to be
+    reported as '1 chunk(s) used a fallback summary'."""
+    monkeypatch.setattr(WebSearch_APIs, "chat_api_call", lambda **kwargs: "Deep answer [1].")
+
+    async def fake_aa_real_single_chunk(wsr, sqd, params, cancel_event=None):
+        final_answer = WebSearch_APIs.aggregate_results(_REL_SINGLE_CHUNK, "what is love", [], "openai")
+        return {"final_answer": final_answer, "relevant_results": _REL_SINGLE_CHUNK,
+                "web_search_results_dict": wsr}
+
+    monkeypatch.setattr(WebSearch_APIs, "analyze_and_aggregate", fake_aa_real_single_chunk)
+    out = web_deep_search("what is love")
+    assert "fallback" not in out.lower()
+
+
+def test_deep_search_footer_counts_exactly_failed_chunks_as_fallback(deep_env, monkeypatch):
+    """A genuine per-chunk MAP-phase summarization failure (multi-chunk) must
+    be counted, and counted EXACTLY -- not inflated by the healthy chunk
+    alongside it."""
+    monkeypatch.setattr(WebSearch_APIs, "chat_api_call", lambda **kwargs: "Deep answer [1][2].")
+
+    from tldw_chatbook.LLM_Calls import Summarization_General_Lib
+    calls = {"n": 0}
+
+    def fake_analyze(*a, **kwargs):
+        calls["n"] += 1
+        if calls["n"] == 2:
+            raise RuntimeError("summarizer down")
+        return "chunk summary ok"
+
+    monkeypatch.setattr(Summarization_General_Lib, "analyze", fake_analyze)
+
+    async def fake_aa_real_multi_chunk(wsr, sqd, params, cancel_event=None):
+        final_answer = WebSearch_APIs.aggregate_results(_REL_MULTI_CHUNK, "what is love", [], "openai")
+        return {"final_answer": final_answer, "relevant_results": _REL_MULTI_CHUNK,
+                "web_search_results_dict": wsr}
+
+    monkeypatch.setattr(WebSearch_APIs, "analyze_and_aggregate", fake_aa_real_multi_chunk)
+    out = web_deep_search("what is love")
+    assert "1 chunk(s) used a fallback summary" in out
 
 
 def test_deep_search_footer_warning_note(deep_env, monkeypatch):
