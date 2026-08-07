@@ -17,7 +17,7 @@ priority: medium
 <!-- SECTION:DESCRIPTION:BEGIN -->
 Screen survey (task-2725 follow-up): the Console screen mounts 357 widgets and is the app's default tab, so its cost is also perceived cold-start cost. 124 widgets arrive hidden in three roots: `ConsoleInspectorRail#console-right-rail` (76), `ChatTaskCards#console-task-surface` (32), `CompactModelBar#console-compact-model-bar` (16) — ~35% deferrable.
 
-This is deliberately LAST in the defer-past-first-paint series: `chat_screen.py` is the app's most complex screen and its sync pipeline (`_sync_native_console_chat_ui` and delegates) touches the rail, so the compose→load window audit is substantially harder than 2725/2900/2901. Do not start until both prior tasks have shipped and soaked. The audit must cover: every query of the three roots reachable from the sync path, `restore_state`, the control-bar build, and the session controllers introduced by console-decomposition wave 2.
+OWNER RULING 2026-08-07: proceed now (supersedes the soak gate below — 2725/2900/2901 shipped; the owner directed Console next after Schedules re-measurement showed its 1.11s baseline evaporated on current dev, 0.47s, no work needed there). Originally deliberately LAST in the defer-past-first-paint series: `chat_screen.py` is the app's most complex screen and its sync pipeline (`_sync_native_console_chat_ui` and delegates) touches the rail, so the compose→load window audit is substantially harder than 2725/2900/2901. Do not start until both prior tasks have shipped and soaked. The audit must cover: every query of the three roots reachable from the sync path, `restore_state`, the control-bar build, and the session controllers introduced by console-decomposition wave 2.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
@@ -28,3 +28,15 @@ This is deliberately LAST in the defer-past-first-paint series: `chat_screen.py`
 - [ ] The full Console test surface stays green (including the worker-lifecycle and generation-actions suites).
 - [ ] The compose→load window audit is recorded in the task notes (which query sites can run early, and why each is safe).
 <!-- SECTION:ACCEPTANCE_CRITERIA:END -->
+
+## Investigation Notes (2026-08-07 — implemented, destabilized a core interaction, PARKED with evidence)
+
+<!-- SECTION:NOTES:BEGIN -->
+The owner directed proceeding (soak gate superseded). The full implementation was built and its own tests passed (3/3: mechanism, order-integrity, pre-mount state replay): collapsed-rail deferral (~76 widgets, conditional so restored-open rails stay eager), task-surface deferral (~32) with a `TaskSurfaceMounted` replay, CompactModelBar deliberately excluded (resize-revealed primary control at narrow widths).
+
+**Why it is parked:** the 31-file mount-path console surface exposed a probabilistic regression in `test_console_workspace_conversation_switch_restores_transcript_messages`. A/B under identical machine load: pristine dev 5/5 pass, branch 2-4/5 fail. Bisecting the change itself: EITHER half alone reproduces it (cards-only 5/5 fail, rail-only 2/5). Instrumentation chain, each hypothesis refuted in turn (rail state at deferred mount is right_open=False/left_open=True every run; the press handler NEVER fires in failing runs; every `pilot.click` returns False for 4s while the row reports `display=True disabled=False` at `y=33` — but passing runs show the row hit-tested at `y=30`). Net: any post-paint mount into the Console's nested fr-width Horizontal leaves the compositor hit-map and widget regions in **persistent multi-second disagreement** (~3-row offset) in ~40% of loaded runs — a framework-interaction failure none of the three simpler screens (VerticalScroll stack / ContentSwitcher / plain Container) triggered. Shipping a probabilistic click-eating window on the app's primary screen is the wrong trade for the measured ~0.9s.
+
+**Live target confirmed on current dev:** Console switch 1.35–1.38s (2.7× the ~0.5s median) — the prize is real when the blocker falls.
+
+**Paths forward:** (a) minimal Textual repro of the stale-region/hit-map divergence (upstream or workaround at the framework level); (b) restructure the reveal path first — give workspace-row activation a stable, index-free identity and re-run the A/B; (c) attack the 1.35s from the other side (profile what Console's compose spends beyond widget count). All code reverted; only this record and the tests' design (in this note) survive.
+<!-- SECTION:NOTES:END -->
