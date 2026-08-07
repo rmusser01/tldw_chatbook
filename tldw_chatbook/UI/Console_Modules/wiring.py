@@ -162,9 +162,16 @@ def build_console_controllers(screen: "ChatScreen") -> None:
                 character_id
             )
         ),
+        # Agent <-> workspace seam, same shape as the message seam above:
+        # the resume flow's TOOL-marker re-derivation moved to
+        # `ConsoleAgentController` (wave-4 task 3). This accessor already
+        # existed as a named callable (wave-2 task 2); only its target
+        # changed, from the screen's own method to the controller.
         inject_resume_agent_markers_accessor=(
-            lambda messages, conversation_id: screen._inject_resume_agent_markers(
-                messages, conversation_id
+            lambda messages, conversation_id: (
+                screen._agent._inject_resume_agent_markers(
+                    messages, conversation_id
+                )
             )
         ),
         resolve_effective_scope_state=(

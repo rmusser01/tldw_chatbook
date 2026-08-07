@@ -1,9 +1,15 @@
 """Characterisation of the Console agent cluster (wave-4 decomposition, task 3).
 
-Written BEFORE `ConsoleAgentController` existed, and deliberately driven
-entirely through `ChatScreen`'s own public-to-the-suite names -- so the same
-file is the extraction's before/after equivalence check, not a description of
-wherever the code happens to live afterwards.
+Written and run green BEFORE `ConsoleAgentController` existed, driven
+entirely through `ChatScreen`'s own names -- so this file is the
+extraction's before/after equivalence check, not a description of wherever
+the code happens to live afterwards.
+
+The extraction then repointed the calls the screen no longer answers (it
+kept only `_ensure_console_agent_bridge`, which three other test files
+replace by name), exactly as it repointed the pre-existing suite. What did
+NOT change is every assertion: same seeded run store, same expected text,
+same painted widgets, same call counts.
 
 What the pre-existing suite already covers, and this file therefore does not
 duplicate:
@@ -119,13 +125,15 @@ async def test_persisted_run_state_reaches_the_mounted_agent_rail_statics(tmp_pa
         console._console_agent_bridge = bridge
         console._console_agent_drilldown_run_id = None
         console._current_console_rail_conversation_id = lambda: "conv-A"
-        console._console_agent_drilldown_conversation_id = "conv-A"
+        console._agent._console_agent_drilldown_conversation_id = "conv-A"
 
         # Precondition: nothing live -- the text below can only come from the
         # persisted run store.
         assert bridge.live_snapshot("conv-A").status == "idle"
 
-        status_line, steps_text, subagents_text = console._console_agent_section_lines()
+        status_line, steps_text, subagents_text = (
+            console._agent._console_agent_section_lines()
+        )
         assert status_line == "Agent: done"
         assert "final answer" in steps_text
         assert "research pricing" in subagents_text
@@ -162,7 +170,7 @@ async def test_agent_section_sync_skips_repainting_an_unchanged_payload(tmp_path
         console._console_agent_bridge = _bridge_over(db_path)
         console._console_agent_drilldown_run_id = None
         console._current_console_rail_conversation_id = lambda: "conv-A"
-        console._console_agent_drilldown_conversation_id = "conv-A"
+        console._agent._console_agent_drilldown_conversation_id = "conv-A"
 
         console._sync_console_agent_section()
         assert _static_text(console, "#console-agent-section-status") == "Agent: done"
@@ -173,7 +181,7 @@ async def test_agent_section_sync_skips_repainting_an_unchanged_payload(tmp_path
 
         # ...and a genuinely changed payload does repaint: drilling in flips
         # the status line, so the guard is a guard and not a one-shot.
-        console._toggle_console_agent_drilldown_from_subagents_click()
+        console._agent._toggle_console_agent_drilldown_from_subagents_click()
         await pilot.pause()
         console._sync_console_agent_section()
         assert _static_text(console, "#console-agent-section-status").startswith(
@@ -203,7 +211,7 @@ async def test_drilldown_cycle_steps_persisted_subagents_and_retargets_the_full_
         console._console_agent_bridge = _bridge_over(db_path)
         console._console_agent_drilldown_run_id = None
         console._current_console_rail_conversation_id = lambda: "conv-A"
-        console._console_agent_drilldown_conversation_id = "conv-A"
+        console._agent._console_agent_drilldown_conversation_id = "conv-A"
 
         # Overview: the affordance targets the conversation's latest primary.
         #
@@ -218,7 +226,7 @@ async def test_drilldown_cycle_steps_persisted_subagents_and_retargets_the_full_
 
         seen = []
         for _ in range(3):
-            console._toggle_console_agent_drilldown_from_subagents_click()
+            console._agent._toggle_console_agent_drilldown_from_subagents_click()
             await pilot.pause()
             seen.append(
                 (
@@ -267,19 +275,19 @@ async def test_subagent_badge_counts_batch_once_and_cache_until_the_row_set_chan
             SimpleNamespace(conversation_id="conv-B"),
         ]
 
-        counts = console._console_subagent_counts_for_rows(bridge, rows_ab)
+        counts = console._agent._console_subagent_counts_for_rows(bridge, rows_ab)
         assert counts == {"conv-A": 2, "conv-B": 1}
         assert calls == [["conv-A", "conv-B"]]
 
         # Same visible rows, next tick: served from cache, no second query.
-        assert console._console_subagent_counts_for_rows(bridge, rows_ab) == {
+        assert console._agent._console_subagent_counts_for_rows(bridge, rows_ab) == {
             "conv-A": 2,
             "conv-B": 1,
         }
         assert len(calls) == 1
 
         # The visible row set changed -- one more batched query, still one.
-        assert console._console_subagent_counts_for_rows(
+        assert console._agent._console_subagent_counts_for_rows(
             bridge, rows_ab[:1]
         ) == {"conv-A": 2}
         assert calls[-1] == ["conv-A"]
@@ -287,7 +295,7 @@ async def test_subagent_badge_counts_batch_once_and_cache_until_the_row_set_chan
 
         # A bridge-less screen (no agent runtime) yields no counts and never
         # touches the DB.
-        assert console._console_subagent_counts_for_rows(None, rows_ab) == {}
+        assert console._agent._console_subagent_counts_for_rows(None, rows_ab) == {}
         assert len(calls) == 2
 
 

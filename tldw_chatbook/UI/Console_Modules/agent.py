@@ -60,18 +60,25 @@ payload`. The screen's own method is now the equality guard plus the DOM
 writes, and `_console_agent_section_last` (that guard's memo, and nothing
 else's) stayed with it.
 
-`ChatScreen` keeps seven one-line delegations, under their ORIGINAL private
-names, because each is reached from outside this cluster:
-`_ensure_console_agent_bridge` (five screen-level call sites -- the chat
-controller's construction and core-state sync, the conversation browser,
-the Change Review opener -- plus three test sites that replace it on the
-screen instance), `_console_agent_section_lines`,
-`_console_agent_fleet_summary_line`, `_toggle_console_agent_drilldown_from_
-subagents_click`, `_open_console_agent_run_log_viewer` and `_console_
-subagent_counts_for_rows` (screen-level callers and/or direct test drives),
-and `_inject_resume_agent_markers` (`ConsoleWorkspaceController` reaches it
-by name through the wiring, and two test files drive it directly). The
-other seven moved with no residue.
+`ChatScreen` keeps exactly ONE one-line delegation, under its original
+private name: `_ensure_console_agent_bridge`. Three test files replace it
+on the screen instance (`Tests/Chat/test_change_turn_tracking.py` x2,
+`Tests/Chat/test_console_agent_swap.py`) to steer five screen-level
+consumers that are not part of this cluster -- the chat controller's
+construction and its core-state sync, the conversation browser's badge
+counts, and the Change Review opener -- so the screen must keep answering
+to that name for those patches to keep working.
+
+Every other moved method left no residue: their screen-side callers
+(`compose_content`, `_toggle_console_rail_section`, `_with_console_
+conversation_browser_state`, `on_click`, `on_button_pressed`) now reach
+`self._agent.<name>()` directly, the same shape those methods already use
+for `self._workspace`/`self._session`, and the ~30 test call sites were
+repointed with them. That is deliberate: `chat_screen.py` is under a
+method-count ratchet (`Tests/Architecture/test_screen_size_ratchet.py`),
+and a delegation table of six pure forwards would have spent the whole of
+this extraction's method-count gain on re-exporting names with one caller
+each -- 599 methods against a 598 ceiling, versus 591 with them gone.
 
 One narrowing worth stating plainly: a test that replaces `screen.
 _ensure_console_agent_bridge` on the instance still steers every SCREEN-side
@@ -83,6 +90,16 @@ swap.py`), so nothing regressed; a future test that needs to stub the
 bridge for the rail itself should set `screen._console_agent_bridge`
 instead, which is what `Tests/UI/test_console_agent_rail.py` already does
 (and which still works, via the read-write proxy on the screen).
+
+`ChatScreen` keeps three read-write proxy properties for the cluster state
+its own non-agent code still touches -- `_console_agent_bridge` (read by
+`_build_console_inspector_state`), `_console_agent_drilldown_run_id` (read
+by `compose_content`, cleared by `on_button_pressed`'s Back branch and by
+`ConsoleSessionController`/`ConsoleWorkspaceController` through their own
+same-named proxies) and `_agent_section_user_dismissed_while_busy` (written
+by `_toggle_console_rail_section`). Each is read-WRITE: all three were
+plain assignable attributes at baseline, and the suite assigns two of them
+20+ times. The cluster's other six attributes have no proxy at all.
 
 `_console_agent_runtime_enabled` is deliberately NOT part of this cluster,
 despite matching on name. It is a four-line `[console] agent_runtime`

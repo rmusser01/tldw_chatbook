@@ -3172,36 +3172,6 @@ class ChatScreen(BaseAppScreen):
         self._sync_console_rail_system_line()
         self._sync_console_agent_section()
 
-    def _console_agent_section_lines(self) -> tuple[str, str, str]:
-        """Return the Agent rail's (status, steps, sub-agents) line text.
-
-        One-line delegation (wave-4 console decomposition, task 3): reached
-        from `compose_content` and driven directly by
-        `Tests/UI/test_console_agent_rail.py` (7 sites). See
-        `ConsoleAgentController._console_agent_section_lines`.
-        """
-        return self._agent._console_agent_section_lines()
-
-    def _console_agent_fleet_summary_line(self) -> str:
-        """Return the Agent rail's fleet summary line (parallel-agents spec §6).
-
-        One-line delegation (wave-4 console decomposition, task 3): reached
-        from `compose_content` and `_toggle_console_rail_section`, and
-        driven directly by `Tests/UI/test_console_parallel_runs.py`. See
-        `ConsoleAgentController._console_agent_fleet_summary_line`.
-        """
-        return self._agent._console_agent_fleet_summary_line()
-
-    def _open_console_agent_run_log_viewer(self) -> None:
-        """Kick off loading the full run log for whatever "View full log" targets.
-
-        One-line delegation (wave-4 console decomposition, task 3): reached
-        from `on_button_pressed`'s `console-agent-view-full-log` branch and
-        driven directly by `Tests/UI/test_console_agent_rail.py`. See
-        `ConsoleAgentController._open_console_agent_run_log_viewer`.
-        """
-        self._agent._open_console_agent_run_log_viewer()
-
     def _sync_console_agent_section(self) -> None:
         """Apply the Agent rail's derived payload to the mounted widgets.
 
@@ -3251,17 +3221,6 @@ class ChatScreen(BaseAppScreen):
         except (NoMatches, QueryError):
             return
         self._console_agent_section_last = payload
-
-    def _toggle_console_agent_drilldown_from_subagents_click(self) -> None:
-        """Step the drill-in through this conversation's sub-agent runs.
-
-        One-line delegation (wave-4 console decomposition, task 3): reached
-        from `on_click`'s `#console-agent-section-subagents` branch and
-        driven directly by `Tests/UI/test_console_agent_rail.py`. See
-        `ConsoleAgentController._toggle_console_agent_drilldown_from_
-        subagents_click`.
-        """
-        self._agent._toggle_console_agent_drilldown_from_subagents_click()
 
     def _focus_console_workspace_conversation_search(self) -> None:
         """Restore focus to the conversation search input when it is mounted."""
@@ -4187,10 +4146,10 @@ class ChatScreen(BaseAppScreen):
         self._hands_free._console_hands_free_store_tap_installed = value
 
     # Agent-cluster state moved to `ConsoleAgentController` (wave-4 console
-    # decomposition, task 3). These four properties keep
+    # decomposition, task 3). These three properties keep
     # `self._console_agent_bridge`/`_console_agent_drilldown_run_id`/
-    # `_console_agent_drilldown_conversation_id`/`_agent_section_user_
-    # dismissed_while_busy` readable AND writable exactly as before, for the
+    # `_agent_section_user_dismissed_while_busy` readable AND writable
+    # exactly as before, for the
     # screen methods outside the agent cluster that still touch this state
     # (`compose_content`, `_build_console_inspector_state`,
     # `_toggle_console_rail_section`, `on_button_pressed`'s drill-down Back
@@ -4205,10 +4164,12 @@ class ChatScreen(BaseAppScreen):
     # times, so a getter-only property would turn a legal write into
     # `AttributeError`.
     #
-    # The cluster's other five attributes (`_console_agent_full_log_cache_
-    # run_id`/`..._available`, `_console_subagent_counts_cache`/`..._row_
-    # ids`/`..._at`) get no proxy: nothing outside the moved methods ever
-    # read or wrote them.
+    # The cluster's other six attributes (`_console_agent_drilldown_
+    # conversation_id`, `_console_agent_full_log_cache_run_id`/`..._
+    # available`, `_console_subagent_counts_cache`/`..._row_ids`/`..._at`)
+    # get no proxy: no production code outside the moved methods ever read
+    # or wrote them, and the tests that set the first one were repointed at
+    # `screen._agent` alongside this move.
     @property
     def _console_agent_bridge(self) -> Any:
         return self._agent._console_agent_bridge
@@ -4224,14 +4185,6 @@ class ChatScreen(BaseAppScreen):
     @_console_agent_drilldown_run_id.setter
     def _console_agent_drilldown_run_id(self, value: str | None) -> None:
         self._agent._console_agent_drilldown_run_id = value
-
-    @property
-    def _console_agent_drilldown_conversation_id(self) -> str | None:
-        return self._agent._console_agent_drilldown_conversation_id
-
-    @_console_agent_drilldown_conversation_id.setter
-    def _console_agent_drilldown_conversation_id(self, value: str | None) -> None:
-        self._agent._console_agent_drilldown_conversation_id = value
 
     @property
     def _agent_section_user_dismissed_while_busy(self) -> bool:
@@ -8359,22 +8312,6 @@ class ChatScreen(BaseAppScreen):
         points at `self._message` directly, bypassing this delegation."""
         return self._message._console_messages_from_conversation_tree(tree)
 
-    def _inject_resume_agent_markers(
-        self,
-        messages: list[ConsoleChatMessage],
-        conversation_id: str,
-    ) -> list[ConsoleChatMessage]:
-        """Re-derive and interleave TOOL markers from ``AgentRunsDB`` on resume.
-
-        One-line delegation (wave-4 console decomposition, task 3):
-        `ConsoleWorkspaceController` reaches this by name through the
-        wiring's `inject_resume_agent_markers_accessor`, and two test files
-        drive it directly (`Tests/UI/test_console_native_chat_flow.py`,
-        `Tests/integration/test_console_agent_marker_anchoring_e2e.py`). See
-        `ConsoleAgentController._inject_resume_agent_markers`.
-        """
-        return self._agent._inject_resume_agent_markers(messages, conversation_id)
-
 
 
     async def _resolve_resumed_character_name(self, character_id: int) -> str:
@@ -9226,20 +9163,6 @@ class ChatScreen(BaseAppScreen):
         await self._refresh_console_conversation_browser_search(query, token)
 
 
-    def _console_subagent_counts_for_rows(
-        self,
-        bridge: Any | None,
-        rows: Iterable[Any],
-    ) -> Dict[str, int]:
-        """Return ``conversation_id -> sub-agent count`` for browser rows.
-
-        One-line delegation (wave-4 console decomposition, task 3): reached
-        from `_with_console_conversation_browser_state` and driven directly
-        by `Tests/UI/test_console_agent_rail.py` (6 sites). See
-        `ConsoleAgentController._console_subagent_counts_for_rows`.
-        """
-        return self._agent._console_subagent_counts_for_rows(bridge, rows)
-
     def _with_console_conversation_browser_state(
         self,
         state: ConsoleWorkspaceContextState,
@@ -9257,7 +9180,7 @@ class ChatScreen(BaseAppScreen):
             current_conversation_id=current_conversation_id,
         )
         bridge = self._ensure_console_agent_bridge()
-        subagent_counts = self._console_subagent_counts_for_rows(bridge, rows)
+        subagent_counts = self._agent._console_subagent_counts_for_rows(bridge, rows)
         browser = build_console_conversation_browser_state(
             rows=rows,
             active_workspace_id=self._workspace._current_console_workspace_context().active_workspace_id,
@@ -10012,7 +9935,7 @@ class ChatScreen(BaseAppScreen):
             # explicit choice either way.
             if next_open:
                 self._agent_section_user_dismissed_while_busy = False
-            elif self._console_agent_fleet_summary_line():
+            elif self._agent._console_agent_fleet_summary_line():
                 self._agent_section_user_dismissed_while_busy = True
         self._set_console_rail_preference(
             section_updates={section_id: next_open},
@@ -12179,13 +12102,13 @@ class ChatScreen(BaseAppScreen):
                 # session-settings resolution, the agent bridge, and
                 # character avatar rendering all stay screen-owned; only the
                 # already-computed results are handed to `ConsoleLeftRail`.
-                fleet_line = self._console_agent_fleet_summary_line()
+                fleet_line = self._agent._console_agent_fleet_summary_line()
                 settings_summary_state = self._build_console_settings_summary_state()
                 system_line_text, system_line_dim = (
                     self._console_rail_system_line_state()
                 )
                 agent_status_line, agent_steps_text, agent_subagents_text = (
-                    self._console_agent_section_lines()
+                    self._agent._console_agent_section_lines()
                 )
                 show_character_section = resolve_show_character_avatar(
                     getattr(getattr(self, "app_instance", None), "app_config", {})
@@ -16939,7 +16862,7 @@ class ChatScreen(BaseAppScreen):
             return
         if getattr(target, "id", None) == "console-agent-section-subagents":
             event.stop()
-            self._toggle_console_agent_drilldown_from_subagents_click()
+            self._agent._toggle_console_agent_drilldown_from_subagents_click()
             return
         try:
             composer = self.query_one("#console-native-composer", ConsoleComposerBar)
@@ -17472,7 +17395,7 @@ class ChatScreen(BaseAppScreen):
             return
         if button_id == "console-agent-view-full-log":
             event.stop()
-            self._open_console_agent_run_log_viewer()
+            self._agent._open_console_agent_run_log_viewer()
             return
         if button_id == "console-new-chat-tab":
             event.stop()
