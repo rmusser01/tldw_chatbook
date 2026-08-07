@@ -421,6 +421,9 @@ def test_counts_returns_per_state_counts() -> None:
         # counts() is keyed by every IngestJobState, so a state with no jobs
         # still reports zero rather than being absent.
         "cancelled": 0,
+        # SKIPPED joined the lifecycle in 40de4b136 (task-2220:
+        # unsupported-in-folder files record as skipped, not failed).
+        "skipped": 0,
     }
 
 

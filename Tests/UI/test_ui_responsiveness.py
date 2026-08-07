@@ -309,6 +309,13 @@ def _make_sync_probe_screen(monitor):
     screen = MagicMock(spec=ChatScreen)
     screen._console_sync_in_progress = False
     screen._console_sync_requested = False
+    # Console decomposition wave 2 (PR #1381) moved stages onto instance-held
+    # delegate objects created in __init__ (`_session`, `_workspace`).
+    # `spec=ChatScreen` auto-stubs only CLASS attributes, so these fall
+    # outside the spec treadmill this factory exists to avoid and must be
+    # stubbed by hand; every delegate call in the sync path is synchronous.
+    screen._session = MagicMock()
+    screen._workspace = MagicMock()
     screen.app_instance = SimpleNamespace(ui_responsiveness_monitor=monitor)
     screen._ui_responsiveness_monitor = partial(
         ChatScreen._ui_responsiveness_monitor, screen

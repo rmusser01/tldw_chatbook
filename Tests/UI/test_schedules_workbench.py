@@ -1019,13 +1019,17 @@ async def test_conflicts_tab_renders_rows_and_resolves():
         assert table.row_count == 1
         server_button = tab.query_one("#scheduling-use-server", Button)
         local_button = tab.query_one("#scheduling-use-local", Button)
+        # The Lab/Schedules/Logs UX overhaul (9dd2374b5, ADR-031) replaced the
+        # per-button resolve tooltips with one guidance line set by
+        # `_set_actions_enabled` whenever rows exist; this pin tracks that
+        # shipped copy (the old per-version tooltips only exist pre-populate).
         assert (
             str(server_button.tooltip)
-            == "Resolve the selected conflict with the server version."
+            == "Select a conflict above, then choose which version to keep."
         )
         assert (
             str(local_button.tooltip)
-            == "Resolve the selected conflict with the local version."
+            == "Select a conflict above, then choose which version to keep."
         )
         table.cursor_coordinate = (0, 0)
         await pilot.click("#scheduling-use-server")

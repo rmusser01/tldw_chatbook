@@ -121,6 +121,10 @@ def _bare_generation_screen(store: ConsoleChatStore) -> ChatScreen:
     screen._pending_console_delete_message_id = None
     screen.app_instance = SimpleNamespace(notify=lambda *a, **k: None)
     screen._sync_native_console_chat_ui = AsyncMock()
+    # `_clear_console_composer_draft` now also syncs the slash-command popup;
+    # on a detached screen (no `_nodes`) that query dies with AttributeError,
+    # not the guarded QueryError — same class of seam as the sync stub above.
+    screen._sync_console_command_popup = lambda: None
     return screen
 
 
