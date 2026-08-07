@@ -107,6 +107,7 @@ unless you run Manual sync from Overview yourself.
 | Data & Privacy | **Workspaces** | Create, rename, archive, and bind folders for agent file tools. | Applies immediately |
 | Data & Privacy | **Privacy & Security** (view) | Secrets, encryption, redaction, and local privacy boundaries. | Read-only here |
 | Troubleshooting | **Diagnostics** (view) | Config validation, logs, and troubleshooting signals. | Read-only here |
+| Troubleshooting | **About** (view) | Version, license, and project links. | Read-only here |
 | Expert | **Internal Prompts** | The system prompts the app uses internally (RAG, web search, agents, summarization, more). | Per-item Save/Reset |
 | Expert | **Advanced Config** | Raw TOML view and expert configuration editing. | Validate, then Save |
 | Domain Defaults | **RAG** → [own page](settings/rag.md) | Source search, retrieval, citations, snippets, and Console evidence defaults. | Draft — save with s |
@@ -290,6 +291,13 @@ Three buttons, no fields. Pressing **t** runs the first two together.
 | **Validate Config** | Parses your configuration file strictly and reports "valid" or "invalid - \<error\>", with secrets redacted out of the error. |
 | **Reload Config** | Validates, then loads the file into the running app. |
 | **Run Setup Wizard** | Re-runs the guided first-run setup — see [First run setup](First_Run_Setup.md). |
+
+### Troubleshooting — About
+
+The installed version, the license (AGPLv3+), a short feature list, and the
+project links (GitHub, documentation, issues). Read-only. Clicking a link
+opens it in your system browser and confirms with a notification; nothing on
+this page writes config.
 
 ### Expert — Internal Prompts
 
@@ -484,4 +492,4 @@ not open an editor.
   inspector" at the bottom means there is more below.
 
 —
-*Verified against dev @ e7b9ebabd — 2026-08-06*
+*Verified against dev @ 39232202b — 2026-08-06*
