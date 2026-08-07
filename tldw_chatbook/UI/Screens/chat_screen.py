@@ -8102,14 +8102,10 @@ class ChatScreen(BaseAppScreen):
     ) -> _ConsoleTranscriptReadingState | None:
         """Capture the semantic reading position before composer layout changes.
 
-        Delegates to ``ConsoleTranscriptRegion.capture_reading_state`` (wave-3
-        task 2); kept as a screen method because
-        ``_set_console_composer_collapsed`` and a mounted composer-collapse
-        regression both call it by this name.
+        Delegates to ``ConsoleTranscriptRegion.capture_reading_state``.
 
         Returns:
-            The transcript's reading state, or ``None`` when no transcript
-            region is mounted.
+            The transcript's reading state, or ``None`` when unmounted.
         """
         region = self._console_transcript_region_or_none()
         return None if region is None else region.capture_reading_state()
@@ -13544,26 +13540,18 @@ class ChatScreen(BaseAppScreen):
                     left_rail.styles.display = "none"
                 yield self._frame_console_region(left_rail)
 
-                # `session_surface_builder` hands `ConsoleTranscriptRegion` a
-                # zero-arg callable, not a pre-built widget, for the same
-                # reason `character_avatar_widget_builder` does above -- and
-                # with a sharper edge here: `_ensure_console_session_surface`
-                # CACHES its result on `self.console_session_surface` and
-                # returns the same instance every time, so a stored instance
-                # would re-yield a widget Textual may already have removed on
-                # the next recompose, and would skip the background-effect
-                # re-sync that call performs. The lambda closes over `self`
-                # and resolves at CALL time (matching
-                # `ConsoleDictationController`'s late-binding constructor rule
-                # -- see `dictation.py`'s module docstring).
+                # A zero-arg builder, not a pre-built widget, for the same
+                # reason `character_avatar_widget_builder` above is one --
+                # with a sharper edge here, since the surface is CACHED on
+                # the screen; full reasoning in `ConsoleTranscriptRegion.
+                # __init__`'s docstring. Sizing stays on this side: it
+                # describes this pane's place among its grid siblings
+                # (3fr / 13fr / 4fr), exactly as both rails are wired.
                 main_column = ConsoleTranscriptRegion(
                     session_surface_builder=(
                         lambda: self._ensure_console_session_surface()
                     ),
                 )
-                # Sizing stays here, not in the region: these are facts about
-                # this pane's place among its `#console-workspace-grid`
-                # siblings (3fr / 13fr / 4fr), exactly as both rails are wired.
                 main_column.styles.width = "13fr"
                 main_column.styles.min_width = 56
                 main_column.styles.min_height = 0
