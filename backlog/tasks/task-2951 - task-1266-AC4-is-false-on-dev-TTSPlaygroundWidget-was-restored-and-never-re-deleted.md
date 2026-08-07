@@ -158,8 +158,35 @@ as unused, but two tests patched that already-inert attribute (the pane's servic
 factory never read it) rather than `SpeechPlaygroundPane._tts_service_factory` --
 repointed both to the correct target.
 
-AC#3 now genuinely holds: 12 of the 14 red tests are dead-code-only (unchanged
-classification), 2 are ported as real green tests proving fixed live behavior, and the
-"already covered" claim is corrected to reflect that one of the three needed porting.
+AC#3 now genuinely holds: of the 14 red tests, 2 are ported as real green tests
+proving fixed live behavior (see final classification below) and the "already
+covered" claim is corrected to reflect that one of the three needed porting.
 Full evidence trail in `.task-2951-report.md`.
+
+### Second re-review round: final 14-red classification + task-3000 filed
+
+A second independent-probe pass confirmed all three items from the round above clean
+(both CRITICAL fixes; the `speech_catalog_mixin.py` ordering fix specifically verified
+by deleting the added `_sync_generate_enabled()` call and watching the pre-existing
+test fail exactly as its own docstring predicts), and resolved the two remaining open
+questions by probing each independently against pre-fix AND post-fix code:
+
+- `test_exact_profile_ctrl_g_cannot_bypass_configuration_change_gate` -- already
+  covered by the same unification fix (confirmed, not assumed). Stays dead, no port
+  needed.
+- `test_configuration_change_detaches_cancellation_resistant_profile_voice_gate` --
+  a real, separate, PRE-EXISTING gap (identical probe result before and after this
+  branch's fix -- not introduced or worsened by it): a config change landing while a
+  cancellation-resistant voice check is in flight never detaches
+  `_profile_voice_validation_token`, so Generate stays disabled indefinitely (fail
+  *closed*, the opposite failure direction from the two CRITICALs, which were fail
+  *open*). The retired widget detached the token on this sequence, settled
+  availability at "unverified", and allowed one warned attempt. Filed as
+  **task-3000** (dep: task-2951), scanned against every worktree's `backlog/tasks/`
+  and every remote ref for the true max task id (2990) and leapfrogged to 3000 for
+  headroom.
+
+**Final 14-red classification, locked: 11 dead / 2 fixed-this-branch / 1
+real-gap-filed (task-3000).** Full per-test names in `.task-2951-report.md`'s
+"Corrected 14-red classification (FINAL...)" section.
 <!-- SECTION:NOTES:END -->
