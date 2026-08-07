@@ -252,6 +252,29 @@ def test_deep_search_footer_warning_note(deep_env, monkeypatch):
     assert "warning" in out.lower()
 
 
+def test_deep_search_footer_surfaces_subquery_generation_failure_warning(deep_env, monkeypatch):
+    """task-3221: exhausting all 3 paid sub-query-generation attempts must
+    leave a trace the user can see -- otherwise it's indistinguishable from
+    the feature being off. Passthrough test (phase-boundary fake, like
+    test_deep_search_footer_warning_note above): the warning
+    generate_and_search appends on total sub-query-generation failure must
+    reach the tool's footer's warning count like any other provider
+    warning."""
+    warning_text = (
+        f"sub-query generation failed after "
+        f"{WebSearch_APIs._SUBQUERY_GENERATION_MAX_ATTEMPTS} attempts; "
+        "searched only the original query"
+    )
+    phase1_with_subquery_failure = {
+        "web_search_results_dict": {"results": [{"title": "T", "url": "https://e.com/"}],
+                                     "warnings": [warning_text]},
+        "sub_query_dict": {"sub_questions": [], "main_goal": "q"},
+    }
+    monkeypatch.setattr(WebSearch_APIs, "generate_and_search", lambda q, p: phase1_with_subquery_failure)
+    out = web_deep_search("what is love")
+    assert "1 search warning(s)" in out  # counted through, like any other provider warning
+
+
 def test_deep_search_phase1_exception_wrapped(deep_env, monkeypatch):
     def boom(q, p):
         raise RuntimeError("provider exploded")

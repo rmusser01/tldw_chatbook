@@ -461,10 +461,24 @@ def generate_and_search(question: str, search_params: Dict) -> Dict:
         "analysis_prompt": None,
     }
 
+    # Set only when subquery_generation is on AND analyze_question exhausted
+    # every attempt without producing a single sub-question (task-3221): up
+    # to _SUBQUERY_GENERATION_MAX_ATTEMPTS paid LLM calls were made and none
+    # of them yielded anything, which is otherwise indistinguishable from
+    # the feature being off. Appended to warnings below, once the dict
+    # exists.
+    subquery_generation_failure_warning: Optional[str] = None
     if search_params.get("subquery_generation", False):
         logger.info("Sub-query generation enabled")
         api_endpoint = search_params.get("subquery_generation_llm", "openai")
         sub_query_dict = analyze_question(question, api_endpoint)
+        if not sub_query_dict.get("sub_questions"):
+            subquery_generation_failure_warning = (
+                f"sub-query generation failed after "
+                f"{_SUBQUERY_GENERATION_MAX_ATTEMPTS} attempts; searched only "
+                "the original query"
+            )
+            logger.warning(subquery_generation_failure_warning)
 
     # Merge original question with sub-queries, dropping any sub-query that's
     # just the original question again (case-insensitive) before fan-out
@@ -497,6 +511,8 @@ def generate_and_search(question: str, search_params: Dict) -> Dict:
     web_search_results_dict = initialize_web_search_results_dict(search_params)
     web_search_results_dict["search_query"] = question
     web_search_results_dict["warnings"] = []
+    if subquery_generation_failure_warning:
+        web_search_results_dict["warnings"].append(subquery_generation_failure_warning)
 
     # 3. Perform searches and accumulate all raw results
     #
@@ -715,7 +731,13 @@ async def analyze_and_aggregate(
 
 ######################### Question Analysis #########################
 #
-#
+_SUBQUERY_GENERATION_MAX_ATTEMPTS = 3
+"""Number of paid LLM attempts `analyze_question` makes at generating
+sub-questions before giving up. Shared with `generate_and_search`'s
+total-failure warning (task-3221) so the "N attempts" the user is told
+about can never drift from the loop bound that actually produced it."""
+
+
 def analyze_question(question: str, api_endpoint) -> Dict:
     """
     Analyze a question and generate relevant sub-queries.
@@ -763,7 +785,7 @@ def analyze_question(question: str, api_endpoint) -> Dict:
     input_data = "Follow the above instructions."
 
     sub_questions: List[str] = []
-    for attempt in range(3):
+    for attempt in range(_SUBQUERY_GENERATION_MAX_ATTEMPTS):
         try:
             logger.info(f"Generating sub-questions (attempt {attempt + 1})")
 

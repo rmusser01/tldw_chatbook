@@ -163,6 +163,55 @@ def test_generate_and_search_stops_fanout_at_phase1_time_budget(monkeypatch):
     assert wsr["results"]  # partial results still returned, not discarded
 
 
+def test_generate_and_search_warns_when_subquery_generation_exhausts_attempts(monkeypatch):
+    """task-3221: when subquery_generation is on, analyze_question makes up
+    to 3 paid LLM attempts; if every attempt fails to produce sub-questions,
+    generate_and_search must leave a trace -- otherwise 3 billed calls are
+    indistinguishable from the feature being off. Drives the real
+    analyze_question/generate_and_search path (only chat_api_call and
+    perform_websearch are faked) to a total failure and asserts the warning
+    text lands in web_search_results_dict['warnings']."""
+    attempts = {"n": 0}
+
+    def always_garbage(**kwargs):
+        attempts["n"] += 1
+        return "not json and no quoted strings here"
+
+    def fake_perform(search_engine, search_query, *a, **k):
+        return {"results": [_std_result("T", "https://e.com/", "c")], "processing_error": None}
+
+    monkeypatch.setattr(WebSearch_APIs, "chat_api_call", always_garbage)
+    monkeypatch.setattr(WebSearch_APIs, "perform_websearch", fake_perform)
+    monkeypatch.setattr(WebSearch_APIs.time, "sleep", lambda s: None)
+
+    out = WebSearch_APIs.generate_and_search(
+        "what is love", _search_params(subquery_generation=True, subquery_generation_llm="openai")
+    )
+    wsr = out["web_search_results_dict"]
+    assert attempts["n"] == WebSearch_APIs._SUBQUERY_GENERATION_MAX_ATTEMPTS  # all paid attempts made
+    expected = (
+        f"sub-query generation failed after "
+        f"{WebSearch_APIs._SUBQUERY_GENERATION_MAX_ATTEMPTS} attempts; "
+        "searched only the original query"
+    )
+    assert expected in wsr["warnings"]
+
+
+def test_generate_and_search_no_warning_when_subquery_generation_disabled(monkeypatch):
+    """Sanity check: the new warning must never appear when
+    subquery_generation is off -- analyze_question is never even called, so
+    there is nothing to report as a "failure"."""
+    def fake_perform(search_engine, search_query, *a, **k):
+        return {"results": [_std_result("T", "https://e.com/", "c")], "processing_error": None}
+
+    monkeypatch.setattr(WebSearch_APIs, "perform_websearch", fake_perform)
+    monkeypatch.setattr(WebSearch_APIs.time, "sleep", lambda s: None)
+
+    out = WebSearch_APIs.generate_and_search("q", _search_params(subquery_generation=False))
+    wsr = out["web_search_results_dict"]
+    assert not any("sub-query generation failed" in w for w in wsr["warnings"])
+
+
 # --- chunking / confidence ----------------------------------------------------
 
 def test_build_chunk_infos_packs_and_splits():
