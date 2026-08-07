@@ -1462,10 +1462,18 @@ async def test_stts_window_consumes_exact_profile_preview_once_on_playground_rem
     async def _unavailable_tts_service() -> object:
         raise RuntimeError("catalog deliberately unavailable")
 
+    # `SpeechCatalogMixin._tts_service_factory` resolves `get_tts_service`
+    # from its own direct import, never from `STTS_Window`'s module
+    # namespace -- patching that module attribute was always inert here
+    # (TASK-2951's second widget-deletion pass only surfaced it: deleting
+    # the retired widget, the sole other user of that name in `STTS_Window`,
+    # left the import genuinely unused, so ruff correctly dropped it and
+    # this patch started raising `AttributeError` instead of silently
+    # doing nothing).
     monkeypatch.setattr(
-        stts_window_module,
-        "get_tts_service",
-        _unavailable_tts_service,
+        SpeechPlaygroundPane,
+        "_tts_service_factory",
+        lambda self: _unavailable_tts_service(),
     )
 
     async with app.run_test(size=(150, 55)) as pilot:
@@ -1513,10 +1521,18 @@ async def test_exact_preview_at_80x24_focuses_playground_with_visible_recovery_b
     async def _unavailable_tts_service() -> object:
         raise RuntimeError("catalog deliberately unavailable")
 
+    # `SpeechCatalogMixin._tts_service_factory` resolves `get_tts_service`
+    # from its own direct import, never from `STTS_Window`'s module
+    # namespace -- patching that module attribute was always inert here
+    # (TASK-2951's second widget-deletion pass only surfaced it: deleting
+    # the retired widget, the sole other user of that name in `STTS_Window`,
+    # left the import genuinely unused, so ruff correctly dropped it and
+    # this patch started raising `AttributeError` instead of silently
+    # doing nothing).
     monkeypatch.setattr(
-        stts_window_module,
-        "get_tts_service",
-        _unavailable_tts_service,
+        SpeechPlaygroundPane,
+        "_tts_service_factory",
+        lambda self: _unavailable_tts_service(),
     )
 
     async with app.run_test(size=(80, 24)) as pilot:

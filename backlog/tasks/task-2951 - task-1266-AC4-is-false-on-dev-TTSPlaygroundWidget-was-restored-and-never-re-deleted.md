@@ -118,4 +118,48 @@ failure found and left alone --
 test_first_time_audio_cpp_setup_lab_generation_and_console_handoff` --
 confirmed by running it against a throwaway worktree at the unmodified base
 commit (517e1b200), where it also fails; unrelated to this task.
+
+### Re-review correction (same session)
+
+A whole-branch review found the AC#3 "zero silent coverage loss" claim above did not
+hold: 2 of the 14 tests classified "dead code, proves nothing" actually described real
+pane bugs, both in the exact-profile generate-readiness path, and one of the "3 already
+covered" tests had zero real coverage. Root cause: `_generation_readiness_error` (what
+`_generate_tts`/`action_generate_tts()` actually consults) never had the profile-preset
+branch the retired widget's own version carried; `_sync_generate_enabled` (the button's
+visual state) reimplemented a separate, profile-aware condition tree instead of asking
+the same question. The two gates disagreeing meant a pending exact-profile voice
+validation correctly disabled the button but did not stop `action_generate_tts()` from
+firing anyway (CRITICAL, and newly keyboard-reachable because of this same task's own
+AC#2 `_playground()` fix), and a naturally-stale-catalog "unverified" preset showed an
+enabled button that silently did nothing when pressed (CRITICAL).
+
+Fixed by unification: `_generation_readiness_error` gained the profile-preset branch
+(ported verbatim from the retired widget, `speech_synthesis_mixin.py`), and
+`_sync_generate_enabled` now derives the button's disabled state from that same
+function instead of its own parallel tree, so the two structurally cannot diverge
+again. TDD'd (both dropped tests ported as real, non-xfail assertions, RED confirmed
+against pre-fix code, GREEN after) and mutation-checked (temporarily re-split the
+gates -- both tests failed again, on both their button-state and action-outcome
+halves -- then restored). Also ported the genuine acquisition-failure gap
+(`test_profile_service_acquisition_failure_projects_exact_disabled_recovery`; passed
+immediately, confirming it was coverage-only, not a bug).
+
+The unification surfaced one more pre-existing bug in `speech_catalog_mixin.py`: a
+catalog-application branch popped `_pending_voice_selections` without re-syncing the
+button, invisible while `_sync_generate_enabled` never read that dict, now regressing
+`test_catalog_revision_invalidates_old_voices_before_rediscovery` once it does --
+fixed with a one-line `_sync_generate_enabled()` call.
+
+Widening the gate list to include `test_stts_profile_library.py` (missed in the
+original pass) also caught 2 pre-existing failures from the original widget deletion
+itself: `ruff --fix`'s import cleanup correctly removed `STTS_Window.get_tts_service`
+as unused, but two tests patched that already-inert attribute (the pane's service
+factory never read it) rather than `SpeechPlaygroundPane._tts_service_factory` --
+repointed both to the correct target.
+
+AC#3 now genuinely holds: 12 of the 14 red tests are dead-code-only (unchanged
+classification), 2 are ported as real green tests proving fixed live behavior, and the
+"already covered" claim is corrected to reflect that one of the three needed porting.
+Full evidence trail in `.task-2951-report.md`.
 <!-- SECTION:NOTES:END -->

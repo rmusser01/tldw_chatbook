@@ -1931,6 +1931,151 @@ async def test_complete_voice_observation_missing_exact_voice_blocks_profile(
     assert service.voice_calls == [("audio_cpp", "<opaque:model>", False)]
 
 
+# --------------------------------------------------------------------------
+# TASK-2951 re-review: the readiness-gate unification.
+#
+# Both tests below were originally classified as "RED against the dead
+# widget, proves nothing about live code" and dropped without porting. That
+# classification was wrong for these two specifically: they describe real
+# guarantees `SpeechPlaygroundPane` did not (yet) have, not dead-widget-only
+# behavior. `action_generate_tts()` -- unreachable from the keyboard before
+# this same branch's `_playground()` fix (TASK-2951 AC#2), since the screen-
+# level mirror always found nothing to call it on -- is now reachable, which
+# is what makes the gap below a live bypass rather than a theoretical one.
+#
+# Root cause: `_sync_generate_enabled` (the button's visual state) was
+# profile-preset-aware; `_generation_readiness_error` (what `_generate_tts`
+# actually consults before firing) was not -- it never had the profile
+# branch the retired widget's own version carried (verified via `git show
+# HEAD:tldw_chatbook/UI/STTS_Window.py` against the version that predates
+# this branch's widget deletion). Fixed by making `_sync_generate_enabled`
+# derive the button's disabled state from `_generation_readiness_error`
+# instead of re-deriving its own answer, so the two can no longer disagree.
+@pytest.mark.asyncio
+async def test_exact_profile_cannot_generate_while_voice_validation_is_pending(
+    audio_cpp_playground: FakeTTSService,
+) -> None:
+    """A pending voice-validation token must block generation -- not just
+    the button's visual state, but a direct `action_generate_tts()` call
+    too, which is exactly how the keyboard `g` mirror (STTSScreen ->
+    `_playground()` -> `SpeechPlaygroundPane`) reaches it."""
+    service = audio_cpp_playground
+    service.voice_started = asyncio.Event()
+    service.allow_voices = asyncio.Event()
+    preset = _profile_preset(
+        model_id="<opaque:model>",
+        voice_id="missing-profile-voice",
+    )
+    app = _PaneHost(preset=preset)
+
+    async with app.run_test(size=(180, 70)) as pilot:
+        await service.voice_started.wait()
+        await pilot.pause()
+        pane = app.query_one(SpeechPlaygroundPane)
+
+        assert app.query_one("#tts-generate-btn", Button).disabled is True
+        assert app.query_one("#tts-profile-preview-status", Static).has_class(
+            "profile-preview-loading"
+        )
+
+        pane.action_generate_tts()
+        await pilot.pause()
+
+        assert app.generation_events == [], (
+            "action_generate_tts() bypassed the disabled Generate button "
+            "while the exact profile's voice validation was still pending"
+        )
+        assert app.notices[-1] == (
+            "The exact profile voice is still being checked; wait before generating",
+            "warning",
+        )
+
+        service.allow_voices.set()
+        await app.workers.wait_for_complete()
+
+        assert pane._profile_effective_availability == "unavailable"
+        assert app.query_one("#tts-generate-btn", Button).disabled is True
+
+
+@pytest.mark.asyncio
+async def test_stale_catalog_downgrades_available_profile_to_warned_unverified_attempt(
+    audio_cpp_playground: FakeTTSService,
+) -> None:
+    """A naturally stale (not reconfigured) catalog downgrades an
+    "available" preset to "unverified" -- Generate must stay ENABLED and
+    actually produce one exact attempt with a warning, not sit enabled
+    while silently doing nothing when pressed."""
+    service = audio_cpp_playground
+    service.catalogs["audio_cpp"] = _audio_catalog(
+        health=ProviderHealth(state="available", fresh=False)
+    )
+    preset = _profile_preset(model_id="<opaque:model>", voice_id="[voice]")
+    app = _PaneHost(preset=preset)
+
+    async with app.run_test(size=(180, 70)) as pilot:
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        pane = app.query_one(SpeechPlaygroundPane)
+
+        assert preset.availability == "available"
+        assert pane._profile_effective_availability == "unverified"
+        assert app.query_one("#tts-model-select", Select).value == preset.model_id
+        assert app.query_one("#tts-voice-select", Select).value == preset.voice_id
+        assert app.query_one("#tts-generate-btn", Button).disabled is False
+
+        pane.action_generate_tts()
+        await pilot.pause()
+
+        assert len(app.generation_events) == 1, (
+            "the enabled Generate button did nothing when pressed for an "
+            "unverified profile preset"
+        )
+        assert any(
+            "unverified" in message.lower() and severity == "warning"
+            for message, severity in app.notices
+        )
+
+
+@pytest.mark.asyncio
+async def test_profile_service_acquisition_failure_projects_exact_disabled_recovery(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`_profile_preview_blocked_presentation`'s `service is None` branch
+    had zero behavioral coverage anywhere -- `test_speech_profile_port.py`
+    only checks the method is inherited, never that acquiring the TTS
+    service failing actually projects the disabled, private-detail-free
+    recovery copy."""
+
+    async def _service_unavailable() -> object:
+        raise RuntimeError("private service detail")
+
+    monkeypatch.setattr(
+        SpeechPlaygroundPane,
+        "_tts_service_factory",
+        lambda self: _service_unavailable(),
+    )
+    preset = _profile_preset()
+    app = _PaneHost(preset=preset)
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert app.query_one("#tts-provider-select", Select).value == preset.provider_id
+        assert app.query_one("#tts-model-select", Select).value == preset.model_id
+        assert app.query_one("#tts-voice-select", Select).value == preset.voice_id
+        assert app.query_one("#tts-generate-btn", Button).disabled is True
+        status = str(app.query_one("#tts-provider-status", Static).render())
+        assert "unavailable" in status.lower()
+        assert "private service detail" not in status
+        banner = app.query_one("#tts-profile-preview-status", Static)
+        banner_copy = str(banner.render()).lower()
+        assert "blocked" in banner_copy
+        assert "unavailable" in banner_copy
+        assert "exact saved selection" not in banner_copy
+        assert banner.has_class("profile-preview-unavailable")
+
+
 @pytest.mark.asyncio
 async def test_long_exact_profile_ids_stay_reachable_via_tooltip(
     audio_cpp_playground: FakeTTSService,

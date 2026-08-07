@@ -902,6 +902,16 @@ class SpeechCatalogMixin:
             self._sync_generate_enabled()
         elif provider_id == AUDIO_CPP_PROVIDER_ID and discovered_voices is not None:
             self._pending_voice_selections.pop(provider_id, None)
+            # `_apply_controls` above already ran its own `_sync_generate_
+            # enabled()`, but with this entry still IN `_pending_voice_
+            # selections` -- the pop happens after it returns. Harmless
+            # while nothing but this dict's own removal read it; TASK-2951
+            # surfaced it because the unified readiness gate now blocks on
+            # `provider_id in self._pending_voice_selections` too, so a
+            # stale pre-pop "voices are still loading" verdict would
+            # otherwise survive on the button after discovery actually
+            # finished, with nothing left to correct it.
+            self._sync_generate_enabled()
         consume_navigation = getattr(
             self,
             "_consume_navigation_target_after_catalog",
