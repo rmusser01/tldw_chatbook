@@ -32,6 +32,15 @@ summary, as it applies to this file:
 - `app_instance` is the one justified snapshot (plain attribute, not a
   callable): it never changes identity over a controller's life.
 - Controllers own no DOM.
+
+`Screens/chat_screen.py` still imports all six controller CLASSES even though
+it no longer names four of them in code. That is deliberate, and re-deleting
+them is a regression: 18 sites across five test files reach them as
+`chat_screen_module.ConsoleDictationController` /
+`...ConsoleWorkspaceController` patch handles, and dropping the imports
+turned 28 of those tests red during this very extraction. They are re-export
+surface, in the same way as the ~30 other unused-but-imported names that file
+already carries.
 """
 
 from typing import TYPE_CHECKING

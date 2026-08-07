@@ -56,6 +56,7 @@ from ..Console_Modules.dictation import (
     CONSOLE_DICTATION_MAX_SECONDS,
     CONSOLE_DICTATION_SAMPLE_RATE,
     CONSOLE_DICTATION_SAMPLE_WIDTH,
+    ConsoleDictationController,
     ConsoleDictationEvent,
     ConsoleDictationLimitSignal,
     ConsoleStreamingDictationSession,
@@ -63,16 +64,22 @@ from ..Console_Modules.dictation import (
     _VOICE_ACK_NOT_SENT,
     _VOICE_ACK_SESSION_CHANGED,
 )
-from ..Console_Modules.hands_free import ConsoleHandsFreeSession
+from ..Console_Modules.hands_free import (
+    ConsoleHandsFreeController,
+    ConsoleHandsFreeSession,
+)
 from ..Console_Modules.left_rail import ConsoleLeftRail
 from ..Console_Modules.message import ConsoleMessageController
+from ..Console_Modules.prompts import ConsolePromptsController
 from ..Console_Modules.right_rail import ConsoleInspectorRail
 from ..Console_Modules.transcript import (
     ConsoleTranscriptRegion,
     _ConsoleTranscriptReadingState,
 )
 from ..Console_Modules.wiring import build_console_controllers
+from ..Console_Modules.workspace import ConsoleWorkspaceController
 from ..Console_Modules.session import (
+    ConsoleSessionController,
     _canonical_card_character_id,
     _character_session_prompt_seed,
     _has_selected_text,
