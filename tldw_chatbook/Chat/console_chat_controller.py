@@ -992,6 +992,7 @@ class ConsoleChatController:
         world_info_applier: "Callable[[str | None, str, list], str] | None" = None,
         rag_capture_provider: "Callable[[str], Awaitable[Any]] | None" = None,
         default_session_settings: "Callable[[], ConsoleSessionSettings] | None" = None,
+        library_provider_factory: "Callable[[], Any | None] | None" = None,
     ) -> None:
         self.store = store
         self.provider_gateway = provider_gateway
@@ -1034,6 +1035,17 @@ class ConsoleChatController:
         #: settings then, matching every other UI-bridge hook's no-op
         #: default here).
         self._default_session_settings = default_session_settings
+        #: task-1337: screen-owned seam that builds THIS run's Library
+        #: retrieval provider (the descriptor-backed ``LibraryToolProvider``
+        #: when direct Library tools are on, the bounded
+        #: ``LibraryRagToolProvider`` when off, or ``None`` when neither can
+        #: be constructed). Called exactly once per agent run, on the main
+        #: loop, inside ``_run_agent_reply`` -- the bridge worker thread
+        #: never reads Textual config itself, and flipping the setting
+        #: between runs takes effect on the very next run without
+        #: rebuilding this controller or the cached bridge. ``None`` (the
+        #: default) means no Library tools are offered at all.
+        self._library_provider_factory = library_provider_factory
         # Parallel-agents spec §2: run state is a PER-SESSION map, not a
         # single global slot -- two sessions can each have their own
         # in-flight/terminal run without stamping each other. `run_state`/
@@ -7329,6 +7341,19 @@ class ConsoleChatController:
                 [review_hook, local_review_hook]
             )
 
+        # task-1337: THIS run's Library retrieval provider (direct tools or
+        # the bounded RAG fallback), resolved ONCE here on the main loop via
+        # the injected factory -- a raising factory degrades to None (no
+        # Library tools this run) rather than breaking the send.
+        library_provider: Any | None = None
+        if self._library_provider_factory is not None:
+            try:
+                library_provider = self._library_provider_factory()
+            except Exception:  # noqa: BLE001 -- never block a send
+                logger.opt(exception=True).warning(
+                    "library_provider_factory failed; running without Library tools"
+                )
+
         # TASK-1971 (Agent Change Review): THIS run's tracked roots -- the
         # same workspace folder bindings the file tools resolve against.
         # Best-effort: an unavailable registry yields no roots and an
@@ -7373,6 +7398,7 @@ class ConsoleChatController:
                 builtin_gate=builtin_gate,
                 review_tool_calls=review_hook,
                 local_provider=local_provider,
+                library_provider=library_provider,
                 change_roots=change_roots,
                 turn_skill_bindings=skill_bindings,
                 turn_bundle_block=skill_bundle_block,

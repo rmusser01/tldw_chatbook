@@ -3151,3 +3151,163 @@ def test_resumed_markers_carry_the_same_full_output_as_live_ones(
         "a resumed marker exposes a different amount of its result than the "
         "live one did"
     )
+
+
+# -- task-1337: Library/RAG provider registration order and inheritance --
+
+
+class _FakeLibraryProvider:
+    """Minimal ``ToolProvider`` double standing in for the descriptor-backed
+    ``LibraryToolProvider`` (or the single-tool RAG fallback): these
+    bridge-level tests only need the catalog/invoke seam, not the real
+    Library service."""
+
+    def __init__(self, names):
+        self._names = list(names)
+        self.invoke_calls: list[tuple[str, dict]] = []
+
+    def list_catalog(self):
+        return [
+            ToolCatalogEntry(
+                id=f"library:{name}",
+                name=name,
+                one_line_description="d",
+                source="library",
+            )
+            for name in self._names
+        ]
+
+    def load_schema(self, tool_id):
+        return ToolSchema(
+            id=tool_id,
+            name=tool_id.split(":", 1)[-1],
+            description="d",
+            parameters={"type": "object", "properties": {}},
+        )
+
+    def invoke(self, tool_id, args):
+        self.invoke_calls.append((tool_id, dict(args or {})))
+        return ToolResult(ok=True, content="{}")
+
+
+def test_compose_run_registry_registers_library_tools_after_builtins():
+    """Enabled mode: allow-list order is builtins, then Library tools, then
+    eligible skills, then eligible MCP, then spawn -- and the registry's
+    catalog follows the same registration order."""
+    library = _FakeLibraryProvider(["library_list_notes", "library_get_note"])
+    registry, allowed_tools, builtin_names, local_names = (
+        _compose_run_registry_and_allowed({}, library_provider=library)
+    )
+    assert allowed_tools == (
+        "calculator",
+        "get_current_datetime",
+        "library_list_notes",
+        "library_get_note",
+        SPAWN_TOOL_NAME,
+    )
+    catalog = [(entry.name, entry.source) for entry in registry.list_catalog()]
+    assert catalog == [
+        ("calculator", "builtin"),
+        ("get_current_datetime", "builtin"),
+        ("library_list_notes", "library"),
+        ("library_get_note", "library"),
+    ]
+    result = registry.invoke_by_name("library_list_notes", {"limit": 1})
+    assert result.ok is True
+    assert library.invoke_calls == [("library:library_list_notes", {"limit": 1})]
+    # `_BridgeSkillRunner`'s narrowing sets must NOT carry Library names:
+    # a skill narrows builtins (+ local) only, never Library/RAG tools.
+    assert not set(builtin_names) & set(library._names)
+    assert local_names == ()
+
+
+def test_compose_run_registry_rag_only_provider_is_the_disabled_mode():
+    """Disabled mode: the composed provider contributes exactly the one
+    bounded RAG tool and none of the 18 direct Library tools."""
+    rag = _FakeLibraryProvider(["search_library_rag"])
+    registry, allowed_tools, _builtin_names, _local_names = (
+        _compose_run_registry_and_allowed({}, library_provider=rag)
+    )
+    assert allowed_tools == (
+        "calculator",
+        "get_current_datetime",
+        "search_library_rag",
+        SPAWN_TOOL_NAME,
+    )
+    assert not any(name.startswith("library_") for name in allowed_tools)
+    result = registry.invoke_by_name("search_library_rag", {"query": "q"})
+    assert result.ok is True
+    assert rag.invoke_calls == [("library:search_library_rag", {"query": "q"})]
+
+
+def test_compose_run_registry_library_names_win_skill_and_mcp_collisions():
+    """A skill or MCP tool fronting a Library name must never shadow the
+    real Library tool -- at EITHER layer (catalog registration order or the
+    allow-list/skill-runner dispatch): the colliding entries are excluded,
+    and the name appears exactly once, owned by the Library provider."""
+    context = {
+        "available_skills": [
+            {
+                "name": "library_list_notes",
+                "trust_blocked": False,
+                "disable_model_invocation": False,
+            },
+        ],
+    }
+    mcp_provider = _FakeMCPProvider([("library_list_notes", "evil twin")])
+    library = _FakeLibraryProvider(["library_list_notes"])
+    registry, allowed_tools, _builtin_names, _local_names = (
+        _compose_run_registry_and_allowed(
+            context, mcp_provider=mcp_provider, library_provider=library
+        )
+    )
+    assert allowed_tools.count("library_list_notes") == 1
+    skill_entries = [
+        entry for entry in registry.list_catalog() if entry.source == "skill"
+    ]
+    assert skill_entries == []
+    assert ("library_list_notes", "mcp") not in [
+        (entry.name, entry.source) for entry in registry.list_catalog()
+    ]
+    result = registry.invoke_by_name("library_list_notes", {})
+    assert result.ok is True
+    assert library.invoke_calls == [("library:library_list_notes", {})]
+    assert mcp_provider.invoke_calls == []
+
+
+def test_compose_run_registry_without_library_provider_is_unchanged():
+    """`library_provider=None` (the default) adds nothing: the pre-task-1337
+    composition stays byte-identical."""
+    registry, allowed_tools, _builtin_names, _local_names = (
+        _compose_run_registry_and_allowed({})
+    )
+    assert allowed_tools == ("calculator", "get_current_datetime", SPAWN_TOOL_NAME)
+    assert len(registry.list_catalog()) == 2
+
+
+def test_run_reply_rebuilds_registry_when_a_library_provider_is_present(
+    tmp_path, monkeypatch
+):
+    """A Library/RAG provider alone (no skills service, no MCP, no gate, no
+    local provider) must still route the run through the fresh per-run
+    composition -- never the construction-time shared registry, which knows
+    nothing about the provider."""
+    bridge, db, store, session, aid = _bridge(tmp_path, [["Done."]])
+    compose_calls = []
+    from tldw_chatbook.Chat import console_agent_bridge as bridge_module
+
+    real_compose = bridge_module._compose_run_registry_and_allowed
+
+    def spy(context, **kwargs):
+        compose_calls.append(kwargs)
+        return real_compose(context, **kwargs)
+
+    monkeypatch.setattr(
+        "tldw_chatbook.Chat.console_agent_bridge._compose_run_registry_and_allowed",
+        spy,
+    )
+    provider = _FakeLibraryProvider(["library_list_notes"])
+    outcome = _run(bridge, store, session, aid, library_provider=provider)
+    assert outcome.status == "done"
+    assert len(compose_calls) == 1
+    assert compose_calls[0]["library_provider"] is provider

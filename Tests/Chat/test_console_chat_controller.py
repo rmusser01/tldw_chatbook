@@ -4917,3 +4917,133 @@ async def test_submit_without_prompt_history_configured_is_a_noop():
     assert controller.prompt_history is None
     result = await controller.submit_draft("hello")
     assert result.accepted
+
+
+# -- task-1337: per-run Library/RAG provider factory seam --
+
+
+@pytest.mark.asyncio
+async def test_run_agent_reply_threads_library_provider_from_factory():
+    """The controller resolves the injected `library_provider_factory` exactly
+    once per run, on the main loop, and hands the resulting provider to the
+    bridge's run_reply alongside the other per-run providers."""
+    store = ConsoleChatStore()
+    gateway = RecordingStreamingGateway()
+    provider = object()
+    factory_calls = []
+
+    def factory():
+        factory_calls.append(1)
+        return provider
+
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=gateway,
+        agent_runtime_enabled=True,
+        library_provider_factory=factory,
+    )
+    bridge_calls = []
+
+    def run_reply(**kwargs):
+        bridge_calls.append(kwargs)
+        return "run-test", RunOutcome(status=RUN_DONE, steps=[], final_text="ok")
+
+    controller._agent_bridge = SimpleNamespace(run_reply=run_reply)
+    _arm_session(store)
+
+    await controller.submit_draft("hello")
+
+    assert factory_calls == [1]
+    assert len(bridge_calls) == 1
+    assert bridge_calls[0]["library_provider"] is provider
+
+
+@pytest.mark.asyncio
+async def test_run_agent_reply_without_factory_passes_no_library_provider():
+    """Default construction (no factory) keeps the pre-task-1337 handoff:
+    run_reply receives `library_provider=None`."""
+    store = ConsoleChatStore()
+    gateway = RecordingStreamingGateway()
+    controller = ConsoleChatController(
+        store=store, provider_gateway=gateway, agent_runtime_enabled=True
+    )
+    bridge_calls = []
+
+    def run_reply(**kwargs):
+        bridge_calls.append(kwargs)
+        return "run-test", RunOutcome(status=RUN_DONE, steps=[], final_text="ok")
+
+    controller._agent_bridge = SimpleNamespace(run_reply=run_reply)
+    _arm_session(store)
+
+    await controller.submit_draft("hello")
+
+    assert len(bridge_calls) == 1
+    assert bridge_calls[0]["library_provider"] is None
+
+
+@pytest.mark.asyncio
+async def test_library_provider_factory_refreshes_per_run_without_rebuilding_bridge():
+    """Per-run freshness: flipping which provider the factory returns between
+    runs changes the NEXT run's provider while the cached bridge instance is
+    reused untouched."""
+    store = ConsoleChatStore()
+    gateway = RecordingStreamingGateway()
+    direct_provider = object()
+    rag_provider = object()
+    offerings = [direct_provider, rag_provider]
+
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=gateway,
+        agent_runtime_enabled=True,
+        library_provider_factory=lambda: offerings.pop(0),
+    )
+    bridge_calls = []
+
+    def run_reply(**kwargs):
+        bridge_calls.append(kwargs)
+        return "run-test", RunOutcome(status=RUN_DONE, steps=[], final_text="ok")
+
+    cached_bridge = SimpleNamespace(run_reply=run_reply)
+    controller._agent_bridge = cached_bridge
+    _arm_session(store)
+
+    await controller.submit_draft("first")
+    await controller.submit_draft("second")
+
+    assert len(bridge_calls) == 2
+    assert bridge_calls[0]["library_provider"] is direct_provider
+    assert bridge_calls[1]["library_provider"] is rag_provider
+    assert controller._agent_bridge is cached_bridge
+
+
+@pytest.mark.asyncio
+async def test_library_provider_factory_failure_degrades_to_no_provider():
+    """A raising factory must never break a send: the run proceeds with
+    `library_provider=None` (no Library tools that run)."""
+    store = ConsoleChatStore()
+    gateway = RecordingStreamingGateway()
+
+    def factory():
+        raise RuntimeError("config exploded")
+
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=gateway,
+        agent_runtime_enabled=True,
+        library_provider_factory=factory,
+    )
+    bridge_calls = []
+
+    def run_reply(**kwargs):
+        bridge_calls.append(kwargs)
+        return "run-test", RunOutcome(status=RUN_DONE, steps=[], final_text="ok")
+
+    controller._agent_bridge = SimpleNamespace(run_reply=run_reply)
+    _arm_session(store)
+
+    result = await controller.submit_draft("hello")
+
+    assert result.accepted
+    assert bridge_calls[0]["library_provider"] is None
