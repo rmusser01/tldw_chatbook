@@ -3,8 +3,11 @@
 Model card viewer for displaying HuggingFace model details and available files.
 """
 
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Tuple
 from pathlib import Path
+from urllib.parse import urljoin
+
+from textual import on
 from textual.app import ComposeResult
 from textual.containers import Container, VerticalScroll
 from textual.widgets import (
@@ -20,6 +23,39 @@ from textual.widgets import (
 from textual.message import Message
 from textual.reactive import reactive
 from loguru import logger
+
+
+def resolve_readme_href(href: str, repo_id: Optional[str]) -> Tuple[str, str]:
+    """Resolve one README link into an action (TASK-1991, frogmouth tiers).
+
+    Args:
+        href: The clicked link target, exactly as authored in the README.
+        repo_id: The HuggingFace repo the README belongs to (``org/model``),
+            or None when unknown.
+
+    Returns:
+        ``("anchor", name)`` — scroll to the in-document heading;
+        ``("browser", url)`` — open the URL in the system browser;
+        ``("unresolvable", href)`` — tell the user, never fail silently.
+    """
+    href = (href or "").strip()
+    if not href:
+        return ("unresolvable", href)
+    if href.startswith("#"):
+        return ("anchor", href[1:])
+    if href.startswith(("http://", "https://", "mailto:")):
+        return ("browser", href)
+    if href.startswith("//"):
+        return ("browser", f"https:{href}")
+    if ":" in href.split("/", 1)[0].split("?", 1)[0]:
+        # Any other explicit scheme (javascript:, file:, ftp:, data:…).
+        return ("unresolvable", href)
+    if repo_id:
+        # Relative path: resolve against the repo's blob root, like the
+        # links behave on huggingface.co itself.
+        base = f"https://huggingface.co/{repo_id}/blob/main/"
+        return ("browser", urljoin(base, href))
+    return ("unresolvable", href)
 
 
 class DownloadRequestEvent(Message):
@@ -212,8 +248,14 @@ class ModelCardViewer(Container):
                 # README tab
                 with TabPane("README", id="readme-tab"):
                     with VerticalScroll(classes="tab-content"):
+                        # open_links=False: link handling goes through the
+                        # tiered resolver below (TASK-1991) — relative links
+                        # and #anchors were dead with the default auto-open.
                         yield Markdown(
-                            "", id="readme-display", classes="readme-content"
+                            "",
+                            id="readme-display",
+                            classes="readme-content",
+                            open_links=False,
                         )
 
                 # Model Card tab
@@ -276,6 +318,37 @@ class ModelCardViewer(Container):
                 readme_display.update("*No README available*")
         except Exception as e:
             logger.error(f"Error updating README display: {e}")
+
+    @on(Markdown.LinkClicked, "#readme-display")
+    def _handle_readme_link(self, event: Markdown.LinkClicked) -> None:
+        """Resolve README links: anchors scroll, URLs open, junk notifies.
+
+        TASK-1991 (frogmouth tiers): absolute URLs open in the browser;
+        relative paths resolve against the repo's blob root; ``#anchor``
+        scrolls the rendered README; anything else notifies with the href
+        instead of failing silently.
+        """
+        event.stop()
+        repo_id = (self.model_info or {}).get("id")
+        kind, value = resolve_readme_href(event.href, repo_id)
+        if kind == "anchor":
+            if not event.markdown.goto_anchor(value):
+                self.notify(
+                    f"No such section in this README: #{value}",
+                    severity="warning",
+                    timeout=5,
+                )
+        elif kind == "browser":
+            import webbrowser
+
+            webbrowser.open(value)
+            self.notify(f"Opened in browser: {value}", timeout=4)
+        else:
+            self.notify(
+                f"Cannot handle this link: {value or event.href!r}",
+                severity="warning",
+                timeout=6,
+            )
 
     def watch_selected_file(self, selected: Optional[str]) -> None:
         """Update UI when file selection changes."""
