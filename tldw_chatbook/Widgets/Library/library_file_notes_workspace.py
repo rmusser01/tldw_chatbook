@@ -378,6 +378,18 @@ class LibraryFileNotesWorkspace(Vertical):
         overflow: hidden hidden;
     }
 
+    /* task-2850: the "no root chosen yet" empty state is a prompt +
+       adjacent action, not a status toolbar -- the ``1fr`` above is
+       correct once a root is linked (it reserves room for a Details/
+       Change pair pinned to the right of a long elided path), but on the
+       root-less first paint it shoved "Choose folder..." ~150 columns
+       away from "Choose a notes folder.", reading as two unrelated,
+       far-apart widgets. Hugging the prompt's own width keeps the two
+       adjacent regardless of the workspace's mounted width. */
+    #file-notes-root-status.-empty-root {
+        width: auto;
+    }
+
     #file-notes-root-details,
     #file-notes-choose-root {
         width: auto;
@@ -738,11 +750,16 @@ class LibraryFileNotesWorkspace(Vertical):
 
     def compose(self) -> ComposeResult:
         with Horizontal(id="file-notes-root-row"):
-            yield Static(
+            root_status = Static(
                 "Choose a notes folder.",
                 id="file-notes-root-status",
                 markup=False,
             )
+            # task-2850: match ``_update_root_surface``'s class so the very
+            # first paint (before ``on_mount`` runs) already keeps the
+            # prompt and its button adjacent when no root is configured.
+            root_status.set_class(self._root is None, "-empty-root")
+            yield root_status
             yield Button(
                 "Details",
                 id="file-notes-root-details",
@@ -1255,11 +1272,13 @@ class LibraryFileNotesWorkspace(Vertical):
             self._root_status_detail = "Choose a notes folder."
             status.tooltip = None
             status.update(self._root_status_detail)
+            status.set_class(True, "-empty-root")
             body.display = False
             details.display = False
             choose.label = "Choose folder…"
             choose.display = True
             return
+        status.set_class(False, "-empty-root")
         is_offline = self._root_offline if offline is None else offline
         state = (
             "Checking"

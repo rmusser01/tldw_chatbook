@@ -934,6 +934,16 @@ class LibraryScreen(BaseAppScreen):
         # everywhere else on the screen.
         ("ctrl+s", "library_skill_save", "Save skill"),
         ("escape", "library_skill_back", "Back to skills list"),
+        # task-2850: a second "escape" binding on the SAME key is legal --
+        # Textual tries every binding registered for a key in order and
+        # runs the first whose ``check_action`` passes (see
+        # ``BindingsMap.key_to_bindings``/``App._check_bindings``), so this
+        # falls through untouched whenever the skill editor's own escape
+        # binding above is inactive. ``check_action`` gates it to Files
+        # mode owning the Notes canvas (``_file_notes_active()``), the same
+        # gate the sibling skill-editor binding uses, so it never fires on
+        # any other Library surface.
+        ("escape", "library_notes_files_back", "Back to Database notes"),
         # Task 12/RAG-36: keyboard traversal of Library Search/RAG evidence
         # cards. Both actions gate on the currently FOCUSED widget being one
         # of the per-result `.library-rag-result-card` containers (see
@@ -996,6 +1006,17 @@ class LibraryScreen(BaseAppScreen):
     LIBRARY_GENERAL_SHORTCUTS = (
         ("/", "focus search"),
         ("F6", "next pane"),
+    )
+
+    #: task-2850: Notes ▸ Files mode's Escape binding only fires while
+    #: ``_file_notes_active()`` is true (see ``check_action``), so this
+    #: context-specific set is the only place "esc" is advertised -- every
+    #: other Library surface keeps ``LIBRARY_GENERAL_SHORTCUTS``, where
+    #: Escape is genuinely unbound.
+    LIBRARY_NOTES_FILES_SHORTCUTS = (
+        ("/", "focus search"),
+        ("F6", "next pane"),
+        ("esc", "back to Database"),
     )
 
     #: task-2237 (R2): F6 pane-cycle targets (the app's
@@ -1641,11 +1662,16 @@ class LibraryScreen(BaseAppScreen):
         # the Search canvas without a rail-row press). task-2237 (R2):
         # three honest contexts -- the landing advertises its full
         # keyboard story (`/`, hub accelerators, F6), other canvases get
-        # the keys that work there, never a dead key.
+        # the keys that work there, never a dead key. task-2850: Files
+        # mode is a fourth context -- its Escape binding only works there
+        # (see ``check_action``), so it is the only state that advertises
+        # "esc".
         if self._library_selected_row_id == LIBRARY_ROW_BROWSE_SEARCH:
             shortcuts = self.LIBRARY_SHORTCUTS
         elif not self._library_selected_row_id:
             shortcuts = self.LIBRARY_LANDING_SHORTCUTS
+        elif self._file_notes_active():
+            shortcuts = self.LIBRARY_NOTES_FILES_SHORTCUTS
         else:
             shortcuts = self.LIBRARY_GENERAL_SHORTCUTS
         self.register_footer_shortcuts(source="library", shortcuts=shortcuts)
@@ -4221,17 +4247,6 @@ class LibraryScreen(BaseAppScreen):
                 )
                 files_source.set_class(files_selected, "-selected")
                 yield files_source
-            if self._library_notes_source == "files":
-                workspace = self._library_file_notes_workspace
-                if workspace is not None:
-                    yield workspace
-                else:
-                    yield Static(
-                        "Opening File Notes…",
-                        id="library-file-notes-loading",
-                        markup=False,
-                    )
-                return
         shell_grid = Horizontal(
             id="library-shell-grid", classes="ds-panel destination-workbench"
         )
@@ -4263,11 +4278,17 @@ class LibraryScreen(BaseAppScreen):
                 # while that snapshot is still loading. "mode" canvases
                 # (Collections, Flashcards, Search/RAG, ...) and the
                 # landing/empty canvas are unaffected and must not be
-                # replaced by this loading/error copy.
+                # replaced by this loading/error copy. Files mode (task-2850)
+                # is disk-backed, not DB-backed -- it never depends on
+                # ``_library_loaded``/``_library_lookup_error``, so it is
+                # excluded here too, or a Files-mode entry made ahead of the
+                # DB snapshot would flash the DB "Loading…" copy over it.
                 is_local_snapshot_canvas = shell.canvas_kind in (
                     "conversations",
                     "media",
-                    "notes",
+                ) or (
+                    shell.canvas_kind == "notes"
+                    and self._library_notes_source != "files"
                 )
                 if (
                     is_local_snapshot_canvas
@@ -4330,6 +4351,25 @@ class LibraryScreen(BaseAppScreen):
                         media_state,
                         id="library-media-canvas",
                     )
+                elif (
+                    shell.canvas_kind == "notes"
+                    and self._library_notes_source == "files"
+                ):
+                    # task-2850: File Notes owns the canvas PANE now, not
+                    # the whole screen -- the rail and shell_grid frame
+                    # above/around this branch stay mounted exactly like
+                    # every other notes view (list/editor/sync), so leaving
+                    # Files mode never looks like the app broke.
+                    workspace = self._library_file_notes_workspace
+                    if workspace is not None:
+                        yield workspace
+                    else:
+                        yield Static(
+                            "Opening File Notes…",
+                            id="library-file-notes-loading",
+                            classes="destination-purpose",
+                            markup=False,
+                        )
                 elif (
                     shell.canvas_kind == "notes"
                     and self._library_notes_view == "editor"
@@ -7734,12 +7774,26 @@ class LibraryScreen(BaseAppScreen):
                 self._library_file_notes_workspace_factory()
             )
         self._library_notes_source = "files"
+        # task-2850: the Files-mode Escape binding only fires while
+        # ``_file_notes_active()`` is true, so the footer's advertised keys
+        # must follow this same transition or Escape works unadvertised.
+        self._register_footer_shortcuts()
         self.refresh(recompose=True)
 
     @on(Button.Pressed, "#library-notes-source-database")
     async def _show_library_database_notes(self, event: Button.Pressed) -> None:
         """Return to Database Notes only after the File Notes leave guard."""
         event.stop()
+        await self._return_to_library_database_notes()
+
+    async def _return_to_library_database_notes(self) -> None:
+        """Leave File Notes and return to the Database Notes view.
+
+        Shared by the "Database" strip button and the Files-mode Escape key
+        (task-2850) so both exits honor the identical flush/leave-guard
+        sequence -- one seam, not a parallel key-driven path that could
+        drift from the button's.
+        """
         if self._library_notes_source == "database":
             return
         if not await self._flush_active_file_notes():
@@ -7749,10 +7803,19 @@ class LibraryScreen(BaseAppScreen):
             return
         try:
             self._library_notes_source = "database"
+            self._register_footer_shortcuts()
             await self.recompose()
         finally:
             if callable(release_source):
                 release_source()
+
+    async def action_library_notes_files_back(self) -> None:
+        """Escape: leave Files mode and return to Database Notes (task-2850).
+
+        ``check_action`` gates this to ``_file_notes_active()``, so it only
+        ever runs while Files mode genuinely owns the Notes canvas.
+        """
+        await self._return_to_library_database_notes()
 
     @on(Button.Pressed, ".library-rail-row")
     @on(Button.Pressed, ".library-hub-action")
@@ -9680,13 +9743,20 @@ class LibraryScreen(BaseAppScreen):
         )
 
     def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
-        """Gate the skill-editor key bindings to the open editor (task-424).
+        """Gate the skill-editor and Files-mode key bindings (task-424/2850).
 
         Returning ``False`` deactivates the binding entirely, so Escape /
         Ctrl+S behave as if unbound anywhere else on the Library screen.
+        Both this and the sibling skill-editor gate share the "escape" key
+        (see the two "escape" ``BINDINGS`` entries) -- Textual tries them in
+        order and stops at the first whose ``check_action`` passes, so each
+        one returning ``False`` outside its own context is what lets the
+        other fall through untouched.
         """
         if action in ("library_skill_save", "library_skill_back"):
             return self._library_skill_editor_active()
+        if action == "library_notes_files_back":
+            return self._file_notes_active()
         return True
 
     def action_library_skill_save(self) -> None:

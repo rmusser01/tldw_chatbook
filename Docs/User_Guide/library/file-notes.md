@@ -17,8 +17,11 @@ commit to its existing upstream, without leaving the app.
 Open [Library](../library.md) (**Ctrl+3**), pick **Notes** in the rail's
 Browse section, then use the source strip at the top of the canvas: it reads
 **Database** | **Files**. Click **Files** — while the workspace loads you'll
-briefly see "Opening File Notes…". Click **Database** to switch back; either
-switch first saves any unsaved edits on the side you're leaving.
+briefly see "Opening File Notes…". The rail and the rest of the Library
+shell stay visible; the workspace fills the canvas pane next to them, the
+same as every other Notes view. Click **Database**, or press **Escape**, to
+switch back; either switch first saves any unsaved edits on the side you're
+leaving.
 
 ## Layout tour
 
@@ -289,4 +292,6 @@ not available.
   be unavailable.
 
 —
-*Verified against dev @ 949e2ef73 — 2026-08-01*
+*Verified against dev @ e3d0d2c9d — 2026-08-07 (TASK-2850: Files mode
+stays inside the Library rail/canvas frame instead of replacing the whole
+shell; Escape returns to Database)*

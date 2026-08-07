@@ -1585,6 +1585,95 @@ async def test_file_notes_mutation_admitted_during_source_flush_vetoes_switch(
     mutation.release()
 
 
+def test_check_action_gates_notes_files_back_to_active_files_mode():
+    """task-2850 AC3: the Files-mode Escape binding only fires while Files
+    mode genuinely owns the Notes canvas -- everywhere else it must behave
+    as if unbound (``check_action`` returning ``False``), exactly like the
+    sibling ``library_skill_back`` gate it shares the "escape" key with.
+    """
+    from tldw_chatbook.Library.library_shell_state import LIBRARY_ROW_BROWSE_NOTES
+    from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+
+    app = _build_test_app()
+    workspace = object()
+    screen = LibraryScreen(app, file_notes_workspace_factory=lambda: workspace)
+
+    # Default state: Database Notes, no workspace mounted -- inactive.
+    assert screen.check_action("library_notes_files_back", ()) is False
+
+    # Files mode selected but the row isn't Notes (stale source flag from a
+    # prior visit) -- still inactive, mirroring ``_file_notes_active()``.
+    screen._library_notes_source = "files"
+    screen._library_file_notes_workspace = workspace
+    assert screen.check_action("library_notes_files_back", ()) is False
+
+    # Files mode genuinely owns the Notes canvas -- active.
+    screen._library_selected_row_id = LIBRARY_ROW_BROWSE_NOTES
+    assert screen.check_action("library_notes_files_back", ()) is True
+
+    # Back to Database Notes -- inactive again.
+    screen._library_notes_source = "database"
+    assert screen.check_action("library_notes_files_back", ()) is False
+
+    # Unrelated actions are untouched by the new gate.
+    assert screen.check_action("library_rag_use_in_console", ()) is True
+
+
+@pytest.mark.asyncio
+async def test_action_library_notes_files_back_returns_to_database(
+    monkeypatch,
+    tmp_path,
+):
+    """task-2850 AC3: Escape's action reuses the SAME guarded return path as
+    the "Database" strip button (``_return_to_library_database_notes``) --
+    one seam, not a parallel key-driven shortcut that could drift from the
+    button's flush/leave-guard sequence.
+    """
+    from tldw_chatbook.Library.library_shell_state import LIBRARY_ROW_BROWSE_NOTES
+    from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+
+    app = _build_test_app()
+    owner = app.file_notes_session_owner
+    binding = owner.select_root(tmp_path / "notes")
+
+    class WorkspaceProbe:
+        async def flush_pending_work(self):
+            return not owner.mutation_active(binding)
+
+        def acquire_transition(self, kind):
+            lease = owner.try_acquire_transition(binding, kind)
+            return False if lease is None else lease.release
+
+    workspace = WorkspaceProbe()
+    screen = LibraryScreen(app, file_notes_workspace_factory=lambda: workspace)
+    screen._library_file_notes_workspace = workspace
+    screen._library_notes_source = "files"
+    screen._library_selected_row_id = LIBRARY_ROW_BROWSE_NOTES
+    recompose_calls = []
+
+    async def recompose():
+        recompose_calls.append(True)
+
+    monkeypatch.setattr(screen, "recompose", recompose)
+    footer_calls = []
+    monkeypatch.setattr(
+        screen,
+        "_register_footer_shortcuts",
+        lambda: footer_calls.append(screen._library_notes_source),
+    )
+
+    await screen.action_library_notes_files_back()
+
+    assert screen._library_notes_source == "database"
+    assert recompose_calls == [True]
+    # The footer's "esc" hint must drop the moment the source flips back,
+    # not on some later, separate recompose (task-2850).
+    assert footer_calls == ["database"]
+    after_recompose = owner.try_acquire_mutation(binding)
+    assert after_recompose is not None
+    after_recompose.release()
+
+
 def test_app_uses_screen_navigation_and_wires_media_services():
     app = _build_test_app()
 

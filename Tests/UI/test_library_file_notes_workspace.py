@@ -366,6 +366,79 @@ async def test_empty_offline_and_persisted_root_states(
 
 
 @pytest.mark.asyncio
+async def test_empty_root_prompt_and_choose_button_render_adjacent() -> None:
+    """task-2850 AC2: the "no root chosen" empty state is a prompt +
+    adjacent action, not a status toolbar with the button pinned ~150
+    columns away. Mounted at a wide (170-col) size -- the width the UAT
+    finding reproduced at -- so a regression to the old ``width: 1fr``
+    status (which pushes the button to the far right of whatever it is
+    mounted in) is caught even though this harness mounts the workspace
+    alone, narrower than the reported full-screen gap.
+    """
+    replica = FileNotesReplica(":memory:")
+    empty = LibraryFileNotesWorkspace(root=None, replica=replica)
+    async with _WorkspaceHarness(empty).run_test(size=(170, 50)) as pilot:
+        await pilot.pause()
+        status = empty.query_one("#file-notes-root-status")
+        choose = empty.query_one("#file-notes-choose-root", Button)
+        assert status.has_class("-empty-root")
+        gap = choose.region.x - status.region.right
+        assert gap <= 2, (
+            f"'{_static_text(empty, '#file-notes-root-status')}' and "
+            f"'Choose folder…' are {gap} columns apart -- not adjacent"
+        )
+    replica.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("size", [(170, 50), (100, 30)])
+async def test_files_mode_keeps_library_rail_and_canvas_frame_mounted(
+    size: tuple[int, int],
+) -> None:
+    """task-2850 AC1/AC4: entering Notes > Files must not blank the rest of
+    the Library screen. Before the fix, ``compose_content`` returned early
+    with just the source-toggle strip and the workspace as direct screen
+    children, so the rail and the ``#library-canvas`` frame around it never
+    mounted at all. Checked at both sizes the live re-verification covers.
+    """
+    replica = FileNotesReplica(":memory:")
+    workspace = LibraryFileNotesWorkspace(root=None, replica=replica)
+    async with _production_workspace_context(workspace, size=size) as pilot:
+        screen = pilot.app.screen
+        rail = screen.query_one("#library-rail")
+        canvas_host = screen.query_one("#library-canvas")
+        assert rail.display
+        assert canvas_host.display
+        # The workspace renders INSIDE the canvas pane, alongside the rail
+        # -- not as a full-screen replacement of the whole shell.
+        assert workspace.parent is canvas_host
+    replica.close()
+
+
+@pytest.mark.asyncio
+async def test_escape_in_files_mode_returns_to_database_notes() -> None:
+    """task-2850 AC3: Escape is a real, working way out of Files mode --
+    not just the small "Database" strip link, which was the only exit
+    before this fix (Escape was previously dead on this surface).
+    """
+    replica = FileNotesReplica(":memory:")
+    workspace = LibraryFileNotesWorkspace(root=None, replica=replica)
+    async with _production_workspace_context(workspace, size=(170, 50)) as pilot:
+        screen = pilot.app.screen
+        assert screen._library_notes_source == "files"
+
+        await pilot.press("escape")
+        await _wait_until(
+            pilot,
+            lambda: screen._library_notes_source == "database",
+            "Escape did not return Files mode to Database Notes",
+        )
+        assert screen.query_one("#library-notes-source-database", Button)
+        assert not screen.query("#library-file-notes-workspace")
+    replica.close()
+
+
+@pytest.mark.asyncio
 async def test_root_transition_retains_and_freezes_old_document_until_scan_finishes(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -2138,7 +2211,7 @@ async def test_library_database_files_switch_retains_workspace_and_database_canv
         await _wait_until(
             pilot,
             lambda: bool(screen.query("#library-file-notes-workspace")),
-            "Files workspace did not replace the Database rail/canvas",
+            "Files workspace did not mount into the canvas pane",
         )
         await _wait_until(
             pilot,
@@ -2153,7 +2226,9 @@ async def test_library_database_files_switch_retains_workspace_and_database_canv
         owned_replica = retained._replica
         assert owned_replica is not None
         assert retained is workspace
-        assert not screen.query("#library-rail")
+        # task-2850: Files mode renders INSIDE the same rail + canvas frame
+        # every other notes view uses -- it must never blank the rail.
+        assert screen.query_one("#library-rail")
 
         release_detail.set()
         await detail_task

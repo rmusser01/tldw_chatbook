@@ -77,8 +77,10 @@ pages:
   context in Console", "enter select evidence", and "o open evidence".
 
 One special case: selecting **Notes** adds a **Database | Files** strip
-above the workbench. **Files** swaps the entire Library shell for the
-File Notes workspace — see [File Notes](library/file-notes.md).
+above the workbench. **Files** swaps the canvas pane for the File Notes
+workspace — the rail and the rest of the shell stay put, and Escape (or
+the **Database** link) returns to the notes list — see
+[File Notes](library/file-notes.md).
 
 ## Features & controls
 
@@ -190,8 +192,10 @@ Screen-level keys only — global keys live in the [guide index](index.md).
 | u | Use Library context in Console — only while the Search / RAG row is selected (the footer hint appears only there) |
 
 Escape and Ctrl+S are bound only inside the skill editor (back to list /
-save) — see [Skills](library/skills.md). Esc is also live inside the File
-Notes surface's panels and dialogs — see [File Notes](library/file-notes.md).
+save) — see [Skills](library/skills.md). Escape also returns Notes ▸
+Files mode to the Database notes view, and is live inside the File Notes
+surface's own panels and dialogs — see
+[File Notes](library/file-notes.md).
 
 ## Related settings & docs
 
@@ -223,4 +227,6 @@ Notes surface's panels and dialogs — see [File Notes](library/file-notes.md).
   their names now route to the matching Library row.
 
 —
-*Verified against dev @ bd05a692a — 2026-07-31*
+*Verified against dev @ e3d0d2c9d — 2026-08-07 (TASK-2850: Notes ▸ Files
+mode stays inside the Library rail/canvas frame; Escape returns to
+Database)*
