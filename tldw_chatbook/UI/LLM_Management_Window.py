@@ -12,6 +12,7 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Container, VerticalScroll, Horizontal, Vertical
 from textual.css.query import QueryError
+from textual.message import Message
 from textual.reactive import reactive
 from textual.widgets import Static, Button, Input, RichLog, Label, TextArea, Collapsible
 from loguru import logger
@@ -50,11 +51,218 @@ if TYPE_CHECKING:
 # Functions:
 
 
+
+
+class OllamaServiceView(VerticalScroll):
+    """The Ollama view body, extracted verbatim from `compose` (task-2900).
+
+    Deferred past first paint by `_mount_deferred_views`; the one dynamic
+    piece of the original inline block — the prereq line — is computed by
+    the window at build time and passed in.
+    """
+
+    def __init__(self, prereq_text: str, **kwargs) -> None:
+        kwargs.setdefault("id", "llm-view-ollama")
+        kwargs.setdefault("classes", "llm-view")
+        super().__init__(**kwargs)
+        self._prereq_text = prereq_text
+
+    def compose(self) -> ComposeResult:
+        yield Label("Ollama Service Management", classes="section-title")
+        yield Static(self._prereq_text, classes="prereq-hint")
+
+        with Container(classes="input_container"):
+            yield Label("Ollama Executable Path:", classes="inline-label")
+            yield Input(
+                id="ollama-exec-path",
+                placeholder="Path to ollama executable (e.g., /usr/local/bin/ollama)",
+            )
+            yield Button(
+                "Browse",
+                id="ollama-browse-exec-button",
+                classes="browse_button",
+                tooltip="Choose the Ollama executable.",
+            )
+
+        with Horizontal(classes="ollama-button-bar"):
+            yield Button(
+                "Start Ollama Service", id="ollama-start-service-button"
+            )
+            yield Button(
+                "Stop Ollama Service",
+                id="ollama-stop-service-button",
+                disabled=True,
+            )
+
+        yield Label(
+            "Ollama API Management (requires running service)",
+            classes="section_label",
+        )
+        yield Label("Ollama Server URL:", classes="label")
+        yield Input(
+            id="ollama-server-url",
+            value="http://localhost:11434",
+            classes="input_field_long",
+        )
+
+        with Horizontal(classes="ollama-button-bar"):
+            yield Button("List Local Models", id="ollama-list-models-button")
+            yield Button("List Running Models", id="ollama-ps-button")
+
+        with Horizontal(classes="ollama-actions-grid"):
+            # Left Column
+            with Vertical(classes="ollama-actions-column"):
+                yield Static("Model Management", classes="column-title")
+
+                yield Label("Show Info:", classes="label")
+                with Container(classes="input_action_container"):
+                    yield Input(
+                        id="ollama-show-model-name",
+                        placeholder="Model name",
+                        classes="input_field_short",
+                    )
+                    yield Button(
+                        "Show",
+                        id="ollama-show-model-button",
+                        classes="action_button_short",
+                    )
+
+                yield Label("Delete:", classes="label")
+                with Container(classes="input_action_container"):
+                    yield Input(
+                        id="ollama-delete-model-name",
+                        placeholder="Model to delete",
+                        classes="input_field_short",
+                    )
+                    yield Button(
+                        "Delete",
+                        id="ollama-delete-model-button",
+                        classes="action_button_short delete_button",
+                    )
+
+                yield Label("Copy Model:", classes="label")
+                with Horizontal(classes="input_action_container"):
+                    yield Input(
+                        id="ollama-copy-source-model",
+                        placeholder="Source",
+                        classes="input_field_short",
+                    )
+                    yield Input(
+                        id="ollama-copy-destination-model",
+                        placeholder="Destination",
+                        classes="input_field_short",
+                    )
+                yield Button(
+                    "Copy Model",
+                    id="ollama-copy-model-button",
+                    classes="full_width_button",
+                )
+
+            # Right Column
+            with Vertical(classes="ollama-actions-column"):
+                yield Static("Registry & Custom Models", classes="column-title")
+
+                yield Label("Pull Model from Registry:", classes="label")
+                with Container(classes="input_action_container"):
+                    yield Input(
+                        id="ollama-pull-model-name",
+                        placeholder="e.g. llama3",
+                        classes="input_field_short",
+                    )
+                    yield Button(
+                        "Pull",
+                        id="ollama-pull-model-button",
+                        classes="action_button_short",
+                    )
+
+                yield Label("Push Model to Registry:", classes="label")
+                with Container(classes="input_action_container"):
+                    yield Input(
+                        id="ollama-push-model-name",
+                        placeholder="e.g. my-registry/my-model",
+                        classes="input_field_short",
+                    )
+                    yield Button(
+                        "Push",
+                        id="ollama-push-model-button",
+                        classes="action_button_short",
+                    )
+
+                yield Label("Create Model from Modelfile:", classes="label")
+                yield Input(
+                    id="ollama-create-model-name",
+                    placeholder="New model name",
+                    classes="input_field_long",
+                )
+                with Horizontal(classes="input_action_container"):
+                    yield Input(
+                        id="ollama-create-modelfile-path",
+                        placeholder="Path to Modelfile...",
+                        disabled=True,
+                        classes="input_field_short",
+                    )
+                    yield Button(
+                        "Browse",
+                        id="ollama-browse-modelfile-button",
+                        classes="browse_button_short",
+                        tooltip="Choose the Modelfile used to create an Ollama model.",
+                    )
+                yield Button(
+                    "Create Model",
+                    id="ollama-create-model-button",
+                    classes="full_width_button",
+                )
+
+        yield Label("Generate Embeddings:", classes="section_label")
+        with Horizontal(classes="embeddings_container"):
+            with Vertical(classes="embeddings_inputs"):
+                yield Input(
+                    id="ollama-embeddings-model-name",
+                    placeholder="Model name for embeddings",
+                    classes="input_field_long",
+                )
+                yield Input(
+                    id="ollama-embeddings-prompt",
+                    placeholder="Text to generate embeddings for",
+                    classes="input_field_long",
+                )
+            yield Button(
+                "Generate Embeddings",
+                id="ollama-embeddings-button",
+                classes="action_button_tall",
+            )
+
+        yield Label("Result / Status:", classes="section_label")
+        yield RichLog(
+            id="ollama-combined-output",
+            wrap=True,
+            highlight=False,
+            classes="output_textarea_medium",
+        )
+
+        yield Label("Streaming Log:", classes="section_label")
+        yield RichLog(
+            id="ollama-log-output",
+            wrap=True,
+            highlight=True,
+            classes="log_output_large",
+        )
+
 class LLMManagementWindow(Container):
     """
     Container for the LLM Management Tab's UI.
     Follows Textual best practices with proper navigation and view management.
     """
+
+    class DeferredViewsMounted(Message):
+        """The five deferred views now exist (task-2900).
+
+        Posted at the end of `_finish_deferred_mount` so ancestors that
+        hydrate state into those views on (re)mount — `LLMScreen`'s
+        install-progress hydration fires from `on_lab_body_ready` via one
+        `call_after_refresh`, which raced (and lost to) the deferred mount —
+        get a second, correctly-ordered chance.
+        """
 
     DEFAULT_CSS = """
     LLMManagementWindow {
@@ -308,15 +516,99 @@ class LLMManagementWindow(Container):
     def on_mount(self) -> None:
         """Called when the widget is mounted."""
         logger.debug("LLMManagementWindow.on_mount called")
-        # The child views don't exist until after this refresh (the window
-        # itself may be mounted lazily by its parent screen), so defer the
-        # initial activation until they do.
-        self.call_after_refresh(self._initialize_view)
-        # Autofill the Ollama executable when it's discoverable (UX-078).
-        self.call_after_refresh(self._autofill_ollama_path)
-        # Keep the Ollama API controls gated on a live service (UX-091).
-        self.call_after_refresh(self._update_ollama_api_state)
+        # task-2900: the five heavy hidden views mount here, after the first
+        # refresh, then the initial activation and the one-shot Ollama
+        # initializers run — in that order, because both touch views that no
+        # longer exist at compose time (the autofill would otherwise
+        # silently never fire, UX-078).
+        self.call_after_refresh(self._finish_deferred_mount)
         self.set_interval(3.0, self._update_ollama_api_state)
+
+    async def _finish_deferred_mount(self) -> None:
+        """Mount deferred views, then run everything that assumes them.
+
+        Each step is guarded individually: before task-2900 these were
+        independent `call_after_refresh` callbacks, and one failing never
+        stopped the others (a harness without a real app instance breaks
+        `_initialize_view`'s process-control sync but must not kill the
+        Ollama autofill, UX-078). Sequencing adds the ordering guarantee;
+        it must not add failure coupling.
+        """
+        try:
+            await self._mount_deferred_views()
+        except Exception:
+            logger.exception("Deferred LLM view mount failed")
+        for step in (
+            self._initialize_view,
+            # Autofill the Ollama executable when it's discoverable (UX-078).
+            self._autofill_ollama_path,
+            # Keep the Ollama API controls gated on a live service (UX-091).
+            self._update_ollama_api_state,
+        ):
+            try:
+                step()
+            except Exception:
+                logger.exception(f"Post-mount step failed: {step.__name__}")
+        self.post_message(self.DeferredViewsMounted())
+
+    async def _mount_deferred_views(self) -> None:
+        """Mount the five heavy views that arrive CSS-hidden (task-2900).
+
+        Screen survey: `#llm-view-download-models` (76 widgets),
+        `#llm-view-ollama` (58) and the curated/installed/remote library
+        views dominated this screen's 388-widget mount cost while arriving
+        `display: none` behind the `-active` CSS mechanism. Mounting them
+        here — off the click→paint critical path — leaves every activation
+        path working: `watch_active_view` tolerates absent views, and view
+        order inside `#llm-main-content` is irrelevant (exactly one view is
+        ever shown). Idempotent for re-entered mounts.
+        """
+        try:
+            content = self.query_one("#llm-main-content", Container)
+        except QueryError:
+            return
+        if self.query("#llm-view-ollama"):
+            return
+
+        from .Screens.model_curated_view import CuratedView
+        from .Screens.model_installed_view import InstalledView
+        from .Screens.model_remote_view import RemoteView
+        from ..Widgets.HuggingFace import HuggingFaceModelBrowser
+
+        curated = Container(id="llm-view-curated", classes="llm-view")
+        installed = Container(id="llm-view-installed", classes="llm-view")
+        remote = Container(id="llm-view-remote", classes="llm-view")
+        download = Container(id="llm-view-download-models", classes="llm-view")
+        await content.mount(
+            OllamaServiceView(self._ollama_prereq_text()),
+            curated,
+            installed,
+            remote,
+            download,
+        )
+
+        legacy_dir = None
+        app_config = getattr(self.app_instance, "app_config", {})
+        if isinstance(app_config, dict):
+            configured = app_config.get("llm_management", {}).get(
+                "model_download_dir"
+            )
+            if configured:
+                from pathlib import Path
+
+                legacy_dir = Path(str(configured)).expanduser()
+
+        await curated.mount(CuratedView(id="curated-models-view"))
+        await installed.mount(
+            InstalledView(legacy_dir=legacy_dir, id="installed-models-view")
+        )
+        # Remote is explicitly idle until Search is submitted.
+        await remote.mount(RemoteView(id="remote-models-view"))
+        await download.mount(
+            HuggingFaceModelBrowser(
+                self.app_instance, id="huggingface-model-browser"
+            )
+        )
 
     def _ollama_api_available(self) -> bool:
         """True when an Ollama service answers (app-launched or external)."""
@@ -931,225 +1223,6 @@ class LLMManagementWindow(Container):
                     id="mlx-log-output", classes="log_output", wrap=True, highlight=True
                 )
 
-            # Ollama View
-            with VerticalScroll(id="llm-view-ollama", classes="llm-view"):
-                yield Label("Ollama Service Management", classes="section-title")
-                yield Static(self._ollama_prereq_text(), classes="prereq-hint")
-
-                with Container(classes="input_container"):
-                    yield Label("Ollama Executable Path:", classes="inline-label")
-                    yield Input(
-                        id="ollama-exec-path",
-                        placeholder="Path to ollama executable (e.g., /usr/local/bin/ollama)",
-                    )
-                    yield Button(
-                        "Browse",
-                        id="ollama-browse-exec-button",
-                        classes="browse_button",
-                        tooltip="Choose the Ollama executable.",
-                    )
-
-                with Horizontal(classes="ollama-button-bar"):
-                    yield Button(
-                        "Start Ollama Service", id="ollama-start-service-button"
-                    )
-                    yield Button(
-                        "Stop Ollama Service",
-                        id="ollama-stop-service-button",
-                        disabled=True,
-                    )
-
-                yield Label(
-                    "Ollama API Management (requires running service)",
-                    classes="section_label",
-                )
-                yield Label("Ollama Server URL:", classes="label")
-                yield Input(
-                    id="ollama-server-url",
-                    value="http://localhost:11434",
-                    classes="input_field_long",
-                )
-
-                with Horizontal(classes="ollama-button-bar"):
-                    yield Button("List Local Models", id="ollama-list-models-button")
-                    yield Button("List Running Models", id="ollama-ps-button")
-
-                with Horizontal(classes="ollama-actions-grid"):
-                    # Left Column
-                    with Vertical(classes="ollama-actions-column"):
-                        yield Static("Model Management", classes="column-title")
-
-                        yield Label("Show Info:", classes="label")
-                        with Container(classes="input_action_container"):
-                            yield Input(
-                                id="ollama-show-model-name",
-                                placeholder="Model name",
-                                classes="input_field_short",
-                            )
-                            yield Button(
-                                "Show",
-                                id="ollama-show-model-button",
-                                classes="action_button_short",
-                            )
-
-                        yield Label("Delete:", classes="label")
-                        with Container(classes="input_action_container"):
-                            yield Input(
-                                id="ollama-delete-model-name",
-                                placeholder="Model to delete",
-                                classes="input_field_short",
-                            )
-                            yield Button(
-                                "Delete",
-                                id="ollama-delete-model-button",
-                                classes="action_button_short delete_button",
-                            )
-
-                        yield Label("Copy Model:", classes="label")
-                        with Horizontal(classes="input_action_container"):
-                            yield Input(
-                                id="ollama-copy-source-model",
-                                placeholder="Source",
-                                classes="input_field_short",
-                            )
-                            yield Input(
-                                id="ollama-copy-destination-model",
-                                placeholder="Destination",
-                                classes="input_field_short",
-                            )
-                        yield Button(
-                            "Copy Model",
-                            id="ollama-copy-model-button",
-                            classes="full_width_button",
-                        )
-
-                    # Right Column
-                    with Vertical(classes="ollama-actions-column"):
-                        yield Static("Registry & Custom Models", classes="column-title")
-
-                        yield Label("Pull Model from Registry:", classes="label")
-                        with Container(classes="input_action_container"):
-                            yield Input(
-                                id="ollama-pull-model-name",
-                                placeholder="e.g. llama3",
-                                classes="input_field_short",
-                            )
-                            yield Button(
-                                "Pull",
-                                id="ollama-pull-model-button",
-                                classes="action_button_short",
-                            )
-
-                        yield Label("Push Model to Registry:", classes="label")
-                        with Container(classes="input_action_container"):
-                            yield Input(
-                                id="ollama-push-model-name",
-                                placeholder="e.g. my-registry/my-model",
-                                classes="input_field_short",
-                            )
-                            yield Button(
-                                "Push",
-                                id="ollama-push-model-button",
-                                classes="action_button_short",
-                            )
-
-                        yield Label("Create Model from Modelfile:", classes="label")
-                        yield Input(
-                            id="ollama-create-model-name",
-                            placeholder="New model name",
-                            classes="input_field_long",
-                        )
-                        with Horizontal(classes="input_action_container"):
-                            yield Input(
-                                id="ollama-create-modelfile-path",
-                                placeholder="Path to Modelfile...",
-                                disabled=True,
-                                classes="input_field_short",
-                            )
-                            yield Button(
-                                "Browse",
-                                id="ollama-browse-modelfile-button",
-                                classes="browse_button_short",
-                                tooltip="Choose the Modelfile used to create an Ollama model.",
-                            )
-                        yield Button(
-                            "Create Model",
-                            id="ollama-create-model-button",
-                            classes="full_width_button",
-                        )
-
-                yield Label("Generate Embeddings:", classes="section_label")
-                with Horizontal(classes="embeddings_container"):
-                    with Vertical(classes="embeddings_inputs"):
-                        yield Input(
-                            id="ollama-embeddings-model-name",
-                            placeholder="Model name for embeddings",
-                            classes="input_field_long",
-                        )
-                        yield Input(
-                            id="ollama-embeddings-prompt",
-                            placeholder="Text to generate embeddings for",
-                            classes="input_field_long",
-                        )
-                    yield Button(
-                        "Generate Embeddings",
-                        id="ollama-embeddings-button",
-                        classes="action_button_tall",
-                    )
-
-                yield Label("Result / Status:", classes="section_label")
-                yield RichLog(
-                    id="ollama-combined-output",
-                    wrap=True,
-                    highlight=False,
-                    classes="output_textarea_medium",
-                )
-
-                yield Label("Streaming Log:", classes="section_label")
-                yield RichLog(
-                    id="ollama-log-output",
-                    wrap=True,
-                    highlight=True,
-                    classes="log_output_large",
-                )
-
-            # Curated and Installed stay idle until their rail row is selected.
-            with Container(id="llm-view-curated", classes="llm-view"):
-                from .Screens.model_curated_view import CuratedView
-
-                yield CuratedView(id="curated-models-view")
-
-            with Container(id="llm-view-installed", classes="llm-view"):
-                from .Screens.model_installed_view import InstalledView
-
-                legacy_dir = None
-                app_config = getattr(self.app_instance, "app_config", {})
-                if isinstance(app_config, dict):
-                    configured = app_config.get("llm_management", {}).get(
-                        "model_download_dir"
-                    )
-                    if configured:
-                        from pathlib import Path
-
-                        legacy_dir = Path(str(configured)).expanduser()
-                yield InstalledView(
-                    legacy_dir=legacy_dir,
-                    id="installed-models-view",
-                )
-
-            # Remote is explicitly idle until Search is submitted.
-            with Container(id="llm-view-remote", classes="llm-view"):
-                from .Screens.model_remote_view import RemoteView
-
-                yield RemoteView(id="remote-models-view")
-
-            # Download Models View (preserved unchanged)
-            with Container(id="llm-view-download-models", classes="llm-view"):
-                from ..Widgets.HuggingFace import HuggingFaceModelBrowser
-
-                yield HuggingFaceModelBrowser(
-                    self.app_instance, id="huggingface-model-browser"
-                )
 
     @on(InstallProgressed)
     def _managed_install_progressed(self, event: InstallProgressed) -> None:
