@@ -1948,13 +1948,21 @@ class LibraryScreen(BaseAppScreen):
         # prior timer before scheduling a new one -- see both methods.
         self._library_list_entry_focus_timer: Timer | None = None
 
-    def _register_footer_shortcuts(self) -> None:
-        """Register Library shortcuts via BaseAppScreen's persisting API.
+    def _library_footer_shortcuts_for_current_state(
+        self,
+    ) -> tuple[tuple[str, str], ...]:
+        """The per-mode shortcut set for whichever Library surface is live.
 
-        Persistence matters here: the destination-switch failsafes call
-        ``screen.refresh(recompose=True)``, which replaces the footer widget;
-        the registration must survive that.
-        """
+        Shared by ``_register_footer_shortcuts`` (the footer) and
+        ``action_show_workbench_help`` (F1) -- task-2858 review (Important
+        #1): before this extraction, F1 only listed check_action-filtered
+        ``BINDINGS`` entries, but `/`, the landing's `i`/`n` hub
+        accelerators, and F6 are ``on_key``/app-global wiring, never
+        ``Binding``s, so F1 never learned about them and rendered an empty
+        panel on the landing (and every other on_key-only surface). Both
+        call sites now read the exact same selection, so the footer and F1
+        can never disagree about what is genuinely active.
+
         # task-420: the "u"/evidence actions hard-gate on the Search/RAG
         # row, so advertising them screen-wide made them dead shortcuts
         # everywhere else -- they register only where they work,
@@ -1975,21 +1983,17 @@ class LibraryScreen(BaseAppScreen):
         # back one level (see ``action_library_media_viewer_back``), not to
         # the list, so it gets its own honest hint instead of inheriting
         # the plain viewer's "back to list" (see
-        # ``_library_media_viewer_substate_active``). This method is ALSO
-        # called from ``compose_content`` on every recompose (not just at
-        # the transition call sites above), so a sub-view entered from ANY
-        # of the editor/viewer's several call sites (see
-        # ``_library_note_editor_active`` etc.) can never leave the footer
-        # stale the way an easily-missed per-call-site registration could.
+        # ``_library_media_viewer_substate_active``).
+        """
         if self._library_selected_row_id == LIBRARY_ROW_BROWSE_SEARCH:
-            shortcuts = self.LIBRARY_SHORTCUTS
-        elif not self._library_selected_row_id:
-            shortcuts = self.LIBRARY_LANDING_SHORTCUTS
-        elif self._file_notes_active():
-            shortcuts = self.LIBRARY_NOTES_FILES_SHORTCUTS
-        elif self._library_media_viewer_substate_active():
-            shortcuts = self.LIBRARY_MEDIA_SUBSTATE_BACK_SHORTCUTS
-        elif (
+            return self.LIBRARY_SHORTCUTS
+        if not self._library_selected_row_id:
+            return self.LIBRARY_LANDING_SHORTCUTS
+        if self._file_notes_active():
+            return self.LIBRARY_NOTES_FILES_SHORTCUTS
+        if self._library_media_viewer_substate_active():
+            return self.LIBRARY_MEDIA_SUBSTATE_BACK_SHORTCUTS
+        if (
             (
                 self._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA
                 and self._library_media_view == "viewer"
@@ -1997,11 +2001,24 @@ class LibraryScreen(BaseAppScreen):
             or self._library_note_editor_active()
             or self._library_prompt_editor_active()
         ):
-            shortcuts = self.LIBRARY_DETAIL_BACK_SHORTCUTS
-        elif self._library_list_canvas_showing_list():
-            shortcuts = self.LIBRARY_LIST_SHORTCUTS
-        else:
-            shortcuts = self.LIBRARY_GENERAL_SHORTCUTS
+            return self.LIBRARY_DETAIL_BACK_SHORTCUTS
+        if self._library_list_canvas_showing_list():
+            return self.LIBRARY_LIST_SHORTCUTS
+        return self.LIBRARY_GENERAL_SHORTCUTS
+
+    def _register_footer_shortcuts(self) -> None:
+        """Register Library shortcuts via BaseAppScreen's persisting API.
+
+        Persistence matters here: the destination-switch failsafes call
+        ``screen.refresh(recompose=True)``, which replaces the footer widget;
+        the registration must survive that. This method is ALSO called from
+        ``compose_content`` on every recompose (not just at the transition
+        call sites elsewhere in this class), so a sub-view entered from ANY
+        of the editor/viewer's several call sites (see
+        ``_library_note_editor_active`` etc.) can never leave the footer
+        stale the way an easily-missed per-call-site registration could.
+        """
+        shortcuts = self._library_footer_shortcuts_for_current_state()
         self.register_footer_shortcuts(source="library", shortcuts=shortcuts)
 
     def on_key(self, event: Key) -> None:
@@ -10864,8 +10881,9 @@ class LibraryScreen(BaseAppScreen):
         return True
 
     def action_show_workbench_help(self) -> None:
-        """F1 help: only bindings whose ``check_action`` gate currently
-        passes (task-2858 AC#2, LIB-09).
+        """F1 help: the live per-mode footer set plus any ``check_action``-
+        gated ``BINDINGS`` extras (task-2858 AC#2/LIB-09; review Important
+        #1).
 
         Without this override, ``app.py``'s generic fallback
         (``App._show_generic_screen_help``, used by any screen that
@@ -10880,22 +10898,46 @@ class LibraryScreen(BaseAppScreen):
         skill"/"escape: Back to skills list" while browsing media, where
         neither key does anything.
 
-        ``app.py`` delegates F1 to the screen whenever this method
-        exists (the same seam ``SettingsScreen.action_show_workbench_
-        help`` already uses for its own per-category filtering) -- this
-        filters the same static list through ``check_action``, mirroring
-        the exact keep/drop rule Textual's own ``Screen.active_bindings``
-        uses for footer/key resolution.
+        Filtering ``BINDINGS`` through ``check_action`` alone was not
+        enough, though: the keys the footer actually teaches on most
+        Library surfaces (``/`` focus-search, the landing's ``i``/``n``
+        hub accelerators, F6 pane-cycle -- ``LIBRARY_LANDING_SHORTCUTS``
+        and its five siblings) are ``on_key``/app-global wiring, never
+        ``Binding``s, so they never reached this filter and F1 rendered
+        an EMPTY panel (title + Close button only) on the landing and
+        every other on_key-only surface. This now starts from
+        ``_library_footer_shortcuts_for_current_state`` -- the exact
+        per-mode set ``_register_footer_shortcuts`` selects for the
+        footer, so F1 and the footer can never disagree -- and appends
+        whatever ``check_action``-gated ``BINDINGS`` extras are active
+        right now, mirroring the keep/drop rule Textual's own
+        ``Screen.active_bindings`` uses for footer/key resolution.
+        Deliberately NOT run through ``AppFooterStatus``'s reserved-
+        global-key filter (the footer drops F6 there because the global
+        hint cluster already covers it, and further compacts that
+        cluster below F6 at narrow widths -- LIB-18): F1 is the
+        discoverability fallback for exactly that narrow-width case, so
+        it must show F6 even where the footer currently cannot
+        (``SettingsScreen.action_show_workbench_help`` reads its own
+        per-category shortcuts the same direct way, bypassing the footer
+        widget entirely).
         """
         from ..Workbench.help import (  # noqa: PLC0415 -- lazy: only needed on F1; keeps the help panel off the module import path
             WorkbenchHelpPanel,
             WorkbenchHelpState,
         )
 
+        footer_shortcuts = self._library_footer_shortcuts_for_current_state()
+        seen_keys = {key for key, _description in footer_shortcuts}
+        binding_extras = tuple(
+            pair
+            for pair in self._active_library_binding_shortcuts()
+            if pair[0] not in seen_keys
+        )
         state = WorkbenchHelpState(
             route_id="library",
-            title=f"{type(self).__name__} Shortcuts",
-            shortcuts=self._active_library_binding_shortcuts(),
+            title="Library Shortcuts",
+            shortcuts=footer_shortcuts + binding_extras,
         )
         self.app.push_screen(WorkbenchHelpPanel(state))
 

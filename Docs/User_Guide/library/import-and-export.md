@@ -190,7 +190,7 @@ button/canvas title/Start button/completion toast all read "Import…" /
 reads "Export bundle (.zip)" everywhere it used to say "Export chatbook";
 option labels and dialogs say "import" instead of "ingest" throughout)*
 
-*Verified against branch-base `6b38a13b8` — 2026-08-07 (task-2858 AC#3:
+*Verified against dev @ 6b38a13b8 — 2026-08-07 (task-2858 AC#3:
 the Export button's disabled state now always carries an explaining
 tooltip, and a successful export leaves the durable "Last export: …"
 line described above — previously an empty-scope/no-destination press

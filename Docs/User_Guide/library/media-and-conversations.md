@@ -94,8 +94,10 @@ of type 'pdf'."
   placeholder reads "Search content (raw text)…" whenever the toggle is
   present, since search always matches the raw stored text regardless of
   which view is showing. Typing a query shows "Match 1 of 4 matches" (or
-  "No matches") and a "◀ Prev" / "Next ▶" pair that steps through
-  highlighted matches (shown only in the Raw view), wrapping at either end.
+  "No matches") and a "◀ Prev" / "Next ▶" pair that steps through matches
+  and wraps at either end — in both views. Only the visual highlighting of
+  the current match is Raw-only; Rendered shows the same step count with
+  no on-screen mark.
 - **"Analysis"** — a stored analysis text you can view and edit ("Edit
   analysis", or "Add analysis" when empty; "No analysis yet." otherwise).
   This section only edits text — it never calls a model; analysis is

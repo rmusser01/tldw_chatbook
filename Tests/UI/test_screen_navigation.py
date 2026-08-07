@@ -2068,6 +2068,61 @@ def test_action_show_workbench_help_filters_bindings_by_check_action(monkeypatch
     assert "escape" in keys
 
 
+def test_action_show_workbench_help_includes_landing_footer_keys(monkeypatch):
+    """task-2858 review (Important #1): F1 on the Library LANDING (and every
+    other surface whose real keyboard story is on_key/footer-set wiring,
+    never a ``Binding``) must not render an EMPTY panel.
+
+    Before this fix ``action_show_workbench_help`` only listed check_action-
+    filtered ``BINDINGS`` entries -- and ``test_library_screen_bindings_are_
+    all_gated_or_universal`` above pins that EVERY ``BINDINGS`` action gates
+    ``False`` on the bare landing, so the panel rendered a title and a Close
+    button and nothing else. Yet the landing footer teaches four real keys
+    (``/``, ``i``, ``n``, F6 -- ``LIBRARY_LANDING_SHORTCUTS``,
+    ``_register_footer_shortcuts``) that never reach a ``Binding`` (``/``
+    and the hub accelerators are ``on_key`` wiring; F6 is the app-global
+    pane-cycle key). F1 must now include that same per-mode footer set, so
+    the landing's F1 is never empty and matches what the footer already
+    teaches -- including F6, which task-2860's reserved-global filtering
+    drops from the FOOTER's compact rendering but must still reach F1 (F1
+    is not subject to that filter, mirroring how
+    ``SettingsScreen.action_show_workbench_help`` reads its per-category
+    shortcuts directly rather than through the footer widget).
+    """
+    from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+    from tldw_chatbook.UI.Workbench.help import WorkbenchHelpPanel
+
+    app = _build_test_app()
+    screen = LibraryScreen(app)
+    # Landing: no row selected (the default -- see LibraryScreen.__init__).
+    assert screen._library_selected_row_id == ""
+
+    pushed = []
+
+    class _FakeApp:
+        def push_screen(self, panel):
+            pushed.append(panel)
+
+    monkeypatch.setattr(
+        LibraryScreen, "app", property(lambda self: _FakeApp()), raising=False
+    )
+
+    screen.action_show_workbench_help()
+
+    assert len(pushed) == 1
+    panel = pushed[0]
+    assert isinstance(panel, WorkbenchHelpPanel)
+    assert panel.state.shortcuts, "F1 must not be empty on the Library landing"
+    keys = {key for key, _description in panel.state.shortcuts}
+    # LIBRARY_LANDING_SHORTCUTS -- the exact keys the landing footer teaches.
+    assert "/" in keys
+    assert "i" in keys
+    assert "n" in keys
+    assert "F6" in keys
+    # Minor #2 (same review): the title must not leak the raw class name.
+    assert panel.state.title == "Library Shortcuts"
+
+
 def test_action_library_media_viewer_back_returns_to_list_and_refocuses_it():
     """task-2856 AC1/AC2: Escape from the PLAIN read-only media viewer (no
     edit/delete-confirm/analysis sub-state active) reuses the exact same

@@ -434,14 +434,18 @@ async def test_collections_row_falls_back_to_short_title_once_double_digit():
 
 
 async def test_no_row_label_truncates_mid_word_at_120_100_and_80_columns():
-    """Rendered-geometry sweep: mounts the REAL rail with the REAL browse
-    section rows (built by build_library_shell_state) and refits every row
-    button to the verified real content width for 120/100/80 columns
-    (17 cells, see ``_REAL_RAIL_ROW_WIDTH``), then asserts no rendered
-    label contains an ellipsis immediately preceded by a lowercase letter
-    that is not the end of a real short word -- i.e. no row's PRIMARY
-    title line hard-cuts inside "Conversations"/"Flashcards"/"Collections"
-    the way the live 120x35/100x30/80x24 captures originally showed."""
+    """Rendered-geometry sweep: calls the REAL rail's static ``_row_label``
+    directly for every browse-section row (built by
+    build_library_shell_state) at the one width value verified to be the
+    real rail's row-content width at 120/100/80 columns alike (17 cells,
+    see ``_REAL_RAIL_ROW_WIDTH``'s comment above) -- the genuine MOUNTED
+    rail check lives in
+    ``test_library_shell.py::test_rail_counts_never_clip_and_titles_
+    shrink_first_at_100x30``. Asserts no rendered label contains an
+    ellipsis immediately preceded by a lowercase letter that is not the
+    end of a real short word -- i.e. no row's PRIMARY title line hard-cuts
+    inside "Conversations"/"Flashcards"/"Collections" the way the live
+    120x35/100x30/80x24 captures originally showed."""
     from tldw_chatbook.Library.library_shell_state import (
         LibraryShellInput,
         build_library_shell_state,

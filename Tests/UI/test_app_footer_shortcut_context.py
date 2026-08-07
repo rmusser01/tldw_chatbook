@@ -336,11 +336,12 @@ async def test_footer_compacts_globals_before_dropping_screen_hints_when_narrow(
 
 @pytest.mark.asyncio
 async def test_footer_control_reproduces_the_historical_ellipsis_drop():
-    """Control case: confirms the width chosen above genuinely exercises
-    the historical bug shape (screen hints dropping to a bare ellipsis)
-    when the new compact-globals step is removed -- i.e. this test would
-    have failed before the fix, proving the fix (not the width choice)
-    is what changed the outcome."""
+    """Control case: confirms the 100-column width used above genuinely
+    REACHES the new compact-globals intermediate step (LIB-18) -- i.e.
+    that step, not a wider or narrower one, is what actually renders at
+    that width. This proves the compact step is reached; it does not
+    reproduce the historical bare-ellipsis drop itself (there is no
+    fixture here with that step disabled to show the old behavior)."""
 
     class TestApp(App):
         def compose(self):
