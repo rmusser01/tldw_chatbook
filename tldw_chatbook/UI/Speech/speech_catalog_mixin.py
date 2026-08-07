@@ -63,6 +63,7 @@ from tldw_chatbook.UI.stts_playground_catalog import (
     SelectValue,
     controls_from_catalog,
     controls_from_profile_preset,
+    preset_has_no_catalog_check,
     profile_availability_from_catalog,
     provider_options,
 )
@@ -556,10 +557,18 @@ class SpeechCatalogMixin:
                         ):
                             self._stale_providers.add(provider_id)
                             self._catalog_generation_allowed = True
-                            self._set_provider_status(
-                                "Profile availability is unverified. Generate makes "
-                                "one exact attempt without fallback and shows a warning."
-                            )
+                            if preset_has_no_catalog_check(preset):
+                                self._set_provider_status(
+                                    "This provider has no catalog check. Generate "
+                                    "makes one exact attempt without fallback and "
+                                    "shows a warning."
+                                )
+                            else:
+                                self._set_provider_status(
+                                    "Profile availability is unverified. Generate "
+                                    "makes one exact attempt without fallback and "
+                                    "shows a warning."
+                                )
                             self._sync_generate_enabled()
                             return
                         self._stale_providers.add(provider_id)
@@ -605,11 +614,23 @@ class SpeechCatalogMixin:
                 self._apply_catalog(provider_id, catalog)
             if preset is not None and preset.provider_id == provider_id:
                 if self._profile_effective_availability != "unavailable":
-                    self._set_provider_status(
-                        "Exact profile voice discovery is unverified; "
-                        "the exact selection remains selected without fallback."
-                    )
+                    if preset_has_no_catalog_check(preset):
+                        self._set_provider_status(
+                            "This provider has no catalog check. The exact "
+                            "selection remains selected without fallback."
+                        )
+                    else:
+                        self._set_provider_status(
+                            "Exact profile voice discovery is unverified; "
+                            "the exact selection remains selected without fallback."
+                        )
             else:
+                # Investigated (slice 2 task 3): this "exact selection" is a
+                # manually chosen voice for `provider_id`, not an adopted
+                # profile -- this branch only runs when there is no matching
+                # preset (`preset is None` or `preset.provider_id !=
+                # provider_id`). It carries no legacy-vs-audio.cpp adoption
+                # story to tell, so it is left as-is.
                 self._set_provider_status(
                     "Voices are unavailable; the exact selection remains unverified"
                     if isinstance(failed_voice, str)
@@ -659,6 +680,12 @@ class SpeechCatalogMixin:
             unavailable=voice_unverified,
         )
         if voice_unverified and preset is None:
+            # Investigated (slice 2 task 3): `voice_unverified` can only be
+            # True when `observation` was populated above, which only
+            # happens `if provider_id == AUDIO_CPP_PROVIDER_ID`. This branch
+            # is audio.cpp-only reachable AND requires `preset is None` (no
+            # adopted profile in play), so it has no legacy-adoption story
+            # to tell -- left as-is.
             selected_voice = self._current_select_value("#tts-voice-select")
             self._set_provider_status(
                 "Voices are unavailable; the exact selection remains unverified"
@@ -956,10 +983,16 @@ class SpeechCatalogMixin:
                     "profiles and choose Edit."
                 )
             elif availability == "unverified":
-                self._set_provider_status(
-                    "Profile availability is unverified. Generate makes one exact "
-                    "attempt without fallback and shows a warning."
-                )
+                if preset_has_no_catalog_check(preset):
+                    self._set_provider_status(
+                        "This provider has no catalog check. Generate makes one "
+                        "exact attempt without fallback and shows a warning."
+                    )
+                else:
+                    self._set_provider_status(
+                        "Profile availability is unverified. Generate makes one "
+                        "exact attempt without fallback and shows a warning."
+                    )
             else:
                 self._set_provider_status(
                     "Profile preview loaded with its exact persisted selection."

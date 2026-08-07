@@ -19,7 +19,10 @@ from Tests.UI.test_stts_playground_audio_cpp import (
     _resolved,
     _wait_until,
 )
-from tldw_chatbook.TTS.adapter_types import TTSProviderCatalog
+from tldw_chatbook.TTS.adapter_types import (
+    TTSProviderCatalog,
+    TTSProviderReconfiguringError,
+)
 from tldw_chatbook.TTS.audio_player import PlaybackState
 from tldw_chatbook.TTS.playground_types import STTSGeneratedAudio
 from tldw_chatbook.TTS.studio_preferences import StudioTTSPreferencesSnapshot
@@ -1508,3 +1511,182 @@ async def test_a_user_edit_updates_the_marker(
         )
         assert chip.has_class("speech-chip-override")
         assert pane.axis_values.get("tts-speed-input") == "1.7"
+
+
+#: (provider_id, model_id, voice_id) for the two provider classes this
+#: pane must distinguish: audio.cpp has real catalog authority, so its
+#: "unverified" is transient; the six legacy-bridge providers (openai
+#: stands in for all of them here) have none, so theirs is permanent.
+#: Matches each service's own catalog exactly, so `profile_availability_
+#: from_catalog` resolves both to "unverified" rather than "unavailable".
+_ADOPTED_PRESET_PROVIDER_CASES = (
+    ("audio_cpp", "<opaque:model>", "[voice]"),
+    ("openai", "tts-1", "alloy"),
+)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("provider_id", "model_id", "voice_id"),
+    _ADOPTED_PRESET_PROVIDER_CASES,
+    ids=("audio_cpp", "openai"),
+)
+async def test_adopted_preset_unverified_copy_distinguishes_no_catalog_legacy(
+    faked_service: FakeTTSService,
+    provider_id: str,
+    model_id: str,
+    voice_id: str,
+) -> None:
+    """Task 3's two highest-traffic adoption sites: the provider-status line
+    (`_apply_controls`) and the preview banner (`_sync_profile_preview_status`).
+
+    Before this, both read identically for a legacy preset and an
+    audio.cpp preset once either settled "unverified" -- "Profile
+    availability is unverified. Generate makes one exact attempt without
+    fallback and shows a warning." implies a transient state Refresh can
+    resolve, which is false for a provider with no catalog to refresh
+    against. A legacy preset must instead read the permanent "no catalog
+    check" story; audio.cpp's transient story is unchanged.
+    """
+    preset = _profile_preset(
+        provider_id=provider_id,
+        model_id=model_id,
+        voice_id=voice_id,
+        availability="unverified",
+    )
+    app = _AxisHarness(profile_preset=preset)
+
+    async with app.run_test(size=(160, 60)) as pilot:
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        pane = app.query_one(SpeechPlaygroundPane)
+        assert pane._profile_effective_availability == "unverified"
+
+        status = str(app.query_one("#tts-provider-status", Static).renderable).lower()
+        banner = str(
+            app.query_one("#tts-profile-preview-status", Static).renderable
+        ).lower()
+
+        if provider_id == "audio_cpp":
+            assert "unverified" in status
+            assert "no catalog check" not in status
+            assert "unverified" in banner
+            assert "no catalog check" not in banner
+        else:
+            assert "no catalog check" in status
+            assert "unverified" not in status
+            assert "no catalog check" in banner
+            assert "unverified" not in banner
+        # The behavioral tail -- one exact attempt, no fallback -- is true
+        # for both provider classes and must survive the copy split.
+        assert "generate makes one exact attempt" in status
+        assert "without fallback" in status
+        assert "generate makes one exact attempt" in banner
+        assert "without fallback" in banner
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("provider_id", "model_id", "voice_id"),
+    _ADOPTED_PRESET_PROVIDER_CASES,
+    ids=("audio_cpp", "openai"),
+)
+async def test_reconfiguring_voice_failure_status_distinguishes_no_catalog_legacy(
+    faked_service: FakeTTSService,
+    provider_id: str,
+    model_id: str,
+    voice_id: str,
+) -> None:
+    """`_load_provider_voices_worker`'s reconfiguring branch (task 3 site 2)
+    must not promise a legacy provider's permanent no-catalog state will
+    resolve on retry, the way it honestly can for audio.cpp.
+    """
+    preset = _profile_preset(
+        provider_id=provider_id,
+        model_id=model_id,
+        voice_id=voice_id,
+        availability="available",
+    )
+    app = _AxisHarness(profile_preset=preset)
+
+    async with app.run_test(size=(160, 60)) as pilot:
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        pane = app.query_one(SpeechPlaygroundPane)
+        catalog = pane._catalogs[provider_id]
+
+        faked_service.voice_error = TTSProviderReconfiguringError(
+            "private reconfiguring detail"
+        )
+        pane._load_provider_voices(
+            provider_id,
+            model_id,
+            catalog.revision,
+            refresh=True,
+        )
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        status = str(app.query_one("#tts-provider-status", Static).renderable).lower()
+        if provider_id == "audio_cpp":
+            assert "unverified" in status
+            assert "no catalog check" not in status
+        else:
+            assert "no catalog check" in status
+            assert "unverified" not in status
+        assert "private reconfiguring detail" not in status
+        assert "generate makes one exact attempt" in status
+        assert "shows a warning" in status
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("provider_id", "model_id", "voice_id"),
+    _ADOPTED_PRESET_PROVIDER_CASES,
+    ids=("audio_cpp", "openai"),
+)
+async def test_generic_voice_failure_status_distinguishes_no_catalog_legacy(
+    faked_service: FakeTTSService,
+    provider_id: str,
+    model_id: str,
+    voice_id: str,
+) -> None:
+    """`_load_provider_voices_worker`'s generic-exception branch (task 3
+    site 3): the "the exact selection remains selected without fallback"
+    line must carry the same no-catalog distinction, not just the two
+    "Generate makes one exact attempt" sites.
+    """
+    preset = _profile_preset(
+        provider_id=provider_id,
+        model_id=model_id,
+        voice_id=voice_id,
+        availability="available",
+    )
+    app = _AxisHarness(profile_preset=preset)
+
+    async with app.run_test(size=(160, 60)) as pilot:
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        pane = app.query_one(SpeechPlaygroundPane)
+        catalog = pane._catalogs[provider_id]
+
+        faked_service.voice_error = RuntimeError("private upstream detail")
+        pane._load_provider_voices(
+            provider_id,
+            model_id,
+            catalog.revision,
+            refresh=True,
+        )
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        status = str(app.query_one("#tts-provider-status", Static).renderable).lower()
+        if provider_id == "audio_cpp":
+            assert "unverified" in status
+            assert "no catalog check" not in status
+        else:
+            assert "no catalog check" in status
+            assert "unverified" not in status
+        assert "private upstream detail" not in status
+        assert "without fallback" in status

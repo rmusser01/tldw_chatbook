@@ -302,6 +302,33 @@ def controls_from_profile_preset(
     )
 
 
+def preset_has_no_catalog_check(preset: TTSPlaygroundSelectionPreset) -> bool:
+    """Return whether a preset's provider has no catalog authority at all.
+
+    The six legacy-bridge providers (openai, elevenlabs, kokoro,
+    chatterbox, higgs, alltalk) are never preflighted -- `observe_
+    availability` skips them by design -- so their "unverified" is
+    permanent, not a transient result waiting on Refresh the way
+    audio.cpp's is. Presentation code must say so instead of reusing
+    audio.cpp's "unverified, refresh and retry" copy for both classes.
+
+    The honest key elsewhere in this program is `recovery_action ==
+    "none"` on a `TTSProfileAvailability` (see `profile_service.
+    _recovery_action`), which slice 2 tasks 1 and 2 use because their call
+    sites hold one. The Playground adoption sites this helper serves hold
+    only `TTSPlaygroundSelectionPreset`, whose `availability` field is a
+    bare `ProfileAvailabilityState` string with no recovery_action --
+    provider class is a sufficient and exact proxy in that specific
+    situation (recovery_action for "unverified" is "none" for every
+    provider except audio_cpp, unconditionally). This is a deliberate,
+    centralized exception to "branch on recovery_action, not provider_id
+    string comparisons" -- every Playground adoption site must call this
+    one helper rather than re-deriving the class test itself, so a sixth
+    site can't diverge from the other five.
+    """
+    return preset.provider_id != AUDIO_CPP_PROVIDER_ID
+
+
 def profile_availability_from_catalog(
     preset: TTSPlaygroundSelectionPreset,
     catalog: TTSProviderCatalog | None,

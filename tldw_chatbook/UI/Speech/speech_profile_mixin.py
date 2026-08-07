@@ -31,6 +31,7 @@ from tldw_chatbook.UI.stts_playground_catalog import (
     AUDIO_CPP_PROVIDER_ID,
     CatalogRequestToken,
     controls_from_profile_preset,
+    preset_has_no_catalog_check,
 )
 from tldw_chatbook.UI.stts_profile_library import (
     PROFILE_ACTION_FAILED_COPY,
@@ -333,10 +334,16 @@ class SpeechProfileMixin:
         ) is not None:
             copy, style_state = blocked
         elif availability == "unverified":
-            copy = (
-                "Profile preview unverified — Generate makes one exact attempt "
-                "without fallback."
-            )
+            if preset_has_no_catalog_check(preset):
+                copy = (
+                    "This provider has no catalog check. Generate makes one "
+                    "exact attempt without fallback."
+                )
+            else:
+                copy = (
+                    "Profile preview unverified — Generate makes one exact "
+                    "attempt without fallback."
+                )
         else:
             copy = "Profile preview — exact saved selection."
         for state in ("loading", "available", "unverified", "unavailable"):
