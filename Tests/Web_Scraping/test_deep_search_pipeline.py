@@ -107,9 +107,13 @@ def test_build_chunk_infos_packs_and_splits():
 
 
 def test_estimate_confidence_formula_points():
+    # Server WebSearch_APIs.py :1119-1133, verbatim: chunk_success is 1.0
+    # (nothing failed) when chunk_count == 0, and a fully-clean LLM run
+    # (has_llm and failed_chunks == 0) earns a +0.1 bonus, not a flat +0.05.
     f = WebSearch_APIs._estimate_confidence
     assert f(0, 0, 0, True) == 0.0
-    assert f(10, 2, 0, True) == pytest.approx(min(0.99, (0.35 + 0.45) * 1.0 + 0.05))
+    assert f(10, 2, 0, True) == pytest.approx(0.9)
+    assert f(5, 0, 0, True) == pytest.approx(0.675)  # chunk_count == 0 branch
     assert f(1, 1, 1, False) >= 0.1  # clamp floor
 
 
@@ -159,6 +163,62 @@ def test_aggregate_llm_failure_still_typed(monkeypatch):
 def test_aggregate_no_llm_fallback():
     out = WebSearch_APIs.aggregate_results(_REL, "q", [], None)
     assert "sum one" in out["text"] and out["confidence"] > 0.0
+
+
+def test_aggregate_single_chunk_skips_wasted_map_call(monkeypatch):
+    # _REL is one small entry -> exactly one chunk. The MAP-phase chunk
+    # summarization would cost a provider round-trip whose output feeds
+    # nothing (synthesis already reads the raw numbered evidence directly
+    # when there's only one chunk) -- it must not be called at all.
+    calls = {"n": 0}
+
+    def fake_chat(**kwargs):
+        calls["n"] += 1
+        return "Answer citing [1]."
+
+    def fake_analyze(*a, **kwargs):
+        calls["n"] += 1
+        return "chunk summary"
+
+    monkeypatch.setattr(WebSearch_APIs, "chat_api_call", fake_chat)
+    from tldw_chatbook.LLM_Calls import Summarization_General_Lib
+    monkeypatch.setattr(Summarization_General_Lib, "analyze", fake_analyze)
+
+    out = WebSearch_APIs.aggregate_results(_REL, "q", [], "openai")
+    assert calls["n"] == 1  # only the synthesis call; MAP call skipped
+
+
+_REL_MULTI = {
+    "a": {"content": "A" * 4000, "reasoning": "ra", "url": "https://a.example/", "title": "A"},
+    "b": {"content": "B" * 4000, "reasoning": "rb", "url": "https://b.example/", "title": "B"},
+}
+
+
+def test_aggregate_multi_chunk_synthesizes_from_chunk_summaries(monkeypatch):
+    # Two ~4000-char entries pack into 2 separate 6000-char chunks, so the
+    # MAP phase runs. The synthesis prompt must consume the chunk SUMMARIES
+    # (not the raw ~4000-char originals) while the "[n]" markers the
+    # summarizer is instructed to preserve still reach the synthesis prompt.
+    captured = {}
+
+    def fake_chat(**kwargs):
+        captured["prompt"] = kwargs["messages_payload"][0]["content"]
+        return "Answer citing [1][2]."
+
+    def fake_analyze(*a, **kwargs):
+        input_data = kwargs.get("input_data", "")
+        marker = input_data.split("\n", 1)[0]  # e.g. "[1] A"
+        return f"{marker} summary of chunk"
+
+    monkeypatch.setattr(WebSearch_APIs, "chat_api_call", fake_chat)
+    from tldw_chatbook.LLM_Calls import Summarization_General_Lib
+    monkeypatch.setattr(Summarization_General_Lib, "analyze", fake_analyze)
+
+    out = WebSearch_APIs.aggregate_results(_REL_MULTI, "q", [], "openai")
+    prompt = captured["prompt"]
+    assert "summary of chunk" in prompt              # built from chunk summaries
+    assert "[1]" in prompt and "[2]" in prompt        # citation markers survived the map step
+    assert "A" * 4000 not in prompt and "B" * 4000 not in prompt  # not the raw originals
 
 
 # --- relevance: timeouts, cancel, scrape fallback, url/title capture -----------

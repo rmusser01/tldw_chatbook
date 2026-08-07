@@ -1152,20 +1152,26 @@ def _build_chunk_infos(items: List[str], max_chars: int = 6000) -> List[Dict[str
 def _estimate_confidence(
     relevant_count: int, chunk_count: int, failed_chunks: int, has_llm: bool
 ) -> float:
-    """Confidence heuristic (Global Constraints formula, verbatim; port of
-    server WebSearch_APIs.py :1119-1133; task-1356):
+    """Confidence heuristic, port of server WebSearch_APIs.py :1119-1133
+    VERBATIM (task-1356; the plan doc's "Global Constraints" transcription
+    dropped two server nuances -- see task-2 fix-report -- so this now
+    matches the live server source exactly, not the plan doc):
     ``coverage = min(relevant_count, 10) / 10``;
-    ``chunk_success = (chunk_count - failed_chunks) / chunk_count if chunk_count else 0.0``;
-    ``confidence = (0.35 + 0.45 * coverage) * (0.6 + 0.4 * chunk_success) + (0.05 if has_llm else 0.0)``,
+    ``chunk_success = 1.0 if chunk_count == 0 else (chunk_count - failed_chunks) / chunk_count``
+    (zero chunks means nothing failed, not a 0.4x penalty);
+    ``llm_bonus = 0.1 if has_llm and failed_chunks == 0 else (0.05 if has_llm else 0.0)``
+    (a fully-clean LLM run earns the full bonus, not a flat 0.05);
+    ``confidence = (0.35 + 0.45 * coverage) * (0.6 + 0.4 * chunk_success) + llm_bonus``,
     clamped to [0.1, 0.99]; 0.0 only when relevant_count == 0.
     """
     if relevant_count <= 0:
         return 0.0
     coverage = min(relevant_count, 10) / 10.0
-    chunk_success = (chunk_count - failed_chunks) / chunk_count if chunk_count else 0.0
-    confidence = (0.35 + 0.45 * coverage) * (0.6 + 0.4 * chunk_success) + (
-        0.05 if has_llm else 0.0
-    )
+    chunk_success = 1.0 if chunk_count == 0 else (chunk_count - failed_chunks) / chunk_count
+    base = 0.35 + 0.45 * coverage
+    modifier = 0.6 + 0.4 * chunk_success
+    llm_bonus = 0.1 if has_llm and failed_chunks == 0 else (0.05 if has_llm else 0.0)
+    confidence = base * modifier + llm_bonus
     return max(0.1, min(0.99, round(confidence, 3)))
 
 
@@ -1178,16 +1184,21 @@ def aggregate_results(
     """
     Combines and summarizes relevant results into a final answer via a
     chunked map-reduce: relevant results are renumbered 1..N (stable dict
-    order) and packed into <= 6000-char chunks (`_build_chunk_infos`); each
-    chunk is independently summarized (MAP, for the audit-trail `chunks`
-    field and the confidence signal) while the synthesis prompt itself
-    (REDUCE) is built directly from the full numbered evidence list -- not
-    from the chunk summaries -- so every "[n]" citation the LLM emits
-    resolves to a real evidence id (the citation-integrity fix; task-1356
-    binding adaptation 4, replacing the server's un-renumbered "ID: {rid}"
-    payload). Port of server WebSearch_APIs.py :1042-1298; binding adaptation
-    (5): chunk summarization uses chatbook's existing lazy
-    `Summarization_General_Lib.analyze` import, not the server's `summarize`.
+    order) and packed into <= 6000-char chunks (`_build_chunk_infos`). Every
+    "[n]" citation the eventual synthesis LLM emits resolves to a real
+    evidence id (the citation-integrity fix; task-1356 binding adaptation 4,
+    replacing the server's un-renumbered "ID: {rid}" payload):
+      - **1 chunk** (context already bounded by construction): the MAP
+        summarization call is skipped entirely -- it would cost a provider
+        round-trip whose output fed nothing -- and the synthesis prompt (REDUCE)
+        consumes the raw numbered evidence directly.
+      - **>1 chunks**: each chunk is summarized (MAP; chatbook's lazy
+        `Summarization_General_Lib.analyze` import, binding adaptation 5, not
+        the server's `summarize`), instructed to preserve "[n]" markers
+        verbatim, and the synthesis prompt (REDUCE) consumes those chunk
+        summaries -- restoring the server's actual context-bounding design
+        (port of server WebSearch_APIs.py :1042-1298) instead of feeding the
+        full originals regardless of size.
 
     Args:
         relevant_results (Dict[str, Dict]): Dictionary of relevant articles/content.
@@ -1249,7 +1260,7 @@ def aggregate_results(
         chunk_metadata = [
             {
                 "chunk_index": info["index"],
-                "result_ids": info["item_indices"],
+                "evidence_ids": info["item_indices"],
                 "summary": info["text"][:1500],
                 "generated": False,
                 "source_characters": len(info["text"]),
@@ -1270,63 +1281,93 @@ def aggregate_results(
         }
         return fallback_answer
 
-    # MAP: summarize each chunk (audit trail + confidence signal only -- the
-    # synthesis prompt below always uses the numbered evidence, never these
-    # summaries, to keep citations resolvable).
-    # `analyze` is imported lazily (chatbook precedent, see module docstring).
-    from tldw_chatbook.LLM_Calls.Summarization_General_Lib import analyze as _analyze
-
     chunk_metadata: List[Dict[str, Any]] = []
     failed_chunks = 0
-    for info in chunk_infos:
-        chunk_prompt = (
-            "Summarize the following set of relevant search snippets into a "
-            f'concise digest that preserves high-signal facts for answering the question: "{question}".\n\n'
-            "Requirements:\n"
-            "1. Keep the summary under 1500 characters.\n"
-            "2. Focus on verifiable facts and key statistics.\n"
-            "3. Mention the reasoning notes when helpful.\n\n"
-            f"<chunk index=\"{info['index']}\">\n{info['text']}\n</chunk>"
-        )
-        try:
-            chunk_summary = _analyze(
-                input_data=info["text"],
-                custom_prompt_arg=chunk_prompt,
-                api_name=api_endpoint,
-                api_key=None,
-                temp=0.3,
-                system_message=None,
-                streaming=False,
-            )
-            if not chunk_summary or (
-                isinstance(chunk_summary, str) and chunk_summary.startswith("Error:")
-            ):
-                raise RuntimeError(chunk_summary or "empty chunk summary")
-            generated = True
-        except Exception as chunk_error:
-            failed_chunks += 1
-            logger.warning(f"Chunk summarization failed for chunk {info['index']}: {chunk_error}")
-            chunk_summary = info["text"][:1500]
-            generated = False
 
-        chunk_metadata.append(
-            {
-                "chunk_index": info["index"],
-                "result_ids": info["item_indices"],
-                "summary": chunk_summary,
-                "generated": generated,
-                "source_characters": len(info["text"]),
-                "truncated_source": info["truncated"],
-            }
-        )
+    if len(chunk_infos) <= 1:
+        # A single chunk already bounds context by construction -- the MAP
+        # summarization call would cost a provider round-trip for zero
+        # effect (its output would only feed the audit trail), so skip it
+        # and synthesize directly from the raw numbered evidence.
+        for info in chunk_infos:
+            chunk_metadata.append(
+                {
+                    "chunk_index": info["index"],
+                    "evidence_ids": info["item_indices"],
+                    "summary": info["text"][:1500],
+                    "generated": False,
+                    "source_characters": len(info["text"]),
+                    "truncated_source": info["truncated"],
+                }
+            )
+        synthesis_source = concatenated_texts
+    else:
+        # MAP: multiple chunks -- summarize each one so the synthesis prompt
+        # below stays context-bounded (the point of chunking); the summarizer
+        # is explicitly told to preserve "[n]" citation markers verbatim so
+        # the citation-integrity fix (adaptation 4) survives this reduce step.
+        # `analyze` is imported lazily (chatbook precedent, see module docstring).
+        from tldw_chatbook.LLM_Calls.Summarization_General_Lib import analyze as _analyze
+
+        summarized_chunks: List[str] = []
+        for info in chunk_infos:
+            chunk_prompt = (
+                "Summarize the following set of relevant search snippets into a "
+                f'concise digest that preserves high-signal facts for answering the question: "{question}".\n\n'
+                "Requirements:\n"
+                "1. Keep the summary under 1500 characters.\n"
+                "2. Focus on verifiable facts and key statistics.\n"
+                "3. Mention the reasoning notes when helpful.\n"
+                "4. Preserve all [n] citation markers exactly as they appear; "
+                "never renumber, merge, or drop them.\n\n"
+                f"<chunk index=\"{info['index']}\">\n{info['text']}\n</chunk>"
+            )
+            try:
+                chunk_summary = _analyze(
+                    input_data=info["text"],
+                    custom_prompt_arg=chunk_prompt,
+                    api_name=api_endpoint,
+                    api_key=None,
+                    temp=0.3,
+                    system_message=None,
+                    streaming=False,
+                )
+                if not chunk_summary or (
+                    isinstance(chunk_summary, str) and chunk_summary.startswith("Error:")
+                ):
+                    raise RuntimeError(chunk_summary or "empty chunk summary")
+                generated = True
+            except Exception as chunk_error:
+                failed_chunks += 1
+                logger.warning(
+                    f"Chunk summarization failed for chunk {info['index']}: {chunk_error}"
+                )
+                chunk_summary = info["text"][:1500]
+                generated = False
+
+            chunk_metadata.append(
+                {
+                    "chunk_index": info["index"],
+                    "evidence_ids": info["item_indices"],
+                    "summary": chunk_summary,
+                    "generated": generated,
+                    "source_characters": len(info["text"]),
+                    "truncated_source": info["truncated"],
+                }
+            )
+            summarized_chunks.append(f"Chunk {info['index']} Summary:\n{chunk_summary}")
+
+        synthesis_source = "\n\n".join(summarized_chunks)
 
     current_date = time.strftime("%Y-%m-%d")
 
-    # REDUCE: the synthesis prompt is built from the full numbered evidence
-    # payload (concatenated_texts), not the chunk summaries above.
+    # REDUCE: single-chunk synthesizes from the raw numbered evidence above;
+    # multi-chunk synthesizes from the MAP-phase chunk summaries (restoring
+    # the server's context-bounding design) which still carry the "[n]"
+    # markers per the preservation instruction above.
     analyze_search_results_prompt_2 = render_internal_prompt(
         "websearch.answer_synthesis",
-        concatenated_texts=concatenated_texts,
+        concatenated_texts=synthesis_source,
         current_date=current_date,
         question=question,
     )
