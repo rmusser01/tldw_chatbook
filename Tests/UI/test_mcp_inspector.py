@@ -2459,6 +2459,65 @@ async def test_test_panel_open_moves_focus_inside_and_escape_closes():
         assert app.query_one("#mcp-inspector-test-tool", Button).disabled is False
 
 
+@pytest.mark.asyncio
+async def test_test_panel_mounts_for_an_all_boolean_schema_and_focuses_the_checkbox():
+    """task-2740: `_mount_test_tool_panel()`'s F-056 focus query omitted
+    `Checkbox`, and `DOMQuery.first()` RAISES `NoMatches` on an empty
+    result (the `is None` fallback was dead code) -- so a tool whose
+    schema renders ONLY boolean fields killed the mount worker, taking
+    the app down (default `exit_on_error`). Found live during PR #1385's
+    round-I test writing. The panel must mount, and focus must land on
+    the first form control -- the Checkbox -- per F-056's own contract
+    ("the schema form's first control when there is one")."""
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        await inspector.show_tool(_tool(input_schema={
+            "type": "object",
+            "properties": {"verbose": {"type": "boolean", "default": False}},
+        }))
+        await pilot.pause()
+        await pilot.click("#mcp-inspector-test-tool")
+        await pilot.pause()
+        await pilot.pause()
+
+        assert list(app.query("#mcp-inspector-test-panel"))
+        focused = app.focused
+        assert focused is not None
+        assert focused.id == "mcp-schema-field-0", (
+            f"focus must land on the boolean form's Checkbox: {focused!r}"
+        )
+
+
+@pytest.mark.asyncio
+async def test_test_panel_mounts_for_a_zero_control_schema_and_focuses_close():
+    """task-2740, the shape that made this a LIVE crasher: a schema with
+    empty `properties` renders a form with ZERO controls -- and the real
+    built-in `list_characters` ships exactly that schema, so opening Test
+    Tool on it crashed the app before this fix. With nothing to focus,
+    the panel must mount and the F-056 fallback to the Close button must
+    actually happen (it was unreachable dead code behind the raising
+    `.first()`)."""
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        await inspector.show_tool(_tool(input_schema={
+            "type": "object",
+            "properties": {},
+        }))
+        await pilot.pause()
+        await pilot.click("#mcp-inspector-test-tool")
+        await pilot.pause()
+        await pilot.pause()
+
+        assert list(app.query("#mcp-inspector-test-panel"))
+        focused = app.focused
+        assert focused is not None
+        assert focused.id == "mcp-inspector-test-close", (
+            f"with zero form controls, focus must land on Close: {focused!r}"
+        )
+
+
 # -- Task 5: gate-aware Test Tool -- arm-then-confirm mechanics --------------
 #
 # `require_confirm()`/`disarm_test_run()`/`test_run_armed` are the inspector-

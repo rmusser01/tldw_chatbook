@@ -2035,12 +2035,27 @@ class MCPInspector(Vertical):
         await container.mount(panel)
         # F-056: opening the panel moves keyboard focus into it -- the
         # schema form's first control when there is one (a raw-JSON
-        # TextArea, an enum Select, or a scalar Input), the Close button
-        # otherwise. `call_after_refresh` so this lands after Textual's own
-        # mount-time focus settling instead of racing it.
-        first_control = panel.query("Input, Select, TextArea").first()
-        if first_control is None:
-            first_control = panel.query_one("#mcp-inspector-test-close", Button)
+        # TextArea, an enum Select, a Checkbox, or a scalar Input), the
+        # Close button otherwise. `call_after_refresh` so this lands after
+        # Textual's own mount-time focus settling instead of racing it.
+        #
+        # task-2740: two stacked defects made this a live CRASHER, not a
+        # focus nit -- the query omitted `Checkbox`, and `DOMQuery.first()`
+        # RAISES `NoMatches` on an empty result (it never returns None, so
+        # the old `is None` fallback to Close was dead code and the
+        # "otherwise" above never happened). Any tool whose schema renders
+        # no Input/Select/TextArea -- an all-boolean schema, or the empty
+        # `properties` the real built-in `list_characters` ships -- blew up
+        # this mount worker (default `exit_on_error`) and took the app
+        # down. The truthiness guard below is the check `DOMQuery`
+        # actually supports; the Close fallback is now reachable, and the
+        # zero-control regression test pins it.
+        controls = panel.query("Input, Select, TextArea, Checkbox")
+        first_control = (
+            controls.first()
+            if controls
+            else panel.query_one("#mcp-inspector-test-close", Button)
+        )
         self.call_after_refresh(first_control.focus)
 
     async def action_close_test_panel(self) -> None:
