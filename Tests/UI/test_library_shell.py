@@ -13,6 +13,7 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 from rich.cells import cell_len
 from textual.app import App, ComposeResult
+from textual.containers import Vertical
 from textual.screen import Screen
 from textual.widgets import Button, Collapsible, Input, Markdown, Static, TextArea
 
@@ -127,6 +128,86 @@ def test_library_carries_forward_line_escapes_markup_in_titles():
     )
 
     assert line == r"Carries forward: \[bold]Unsafe\[/bold] title"
+
+
+# --- task-2856: Library keyboard story --------------------------------------
+
+
+class _RowFocusHost(App):
+    """Mount a bare Vertical of mixed rows/non-row siblings.
+
+    Mirrors the Skills list canvas's exact shape (``library_skills_canvas.py``
+    interleaves a non-row ``Static`` secondary line between some rows), in
+    isolation from the full ``LibraryScreen`` -- ``_move_library_list_row_focus``
+    is a pure module-level function precisely so it can be proven correct
+    this way (see its docstring).
+    """
+
+    def compose(self) -> ComposeResult:
+        with Vertical():
+            yield Button("Row 0", id="row-0", classes="library-skill-row")
+            yield Static("flags · description", classes="library-skill-row-secondary")
+            yield Button("Row 1", id="row-1", classes="library-skill-row")
+            yield Button("Row 2", id="row-2", classes="library-skill-row")
+            yield Static("flags · description", classes="library-skill-row-secondary")
+
+
+@pytest.mark.asyncio
+async def test_move_library_list_row_focus_skips_interleaved_non_row_siblings():
+    """The Skills list interleaves a non-row ``Static`` secondary line
+    between some rows -- a plain "next DOM child" walk would land on that
+    Static (which cannot take focus) every other step instead of the next
+    row. ``_move_library_list_row_focus`` filters siblings to the row
+    class first, so Down/Up always land on the next/previous ROW."""
+    app = _RowFocusHost()
+    async with app.run_test() as pilot:
+        row0 = app.query_one("#row-0", Button)
+        row1 = app.query_one("#row-1", Button)
+        row2 = app.query_one("#row-2", Button)
+        row0.focus()
+        await pilot.pause()
+
+        assert (
+            library_screen_module._move_library_list_row_focus(app.focused, "down")
+            is True
+        )
+        await pilot.pause()
+        assert row1.has_focus
+
+        assert (
+            library_screen_module._move_library_list_row_focus(app.focused, "down")
+            is True
+        )
+        await pilot.pause()
+        assert row2.has_focus
+
+        # Boundary: Down at the last row is claimed (True) but does not wrap.
+        assert (
+            library_screen_module._move_library_list_row_focus(app.focused, "down")
+            is True
+        )
+        await pilot.pause()
+        assert row2.has_focus
+
+        assert (
+            library_screen_module._move_library_list_row_focus(app.focused, "up")
+            is True
+        )
+        await pilot.pause()
+        assert row1.has_focus
+
+
+def test_move_library_list_row_focus_ignores_non_row_and_absent_focus():
+    """Up/Down must be left untouched (return False) when the currently
+    focused widget is not a Library list row, and when nothing is
+    focused -- the ``on_key`` caller relies on this to leave the key alone
+    for its normal handling everywhere else on the screen."""
+    plain_button = Button("Not a list row")
+    assert (
+        library_screen_module._move_library_list_row_focus(plain_button, "down")
+        is False
+    )
+    assert library_screen_module._move_library_list_row_focus(None, "down") is False
 
 
 # Gated fakes block a real executor thread on a threading.Event until a test
@@ -12196,6 +12277,113 @@ async def test_library_shell_media_export_action_carries_type_filter_into_scope(
 
 
 @pytest.mark.asyncio
+async def test_library_media_list_focuses_first_row_and_arrow_keys_move_it():
+    """task-2856 AC1/AC5: entering the Media list parks DOM focus on its
+    first row (previously nothing distinguishable was focused at all --
+    2026-08-06 UAT), Up/Down move it between rows (bounded, no wrap), and
+    Enter opens the focused row -- the same outcome a click on it has."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), media=_two_media_items())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one(f"#library-row-{LIBRARY_ROW_BROWSE_MEDIA}").press()
+        await _wait_for_selector(screen, pilot, "#library-media-row-0")
+        await pilot.pause()
+
+        first_row = screen.query_one("#library-media-row-0", Button)
+        second_row = screen.query_one("#library-media-row-1", Button)
+        assert first_row.has_focus, "entering the list must focus its first row"
+
+        await pilot.press("down")
+        assert second_row.has_focus
+        assert not first_row.has_focus
+
+        # Boundary: Down at the last row does not wrap.
+        await pilot.press("down")
+        assert second_row.has_focus
+
+        await pilot.press("up")
+        assert first_row.has_focus
+
+        # Boundary: Up at the first row does not wrap.
+        await pilot.press("up")
+        assert first_row.has_focus
+
+        # Enter opens the focused row -- the same transition a click fires
+        # (Textual's own ``Button`` binds "enter" to "press").
+        await pilot.press("enter")
+        await pilot.pause()
+        assert screen._library_media_view == "viewer"
+
+
+@pytest.mark.asyncio
+async def test_library_media_escape_returns_to_list_then_focuses_rail():
+    """task-2856 AC2/AC5: Escape in the media viewer returns to the list
+    AND re-focuses its first row (AC1's "on return" half -- previously
+    Up/Down did not move the selection even directly after Back, per the
+    2026-08-06 UAT); a second Escape, now on the plain list, moves focus
+    to the rail search box -- the SAME target `/` and F6 already use."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), media=_two_media_items())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one(f"#library-row-{LIBRARY_ROW_BROWSE_MEDIA}").press()
+        await _wait_for_selector(screen, pilot, "#library-media-row-0")
+        await pilot.pause()
+        screen.query_one("#library-media-row-0", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-media-back")
+        assert screen._library_media_view == "viewer"
+
+        await pilot.press("escape")
+        await pilot.pause()
+        assert screen._library_media_view == "list"
+        await _wait_for_selector(screen, pilot, "#library-media-row-0")
+        await pilot.pause()
+        assert screen.query_one("#library-media-row-0", Button).has_focus
+
+        await pilot.press("escape")
+        await pilot.pause()
+        assert screen.query_one("#library-search-input", Input).has_focus
+
+
+@pytest.mark.asyncio
+async def test_library_notes_list_focuses_first_row_and_arrow_keys_move_it():
+    """task-2856 AC1: the Notes list gets the SAME entry-focus + Up/Down
+    treatment as Media -- proven independently since the two canvases
+    render structurally different row shapes (Notes rows carry no select
+    marker, unlike Media's ``▸``)."""
+    app = _build_test_app()
+    app.notes_scope_service = StaticLibraryNotesListScopeService(_two_notes())
+    app.media_reading_scope_service = StaticLibraryMediaScopeService([])
+    app.chat_conversation_scope_service = StaticLibraryConversationScopeService([])
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one(f"#library-row-{LIBRARY_ROW_BROWSE_NOTES}").press()
+        await _wait_for_selector(screen, pilot, "#library-notes-row-0")
+        await pilot.pause()
+
+        first_row = screen.query_one("#library-notes-row-0", Button)
+        second_row = screen.query_one("#library-notes-row-1", Button)
+        assert first_row.has_focus, "entering the list must focus its first row"
+
+        await pilot.press("down")
+        assert second_row.has_focus
+        assert not first_row.has_focus
+
+
+@pytest.mark.asyncio
 async def test_library_shell_export_empty_scope_disables_export_and_shows_helper():
     """An empty-everywhere scope disables Export with the exact helper copy."""
     app = _build_test_app()
@@ -15324,3 +15512,4 @@ async def test_invalid_marker_toggles_with_the_in_place_validation(
         assert not chunk.has_class("-ingest-option-invalid"), (
             "becoming valid must clear the marker in place"
         )
+

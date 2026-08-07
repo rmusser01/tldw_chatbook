@@ -2078,8 +2078,12 @@ async def test_footer_u_hint_only_registered_on_search_row():
         await pilot.pause()
         source, shortcuts = screen._footer_shortcut_registration
         # task-2237 (R2): a selected non-search canvas gets the general set
-        # (`/` + F6); the landing's fuller set is landing-scoped.
-        assert shortcuts == LibraryScreen.LIBRARY_GENERAL_SHORTCUTS
+        # (`/` + F6); the landing's fuller set is landing-scoped. task-2856:
+        # a freshly-entered list canvas (Skills lands in its "list"
+        # sub-view) now ALSO advertises "esc focus rail" -- LIBRARY_LIST_
+        # SHORTCUTS, not the bare general set -- since Escape now genuinely
+        # does something there.
+        assert shortcuts == LibraryScreen.LIBRARY_LIST_SHORTCUTS
         assert all(key != "u" for key, _label in shortcuts)
 
         screen.query_one("#library-row-browse-search").press()
@@ -2350,6 +2354,7 @@ async def test_action_library_skill_back_honors_dirty_guard():
 
     resets: list[bool] = []
     refreshes: list[bool] = []
+    focus_calls: list[object] = []
     clean = _bind_editor_active(
         SimpleNamespace(
             _library_selected_row_id=LIBRARY_ROW_BROWSE_SKILLS,
@@ -2358,14 +2363,36 @@ async def test_action_library_skill_back_honors_dirty_guard():
             _reset_library_skill_editor_state=lambda: resets.append(True),
             _refresh_local_source_snapshot=lambda: None,
             refresh=lambda recompose=False: refreshes.append(recompose),
+            # task-2856: the guarded exit now also arms the entry-focus
+            # follow-up (``_arm_library_list_entry_focus`` -- sets the
+            # pending flag THEN schedules ``_focus_library_list_entry``,
+            # so an independent ``_refresh_local_source_snapshot`` worker
+            # completing later can re-request the focus after ITS OWN
+            # recompose too; see ``_apply_local_source_snapshot``).
+            _library_pending_list_entry_focus=False,
+            _focus_library_list_entry=lambda: None,
+            call_after_refresh=lambda callback: focus_calls.append(callback),
+            # ``_arm_library_list_entry_focus`` also arms a settle-window
+            # timer (task-2856) -- a real ``set_timer`` needs a widget
+            # actually mounted in a running App, which this bare fake
+            # isn't.
+            set_timer=lambda delay, callback: timer_calls.append((delay, callback)),
+            _disarm_library_list_entry_focus=lambda: None,
         )
     )
+    timer_calls: list[object] = []
     clean._exit_library_skill_editor_guarded = (
         lambda: LibraryScreen._exit_library_skill_editor_guarded(clean)
+    )
+    clean._arm_library_list_entry_focus = (
+        lambda: LibraryScreen._arm_library_list_entry_focus(clean)
     )
     await LibraryScreen.action_library_skill_back(clean)
     assert resets == [True]
     assert refreshes == [True]
+    assert len(focus_calls) == 1
+    assert clean._library_pending_list_entry_focus is True
+    assert len(timer_calls) == 1
 
 
 @pytest.mark.asyncio

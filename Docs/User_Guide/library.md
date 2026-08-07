@@ -76,8 +76,11 @@ pages:
 - **Footer** — shows the keys that work where you are: "/ focus search"
   and "F6 next pane" on every canvas; the landing adds "i import content"
   and "n new note" (single-letter accelerators for the hub actions);
-  and the Search / RAG canvas adds "u use Library
-  context in Console", "enter select evidence", and "o open evidence".
+  the Search / RAG canvas adds "u use Library
+  context in Console", "enter select evidence", and "o open evidence";
+  a Media/Notes/Prompts/Skills list adds "esc focus rail"; and that
+  list's item viewer/editor (or the media viewer) adds "esc back to
+  list" instead.
 
 One special case: selecting **Notes** adds a **Database | Files** strip
 above the workbench. **Files** swaps the canvas pane for the File Notes
@@ -200,12 +203,29 @@ Screen-level keys only — global keys live in the [guide index](index.md).
 
 | Key | Action |
 |---|---|
+| / | Focus the **Search Library…** box, from anywhere on the screen (unless a text field already has focus) |
 | u | Use Library context in Console — only while the Search / RAG row is selected (the footer hint appears only there) |
+| ↑ / ↓ | Inside a Media, Notes, Prompts, or Skills list, move to the previous/next row (stops at the first/last row — it does not wrap) |
+| Enter | Open the focused list row (same as clicking it) |
+| Esc | Context-dependent — see below |
 
-Escape and Ctrl+S are bound only inside the skill editor (back to list /
-save) — see [Skills](library/skills.md). Escape also returns Notes ▸
-Files mode to the Database notes view, and is live inside the File Notes
-surface's own panels and dialogs — see
+Entering a Media, Notes, Prompts, or Skills list (from the rail, or
+returning from its item) focuses the list's first row, so ↑/↓/Enter work
+immediately without tabbing to find it. Escape then reads the surface
+you're on:
+
+- **On the plain list** — Escape moves focus to the rail's **Search
+  Library…** box (the same target `/` and F6 use); it never leaves the
+  canvas or changes what's shown.
+- **In an item's viewer or editor** (the media viewer; the Notes,
+  Prompts, or Skills editor) — Escape returns to that list, re-focusing
+  its first row, exactly like pressing **‹ Back to list**. A dirty note
+  or prompt edit vetoes the exit the same way Back does.
+
+Escape and Ctrl+S are also bound inside the skill editor specifically
+(back to list / save) — see [Skills](library/skills.md). Escape also
+returns Notes ▸ Files mode to the Database notes view, and is live
+inside the File Notes surface's own panels and dialogs — see
 [File Notes](library/file-notes.md). On the Study screen (reached via
 **Continue in Study**), Escape returns to the Study decks staging canvas
 here in Library.
@@ -253,4 +273,9 @@ to the Study decks staging canvas; TASK-2857: the rail/canvas/toast CTA is
 "Import…" everywhere (was "Add content…"), the Export canvas/button reads
 "Export bundle (.zip)" (was "Export chatbook"), and the full media
 viewer's escape hatch reads "Open in Library ▸ Media" (was "Open in Media
-manager", stale since TASK-2851 retired that route))*
+manager", stale since TASK-2851 retired that route); TASK-2856: entering
+a Media/Notes/Prompts/Skills list now focuses its first row so ↑/↓/Enter
+work immediately (previously nothing was focused there, on entry or on
+return); Escape now moves focus from a list to the rail, and returns from
+that list's viewer/editor to the list, both newly advertised in the
+footer)*

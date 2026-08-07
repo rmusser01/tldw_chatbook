@@ -1094,6 +1094,20 @@ ConsoleRunLogModal {
     text-style: bold underline;
 }
 
+/* task-2856 AC1/AC4: entering the Media list now parks real DOM focus on
+   the first row and Up/Down move it between rows -- previously this class
+   had no dedicated ``:focus`` rule at all and fell back to the generic
+   ``*:focus{outline:solid}`` (core/_reset.tcss). Same readable contract
+   ``.library-media-row-selected`` above already uses; `outline: none`
+   suppresses the generic fallback so this is the only cue (never
+   `outline: heavy`, which eats a compact row's label -- round-3 lesson). */
+.library-media-row:focus {
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
+    outline: none;
+}
+
 .library-notes-row {
     width: 100%;
     min-width: 0;
@@ -1108,6 +1122,16 @@ ConsoleRunLogModal {
     border: none;
     background: $ds-surface-panel;
     color: $ds-text-primary;
+}
+
+/* task-2856 AC1/AC4: same readable-focus contract as .library-media-row:focus
+   above -- entering the Notes list now parks DOM focus on the first row and
+   Up/Down move it between rows. */
+.library-notes-row:focus {
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
+    outline: none;
 }
 
 /* Same look as .library-notes-row, on a separate class: the notes Create
@@ -1146,6 +1170,16 @@ ConsoleRunLogModal {
     border: none;
     background: $ds-surface-panel;
     color: $ds-text-primary;
+}
+
+/* task-2856 AC1/AC4: same readable-focus contract as .library-media-row:focus
+   above -- entering the Prompts list now parks DOM focus on the first row
+   and Up/Down move it between rows. */
+.library-prompt-row:focus {
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
+    outline: none;
 }
 
 /* "From a template" group label: separates the primary Blank note action
@@ -1358,6 +1392,19 @@ with stray left-edge border fragments), and padding 0 1 so the full
     border: none;
     background: $ds-surface-panel;
     color: $ds-text-primary;
+}
+
+/* task-2856 AC1/AC4: same readable-focus contract as .library-media-row:focus
+   above -- entering the Skills list now parks DOM focus on the first row
+   and Up/Down move it between rows. This class is only 1 row high (see the
+   comment on the base rule above), which is exactly the shape `outline:
+   heavy` eats the label on (round-3 lesson) -- background/color/text-style
+   only, no outline geometry. */
+.library-skill-row:focus {
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
+    outline: none;
 }
 
 /* Needs-review (trust-blocked) skills stay selectable -- the trust panel

@@ -380,6 +380,18 @@ LIBRARY_SOURCE_SNAPSHOT_TIMEOUT_SECONDS = 5.0
 # fresh background fetch, so staleness is bounded to a single refresh
 # cycle regardless of this TTL's length.
 LIBRARY_SNAPSHOT_CACHE_TTL_SECONDS = 5.0
+# task-2856: how long an "enter/return to a list canvas" entry-focus
+# request (``_library_pending_list_entry_focus``) stays armed. A "back to
+# list" exit can kick off MULTIPLE sequential background workers, each
+# ending in its own recompose (e.g. the skills exit's snapshot refresh
+# chains into a trust-posture reload, which does its own LATER
+# ``self.refresh(recompose=True)``) -- a single-consume flag loses the
+# race against whichever finishes last. ``compose_content`` re-requests
+# the focus on every recompose while this window is open instead of
+# consuming the flag on first use; an explicit Up/Down (the user taking
+# manual control -- see ``on_key``) disarms it immediately, so this window
+# only matters for the brief settle period right after the transition.
+LIBRARY_LIST_ENTRY_FOCUS_ARMED_SECONDS = 1.0
 LIBRARY_NOTES_AUTOSAVE_SECONDS = 2.0
 LIBRARY_NOTE_CONTENT_MAX_CHARS = 2_000_000
 # Prompt editor body fields (details/system/user) have no dedicated cap of
@@ -688,6 +700,93 @@ def _collection_scoped_conflicts(
     return tuple(scoped)
 
 
+# --- task-2856: Library keyboard story -------------------------------------
+#
+# Every list canvas (Media/Notes/Prompts/Skills) renders its rows as plain
+# Button widgets in a Vertical container, not a Textual ListView -- so Up/
+# Down movement between them has to be wired by hand. The four row CSS
+# classes are the seam: entering a list canvas focuses the first one
+# (``_focus_library_list_entry``/``_LIBRARY_LIST_ROW_CLASS_BY_ROW_ID``) and
+# Up/Down move DOM focus between siblings sharing one of these classes
+# (``_move_library_list_row_focus``). A MODULE-LEVEL function (not a method)
+# for the same reason ``_apply_library_row_toggle`` below is one: it is unit
+# tested against a minimal Pilot host without constructing a full
+# ``LibraryScreen``.
+_LIBRARY_LIST_ROW_CLASSES = (
+    "library-media-row",
+    "library-notes-row",
+    "library-prompt-row",
+    "library-skill-row",
+)
+
+_LIBRARY_LIST_ROW_CLASS_BY_ROW_ID = {
+    LIBRARY_ROW_BROWSE_MEDIA: "library-media-row",
+    LIBRARY_ROW_BROWSE_NOTES: "library-notes-row",
+    LIBRARY_ROW_BROWSE_PROMPTS: "library-prompt-row",
+    LIBRARY_ROW_BROWSE_SKILLS: "library-skill-row",
+    # ``_enter_library_prompt_create_editor``/``_enter_library_skill_create_
+    # editor`` (Create rail row -> editor) never reassign
+    # ``_library_selected_row_id`` away from these CREATE_* ids (mirroring
+    # ``_library_skill_editor_active``'s own dual-row-id gate) -- so
+    # exiting that editor back to the list still reads CREATE_PROMPT/
+    # CREATE_SKILL here, not BROWSE_PROMPTS/BROWSE_SKILLS. Omitting these
+    # left "New skill -> save -> Escape" focusing nothing (reproduced
+    # live: ``row_class`` resolved to ``None`` for ``LIBRARY_ROW_CREATE_
+    # SKILL``).
+    LIBRARY_ROW_CREATE_PROMPT: "library-prompt-row",
+    LIBRARY_ROW_CREATE_SKILL: "library-skill-row",
+}
+
+
+def _move_library_list_row_focus(focused: Widget | None, key: str) -> bool:
+    """Move DOM focus to the previous/next Library list row, in place.
+
+    Up/Down are otherwise unbound in this app (see the module docstring
+    above); this fires ONLY when ``focused`` is one of the four Library
+    list-row Button classes, so it never intercepts Up/Down anywhere else
+    on the screen (rail rows, form Inputs, TextAreas, the RAG evidence
+    cards, etc. all keep their native/absent behavior). Siblings sharing a
+    row class are read off ``focused.parent.children`` and filtered to
+    that class -- the Skills list interleaves a non-row ``Static`` secondary
+    line between rows (``library_skills_canvas.py``), so a plain "next
+    child" walk would skip a row every other step.
+
+    Args:
+        focused: The screen's currently focused widget (``screen.focused``),
+            or ``None``.
+        key: ``"up"`` or ``"down"``.
+
+    Returns:
+        ``True`` when ``focused`` is a Library list row -- the caller
+        should treat the key as claimed (``event.stop()`` /
+        ``event.prevent_default()``) even at a list boundary, where focus
+        deliberately does not wrap. ``False`` when ``focused`` is not a
+        Library list row, so the caller must leave the key untouched for
+        its normal handling elsewhere.
+    """
+    if focused is None:
+        return False
+    if not any(focused.has_class(name) for name in _LIBRARY_LIST_ROW_CLASSES):
+        return False
+    parent = focused.parent
+    if parent is None:
+        return False
+    siblings = [
+        child
+        for child in parent.children
+        if any(child.has_class(name) for name in _LIBRARY_LIST_ROW_CLASSES)
+    ]
+    try:
+        index = siblings.index(focused)
+    except ValueError:
+        return True
+    step = -1 if key == "up" else 1
+    new_index = index + step
+    if 0 <= new_index < len(siblings):
+        siblings[new_index].focus()
+    return True
+
+
 # --- task-252: targeted (non-recompose) selection-interaction updates ------
 #
 # Docs/Design/2026-07-16-performance-audit.md §P1 B2: library_screen.py
@@ -967,6 +1066,19 @@ class LibraryScreen(BaseAppScreen):
         # gate the sibling skill-editor binding uses, so it never fires on
         # any other Library surface.
         ("escape", "library_notes_files_back", "Back to Database notes"),
+        # task-2856: four more "escape" bindings, tried in order after the
+        # two above and gated the same way -- each ``check_action`` returns
+        # False everywhere outside its own state, so Textual falls through
+        # to the next one and exactly one (or none, e.g. on the landing)
+        # ever fires. First three: a detail/viewer surface goes back to its
+        # list. Last (broadest, so tried last): a list canvas showing its
+        # plain list moves focus toward the rail -- never navigation, only
+        # a focus hop, converging on the same `#library-search-input`
+        # target `/` and F6 already use (`_WORKBENCH_FOCUS_TARGETS`).
+        ("escape", "library_media_viewer_back", "Back to media list"),
+        ("escape", "library_note_editor_back", "Back to notes list"),
+        ("escape", "library_prompt_editor_back", "Back to prompts list"),
+        ("escape", "library_list_focus_rail", "Focus rail"),
         # Task 12/RAG-36: keyboard traversal of Library Search/RAG evidence
         # cards. Both actions gate on the currently FOCUSED widget being one
         # of the per-result `.library-rag-result-card` containers (see
@@ -1033,13 +1145,30 @@ class LibraryScreen(BaseAppScreen):
 
     #: task-2850: Notes ▸ Files mode's Escape binding only fires while
     #: ``_file_notes_active()`` is true (see ``check_action``), so this
-    #: context-specific set is the only place "esc" is advertised -- every
-    #: other Library surface keeps ``LIBRARY_GENERAL_SHORTCUTS``, where
-    #: Escape is genuinely unbound.
+    #: context-specific set is the only place "esc" is advertised for THAT
+    #: state -- task-2856 adds two more context-specific "esc" sets below
+    #: for the same reason; every remaining Library surface keeps
+    #: ``LIBRARY_GENERAL_SHORTCUTS``, where Escape is genuinely unbound.
     LIBRARY_NOTES_FILES_SHORTCUTS = (
         ("/", "focus search"),
         ("F6", "next pane"),
         ("esc", "back to Database"),
+    )
+
+    #: task-2856 AC2: a detail/viewer surface (media viewer, note editor,
+    #: prompt editor) -- Escape goes back to that surface's list.
+    LIBRARY_DETAIL_BACK_SHORTCUTS = (
+        ("/", "focus search"),
+        ("F6", "next pane"),
+        ("esc", "back to list"),
+    )
+
+    #: task-2856 AC2: a list canvas (Media/Notes/Prompts/Skills) showing its
+    #: plain list -- Escape moves focus toward the rail (never navigation).
+    LIBRARY_LIST_SHORTCUTS = (
+        ("/", "focus search"),
+        ("F6", "next pane"),
+        ("esc", "focus rail"),
     )
 
     #: task-2237 (R2): F6 pane-cycle targets (the app's
@@ -1669,6 +1798,25 @@ class LibraryScreen(BaseAppScreen):
         # it yet in this task -- the Cancel button and navigate-away wiring
         # land in Task 5.
         self._library_export_cancel_event: threading.Event | None = None
+        # task-2856: armed by every "enter/return to a list canvas" seam
+        # (``_arm_library_list_entry_focus``) right before it schedules its
+        # OWN ``call_after_refresh(self._focus_library_list_entry)``. That
+        # first attempt wins the common case, but this screen has SEVERAL
+        # independent ``@work``/``run_worker`` background workers that each
+        # end in their own LATER ``self.refresh(recompose=True)`` --
+        # ``_refresh_local_source_snapshot`` (skill/note/prompt editor
+        # exits all kick it), the skills trust-posture load it itself
+        # triggers, per-item detail fetches, etc. Any one of those landing
+        # AFTER the first attempt rebuilds the list's row Buttons as fresh
+        # instances and silently drops the focus already set (reproduced
+        # live: the skill editor's Escape correctly returned to the list,
+        # but the trust-posture worker's later recompose still dropped the
+        # focus -- a one-shot race against just the snapshot-refresh worker
+        # was not enough). ``compose_content`` -- the one choke point EVERY
+        # recompose passes through regardless of which worker triggered it
+        # -- checks and consumes this flag on every run, re-requesting the
+        # focus after whichever recompose turns out to be the last one.
+        self._library_pending_list_entry_focus: bool = False
 
     def _register_footer_shortcuts(self) -> None:
         """Register Library shortcuts via BaseAppScreen's persisting API.
@@ -1688,13 +1836,32 @@ class LibraryScreen(BaseAppScreen):
         # the keys that work there, never a dead key. task-2850: Files
         # mode is a fourth context -- its Escape binding only works there
         # (see ``check_action``), so it is the only state that advertises
-        # "esc".
+        # "esc". task-2856: two more contexts -- a detail/viewer surface
+        # (media viewer, note/prompt editor) advertises "esc back to list";
+        # a list canvas showing its plain list advertises "esc focus rail".
+        # This method is ALSO called from ``compose_content`` on every
+        # recompose (not just at the transition call sites above), so a
+        # sub-view entered from ANY of the editor/viewer's several call
+        # sites (see ``_library_note_editor_active`` etc.) can never leave
+        # the footer stale the way an easily-missed per-call-site
+        # registration could.
         if self._library_selected_row_id == LIBRARY_ROW_BROWSE_SEARCH:
             shortcuts = self.LIBRARY_SHORTCUTS
         elif not self._library_selected_row_id:
             shortcuts = self.LIBRARY_LANDING_SHORTCUTS
         elif self._file_notes_active():
             shortcuts = self.LIBRARY_NOTES_FILES_SHORTCUTS
+        elif (
+            (
+                self._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA
+                and self._library_media_view == "viewer"
+            )
+            or self._library_note_editor_active()
+            or self._library_prompt_editor_active()
+        ):
+            shortcuts = self.LIBRARY_DETAIL_BACK_SHORTCUTS
+        elif self._library_list_canvas_showing_list():
+            shortcuts = self.LIBRARY_LIST_SHORTCUTS
         else:
             shortcuts = self.LIBRARY_GENERAL_SHORTCUTS
         self.register_footer_shortcuts(source="library", shortcuts=shortcuts)
@@ -1716,8 +1883,26 @@ class LibraryScreen(BaseAppScreen):
         through the same guarded row-switch the hub rows use. They are
         advertised on the landing footer and nowhere else, so they never
         fire off the landing.
+
+        task-2856 (AC1): Up/Down move DOM focus between Library list rows
+        (Media/Notes/Prompts/Skills) -- see ``_move_library_list_row_focus``,
+        which claims the key only while a list row genuinely has focus, so
+        Up/Down are left alone everywhere else (rail rows, form Inputs, the
+        command palette, etc.).
         """
         if isinstance(self.focused, (Input, TextArea)):
+            return
+        if event.key in ("up", "down") and _move_library_list_row_focus(
+            self.focused, event.key
+        ):
+            # task-2856: the user just took manual control of list focus --
+            # disarm the entry-focus request immediately (rather than
+            # waiting out its settle window) so a still-in-flight
+            # background snapshot refresh can never yank focus back to
+            # row 0 out from under them.
+            self._disarm_library_list_entry_focus()
+            event.stop()
+            event.prevent_default()
             return
         is_slash = (
             event.key in {"/", "slash"}
@@ -2140,6 +2325,109 @@ class LibraryScreen(BaseAppScreen):
             == LIBRARY_ROW_BROWSE_NOTES
             and getattr(self, "_library_file_notes_workspace", None) is not None
         )
+
+    def _library_note_editor_active(self) -> bool:
+        """True while the in-canvas DATABASE note editor is the live view (task-2856).
+
+        Scoped to ``_library_notes_source == "database"`` so this never
+        overlaps ``_file_notes_active()`` -- Files mode has its own
+        dedicated Escape gate and never sets ``_library_notes_view``.
+        """
+        return (
+            self._library_selected_row_id == LIBRARY_ROW_BROWSE_NOTES
+            and getattr(self, "_library_notes_source", "database") == "database"
+            and getattr(self, "_library_notes_view", "list") == "editor"
+        )
+
+    def _library_prompt_editor_active(self) -> bool:
+        """True while the in-canvas prompt editor is the live view (task-2856).
+
+        Mirrors ``_library_skill_editor_active``: the Create flow keeps
+        ``_library_selected_row_id == LIBRARY_ROW_CREATE_PROMPT`` while its
+        editor is open (never reassigned to ``LIBRARY_ROW_BROWSE_PROMPTS``
+        -- see ``_enter_library_prompt_create_editor``), so both row ids
+        are checked here.
+        """
+        return (
+            self._library_selected_row_id
+            in (LIBRARY_ROW_BROWSE_PROMPTS, LIBRARY_ROW_CREATE_PROMPT)
+            and getattr(self, "_library_prompts_view", "list") == "editor"
+        )
+
+    def _library_list_canvas_showing_list(self) -> bool:
+        """True while Media/Notes/Prompts/Skills shows its plain LIST sub-view.
+
+        The state task-2856's Escape-to-rail action targets: entering a
+        detail/viewer/editor/create/sync sub-view of any of these four
+        canvases returns False here (each of those has its own more
+        specific Escape gate, or genuinely nothing to leave toward the
+        rail for). Prompts/Skills also check the CREATE_* row id -- a
+        "New prompt"/"New skill" editor exited back to the list never
+        reassigns ``_library_selected_row_id`` away from CREATE_PROMPT/
+        CREATE_SKILL (mirroring ``_library_skill_editor_active``'s own
+        dual-row-id gate), so the list is genuinely showing under either
+        id.
+        """
+        row_id = self._library_selected_row_id
+        if row_id == LIBRARY_ROW_BROWSE_MEDIA:
+            return getattr(self, "_library_media_view", "list") == "list"
+        if row_id == LIBRARY_ROW_BROWSE_NOTES:
+            return (
+                getattr(self, "_library_notes_source", "database") == "database"
+                and getattr(self, "_library_notes_view", "list") == "list"
+            )
+        if row_id in (LIBRARY_ROW_BROWSE_PROMPTS, LIBRARY_ROW_CREATE_PROMPT):
+            return getattr(self, "_library_prompts_view", "list") == "list"
+        if row_id in (LIBRARY_ROW_BROWSE_SKILLS, LIBRARY_ROW_CREATE_SKILL):
+            return getattr(self, "_library_skills_view", "list") == "list"
+        return False
+
+    def _arm_library_list_entry_focus(self) -> None:
+        """Request the primary list's first row be focused (task-2856 AC1).
+
+        Call this (never ``call_after_refresh(self._focus_library_list_entry)``
+        directly) from every "enter/return to a list canvas" seam -- a
+        fresh rail-row press landing on Media/Notes/Prompts/Skills, and
+        every "back to list" exit from that canvas's viewer/editor. Arms
+        ``_library_pending_list_entry_focus`` for
+        ``LIBRARY_LIST_ENTRY_FOCUS_ARMED_SECONDS`` (re-requested by
+        ``compose_content`` on every recompose while armed -- see that
+        flag's docstring in ``__init__`` for why a single-consume flag
+        is not enough) IN ADDITION TO scheduling the immediate attempt.
+        """
+        self._library_pending_list_entry_focus = True
+        self.call_after_refresh(self._focus_library_list_entry)
+        self.set_timer(
+            LIBRARY_LIST_ENTRY_FOCUS_ARMED_SECONDS,
+            self._disarm_library_list_entry_focus,
+        )
+
+    def _disarm_library_list_entry_focus(self) -> None:
+        """End an entry-focus request's settle window (task-2856 AC1).
+
+        Fired by the timer ``_arm_library_list_entry_focus`` sets, or
+        directly by ``on_key`` the moment Up/Down gives the user manual
+        control of list focus -- whichever comes first.
+        """
+        self._library_pending_list_entry_focus = False
+
+    def _focus_library_list_entry(self) -> None:
+        """Focus the primary list's first row -- see ``_arm_library_list_entry_focus``.
+
+        A no-op when the canvas isn't one of the four list canvases
+        (nothing to focus), the list is empty, or the query can't resolve
+        (e.g. a recompose still in flight).
+        """
+        row_class = _LIBRARY_LIST_ROW_CLASS_BY_ROW_ID.get(
+            self._library_selected_row_id
+        )
+        if row_class is None:
+            return
+        try:
+            first_row = self.query(f".{row_class}").first()
+        except NoMatches:
+            return
+        first_row.focus()
 
     async def _flush_active_file_notes(self) -> bool:
         """Delegate the common leave guard only while Files owns Notes."""
@@ -4236,6 +4524,34 @@ class LibraryScreen(BaseAppScreen):
             shell_input, selected_row_id=self._library_selected_row_id
         )
         self._library_selected_row_id = shell.selected_row_id
+        # task-2856: re-derive the footer's advertised keys on EVERY
+        # recompose (not only at the transition call sites that also call
+        # this), so entering/leaving a detail surface (media viewer, note/
+        # prompt editor) from any of their several call sites can never
+        # leave the footer advertising a stale key -- the exact failure
+        # mode task-2850's own review caught for a single call site.
+        self._register_footer_shortcuts()
+        # task-2856: re-request a pending entry-focus on EVERY recompose
+        # while it's armed -- the ONE guaranteed choke point every
+        # recompose passes through, no matter which of the screen's
+        # several INDEPENDENT background workers triggered it (the
+        # snapshot refresh several "back to list" exits kick off, but ALSO
+        # the skills trust-posture load IT chains into, media/note/prompt
+        # detail fetches, etc. -- each ends in its own
+        # `self.refresh(recompose=True)`). Reproduced live: the skill
+        # editor's Escape correctly returned to the list and briefly
+        # focused its first row, but the trust-posture worker's LATER
+        # recompose (rebuilding the row Buttons as fresh instances) still
+        # silently dropped it -- consuming (clearing) the flag on the
+        # FIRST such recompose lost that same race one level up, since it
+        # left nothing armed for the trust-posture worker's later one to
+        # re-request from. Re-firing without clearing, bounded by the
+        # flag's own settle-window timer (``_arm_library_list_entry_focus``)
+        # and disarmed immediately by manual Up/Down (``on_key``), covers
+        # an arbitrary-length chain of these workers instead of exactly
+        # one.
+        if self._library_pending_list_entry_focus:
+            self.call_after_refresh(self._focus_library_list_entry)
         preferences = self._library_rail_preferences()
 
         yield Static(
@@ -7832,6 +8148,10 @@ class LibraryScreen(BaseAppScreen):
             self._library_notes_source = "database"
             self._register_footer_shortcuts()
             await self.recompose()
+            # task-2856 AC1: this lands on the Notes LIST (never Files'
+            # own editor state), so re-focus its first row the same way
+            # every other "enter/return to a list" seam does.
+            self._arm_library_list_entry_focus()
         finally:
             if callable(release_source):
                 release_source()
@@ -7990,6 +8310,25 @@ class LibraryScreen(BaseAppScreen):
             )
             return
         await self.recompose()
+        # task-2856 AC1: a rail-row press landing on one of the four list
+        # canvases focuses its primary list's first row -- the entry-point
+        # half of the same seam ``_exit_library_skill_editor_guarded`` /
+        # ``_return_to_library_database_notes`` /
+        # ``_exit_library_media_viewer`` / ``_exit_library_note_editor_guarded``
+        # / ``_exit_library_prompt_editor_guarded`` use for the RETURN half.
+        # Explicitly the four BROWSE_* ids, NOT
+        # ``_LIBRARY_LIST_ROW_CLASS_BY_ROW_ID`` (which also maps CREATE_
+        # PROMPT/CREATE_SKILL -- needed for the RETURN half's row-class
+        # lookup once back on the list, but a FRESH press into either
+        # ALWAYS lands in the editor, never the list; the branches below
+        # set that editor's own field focus instead).
+        if self.is_mounted and self._library_selected_row_id in (
+            LIBRARY_ROW_BROWSE_MEDIA,
+            LIBRARY_ROW_BROWSE_NOTES,
+            LIBRARY_ROW_BROWSE_PROMPTS,
+            LIBRARY_ROW_BROWSE_SKILLS,
+        ):
+            self._arm_library_list_entry_focus()
         if self._library_selected_row_id == LIBRARY_ROW_INGEST_EXPORT:
             self._start_library_export_counts_worker()
         if row_id == LIBRARY_ROW_CREATE_PROMPT and self.is_mounted:
@@ -9770,20 +10109,31 @@ class LibraryScreen(BaseAppScreen):
         )
 
     def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
-        """Gate the skill-editor and Files-mode key bindings (task-424/2850).
+        """Gate the skill-editor, Files-mode, and list/detail Escape bindings
+        (task-424/2850/2856).
 
         Returning ``False`` deactivates the binding entirely, so Escape /
         Ctrl+S behave as if unbound anywhere else on the Library screen.
-        Both this and the sibling skill-editor gate share the "escape" key
-        (see the two "escape" ``BINDINGS`` entries) -- Textual tries them in
-        order and stops at the first whose ``check_action`` passes, so each
-        one returning ``False`` outside its own context is what lets the
-        other fall through untouched.
+        All six "escape" ``BINDINGS`` entries share the same key -- Textual
+        tries them in order and stops at the first whose ``check_action``
+        passes, so each one returning ``False`` outside its own context is
+        what lets the next fall through untouched.
         """
         if action in ("library_skill_save", "library_skill_back"):
             return self._library_skill_editor_active()
         if action == "library_notes_files_back":
             return self._file_notes_active()
+        if action == "library_media_viewer_back":
+            return (
+                self._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA
+                and getattr(self, "_library_media_view", "list") == "viewer"
+            )
+        if action == "library_note_editor_back":
+            return self._library_note_editor_active()
+        if action == "library_prompt_editor_back":
+            return self._library_prompt_editor_active()
+        if action == "library_list_focus_rail":
+            return self._library_list_canvas_showing_list()
         return True
 
     def action_library_skill_save(self) -> None:
@@ -9820,6 +10170,10 @@ class LibraryScreen(BaseAppScreen):
         self._reset_library_skill_editor_state()
         self._refresh_local_source_snapshot()
         self.refresh(recompose=True)
+        # task-2856 AC1: every "back to list" exit re-focuses the list's
+        # first row so Up/Down/Enter work immediately, without a separate
+        # Tab traversal back to it.
+        self._arm_library_list_entry_focus()
         return True
 
     def _focus_library_skill_name(self) -> None:
@@ -12151,6 +12505,18 @@ class LibraryScreen(BaseAppScreen):
     async def handle_library_prompt_back(self, event: Button.Pressed) -> None:
         """Return the Library prompts canvas from the editor to its list view.
 
+        Args:
+            event: Button press event emitted by the "‹ Back to list" action.
+        """
+        event.stop()
+        await self._exit_library_prompt_editor_guarded()
+
+    async def _exit_library_prompt_editor_guarded(self) -> bool:
+        """Shared Back exit: veto while dirty, else reset to list.
+
+        Shared by the "‹ Back to list" button and the editor's Escape
+        binding (``action_library_prompt_editor_back``, task-2856 AC2) --
+        one seam, matching the skill/note editors' guarded-exit idiom.
         Vetoed while dirty (see ``_flush_library_prompt_save``) so Back
         never silently discards an unsaved edit.
 
@@ -12163,15 +12529,44 @@ class LibraryScreen(BaseAppScreen):
         lands -- safe to fire now since the editor is no longer mounted to
         be spuriously re-dirtied by the recompose it eventually triggers.
 
-        Args:
-            event: Button press event emitted by the "‹ Back to list" action.
+        Returns:
+            ``True`` when the editor was exited; ``False`` on a dirty veto.
         """
-        event.stop()
         if not await self._flush_library_prompt_save():
-            return
+            return False
         self._reset_library_prompt_editor_state()
         self._refresh_local_source_snapshot()
         self.refresh(recompose=True)
+        # task-2856 AC1: every "back to list" exit re-focuses the list's
+        # first row so Up/Down/Enter work immediately.
+        self._arm_library_list_entry_focus()
+        return True
+
+    async def action_library_prompt_editor_back(self) -> None:
+        """Escape: leave the prompt editor for its list, honoring the dirty
+        guard (task-2856 AC2).
+
+        ``check_action`` gates this to ``_library_prompt_editor_active()``,
+        so it only ever fires while the prompt editor genuinely owns the
+        Prompts canvas.
+        """
+        await self._exit_library_prompt_editor_guarded()
+
+    def action_library_list_focus_rail(self) -> None:
+        """Escape: move focus from a list canvas toward the rail (task-2856 AC2).
+
+        ``check_action`` gates this to ``_library_list_canvas_showing_list()``
+        -- a list canvas (Media/Notes/Prompts/Skills) genuinely showing its
+        plain list, never its viewer/editor. Only ever moves keyboard
+        focus, never navigation or data state -- converges on the exact
+        same ``#library-search-input`` target `/` (``on_key``) and F6
+        (``_WORKBENCH_FOCUS_TARGETS``) already use, so all three routes to
+        the rail agree on where "the rail" is.
+        """
+        try:
+            self.query_one("#library-search-input", Input).focus()
+        except (NoMatches, QueryError):
+            pass
 
     @on(Button.Pressed, "#library-prompt-export")
     async def handle_library_prompt_export(self, event: Button.Pressed) -> None:
@@ -15162,9 +15557,21 @@ class LibraryScreen(BaseAppScreen):
     async def handle_library_note_back(self, event: Button.Pressed) -> None:
         """Return the Library notes canvas from the editor to its list view.
 
-        Flushes a dirty edit first (awaited) so Back never silently
-        discards unsaved text; an unsaved edit surviving the flush aborts the
-        navigation.
+        Args:
+            event: Button press event emitted by the "‹ Back to list" action.
+        """
+        event.stop()
+        await self._exit_library_note_editor_guarded()
+
+    async def _exit_library_note_editor_guarded(self) -> bool:
+        """Shared Back exit: veto while dirty, else reset to list.
+
+        Shared by the "‹ Back to list" button and the editor's Escape
+        binding (``action_library_note_editor_back``, task-2856 AC2) --
+        one seam, matching the skill editor's
+        ``_exit_library_skill_editor_guarded`` idiom. Flushes a dirty edit
+        first (awaited) so Back never silently discards unsaved text; an
+        unsaved edit surviving the flush vetoes the exit.
 
         Also kicks the full local-source snapshot refetch (the same
         exclusive worker the delete/create flows already use) so the list's
@@ -15173,16 +15580,29 @@ class LibraryScreen(BaseAppScreen):
         immediate recompose below renders the save-time in-memory patch
         (see ``_save_library_note``), and the refetch then confirms it.
 
-        Args:
-            event: Button press event emitted by the "‹ Back to list" action.
+        Returns:
+            ``True`` when the editor was exited; ``False`` on a dirty veto.
         """
-        event.stop()
         await self._flush_library_note_save()
         if self._library_note_dirty:
-            return
+            return False
         self._reset_library_note_editor_state()
         self._refresh_local_source_snapshot()
         self.refresh(recompose=True)
+        # task-2856 AC1: every "back to list" exit re-focuses the list's
+        # first row so Up/Down/Enter work immediately.
+        self._arm_library_list_entry_focus()
+        return True
+
+    async def action_library_note_editor_back(self) -> None:
+        """Escape: leave the note editor for its list, honoring the dirty
+        guard (task-2856 AC2).
+
+        ``check_action`` gates this to ``_library_note_editor_active()``,
+        so it only ever fires while the DATABASE note editor genuinely owns
+        the Notes canvas.
+        """
+        await self._exit_library_note_editor_guarded()
 
     @on(Button.Pressed, "#library-note-delete")
     async def handle_library_note_delete(self, event: Button.Pressed) -> None:
@@ -15580,6 +16000,19 @@ class LibraryScreen(BaseAppScreen):
             event: Button press event emitted by the "‹ Back to list" action.
         """
         event.stop()
+        self._exit_library_media_viewer()
+
+    def _exit_library_media_viewer(self) -> None:
+        """Shared Back exit: return the media canvas from viewer to list.
+
+        Shared by the "‹ Back to list" button and the viewer's Escape
+        binding (``action_library_media_viewer_back``, task-2856 AC2) so
+        both exits run the identical reset sequence -- one seam, not a
+        parallel key-driven path that could drift from the button's. Runs
+        unconditionally regardless of the viewer's editing/confirming-
+        delete sub-state, mirroring the "‹ Back to list" button itself,
+        which renders (and is reachable) in every one of those sub-states.
+        """
         self._library_media_view = "list"
         self._library_media_editing = False
         self._library_media_confirming_delete = False
@@ -15587,6 +16020,17 @@ class LibraryScreen(BaseAppScreen):
         self._library_media_content_query = ""
         self._library_media_content_match_index = 0
         self.refresh(recompose=True)
+        # task-2856 AC1: every "back to list" exit re-focuses the list's
+        # first row so Up/Down/Enter work immediately.
+        self._arm_library_list_entry_focus()
+
+    def action_library_media_viewer_back(self) -> None:
+        """Escape: leave the media viewer for its list (task-2856 AC2).
+
+        ``check_action`` gates this to the media canvas genuinely showing
+        its viewer sub-view, so it only ever fires there.
+        """
+        self._exit_library_media_viewer()
 
     @on(Button.Pressed, "#library-media-edit")
     def handle_library_media_edit(self, event: Button.Pressed) -> None:
