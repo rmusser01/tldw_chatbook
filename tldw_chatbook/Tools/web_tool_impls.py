@@ -310,8 +310,18 @@ def _pymupdf_available() -> bool:
     """Cheap availability probe (no import): the 20 MB PDF read ceiling and
     the [missing-dep] refusal must be decided before the GET starts — the probe
     chooses the read CAP; it does not skip the download itself. optional_deps.check_dependency()
-    eagerly imports the module — wrong cost for the fetch hot path."""
-    return importlib.util.find_spec("pymupdf") is not None
+    eagerly imports the module — wrong cost for the fetch hot path.
+
+    Total, not just cheap: find_spec raises ValueError (not ImportError) when
+    sys.modules already holds an entry for the name with __spec__ = None —
+    e.g. a stubbed/partial module left behind by another import path. This
+    module's failure contract is all-LocalToolError, so that must degrade to
+    "unavailable" rather than escape as a raw ValueError.
+    """
+    try:
+        return importlib.util.find_spec("pymupdf") is not None
+    except (ImportError, ValueError):
+        return False
 
 
 def _extract_pdf_text(body: bytes, max_bytes: int) -> str:
@@ -370,6 +380,12 @@ def _extract_pdf_text(body: bytes, max_bytes: int) -> str:
 def web_fetch(url: str, *, max_bytes: int = FETCH_MAX_BYTES) -> str:
     """Fetch ``url`` and return extracted text (trafilatura for HTML, PyMuPDF for PDF).
 
+    Args:
+        url: public http(s) URL to fetch.
+        max_bytes: response-read cap for text, clamped to
+            [1, FETCH_HARD_MAX_BYTES]; for PDFs it caps the EXTRACTED text,
+            not the download.
+
     SSRF-guarded per hop (validate_outbound_url), redirect-capped,
     rate-limited per domain, cached in-memory by (url, max_bytes) key
     (256-entry bound, earliest-expiry eviction, FETCH_CACHE_TTL_SECONDS expiry).
@@ -392,6 +408,10 @@ def web_fetch(url: str, *, max_bytes: int = FETCH_MAX_BYTES) -> str:
         - "missing-dep" (PDF requires pymupdf extra)
         - "pdf-error" (PyMuPDF extraction or encryption failure)
         - "too-large" (PDF exceeds 20 MB ceiling when pymupdf available)
+
+    Returns:
+        str: extracted text — trafilatura/tag-strip for HTML, raw for plain
+        types, pymupdf text for PDFs — with a truncation marker when capped.
 
     Raises:
         LocalToolError: on invalid/SSRF URLs, redirect overflow, timeouts,
@@ -423,6 +443,11 @@ def web_fetch(url: str, *, max_bytes: int = FETCH_MAX_BYTES) -> str:
         # and connects on our behalf, bypassing the SSRF guard entirely.
         trust_env=False,
     )
+    # Probed ONCE per call, not per redirect hop: a mid-call sys.modules
+    # mutation could otherwise make the pre-fetch cap decision and the
+    # post-fetch [missing-dep]-vs-[too-large] verdict disagree with each
+    # other (and find_spec gains nothing from re-probing every hop).
+    pymupdf_ok = _pymupdf_available()
     try:
         current_url = url
         for _hop in range(FETCH_MAX_REDIRECTS + 1):
@@ -432,7 +457,7 @@ def web_fetch(url: str, *, max_bytes: int = FETCH_MAX_BYTES) -> str:
             _enforce_rate_limit(urlsplit(current_url).hostname or "unknown")
             status, headers, body, truncated, is_pdf = _fetch_once(
                 client, current_url, max_bytes,
-                pdf_max_bytes=PDF_MAX_BYTES if _pymupdf_available() else None,
+                pdf_max_bytes=PDF_MAX_BYTES if pymupdf_ok else None,
             )
             if status in _REDIRECT_STATUSES:
                 location = headers.get("location")
@@ -460,7 +485,7 @@ def web_fetch(url: str, *, max_bytes: int = FETCH_MAX_BYTES) -> str:
         raise LocalToolError(f"[http-{status}] upstream returned status {status} for {url!r}")
 
     if is_pdf:
-        if not _pymupdf_available():
+        if not pymupdf_ok:
             # Decided BEFORE the size check: pdf_max_bytes was already None
             # for this fetch (above), so `truncated` reflects the ordinary
             # max_bytes cap, not the 20 MB ceiling — a [too-large] verdict
@@ -621,6 +646,7 @@ CRAWL_EXCERPT_MAX_CHARS = 200
 CRAWL_RESULT_MAX_BYTES = 24 * 1024
 CRAWL_BLOCK_MAX_BYTES = 1024
 CRAWL_MAX_LINKS_PER_PAGE = 500      # frontier bound: cap links enqueued FROM one page
+CRAWL_TITLE_MAX_CHARS = 512         # bound on <title> accumulation (see _CrawlLinkParser.handle_data)
 SITEMAP_MAX_BYTES = 5 * 1024 * 1024
 SITEMAP_MAX_CHILDREN = 20           # cap child sitemaps actually fetched from an index
 
@@ -661,7 +687,7 @@ class _CrawlLinkParser(HTMLParser):
             # rest of the page's text data unboundedly (handle_data fires
             # once per chunk of text). The excerpt/title only ever needs a
             # display-sized prefix.
-            self.title = (self.title + data)[:512]
+            self.title = (self.title + data)[:CRAWL_TITLE_MAX_CHARS]
 
 
 def _crawl_host(url: str) -> str:
@@ -872,16 +898,21 @@ def _seed_from_sitemap(
     def take(candidates: list[str]) -> None:
         nonlocal budget_truncated
         for candidate in candidates:
-            if len(urls) >= max_pages:
-                # At least `candidate` (and anything after it) was never
-                # considered: the cap, not exhaustion, ended this pass.
-                budget_truncated = True
-                return
+            # Host/dedup filters run BEFORE the budget check: a trailing
+            # off-host or duplicate candidate would be discarded anyway, so
+            # it must not flip budget_truncated and claim the page budget —
+            # not the sitemap itself — cut the seed short.
             if _crawl_host(candidate) != scope_host:
                 continue
             norm = _normalize_crawl_url(candidate)
             if norm in seen:
                 continue
+            if len(urls) >= max_pages:
+                # This candidate (and anything after it that would pass the
+                # filters above) was never considered: the cap, not
+                # exhaustion, ended this pass.
+                budget_truncated = True
+                return
             seen.add(norm)
             urls.append(candidate)
 
@@ -890,13 +921,16 @@ def _seed_from_sitemap(
     children_capped = False
     children_skipped = 0
     for child in children:
+        if time.monotonic() >= deadline:
+            break
+        # Off-host filter runs BEFORE the budget check, mirroring take(): a
+        # trailing off-host child would be skipped regardless, so it must
+        # not flip budget_truncated on its own.
+        if _crawl_host(child) != sitemap_host:
+            continue
         if len(urls) >= max_pages:
             budget_truncated = True
             break
-        if time.monotonic() >= deadline:
-            break
-        if _crawl_host(child) != sitemap_host:
-            continue
         if children_fetched >= SITEMAP_MAX_CHILDREN:
             # Amplification guard: a pathological same-host index (~119
             # children measured in the review, ~600 MB at 5 MiB each) is

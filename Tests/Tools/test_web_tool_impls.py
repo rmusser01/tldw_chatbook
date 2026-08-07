@@ -1,4 +1,5 @@
 import socket
+import sys
 from types import SimpleNamespace
 
 import httpx
@@ -484,6 +485,19 @@ def test_fetch_pdf_missing_dep_message(fetch_env, monkeypatch):
     monkeypatch.setattr(builtins, "__import__", no_pymupdf)
     fetch_env.routes["http://example.com/doc.pdf"] = _pdf_response(_make_pdf(["hi"]))
     with pytest.raises(LocalToolError, match=r"missing-dep.*tldw_chatbook\[pdf\]"):
+        web_fetch("http://example.com/doc.pdf")
+
+
+def test_pymupdf_available_spec_less_stub_returns_false_not_valueerror(fetch_env, monkeypatch):
+    """_pymupdf_available() must be TOTAL: importlib.util.find_spec raises a
+    raw ValueError (not caught anywhere else in this module) when
+    sys.modules holds a stub entry with __spec__ = None — e.g. a test or
+    a bad partial-import elsewhere in the process leaves such a stub
+    behind. That must not escape web_fetch as an uncaught ValueError; the
+    module's failure contract is all-LocalToolError."""
+    monkeypatch.setitem(sys.modules, "pymupdf", SimpleNamespace(__spec__=None))
+    fetch_env.routes["http://example.com/doc.pdf"] = _pdf_response(b"%PDF-1.4 stub")
+    with pytest.raises(LocalToolError, match=r"missing-dep"):
         web_fetch("http://example.com/doc.pdf")
 
 

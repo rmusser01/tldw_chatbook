@@ -8,6 +8,7 @@ import pytest
 
 from tldw_chatbook.Tools import web_tool_impls
 from tldw_chatbook.Tools.web_tool_impls import (
+    CRAWL_TITLE_MAX_CHARS,
     LocalToolError,
     _CrawlLinkParser,
     _coerce_budget,
@@ -48,7 +49,7 @@ def test_title_accumulation_bounded():
     parser = _CrawlLinkParser()
     parser.feed("<title>" + ("x" * 100_000))
     parser.close()
-    assert len(parser.title) <= 512
+    assert len(parser.title) <= CRAWL_TITLE_MAX_CHARS
 
 
 def test_normalize_folds_www_case_and_fragment():
@@ -934,6 +935,48 @@ def test_sitemap_exactly_consumed_still_reports_exhausted(crawl_env):
     left over) must still report "sitemap exhausted" — take() only flips the
     truncation flag when a candidate was actually left unconsidered."""
     urls_xml = "".join(f"<url><loc>http://example.com/p{i}</loc></url>" for i in range(3))
+    xml = (
+        '<?xml version="1.0"?>'
+        '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
+        f"{urls_xml}</urlset>"
+    ).encode()
+    crawl_env.routes["http://example.com/sitemap.xml"] = _sitemap_response(xml)
+    _site(crawl_env, {f"http://example.com/p{i}": (f"page {i}", []) for i in range(3)})
+    out = web_crawl(
+        "http://example.com/", sitemap_url="http://example.com/sitemap.xml", max_pages=3
+    )
+    assert out.endswith("Stopped: sitemap exhausted.")
+
+
+def test_sitemap_trailing_offhost_loc_does_not_flip_budget_truncated(crawl_env):
+    """False-positive guard: take()'s max_pages check must run AFTER the
+    scope_host filter. 3 same-host locs exactly fill max_pages=3; a 4th,
+    TRAILING off-host loc would be discarded by the host filter regardless
+    — it must not flip budget_truncated and make the footer claim "page
+    budget reached" when every same-host candidate was actually considered."""
+    urls_xml = "".join(f"<url><loc>http://example.com/p{i}</loc></url>" for i in range(3))
+    urls_xml += "<url><loc>http://other.com/off-host</loc></url>"
+    xml = (
+        '<?xml version="1.0"?>'
+        '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
+        f"{urls_xml}</urlset>"
+    ).encode()
+    crawl_env.routes["http://example.com/sitemap.xml"] = _sitemap_response(xml)
+    _site(crawl_env, {f"http://example.com/p{i}": (f"page {i}", []) for i in range(3)})
+    out = web_crawl(
+        "http://example.com/", sitemap_url="http://example.com/sitemap.xml", max_pages=3
+    )
+    assert "http://other.com/off-host" not in crawl_env.calls
+    assert out.endswith("Stopped: sitemap exhausted.")
+
+
+def test_sitemap_trailing_duplicate_loc_does_not_flip_budget_truncated(crawl_env):
+    """Same false-positive guard, duplicate-filter side: a 4th, TRAILING loc
+    that duplicates the first same-host URL would be discarded by the
+    `seen` filter regardless of max_pages — it must not flip
+    budget_truncated either."""
+    urls_xml = "".join(f"<url><loc>http://example.com/p{i}</loc></url>" for i in range(3))
+    urls_xml += "<url><loc>http://example.com/p0</loc></url>"  # duplicate of the first
     xml = (
         '<?xml version="1.0"?>'
         '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
