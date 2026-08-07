@@ -23,17 +23,17 @@ pages:
 
 - Press **Ctrl+3** from anywhere, or click **⌃3 Library** in the nav bar.
 - **Ctrl+P** → "Tab Navigation: Switch to Library" in the command palette.
-- Old destination names still find it: the five retired screens —
-  **notes**, **prompts**, **skills**, **ingest**, and **research** — now
-  live inside Library, and typing any of them into the palette routes
-  here. (Typing **media**, **search**, or **study** also surfaces the
+- Old destination names still find it: the six retired screens —
+  **notes**, **prompts**, **skills**, **ingest**, **research**, and
+  **media** — now live inside Library, and typing any of them into the
+  palette routes here. (Typing **search** or **study** also surfaces the
   Library command — those words are aliases for it, and picking the hit
-  lands on Library. The Media and Search screens still exist behind their
-  own named commands, "Media & Content: Open Media Library" and "Quick
-  Actions: Search All Content"; Study has no palette command at all — reach
-  it from Library's hand-off buttons.) The palette also offers
-  "Tab Navigation: Library — Skills", which lands directly on the Skills
-  row.
+  lands on Library. The command palette's "Media & Content: Open Media
+  Library" and "Quick Actions: Search All Content" entries are deep links
+  into Library's Media and Search/RAG rows, not separate screens; Study has
+  no palette command at all — reach it from Library's hand-off buttons.)
+  The palette also offers "Tab Navigation: Library — Skills", which lands
+  directly on the Skills row.
 
 ## Layout tour
 
@@ -223,10 +223,11 @@ surface's own panels and dialogs — see
   That's by design — those rows are hand-offs, not Library canvases;
   generation and review run in the Study screen.
 - **The palette found "Notes" but opened Library.** The standalone
-  Notes, Prompts, Skills, Ingest, and Research screens were retired;
-  their names now route to the matching Library row.
+  Notes, Prompts, Skills, Ingest, Research, and Media screens were
+  retired; their names now route to the matching Library row.
 
 —
 *Verified against dev @ e3d0d2c9d — 2026-08-07 (TASK-2850: Notes ▸ Files
 mode stays inside the Library rail/canvas frame; Escape returns to
-Database)*
+Database; TASK-2851: the legacy Media Library screen is retired — "Media &
+Content: Open Media Library" now deep-links into Library's Media row)*

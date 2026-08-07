@@ -582,19 +582,23 @@ def _active_library_sync_scope(app_instance: Any) -> dict[str, str | None]:
 # ``search``/``collections`` -- added so a future Skills deep link has
 # somewhere to land without another table edit. ``notes`` is handled as its
 # own dedicated branch in ``_apply_navigation_context_state`` below
-# (``open_notes_workspace``'s route), not through this table. ``media`` has
-# no navigation-context entry point at all (the retired mode-strip machinery
-# never had a "media" mode either). Any other mode value -- including the
-# retired ``study``/``flashcards``/``quizzes`` mode values (those rows are
-# now "handoff" rows, not nav-context targets) and the retired
-# ``sources``/``workspaces``/``import-export`` values -- degrades quietly,
-# unchanged from before this table existed.
+# (``open_notes_workspace``'s route), not through this table. ``media``
+# (task-2851: the retired standalone Media Library screen's legacy route
+# alias -- mirrors "search"/"prompts"/"skills" above) lands on this same
+# canvas's browse row -- unlike those, its own selected item still round-
+# trips through ``open_source_type``/``open_source_id`` above rather than a
+# mode-table entry, so this only owns landing on the list. Any other mode
+# value -- including the retired ``study``/``flashcards``/``quizzes`` mode
+# values (those rows are now "handoff" rows, not nav-context targets) and
+# the retired ``sources``/``workspaces``/``import-export`` values --
+# degrades quietly, unchanged from before this table existed.
 LIBRARY_NAV_MODE_TO_ROW_ID = {
     "conversations": LIBRARY_ROW_BROWSE_CONVERSATIONS,
     "collections": LIBRARY_ROW_BROWSE_COLLECTIONS,
     "search": LIBRARY_ROW_BROWSE_SEARCH,
     "prompts": LIBRARY_ROW_BROWSE_PROMPTS,
     "skills": LIBRARY_ROW_BROWSE_SKILLS,
+    "media": LIBRARY_ROW_BROWSE_MEDIA,
 }
 
 

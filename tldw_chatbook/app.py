@@ -1424,7 +1424,12 @@ class MediaProvider(Provider):
         """Handle media management actions."""
         try:
             if action_id == "open_media":
-                _navigate_via_screen(self.app, TAB_MEDIA, "Opened Media Library")
+                # task-2851: "media" now aliases to Library's own Media row
+                # (screen_registry._SCREEN_ALIASES) instead of the retired
+                # standalone MediaScreen -- the toast says so, matching the
+                # "Opened Library X" wording the search_transcripts branch
+                # below already uses for its own Library-folded route.
+                _navigate_via_screen(self.app, TAB_MEDIA, "Opened Library Media")
             elif action_id == "import_new":
                 _navigate_via_screen(
                     self.app, TAB_INGEST, "Opened Import/Export for media import"
@@ -6321,14 +6326,16 @@ class TldwCli(
     # ``{LIBRARY_NAV_CONTEXT_MODE: "notes"}`` for the retired standalone
     # Notes tab -- except "prompts" (the retired Personas "prompts" mode
     # chip, Task 7), "skills" (the retired standalone Skills tab, Skills
-    # sub-project Task 5), and "search" (the retired standalone Search
-    # screen, RAG UX v2 PR-1 Task 1) have no dedicated re-entry action to
+    # sub-project Task 5), "search" (the retired standalone Search
+    # screen, RAG UX v2 PR-1 Task 1), and "media" (the retired standalone
+    # Media Library screen, task-2851) have no dedicated re-entry action to
     # carry that context, so the bare alias route itself must supply it here.
     # The retired Customize screen folds into Settings > Theme.
     _LEGACY_ROUTE_LIBRARY_NAV_CONTEXT: dict[str, dict[str, str]] = {
         "prompts": {LIBRARY_NAV_CONTEXT_MODE: "prompts"},
         "skills": {LIBRARY_NAV_CONTEXT_MODE: "skills"},
         "search": {LIBRARY_NAV_CONTEXT_MODE: "search"},
+        "media": {LIBRARY_NAV_CONTEXT_MODE: "media"},
         "customize": {"category": "theme"},
     }
 

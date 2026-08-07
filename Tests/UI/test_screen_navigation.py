@@ -404,6 +404,45 @@ def test_research_route_resolves_to_library_screen():
     assert screen_class is LibraryScreen
 
 
+def test_media_route_resolves_to_library_screen():
+    """task-2851: the legacy standalone Media Library screen is retired.
+
+    Library already reimplements full media browsing/management as its own
+    canvas (rail row "media", ``LIBRARY_ROW_BROWSE_MEDIA``) -- the standalone
+    ``MediaScreen`` (nav: Media Types / All Media / Analysis Review /
+    Collections-Tags / Multi-Item Review) is a dead-end duplicate that used
+    to render UNDER the active Library tab highlight (the "media" legacy
+    route folds into the "library" shell destination for nav-bar purposes,
+    but its screen route pointed at a completely different screen). The
+    legacy "media" route id must resolve to ``LibraryScreen`` instead of
+    ``MediaScreen``, mirroring the "notes"/"prompts"/"skills"/"research"
+    compatibility aliases above. ``MediaScreen`` itself is not deleted --
+    its save_state/restore_state contracts stay directly exercised by their
+    own unit tests below, mirroring the "skills" precedent.
+    """
+    from tldw_chatbook.UI.Navigation.screen_registry import resolve_screen_target
+    from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+
+    _screen_name, _canonical_tab, screen_class = resolve_screen_target("media")
+    assert screen_class is LibraryScreen
+
+
+def test_no_route_reaches_the_retired_media_screen():
+    """task-2851 AC#1: nothing may still resolve to the legacy MediaScreen."""
+    from tldw_chatbook.UI.Navigation import screen_registry
+
+    for route_id in screen_registry.registered_screen_route_ids():
+        _screen_name, _canonical_tab, screen_class = (
+            screen_registry.resolve_screen_target(route_id)
+        )
+        assert screen_class is None or screen_class.__name__ != "MediaScreen", route_id
+    for alias_id in screen_registry.registered_screen_aliases():
+        _screen_name, _canonical_tab, screen_class = (
+            screen_registry.resolve_screen_target(alias_id)
+        )
+        assert screen_class is None or screen_class.__name__ != "MediaScreen", alias_id
+
+
 def test_all_master_shell_primary_routes_resolve_before_nav_exposure():
     app = _build_test_app()
     expected_routes = {
@@ -2530,23 +2569,25 @@ async def test_search_all_palette_command_lands_on_library_with_honest_toast():
 
 
 @pytest.mark.asyncio
-async def test_media_screen_round_trip_restores_type_filter_and_search_term():
-    """Regression lock for the bug this task fixes: nothing seeds
-    ``MediaWindow.active_media_type`` on a screen-navigated visit except a
-    live nav-panel click (the legacy ``watch_current_tab`` ->
-    ``activate_initial_view`` path is a no-op once ``_use_screen_navigation``
-    is set). Without restoring it first, a fresh ``MediaWindow`` instance
-    every visit meant the type/search/keyword filter silently reset on every
-    single navigation away and back.
+async def test_media_route_round_trips_to_the_library_media_row():
+    """task-2851: the legacy standalone Media Library screen (nav: Media
+    Types / All Media / Analysis Review / Collections-Tags / Multi-Item
+    Review) used to render UNDER the active Library tab highlight when the
+    command palette's "Media & Content: Open Media Library" entry navigated
+    to the bare "media" route (``MediaProvider.handle_media_action
+    ("open_media")`` -> ``NavigateToScreen("media")``) -- the legacy route
+    folds into the "library" shell destination for nav-bar purposes, but its
+    own screen route pointed at a completely different, dead-end-duplicate
+    screen. "media" is now retired the same way "search" was (RAG UX v2
+    PR-1): it resolves to ``LibraryScreen`` with the Media rail row
+    selected, and -- mirroring
+    ``test_search_route_round_trips_to_the_library_rag_row`` exactly -- that
+    selection survives a round trip through another screen rather than being
+    just a first-navigation fluke of ``_LEGACY_ROUTE_LIBRARY_NAV_CONTEXT``.
     """
+    from tldw_chatbook.Library.library_shell_state import LIBRARY_ROW_BROWSE_MEDIA
+
     app = _build_test_app()
-    # search_media hits the real MediaReadingScopeService -> media_db chain,
-    # and the test fixture's media_db is None -- stub just the DB-touching
-    # call (mirroring Tests/UI/test_media_window_v2_parity.py's pattern) so
-    # this exercises the real mount/restore path without a real database.
-    app.media_reading_scope_service.search_media = AsyncMock(
-        return_value={"items": [], "total": 0}
-    )
 
     async with app.run_test(size=(170, 48)) as pilot:
         for _ in range(150):
@@ -2557,27 +2598,12 @@ async def test_media_screen_round_trip_restores_type_filter_and_search_term():
         app.post_message(NavigateToScreen("media"))
         for _ in range(150):
             await pilot.pause(0.02)
-            if type(app.screen).__name__ == "MediaScreen" and app.screen.query(
-                "#media-nav-all-media"
+            if type(app.screen).__name__ == "LibraryScreen" and app.screen.query(
+                "#library-row-browse-media"
             ):
                 break
-        assert type(app.screen).__name__ == "MediaScreen"
-
-        # Pick a type the way a real user does (there is exactly one media
-        # type in this fixture: "All Media" -> slug "all-media").
-        app.screen.query_one("#media-nav-all-media").press()
-        for _ in range(150):
-            await pilot.pause(0.02)
-            if app.screen.media_window.active_media_type:
-                break
-        assert app.screen.media_window.active_media_type == "all-media"
-
-        search_input = app.screen.query_one("#search-input", Input)
-        search_input.value = "quarterly report"
-        await pilot.pause()
-        await pilot.pause()
-
-        assert app.screen.media_window.search_panel.search_term == "quarterly report"
+        assert type(app.screen).__name__ == "LibraryScreen"
+        assert app.screen._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA
 
         app.post_message(NavigateToScreen("home"))
         for _ in range(150):
@@ -2589,26 +2615,14 @@ async def test_media_screen_round_trip_restores_type_filter_and_search_term():
         app.post_message(NavigateToScreen("media"))
         for _ in range(150):
             await pilot.pause(0.02)
-            if type(app.screen).__name__ == "MediaScreen" and app.screen.query(
-                "#search-input"
+            if type(app.screen).__name__ == "LibraryScreen" and app.screen.query(
+                "#library-row-browse-media"
             ):
                 break
 
         restored_screen = app.screen
-        assert type(restored_screen).__name__ == "MediaScreen"
-        assert restored_screen.media_window.active_media_type == "all-media"
-        for _ in range(150):
-            await pilot.pause(0.02)
-            if (
-                restored_screen.media_window.search_panel.search_term
-                == "quarterly report"
-            ):
-                break
-        assert (
-            restored_screen.media_window.search_panel.search_term == "quarterly report"
-        )
-        restored_input = restored_screen.query_one("#search-input", Input)
-        assert restored_input.value == "quarterly report"
+        assert type(restored_screen).__name__ == "LibraryScreen"
+        assert restored_screen._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA
 
 
 @pytest.mark.asyncio
