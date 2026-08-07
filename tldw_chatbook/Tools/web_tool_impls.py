@@ -26,6 +26,7 @@ from collections import deque
 from html.parser import HTMLParser
 from typing import NamedTuple, Optional
 from urllib.parse import urljoin, urlsplit
+from urllib.robotparser import RobotFileParser
 
 import httpx
 from loguru import logger
@@ -156,14 +157,26 @@ _BLANKLINES_RE = re.compile(r"\n{3,}")
 _fetch_cache: dict[tuple[str, int], tuple[float, str]] = {}
 _domain_last_fetch: dict[str, float] = {}
 
+# robots.txt cache (task-2833 design doc §Mechanism), keyed by
+# scheme://netloc -- host-level, not per-UA: only the can_fetch() *query*
+# is per-caller-UA, the fetched/parsed policy is shared. Value is
+# (expires_at_monotonic, parser_or_None); None means "unreachable or
+# unparsable" -> fail open (ruling 2).
+ROBOTS_MAX_BYTES = 64 * 1024
+ROBOTS_CACHE_TTL_SECONDS = 1800.0
+ROBOTS_CACHE_MAX_ENTRIES = 128
+
+_robots_cache: dict[str, tuple[float, "RobotFileParser | None"]] = {}
+
 # Test seam: tests set this to an httpx.MockTransport.
 _transport: "httpx.BaseTransport | None" = None
 
 
 def _reset_state_for_tests() -> None:
-    """Clear the module-level fetch cache and rate-limit state."""
+    """Clear the module-level fetch cache, rate-limit state, and robots cache."""
     _fetch_cache.clear()
     _domain_last_fetch.clear()
+    _robots_cache.clear()
 
 
 def _cache_put(key: tuple[str, int], text: str) -> None:
@@ -172,6 +185,14 @@ def _cache_put(key: tuple[str, int], text: str) -> None:
         oldest = min(_fetch_cache, key=lambda k: _fetch_cache[k][0])
         _fetch_cache.pop(oldest)
     _fetch_cache[key] = (time.monotonic() + FETCH_CACHE_TTL_SECONDS, text)
+
+
+def _robots_cache_put(key: str, parser: "RobotFileParser | None") -> None:
+    """Insert into the robots cache, evicting earliest-expiry entry at capacity."""
+    if key not in _robots_cache and len(_robots_cache) >= ROBOTS_CACHE_MAX_ENTRIES:
+        oldest = min(_robots_cache, key=lambda k: _robots_cache[k][0])
+        _robots_cache.pop(oldest)
+    _robots_cache[key] = (time.monotonic() + ROBOTS_CACHE_TTL_SECONDS, parser)
 
 
 def _validate_hop(url: str) -> None:
@@ -379,6 +400,100 @@ def _extract_pdf_text(body: bytes, max_bytes: int) -> str:
     return joined
 
 
+def _webfetch_settings() -> dict:
+    """Resolve the ``[webfetch]`` config keys web_fetch/web_crawl need for
+    robots.txt enforcement.
+
+    A dedicated module function (mirroring ``_deep_search_settings()``
+    below) so tests can monkeypatch config resolution wholesale rather than
+    stubbing individual keys. ``_bool`` uses the same strict true-set
+    coercion as ``_deep_search_settings``'s own helper: an actual bool
+    value (the common case -- TOML parses `true`/`false` natively) passes
+    through unchanged; a string coerces via ``"true"``/``"1"`` membership,
+    so a stray quoted ``"false"`` reliably disables and a stray quoted
+    ``"true"`` is never misread as disabled -- the same lesson
+    ``_deep_search_settings`` recorded, applied in the opposite direction
+    since THIS flag defaults to True rather than False. Anything else
+    (missing key, wrong type) falls back to ``default``.
+
+    Read once per tool invocation, not per hop (design doc ruling 6): both
+    ``web_fetch`` and ``web_crawl`` call this exactly once at the top of
+    the public function and thread the resolved flag through every hop.
+    """
+    from ..config import get_cli_setting  # local import: keep module import cheap
+
+    def _bool(key: str, default: bool) -> bool:
+        raw = get_cli_setting("webfetch", key, default)
+        if isinstance(raw, bool):
+            return raw
+        if isinstance(raw, str):
+            return raw.strip().lower() in ("true", "1")
+        return default
+
+    return {"respect_robots_txt": _bool("respect_robots_txt", True)}
+
+
+def _robots_disallowed_message(url: str) -> str:
+    """Structured refusal string (error contract style of [ssrf]/[invalid-url])."""
+    host = urlsplit(url).hostname or url
+    return (
+        f"[robots-disallowed] {url} — {host}/robots.txt disallows this path "
+        "for this tool's user agent; set [webfetch] respect_robots_txt = false to override"
+    )
+
+
+def _robots_allows(client: httpx.Client, url: str, user_agent: str) -> bool:
+    """True if ``user_agent`` may fetch ``url`` per its host's robots.txt.
+
+    Cache lookup keyed by ``scheme://netloc`` (host-level; the UA is only a
+    parameter to the *query*, ``can_fetch()``, not the cache key -- the
+    fetched policy is shared across callers). On a miss, rate-limits like
+    any other request to the host (design doc ruling 5 -- the politeness
+    probe is itself polite), fetches ``{scheme}://{netloc}/robots.txt``
+    through ``_fetch_once`` under a dedicated ``ROBOTS_MAX_BYTES`` cap (not
+    the page cap), and parses it with the stdlib ``RobotFileParser``.
+
+    Fail-open (design doc ruling 2, "compat" semantics): anything short of
+    a clean 2xx fetch under the byte cap -- network error, non-2xx status,
+    a body TRUNCATED at ROBOTS_MAX_BYTES (a half-file could silently drop
+    trailing Disallow lines -- refusing to trust a truncated policy is the
+    honest reading), or a parse failure -- is cached as ``None`` (no
+    restrictions) for the same TTL as a successful fetch, via one broad
+    ``except Exception``: a robots.txt outage must not brick fetching, and
+    in the shipped code this same broad catch is what keeps every
+    pre-existing route-less-robots test passing unchanged once the fixture
+    opts back into enforcement.
+
+    Synchronous, no locks -- matches the module's existing idiom (single
+    call per tool invocation; a cross-call stampede costs at most one
+    duplicate robots.txt fetch, accepted).
+    """
+    parts = urlsplit(url)
+    cache_key = f"{parts.scheme}://{parts.netloc}"
+    cached = _robots_cache.get(cache_key)
+    now = time.monotonic()
+    if cached is not None and now < cached[0]:
+        parser = cached[1]
+    else:
+        robots_url = f"{cache_key}/robots.txt"
+        parser = None
+        try:
+            _validate_hop(robots_url)  # symmetry with every other request (design doc Minor 9)
+            _enforce_rate_limit(parts.hostname or "unknown")
+            status, headers, body, truncated, _is_pdf = _fetch_once(client, robots_url, ROBOTS_MAX_BYTES)
+            if 200 <= status < 300 and not truncated:
+                text = _decode_body(body, headers.get("content-type", ""))
+                candidate = RobotFileParser()
+                candidate.parse(text.splitlines())
+                parser = candidate
+        except Exception:  # noqa: BLE001 - broad by design: any robots fetch/parse failure fails open
+            parser = None
+        _robots_cache_put(cache_key, parser)
+    if parser is None:
+        return True
+    return parser.can_fetch(user_agent, url)
+
+
 def web_fetch(url: str, *, max_bytes: int = FETCH_MAX_BYTES) -> str:
     """Fetch ``url`` and return extracted text (trafilatura for HTML, PyMuPDF for PDF).
 
@@ -392,6 +507,11 @@ def web_fetch(url: str, *, max_bytes: int = FETCH_MAX_BYTES) -> str:
     rate-limited per domain, cached in-memory by (url, max_bytes) key
     (256-entry bound, earliest-expiry eviction, FETCH_CACHE_TTL_SECONDS expiry).
 
+    Robots-guarded per hop too (task-2833): each hop's host robots.txt is
+    checked for ``_USER_AGENT``, honoring ``[webfetch] respect_robots_txt``
+    (default true, fail-open on an unreachable/unparsable robots.txt). A
+    cache hit re-checks robots the same way it re-checks SSRF policy.
+
     HTML/plain-text extracted via trafilatura with fallback tag-strip;
     script/style tags removed. Result ends with a truncation marker when
     capped at max_bytes (default FETCH_MAX_BYTES=1 MiB).
@@ -404,8 +524,8 @@ def web_fetch(url: str, *, max_bytes: int = FETCH_MAX_BYTES) -> str:
     max_bytes; the result includes page count.
 
     All failures raise LocalToolError with structured reasons:
-        - "invalid-url", "ssrf", "redirect-limit", "timeout",
-          "http-<status>", "rate-limited", "fetch-failed" (general fetch)
+        - "invalid-url", "ssrf", "robots-disallowed", "redirect-limit",
+          "timeout", "http-<status>", "rate-limited", "fetch-failed" (general fetch)
         - "empty-content" (unextractable HTML/text/PDF)
         - "missing-dep" (PDF requires pymupdf extra)
         - "pdf-error" (PyMuPDF extraction or encryption failure)
@@ -428,13 +548,8 @@ def web_fetch(url: str, *, max_bytes: int = FETCH_MAX_BYTES) -> str:
     except (TypeError, ValueError) as exc:
         raise LocalToolError(f"[invalid-url] max_bytes must be an integer: {max_bytes!r}") from exc
 
-    cached = _fetch_cache.get((url, max_bytes))
-    if cached is not None:
-        expires_at, text = cached
-        if time.monotonic() < expires_at:
-            _validate_hop(url)  # re-check policy on cache hits (cheap, no body)
-            return text
-        _fetch_cache.pop((url, max_bytes), None)
+    # Read once per invocation, not per hop (design doc ruling 6).
+    respect_robots = _webfetch_settings()["respect_robots_txt"]
 
     client = httpx.Client(
         follow_redirects=False,
@@ -445,17 +560,35 @@ def web_fetch(url: str, *, max_bytes: int = FETCH_MAX_BYTES) -> str:
         # and connects on our behalf, bypassing the SSRF guard entirely.
         trust_env=False,
     )
-    # Probed ONCE per call, not per redirect hop: a mid-call sys.modules
-    # mutation could otherwise make the pre-fetch cap decision and the
-    # post-fetch [missing-dep]-vs-[too-large] verdict disagree with each
-    # other (and find_spec gains nothing from re-probing every hop).
-    pymupdf_ok = _pymupdf_available()
     try:
+        cached = _fetch_cache.get((url, max_bytes))
+        if cached is not None:
+            expires_at, text = cached
+            if time.monotonic() < expires_at:
+                _validate_hop(url)  # re-check policy on cache hits (cheap, no body)
+                # Robots re-checked exactly like _validate_hop above: rules
+                # may have changed since the body was cached (design doc
+                # ruling 3).
+                if respect_robots and not _robots_allows(client, url, _USER_AGENT):
+                    raise LocalToolError(_robots_disallowed_message(url))
+                return text
+            _fetch_cache.pop((url, max_bytes), None)
+
+        # Probed ONCE per call, not per redirect hop: a mid-call sys.modules
+        # mutation could otherwise make the pre-fetch cap decision and the
+        # post-fetch [missing-dep]-vs-[too-large] verdict disagree with each
+        # other (and find_spec gains nothing from re-probing every hop).
+        pymupdf_ok = _pymupdf_available()
         current_url = url
         for _hop in range(FETCH_MAX_REDIRECTS + 1):
             # Policy re-checked on EVERY hop: a permitted URL must not be able
             # to redirect into private/denied address space.
             _validate_hop(current_url)
+            # Robots consulted at the same position as _validate_hop, for
+            # every hop (design doc ruling 3): a redirect into a disallowed
+            # path is a disallowed fetch.
+            if respect_robots and not _robots_allows(client, current_url, _USER_AGENT):
+                raise LocalToolError(_robots_disallowed_message(current_url))
             _enforce_rate_limit(urlsplit(current_url).hostname or "unknown")
             status, headers, body, truncated, is_pdf = _fetch_once(
                 client, current_url, max_bytes,
@@ -768,6 +901,7 @@ def _format_crawl_result(
     stop_reason: str,
     children_skipped: int = 0,
     duplicates_skipped: int = 0,
+    robots_disallowed: int = 0,
 ) -> str:
     blocks: list[str] = []
     total = 0
@@ -786,6 +920,8 @@ def _format_crawl_result(
         blocks.append(block)
         total += block_bytes
     counts = f"{failed} failed, {blocked} blocked"
+    if robots_disallowed > 0:
+        counts += f"; {robots_disallowed} robots-disallowed"
     if children_skipped > 0:
         counts += f"; {children_skipped} child sitemaps skipped"
     if duplicates_skipped > 0:
@@ -805,6 +941,7 @@ def _crawl_fetch_page(
     *,
     max_bytes: int = FETCH_MAX_BYTES,
     html_only: bool = True,
+    respect_robots: bool = True,
 ) -> tuple[str, "httpx.Headers", bytes, bool, bool]:
     """Guarded, rate-limited GET with the crawl's redirect loop.
 
@@ -816,12 +953,22 @@ def _crawl_fetch_page(
     text/html must not fall through to HTML extraction, or its raw bytes
     become the page excerpt and its garbage "extracted text" warm-writes
     the shared web_fetch cache (see web_crawl's marker branch).
+
+    This is also the path every sitemap fetch takes (task-2833 design doc
+    ruling 4: root + child sitemap fetches go through this same loop), so
+    the ``respect_robots`` check below covers those for free -- always
+    against ``_CRAWL_USER_AGENT``, the one UA this whole module uses for
+    crawl-initiated fetches including sitemaps.
     """
     current = url
     for _hop in range(FETCH_MAX_REDIRECTS + 1):
         if time.monotonic() >= deadline:
             raise _CrawlDeadline()
         _validate_hop(current)
+        # Robots consulted at the same position as _validate_hop, for every
+        # hop (design doc ruling 3).
+        if respect_robots and not _robots_allows(client, current, _CRAWL_USER_AGENT):
+            raise LocalToolError(_robots_disallowed_message(current))
         _enforce_rate_limit(urlsplit(current).hostname or "unknown")
         try:
             status, headers, body, truncated, is_pdf = _fetch_once(
@@ -880,6 +1027,7 @@ def _seed_from_sitemap(
     scope_host: str,
     max_pages: int,
     deadline: float,
+    respect_robots: bool = True,
 ) -> _SitemapSeed:
     """Collect up to max_pages same-host page URLs from a sitemap.
 
@@ -887,9 +1035,20 @@ def _seed_from_sitemap(
     budget; the deadline bounds a pathological index (spec §2). Host rules:
     child sitemaps must share sitemap_url's host; page URLs must share the
     crawl scope host.
+
+    ``respect_robots`` is threaded into every ``_crawl_fetch_page`` call
+    below (root sitemap and each child sitemap) -- a robots-disallowed
+    root sitemap propagates uncaught out of this function (the caller
+    wraps it into the structured ``[crawl-failed] sitemap could not be
+    fetched: [robots-disallowed] ...`` refusal, matching every other
+    seed-failure type); a disallowed child sitemap is caught by the
+    existing broad ``except (LocalToolError, _CrawlDeadline)`` below and
+    simply counted in ``children_skipped``, same as any other child
+    fetch failure.
     """
     final_url, _headers, body, truncated, _is_pdf = _crawl_fetch_page(
-        client, sitemap_url, deadline, max_bytes=SITEMAP_MAX_BYTES, html_only=False
+        client, sitemap_url, deadline, max_bytes=SITEMAP_MAX_BYTES, html_only=False,
+        respect_robots=respect_robots,
     )
     if truncated:
         raise LocalToolError(f"[crawl-failed] sitemap exceeds {SITEMAP_MAX_BYTES} bytes: {sitemap_url!r}")
@@ -945,7 +1104,8 @@ def _seed_from_sitemap(
         children_fetched += 1
         try:
             _f, _h, child_body, child_truncated, _is_pdf = _crawl_fetch_page(
-                client, child, deadline, max_bytes=SITEMAP_MAX_BYTES, html_only=False
+                client, child, deadline, max_bytes=SITEMAP_MAX_BYTES, html_only=False,
+                respect_robots=respect_robots,
             )
         except (LocalToolError, _CrawlDeadline):
             children_skipped += 1
@@ -975,6 +1135,14 @@ def web_crawl(
     expected to follow up with web_fetch on pages that matter (spec §2).
     Every URL is egress-guarded; budgets bound fetch ATTEMPTS; a wall-clock
     deadline bounds the whole crawl. Ephemeral: no database writes.
+
+    Robots-guarded (task-2833): every hop -- BFS pages, and sitemap fetches
+    (root + children) since they share the same fetch loop -- is checked
+    against its host's robots.txt for ``_CRAWL_USER_AGENT``, honoring
+    ``[webfetch] respect_robots_txt`` (default true). A disallowed page or
+    child sitemap is SKIPPED and counted (footer's "robots-disallowed"
+    clause), not fatal; a disallowed start URL or root sitemap is fatal,
+    same as any other seed-fetch failure (see Raises below).
 
     Attempt/row invariant: A row-less attempt arises two ways: a redirect
     that lands on an already-listed final URL, or a plain fetch of a URL
@@ -1019,12 +1187,16 @@ def web_crawl(
     if not scope_host:
         raise LocalToolError(f"[invalid-args] url has no host: {url!r}")
 
+    # Read once per invocation, not per hop (design doc ruling 6).
+    respect_robots = _webfetch_settings()["respect_robots_txt"]
+
     deadline = time.monotonic() + CRAWL_DEADLINE_SECONDS
     queue: "deque[tuple[str, int]]" = deque([(url, 0)])
     visited = {_normalize_crawl_url(url)}
     listed: set[str] = set()  # normalized final URLs actually appended to `pages`
     pages: list[dict] = []
     failed = blocked = 0
+    robots_disallowed = 0
     attempts = 0
     stop_reason = "no more links within depth"
     children_skipped = 0
@@ -1044,7 +1216,8 @@ def web_crawl(
                 raise LocalToolError("[invalid-args] sitemap_url must be a non-empty string")
             try:
                 seed = _seed_from_sitemap(
-                    client, sitemap_url.strip(), scope_host, max_pages, deadline
+                    client, sitemap_url.strip(), scope_host, max_pages, deadline,
+                    respect_robots=respect_robots,
                 )
             except _CrawlDeadline:
                 seed = _SitemapSeed(urls=[], children_capped=False, budget_truncated=False, children_skipped=0)
@@ -1087,20 +1260,25 @@ def web_crawl(
             is_start = attempts == 0
             attempts += 1
             try:
-                final_url, headers, body, truncated, is_pdf = _crawl_fetch_page(client, current, deadline)
+                final_url, headers, body, truncated, is_pdf = _crawl_fetch_page(
+                    client, current, deadline, respect_robots=respect_robots
+                )
             except _CrawlDeadline:
                 stop_reason = "deadline reached"
                 break
             except LocalToolError as exc:
                 if is_start and sitemap_url is None:
                     raise LocalToolError(f"[crawl-failed] start URL could not be fetched: {exc}") from exc
-                # Prefix check, not substring: _validate_hop puts the reason
-                # at position 0 of ITS message, but a URL echoed into an
-                # unrelated error (e.g. an http-404 message quoting the
-                # failing URL) can contain the literal text "[ssrf]"
-                # anywhere in the string without being an SSRF refusal.
+                # Prefix check, not substring: _validate_hop/_robots_allows put
+                # the reason at position 0 of THEIR message, but a URL echoed
+                # into an unrelated error (e.g. an http-404 message quoting
+                # the failing URL) can contain the literal text "[ssrf]" or
+                # "[robots-disallowed]" anywhere in the string without being
+                # that kind of refusal.
                 if str(exc).startswith("[ssrf]"):
                     blocked += 1
+                elif str(exc).startswith("[robots-disallowed]"):
+                    robots_disallowed += 1
                 else:
                     failed += 1
                 continue
@@ -1207,7 +1385,9 @@ def web_crawl(
         client.close()
 
     return _format_crawl_result(
-        pages, failed, blocked, stop_reason, children_skipped=children_skipped, duplicates_skipped=duplicates_skipped
+        pages, failed, blocked, stop_reason,
+        children_skipped=children_skipped, duplicates_skipped=duplicates_skipped,
+        robots_disallowed=robots_disallowed,
     )
 
 

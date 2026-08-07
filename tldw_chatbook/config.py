@@ -3762,6 +3762,17 @@ log_unknown_models = true      # Whether to log when an unknown model is queried
 # relevance_scrape_timeout_s = 30
 # deep_search_timeout_s = 240   # the agent runtime automatically allots this tool its own per-call timeout of this value plus ~50s slack (wait_for grace + thread-join + scheduling jitter), via LocalToolProvider.timeout_for -- independent of max_tool_call_seconds, any value here is safe
 
+[webfetch]
+# Governs the web_fetch and web_crawl tools (task-2833). When true (the
+# default), every hop -- web_fetch redirects, web_crawl pages, and sitemap
+# fetches -- is checked against its host's robots.txt before being
+# fetched; a disallowed web_fetch hop is refused, a disallowed web_crawl
+# page/sitemap is skipped and counted, not fatal. A robots.txt that can't
+# be fetched or parsed fails OPEN (no restrictions applied), so a robots
+# outage never bricks fetching. Set to false to disable enforcement
+# entirely (no robots.txt fetches are made).
+# respect_robots_txt = true
+
 # ==========================================================
 # Search Engines Configuration
 # ==========================================================

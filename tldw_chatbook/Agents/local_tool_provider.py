@@ -977,7 +977,8 @@ def _default_specs(
                 "Fetch a web page and return its extracted text; PDFs are "
                 "text-extracted too (up to 20 MB, ephemeral — nothing is "
                 "ingested). SSRF-guarded (public http(s) only), "
-                "redirect-capped, byte-capped, cached."
+                "redirect-capped, byte-capped, cached. Honors robots.txt "
+                "(configurable)."
             ),
             parameters={
                 "type": "object",
@@ -1018,9 +1019,9 @@ def _default_specs(
                 "bounded page list (URL, title, short excerpt per page) — "
                 "follow up with web_fetch on pages that matter. Same-host "
                 "only, SSRF-guarded, rate-limited (~1 page/sec), wall-clock "
-                "capped (120s). Optional sitemap_url seeds the page list "
-                "from a sitemap instead of link discovery (max_depth is "
-                "ignored in that mode)."
+                "capped (120s). Honors robots.txt (configurable). Optional "
+                "sitemap_url seeds the page list from a sitemap instead of "
+                "link discovery (max_depth is ignored in that mode)."
             ),
             parameters={
                 "type": "object",
