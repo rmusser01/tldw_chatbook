@@ -1553,6 +1553,36 @@ class TestLibraryRagCoverageNote:
             "Scope active — semantic only until scope-aware hybrid lands."
         )
 
+    def test_route_notes_survive_the_zero_row_outcome(self):
+        """(RAG-port P0 review, I2) The empty-rows guard exists so a
+        no-match search does not enumerate every requested source as
+        "uncovered" -- a claim about coverage. A ROUTING disclosure is a
+        different fact ("vectors were never consulted"), and zero rows is
+        exactly when it is most diagnostic: a plain-profile query that
+        matched nothing must still say the profile ran keyword-only, or the
+        user reads the empty result as "the vector index has nothing"."""
+        assert library_rag_coverage_note(
+            {
+                LIBRARY_RAG_ROUTE_NOTES_KEY: [
+                    "Profile 'BM25 Only': keyword search (no vectors)"
+                ]
+            },
+            (),
+        ) == "Profile 'BM25 Only': keyword search (no vectors)."
+
+    def test_zero_row_coverage_claims_stay_suppressed_alongside_a_route_note(self):
+        """Only the routing fact survives zero rows -- the "found nothing
+        from: …" coverage sentence stays suppressed exactly as before."""
+        diagnostics = {
+            "semantic_scope_coverage": {"covered": [], "uncovered": ["notes", "media"]},
+            LIBRARY_RAG_ROUTE_NOTES_KEY: [
+                "scope active — semantic only until scope-aware hybrid lands"
+            ],
+        }
+        assert library_rag_coverage_note(diagnostics, ()) == (
+            "Scope active — semantic only until scope-aware hybrid lands."
+        )
+
     def test_blank_route_notes_render_nothing(self):
         rows = (self._row(0.6),)
         diagnostics = {"semantic_scope_coverage": {"covered": ["notes"], "uncovered": []}}

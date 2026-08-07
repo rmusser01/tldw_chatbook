@@ -186,6 +186,59 @@ class TestResolveSemanticRagService:
         assert resolved is None
         assert reason == SEMANTIC_REASON_INIT_FAILED
 
+    def test_cached_service_is_re_resolved_after_a_profile_switch(self, monkeypatch):
+        """(RAG-port P0 review, I1) This resolver WRITES `app._rag_service`,
+        and a profile switch (`set_active_profile` -> `reset_shared_rag_
+        service`) only clears the module singleton. Whatever it cached must
+        therefore be re-resolved once the shared-service generation moves,
+        or every surface reading this cache keeps serving the old profile
+        for the rest of the session."""
+        from tldw_chatbook.RAG_Search import ingestion_indexing
+
+        old_service = StrictRagService()
+        new_service = StrictRagService()
+        app = SimpleNamespace()
+        _deps(monkeypatch, True)
+        ingestion_indexing.reset_shared_rag_service()
+        try:
+            _factory(monkeypatch, lambda profile_name=None: old_service)
+            resolved, _ = asyncio.run(resolve_semantic_rag_service(app))
+            assert resolved is old_service
+            assert app._rag_service is old_service
+
+            # Profile switch: singleton dropped, generation bumped.
+            ingestion_indexing.reset_shared_rag_service()
+            _factory(monkeypatch, lambda profile_name=None: new_service)
+
+            resolved, reason = asyncio.run(resolve_semantic_rag_service(app))
+            assert reason is None
+            assert resolved is new_service
+            assert app._rag_service is new_service
+        finally:
+            ingestion_indexing.reset_shared_rag_service()
+
+    def test_injected_service_without_a_stamp_wins_even_after_a_reset(
+        self, monkeypatch
+    ):
+        """The injection contract is unchanged: a service placed directly on
+        the app was never resolved through the shared seam, so a generation
+        bump says nothing about it and must not evict it."""
+        from tldw_chatbook.RAG_Search import ingestion_indexing
+
+        service = StrictRagService()
+        app = SimpleNamespace(_rag_service=service)
+        monkeypatch.setattr(
+            sa,
+            "embeddings_rag_deps_installed",
+            lambda: (_ for _ in ()).throw(AssertionError("deps probe must not run")),
+        )
+        _forbidden_factory(monkeypatch)
+        ingestion_indexing.set_shared_rag_service(None)
+
+        resolved, reason = asyncio.run(resolve_semantic_rag_service(app))
+        assert resolved is service
+        assert reason is None
+
 
 class TestSemanticIndexIsEmpty:
     """Trustworthy-count probe: only an error-free integer 0 counts as empty."""

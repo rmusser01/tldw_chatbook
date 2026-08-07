@@ -40,7 +40,18 @@ from tldw_chatbook.RAG_Search.pipeline_functions_simple import SCOPE_DIAGNOSTICS
 # (task-247): resolving through it guarantees Library RAG Answer queries read
 # the exact vector store / collection / embedding model that ingestion-time
 # indexing writes to.
-from tldw_chatbook.RAG_Search.ingestion_indexing import get_shared_rag_service
+from tldw_chatbook.RAG_Search.ingestion_indexing import (
+    get_shared_rag_service,
+    shared_rag_service_generation,
+)
+
+# One staleness rule for the `app._rag_service` cache, shared with the chat/
+# Search resolver (`resolve_semantic_rag_service`): a profile switch resets
+# the shared singleton, and both app-level caches must notice.
+from tldw_chatbook.RAG_Search.semantic_availability import (
+    cache_app_rag_service,
+    current_app_rag_service,
+)
 from tldw_chatbook.UI.destination_recovery import DestinationRecoveryState
 from tldw_chatbook.Utils.input_validation import sanitize_string, validate_text_input
 from tldw_chatbook.Utils.optional_deps import embeddings_rag_deps_installed
@@ -705,8 +716,15 @@ class LibraryLocalRagSearchService:
 
         Resolution order:
 
-        1. An existing ``app._rag_service`` with a callable ``search`` always
-           wins (already initialized by any surface, or injected by tests).
+        1. An existing ``app._rag_service`` with a callable ``search`` wins
+           (already initialized by any surface, or injected by tests) --
+           UNLESS a profile switch superseded it since it was cached
+           (``current_app_rag_service``, the one staleness rule shared with
+           ``semantic_availability``'s resolver). Without that check, a
+           Settings profile change would leave this path retrieving under
+           the OLD profile for the rest of the session, and `_search_rag`
+           would attribute its disclosure to a profile that is no longer
+           active -- a false claim about the very thing being disclosed.
         2. The ``embeddings_rag`` deps gate (cheap ``find_spec`` probe, no
            imports) short-circuits BEFORE any heavy work, so missing-deps
            installs keep the existing recovery routing at zero cost (AC #3).
@@ -726,11 +744,13 @@ class LibraryLocalRagSearchService:
             The RAG runtime, or None when it is unavailable (missing deps or
             failed construction) -- the caller renders the recovery state.
         """
-        rag_service = getattr(self._app, "_rag_service", None)
-        if rag_service is not None and callable(getattr(rag_service, "search", None)):
-            return rag_service
+        cached = current_app_rag_service(self._app)
+        if cached is not None:
+            return cached
         if not embeddings_rag_deps_installed():
             return None
+        # Captured BEFORE the build -- see `cache_app_rag_service`.
+        generation = shared_rag_service_generation()
         try:
             service = await asyncio.to_thread(get_shared_rag_service)
         except Exception:
@@ -741,14 +761,10 @@ class LibraryLocalRagSearchService:
             return None
         if service is None or not callable(getattr(service, "search", None)):
             return None
-        try:
-            # Cache on the app so every RAG surface (chat sidebar readiness,
-            # repeat Library queries) sees the initialized runtime.
-            self._app._rag_service = service
-        except Exception:
-            logger.opt(exception=True).debug(
-                "Could not cache the shared RAG service on the app instance."
-            )
+        # Cache on the app so every RAG surface (chat sidebar readiness,
+        # repeat Library queries) sees the initialized runtime, stamped so a
+        # later profile switch invalidates it.
+        cache_app_rag_service(self._app, service, generation)
         return service
 
     async def _semantic_index_is_empty(self, rag_service: Any) -> bool:

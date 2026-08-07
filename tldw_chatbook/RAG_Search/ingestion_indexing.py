@@ -415,6 +415,30 @@ def peek_shared_rag_service() -> Optional[Any]:
     return _shared_service
 
 
+def shared_rag_service_generation() -> int:
+    """Return the current shared-service generation counter.
+
+    Bumped by every ``set_shared_rag_service()`` (including
+    ``reset_shared_rag_service()``'s ``set_shared_rag_service(None)``), so a
+    caller that caches the shared service elsewhere -- notably
+    ``app._rag_service``, which a profile switch would otherwise leave
+    pointing at the previous profile's runtime for the rest of the session
+    -- can capture this alongside the service and detect that it has been
+    superseded. See ``semantic_availability.cache_app_rag_service`` /
+    ``current_app_rag_service``, the one pair of helpers both app-level
+    resolvers use.
+
+    Returns:
+        The generation at the moment of the call. Capture it BEFORE
+        resolving/building a service, never after: a reset landing during
+        construction must leave the captured value BEHIND the current one,
+        so the cache is treated as stale rather than trusted (the same
+        ordering rule ``get_shared_rag_service`` follows internally).
+    """
+    with _shared_service_lock:
+        return _shared_service_generation
+
+
 def set_shared_rag_service(service: Optional[Any]) -> None:
     """Directly install (or clear) the shared RAG service instance.
 

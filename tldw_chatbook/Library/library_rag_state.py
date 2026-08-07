@@ -1600,9 +1600,13 @@ def library_rag_coverage_note(
             what is about to be shown).
 
     Returns:
-        `""` when `rows` is empty (edge case: zero results overall is the
-        no-match/empty state's territory, not a coverage note enumerating
-        every requested source as "uncovered"), when every requested source
+        `""` when `rows` is empty AND no routing disclosure is present
+        (edge case: zero results overall is the no-match/empty state's
+        territory, not a coverage note enumerating every requested source as
+        "uncovered" -- but a routing disclosure under
+        `LIBRARY_RAG_ROUTE_NOTES_KEY` is a statement about HOW the search
+        ran, still true and still needed at zero rows, so it renders alone
+        there), when every requested source
         type is covered and no row bands weak, or when `diagnostics` carries
         no `semantic_scope_coverage` entry at all (e.g. keyword mode).
         Otherwise `"Semantic search found nothing from: <types>."` (types
@@ -1616,8 +1620,26 @@ def library_rag_coverage_note(
         `library_rag_all_matches_weak(rows)` is True -- or just the
         weak-prefix alone when nothing is uncovered.
     """
+    route_notes = (
+        tuple(
+            str(item)
+            for item in (diagnostics.get(LIBRARY_RAG_ROUTE_NOTES_KEY) or ())
+        )
+        if isinstance(diagnostics, Mapping)
+        else ()
+    )
     if not rows:
-        return ""
+        # Coverage claims stay suppressed with no rows (see the Returns
+        # section) -- but a ROUTING disclosure is a different fact, and zero
+        # rows is exactly when it matters most: a plain-profile query that
+        # matched nothing must still say vectors were never consulted, or
+        # the quiet no-match line reads as a verdict on an index this search
+        # never touched (review finding I2).
+        return " ".join(
+            sentence
+            for sentence in (_route_note_sentence(note) for note in route_notes)
+            if sentence
+        )
     coverage = (
         diagnostics.get("semantic_scope_coverage")
         if isinstance(diagnostics, Mapping)
@@ -1643,14 +1665,6 @@ def library_rag_coverage_note(
         f"Semantic search found nothing from: {', '.join(uncovered_labels)}."
         if uncovered_labels
         else ""
-    )
-    route_notes = (
-        tuple(
-            str(item)
-            for item in (diagnostics.get(LIBRARY_RAG_ROUTE_NOTES_KEY) or ())
-        )
-        if isinstance(diagnostics, Mapping)
-        else ()
     )
     parts = [
         part

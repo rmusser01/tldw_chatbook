@@ -334,6 +334,48 @@ def test_empty_status_renders_quiet_two_line_state_not_full_dump() -> None:
     assert "Unavailable: Library Search/RAG retrieval." in dump_text
 
 
+def test_empty_status_still_renders_the_routing_disclosure() -> None:
+    """(RAG-port P0 review, I2) A zero-result search under a plain (BM25)
+    profile is precisely when "vectors were never consulted" is the most
+    diagnostic fact on screen -- without it the quiet "No evidence matched"
+    line reads as a verdict on the semantic index that was never queried.
+    The disclosure rides the SAME coverage-note line (quiet register, same
+    id), above the unchanged no-match copy."""
+    from tldw_chatbook.Library.library_rag_state import (
+        LIBRARY_RAG_ROUTE_NOTES_KEY,
+        LibraryRagPanelState,
+    )
+    from tldw_chatbook.Widgets.Library import library_rag_results_body_children
+
+    state = LibraryRagPanelState.from_values(
+        source_counts={"notes": 1, "media": 1},
+        query="unicorn migration guide",
+        retrieval_status="empty",
+        provider_name="openai",
+        diagnostics={
+            LIBRARY_RAG_ROUTE_NOTES_KEY: [
+                "Profile 'BM25 Only': keyword search (no vectors)"
+            ]
+        },
+    )
+
+    children = library_rag_results_body_children(state)
+
+    note = children[0]
+    assert note.id == "library-rag-coverage-note"
+    assert note.has_class("library-rag-quiet-line")
+    assert (
+        str(note.renderable) == "Profile 'BM25 Only': keyword search (no vectors)."
+    )
+    # The no-match copy itself is untouched, and still follows the note.
+    quiet_static = children[1]
+    assert quiet_static.id == "library-rag-empty-state"
+    assert str(quiet_static.renderable) == (
+        "No evidence matched 'unicorn migration guide'.\nTry broader terms."
+    )
+    assert len(children) == 2
+
+
 # --- Task 13: honest re-run hint on history rows (RAG-38) ------------------
 
 

@@ -25,6 +25,7 @@ from tldw_chatbook.Chat.rag_scope import (
     EffectiveScope,
     SOURCE_TYPE_MEDIA,
 )
+from tldw_chatbook.Library import library_local_rag_search_service as rag_service_module
 from tldw_chatbook.Library.library_local_rag_search_service import (
     LibraryLocalRagSearchService,
 )
@@ -352,3 +353,88 @@ async def test_semantic_leg_empty_note_never_fires_when_the_vector_leg_scored():
     result = await service.search("credential", ("media",), "rag", top_k=5)
 
     assert _NOTE_SEMANTIC_LEG_EMPTY not in _route_notes(result)
+
+
+# --- Profile switching mid-session ------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_profile_switch_mid_session_reroutes_and_renames_the_disclosure(
+    monkeypatch,
+):
+    """Review finding I1: routing is only honest if it follows the profile
+    that is active NOW.
+
+    `app._rag_service` is a per-app cache that a profile switch never
+    cleared -- `set_active_profile()` / the Settings save path call
+    `reset_shared_rag_service()`, which drops only the module singleton.
+    Without invalidation the second query below still routes through profile
+    A and the disclosure names a profile the user already switched away
+    from: false attribution, the exact defect class this task exists to kill.
+    """
+    from tldw_chatbook.RAG_Search import ingestion_indexing
+    from tldw_chatbook.RAG_Search import simplified as simplified_module
+
+    monkeypatch.setattr(
+        rag_service_module, "embeddings_rag_deps_installed", lambda: True
+    )
+    profile_a = _ProfileRagService(mode="plain", profile_name="BM25 Only")
+    profile_b = _ProfileRagService(
+        mode="hybrid", profile_name="Hybrid Basic", results=[_media_result()]
+    )
+    notes = FakeNotesScopeService(
+        rows=[{"id": "note-1", "title": "Runbook", "content": "Rotate the credential."}]
+    )
+    ingestion_indexing.reset_shared_rag_service()
+    try:
+        # Profile A is the process-wide runtime; the app has no cache yet.
+        ingestion_indexing.set_shared_rag_service(profile_a)
+        app = SimpleNamespace(_rag_service=None, notes_scope_service=notes)
+        service = LibraryLocalRagSearchService(app)
+
+        first = await service.search("credential", ("notes", "media"), "rag", top_k=5)
+
+        assert first["runtime_backend"] == "local-fts"
+        assert "Profile 'BM25 Only': keyword search (no vectors)" in _route_notes(first)
+
+        # The user switches profile in Settings: the pointer write resets the
+        # shared service, and the next resolution rebuilds it (profile B).
+        monkeypatch.setattr(
+            simplified_module, "create_rag_service", lambda **kwargs: profile_b
+        )
+        ingestion_indexing.reset_shared_rag_service()
+
+        second = await service.search("credential", ("notes", "media"), "rag", top_k=5)
+
+        assert [call["search_type"] for call in profile_b.calls] == ["hybrid"]
+        assert second["runtime_backend"] == "rag-hybrid"
+        assert app._rag_service is profile_b
+        assert not any("BM25 Only" in note for note in _route_notes(second))
+    finally:
+        ingestion_indexing.reset_shared_rag_service()
+
+
+@pytest.mark.asyncio
+async def test_injected_runtime_without_a_generation_stamp_still_wins(monkeypatch):
+    """Guard on the staleness fix: a runtime injected straight onto the app
+    (every pre-existing test fake, and any surface that predates the stamp)
+    was never resolved through the shared seam, so it has no generation to
+    compare -- it must keep winning outright, never be treated as stale and
+    rebuilt."""
+    from tldw_chatbook.RAG_Search import ingestion_indexing
+
+    def _forbidden(*args, **kwargs):
+        raise AssertionError("an injected runtime must not be re-resolved")
+
+    monkeypatch.setattr(rag_service_module, "embeddings_rag_deps_installed", _forbidden)
+    monkeypatch.setattr(rag_service_module, "get_shared_rag_service", _forbidden)
+    injected = _ProfileRagService(mode="hybrid", results=[_media_result()])
+    service = LibraryLocalRagSearchService(SimpleNamespace(_rag_service=injected))
+    # Bump the generation so a naive "generation moved -> stale" rule would
+    # wrongly discard the injected runtime.
+    ingestion_indexing.set_shared_rag_service(None)
+
+    result = await service.search("credential", ("media",), "rag", top_k=5)
+
+    assert result["runtime_backend"] == "rag-hybrid"
+    assert injected.calls
