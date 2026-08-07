@@ -326,7 +326,7 @@ rather than `SubscriptionsDB`.
 
 ### Tabs
 
-> **Decision (task-1346, owner ruling 2026-08-03): the spec adopts the shipped strip.** Phase C
+> **Decision (task-2830, owner ruling 2026-08-03): the spec adopts the shipped strip.** Phase C
 > deliberately kept the pre-existing section strip rather than this section's original five-tab
 > layout, and that divergence was never recorded — it was rediscovered in Phase D when a task went
 > looking for the original "Artifacts tab names the next slice" empty state. Rather than reshape

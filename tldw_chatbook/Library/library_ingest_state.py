@@ -187,7 +187,7 @@ MAX_CHUNK_SIZE = 5000
 # Queue row state glyphs (binding).
 _GLYPH_ACTIVE = "●"  # "●" -- queued, parsing, or writing
 _GLYPH_DONE = "✓"  # "✓"
-#: (task-2231) A dedup match is a distinct OUTCOME, not a quieter
+#: (task-2837) A dedup match is a distinct OUTCOME, not a quieter
 #: import -- the two used to be byte-identical rows.
 _GLYPH_MATCHED = "≡"
 _GLYPH_FAILED = "✗"  # "✗"
@@ -779,7 +779,7 @@ def _build_queue_row_for_state(job: LibraryIngestJob, *, now: float) -> IngestQu
         elapsed = _format_elapsed(
             job.submitted_at or job.started_at, job.finished_at, now=now
         )
-        # (task-2231) The forecast promised "will match"; the receipt says
+        # (task-2837) The forecast promised "will match"; the receipt says
         # so too. Matched rows carry their own glyph and word, so an import
         # and a dedup match are distinguishable at a glance rather than
         # only by the sub-line.
@@ -1088,7 +1088,7 @@ def _batch_outcome_parts(members: "Sequence[LibraryIngestJob]") -> list[str]:
         elif job.state == IngestJobState.DONE and str(
             (job.progress or {}).get("message", "")
         ).startswith(INGEST_DUPLICATE_PROGRESS_PREFIX):
-            # (task-2231) "matched" is reported, not folded into "done".
+            # (task-2837) "matched" is reported, not folded into "done".
             matched += 1
         else:
             tallies[job.state.value] = tallies.get(job.state.value, 0) + 1
@@ -1512,7 +1512,7 @@ def build_library_ingest_state(
         # (task-2223 ruling) Zero imports + ≥1 predicted match keeps Start
         # ENABLED (the dedup probe is capped best-effort, never a blocker)
         # but consent becomes informed: say what starting will actually do.
-        # (task-2231) "Everything here" must be true: only when every
+        # (task-2837) "Everything here" must be true: only when every
         # importable file is a predicted match and nothing else is staged.
         if (
             will_import == 0

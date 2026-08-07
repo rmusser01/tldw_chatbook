@@ -10,7 +10,7 @@
 
 ## Global Constraints
 
-- Do not begin Task 1 until dependency TASK-400 is Done and both supported manifests constrain Textual to `>=8.0.0,<9`.
+- Do not begin Task 1 until dependency TASK-542 is Done and both supported manifests constrain Textual to `>=8.0.0,<9`.
 - Preserve the existing Library route, Database Note storage/schema, sync ownership, export formats, immediate-create behavior, and Console handoff.
 - Preserve direct wide access to keywords, metadata, Use in Console, Copy, Markdown/text export, and Delete.
 - Do not import Textual, File Notes, database handles, navigation, or application globals from `library_notes_session.py`.
@@ -78,7 +78,7 @@ needed unless implementation changes that boundary.
     responsive contracts.
 - `Tests/UI/test_css_build_integrity.py`
   - Source/bundle and fallback/source parity contracts.
-- `backlog/tasks/task-1333 - Adapt-Library-Notes-for-lossless-60x20-workflow.md`
+- `backlog/tasks/task-2818 - Adapt-Library-Notes-for-lossless-60x20-workflow.md`
   - Plan link, completed acceptance criteria, implementation evidence, and
     final status only after all gates pass.
 
@@ -91,30 +91,30 @@ needed unless implementation changes that boundary.
 
 ---
 
-### Task 0: Enforce the TASK-400 runtime prerequisite
+### Task 0: Enforce the TASK-542 runtime prerequisite
 
 **Files:**
-- Read: `backlog/tasks/task-400 - Fix-MCP-navigation-crash-by-requiring-Textual-8.md`
+- Read: `backlog/tasks/task-542 - Fix-MCP-navigation-crash-by-requiring-Textual-8.md`
 - Read: `pyproject.toml:41`
 - Read: `requirements.txt:21`
 - Read: `.github/workflows/test.yml`
 - Test: `Tests/CI/test_textual_runtime_contract.py`
 
 **Interfaces:**
-- Consumes: TASK-400's supported Textual runtime contract.
-- Produces: a hard go/no-go decision for TASK-1333 implementation.
+- Consumes: TASK-542's supported Textual runtime contract.
+- Produces: a hard go/no-go decision for TASK-2818 implementation.
 
-- [ ] **Step 1: Verify TASK-400 is complete**
+- [ ] **Step 1: Verify TASK-542 is complete**
 
 Run:
 
 ```bash
-backlog task 400 --plain
+backlog task 542 --plain
 ```
 
 Expected: `Status: Done`, with every acceptance criterion checked and
-implementation notes present. If not, stop TASK-1333 execution and complete
-TASK-400 through its own approved plan first.
+implementation notes present. If not, stop TASK-2818 execution and complete
+TASK-542 through its own approved plan first.
 
 - [ ] **Step 2: Verify both manifests and the exact-minimum CI lane**
 
@@ -136,7 +136,7 @@ Run:
 .venv/bin/python -m pytest -q Tests/CI/test_textual_runtime_contract.py --tb=short
 ```
 
-Expected: PASS. Do not make TASK-400 changes in a TASK-1333 commit.
+Expected: PASS. Do not make TASK-542 changes in a TASK-2818 commit.
 
 ---
 
@@ -1613,13 +1613,13 @@ git commit -m "test(notes): gate compact keyboard lifecycle"
 
 ---
 
-### Task 11: Run full verification, capture UAT evidence, and close TASK-1333
+### Task 11: Run full verification, capture UAT evidence, and close TASK-2818
 
 **Files:**
 - Create: `Docs/superpowers/qa/library-notes-adaptive-60x20/capture_library_notes.py`
 - Create: `Docs/superpowers/qa/library-notes-adaptive-60x20/README.md`
 - Create: `Docs/superpowers/qa/library-notes-adaptive-60x20/*.svg`
-- Modify: `backlog/tasks/task-1333 - Adapt-Library-Notes-for-lossless-60x20-workflow.md`
+- Modify: `backlog/tasks/task-2818 - Adapt-Library-Notes-for-lossless-60x20-workflow.md`
 
 **Interfaces:**
 - Produces: reproducible synthetic UAT evidence and complete Backlog Definition
@@ -1754,7 +1754,7 @@ Inspect every changed line for:
 - direct service calls from the canvas;
 - unrelated worktree changes.
 
-- [ ] **Step 9: Update and close TASK-1333 only after all gates pass**
+- [ ] **Step 9: Update and close TASK-2818 only after all gates pass**
 
 Use Backlog CLI to:
 
@@ -1762,9 +1762,9 @@ Use Backlog CLI to:
 2. Add concise Implementation Notes naming the coordinator boundary,
    presentation/geometry changes, modified files, verification commands,
    UAT evidence, trade-offs, and ADR-027.
-3. Set TASK-1333 to Done.
+3. Set TASK-2818 to Done.
 
-Do not mark Done if TASK-400 is not Done, any required test is failing, UAT
+Do not mark Done if TASK-542 is not Done, any required test is failing, UAT
 evidence is missing, or any acceptance criterion remains unchecked.
 
 - [ ] **Step 10: Commit completion evidence**
@@ -1772,7 +1772,7 @@ evidence is missing, or any acceptance criterion remains unchecked.
 ```bash
 git add \
   Docs/superpowers/qa/library-notes-adaptive-60x20 \
-  'backlog/tasks/task-1333 - Adapt-Library-Notes-for-lossless-60x20-workflow.md'
+  'backlog/tasks/task-2818 - Adapt-Library-Notes-for-lossless-60x20-workflow.md'
 git commit -m "docs(notes): record adaptive workflow verification"
 ```
 
@@ -1781,4 +1781,4 @@ git commit -m "docs(notes): record adaptive workflow verification"
 Recommended execution is **Subagent-Driven** with a fresh implementation
 worker per numbered task and review between tasks. **Inline Execution** is also
 supported using `superpowers:executing-plans` in bounded batches. In either
-mode, Task 0 is a hard stop until TASK-400 is Done.
+mode, Task 0 is a hard stop until TASK-542 is Done.

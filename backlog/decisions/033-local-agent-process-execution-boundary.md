@@ -2,7 +2,7 @@
 
 Status: Accepted
 Date: 2026-08-05
-Related Task: [TASK-1339 - Local agent tools phase 2: file tools (fs_read/fs_write/fs_edit/fs_glob/fs_grep)](../tasks/task-1339%20-%20Local-agent-tools-phase-2-file-tools-fs_read-fs_write-fs_edit-fs_glob-fs_grep.md)
+Related Task: [TASK-2820 - Local agent tools phase 2: file tools (fs_read/fs_write/fs_edit/fs_glob/fs_grep)](../tasks/task-2820%20-%20Local-agent-tools-phase-2-file-tools-fs_read-fs_write-fs_edit-fs_glob-fs_grep.md)
 Supersedes: N/A
 
 ## Decision
@@ -111,7 +111,7 @@ recorded as a binding tripwire rather than silently accepted.
 
 ## Links
 
-- [TASK-1339](../tasks/task-1339%20-%20Local-agent-tools-phase-2-file-tools-fs_read-fs_write-fs_edit-fs_glob-fs_grep.md)
+- [TASK-2820](../tasks/task-2820%20-%20Local-agent-tools-phase-2-file-tools-fs_read-fs_write-fs_edit-fs_glob-fs_grep.md)
 - [Re-plan specification](../../Docs/superpowers/specs/2026-08-05-local-agent-tools-phases-3-4-replan.md)
 - [Original design specification](../../Docs/superpowers/specs/2026-08-04-local-agent-tools-design.md)
 - [ADR-032: Local Agent Tool Permission Boundary](032-local-agent-tool-permission-boundary.md)

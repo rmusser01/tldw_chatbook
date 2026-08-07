@@ -41,7 +41,7 @@
 
 ```bash
 backlog task create "Local agent tools phase 2: file tools (fs_read/fs_write/fs_edit/fs_glob/fs_grep)" \
-  -d "Spec: Docs/superpowers/specs/2026-08-04-local-agent-tools-design.md (phase 2). Plan: Docs/superpowers/plans/2026-08-04-local-agent-tools-phase2.md. ADR: backlog/decisions/032. Builds on task-1338 (phase 1, fs_list pilot). NOTE: fs_list already landed in phase 1 and is out of scope here." \
+  -d "Spec: Docs/superpowers/specs/2026-08-04-local-agent-tools-design.md (phase 2). Plan: Docs/superpowers/plans/2026-08-04-local-agent-tools-phase2.md. ADR: backlog/decisions/032. Builds on task-2819 (phase 1, fs_list pilot). NOTE: fs_list already landed in phase 1 and is out of scope here." \
   --ac "fs_read pages line-numbered output with offset/limit and refuses binary files,fs_write creates/overwrites files confined to workspace root with mutates risk tag,fs_edit performs unique-match replacement with ambiguity errors and replace_all,fs_glob and fs_grep search the workspace with result caps,Legacy ReadFileTool/WriteFileTool delegate to the shared cores with unchanged legacy behavior,Local deny/timeout outcomes are audit-recorded,Tools remain reachable via find_tools/load_tools past the direct-disclosure threshold,All new tests pass" \
   --plan "See Docs/superpowers/plans/2026-08-04-local-agent-tools-phase2.md"
 ```

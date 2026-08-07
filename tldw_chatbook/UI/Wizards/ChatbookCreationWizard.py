@@ -1076,7 +1076,7 @@ class ProgressStep(WizardStep):
         if button_id == "open-folder" and self.export_path:
             # Open the folder containing the export.
             #
-            # Launched, never awaited (TASK-1373). This runs on Textual's
+            # Launched, never awaited (TASK-2834). This runs on Textual's
             # serialized message pump, so `subprocess.run` -- which waits for the
             # child -- froze the app for as long as the file manager took to
             # return. `open` on macOS returns promptly, which is why this went

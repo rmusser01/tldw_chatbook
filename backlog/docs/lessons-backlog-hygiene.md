@@ -234,6 +234,27 @@ actual source of truth about who is building what.
 
 ---
 
+## A duplicate ID on dev may be a resurrected ghost — check for a renumbered twin BEFORE renumbering
+
+During the TASK-2750 sweep (2026-08-06), dev carried 35 duplicated task IDs.
+The obvious fix — renumber one side of each pair — was WRONG for over half of
+them: 25 of the 47 colliding files were **stale pre-renumber copies of tasks
+that earlier dedup sessions had already moved** (400→542, the 401 epic + nine
+children→553.x, 402→561, the 506-518 STT batch→593-605, 519→869; the moves are
+recorded in task-542/544/554/561/869's own notes). The ghosts came back through
+merges of branches cut before those renumbers landed. Renumbering a ghost to a
+fresh ID would have minted a THIRD copy of each task.
+
+Before renumbering a duplicate, search the tree for another file with the same
+title marker at a different ID (`ls backlog/tasks | grep <title-fragment>`).
+Twin exists → the duplicate is a ghost: delete it and point any of its
+references at the twin. No twin → renumber per the keeper rules (Done/older/
+load-bearing side keeps; references are attributed per side by their context,
+never rewritten wholesale — the same integer means different tasks in
+different files).
+
+---
+
 ## Related
 
 - `lessons-testing-evidence.md`

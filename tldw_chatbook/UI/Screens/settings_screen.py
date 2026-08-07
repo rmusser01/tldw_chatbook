@@ -6412,7 +6412,7 @@ class SettingsScreen(BaseAppScreen):
             pass
 
     def _update_focus_help(self, widget: object) -> None:
-        """Surface the focused control's tooltip for keyboard users (task-1374).
+        """Surface the focused control's tooltip for keyboard users (task-2835).
 
         Textual 8.x renders tooltips on hover only; mirroring the focused
         widget's tooltip text into the shell's focus-help line makes the
@@ -12683,7 +12683,7 @@ class SettingsScreen(BaseAppScreen):
                     overflow_hint.styles.color = "gray"
                     overflow_hint.display = False
                     yield overflow_hint
-            # task-1374: keyboard-reachable mirror of the focused control's
+            # task-2835: keyboard-reachable mirror of the focused control's
             # hover-only tooltip; updated by handle_descendant_focus.
             yield Static(
                 "",
