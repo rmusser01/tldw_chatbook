@@ -1358,6 +1358,13 @@ class LibraryScreen(BaseAppScreen):
         ("escape", "library_media_viewer_back", "Back to media list"),
         ("escape", "library_note_editor_back", "Back to notes list"),
         ("escape", "library_prompt_editor_back", "Back to prompts list"),
+        # task-3302 (MI-04): a seventh "escape" binding, same disjoint-gate
+        # contract -- active only while the Ingest canvas owns the row
+        # (``check_action``), where every other escape gate is False, so
+        # the try-in-order chain still fires exactly one action. Returns
+        # to the hub landing; the persisted ingest form survives (the
+        # task-2043 persistence rule), so Esc is never destructive.
+        ("escape", "library_ingest_back", "Back to Library hub"),
         ("escape", "library_list_focus_rail", "Focus rail"),
         # Task 12/RAG-36: keyboard traversal of Library Search/RAG evidence
         # cards. Both actions gate on the currently FOCUSED widget being one
@@ -1470,6 +1477,19 @@ class LibraryScreen(BaseAppScreen):
         ("esc", "focus rail"),
     )
 
+    #: task-3302 (MI-04): the Ingest canvas's own keyboard story -- Enter
+    #: (in the path field) starts the import when the Start gate is open
+    #: (``handle_library_ingest_path_submitted``), Esc returns to the hub
+    #: landing (``action_library_ingest_back``). Shared by the footer and
+    #: F1 via ``_library_footer_shortcuts_for_current_state``, the
+    #: task-2858 single-source rule.
+    LIBRARY_INGEST_SHORTCUTS = (
+        ("/", "focus search"),
+        ("F6", "next pane"),
+        ("enter", "start import"),
+        ("esc", "back to hub"),
+    )
+
     #: task-2237 (R2): F6 pane-cycle targets (the app's
     #: ``focus_relative_workbench_pane`` idiom, per personas). The rail's
     #: preferred focus is its search box; the canvas's is the hub's first
@@ -1481,7 +1501,11 @@ class LibraryScreen(BaseAppScreen):
         ),
         WorkbenchPaneTarget(
             "library-canvas",
-            ("library-hub-action-import",),
+            # task-3302 (MI-03): the hub's first action exists only on the
+            # landing, so the canvas pane target was landing-only and F6
+            # skipped the Ingest canvas entirely; the path field is the
+            # canvas target there (candidates are tried in order).
+            ("library-hub-action-import", "library-ingest-path"),
         ),
     )
     LIBRARY_NOTES_NAVIGATOR_SHORTCUTS = (("Ctrl+N", "New · / Find · Esc Library"),)
@@ -2791,6 +2815,11 @@ class LibraryScreen(BaseAppScreen):
             return self.LIBRARY_SHORTCUTS
         if not self._library_selected_row_id:
             return self.LIBRARY_LANDING_SHORTCUTS
+        # task-3302 (MI-04): Ingest is its own honest context -- Enter
+        # starts the import, Esc returns to the hub. Disjoint from every
+        # gate below (they all require a different row id).
+        if self._library_selected_row_id == LIBRARY_ROW_INGEST_MEDIA:
+            return self.LIBRARY_INGEST_SHORTCUTS
         if self._file_notes_active():
             return self.LIBRARY_NOTES_FILES_SHORTCUTS
         if self._library_media_viewer_substate_active():
@@ -4279,11 +4308,12 @@ class LibraryScreen(BaseAppScreen):
         itself has focus, its own ``_on_key`` re-arms the query instead
         (see ``LibraryRailSearchInput``).
 
-        task-2237 (R2): on the LANDING only, `i` and `n` are the hub
-        next-action accelerators (import content / new note), dispatched
-        through the same guarded row-switch the hub rows use. They are
-        advertised on the landing footer and nowhere else, so they never
-        fire off the landing.
+        task-2237 (R2): `i` and `n` are the hub next-action accelerators
+        (import content / new note), dispatched through the same guarded
+        row-switch the hub rows use. task-3302 (MI-04) widened `i` to work
+        from ANY Library canvas (it opens the same Ingest canvas from
+        anywhere, and the row-switch guards still veto over dirty edits);
+        `n` stays landing-scoped because it opens a create editor.
 
         task-2856 (AC1): Up/Down move DOM focus between Library list rows
         (Media/Notes/Prompts/Skills) -- see ``_move_library_list_row_focus``,
@@ -4324,17 +4354,33 @@ class LibraryScreen(BaseAppScreen):
             event.stop()
             event.prevent_default()
             return
-        # Landing-scoped hub accelerators (task-2237).
+        # task-3302 (MI-04): `i` (import content) works from ANY Library
+        # canvas, not just the landing -- there was no keyboard route into
+        # Ingest once a row was selected. Still never fires while an
+        # Input/TextArea owns focus (the early return above), and it rides
+        # the same guarded row switch as the rail rows, so dirty
+        # note/prompt/skill edits still flush-or-veto the jump. A no-op
+        # while Ingest already owns the canvas.
+        if event.key == "i":
+            if self._library_selected_row_id == LIBRARY_ROW_INGEST_MEDIA:
+                return
+            self.run_worker(
+                self._select_library_rail_row(LIBRARY_ROW_INGEST_MEDIA),
+                exclusive=True,
+                group="library_rail_row_switch",
+            )
+            event.stop()
+            event.prevent_default()
+            return
+        # Landing-scoped hub accelerator (task-2237): `n` (new note) stays
+        # landing-only -- unlike `i`, it opens a CREATE editor, which would
+        # be a surprising context loss from a browse canvas.
         if self._library_selected_row_id:
             return
-        accelerator_row = {
-            "i": LIBRARY_ROW_INGEST_MEDIA,
-            "n": LIBRARY_ROW_CREATE_NOTE,
-        }.get(event.key)
-        if accelerator_row is None:
+        if event.key != "n":
             return
         self.run_worker(
-            self._select_library_rail_row(accelerator_row),
+            self._select_library_rail_row(LIBRARY_ROW_CREATE_NOTE),
             exclusive=True,
             group="library_rail_row_switch",
         )
@@ -11133,6 +11179,14 @@ class LibraryScreen(BaseAppScreen):
             self._arm_library_list_entry_focus()
         if self._library_selected_row_id == LIBRARY_ROW_INGEST_EXPORT:
             self._start_library_export_counts_worker()
+        if row_id == LIBRARY_ROW_INGEST_MEDIA and self.is_mounted:
+            # task-3302 AC#1 (MI-03): entering Ingest parks the caret in
+            # the path field -- the first action on this canvas is always
+            # typing/pasting a path. Previously focus stayed wherever it
+            # was (the rail search box in the live walk), so typing a path
+            # ran a Library search. Same call_after_refresh seam the
+            # CREATE_PROMPT/CREATE_SKILL entry-focus branches below use.
+            self.call_after_refresh(self._focus_library_ingest_path)
         if row_id == LIBRARY_ROW_CREATE_PROMPT and self.is_mounted:
             self.call_after_refresh(self._arm_library_prompt_editor)
         if row_id == LIBRARY_ROW_CREATE_SKILL and self.is_mounted:
@@ -13167,10 +13221,11 @@ class LibraryScreen(BaseAppScreen):
 
         Returning ``False`` deactivates the binding entirely, so Escape /
         Ctrl+S behave as if unbound anywhere else on the Library screen.
-        All six "escape" ``BINDINGS`` entries share the same key -- Textual
-        tries them in order and stops at the first whose ``check_action``
-        passes, so each one returning ``False`` outside its own context is
-        what lets the next fall through untouched.
+        All seven "escape" ``BINDINGS`` entries share the same key --
+        Textual tries them in order and stops at the first whose
+        ``check_action`` passes, so each one returning ``False`` outside
+        its own context is what lets the next fall through untouched
+        (task-3302 added the Ingest-canvas gate to the original six).
 
         task-2858 AC#2 (LIB-09): the three Search/RAG evidence-card
         actions (``u``/``enter``/``o``) had NO gate here before this task
@@ -13223,6 +13278,8 @@ class LibraryScreen(BaseAppScreen):
             return self._library_note_editor_active()
         if action == "library_prompt_editor_back":
             return self._library_prompt_editor_active()
+        if action == "library_ingest_back":
+            return self._library_selected_row_id == LIBRARY_ROW_INGEST_MEDIA
         if action == "library_list_focus_rail":
             return self._library_list_canvas_showing_list()
         if action == "library_rag_use_in_console":
@@ -13387,6 +13444,49 @@ class LibraryScreen(BaseAppScreen):
             self.query_one("#library-skill-name", Input).focus()
         except (NoMatches, QueryError):
             pass
+
+    def _focus_library_ingest_path(self) -> None:
+        """Focus the Ingest canvas's path field (task-3302 AC#1, MI-03).
+
+        The Ingest entry-focus counterpart of ``_focus_library_skill_name``
+        -- scheduled via ``call_after_refresh`` from the rail-row switch so
+        typing immediately edits the path instead of feeding whatever
+        widget happened to keep focus (the live walk: the rail search box,
+        so a pasted path ran a Library search).
+        """
+        try:
+            self.query_one("#library-ingest-path", Input).focus()
+        except (NoMatches, QueryError):
+            pass
+
+    def _focus_library_hub_entry(self) -> None:
+        """Focus the hub landing's first action (task-3302 AC#2, MI-04).
+
+        Called after Esc leaves the Ingest canvas for the landing:
+        stranding focus nowhere would recreate the invisible-focus failure
+        this task closes, while the hub's first action keeps the landing
+        accelerators (`i`/`n`) live -- focusing the SEARCH box instead
+        would swallow them as literal text.
+        """
+        try:
+            self.query_one("#library-hub-action-import", Button).focus()
+        except (NoMatches, QueryError):
+            pass
+
+    async def action_library_ingest_back(self) -> None:
+        """Escape: leave the Ingest canvas for the hub landing (task-3302).
+
+        Gated by ``check_action`` to the Ingest row, mirroring the other
+        six escape gates. Routes through the shared rail-row seam with the
+        landing's empty row id, so every switch-hygiene reset (including
+        ``_pause_library_ingest_transient_ui`` -- the form itself persists,
+        task-2043) applies exactly as a rail press would.
+        """
+        if self._library_selected_row_id != LIBRARY_ROW_INGEST_MEDIA:
+            return
+        await self._select_library_rail_row("")
+        if self.is_mounted:
+            self.call_after_refresh(self._focus_library_hub_entry)
 
     @on(Button.Pressed, "#library-skill-back")
     async def handle_library_skill_back(self, event: Button.Pressed) -> None:

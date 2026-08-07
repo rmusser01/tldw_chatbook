@@ -135,9 +135,18 @@ installing.
 
 ## Keyboard & commands
 
-Neither form has screen-specific shortcuts. **Escape** closes the
-"Some files may fail to import:" and Parakeet install dialogs. Global keys
-live in the [guide index](../index.md).
+**Import media** is keyboard-first: **i** opens it from anywhere on the
+Library screen (not just the landing — though never while you're typing in
+a text field, where `i` stays a letter), and entering the form always
+parks the caret in the path field, so you can type or paste a path
+immediately. **Enter** in the path field starts the import once the gate
+line clears; **Escape** returns you to the Library landing (a half-filled
+form is kept, same as switching rail rows). The footer and F1 list the
+same set while the form is open: `enter start import`, `esc back to hub`.
+
+The Export form has no screen-specific shortcuts. **Escape** also closes
+the "Some files may fail to import:" and Parakeet install dialogs. Global
+keys live in the [guide index](../index.md).
 
 ## Related settings & docs
 
@@ -203,3 +212,10 @@ files may fail to import:" dialog now renders every warning line and its
 warning rows collapsed to an empty full-height column; counts read
 "1 file" / "N files"; "Start import anyway" fits on one line; Cancel is
 no longer styled red)*
+
+*Verified against dev @ 023a04a48 — 2026-08-07 (task-3302: the Keyboard
+& commands section above is new behavior — entering Import media now
+focuses the path field, Esc returns to the landing, `i` works from any
+Library canvas, the footer/F1 advertise `enter start import` / `esc back
+to hub`, and focused fields/compact buttons show a heavy structural focus
+edge instead of a color-only change)*
