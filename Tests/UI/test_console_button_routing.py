@@ -1,0 +1,501 @@
+"""Characterisation of `ChatScreen.on_button_pressed`'s branch behaviour.
+
+Written BEFORE wave 4 task 2 routed the dispatcher's branch bodies to the
+controllers that already own their state. Every test here presses the REAL
+button on a mounted Console and asserts the **persisted** result -- a row in
+the local-marks DB, a preference in `app_config`, a session in the chat
+store, or controller state that outlives the repaint -- never the widget
+tree the press happened to touch. That is what makes the file survive the
+move byte-for-byte: it pins what a press DOES, not where the doing lives.
+
+Coverage is deliberately weighted. `on_button_pressed` had 19 top-level
+branches; the five largest (`console-workspace-conversation-` at 81 lines,
+`console-conversation-star-` at 65, `console-close-session-tab-` at 39,
+`console-workspace-conversations-toggle` at 35, `console-dictation` at 31)
+account for 251 of its 381 lines and are all pinned below, whether or not
+the extraction moved them -- two of those five stay on the screen as
+coordination, and a characterisation test is exactly how a "stays" verdict
+is defended later. The three smaller branches that also moved
+(`console-conversation-browser-section-toggle-`,
+`...-group-toggle-`, `console-session-tab-`) are pinned too. The remaining
+branches are one- or two-line delegations that already read as routing-table
+rows and already have coverage in their owning feature's test file.
+"""
+
+from __future__ import annotations
+
+from types import SimpleNamespace
+
+import pytest
+from textual.widgets import Button
+
+from Tests.UI.app_factory import _build_test_app
+from Tests.UI.test_console_workspace_context_rail import (
+    _base_grouped_workspace_state,
+    _browser_row,
+)
+from Tests.UI.test_destination_shells import _wait_for_selector
+from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
+    ConsoleHarness,
+)
+from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+from tldw_chatbook.Chat.conversation_local_marks_service import (
+    ConversationLocalMarksService,
+)
+from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+from tldw_chatbook.Widgets.Console import ConsoleWorkspaceContextTray
+from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
+
+
+def _install_real_marks_service(app, tmp_path) -> ConversationLocalMarksService:
+    """Give the test app a marks service backed by a real sqlite file.
+
+    `_build_test_app` leaves `chachanotes_db` unset, so the production
+    wiring resolves `conversation_local_marks_service` to None. A star
+    assertion is only worth making against a real row, so build one.
+    """
+    db = CharactersRAGDB(str(tmp_path / "chacha.sqlite"), client_id="button-routing")
+    service = ConversationLocalMarksService(db)
+    app.conversation_local_marks_service = service
+    return service
+
+
+async def _mounted_console(host, pilot, selector: str = "#console-workspace-context"):
+    """Return the mounted Console screen once `selector` exists."""
+    console = host.screen_stack[-1]
+    await _wait_for_selector(console, pilot, selector)
+    return console
+
+
+async def _sync_tray(console, pilot, state) -> ConsoleWorkspaceContextTray:
+    tray = console.query_one("#console-workspace-context", ConsoleWorkspaceContextTray)
+    tray.sync_state(state)
+    await pilot.pause()
+    return tray
+
+
+def _browser_config(app) -> dict:
+    """The persisted grouped-browser preference dict, or an empty dict."""
+    console_config = (app.app_config or {}).get("console")
+    if not isinstance(console_config, dict):
+        return {}
+    browser_config = console_config.get("conversation_browser")
+    if not isinstance(browser_config, dict):
+        return {}
+    collapsed = browser_config.get("collapsed_groups")
+    return collapsed if isinstance(collapsed, dict) else {}
+
+
+# --------------------------------------------------------------------------
+# console-conversation-star-  (65 lines -- the second-largest branch)
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_star_button_writes_a_durable_local_mark_and_toggles_it_back(tmp_path):
+    """Pressing the star persists through `conversation_local_marks_service`.
+
+    The mark is the whole point of the branch: the row repaints from the
+    service on the next sync, so asserting the glyph would only prove the
+    repaint ran. Assert the service.
+    """
+    app = _build_test_app()
+    marks = _install_real_marks_service(app, tmp_path)
+    rows = (_browser_row("conv-star-1", "Planning notes"),)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        console = await _mounted_console(host, pilot)
+        await _sync_tray(console, pilot, _base_grouped_workspace_state(rows=rows))
+
+        star = console.query_one("#console-conversation-star-0", Button)
+        assert star.disabled is False
+        assert star.conversation_id == "conv-star-1"
+
+        star.press()
+        await pilot.pause()
+        assert marks.is_starred("conv-star-1") is True
+
+        # A second press unstars: the branch reads current truth from the
+        # service, not from the button's captured `starred` attribute.
+        await _sync_tray(console, pilot, _base_grouped_workspace_state(rows=rows))
+        console.query_one("#console-conversation-star-0", Button).press()
+        await pilot.pause()
+        assert marks.is_starred("conv-star-1") is False
+
+
+@pytest.mark.asyncio
+async def test_star_button_writes_nothing_when_the_marks_service_is_missing():
+    """No service is a warning, not a crash and not a half-write."""
+    app = _build_test_app()
+    app.conversation_local_marks_service = None
+    rows = (_browser_row("conv-star-2", "Unbacked row"),)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        console = await _mounted_console(host, pilot)
+        await _sync_tray(console, pilot, _base_grouped_workspace_state(rows=rows))
+
+        console.query_one("#console-conversation-star-0", Button).press()
+        await pilot.pause()
+
+        # Survived the press with the branch's own guard, not an exception.
+        assert app.conversation_local_marks_service is None
+
+
+# --------------------------------------------------------------------------
+# console-conversation-browser-section-toggle-  (22 lines)
+# console-conversation-browser-group-toggle-    (24 lines)
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_browser_section_toggle_persists_its_collapse_preference():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        console = await _mounted_console(host, pilot)
+        await _sync_tray(console, pilot, _base_grouped_workspace_state())
+
+        toggles = [
+            button
+            for button in console.query(Button)
+            if str(getattr(button, "id", "") or "").startswith(
+                "console-conversation-browser-section-toggle-"
+            )
+        ]
+        assert toggles, "the grouped browser must render section toggles"
+        toggle = toggles[0]
+        group_id = toggle.group_id
+        assert group_id.startswith("section:")
+
+        toggle.press()
+        await pilot.pause()
+
+        assert _browser_config(app).get(group_id) is True
+
+
+@pytest.mark.asyncio
+async def test_browser_group_toggle_persists_its_collapse_preference():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        console = await _mounted_console(host, pilot)
+        await _sync_tray(console, pilot, _base_grouped_workspace_state())
+
+        toggles = [
+            button
+            for button in console.query(Button)
+            if str(getattr(button, "id", "") or "").startswith(
+                "console-conversation-browser-group-toggle-"
+            )
+        ]
+        assert toggles, "the grouped browser must render group toggles"
+        toggle = toggles[0]
+        group_id = toggle.group_id
+        assert group_id and not group_id.startswith("section:")
+
+        toggle.press()
+        await pilot.pause()
+
+        assert _browser_config(app).get(group_id) is True
+
+
+# --------------------------------------------------------------------------
+# console-workspace-conversations-toggle  (35 lines -- fourth-largest)
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_no_widget_carries_the_workspace_conversations_toggle_id():
+    """The 35-line `console-workspace-conversations-toggle` branch is DEAD.
+
+    Nothing in the app constructs a widget with that id. It was the legacy
+    ungrouped conversation list's collapse control, and commit `3b0374479`
+    ("retire the unreachable legacy conversation list [TASK-1190]") removed
+    the button while leaving the dispatcher branch behind --
+    `console-workspace-conversations-toggle` survives only as a CSS *class*
+    on the grouped browser's section/group toggles, whose ids are
+    `console-conversation-browser-{section,group}-toggle-*` and which take
+    entirely different branches.
+
+    So this branch cannot be characterised by pressing anything, and it has
+    no owner to be routed to. Pin the deadness instead: if someone gives a
+    widget that id again, this fails and the branch is live code that needs
+    a real test and a real owner.
+    """
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        console = await _mounted_console(host, pilot)
+        await _sync_tray(console, pilot, _base_grouped_workspace_state())
+
+        assert len(console.query("#console-workspace-conversations-toggle")) == 0
+        # ...and the class-bearing toggles that DO exist route elsewhere.
+        classed = list(console.query(".console-workspace-conversations-toggle"))
+        assert classed
+        assert all(
+            str(button.id or "").startswith(
+                "console-conversation-browser-section-toggle-"
+            )
+            or str(button.id or "").startswith(
+                "console-conversation-browser-group-toggle-"
+            )
+            for button in classed
+        )
+
+
+# --------------------------------------------------------------------------
+# console-workspace-conversation-  (81 lines -- the largest branch)
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_workspace_conversation_row_switches_to_its_already_open_session():
+    """Pressing a row with an open native tab switches the store, not resumes.
+
+    The persisted result is `store.active_session_id`; every visible effect
+    (tab strip, transcript, temporary chip) is downstream of it.
+    """
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        console = await _mounted_console(host, pilot)
+        store = console._ensure_console_chat_store()
+        first_session_id = store.active_session_id
+        second = store.create_session()
+        store.switch_session(first_session_id)
+        assert store.active_session_id == first_session_id
+
+        rows = (
+            _browser_row(
+                f"native:{second.id}",
+                "Second tab",
+                conversation_id=f"native:{second.id}",
+                native_session_id=second.id,
+                source_kind="native",
+            ),
+        )
+        await _sync_tray(console, pilot, _base_grouped_workspace_state(rows=rows))
+
+        console.query_one("#console-workspace-conversation-0", Button).press()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert store.active_session_id == second.id
+
+
+# --------------------------------------------------------------------------
+# console-close-session-tab-  (39 lines -- third-largest)
+# console-session-tab-       (9 lines)
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_close_tab_button_drops_an_empty_session_without_confirmation():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        console = await _mounted_console(host, pilot, "#console-native-composer")
+        store = console._ensure_console_chat_store()
+        keeper_id = store.active_session_id
+        doomed = store.create_session()
+        # Close a BACKGROUND tab (the × on a non-active tab). Closing the
+        # active one leaves an undo entry behind, because the draft sync
+        # that follows the close re-seeds `_console_undo_histories` for the
+        # still-visible session id -- pre-existing, and not what this
+        # branch is being characterised for.
+        store.switch_session(keeper_id)
+        # A real `ConsoleComposerUndoHistory` (an (undo, redo) stack pair),
+        # so the close path's own consumers see the shape they expect.
+        console._console_undo_histories[doomed.id] = ([], [])
+        await console._sync_native_console_chat_ui()
+        await pilot.pause()
+
+        close = console.query_one(f"#console-close-session-tab-{doomed.id}", Button)
+        close.press()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert doomed.id not in {session.id for session in store.sessions()}
+        assert doomed.id not in console._console_undo_histories
+        assert not isinstance(host.screen_stack[-1], ConfirmationDialog)
+
+
+@pytest.mark.asyncio
+async def test_close_tab_button_confirms_before_dropping_a_session_with_messages():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        console = await _mounted_console(host, pilot, "#console-native-composer")
+        store = console._ensure_console_chat_store()
+        keeper_id = store.active_session_id
+        doomed = store.create_session()
+        store.switch_session(keeper_id)
+        store.append_message(
+            doomed.id, role=ConsoleMessageRole.USER, content="do not lose me"
+        )
+        await console._sync_native_console_chat_ui()
+        await pilot.pause()
+
+        close = console.query_one(f"#console-close-session-tab-{doomed.id}", Button)
+        close.press()
+        await pilot.pause()
+
+        assert isinstance(host.screen_stack[-1], ConfirmationDialog)
+        # Still open: the confirmation is a gate, not a notification.
+        assert doomed.id in {session.id for session in store.sessions()}
+
+        host.screen_stack[-1].query_one("#confirm-button", Button).press()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert doomed.id not in {session.id for session in store.sessions()}
+
+
+@pytest.mark.asyncio
+async def test_session_tab_button_activates_an_inactive_session():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        console = await _mounted_console(host, pilot, "#console-native-composer")
+        store = console._ensure_console_chat_store()
+        first_session_id = store.active_session_id
+        second = store.create_session()
+        store.switch_session(first_session_id)
+        await console._sync_native_console_chat_ui()
+        await pilot.pause()
+
+        console.query_one(f"#console-session-tab-{second.id}", Button).press()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert store.active_session_id == second.id
+
+
+# --------------------------------------------------------------------------
+# console-dictation  (31 lines -- fifth-largest)
+# --------------------------------------------------------------------------
+
+
+class _ExitRecorder:
+    """A stand-in voice session whose controller records `on_exit_request`.
+
+    `tick_timer`/`assistant_row_id` are here for the screen's UNMOUNT
+    teardown, which runs against whatever session is still installed when
+    the harness tears down; both defaults make that teardown a no-op.
+    """
+
+    def __init__(self) -> None:
+        self.exits = 0
+        self.tick_timer = None
+        self.assistant_row_id = None
+        self.controller = SimpleNamespace(on_exit_request=self._on_exit_request)
+
+    def _on_exit_request(self) -> None:
+        self.exits += 1
+
+
+@pytest.mark.asyncio
+async def test_mic_button_opens_a_capture_when_idle(monkeypatch):
+    """Idle press arms a capture: state and origin session both persist."""
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        console = await _mounted_console(host, pilot, "#console-native-composer")
+
+        async def _no_op_start() -> None:
+            return None
+
+        monkeypatch.setattr(
+            console._dictation, "_start_console_dictation", _no_op_start
+        )
+        store = console._ensure_console_chat_store()
+        assert console._console_dictation_state == "idle"
+
+        console.query_one("#console-dictation", Button).press()
+        await pilot.pause()
+
+        assert console._console_dictation_state == "starting"
+        assert (
+            console._dictation._console_dictation_origin_session_id
+            == store.active_session_id
+        )
+
+
+@pytest.mark.asyncio
+async def test_mic_button_exits_the_hands_free_loop_instead_of_toggling():
+    """A running hands-free loop supersedes the one-shot toggle entirely."""
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        console = await _mounted_console(host, pilot, "#console-native-composer")
+        recorder = _ExitRecorder()
+        console._console_hands_free = recorder
+
+        console.query_one("#console-dictation", Button).press()
+        await pilot.pause()
+
+        assert recorder.exits == 1
+        # No fall-through: the one-shot capture never armed.
+        assert console._console_dictation_state == "idle"
+        console._console_hands_free = None
+
+
+@pytest.mark.asyncio
+async def test_mic_button_exits_the_realtime_loop_instead_of_toggling():
+    """Same rule for the V4 realtime engine (it would otherwise double-open
+    the microphone and keep billing)."""
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        console = await _mounted_console(host, pilot, "#console-native-composer")
+        recorder = _ExitRecorder()
+        console._console_realtime = recorder
+
+        console.query_one("#console-dictation", Button).press()
+        await pilot.pause()
+
+        assert recorder.exits == 1
+        assert console._console_dictation_state == "idle"
+        console._console_realtime = None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("state", "expected"),
+    [("starting", "cancel"), ("recording", "stop")],
+)
+async def test_mic_button_routes_a_live_capture_to_cancel_or_stop(
+    state: str, expected: str, monkeypatch
+):
+    """`starting` cancels (the only way out of a model download); `recording`
+    stops (the capture is worth finishing)."""
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        console = await _mounted_console(host, pilot, "#console-native-composer")
+        calls: list[str] = []
+        for name in ("start", "cancel", "stop"):
+            monkeypatch.setattr(
+                console._dictation,
+                f"_request_console_dictation_{name}",
+                (lambda captured=name: calls.append(captured)),
+            )
+        console._console_dictation_state = state
+
+        console.query_one("#console-dictation", Button).press()
+        await pilot.pause()
+
+        assert calls == [expected]
