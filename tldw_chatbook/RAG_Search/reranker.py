@@ -624,6 +624,24 @@ class ListwiseReranker(BaseReranker):
 def create_reranker(strategy: str = "pointwise", **kwargs) -> BaseReranker:
     """Factory function to create a reranker with the specified strategy."""
     config = RerankingConfig(strategy=strategy, **kwargs)
+    return create_reranker_from_config(config)
+
+
+def create_reranker_from_config(config: RerankingConfig) -> BaseReranker:
+    """Build a reranker directly from an already-constructed ``RerankingConfig``.
+
+    This is the seam every caller that already HAS a ``RerankingConfig``
+    (profiles, experiment configs) must use. ``create_reranker(strategy=X,
+    **config.__dict__)`` -- the previous call pattern everywhere in
+    ``enhanced_rag_service_v2.py`` -- passes ``strategy`` twice (once
+    positionally/by-keyword, once again inside ``**config.__dict__``, since
+    ``strategy`` is itself a field of ``RerankingConfig``), which raised
+    ``TypeError: RerankingConfig() got multiple values for keyword argument
+    'strategy'`` on every reranking-enabled profile. This function takes the
+    config object as-is and dispatches on ``config.strategy`` without
+    reconstructing it.
+    """
+    strategy = config.strategy
 
     if strategy == "pointwise":
         return PointwiseReranker(config)

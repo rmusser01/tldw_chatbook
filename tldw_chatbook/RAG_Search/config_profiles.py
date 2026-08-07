@@ -349,8 +349,15 @@ class ConfigProfileManager:
         hybrid_full_rag.search.parent_inclusion_strategy = "size_based"
         hybrid_full_rag.search.max_context_size = 32000
 
+        # "cross_encoder" is not an implemented reranking strategy in
+        # chatbook -- reranker.py only implements the three LLM-driven
+        # strategies (pointwise/pairwise/listwise); there is no local
+        # cross-encoder model path. This profile previously requested
+        # "cross_encoder" and raised ValueError the moment its reranker
+        # tried to construct (task-3170 P0). "pointwise" is the closest
+        # available strategy to a cross-encoder's per-result scoring.
         hybrid_full_rerank = RerankingConfig(
-            strategy="cross_encoder", top_k_to_rerank=15, include_reasoning=False
+            strategy="pointwise", top_k_to_rerank=15, include_reasoning=False
         )
 
         self._profiles["hybrid_full"] = ProfileConfig(
