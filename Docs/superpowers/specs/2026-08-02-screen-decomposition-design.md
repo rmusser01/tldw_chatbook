@@ -226,7 +226,7 @@ become a controller.
 shared frame helper, `ConsoleLeftRail`, `ConsoleInspectorRail`,
 `ConsoleDictationController`.
 
-**Wave 2 (this branch)** — `ConsoleWorkspaceController`,
+**Wave 2 (merged, PR #1381)** — `ConsoleWorkspaceController`,
 `ConsoleHandsFreeController`, `ConsoleSessionController`.
 
 Measured against dev at the wave-2 close: `chat_screen.py` **24,195 → 20,964
@@ -242,6 +242,47 @@ Controller discipline at the close, verified per module rather than asserted:
 **zero** `query_one`/DOM access in any of the four controllers, and `self._screen`
 uses held to 3–6 each, every one either a framework service or a documented
 sibling-state proxy.
+
+**Wave 3 (this branch)** — `ConsoleMessageController`, `ConsoleTranscriptRegion`,
+`ConsolePromptsController`, plus the size ratchet.
+
+`chat_screen.py` **20,964 → 18,904 lines**, `ChatScreen` **612 → 598 methods**
+(−2,060 / −14). `UI/Console_Modules/` now holds 11,363 lines across six
+controllers, three region widgets, and the frame helper.
+
+**The finding that reframed the programme, recorded here because it changes what
+the next wave should optimise for.** Waves 1 and 2 extracted ~4,900 lines, and
+`chat_screen.py` finished those waves *larger* than it started — roughly 5,500
+lines of concurrent feature work landed in it over the same window. Extraction
+cannot outrun growth. Every one of those lines went into the screen because the
+screen was the path of least resistance: `UI/Console_Modules/` either did not
+exist yet or was not yet the obvious destination. So wave 3 adds
+`Tests/Architecture/test_screen_size_ratchet.py`, a one-way ratchet that makes
+the current size a **ceiling** rather than a waypoint, with a second test that
+fails if a wave lands without lowering the budget. Budgets may only go down.
+This, not the extraction, is what makes a wave's gain stick.
+
+Two honest notes on wave 3's own numbers, since a spec that only records wins
+teaches the wrong lesson:
+
+- **`ConsoleTranscriptRegion` netted +1 line and +1 method.** The composed block
+  was 13 lines and the moved bodies 54; the delegations cost the same. It landed
+  anyway, on the ground that all three `#console-workspace-grid` children are now
+  region widgets built identically, and leaving one of three inline is the
+  asymmetry that costs when `compose_content` is attacked. It is a structural
+  change, not a size one — and the transcript's DOM now has **two** access
+  idioms (3 paths route through the region, 9 still `query_one` directly), a
+  transitional state a later wave should finish or deliberately stop, not read
+  as settled design.
+- **The wave's gain is tasks 1 (−1,328) and 3 (−759).** `_open_console_prompts_modal`
+  moved verbatim at 397 lines and took 15 of the prompts controller's 18 named
+  dependencies. Review judged the fan-out inherent rather than a wrong boundary —
+  but noted the method is a class in disguise (a modal callback-bundle factory
+  with 17 nested closures). Decomposing it is follow-up work, not a passenger on
+  a byte-fidelity wave.
+
+`__init__` remains the largest method on the class and grows with each wave's
+controller wiring — a real cost of this pattern, and the next wave's problem.
 
 ## Migration safety
 
@@ -265,8 +306,14 @@ Rules, all non-negotiable:
    **and** 235x52. Where such a test already exists for the region, it must pass
    unchanged; where none exists, it is written *before* the move, against the current
    code, so it is proven to pass before it is relied upon.
-4. **CSS moves with its region**, into `tldw_chatbook/css/features/`, and the bundle is regenerated via
-   `/private/tmp/tldw-venv/bin/python tldw_chatbook/css/build_css.py`. The bundle is never hand-edited.
+4. **CSS moves with its region**, and the bundle is regenerated via
+   `<repo>/.venv/bin/python tldw_chatbook/css/build_css.py`. The bundle is never hand-edited.
+   Two corrections from wave 3: the Console's CSS is not in `css/features/` —
+   `features/_console.tcss` does not exist, and the rules live in
+   `css/components/_agentic_terminal.tcss`; and no interpreter under
+   `/private/tmp` is usable (a cleaner destroyed one mid-programme, along with
+   an entire unpushed wave). Wave 3 moved no CSS at all: every Console rule is
+   id-scoped, so ids-verbatim extraction leaves the selectors matching.
 5. **Behaviour changes are forbidden in an extraction.** An extraction that also fixes a
    bug is two changes; do the fix separately, before or after, so a regression has one
    candidate cause.

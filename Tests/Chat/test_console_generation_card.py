@@ -30,6 +30,7 @@ from tldw_chatbook.Chat.console_chat_models import (
     GenerationVariantMeta,
     MessageAttachment,
 )
+from Tests.UI.console_controller_stubs import NO_APP, stub_message_controller
 from tldw_chatbook.Chat.console_image_view import ConsoleImageRowSpec
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.Widgets.Console.console_generation_card import (
@@ -48,8 +49,25 @@ def _bare_screen() -> ChatScreen:
     ``_bare_console_screen`` pattern -- ``_ensure_console_image_view`` reads
     ``app_instance``/``app_config`` defensively via ``getattr`` specifically
     so tests can call it on an unmounted screen shell like this one.
+
+    ``_recent_console_image_messages`` moved to ``ConsoleMessageController``
+    (wave-3 console decomposition, task 1) and is reached here through
+    ``ChatScreen``'s delegation, so this shell needs a ``_message`` that
+    ``__init__`` would otherwise have built. That one method is pure (it
+    filters a list against ``IMAGE_CACHE_MAX_ENTRIES`` and touches no
+    injected seam), so every constructor callable is stubbed to raise --
+    a fail-loud guard if a future test in this file starts exercising a
+    branch that needs one for real, rather than a silently-wrong no-op.
     """
-    return ChatScreen.__new__(ChatScreen)
+    screen = ChatScreen.__new__(ChatScreen)
+    stub_message_controller(
+        screen,
+        context="test_console_generation_card._bare_screen",
+        # No harness app -- see the sibling note in
+        # test_console_rag_settings_modal; declared, not inferred.
+        app_instance=NO_APP,
+    )
+    return screen
 
 
 def _meta(

@@ -424,3 +424,33 @@ wiring time. Second, if a proxy property is write-only, its getter must raise
 `getattr(obj, name, default)` swallow `AttributeError` specifically, so a
 defensive read would silently take the default forever with nothing raised
 anywhere.
+
+**A proxy property standing in for a plain attribute must be read-WRITE.**
+The rule above governs the write-only case; wave 3 found its mirror image and
+paid for it. Moving state into a controller turns what was
+`self._console_original_attempt_previews = {}` in `__init__` into a `@property`
+on the screen that forwards to the controller — and a `@property` with only a
+getter makes the name **assignment-hostile**, where the plain attribute it
+replaced accepted writes from anywhere. Wave 3 shipped one getter-only proxy
+and turned **41 tests red in a file the branch never touched**, all of them
+`AttributeError: property '…' of 'ChatScreen' object has no setter`. Two
+things follow. First, check the *baseline* shape before writing a proxy: if it
+was a plain assignable attribute, the proxy needs a setter, and "nothing writes
+it today" is a coverage claim rather than a contract — write the setter anyway.
+Second, the setter must write THROUGH to the controller (`self._message.x = v`),
+never to a shadow attribute the controller never reads; that variant is worse
+than the crash, because the tests go green over a dead write. An `ast` audit
+comparing every new property against the baseline attribute's shape catches
+both, and is cheap enough to run every wave.
+
+**New Console code goes in `UI/Console_Modules/`, and a ratchet enforces it.**
+The decomposition's first two waves extracted ~4,900 lines out of
+`chat_screen.py` and the file still ended up *larger* than when the work
+started, because ~5,500 lines of concurrent feature work landed in it over the
+same window. Extraction cannot outrun growth, so the screen's size is now a
+ceiling: `Tests/Architecture/test_screen_size_ratchet.py` holds a line and
+method budget that may only ever be lowered. A wave lowers it in the same PR
+that earns the reduction; a feature that would raise it belongs in a module
+instead. The test's failure message names the module directory and this
+section, because the moment it fires is the moment someone needs to know where
+else to put the code — not a link to chase later.

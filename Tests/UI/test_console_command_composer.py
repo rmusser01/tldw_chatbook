@@ -24,6 +24,7 @@ from tldw_chatbook.Prompt_Management.prompt_scope_service import (
     PromptScopeService,
 )
 from tldw_chatbook.UI.Navigation.pending_handoff_store import HandoffChannel
+from tldw_chatbook.UI.Console_Modules.prompts import ConsolePromptsController
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.Widgets.Console import ConsoleComposerBar
 from tldw_chatbook.Widgets.Console.console_prompt_picker_modal import (
@@ -98,64 +99,77 @@ async def _spy_submit_draft(console) -> AsyncMock:
 
 @pytest.mark.asyncio
 async def test_console_prompt_name_resolution_refuses_recipe_candidates() -> None:
-    screen = SimpleNamespace(
+    # `_resolve_console_prompt_by_name` moved to `ConsolePromptsController`
+    # (wave-3 console decomposition, task 3); still exercised unbound against
+    # a hand-built `self`, now the controller's rather than the screen's.
+    controller = SimpleNamespace(
         _console_prompt_search=AsyncMock(return_value=[_recipe_record()]),
-        _is_recipe_prompt_record=ChatScreen._is_recipe_prompt_record,
+        _is_recipe_prompt_record=ConsolePromptsController._is_recipe_prompt_record,
     )
 
-    resolved = await ChatScreen._resolve_console_prompt_by_name(screen, "Outcome first")
+    resolved = await ConsolePromptsController._resolve_console_prompt_by_name(
+        controller, "Outcome first"
+    )
 
     assert resolved is None
 
 
 @pytest.mark.asyncio
 async def test_prompt_command_rejects_recipe_before_composer_mutation() -> None:
-    screen = SimpleNamespace(
+    controller = SimpleNamespace(
         _resolve_console_prompt_by_name=AsyncMock(return_value=_recipe_record()),
         _insert_prompt_text_into_composer=Mock(),
         _open_console_prompt_picker_for_insert=AsyncMock(),
         _append_native_console_system_message=AsyncMock(),
-        _is_recipe_prompt_record=ChatScreen._is_recipe_prompt_record,
-        _RECIPE_EXECUTION_BLOCKED_COPY=ChatScreen._RECIPE_EXECUTION_BLOCKED_COPY,
+        _is_recipe_prompt_record=ConsolePromptsController._is_recipe_prompt_record,
+        _RECIPE_EXECUTION_BLOCKED_COPY=(
+            ConsolePromptsController._RECIPE_EXECUTION_BLOCKED_COPY
+        ),
     )
 
-    await ChatScreen._console_command_insert_prompt(
-        screen, SimpleNamespace(args="Outcome first")
+    await ConsolePromptsController._console_command_insert_prompt(
+        controller, SimpleNamespace(args="Outcome first")
     )
 
-    screen._insert_prompt_text_into_composer.assert_not_called()
-    screen._open_console_prompt_picker_for_insert.assert_not_awaited()
-    screen._append_native_console_system_message.assert_awaited_once()
+    controller._insert_prompt_text_into_composer.assert_not_called()
+    controller._open_console_prompt_picker_for_insert.assert_not_awaited()
+    controller._append_native_console_system_message.assert_awaited_once()
     assert (
         "recipe"
-        in screen._append_native_console_system_message.await_args.args[0].lower()
+        in controller._append_native_console_system_message.await_args.args[0].lower()
     )
 
 
 @pytest.mark.asyncio
 async def test_system_command_rejects_recipe_before_session_or_draft_mutation() -> None:
-    screen = SimpleNamespace(
+    # The `self._session._apply_console_session_system_prompt(...)` reach in
+    # the pre-move body is now the controller's own same-named session-seam
+    # property (wave-3 console decomposition, task 3), so the fake `self`
+    # carries it directly instead of behind a `_session` namespace.
+    controller = SimpleNamespace(
         _resolve_console_prompt_by_name=AsyncMock(return_value=_recipe_record()),
         _open_console_system_prompt_editor=AsyncMock(),
         _open_console_prompt_picker_for_apply_system=AsyncMock(),
         _append_native_console_system_message=AsyncMock(),
-        _session=SimpleNamespace(_apply_console_session_system_prompt=Mock()),
+        _apply_console_session_system_prompt=Mock(),
         _clear_console_composer_draft=Mock(),
-        _is_recipe_prompt_record=ChatScreen._is_recipe_prompt_record,
-        _RECIPE_EXECUTION_BLOCKED_COPY=ChatScreen._RECIPE_EXECUTION_BLOCKED_COPY,
+        _is_recipe_prompt_record=ConsolePromptsController._is_recipe_prompt_record,
+        _RECIPE_EXECUTION_BLOCKED_COPY=(
+            ConsolePromptsController._RECIPE_EXECUTION_BLOCKED_COPY
+        ),
     )
 
-    await ChatScreen._console_command_apply_system(
-        screen, SimpleNamespace(args="Outcome first")
+    await ConsolePromptsController._console_command_apply_system(
+        controller, SimpleNamespace(args="Outcome first")
     )
 
-    screen._session._apply_console_session_system_prompt.assert_not_called()
-    screen._clear_console_composer_draft.assert_not_called()
-    screen._open_console_prompt_picker_for_apply_system.assert_not_awaited()
-    screen._append_native_console_system_message.assert_awaited_once()
+    controller._apply_console_session_system_prompt.assert_not_called()
+    controller._clear_console_composer_draft.assert_not_called()
+    controller._open_console_prompt_picker_for_apply_system.assert_not_awaited()
+    controller._append_native_console_system_message.assert_awaited_once()
     assert (
         "recipe"
-        in screen._append_native_console_system_message.await_args.args[0].lower()
+        in controller._append_native_console_system_message.await_args.args[0].lower()
     )
 
 

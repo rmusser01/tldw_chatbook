@@ -44,6 +44,7 @@ from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import (
     TTSPlaybackEvent,
 )
 from tldw_chatbook.UI.Screens import chat_screen as chat_screen_module
+from tldw_chatbook.UI.Console_Modules.message import ConsoleMessageController
 from tldw_chatbook.UI.Console_Modules.session import ConsoleSessionController
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
@@ -106,25 +107,77 @@ def _bare_generation_screen(store: ConsoleChatStore) -> ChatScreen:
     """Build a ``ChatScreen`` shell wired for direct action-handler calls.
 
     Bypasses ``ChatScreen.__init__`` (no mounted Textual app needed) and
-    stubs the two seams the new handlers touch that WOULD need one:
+    stubs the seams the new handlers touch that WOULD need one:
     ``app_instance.notify`` (recorded, never raises) and
     ``_sync_native_console_chat_ui`` (an ``AsyncMock`` no-op -- the real
     method walks the live render/inspector pipeline, irrelevant to the pure
     store-mutation logic under test here).
+
+    ``handle_console_message_action`` moved to ``ConsoleMessageController``
+    (wave-3 console decomposition, task 1); ``screen._message`` is built the
+    same way ``screen._session`` already was here -- bypassing ITS
+    ``__init__`` too, with only the constructor callables this file's
+    generation-branch scenarios (regenerate/keep/variant/speak/speak-stop)
+    can actually reach wired for real. The four callables reaching
+    clusters these tests never touch (change-review, the transcript-sync
+    timer, native message selection, the conversation-browser cache) are
+    stubbed to raise -- a fail-loud guard if a future test in this file
+    starts exercising a branch that needs one for real, instead of a
+    silently-wrong no-op.
     """
     screen = ChatScreen.__new__(ChatScreen)
     screen._console_chat_store = store
     screen._session = ConsoleSessionController.__new__(ConsoleSessionController)
     screen._session._chat_store_accessor = lambda: screen._console_chat_store
     screen._session._current_chat_store_accessor = lambda: screen._console_chat_store
-    screen._console_message_action_service = ConsoleMessageActionService()
-    screen._pending_console_delete_message_id = None
     screen.app_instance = SimpleNamespace(notify=lambda *a, **k: None)
     screen._sync_native_console_chat_ui = AsyncMock()
     # `_clear_console_composer_draft` now also syncs the slash-command popup;
     # on a detached screen (no `_nodes`) that query dies with AttributeError,
     # not the guarded QueryError — same class of seam as the sync stub above.
     screen._sync_console_command_popup = lambda: None
+
+    def _unreached(*_args, **_kwargs):
+        raise AssertionError(
+            "_bare_generation_screen: this constructor callable is not "
+            "wired for real -- the scenario reaching it needs its own stub."
+        )
+
+    screen._message = ConsoleMessageController(
+        screen,
+        app_instance=screen.app_instance,
+        chat_store_accessor=lambda: screen._console_chat_store,
+        current_chat_store_accessor=lambda: screen._console_chat_store,
+        ensure_console_chat_controller=_unreached,
+        current_chat_controller_accessor=lambda: None,
+        sync_native_console_chat_ui=screen._sync_native_console_chat_ui,
+        active_session_is_ephemeral=(
+            lambda: screen._session._console_active_session_is_ephemeral()
+        ),
+        active_native_console_session=_unreached,
+        current_console_conversation_id=_unreached,
+        active_console_provider_model_display=_unreached,
+        console_initial_session_title_for_workspace=lambda workspace_id: "",
+        console_change_review_run_id=_unreached,
+        open_change_review=_unreached,
+        start_console_transcript_sync_timer=_unreached,
+        clear_native_console_message_selection=_unreached,
+        regenerate_console_generation_variant=(
+            lambda message_id: screen._regenerate_console_generation_variant(
+                message_id
+            )
+        ),
+        select_console_generation_variant=(
+            lambda message, direction: screen._select_console_generation_variant(
+                message, direction=direction
+            )
+        ),
+        keep_console_generation_variant=(
+            lambda message: screen._keep_console_generation_variant(message)
+        ),
+        handle_console_toggle_image_view=_unreached,
+        invalidate_console_persisted_rows_cache=_unreached,
+    )
     return screen
 
 

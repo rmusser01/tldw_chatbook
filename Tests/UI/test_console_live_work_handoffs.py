@@ -1859,6 +1859,8 @@ def _bare_console_screen_for_restore(app_instance=None) -> ChatScreen:
         ChatScreen: A bare ChatScreen instance suitable for unit-level
             restore-path testing.
     """
+    from Tests.UI.console_controller_stubs import stub_message_controller
+
     screen = ChatScreen.__new__(ChatScreen)
     screen.app_instance = app_instance
     screen._console_chat_store = ConsoleChatStore()
@@ -1866,6 +1868,15 @@ def _bare_console_screen_for_restore(app_instance=None) -> ChatScreen:
     screen._console_visible_draft_session_id = None
     screen._console_composer_or_none = lambda: None
     screen._task_resume_state = TaskResumeState()
+    # `_restore_native_console_state` calls the three
+    # `_rehydrate_console_message_*` helpers, which moved to
+    # `ConsoleMessageController` (wave-3 console decomposition, task 1) and
+    # are reached through `ChatScreen`'s delegations. `ChatScreen.__new__`
+    # skips the construction `__init__` would do. Those three read only
+    # `app_instance`, so nothing else is wired.
+    stub_message_controller(
+        screen, context="test_console_live_work_handoffs._bare_console_screen"
+    )
     return screen
 
 
