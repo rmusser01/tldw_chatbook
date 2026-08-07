@@ -39,10 +39,12 @@ Main Functions:
 # Imports
 import asyncio
 import base64
+import concurrent.futures
 import json
 from html import unescape
 import random
 import re
+import threading
 import time
 from typing import Optional, Dict, Any, List, Union, Callable, TypedDict
 from urllib.parse import urlparse, urlencode, unquote
@@ -854,6 +856,39 @@ def _build_result_fallback_content(result: Dict[str, Any]) -> str:
 
 ######################### Relevance Analysis #########################
 #
+_DNS_GUARD_EXECUTOR_MAX_WORKERS = 4
+
+_DNS_GUARD_EXECUTOR_LOCK = threading.Lock()
+"""Guards creation of the module-level DNS-guard executor below."""
+
+_DNS_GUARD_EXECUTOR: Optional[concurrent.futures.ThreadPoolExecutor] = None
+"""Dedicated, lazily-created, bounded executor for the pre-scrape SSRF DNS
+guard (`is_public_http_url`) offload in `search_result_relevance` (task-3220).
+
+Constraint: that guard does synchronous `socket.getaddrinfo` and is wrapped
+in `asyncio.wait_for`; when the timeout fires, the abandoned resolver thread
+keeps occupying its executor slot until the OS resolver itself gives up --
+which can far outlast `scrape_timeout_s`. Routing it through
+`asyncio.to_thread` would put it on the DEFAULT executor, the same one this
+loop's other offloads (the relevance/summarization `chat_api_call` calls,
+`aggregate_results`) share -- so a result set full of slow-DNS hosts could
+queue paid LLM calls behind dead resolvers. A small, separate pool isolates
+the abandoned threads so they can never crowd out those offloads."""
+
+
+def _get_dns_guard_executor() -> concurrent.futures.ThreadPoolExecutor:
+    """Return the shared DNS-guard executor, creating it on first use."""
+    global _DNS_GUARD_EXECUTOR
+    if _DNS_GUARD_EXECUTOR is None:
+        with _DNS_GUARD_EXECUTOR_LOCK:
+            if _DNS_GUARD_EXECUTOR is None:
+                _DNS_GUARD_EXECUTOR = concurrent.futures.ThreadPoolExecutor(
+                    max_workers=_DNS_GUARD_EXECUTOR_MAX_WORKERS,
+                    thread_name_prefix="deep-search-dns-guard",
+                )
+    return _DNS_GUARD_EXECUTOR
+
+
 # FIXME - Ensure edge cases are handled properly / Structured outputs?
 async def search_result_relevance(
     search_results: List[Dict],
@@ -991,15 +1026,27 @@ async def search_result_relevance(
                             # is_public_http_url does synchronous DNS resolution
                             # (socket.getaddrinfo) -- its own docstring chain
                             # (evaluate_url_policy) warns never to call that kind
-                            # of check directly from an event loop. Offload to a
-                            # worker thread and bound it with the same timeout
-                            # used for the scrape itself; a guard timeout raises
-                            # asyncio.TimeoutError, which is an Exception (unlike
-                            # CancelledError) so it falls straight into the
-                            # `except Exception` below and is handled exactly
-                            # like a scrape failure -- no separate code path.
+                            # of check directly from an event loop. Offload it,
+                            # bounded by the same timeout used for the scrape
+                            # itself; a guard timeout raises asyncio.TimeoutError,
+                            # which is an Exception (unlike CancelledError) so it
+                            # falls straight into the `except Exception` below and
+                            # is handled exactly like a scrape failure -- no
+                            # separate code path.
+                            #
+                            # Routed through the dedicated `_get_dns_guard_executor`
+                            # pool (task-3220), NOT `asyncio.to_thread`'s shared
+                            # default executor: on a wait_for timeout the abandoned
+                            # getaddrinfo thread keeps occupying its slot until the
+                            # OS resolver gives up, and the default executor is
+                            # also where this loop's own chat_api_call/summarize
+                            # offloads run -- a run of slow-DNS hosts must not be
+                            # able to queue those paid LLM calls behind dead
+                            # resolvers.
                             is_public = await asyncio.wait_for(
-                                asyncio.to_thread(is_public_http_url, result["url"]),
+                                asyncio.get_running_loop().run_in_executor(
+                                    _get_dns_guard_executor(), is_public_http_url, result["url"]
+                                ),
                                 timeout=scrape_timeout_s,
                             )
                             if not is_public:

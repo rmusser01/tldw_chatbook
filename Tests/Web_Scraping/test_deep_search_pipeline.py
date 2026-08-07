@@ -2,7 +2,9 @@
 scrape_article / Summarization analyze — the pipeline code runs real."""
 
 import asyncio
+import concurrent.futures
 import json
+import threading
 import time
 
 import pytest
@@ -437,6 +439,87 @@ async def test_relevance_guard_timeout_falls_back_like_scrape_failure(monkeypatc
     assert scraped == []                                  # never reached scrape_article
     entry = next(iter(out.values()))
     assert "snippet text" in entry["content"] or "Kept Title" in entry["content"]  # fallback kept
+
+
+# --- DNS-guard offload isolation (task-3220) -----------------------------------
+
+@pytest.mark.asyncio
+async def test_relevance_guard_runs_on_dedicated_dns_guard_executor(monkeypatch):
+    """task-3220: the pre-scrape SSRF guard (`is_public_http_url`) must be
+    offloaded through the dedicated DNS-guard executor, not
+    `asyncio.to_thread`'s shared default one -- proven by capturing the name
+    of the worker thread the guard actually ran on."""
+    monkeypatch.setattr(WebSearch_APIs, "chat_api_call",
+                        _fake_chat(["Selected Answer: True\nReasoning: relevant"]))
+    seen_thread_names = []
+
+    def spying_guard(url):
+        seen_thread_names.append(threading.current_thread().name)
+        return True
+
+    monkeypatch.setattr(WebSearch_APIs, "is_public_http_url", spying_guard)
+
+    async def fast_scrape(url, **k):
+        return {"content": "scraped ok", "extraction_successful": True}
+
+    monkeypatch.setattr(WebSearch_APIs, "scrape_article", fast_scrape)
+    results = [_std_result("T", "https://e.example/", "c")]
+    await WebSearch_APIs.search_result_relevance(results, "q", [], "openai")
+
+    assert seen_thread_names, "guard was never called"
+    assert seen_thread_names[0].startswith("deep-search-dns-guard"), (
+        f"guard ran on {seen_thread_names[0]!r}; expected the dedicated "
+        "DNS-guard executor, not the shared default one"
+    )
+
+
+def test_dns_guard_executor_saturation_does_not_starve_default_executor_offloads():
+    """task-3220: when `asyncio.wait_for` times out around the DNS guard, the
+    abandoned `getaddrinfo` thread keeps occupying its executor slot until
+    the OS resolver itself gives up. If that offload shared the DEFAULT
+    executor (asyncio.to_thread), a run of slow-DNS results could queue this
+    same loop's other default-executor offloads -- the relevance/
+    summarization `chat_api_call` calls -- behind those dead resolvers.
+
+    Behavioral proof: fill every worker slot of the dedicated DNS-guard pool
+    with threading.Event-blocked fakes (standing in for abandoned resolver
+    threads), then show a relevance-LLM-style offload on the DEFAULT
+    executor (asyncio.to_thread, exactly what search_result_relevance uses
+    for chat_api_call) still completes promptly. No real DNS, no real
+    sleeps -- unblocking is deterministic and happens in `finally` so no
+    thread is ever left running past this test.
+    """
+    executor = WebSearch_APIs._get_dns_guard_executor()
+    n_workers = WebSearch_APIs._DNS_GUARD_EXECUTOR_MAX_WORKERS
+    release = threading.Event()
+    entered = [threading.Event() for _ in range(n_workers)]
+
+    def blocked_resolver(i):
+        entered[i].set()
+        release.wait(timeout=5)  # released below; 5s is only a safety net
+        return True
+
+    futures = [executor.submit(blocked_resolver, i) for i in range(n_workers)]
+    try:
+        for e in entered:
+            assert e.wait(timeout=2), "dedicated DNS-guard pool never saturated"
+
+        async def run() -> tuple:
+            start = time.monotonic()
+            result = await asyncio.wait_for(
+                asyncio.to_thread(lambda: "llm-response"), timeout=1.0
+            )
+            return result, time.monotonic() - start
+
+        result, elapsed = asyncio.run(run())
+        assert result == "llm-response"
+        assert elapsed < 0.5, (
+            f"default-executor offload took {elapsed:.3f}s while the "
+            "DNS-guard pool was fully saturated -- it must run independently"
+        )
+    finally:
+        release.set()
+        concurrent.futures.wait(futures, timeout=5)
 
 
 # --- pure review ---------------------------------------------------------------
