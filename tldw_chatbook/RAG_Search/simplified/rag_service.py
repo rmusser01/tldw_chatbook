@@ -998,6 +998,12 @@ class RAGService:
         results = []
         for entry in fused:
             result = entry.item
+            # entry.item aliases entry.fts_item (FTS leg wins -- see
+            # FusedResult.item), so the original leg scores must be read
+            # *before* result.score is overwritten below, or the in-place
+            # mutation clobbers the very value we're trying to preserve.
+            fts_score = entry.fts_item.score if entry.fts_item is not None else None
+            vector_score = entry.vector_item.score if entry.vector_item is not None else None
             # Combine citations when the same chunk surfaced in both legs
             if (
                 include_citations
@@ -1013,6 +1019,8 @@ class RAGService:
                 **(result.metadata or {}),
                 "hybrid_fusion": {
                     **entry.provenance(),
+                    "fts_score": fts_score,
+                    "vector_score": vector_score,
                     "alpha": alpha,
                     "rrf_k": DEFAULT_RRF_K,
                 },
