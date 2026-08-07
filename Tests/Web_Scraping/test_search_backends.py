@@ -269,3 +269,15 @@ def test_yandex_end_to_end_through_process(monkeypatch):
     result = WebSearch_APIs.process_web_search_results(raw, "yandex")
     assert result["processing_error"] is None
     assert [r["url"] for r in result["results"]] == ["https://ya-one.example/", "https://ya-two.example/"]
+
+
+def test_agent_enum_engines_all_dispatchable():
+    """Every engine the agent tool advertises must reach a real backend."""
+    from tldw_chatbook.Tools.web_tool_impls import SEARCH_ENGINES
+    for engine in SEARCH_ENGINES:
+        result = WebSearch_APIs.process_web_search_results({}, engine)
+        # a real engine parses an empty payload to an empty result list;
+        # an unknown engine sets processing_error ("Invalid Search Engine Name")
+        assert result["processing_error"] is None or "Invalid" not in str(result["processing_error"]), (
+            f"agent enum advertises {engine!r} but process_web_search_results rejects it"
+        )

@@ -512,7 +512,7 @@ def web_fetch(url: str, *, max_bytes: int = FETCH_MAX_BYTES) -> str:
 # ---------------------------------------------------------------------------
 
 SEARCH_DEFAULT_ENGINE = "duckduckgo"
-SEARCH_ENGINES = ("google", "bing", "duckduckgo", "brave", "kagi", "tavily", "searx")
+SEARCH_ENGINES = ("google", "bing", "duckduckgo", "brave", "kagi", "tavily", "searx", "exa", "serper", "yandex")
 SEARCH_DEFAULT_RESULT_COUNT = 5
 SEARCH_MAX_RESULT_COUNT = 10
 # Byte budgets (re-plan spec §2.2), matching the provider's byte-based

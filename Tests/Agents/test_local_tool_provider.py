@@ -733,6 +733,8 @@ def test_web_search_spec_schema(tmp_path):
     props = schema.parameters["properties"]
     assert props["query"]["type"] == "string"
     assert "duckduckgo" in props["search_engine"]["enum"]
+    for engine in ("exa", "serper", "yandex"):
+        assert engine in props["search_engine"]["enum"]
     assert props["result_count"]["type"] == "integer"
     assert p.hub_tool_for("web_search").tags == ()
 
