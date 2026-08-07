@@ -51,12 +51,22 @@ from ..Console_Modules.frame import (
     CONSOLE_QUIET_FRAME_BORDER,
     frame_console_region,
 )
+# The five controller classes imported below are NOT referenced by this
+# module's code any more -- the wave-4 decomposition moved every construction
+# into `..Console_Modules.wiring.build_console_controllers`. They are kept as
+# deliberate RE-EXPORTS: 18 test sites across 5 files patch them through this
+# module's namespace (`chat_screen_module.ConsoleDictationController`, ...),
+# which no import-grep can see because the alias hides it. Deleting them --
+# by hand, or via `ruff --fix` / autoflake acting on the F401s they raise --
+# turns 28 tests red. This was tripped once already, while making the move.
+# The clean fix is repointing those test sites at the owning modules; until
+# someone does that, leave these alone.
 from ..Console_Modules.dictation import (
     CONSOLE_DICTATION_MAX_BYTES,
     CONSOLE_DICTATION_MAX_SECONDS,
     CONSOLE_DICTATION_SAMPLE_RATE,
     CONSOLE_DICTATION_SAMPLE_WIDTH,
-    ConsoleDictationController,
+    ConsoleDictationController,  # noqa: F401  (re-export; see note above)
     ConsoleDictationEvent,
     ConsoleDictationLimitSignal,
     ConsoleStreamingDictationSession,
@@ -65,19 +75,19 @@ from ..Console_Modules.dictation import (
     _VOICE_ACK_SESSION_CHANGED,
 )
 from ..Console_Modules.hands_free import (
-    ConsoleHandsFreeController,
+    ConsoleHandsFreeController,  # noqa: F401  (re-export; see note above)
     ConsoleHandsFreeSession,
 )
 from ..Console_Modules.left_rail import ConsoleLeftRail
-from ..Console_Modules.message import ConsoleMessageController
-from ..Console_Modules.prompts import ConsolePromptsController
+from ..Console_Modules.message import ConsoleMessageController  # noqa: F401  (re-export; see note above)
+from ..Console_Modules.prompts import ConsolePromptsController  # noqa: F401  (re-export; see note above)
 from ..Console_Modules.right_rail import ConsoleInspectorRail
 from ..Console_Modules.transcript import (
     ConsoleTranscriptRegion,
     _ConsoleTranscriptReadingState,
 )
 from ..Console_Modules.wiring import build_console_controllers
-from ..Console_Modules.workspace import ConsoleWorkspaceController
+from ..Console_Modules.workspace import ConsoleWorkspaceController  # noqa: F401  (re-export; see note above)
 from ..Console_Modules.session import (
     ConsoleSessionController,
     _canonical_card_character_id,
