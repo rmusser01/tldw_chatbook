@@ -56,7 +56,10 @@ from ...Library.export_progress import (
     format_export_progress_line,
 )
 from ...Library.library_collections_service import LibraryCollectionsServiceError
-from ...Library.library_collections_state import LibraryCollectionsPanelState
+from ...Library.library_collections_state import (
+    LibraryCollectionActionState,
+    LibraryCollectionsPanelState,
+)
 from ...Library.library_conversations_state import build_library_conversations_state
 from ...Library.library_export_scope import (
     ExportScope,
@@ -16415,6 +16418,8 @@ class LibraryScreen(BaseAppScreen):
                 buttons[0].disabled = not action.enabled
                 buttons[0].tooltip = action.tooltip
 
+        await self._sync_collections_form_guidance_widget(panel_state.create_action)
+
         confirm_buttons = list(self.query("#library-confirm-delete-collection"))
         if not self._library_collection_pending_delete_id:
             for button in confirm_buttons:
@@ -16430,6 +16435,44 @@ class LibraryScreen(BaseAppScreen):
                         tooltip="Delete the selected local Collection.",
                     )
                 )
+
+    async def _sync_collections_form_guidance_widget(
+        self, create_action: LibraryCollectionActionState
+    ) -> None:
+        """Targeted mount/update/remove of ``#library-collection-form-guidance``.
+
+        Mirrors ``LibraryCollectionsPanel._compose_collection_form``'s
+        conditional (task-2855): the single enable-Create guidance
+        sentence is shown while the typed name can't yet create a
+        Collection and disappears once it can, without a full panel
+        recompose -- same targeted mount/remove pattern as the
+        confirm-delete button above and
+        ``_sync_library_prompt_open_existing_button``.
+        """
+        guidance_widgets = list(self.query("#library-collection-form-guidance"))
+        if create_action.enabled:
+            for widget in guidance_widgets:
+                await widget.remove()
+            return
+
+        guidance_text = (
+            create_action.disabled_reason
+            or "Enter a Collection name to enable Create."
+        )
+        if guidance_widgets:
+            guidance_widgets[0].update(guidance_text)
+            return
+
+        name_inputs = list(self.query("#library-collection-name-input"))
+        if not name_inputs:
+            return
+        parent = name_inputs[0].parent
+        if parent is None:
+            return
+        await parent.mount(
+            Static(guidance_text, id="library-collection-form-guidance"),
+            before=name_inputs[0],
+        )
 
     async def _refresh_library_collections_snapshot(self) -> None:
         service = getattr(self.app_instance, "library_collections_service", None)

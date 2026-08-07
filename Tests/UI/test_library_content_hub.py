@@ -13,6 +13,9 @@ from tldw_chatbook.Constants import (
     LIBRARY_NAV_CONTEXT_CONVERSATION_ID,
     LIBRARY_NAV_CONTEXT_MODE,
 )
+from tldw_chatbook.Widgets.Library.library_collections_panel import (
+    LIBRARY_COLLECTIONS_STATUS_LINE,
+)
 
 from Tests.UI.test_destination_shells import (
     DestinationHarness,
@@ -448,13 +451,20 @@ async def test_library_collections_selection_explains_membership_workspace_and_a
     None
 ):
     """``LibraryCollectionsPanel`` (mounted verbatim in the canvas) still
-    explains membership, workspace rule, and action status for a selected
-    Collection. The retired 3-pane inspector column duplicated this same
-    copy under different ids (``library-collection-inspector-*``) with a few
+    explains status and action availability for a selected Collection. The
+    retired 3-pane inspector column duplicated this same copy under
+    different ids (``library-collection-inspector-*``) with a few
     inspector-only lines ("Selected Collection Record" heading, "Collection
     item reader: not wired locally yet.", the two "Disabled: collection item
     ... is not wired yet." lines, and the Search/RAG recovery sentence) that
-    have no successor in the single-pane canvas."""
+    have no successor in the single-pane canvas.
+
+    TASK-2855: the spec/roadmap block ("Item reader readiness", "Authority:
+    local", "Content use boundary", "Blocked later: ...", "Next: collection
+    item adapters...") is gone, replaced by one plain-language status line;
+    the "Stored item count: N items" line (redundant with the item count
+    already in the Collections list row and the Details disclosure) is
+    gone too."""
     app = _build_test_app()
     _seed_library_content(app)
     app.library_collections_service = StaticLibraryCollectionsService(
@@ -481,17 +491,25 @@ async def test_library_collections_selection_explains_membership_workspace_and_a
         visible = _visible_text(screen)
 
         assert "Launch Evidence" in visible
-        assert "Stored item count: 3 items" in visible
         assert "Stored collection content" in visible
         assert "Selected: Launch Evidence" in visible
+        assert LIBRARY_COLLECTIONS_STATUS_LINE in visible
         assert "Available now: create, rename, delete records" in visible
-        assert (
-            "Blocked later: item reader, Search/RAG, Study, Console handoff, server sync"
-        ) in visible
-        assert (
-            "Next: collection item adapters are required before item-level actions unlock."
-            in visible
-        )
+        for forbidden in (
+            "Item reader readiness",
+            "Content use boundary",
+            "Blocked later:",
+            "Next: collection item adapters",
+            "Write Sync Safety",
+            "Stored item count:",
+        ):
+            assert forbidden not in visible, forbidden
+        # The standalone "Authority: {source_authority}" label is gone;
+        # substring-matching "Authority: local" isn't safe here because a
+        # real sync dry-run promotion readout legitimately includes an
+        # "Authority: ..." label sourced from Sync_Interop -- check the
+        # retired widget id directly instead.
+        assert not screen.query("#library-collection-source-authority")
         assert screen.query_one("#library-row-browse-collections", Button).has_class(
             "library-rail-row-selected"
         )
@@ -507,7 +525,13 @@ async def test_library_collections_empty_state_keeps_global_browse_rule_and_bloc
     """``LibraryCollectionsPanel``'s empty branch still teaches content entry
     and keeps the create/rename/delete form inert until a name is entered.
     The dead-inspector-only lines dropped here mirror the sibling selection
-    test above (no live successor exists for them)."""
+    test above (no live successor exists for them).
+
+    TASK-2855: the three enable-Create helper sentences collapse into one
+    (``#library-collection-form-guidance``, shown only while Create is
+    disabled), and the "No stored collection items..." sentence renders
+    once instead of twice (the "Stored content preview" duplicate is
+    gone)."""
     app = _build_test_app()
     _seed_library_content(app)
     app.library_collections_service = StaticLibraryCollectionsService([])
@@ -526,28 +550,39 @@ async def test_library_collections_empty_state_keeps_global_browse_rule_and_bloc
             "Create a local Collection record to start reviewing saved content."
             in visible
         )
-        assert "Type a Collection name to enable Create." in visible
-        assert "Form actions: enter a name to enable Create." in visible
-        assert (
-            "Create, Rename, and Delete stay inactive until their requirements are met."
-            in visible
-        )
         assert "No stored collection items are available locally yet." in visible
         assert (
             "Collections are for reading, reviewing, and reusing saved content."
             in visible
         )
         assert "No Collection selected." in visible
-        empty_reader = screen.query_one("#library-collection-empty-reader", Static)
-        form_guidance = screen.query_one("#library-collection-form-guidance", Static)
-        form_action_state = screen.query_one(
-            "#library-collection-form-action-state", Static
+        assert not screen.query("#library-collection-empty-reader")
+        assert not screen.query("#library-collection-empty-reader-title")
+        assert not screen.query("#library-collection-form-action-state")
+        assert not screen.query("#library-collection-form-action-boundary")
+
+        occurrences = visible.count(
+            "No stored collection items are available locally yet."
         )
-        assert empty_reader.region.y <= form_guidance.region.y + 8
+        assert occurrences == 1
+
+        form_guidance = screen.query_one(
+            "#library-collection-form-guidance", Static
+        )
+        assert str(form_guidance.renderable) == "Enter a Collection name."
         assert (
-            form_action_state.region.y
+            form_guidance.region.y
             < screen.query_one("#library-create-collection", Button).region.y
         )
+
+        name_input = screen.query_one("#library-collection-name-input", Input)
+        name_input.value = "Research"
+        await pilot.pause()
+        assert not screen.query("#library-collection-form-guidance")
+        assert screen.query_one("#library-create-collection", Button).disabled is (
+            False
+        )
+
         assert not screen.query("#library-collections-workbench")
         use_in_console = screen.query_one("#library-use-in-console", Button)
         assert use_in_console.disabled is False

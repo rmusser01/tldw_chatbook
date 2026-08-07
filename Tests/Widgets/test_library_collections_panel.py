@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import pytest
-from textual.widgets import Static
+from textual.widgets import Collapsible, Static
 
 from tldw_chatbook.Library.library_collections_state import LibraryCollectionsPanelState
 from tldw_chatbook.Widgets.Library.library_collections_panel import (
+    LIBRARY_COLLECTIONS_STATUS_LINE,
     LibraryCollectionsPanel,
 )
 
@@ -82,19 +83,15 @@ async def test_library_collections_panel_renders_write_sync_promotion_labels(
 
     async with await widget_pilot(LibraryCollectionsPanel, state=state) as pilot:
         await pilot.pause()
+        # TASK-2855: the "Write Sync Safety" heading and its help sentence
+        # were spec-internal chrome and were removed; the underlying
+        # dry-run promotion data is genuinely useful and survives inside
+        # the collapsed-by-default Details disclosure.
+        assert not pilot.app.query("#library-collection-sync-safety-heading")
+        assert not pilot.app.query("#library-collection-sync-safety-help")
         assert str(
             pilot.app.query_one("#library-collection-sync-status", Static).renderable
         ) == ("Sync: dry-run only")
-        assert str(
-            pilot.app.query_one(
-                "#library-collection-sync-safety-heading", Static
-            ).renderable
-        ) == ("Write Sync Safety")
-        assert str(
-            pilot.app.query_one(
-                "#library-collection-sync-safety-help", Static
-            ).renderable
-        ) == ("Review these labels before any future server write promotion.")
         assert str(
             pilot.app.query_one("#library-collection-sync-detail", Static).renderable
         ) == (
@@ -165,3 +162,161 @@ async def test_library_collections_panel_renders_sync_profile_status_banner(
             )._render_markup
             is False
         )
+
+
+async def test_library_collections_panel_replaces_spec_block_with_plain_status_line(
+    widget_pilot,
+):
+    """TASK-2855 AC1: the per-selection spec/roadmap block ("Item reader
+    readiness", "Authority: local", "Content use boundary", "Blocked
+    later: ...", "Next: collection item adapters...") is replaced by one
+    plain-language status line, and none of that vocabulary survives
+    anywhere on the canvas."""
+    state = LibraryCollectionsPanelState.from_values(
+        collections=(
+            {
+                "collection_id": "collection-1",
+                "name": "Research",
+                "description": "Selected sources",
+                "item_count": 2,
+                "source_authority": "local",
+                "sync_status": "local-only",
+                "created_at": "2026-05-08T03:00:00Z",
+                "updated_at": "2026-05-08T04:00:00Z",
+            },
+        ),
+        selected_collection_id="collection-1",
+    )
+
+    async with await widget_pilot(LibraryCollectionsPanel, state=state) as pilot:
+        await pilot.pause()
+        assert str(
+            pilot.app.query_one(
+                "#library-collection-status-line", Static
+            ).renderable
+        ) == LIBRARY_COLLECTIONS_STATUS_LINE
+
+        rendered = " ".join(
+            str(widget.renderable) for widget in pilot.app.query(Static)
+        )
+        for forbidden in (
+            "Item reader readiness",
+            "Authority: local",
+            "Content use boundary",
+            "Blocked later:",
+            "Next: collection item adapters",
+            "Write Sync Safety",
+        ):
+            assert forbidden not in rendered, forbidden
+
+        for retired_id in (
+            "#library-collection-membership-heading",
+            "#library-collection-source-authority",
+            "#library-collection-workspace-heading",
+            "#library-collection-workspace-rule",
+            "#library-collection-deferred-actions",
+            "#library-collection-reader-later",
+            "#library-collection-sync-safety-heading",
+            "#library-collection-sync-safety-help",
+        ):
+            assert not pilot.app.query(retired_id), retired_id
+
+        # Genuinely useful action-status copy survives unchanged.
+        assert "Available now: create, rename, delete records" in rendered
+
+
+async def test_library_collections_panel_moves_sync_detail_behind_details_disclosure(
+    widget_pilot,
+):
+    """TASK-2855 AC2: sync-safety/internal detail (sync status, sync
+    detail, item count, updated-at) moves behind a collapsed-by-default
+    "Details" disclosure instead of always being on screen."""
+    state = LibraryCollectionsPanelState.from_values(
+        collections=(
+            {
+                "collection_id": "collection-1",
+                "name": "Research",
+                "description": "Selected sources",
+                "item_count": 2,
+                "source_authority": "local",
+                "sync_status": "",
+                "sync_mirror_report": {
+                    "dry_run": True,
+                    "write_enabled": False,
+                    "mapped_count": 2,
+                    "actions": [
+                        {"local_present": True, "remote_present": True},
+                    ],
+                },
+                "created_at": "2026-05-08T03:00:00Z",
+                "updated_at": "2026-05-08T04:00:00Z",
+            },
+        ),
+        selected_collection_id="collection-1",
+    )
+
+    async with await widget_pilot(LibraryCollectionsPanel, state=state) as pilot:
+        await pilot.pause()
+        details = pilot.app.query_one("#library-collection-details", Collapsible)
+        assert details.collapsed is True
+
+        for widget_id in (
+            "#library-collection-sync-status",
+            "#library-collection-sync-detail",
+            "#library-collection-item-count",
+            "#library-collection-updated-at",
+        ):
+            widget = pilot.app.query_one(widget_id, Static)
+            assert details in widget.ancestors, widget_id
+
+
+async def test_library_collections_panel_empty_state_renders_message_once(
+    widget_pilot,
+):
+    """TASK-2855 AC3: the empty-state "no stored collection items" sentence
+    renders once, not twice."""
+    state = LibraryCollectionsPanelState.from_values(collections=(), status="empty")
+
+    async with await widget_pilot(LibraryCollectionsPanel, state=state) as pilot:
+        await pilot.pause()
+        occurrences = sum(
+            1
+            for widget in pilot.app.query(Static)
+            if "No stored collection items are available locally yet."
+            in str(widget.renderable)
+        )
+        assert occurrences == 1
+        assert not pilot.app.query("#library-collection-empty-reader")
+        assert not pilot.app.query("#library-collection-empty-reader-title")
+
+
+async def test_library_collections_panel_shows_single_create_guidance_when_name_invalid(
+    widget_pilot,
+):
+    """TASK-2855 AC3: the three enable-Create helper sentences collapse
+    into one, shown while the typed name is not yet valid."""
+    state = LibraryCollectionsPanelState.from_values(collections=(), status="empty")
+
+    async with await widget_pilot(LibraryCollectionsPanel, state=state) as pilot:
+        await pilot.pause()
+        guidance = pilot.app.query("#library-collection-form-guidance")
+        assert len(guidance) == 1
+        assert str(guidance[0].renderable) == "Enter a Collection name."
+        assert not pilot.app.query("#library-collection-form-action-state")
+        assert not pilot.app.query("#library-collection-form-action-boundary")
+
+
+async def test_library_collections_panel_hides_create_guidance_once_name_is_valid(
+    widget_pilot,
+):
+    """TASK-2855 AC3: once a valid, non-duplicate name is typed, the
+    create-guidance sentence disappears."""
+    state = LibraryCollectionsPanelState.from_values(
+        collections=(), status="empty", create_name="Research"
+    )
+
+    async with await widget_pilot(
+        LibraryCollectionsPanel, state=state, name_value="Research"
+    ) as pilot:
+        await pilot.pause()
+        assert not pilot.app.query("#library-collection-form-guidance")

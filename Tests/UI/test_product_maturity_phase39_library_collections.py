@@ -10,6 +10,9 @@ from textual.widgets import Button, Input, Static
 
 from tldw_chatbook.Library.library_collections_service import LibraryCollectionRecord
 from tldw_chatbook.Sync_Interop.sync_state_repository import SyncStateRepository
+from tldw_chatbook.Widgets.Library.library_collections_panel import (
+    LIBRARY_COLLECTIONS_STATUS_LINE,
+)
 from tldw_chatbook.runtime_policy.types import RuntimeSourceState
 
 from Tests.UI.test_destination_shells import (
@@ -210,19 +213,23 @@ async def test_library_collections_mode_mounts_panel_and_defers_scoped_actions()
         assert len(screen.query("#library-rag-run-query")) == 0
         assert "Sync: sync-unavailable" in _visible_text(screen)
         assert "Updated 2026-05-08 04:05 UTC" in _visible_text(screen)
-        # The retired action-region's per-mode Study/Flashcards/Quizzes/Console
-        # handoff buttons never mount for a collection selection (they only
-        # live in the create-study/-flashcards/-quizzes canvases now, as
-        # screen-global actions rather than collection-scoped ones); the
-        # collections panel's own deferred-actions copy is the surviving
-        # surface for "collection item actions stay blocked".
+        # TASK-2855: the retired action-region's per-mode
+        # Study/Flashcards/Quizzes/Console handoff buttons never mount for
+        # a collection selection (they only live in the
+        # create-study/-flashcards/-quizzes canvases now, as screen-global
+        # actions rather than collection-scoped ones); the deferred-actions
+        # roadmap copy ("Blocked later: ...", "Next: collection item
+        # adapters...") that used to be the surviving surface for
+        # "collection item actions stay blocked" was spec/roadmap
+        # vocabulary and was replaced by one plain-language status line.
+        assert LIBRARY_COLLECTIONS_STATUS_LINE in _visible_text(screen)
         assert (
             "Blocked later: item reader, Search/RAG, Study, Console handoff, server sync"
-            in (_visible_text(screen))
+            not in _visible_text(screen)
         )
         assert (
             "Next: collection item adapters are required before item-level actions unlock."
-            in (_visible_text(screen))
+            not in _visible_text(screen)
         )
 
 
@@ -293,10 +300,15 @@ async def test_library_collections_surfaces_sync_dry_run_report_without_write_sy
             for widget in screen.query("#library-collection-detail Static")
         )
         assert "Selected: Research" in detail_text
-        assert "Write Sync Safety" in detail_text
+        # TASK-2855: the "Write Sync Safety" heading and its help sentence
+        # were spec-internal chrome and were removed; the dry-run
+        # promotion data above (asserted at the top of this test) is the
+        # genuinely useful part and now lives behind the Details
+        # disclosure instead.
+        assert "Write Sync Safety" not in detail_text
         assert (
             "Review these labels before any future server write promotion."
-            in detail_text
+            not in detail_text
         )
         assert "No Collection selected." not in detail_text
 
