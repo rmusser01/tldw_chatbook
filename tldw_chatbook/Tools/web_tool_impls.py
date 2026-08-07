@@ -13,16 +13,18 @@ web_rate_limit.py and web_cache.py @ 5605b9d9906322c2e6b5342b48c391ae674d315e �
 rewritten as a small sync function, not a line port.
 """
 
+import asyncio
 import codecs
 import html as html_lib
 import importlib.util
 import ipaddress
 import re
 import socket
+import threading
 import time
 from collections import deque
 from html.parser import HTMLParser
-from typing import NamedTuple
+from typing import NamedTuple, Optional
 from urllib.parse import urljoin, urlsplit
 
 import httpx
@@ -1207,3 +1209,297 @@ def web_crawl(
     return _format_crawl_result(
         pages, failed, blocked, stop_reason, children_skipped=children_skipped, duplicates_skipped=duplicates_skipped
     )
+
+
+# ---------------------------------------------------------------------------
+# web_deep_search (task-1356 Task 5)
+# ---------------------------------------------------------------------------
+
+DEEP_SEARCH_ANSWER_MAX_BYTES = 16 * 1024
+DEEP_SEARCH_SOURCES_MAX = 20
+# Hard backstop beyond the deadline the phase-2 watchdog fires cancel_event
+# at: the pipeline has no circuit breaker (a dead relevance-LLM provider
+# costs N sequential llm_timeout_s calls), so cooperative cancellation via
+# cancel_event is the primary stop signal and this wait_for grace is only
+# the last-resort guard against a call that never checks it.
+_DEEP_SEARCH_DEADLINE_GRACE_S = 30.0
+# Extra slack given to the loop-safe runner's thread.join() backstop on top
+# of the coroutine's own wait_for(deadline + grace) so the join timeout
+# never races the coroutine's own timeout under normal scheduling jitter.
+_DEEP_SEARCH_THREAD_JOIN_SLACK_S = 5.0
+
+
+def _deep_search_settings() -> dict:
+    """Resolve the ``[SearchSettings]`` config keys web_deep_search needs.
+
+    A dedicated module function (rather than inline ``get_cli_setting``
+    calls) so tests can monkeypatch config resolution wholesale instead of
+    stubbing individual keys. Defaults mirror task-4's config revival.
+    """
+    from ..config import get_cli_setting  # local import: keep module import cheap
+
+    return {
+        "search_provider_default": get_cli_setting("SearchSettings", "search_provider_default", "google"),
+        "relevance_analysis_llm": get_cli_setting("SearchSettings", "relevance_analysis_llm", "openai"),
+        "final_answer_llm": get_cli_setting("SearchSettings", "final_answer_llm", "openai"),
+        "search_enable_subquery": get_cli_setting("SearchSettings", "search_enable_subquery", False),
+        "search_default_max_queries": get_cli_setting("SearchSettings", "search_default_max_queries", 5),
+        "search_result_max": get_cli_setting("SearchSettings", "search_result_max", 10),
+        "relevance_llm_timeout_s": get_cli_setting("SearchSettings", "relevance_llm_timeout_s", 30),
+        "relevance_scrape_timeout_s": get_cli_setting("SearchSettings", "relevance_scrape_timeout_s", 30),
+        "deep_search_timeout_s": get_cli_setting("SearchSettings", "deep_search_timeout_s", 300),
+    }
+
+
+def _run_coro_loop_safe(coro, timeout_s: float):
+    """Run ``coro`` to completion regardless of whether a loop is already running.
+
+    No running loop on this thread (the common case -- a worker thread or a
+    plain sync caller): ``asyncio.run(coro)`` directly. A loop IS already
+    running (the tool invoked from inside async agent-runtime code):
+    ``asyncio.run`` cannot nest, so ``coro`` runs on a dedicated daemon
+    thread with its own fresh loop, and this thread blocks on ``join``
+    joined with a ``timeout_s`` hard backstop -- defense in depth alongside
+    whatever internal deadline ``coro`` itself enforces (e.g. an
+    ``asyncio.wait_for`` inside it), for the case where ``coro`` fails to
+    respect its own deadline.
+
+    Args:
+        coro: A not-yet-awaited coroutine object.
+        timeout_s: Hard wall-clock backstop for the dedicated-thread path;
+            ignored on the direct ``asyncio.run`` path (nothing to bound
+            there beyond whatever ``coro`` does internally).
+
+    Returns:
+        Whatever ``coro`` returns.
+
+    Raises:
+        LocalToolError: ``[deep-search-failed] timeout: ...`` if the
+            dedicated thread does not finish within ``timeout_s``.
+        BaseException: whatever ``coro`` itself raised, re-raised as-is on
+            the caller's thread.
+    """
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(coro)
+
+    outcome: dict = {}
+
+    def _runner() -> None:
+        try:
+            outcome["value"] = asyncio.run(coro)
+        except BaseException as exc:  # noqa: BLE001 - re-raised on the caller's thread below
+            outcome["error"] = exc
+
+    thread = threading.Thread(target=_runner, daemon=True)
+    thread.start()
+    thread.join(timeout_s)
+    if thread.is_alive():
+        raise LocalToolError(
+            f"[deep-search-failed] timeout: analysis did not finish within {timeout_s:.0f}s "
+            "(loop-safe thread backstop)"
+        )
+    if "error" in outcome:
+        raise outcome["error"]
+    return outcome["value"]
+
+
+def web_deep_search(question: str, engine: Optional[str] = None, max_results: Optional[int] = None) -> str:
+    """Multi-query web research: sub-questions, relevance filtering, a cited answer.
+
+    Two-phase pipeline (``Web_Scraping.WebSearch_APIs``): phase 1
+    (``generate_and_search``, sync) optionally expands ``question`` into
+    sub-queries and fans out searches; phase 2 (``analyze_and_aggregate``,
+    async) scores results for relevance, scrapes/summarizes the relevant
+    ones, and synthesizes a cited answer. Both LLM endpoints (relevance
+    analysis, final synthesis) come from ``[SearchSettings]`` config
+    (``_deep_search_settings``) and are validated BEFORE phase 1 runs --
+    missing config must never cost a search-provider call.
+
+    Phase 2 runs under a wall-clock deadline (``deep_search_timeout_s``
+    minus phase 1's elapsed time): a ``cancel_event`` is set when the
+    deadline is reached, which the pipeline checks cooperatively between
+    per-result relevance calls (task-1356's no-circuit-breaker design means
+    a dead provider otherwise costs N sequential LLM timeouts) so a
+    deadline hit still yields a partial synthesis rather than nothing; a
+    hard ``asyncio.wait_for`` at deadline + 30s grace is the backstop if the
+    pipeline call never returns at all.
+
+    Args:
+        question: The research question. Must be non-empty.
+        engine: Search engine name, validated against ``SEARCH_ENGINES``;
+            defaults to ``search_provider_default`` from config.
+        max_results: Results per query, clamped to ``[1, search_result_max]``
+            (config); defaults to ``search_result_max``.
+
+    Returns:
+        str: On success, the synthesized answer (byte-capped at
+        ``DEEP_SEARCH_ANSWER_MAX_BYTES``) followed by a ``Sources:`` list
+        (evidence id/title/url, capped at ``DEEP_SEARCH_SOURCES_MAX``) and a
+        one-line status footer. When phase 2 finds no relevant results,
+        returns an explanatory (non-error) string listing the queries tried
+        instead of raising -- the model is expected to read and act on it.
+
+    Raises:
+        LocalToolError: ``[invalid-args]`` for an empty question or an
+            unrecognized engine; ``[deep-search-failed] relevance: ...`` /
+            ``synthesis: ...`` if the corresponding LLM is not configured
+            (checked before any spend); ``[deep-search-failed] search: ...``
+            for a phase-1 failure or zero search results;
+            ``[deep-search-failed] relevance: ...`` for an unexpected
+            phase-2 failure; ``[deep-search-failed] timeout: ...`` if the
+            deadline backstop is hit.
+    """
+    if not isinstance(question, str) or not question.strip():
+        raise LocalToolError("[invalid-args] question must be a non-empty string")
+    question = question.strip()
+
+    settings = _deep_search_settings()
+
+    if engine is None:
+        engine = settings.get("search_provider_default", SEARCH_DEFAULT_ENGINE)
+    if not isinstance(engine, str) or engine.strip().lower() not in SEARCH_ENGINES:
+        raise LocalToolError(f"[invalid-args] engine must be one of {SEARCH_ENGINES}: {engine!r}")
+    engine = engine.strip().lower()
+
+    try:
+        result_ceiling = int(settings.get("search_result_max", SEARCH_MAX_RESULT_COUNT))
+    except (TypeError, ValueError):
+        result_ceiling = SEARCH_MAX_RESULT_COUNT
+    if result_ceiling < 1:
+        result_ceiling = SEARCH_MAX_RESULT_COUNT
+    if max_results is None:
+        max_results = result_ceiling
+    try:
+        max_results = int(max_results)
+    except (TypeError, ValueError):
+        max_results = result_ceiling
+    max_results = max(1, min(max_results, result_ceiling))
+
+    # Spend-check-before-spend: both LLM endpoints must be configured before
+    # phase 1 (a real search-provider call) ever runs.
+    relevance_llm = settings.get("relevance_analysis_llm")
+    if not relevance_llm or not str(relevance_llm).strip():
+        raise LocalToolError("[deep-search-failed] relevance: no relevance_analysis_llm configured")
+    final_answer_llm = settings.get("final_answer_llm")
+    if not final_answer_llm or not str(final_answer_llm).strip():
+        raise LocalToolError("[deep-search-failed] synthesis: no final_answer_llm configured")
+
+    search_params = {
+        "engine": engine,
+        "content_country": "US",
+        "search_lang": "en",
+        "output_lang": "en",
+        "result_count": max_results,
+        "subquery_generation": bool(settings.get("search_enable_subquery", False)),
+        "subquery_generation_llm": relevance_llm,
+        "relevance_analysis_llm": relevance_llm,
+        "final_answer_llm": final_answer_llm,
+        # CRITICAL: analyze_and_aggregate reads these two straight out of
+        # search_params -- omitting them means the config knobs silently
+        # never reach the pipeline and it falls back to its own 30s defaults.
+        "relevance_llm_timeout_s": settings.get("relevance_llm_timeout_s", 30),
+        "relevance_scrape_timeout_s": settings.get("relevance_scrape_timeout_s", 30),
+    }
+
+    from ..Web_Scraping import WebSearch_APIs  # local import: keep module import cheap
+
+    deadline_s = float(settings.get("deep_search_timeout_s", 300) or 300)
+    start = time.monotonic()
+    try:
+        phase1 = WebSearch_APIs.generate_and_search(question, search_params)
+    except Exception as exc:  # noqa: BLE001 - structured per behavior 6
+        raise LocalToolError(f"[deep-search-failed] search: {exc}") from exc
+
+    wsr = phase1["web_search_results_dict"]
+    sub_query_dict = phase1["sub_query_dict"]
+    results = wsr.get("results") or []
+    warnings = list(wsr.get("warnings") or [])
+
+    if not results:
+        warn_suffix = f" (warnings: {'; '.join(warnings)})" if warnings else ""
+        raise LocalToolError(f"[deep-search-failed] search: no results{warn_suffix}")
+
+    remaining = max(0.0, deadline_s - (time.monotonic() - start))
+    hard_timeout = remaining + _DEEP_SEARCH_DEADLINE_GRACE_S
+
+    async def _phase2():
+        cancel_event = asyncio.Event()
+
+        async def _watchdog() -> None:
+            try:
+                await asyncio.sleep(remaining)
+            except asyncio.CancelledError:
+                return
+            cancel_event.set()
+
+        watchdog_task = asyncio.ensure_future(_watchdog())
+        try:
+            pipeline_result = await asyncio.wait_for(
+                WebSearch_APIs.analyze_and_aggregate(wsr, sub_query_dict, search_params, cancel_event=cancel_event),
+                timeout=hard_timeout,
+            )
+        finally:
+            watchdog_task.cancel()
+        return pipeline_result, cancel_event.is_set()
+
+    try:
+        phase2_result, deadline_hit = _run_coro_loop_safe(
+            _phase2(), timeout_s=hard_timeout + _DEEP_SEARCH_THREAD_JOIN_SLACK_S
+        )
+    except LocalToolError:
+        raise  # already structured (e.g. the loop-safe runner's own timeout)
+    except asyncio.TimeoutError as exc:
+        raise LocalToolError(
+            f"[deep-search-failed] timeout: exceeded {deadline_s:.0f}s deep-search deadline"
+        ) from exc
+    except Exception as exc:  # noqa: BLE001 - structured per behavior 6
+        # analyze_and_aggregate's own two steps (relevance scoring,
+        # synthesis) each swallow their internal failures and degrade
+        # gracefully rather than raising (see WebSearch_APIs.py); an
+        # exception escaping the combined call is therefore attributed to
+        # the earlier, I/O-heavier relevance step.
+        raise LocalToolError(f"[deep-search-failed] relevance: {exc}") from exc
+
+    final_answer = phase2_result.get("final_answer") or {}
+    relevant_results = phase2_result.get("relevant_results") or {}
+    warnings = list((phase2_result.get("web_search_results_dict") or {}).get("warnings") or warnings)
+
+    sub_questions = list(sub_query_dict.get("sub_questions") or [])
+
+    if not relevant_results:
+        queries_tried = "; ".join([question, *sub_questions]) if sub_questions else question
+        return (
+            f"No relevant results found for {question!r}. Analyzed {len(results)} "
+            f"result(s) across {1 + len(sub_questions)} quer{'y' if not sub_questions else 'ies'} "
+            f"tried: {queries_tried}. Try rephrasing the question or broadening it."
+        )
+
+    text = _truncate_to_bytes(str(final_answer.get("text") or ""), DEEP_SEARCH_ANSWER_MAX_BYTES)
+
+    evidence = final_answer.get("evidence") or []
+    source_lines = []
+    for i, item in enumerate(evidence[:DEEP_SEARCH_SOURCES_MAX], 1):
+        if not isinstance(item, dict):
+            continue
+        sid = item.get("id", i)
+        title = item.get("title") or item.get("url") or "Untitled"
+        url = item.get("url") or ""
+        source_lines.append(f"[{sid}] {title} — {url}")
+    sources_block = "Sources:\n" + "\n".join(source_lines) if source_lines else "Sources: (none)"
+
+    confidence = final_answer.get("confidence") or 0.0
+    chunks = final_answer.get("chunks") or []
+    fallback_count = sum(1 for c in chunks if isinstance(c, dict) and c.get("generated") is False)
+    fallback_note = f" · {fallback_count} chunk(s) used a fallback summary" if fallback_count else ""
+    warning_note = f" · {len(warnings)} search warning(s)" if warnings else ""
+    deadline_note = " · deadline reached: partial synthesis" if deadline_hit else ""
+
+    footer = (
+        f"Confidence: {confidence:.2f} · Engine: {engine} · Sub-queries: {len(sub_questions)} · "
+        f"Analyzed {len(relevant_results)} of {len(results)} results"
+        f"{fallback_note}{warning_note}{deadline_note}"
+    )
+
+    return f"{text}\n\n{sources_block}\n\n{footer}"
