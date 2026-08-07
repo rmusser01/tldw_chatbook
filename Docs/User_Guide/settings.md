@@ -155,7 +155,11 @@ editing application-wide Speech & TTS defaults. The Speech Studio can keep
 separate Studio preferences without changing these values.", and an **Open
 Speech Lab** button, because this pane deliberately does *not* talk to any
 server: "Settings reuses accepted in-memory observations only. Open Speech
-Lab to test the server or refresh models and voices." Ordinary **Save**
+Lab to test the server or refresh models and voices." Right below that
+button, a note points at the two surfaces this pane does not manage: "Voice
+profiles are managed in Lab > Speech > Voice Profiles — open Speech Lab,
+above, to get there. Per-character voices are assigned in the Roleplay
+character editor's Voice & Speech section, not here." Ordinary **Save**
 "validates and persists locally. Use Speech Lab for connection tests,
 discovery, generation, and playback."
 
@@ -492,4 +496,8 @@ not open an editor.
   inspector" at the bottom means there is more below.
 
 —
-*Verified against dev @ 39232202b — 2026-08-06*
+*Verified against dev @ 39232202b — 2026-08-06. Core — Speech & TTS's
+scope-banner note refreshed against dev @ 7f23e0263 — 2026-08-07 (voice
+profiles slice 4: added pointer-note copy verbatim from
+`speech_tts_settings_panel.py`; not re-driven live, the rest of this page's
+content unchanged from the prior stamp).*
