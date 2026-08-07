@@ -119,6 +119,26 @@ def test_serper_end_to_end_through_process(monkeypatch):
     assert [r["url"] for r in result["results"]] == ["https://one.example/", "https://two.example/"]
 
 
+def test_serper_http_error_raises(monkeypatch):
+    _set_key(monkeypatch, "serper_search_api_key", "test-serper-key")
+    _patch_requests(monkeypatch, {}, status_code=429)
+    with pytest.raises(WebSearch_APIs.requests.exceptions.HTTPError):
+        WebSearch_APIs.search_web_serper("q", "US", "en", 5)
+
+
+def test_serper_http_error_via_perform_websearch(monkeypatch):
+    """perform_websearch's dispatch try/except (spec 5) must turn a backend
+    HTTPError into its {"processing_error": ...} envelope, not crash the
+    caller -- see the `except Exception as e` at the end of perform_websearch,
+    which returns {"processing_error": f"Error performing web search: {e}"}."""
+    _set_key(monkeypatch, "serper_search_api_key", "test-serper-key")
+    _patch_requests(monkeypatch, {}, status_code=401)
+    result = WebSearch_APIs.perform_websearch("serper", "q", "US", "en", "en", 5)
+    assert isinstance(result, dict)
+    assert result.get("processing_error") is not None
+    assert "401" in result["processing_error"]
+
+
 # ---------------------------------------------------------------------------
 # Exa
 # ---------------------------------------------------------------------------
@@ -156,6 +176,8 @@ def test_exa_parser_standard_shape():
     WebSearch_APIs.parse_exa_results(_EXA_PAYLOAD, out)
     assert len(out["results"]) == 2
     first, second = out["results"]
+    assert first["title"] == "Exa One"
+    assert first["url"] == "https://exa-one.example/"
     assert first["content"] == "highlight text one"
     assert first["metadata"]["snippet"] == "highlight text one"
     assert first["metadata"]["date_published"] == "2026-02-02"
@@ -170,6 +192,13 @@ def test_exa_end_to_end_through_process(monkeypatch):
     result = WebSearch_APIs.process_web_search_results(raw, "exa")
     assert result["processing_error"] is None
     assert len(result["results"]) == 2
+
+
+def test_exa_http_error_raises(monkeypatch):
+    _set_key(monkeypatch, "exa_search_api_key", "test-exa-key")
+    _patch_requests(monkeypatch, {}, status_code=401)
+    with pytest.raises(WebSearch_APIs.requests.exceptions.HTTPError):
+        WebSearch_APIs.search_web_exa("q", 5)
 
 
 # ---------------------------------------------------------------------------
@@ -271,16 +300,95 @@ def test_yandex_end_to_end_through_process(monkeypatch):
     assert [r["url"] for r in result["results"]] == ["https://ya-one.example/", "https://ya-two.example/"]
 
 
+def test_yandex_http_error_raises(monkeypatch):
+    _set_key(monkeypatch, "yandex_search_api_key", "test-ya-key")
+    _set_key(monkeypatch, "yandex_search_folder_id", "test-folder")
+    _patch_requests(monkeypatch, {}, status_code=429)
+    with pytest.raises(WebSearch_APIs.requests.exceptions.HTTPError):
+        WebSearch_APIs.search_web_yandex("q", 5)
+
+
+# ---------------------------------------------------------------------------
+# Parity: every engine SEARCH_ENGINES advertises must produce real results
+# ---------------------------------------------------------------------------
+
+# parse_tavily_results / parse_searx_results are `pass` stubs -- a real API
+# response parses to zero results, and the caller renders that as "No
+# results found" for an engine that is advertised as working (task-2990).
+# When one of these parsers is implemented, remove it from this set: the
+# assertion below will then start failing (results != [] for a `pass`
+# stub is impossible), which is the signal to also delete its branch in
+# the loop below.
+_KNOWN_BROKEN_PARSERS = {"tavily", "searx"}  # see task-2990
+
+# One minimal, realistic non-empty payload per engine, shaped like that
+# engine's own real API response (read from each search_web_*/parse_*
+# function above) -- not a generic placeholder. exa/serper/yandex reuse
+# the payload constants already defined above for their dedicated tests.
+_ENGINE_SAMPLE_PAYLOADS = {
+    "google": {
+        "items": [{"title": "G Title", "link": "https://g.example/", "snippet": "g snippet"}]
+    },
+    "bing": {
+        "webPages": {"value": [{"name": "B Title", "url": "https://b.example/", "snippet": "b snippet"}]}
+    },
+    "duckduckgo": {
+        "results": [{"title": "D Title", "href": "https://d.example/", "body": "d snippet"}]
+    },
+    "brave": {
+        "web": {"results": [{"title": "Br Title", "url": "https://br.example/", "description": "br snippet"}]}
+    },
+    "kagi": {
+        "data": [{"t": 0, "title": "K Title", "url": "https://k.example/", "snippet": "k snippet"}]
+    },
+    "exa": _EXA_PAYLOAD,
+    "serper": _SERPER_PAYLOAD,
+    "yandex": _yandex_payload(_YANDEX_XML),
+    # Real Tavily API response shape (docs.tavily.com/documentation/api-reference);
+    # parse_tavily_results ignores it entirely -- task-2990.
+    "tavily": {
+        "query": "cherry cake",
+        "results": [{"title": "T Title", "url": "https://t.example/", "content": "t snippet", "score": 0.9}],
+    },
+    # Real SearX/SearXNG JSON API response shape (docs.searxng.org/dev/search_api.html);
+    # parse_searx_results ignores it entirely -- task-2990.
+    "searx": {
+        "query": "cherry cake",
+        "results": [{"title": "S Title", "url": "https://s.example/", "content": "s snippet"}],
+        "number_of_results": 1,
+    },
+}
+
+
 def test_agent_enum_engines_all_dispatchable():
-    """Every engine the agent tool advertises must reach a real backend."""
+    """Every engine the agent tool advertises must reach a real backend that
+    parses a realistic, non-empty payload of ITS OWN shape into at least one
+    standardized result -- except the parsers in _KNOWN_BROKEN_PARSERS, which
+    are `pass` stubs (task-2990) and silently render "No results found" for
+    real responses. Those are asserted at their CURRENT (broken) behavior so
+    this test starts failing the day someone fixes one, as a nudge to shrink
+    the allowlist and close task-2990.
+    """
     from tldw_chatbook.Tools.web_tool_impls import SEARCH_ENGINES
     for engine in SEARCH_ENGINES:
-        result = WebSearch_APIs.process_web_search_results({}, engine)
-        # a real engine parses an empty payload to an empty result list;
-        # an unknown engine sets processing_error ("Invalid Search Engine Name")
-        assert result["processing_error"] is None or "Invalid" not in str(result["processing_error"]), (
-            f"agent enum advertises {engine!r} but process_web_search_results rejects it"
+        payload = _ENGINE_SAMPLE_PAYLOADS.get(engine)
+        assert payload is not None, f"no sample payload registered for advertised engine {engine!r}"
+        result = WebSearch_APIs.process_web_search_results(payload, engine)
+        assert result["processing_error"] is None, (
+            f"{engine}: unexpected processing_error parsing a minimal {engine} payload: "
+            f"{result['processing_error']}"
         )
+        if engine in _KNOWN_BROKEN_PARSERS:
+            assert result["results"] == [], (
+                f"{engine} parser now returns results for a real payload -- it is no "
+                f"longer a `pass` stub. Remove {engine!r} from _KNOWN_BROKEN_PARSERS "
+                f"and close task-2990."
+            )
+        else:
+            assert len(result["results"]) >= 1, (
+                f"agent enum advertises {engine!r} but its parser produced zero results "
+                f"from a minimal, realistic {engine} payload"
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -290,8 +398,10 @@ def test_agent_enum_engines_all_dispatchable():
 import os
 from pathlib import Path
 
-# Key files are read from this checkout's root (where no .gitignore applies);
-# when running from a worktree, copy key files there before running with --run-live.
+# Key files at the checkout root are covered by the tracked .gitignore rules
+# (*-api-key.txt, yandex-folder-id.txt), so they're read from there without
+# risk of an accidental commit; when running from a worktree, copy key files
+# there before running with --run-live.
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _LIVE_ENABLED = os.environ.get("TLDW_LIVE_SEARCH_TESTS") == "1"
 
