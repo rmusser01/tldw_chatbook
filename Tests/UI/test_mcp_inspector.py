@@ -2920,6 +2920,42 @@ async def test_show_permission_origin_sentence_falls_back_for_unrecognized_origi
         assert origin == "Permission state could not be resolved."
 
 
+@pytest.mark.asyncio
+async def test_show_permission_state_line_reads_unknown_not_off_for_gate_error():
+    """Fix Round J (review of Fix Round H): the test above always pinned
+    the gate_error ORIGIN sentence while the state line ONE WIDGET ABOVE
+    it read "Permission: Off" -- `ui_label` maps the synthesized
+    fail-closed `state="deny"` to "Off" with no origin awareness, so the
+    block stacked a confident configuration claim directly on top of an
+    admission that the configuration could not be read. Exactly the
+    contradiction shape earlier rounds removed from the Test Tool body
+    and the Advanced hatch, reassembled by composition of two
+    individually-truthful widgets. The state line must say what is known
+    ("Unknown"), and a GENUINE deny must keep saying "Off" -- both
+    directions pinned so the fix cannot silently overreach."""
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        await inspector.show_permission(
+            _tool(), EffectiveToolState(state="deny", origin="gate_error")
+        )
+        await pilot.pause()
+        state_line = str(
+            app.query_one("#mcp-inspector-permission-state", Static).renderable
+        )
+        assert state_line == "Permission: Unknown"
+        assert "Off" not in state_line
+
+        await inspector.show_permission(
+            _tool(), EffectiveToolState(state="deny", origin="tool_override")
+        )
+        await pilot.pause()
+        state_line = str(
+            app.query_one("#mcp-inspector-permission-state", Static).renderable
+        )
+        assert state_line == "Permission: Off"
+
+
 # -- Task 3 (MCP Hub Phase 6): cascade provenance ----------------------------
 
 

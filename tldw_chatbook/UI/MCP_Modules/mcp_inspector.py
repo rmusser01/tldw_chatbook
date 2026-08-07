@@ -1693,8 +1693,30 @@ class MCPInspector(Vertical):
             # (the `"muted"` fallback never fires here -- `state` is always
             # one of `allow|ask|deny`), so `mcp-status-{kind}` always
             # resolves to one of the three classes the bundle defines.
+            #
+            # Fix Round J: `origin == "gate_error"` is the synthesized
+            # fail-closed verdict (the permission RESOLVER raised, not a
+            # configured Off) -- `ui_label` maps its `state="deny"` to
+            # "Off", which stacked "Permission: Off" (a confident
+            # configuration claim) one line above "Permission state could
+            # not be resolved." (an admission we don't know it) -- the
+            # exact contradiction shape rounds B/D/F removed from the Test
+            # Tool body and the Advanced hatch, reassembled here by two
+            # truthful-in-isolation widgets. The label now says what is
+            # actually known ("Unknown"); the `error` status class is KEPT
+            # on purpose -- the color encodes the EFFECT (fail-closed, the
+            # tool will not run; don't trust it), which is true, while the
+            # label no longer misstates the CAUSE. The other `ui_label`
+            # renderers (Permissions matrix rows, Tools-mode State column
+            # via `format_tool_state_label()`) still print "Off ·" for
+            # gate_error rows -- that is task-2270's scope (gate_error copy
+            # across the views), not silently expanded here.
             Static(
-                f"Permission: {effective.ui_label}",
+                (
+                    "Permission: Unknown"
+                    if effective.origin == "gate_error"
+                    else f"Permission: {effective.ui_label}"
+                ),
                 id="mcp-inspector-permission-state",
                 classes=f"ds-field-row mcp-status-{tool_state_kind(effective)}",
                 markup=False,
