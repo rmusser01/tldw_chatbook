@@ -82,7 +82,7 @@ class LocalToolProvider:
         specs: Tool specs; defaults to the built-in set (fs_list, fs_read,
             fs_write, fs_edit, fs_patch, fs_glob, fs_grep, git_status,
             git_diff, git_log, git_blame, git_branches, web_fetch,
-            web_search).
+            web_search, web_crawl).
         resolve_state: (HubTool) -> EffectiveToolState, injected by the
             controller (owns permission-store access).
         kill_switch: () -> bool master off-switch.

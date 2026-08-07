@@ -410,6 +410,24 @@ def test_crawl_deadline_stops(crawl_env):
     assert "http://example.com/never" not in crawl_env.calls
 
 
+def test_crawl_deadline_stops_during_redirect_hop(crawl_env):
+    """Between-hops deadline coverage: a redirect whose handler advances the
+    clock past CRAWL_DEADLINE_SECONDS must cause the crawl to stop, and the
+    redirect target must never be fetched (exercises _CrawlDeadline raise/catch)."""
+    from tldw_chatbook.Tools.web_tool_impls import CRAWL_DEADLINE_SECONDS
+
+    def redirect_with_deadline_advance(request):
+        crawl_env.clock.now += CRAWL_DEADLINE_SECONDS + 1
+        return httpx.Response(302, headers={"location": "http://example.com/after-deadline"})
+
+    _site(crawl_env, {"http://example.com/": ("root", ["/redirect"])})
+    crawl_env.routes["http://example.com/redirect"] = redirect_with_deadline_advance
+    _site(crawl_env, {"http://example.com/after-deadline": ("should not fetch", [])})
+    out = web_crawl("http://example.com/")
+    assert "Stopped: deadline reached." in out
+    assert "http://example.com/after-deadline" not in crawl_env.calls
+
+
 def test_crawl_rate_limits_between_pages(crawl_env):
     _site(crawl_env, {
         "http://example.com/": ("root", ["/a"]),
@@ -791,8 +809,9 @@ def test_crawl_caps_links_enqueued_per_page(crawl_env, monkeypatch):
         **{f"http://example.com/p{i}": (f"page {i}", []) for i in range(20)},
     })
     web_crawl("http://example.com/", max_pages=100)
-    # root fetch + at most the capped number of links enqueued from it.
-    assert len(crawl_env.calls) <= 6
+    # root fetch + exactly the capped number of links enqueued from it.
+    # Expected: root (1) + at most 5 links from CRAWL_MAX_LINKS_PER_PAGE = 6 total.
+    assert len(crawl_env.calls) == 6
 
 
 def test_sitemap_index_caps_children_fetched(crawl_env, monkeypatch):

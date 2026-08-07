@@ -14,6 +14,24 @@ from tldw_chatbook.Tools.web_tool_impls import (
 )
 
 
+# ---------------------------------------------------------------------------
+# Module ephemerality: spec §5 guards against persistence layer coupling
+# ---------------------------------------------------------------------------
+
+
+def test_module_never_imports_persistence():
+    """Verify web_tool_impls never imports database or media-storage modules.
+
+    Spec §5 requirement: web_tool_impls is a pure-helper module with no
+    coupling to the application's persistence layer (Client_Media_DB_v2,
+    ChaChaNotes_DB, Local_Ingestion, RAG_Indexing, sqlite3, etc.).
+    """
+    import inspect
+    import re
+    src = inspect.getsource(web_tool_impls)
+    assert re.search(r"Client_Media_DB|ChaChaNotes|Local_Ingestion|RAG_Indexing|sqlite3", src) is None
+
+
 def test_accepts_public_https(monkeypatch):
     monkeypatch.setattr(socket, "getaddrinfo", lambda *a, **k: [(2, 1, 6, "", ("93.184.216.34", 443))])
     assert validate_outbound_url("https://example.com/page") == "https://example.com/page"

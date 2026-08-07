@@ -367,17 +367,32 @@ def _extract_pdf_text(body: bytes, max_bytes: int) -> str:
 
 
 def web_fetch(url: str, *, max_bytes: int = FETCH_MAX_BYTES) -> str:
-    """Fetch ``url`` and return extracted text (trafilatura), byte-capped.
+    """Fetch ``url`` and return extracted text (trafilatura for HTML, PyMuPDF for PDF).
 
     SSRF-guarded per hop (validate_outbound_url), redirect-capped,
-    rate-limited per domain, cached in-memory for FETCH_CACHE_TTL_SECONDS.
-    Result ends with a truncation marker when capped. All failures raise
-    LocalToolError with structured reasons ("invalid-url", "ssrf",
-    "redirect-limit", "timeout", "http-<status>", "too-large", "rate-limited").
+    rate-limited per domain, cached in-memory by (url, max_bytes) key
+    (256-entry LRU, FETCH_CACHE_TTL_SECONDS expiry).
+
+    HTML/plain-text extracted via trafilatura with fallback tag-strip;
+    script/style tags removed. Result ends with a truncation marker when
+    capped at max_bytes (default FETCH_MAX_BYTES=1 MiB).
+
+    PDF detection (by file magic, not declared type): text extracted via
+    PyMuPDF if available; PDFs always respect a 20 MB hardened ceiling
+    (PDF_MAX_BYTES). Truncation of extracted text is applied per-page if
+    the total exceeds max_bytes; the result includes page count.
+
+    All failures raise LocalToolError with structured reasons:
+        - "invalid-url", "ssrf", "redirect-limit", "timeout",
+          "http-<status>", "rate-limited" (general fetch)
+        - "missing-dep" (PDF requires pymupdf extra)
+        - "pdf-error" (PyMuPDF extraction or encryption failure)
+        - "too-large" (PDF exceeds 20 MB ceiling, never truncated)
 
     Raises:
         LocalToolError: on invalid/SSRF URLs, redirect overflow, timeouts,
-            HTTP error statuses, rate limiting, or unextractable content.
+            HTTP error statuses, rate limiting, PDF processing errors, or
+            unextractable content.
     """
     if not isinstance(url, str) or not url.strip():
         raise LocalToolError("[invalid-url] url must be a non-empty string")
