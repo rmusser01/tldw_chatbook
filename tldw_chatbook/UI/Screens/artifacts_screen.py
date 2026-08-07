@@ -88,7 +88,8 @@ class ArtifactsScreen(BaseAppScreen):
         self._chatbook_unmounted = True
 
     def on_mount(self) -> None:
-        super().on_mount()
+        # No super().on_mount(): the dispatcher already invokes
+        # BaseAppScreen.on_mount separately for this Mount event.
         self._chatbook_unmounted = False
         self._start_chatbook_refresh()
 

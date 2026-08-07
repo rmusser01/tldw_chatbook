@@ -58,7 +58,8 @@ class LogsScreen(BaseAppScreen):
 
     def on_mount(self) -> None:
         """Route live log records through the rebuilt LogsWindow."""
-        super().on_mount()
+        # No super().on_mount(): the dispatcher already invokes
+        # BaseAppScreen.on_mount separately for this Mount event.
         self.register_footer_shortcuts(
             source="logs", shortcuts=LogsWindow.LOGS_SHORTCUTS
         )

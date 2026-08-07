@@ -45,7 +45,8 @@ class MediaScreen(BaseAppScreen):
         yield self.media_window
 
     def on_mount(self) -> None:
-        super().on_mount()
+        # No super().on_mount(): the dispatcher already invokes
+        # BaseAppScreen.on_mount separately for this Mount event.
         if self._pending_media_restore and self.media_window is not None:
             # Nothing else seeds MediaWindow's active_media_type on a fresh
             # visit under screen navigation (the legacy watch_current_tab ->

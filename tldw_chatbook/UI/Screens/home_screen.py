@@ -270,7 +270,8 @@ class HomeScreen(BaseAppScreen):
         self._home_content_snapshot: HomeContentSnapshot | None = None
 
     def on_mount(self) -> None:
-        super().on_mount()
+        # No super().on_mount(): the dispatcher already invokes
+        # BaseAppScreen.on_mount separately for this Mount event.
         self._refresh_home_chatbook_artifact_snapshot()
         self._refresh_home_content_snapshot()
         self._refresh_home_active_work_cache()

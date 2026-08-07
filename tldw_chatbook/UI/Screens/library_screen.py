@@ -1725,7 +1725,8 @@ class LibraryScreen(BaseAppScreen):
         ``apply_navigation_context`` could not run before mount.
         """
         self._register_footer_shortcuts()
-        super().on_mount()
+        # No super().on_mount(): the dispatcher already invokes
+        # BaseAppScreen.on_mount separately for this Mount event.
         self._load_library_ingest_options_from_config()
         self.set_timer(
             LIBRARY_SOURCE_SNAPSHOT_TIMEOUT_SECONDS,

@@ -66,7 +66,8 @@ class ACPScreen(BaseAppScreen):
 
     def on_mount(self) -> None:
         """Consume an owned current-session target after the real pane mounts."""
-        super().on_mount()
+        # No super().on_mount(): the dispatcher already invokes
+        # BaseAppScreen.on_mount separately for this Mount event.
         self.call_after_refresh(self._consume_pending_session_target)
 
     def _consume_pending_session_target(self) -> None:

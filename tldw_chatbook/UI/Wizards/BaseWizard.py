@@ -511,7 +511,19 @@ class WizardContainer(Container):
         yield WizardNavigation(classes="wizard-navigation")
 
     def on_mount(self) -> None:
-        """Initialize wizard on mount."""
+        """Initialize wizard on mount.
+
+        Ends by calling `_post_mount_hook()` rather than leaving subclasses to
+        override `on_mount()` and call `super().on_mount()`: Textual's
+        dispatcher invokes every `on_mount` defined along the MRO for one
+        Mount event (see `BaseAppScreen.on_mount`'s docstring for the general
+        contract), so a subclass `on_mount` that calls `super().on_mount()`
+        would run this method a second time -- re-triggering `show_step(0)`
+        (and the on_hide/on_show pair on whatever step is current) and
+        scheduling a duplicate validation timer. `_post_mount_hook()` is a
+        plain method call, resolved once via normal Python MRO, so a
+        subclass override runs exactly once, after this method's own work.
+        """
         logger.info(
             f"BaseWizard.on_mount: Starting, current_step={self.current_step}, total_steps={self.total_steps}"
         )
@@ -534,6 +546,17 @@ class WizardContainer(Container):
         # Trigger initial validation after a short delay to allow step to fully initialize
         logger.info("BaseWizard.on_mount: Setting timer for initial validation")
         self.set_timer(0.1, self.validate_step)
+        self._post_mount_hook()
+
+    def _post_mount_hook(self) -> None:
+        """Extension point run once, after this class's own on_mount work.
+
+        No-op by default. Subclasses that need to act after `show_step(0)`
+        (and the rest of this method's initialization) has run should
+        override this instead of defining their own `on_mount()` -- see this
+        method's caller for why.
+        """
+        return None
 
     def show_step(self, step_index: int) -> None:
         """Show a specific step."""

@@ -1232,15 +1232,22 @@ class EnhancedFileDialog(BaseFileDialog):
     def on_mount(self) -> None:
         """Initialize the dialog on mount.
 
-        The base ``on_mount`` expects ``#path-breadcrumbs`` and
-        ``#recent-list`` to exist; our compose provides them, so calling
-        ``super().on_mount()`` is safe.
+        No ``super().on_mount()``: Textual's dispatcher already invokes
+        ``FileSystemPickerScreen.on_mount`` separately for this Mount event
+        (it walks the whole MRO -- see
+        ``Third_Party/textual_fspicker/base_dialog.py``'s
+        ``_focus_initial_widget`` docstring for the same contract, and
+        ``BaseAppScreen.on_mount``'s docstring for the general rule). This
+        method's own work -- the bookmarks list and panel visibility -- reads
+        only state already available at compose time (``#path-breadcrumbs``
+        / ``#recent-list`` existing is a compose-time fact, not something the
+        base's ``on_mount`` produces), so it does not need the base's
+        ``on_mount`` to have run first.
 
         Hidden panels rely on inline ``styles.display`` rather than CSS
         ``display: none`` rules because the vendored base selectors do not
         reliably override container defaults in this subclass.
         """
-        super().on_mount()
         self._update_bookmarks_list()
         self._update_bookmark_button_state(
             self.query_one(SearchableDirectoryNavigation).location

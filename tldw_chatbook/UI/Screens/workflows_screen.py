@@ -45,7 +45,8 @@ class WorkflowsScreen(BaseAppScreen):
         self._latest_console_context_loaded = False
 
     def on_mount(self) -> None:
-        super().on_mount()
+        # No super().on_mount(): the dispatcher already invokes
+        # BaseAppScreen.on_mount separately for this Mount event.
         runtime_identity = RuntimeIdentity.from_state(
             self.app_instance.runtime_policy.state
         )

@@ -1224,8 +1224,10 @@ class StudyScreen(BaseAppScreen):
         Deferred by `call_after_refresh` rather than started directly, because a
         screen's `on_mount` fires before the children its `compose()` yielded
         have finished mounting and the deferred work does `query_one(StudyWindow)`.
+
+        No super().on_mount(): the dispatcher already invokes
+        BaseAppScreen.on_mount separately for this Mount event.
         """
-        super().on_mount()
         logger.info("Study screen mounted")
         self.call_after_refresh(self._start_initial_load)
 

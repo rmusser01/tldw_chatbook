@@ -892,7 +892,8 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         return getattr(self.app_instance, "watchlist_bundle_service", None)
 
     def on_mount(self) -> None:
-        super().on_mount()
+        # No super().on_mount(): the dispatcher already invokes
+        # BaseAppScreen.on_mount separately for this Mount event.
         # Push the persisted layout into the already-mounted workbench, not just
         # this screen's own reactive: `compose_content` already ran by the time
         # `on_mount` fires (compose always precedes the Mount event), so the

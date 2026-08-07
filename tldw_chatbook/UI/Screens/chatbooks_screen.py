@@ -33,7 +33,8 @@ class ChatbooksScreen(BaseAppScreen):
 
     async def on_mount(self) -> None:
         """Initialize Chatbooks when screen is mounted."""
-        super().on_mount()
+        # No super().on_mount(): the dispatcher already invokes
+        # BaseAppScreen.on_mount separately for this Mount event.
         logger.info("Chatbooks screen mounted")
         chatbooks_window = self.query_one(ChatbooksWindowImproved)
         self.chatbook_list = list(chatbooks_window.chatbooks)

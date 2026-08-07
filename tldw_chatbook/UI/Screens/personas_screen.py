@@ -1093,8 +1093,10 @@ class PersonasScreen(BaseAppScreen):
         the screen is laid out and readable immediately. Only the library read
         and what genuinely depends on it is deferred, in its original order --
         including the loading-manager setup, which the library read follows.
+
+        No super().on_mount(): the dispatcher already invokes
+        BaseAppScreen.on_mount separately for this Mount event.
         """
-        super().on_mount()
         self._sync_responsive_workbench()
         self._sync_personas_rails()
         self._set_persona_editor_runtime_source(self.persona_handler.current_mode())

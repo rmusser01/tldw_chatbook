@@ -92,7 +92,9 @@ class StatsScreen(BaseAppScreen):
 
     def on_mount(self) -> None:
         """Load statistics when the screen is mounted."""
-        super().on_mount()
+        # No super().on_mount(): Textual's dispatcher already invokes
+        # BaseAppScreen.on_mount separately for this Mount event (see its
+        # docstring) -- calling it here too would run it twice.
         # Verify we have the app instance
         if not self.app_instance:
             # Try to get from ancestry as fallback
