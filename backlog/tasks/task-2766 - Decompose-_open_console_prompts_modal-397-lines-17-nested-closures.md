@@ -1,11 +1,11 @@
 ---
 id: TASK-2766
 title: 'Decompose _open_console_prompts_modal (397 lines, 17 nested closures)'
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-08-07 06:41'
-updated_date: '2026-08-07 19:08'
+updated_date: '2026-08-07 19:09'
 labels:
   - refactor
   - console
