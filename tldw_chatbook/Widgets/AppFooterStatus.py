@@ -274,6 +274,21 @@ class AppFooterStatus(Widget):
         variants advertise the same global keys, so the hints shrink to
         compact first and the DB stats chip keeps its cells until even that
         overflows (matching the TASK-451 reflow's geometry).
+
+        LIB-18: once the right cluster is fully hidden and ``full`` still
+        does not fit, the screen's own hints used to drop to a bare
+        ellipsis immediately (``"… F1 help · F6 panes · ..."``) -- at
+        Library's real ~100-column footer width this meant the screen-
+        specific keys (``/ focus search``, ``i import content``, ...) the
+        user actually came here to discover vanished behind that leading
+        "…", while the always-present globals (F1/Ctrl+P/Ctrl+Q, muscle-
+        memory keys most users already know) stayed in full. A step in
+        between now compacts the GLOBAL half first (reusing
+        ``GLOBAL_HINTS_COMPACT``, the same constant the no-context branch
+        below already leans on) while the screen's own hints stay intact --
+        ordering the screen-specific keys ahead of the globals in practice,
+        without touching ``set_shortcut_context``'s reserved-key filtering
+        (task-2860's own, separate seam).
         """
         width = self.size.width
         if width <= 0:
@@ -287,10 +302,14 @@ class AppFooterStatus(Widget):
 
         if self._context_text:
             full = f"{self._context_text} | {self.GLOBAL_HINTS}"
+            context_compact_globals = (
+                f"{self._context_text} | {self.GLOBAL_HINTS_COMPACT}"
+            )
             ellipsis = f"… {self.GLOBAL_HINTS}"
             compact = f"… {self.GLOBAL_HINTS_COMPACT}"
         else:
             full = self.GLOBAL_HINTS
+            context_compact_globals = full
             ellipsis = self.GLOBAL_HINTS_COMPACT
             compact = self.GLOBAL_HINTS_COMPACT
 
@@ -301,6 +320,7 @@ class AppFooterStatus(Widget):
                 (full, True, True, False),
                 (full, True, False, False),
                 (full, False, False, False),
+                (context_compact_globals, False, False, False),
                 (ellipsis, False, False, False),
                 (compact, False, False, False),
                 (self.GLOBAL_HINTS_MIN, False, False, False),

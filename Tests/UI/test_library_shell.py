@@ -995,9 +995,11 @@ async def test_lookup_error_hides_row_counts_instead_of_zeroing_them():
 
 @pytest.mark.asyncio
 async def test_rail_counts_never_clip_and_titles_shrink_first_at_100x30():
-    """F-015: at 100x30 every visible rail row fits its width with the
-    COUNT intact -- subtitles drop first, then titles ellipsize, and the
-    count (the information that matters) is the last thing standing."""
+    """F-015/LIB-18: at 100x30 every visible rail row fits its width with
+    the COUNT intact -- subtitles drop first, then the title shrinks (via
+    its short-label fallback, never a mid-word ellipsis -- LIB-18 fixed the
+    prior "Conversa..." mid-word cut this test used to pin), and the count
+    (the information that matters) is the last thing standing."""
     app = _build_test_app()
     _seed_conversations(app, _two_conversations())
     host = LibraryHarness(app)
@@ -1014,14 +1016,24 @@ async def test_rail_counts_never_clip_and_titles_shrink_first_at_100x30():
             assert cell_len(first_line) <= width, (
                 f"{row.id} overflows its width: {first_line!r} ({cell_len(first_line)} > {width})"
             )
+            # LIB-18: no row label ever cuts mid-word -- the only truncation
+            # marker allowed is an ellipsis that follows a short_title
+            # fallback's own hard-cut last resort, never inside the word
+            # "Conversations"/"Flashcards"/"Collections" themselves.
+            for banned in ("Conversa...", "Flash...", "Collect..."):
+                assert banned not in first_line, (row.id, first_line)
 
-        # ...and the count survives on the one row whose title + count
-        # exceed the rail: the TITLE absorbed the squeeze instead.
+        # ...and the count survives on the row whose full title + count
+        # would otherwise exceed the rail: Conversations' short_title
+        # ("Chats") absorbs the squeeze instead of an ellipsis.
         conv = screen.query_one("#library-row-browse-conversations", Button)
         conv_line = conv.label.plain.split("\n")[0]
         assert conv_line.endswith("(2)"), f"count clipped: {conv_line!r}"
-        assert "..." in conv_line or "…" in conv_line, (
-            f"title should ellipsize before the count clips: {conv_line!r}"
+        assert "Chats" in conv_line, (
+            f"title should fall back to its short_title, not ellipsize: {conv_line!r}"
+        )
+        assert "..." not in conv_line and "…" not in conv_line, (
+            f"short_title fits outright -- no ellipsis needed: {conv_line!r}"
         )
 
 

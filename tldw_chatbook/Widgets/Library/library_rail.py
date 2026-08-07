@@ -9,7 +9,7 @@ from rich.markup import escape as escape_markup
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.containers import Vertical
-from textual.events import Key, Resize
+from textual.events import Focus, Key, MouseDown, Resize
 from textual.widget import Widget
 from textual.widgets import Button, Input, Static
 
@@ -66,6 +66,37 @@ def _truncate_row_title(title: str, budget: int = _MAX_LIBRARY_ROW_TITLE) -> str
     return readable
 
 
+def _fit_title_no_mid_word_cut(title: str, budget: int) -> str:
+    """Fit ``title`` within ``budget`` cells without cutting inside a word.
+
+    LIB-18: unlike ``_truncate_row_title`` (used elsewhere for arbitrary
+    user content, where a hard character cut at the budget is the
+    established, expected behavior), the rail's own fixed navigational row
+    titles must never ellipsize mid-word at the rail's real widths
+    (120/100/80 columns all pin the rail to the same row-content budget via
+    its own ``min_width``). Returns ``title`` unchanged when it already
+    fits; otherwise ellipsizes at the last whitespace boundary within
+    budget. A single unbroken word that still does not fit (no internal
+    space to retreat to, and no ``short_title`` override defined for it by
+    the caller) falls back to the same hard character cut as a last
+    resort -- callers should prefer supplying a ``short_title`` for any
+    row whose title risks landing here.
+    """
+    readable = str(title).strip()
+    if len(readable) <= budget:
+        return readable
+    ellipsis_budget = max(1, budget - 3)
+    head = readable[:ellipsis_budget]
+    boundary = head.rfind(" ")
+    if boundary > 0:
+        head = head[:boundary].rstrip()
+    else:
+        head = head.rstrip()
+    if not head:
+        head = readable[:ellipsis_budget].rstrip()
+    return f"{head}..."
+
+
 def _visible_row_title(title: str) -> str:
     """Return the rail-safe row title: capped at the rail budget, escaped.
 
@@ -77,14 +108,95 @@ def _visible_row_title(title: str) -> str:
     return escape_markup(_truncate_row_title(title))
 
 
-class LibraryRailSearchInput(Input):
+class SelectAllOnFocusingClickInput(Input):
+    """An ``Input`` whose FIRST click (the one that also focuses it) selects
+    all text instead of just positioning the cursor there (LIB-17).
+
+    Textual's ``Input`` already defaults ``select_on_focus=True`` (its own
+    ``_on_focus`` sets ``Selection(0, len(value))``), but ``Input.
+    _on_mouse_down`` ALWAYS repositions the cursor to the click offset --
+    and ``Screen._forward_event`` calls ``set_focus()`` *synchronously*,
+    before the click is even forwarded to this widget, so ``self.has_focus``
+    already reads ``True`` by the time ``_on_mouse_down`` runs regardless of
+    whether THIS click is the one that focused the box. Checking
+    ``has_focus`` there cannot distinguish the two cases; the ``Focus``
+    event (posted by ``set_focus``) and this ``MouseDown`` (posted right
+    after, by the same click) are instead queued back-to-back on THIS
+    widget's own message pump and processed in that order, so ``_on_focus``
+    marks a one-shot "a focusing click may still be inbound" flag that
+    ``_on_mouse_down`` consumes if it is the very next thing processed --
+    the same-gesture window this whole mechanism depends on.
+
+    A second Textual quirk this override must also account for: message
+    dispatch (``MessagePump._get_dispatch_methods``) walks the class's
+    entire MRO and invokes EVERY class's own ``_on_mouse_down`` in turn
+    (most-derived first) -- calling ``super()`` is not what wires this up,
+    and NOT calling it does not skip it either. Without
+    ``event.prevent_default()`` in the select-all branch below, ``Input.
+    _on_mouse_down`` (the base class, further up the MRO) still runs
+    immediately afterward and silently overwrites the select-all with its
+    own ``Selection.cursor(click_offset)`` -- ``prevent_default()`` is the
+    documented mechanism (checked at the top of that MRO walk) that stops
+    it, the exact same seam this class's own ``_on_key`` already leans on
+    for the "/" re-arm.
+
+    Without this fix, a plain mouse click on a not-yet-focused Input
+    silently wins the race and undoes ``select_on_focus``'s "replace me"
+    framing entirely, regardless of where in the box the click lands. For a
+    prefilled query box this means the box's stale text survives the very
+    interaction (click, then type) a user relies on to replace it:
+    live-reproduced by a click landing near the start of "quokka" and
+    typing a character, which PREPENDED instead of replacing ("Zquokka").
+
+    Scoped to the focusing click only: once the box already has focus (no
+    new ``Focus`` event, so the flag is never armed), a click positions the
+    cursor precisely as normal -- expected mid-text editing is unaffected.
+    The flag also self-clears shortly after arming (``call_after_refresh``)
+    so a LATER, unrelated click on an already-focused box (e.g. after a
+    Tab-focus with no immediately-following click) never inherits a stale
+    "select all" from an earlier, unconsumed focus event.
+    """
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self._select_all_pending_click = False
+
+    def _on_focus(self, event: Focus) -> None:
+        self._select_all_pending_click = True
+        self.call_after_refresh(self._clear_select_all_pending_click)
+
+    def _clear_select_all_pending_click(self) -> None:
+        self._select_all_pending_click = False
+
+    async def _on_mouse_down(self, event: MouseDown) -> None:
+        if self._select_all_pending_click:
+            self._select_all_pending_click = False
+            self._pause_blink(visible=True)
+            self.select_all()
+            self._selecting = True
+            self.capture_mouse()
+            # See the class docstring: stops Textual's own MRO walk from
+            # ALSO invoking Input._on_mouse_down for this event, which
+            # would otherwise overwrite the select-all above.
+            event.prevent_default()
+            return
+        await super()._on_mouse_down(event)
+
+
+class LibraryRailSearchInput(SelectAllOnFocusingClickInput):
     """Rail search box where a second "/" re-arms the query instead of typing.
 
     "/" is the Library screen's focus-the-search key (F-012); once the box
     itself has focus the screen's on_key never sees printable keys, so a
     second "/" would insert a literal slash into the query -- the settings
     screen's task-1584 live trap, solved the same way here: intercept it
-    and select-all so the next keystroke replaces the stale text.
+    and select-all so the next keystroke replaces the stale text. LIB-17:
+    a stale query surviving a screen re-entry (the rail rebuilds a fresh
+    box seeded from the screen's persisted query, unfocused) is covered by
+    the SAME "select-all, don't clear" promise this seam already makes for
+    "/" -- ``SelectAllOnFocusingClickInput`` extends it to the box's first
+    click too, so whichever way the user re-enters the box (click or "/"),
+    typing replaces rather than appends.
     """
 
     async def _on_key(self, event: Key) -> None:
@@ -197,13 +309,21 @@ class LibraryRail(RecomposeCaptureGuard, Vertical):
             return f" ({count})"
         return f" ({count}+)"
 
+    #: LIB-15: matches the F-014 loading placeholder's own width (" (…)").
+    #: A ``count_pending`` row's gloss-fit check reserves at least this much
+    #: room for the count that has not arrived yet, so the gloss's fate does
+    #: not flip the instant a real (but still short) count lands -- see
+    #: ``LibraryRailRow.count_pending``'s docstring for the full rationale.
+    _GLOSS_FIT_MIN_COUNT_WIDTH = len(" (…)")
+
     @staticmethod
     def _row_label(row: LibraryRailRow, selected: bool, width: int = 0) -> str:
         """Build a rail row's label, fitted to ``width`` cells when known.
 
         Fitting order (F-015): the F-013 subtitle drops first, then the
-        title ellipsize-truncates; the count is never truncated. ``width``
-        0 (compose time, before layout) renders the full label -- each
+        title ellipsize-truncates (never mid-word, LIB-18), then the
+        handoff meta line drops; the count is never truncated. ``width`` 0
+        (compose time, before layout) renders the full label -- each
         ``LibraryRailRowButton`` refits itself via ``on_resize`` once it
         learns its rendered width.
         """
@@ -229,8 +349,9 @@ class LibraryRail(RecomposeCaptureGuard, Vertical):
                 # The title absorbs the squeeze; the count never clips.
                 subtitle_markup = ""
                 title_budget = width - len(prefix) - len(count_plain)
+                candidate_title = row.short_title or raw_title
                 raw_title = (
-                    _truncate_row_title(raw_title, title_budget)
+                    _fit_title_no_mid_word_cut(candidate_title, title_budget)
                     if title_budget >= 4
                     else ""
                 )
@@ -240,7 +361,21 @@ class LibraryRail(RecomposeCaptureGuard, Vertical):
                 # review's "imported…"/"saved…" complaint), so when the
                 # full gloss doesn't fit after title + count, it drops
                 # and the row falls back to its tooltip.
-                if len(fixed_plain) + len(f" — {row.subtitle}") > width:
+                #
+                # LIB-15: a ``count_pending`` row (count not fetched yet,
+                # but will be) reserves at least the F-014 placeholder's
+                # width for the count column here, even while the count is
+                # still ``None`` -- otherwise the gloss decision uses 0
+                # cells for "count not here yet" and a real (if short)
+                # count's width once it lands, silently flipping the
+                # gloss's visibility at an UNCHANGED terminal width.
+                reserved_count_len = len(count_plain)
+                if row.count_pending and row.count is None:
+                    reserved_count_len = max(
+                        reserved_count_len, LibraryRail._GLOSS_FIT_MIN_COUNT_WIDTH
+                    )
+                gloss_fit_len = len(prefix) + len(raw_title) + reserved_count_len
+                if gloss_fit_len + len(f" — {row.subtitle}") > width:
                     subtitle_markup = ""
         label = f"{prefix}{escape_markup(raw_title)}{count_markup}{subtitle_markup}"
         if row.target_kind == "handoff":
@@ -251,7 +386,18 @@ class LibraryRail(RecomposeCaptureGuard, Vertical):
             # canvas ("Continue in Study" lives inside that canvas, one
             # click later, and is the one that actually leaves Library for
             # the Study screen family).
-            label += "\n    opens staging canvas"
+            meta_text = "opens staging canvas"
+            meta_line = f"\n    {meta_text}"
+            # LIB-18: the meta line is the LOWEST-priority element (below
+            # even the gloss) -- at width 0 (compose time) it always shows,
+            # matching every other element's unfitted-until-resize
+            # behavior; once a real width is known, it shows only if it
+            # fits whole. Textual's own Static/Button overflow otherwise
+            # silently ellipsizes it mid-word ("opens stagin…"), exactly
+            # the F-015 pathology this file already exists to prevent for
+            # the count.
+            if width <= 0 or len(meta_line) - 1 <= width:
+                label += meta_line
         return label
 
     def compose(self) -> ComposeResult:

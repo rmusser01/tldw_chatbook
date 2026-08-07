@@ -132,6 +132,17 @@ class LibraryNotesCanvas(Vertical):
             classes="destination-section",
             markup=False,
         )
+        # LIB-19: Database mode (this view), Files mode, and the Sync
+        # sub-canvas are three distinct folder-notes concepts that were
+        # never related to each other anywhere in the UI -- one placement
+        # sentence per surface, cross-referencing the other two.
+        yield Static(
+            "These notes live in the Library's own database — for notes "
+            "that live in a folder on disk, switch to Files, or use Sync "
+            "to mirror one in.",
+            id="library-notes-database-purpose",
+            markup=False,
+        )
         yield Input(
             placeholder="Filter notes… (Enter)",
             id="library-notes-filter",
@@ -505,8 +516,14 @@ class LibraryNotesCanvas(Vertical):
             classes="destination-section",
             markup=False,
         )
+        # LIB-19: relates this surface to Database mode and Files mode --
+        # see library_notes_canvas.py's _compose_list and
+        # library_file_notes_workspace.py's compose() for their own
+        # placement sentences.
         yield Static(
-            "Mirror notes between a folder on disk and the Library.",
+            "Mirror notes between a folder on disk and the Library — "
+            "unlike Files mode, which edits that folder directly without "
+            "mirroring it in.",
             id="library-notes-sync-purpose",
             markup=False,
         )

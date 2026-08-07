@@ -257,3 +257,111 @@ async def test_footer_reflows_when_counts_change_without_a_resize():
         footer.update_word_count(0)
         await pilot.pause()
         assert db.display is True
+
+
+def _rendered_footer_text(footer: AppFooterStatus) -> str:
+    """Return what the footer ACTUALLY displays (post width-fitting).
+
+    ``footer.shortcut_text`` is the stored, unfitted "logical" text --
+    ``_apply_responsive_footer`` picks a (possibly shrunk) variant and
+    writes it straight to the ``#footer-key-quit`` Static without ever
+    reassigning ``_shortcut_text``, so that property alone cannot tell
+    what a real terminal at this width would show.
+    """
+    return str(footer.query_one("#footer-key-quit").renderable)
+
+
+@pytest.mark.asyncio
+async def test_footer_compacts_globals_before_dropping_screen_hints_when_narrow():
+    """LIB-18: reproduces the live 100/80-column Library footer finding --
+    at a narrow width the screen's OWN hints (what the user came here to
+    discover) used to drop first, replaced by a bare "… <globals>"; the
+    fix compacts the always-present globals (muscle-memory keys most users
+    already know) BEFORE the screen-specific hints disappear.
+
+    Mirrors the live-verification recipe (fresh session per width) rather
+    than resizing one running app, matching how the width sweep is
+    actually driven live.
+    """
+
+    def _library_shortcuts() -> tuple[tuple[str, str], ...]:
+        # Approximates the Library landing's real registered hint set
+        # (screen_registry's LIBRARY_LANDING_SHORTCUTS shape).
+        return (
+            ("/", "focus search"),
+            ("i", "import content"),
+            ("n", "new note"),
+        )
+
+    class TestApp(App):
+        def compose(self):
+            yield AppFooterStatus(id="footer")
+
+    # Wide (170): both the screen hints and the full globals fit.
+    wide_app = TestApp()
+    async with wide_app.run_test(size=(170, 12)) as pilot:
+        footer = wide_app.query_one("#footer", AppFooterStatus)
+        footer.set_workbench_shortcuts(source="library", shortcuts=_library_shortcuts())
+        await pilot.pause()
+        wide_text = _rendered_footer_text(footer)
+        assert "focus search" in wide_text
+        assert "F1 help" in wide_text
+
+    # 100 columns: the live Library repro width.
+    narrow_app = TestApp()
+    async with narrow_app.run_test(size=(100, 12)) as pilot:
+        footer = narrow_app.query_one("#footer", AppFooterStatus)
+        footer.set_workbench_shortcuts(source="library", shortcuts=_library_shortcuts())
+        await pilot.pause()
+        narrow_text = _rendered_footer_text(footer)
+        # The screen's own hints must still be legible -- not replaced by
+        # a bare "… F1 help · ...".
+        assert "focus search" in narrow_text, narrow_text
+        assert "import content" in narrow_text, narrow_text
+        assert "new note" in narrow_text, narrow_text
+        assert not narrow_text.startswith("…"), narrow_text
+        # The GLOBAL half compacts instead (still present, just shorter).
+        assert "F1 " in narrow_text
+        assert "F6 panes" not in narrow_text  # only the compact form survives
+
+    # 80 columns (the other live-verified width) still holds.
+    narrowest_app = TestApp()
+    async with narrowest_app.run_test(size=(80, 12)) as pilot:
+        footer = narrowest_app.query_one("#footer", AppFooterStatus)
+        footer.set_workbench_shortcuts(source="library", shortcuts=_library_shortcuts())
+        await pilot.pause()
+        narrowest_text = _rendered_footer_text(footer)
+        assert "focus search" in narrowest_text, narrowest_text
+
+
+@pytest.mark.asyncio
+async def test_footer_control_reproduces_the_historical_ellipsis_drop():
+    """Control case: confirms the width chosen above genuinely exercises
+    the historical bug shape (screen hints dropping to a bare ellipsis)
+    when the new compact-globals step is removed -- i.e. this test would
+    have failed before the fix, proving the fix (not the width choice)
+    is what changed the outcome."""
+
+    class TestApp(App):
+        def compose(self):
+            yield AppFooterStatus(id="footer")
+
+    app = TestApp()
+    async with app.run_test(size=(100, 12)) as pilot:
+        footer = app.query_one("#footer", AppFooterStatus)
+        footer.set_workbench_shortcuts(
+            source="library",
+            shortcuts=(
+                ("/", "focus search"),
+                ("i", "import content"),
+                ("n", "new note"),
+            ),
+        )
+        await pilot.pause()
+        rendered = _rendered_footer_text(footer)
+        # With the fix, the compact-globals step is what actually renders
+        # at this width -- confirms it is REACHED (not merely defined).
+        assert rendered == (
+            "/ focus search | i import content | n new note | "
+            f"{footer.GLOBAL_HINTS_COMPACT}"
+        ), rendered

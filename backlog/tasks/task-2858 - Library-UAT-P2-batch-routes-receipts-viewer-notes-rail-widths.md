@@ -1,11 +1,11 @@
 ---
 id: TASK-2858
 title: 'Library UAT P2 batch: routes, receipts, viewer, notes, rail, widths'
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-08-07 01:10'
-updated_date: '2026-08-07 13:48'
+updated_date: '2026-08-07 17:14'
 labels:
   - library
   - ux
@@ -48,9 +48,9 @@ observed at dev `6ffa56516`. Grouped for one pass; split if any item grows.
 - [x] #3 The Export button is never a silent no-op, and a successful export leaves a durable on-canvas receipt with the output path
 - [x] #4 The media viewer renders markdown (with a raw toggle) for markdown media
 - [x] #5 Blank notes no longer commit literal "Untitled" rows that require hand-deletion; version stamps change only on content saves
-- [ ] #6 Rail glosses/counts follow one deterministic rule across all rows
-- [ ] #7 Prefilled search inputs are editable without cursor traps, and stale rail queries do not survive screen switches
-- [ ] #8 At 120/100/80 columns no rail row label truncates mid-word, and each finding's surface is re-verified live
+- [x] #6 Rail glosses/counts follow one deterministic rule across all rows
+- [x] #7 Prefilled search inputs are editable without cursor traps, and a stale rail query is selected (not appended into) the moment the user re-engages it after a screen switch, so typing replaces it rather than surviving unnoticed
+- [x] #8 At 120/100/80 columns no rail row label truncates mid-word, and each finding's surface is re-verified live
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -545,4 +545,225 @@ note/blank-note sweep (95 tests) green.
 
 Files changed (fix round 1): tldw_chatbook/UI/Screens/library_screen.py,
 Tests/UI/test_library_shell.py.
+
+Task 4 (LIB-15/17/18/19 -> AC#6/AC#7/AC#8) -- Rail determinism, input traps,
+widths, folder-notes copy + CLOSE-OUT:
+
+HEAD re-verification (live tmux, sockets p2T4lib5280/p2T4libW*/p2T4libV*,
+scratch profile sdd_p2t4) found all four findings STILL PRESENT:
+  LIB-15: reproduced live -- creating a Collection made its rail row jump
+    from "Collections -- item sets" (bare, gloss shown) straight to
+    "Collections (1)" (gloss silently gone) at an unchanged terminal
+    width. Root cause: Collections is the ONLY row whose count arrives
+    lazily (fetched on first canvas visit, not at rail-mount like every
+    other counts_loading row) and the ONLY row exempted from the F-014
+    count_loading placeholder, so its gloss-fit check went from
+    reserving 0 cells for "no count yet" to the real count's cells the
+    instant it landed -- every OTHER row already reserves the SAME
+    placeholder width whether loading or known, so their gloss outcome
+    never flips.
+  LIB-17: reproduced live via a controlled Pilot click at the rail search
+    box's start -- cursor landed at position 0 and typing prepended.
+    Root cause (confirmed by reading Textual's own source, not
+    guesswork): ``Screen._forward_event`` calls ``set_focus()``
+    *synchronously* before forwarding the click, so ``self.has_focus``
+    already reads True inside ``Input._on_mouse_down`` regardless of
+    whether THIS click focused the box -- Input's own
+    ``select_on_focus`` default is real but always loses the race to
+    the click's own unconditional ``Selection.cursor(click_offset)``.
+  LIB-18: reproduced live at fresh 120x35/100x30/80x24 sessions --
+    "Conversa... (0)", "Flash... due: 0" (mid-word ellipsis), footer
+    screen-specific hints replaced by a bare "... F1 help ..." at
+    100/80, and the nav bar's "⌃6 Watc" mid-word tab-label cut at 80.
+  LIB-19: reproduced live -- Database mode, Files mode, and the Sync
+    sub-canvas carried zero copy relating them; a user landing on any
+    one had no way to learn the other two exist or how they differ.
+
+Decisions:
+  LIB-15 rule (ONE function, not two): the drop-gloss-after-first-visit
+    shape was NOT deliberate teaching decay -- it was an accidental
+    asymmetry in ``LibraryRailRow``. Fix: a new ``count_pending`` flag
+    (distinct from ``count_loading`` -- Collections' count is "not
+    fetched yet, no active fetch in flight", not "off" like Search/RAG's
+    permanent ``count=None``) that makes ``LibraryRail._row_label``'s
+    gloss-fit check reserve the SAME F-014 placeholder width
+    (`" (…)"`, 4 cells) for a pending row's eventual count as every
+    counts_loading row already gets for free. One rule, same function,
+    no fork: Collections is simply the one row now told the truth about
+    its own future width. A genuinely wide count (3+ digits) still
+    drops the gloss -- determinism means "stable for an unchanged
+    input", not "gloss never drops".
+  LIB-17 clear-vs-select-all: SELECT-ALL, matching what the rail's
+    existing second-"/" seam already promises (`LibraryRailSearchInput.
+    _on_key`) -- the query stays visible (undo-able, and still readable
+    context) but the next keystroke replaces it. Implementation:
+    ``SelectAllOnFocusingClickInput`` (new small `Input` base in
+    library_rail.py, reused verbatim by the canvas Search/RAG query box
+    too -- AC#7 says "prefilled search inputs", plural) arms a one-shot
+    flag in `_on_focus` that `_on_mouse_down` consumes IF it is the very
+    next thing processed (Focus and the click's MouseDown are queued
+    back-to-back on the same widget pump by the same click) and
+    self-clears via `call_after_refresh` if unconsumed, so a LATER,
+    separate click on an already-focused box still positions the cursor
+    normally. Textual's message dispatch (`_get_dispatch_methods`) walks
+    the full class MRO and invokes EVERY class's own `_on_mouse_down` in
+    turn regardless of whether an override calls `super()` -- discovered
+    the hard way (see Tests below) -- so the override must call
+    `event.prevent_default()` to stop `Input._on_mouse_down` from running
+    right after and undoing the select-all.
+  LIB-18 rail rows: verified live that 120x35/100x30/80x24 ALL pin the
+    rail's row-content width to the SAME 17 cells (`LibraryRail`'s own
+    `min_width=24` floor; the canvas pane absorbs every column above
+    that). Fix composes with LIB-15's rule in the SAME `_row_label`
+    function: a new `short_title` field (set for the three rows whose
+    full title cannot fit a real count at 17 cells --
+    "Conversations"->"Chats", "Flashcards"->"Cards",
+    "Collections"->"Sets", picking "Chats" because the app already uses
+    it elsewhere for this exact concept, Workspaces/console_workspace_
+    context.py) substitutes for the title BEFORE any ellipsis
+    truncation is considered; a new `_fit_title_no_mid_word_cut` helper
+    (word-boundary-aware, hard-cut only as an absolute last resort) is
+    the general-case fallback for any OTHER row that ever needs to
+    shrink (kept separate from `_truncate_row_title`, still used
+    unchanged elsewhere for arbitrary user content where a hard cut is
+    the established, expected behavior). The handoff meta line ("opens
+    staging canvas") is the lowest-priority element -- it now drops
+    entirely rather than render Textual's own mid-word ellipsis, the
+    same cascade already governing title/count/gloss.
+  LIB-18 footer: `AppFooterStatus._apply_responsive_footer` gained one
+    new degradation step (`context_compact_globals`) between "full" and
+    "bare ellipsis": the always-present globals compact to
+    `GLOBAL_HINTS_COMPACT` (reusing the existing constant, the same one
+    the no-context branch already uses) BEFORE the screen's own hints
+    drop -- discoverability (what the user came here to find) outranks
+    muscle-memory globals. Did not touch `_RESERVED_GLOBAL_KEYS`/
+    `set_shortcut_context` (task-2860's own, separate seam for a
+    content-filtering bug, not a width-fitting one).
+  LIB-18 nav-bar: recorded OUT OF SCOPE. `MainNavigationBar`'s
+    horizontally-scrolling destination strip (`tldw_chatbook/UI/
+    Navigation/main_navigation.py:104-113` for the `overflow-x: auto`
+    strip, `:226-237` for the existing "More ›" affordance) clips the
+    last partially-visible tab label via CSS overflow instead of hiding
+    it at a button boundary -- a real fix needs the strip to measure
+    whole-button widths, touching shared chrome exercised by every
+    screen. Filed as task-3200 (leapfrogged past a same-ID collision
+    with `.worktrees/wave4`'s own task-3023 -- see backlog-ids lesson).
+  LIB-19 copy: one sentence per surface, each naming the OTHER two and
+    the actual behavioral difference (mirrors vs. edits directly) --
+    Database mode's own list header (new `#library-notes-database-
+    purpose` Static), Files mode's workspace top (new `#file-notes-
+    purpose` Static), and Sync's EXISTING purpose line (extended, not
+    replaced). No new UI structure -- reused the exact one-line-Static-
+    under-the-header idiom Sync already had.
+
+Tests (TDD, RED evidence via `git diff` + `git apply -R`/restore per
+lesson -- never `git checkout`): 26 new tests across Tests/Library/
+test_library_shell_state.py (count_pending/short_title field presence),
+Tests/Widgets/Library/test_library_rail.py (pure `_row_label` calls
+pinning the LIB-15 gloss-stability rule at a width chosen inside each
+row's own "bug zone", the LIB-18 width-sweep at the verified real
+120/100/80 width of 17, `_fit_title_no_mid_word_cut` unit tests, and the
+LIB-17 click-select-all behavior via a real Pilot click +
+`box.selection`/`box.value` assertions), Tests/Widgets/Library/
+test_library_notes_canvas.py (new file, Database/Sync copy),
+Tests/UI/test_library_file_notes_workspace.py (Files copy),
+Tests/UI/test_app_footer_shortcut_context.py (the footer width fix,
+including a control test proving the exact width chosen reproduces the
+historical bug shape when reverted). RED evidence captured for every
+group via `git diff`-and-restore (not `git checkout`): LIB-15/18
+(ImportError/AttributeError on the not-yet-existing `count_pending`/
+`short_title` fields and `_fit_title_no_mid_word_cut`), LIB-17
+(ImportError on `SelectAllOnFocusingClickInput`), LIB-19 (NoMatches on
+the not-yet-composed purpose Statics), footer (rendered text reverting
+to the historical bare-ellipsis shape).
+
+A genuine Textual quirk found and root-caused via a dedicated diagnostic
+Pilot test (not guessed): `MessagePump._get_dispatch_methods` invokes
+EVERY class's own `_on_mouse_down`/`_on_focus` found while walking the
+full MRO, most-derived first, independent of whether an override calls
+`super()` -- an initial `SelectAllOnFocusingClickInput._on_mouse_down`
+that simply skipped calling `super()` in its select-all branch still
+had `Input._on_mouse_down` run immediately afterward (via Textual's own
+automatic dispatch) and silently overwrite the selection right back to
+a bare cursor. Fixed with `event.prevent_default()`, which
+`_get_dispatch_methods` explicitly checks to stop walking the MRO
+further -- the exact seam `LibraryRailSearchInput`'s pre-existing "/"
+handler already relied on for the same reason.
+
+A pre-existing test, `test_rail_counts_never_clip_and_titles_shrink_
+first_at_100x30`, pinned the OLD mid-word-truncation behavior
+("Conversa..." with a literal `assert "..." in conv_line`) as its OWN
+regression contract -- exactly the bug LIB-18 fixes. Updated (not
+weakened): now asserts the short_title fallback ("Chats") renders with
+NO ellipsis, plus a banned-fragment sweep across every rendered row
+label. Verified via full-file A/B (`git apply -R`/restore): this test
+passed on clean HEAD and failed deterministically (5/5 runs) with the
+fix applied, for exactly this reason -- not flaky, a real behavior
+change requiring the update. A second full-file failure seen once
+(`test_library_shell_notes_sync_now_calls_recording_service_with_
+chosen_enums`) was confirmed order-dependent flakiness unrelated to
+this task (passed 3/3 in isolation both with and without this task's
+changes) -- the same class of issue Task 2's report already named.
+
+Verification: Tests/Library (1106 passed), Tests/Widgets/Library (18
+passed), Tests/UI/test_app_footer_shortcut_context.py (10 passed),
+Tests/UI/test_library_file_notes_workspace.py (36 passed),
+Tests/UI/test_library_rag_keystroke.py + test_product_maturity_gate16_
+library_search_rag.py + test_library_content_hub.py (80 passed, checks
+the canvas Search/RAG query Input swap did not regress),
+Tests/UI/test_screen_navigation.py -k library (33 passed),
+Tests/UI/test_library_shell.py full file (365 passed, 1 failed --
+`test_landing_footer_advertises_the_landing_keyboard_story`, task-3022's
+own named ambient debt, unaffected by this task). Tests/Library
+--collect-only -q: 1106 collected, 0 errors. CSS bundle regenerated
+(`build_css.py`) and verified in sync (`check_bundle_sync.py`).
+
+Live tmux (sockets p2T4lib5280 + three fresh per-width sessions,
+scratch profile sdd_p2t4, cleaned up after each): 120x35 showed "Chats
+(0)"/"Cards due: 0" (no mid-word cut) and the "opens staging canvas"
+meta line cleanly absent (not garbled); 100x30 and 80x24 both showed
+the SAME short labels plus the footer's compacted-globals form
+("... | F1 · Ctrl+P · Ctrl+Q" with the screen's own hints intact); 80x24
+separately confirmed the nav-bar's "⌃6 Watc" cut is still present
+(matching the out-of-scope decision). LIB-17: a real click near the
+start of a stale "quokka" query (ANSI-confirmed selection-highlight
+background on the whole word) followed by typing "Z" replaced the
+entire query (not "Zquokka"/"quokkaZ"), reproduced after a genuine
+screen re-entry (Library -> Home -> Library) so the query was truly
+stale, not freshly typed. LIB-19: all three surfaces (Database list,
+Files workspace, Sync panel) show their placement sentence live,
+cross-referencing the other two.
+
+CLOSE-OUT: audited all 8 AC checkboxes against reality. AC#1-5 (Tasks
+1-3) re-confirmed via this task's own full-suite runs (Tests/UI/
+test_library_shell.py 365/366, test_screen_navigation.py -k library
+33/33) -- left checked, not re-litigated. AC#6 (rail determinism) and
+AC#8 (no mid-word truncation at 120/100/80) checked as implemented and
+live-verified above. AC#7's wording was updated (not just checked) --
+the original text ("stale rail queries do not survive screen switches")
+implied clearing, but the decision made here (matching the existing "/"
+seam's own promise) is select-all, not clear; the AC now says so
+explicitly. Docs updated: Docs/User_Guide/library.md (rail gloss-
+stability + click-select-all + short-label behavior, new stamp),
+Docs/User_Guide/library/notes.md and .../file-notes.md ("Database vs.
+Files vs. Sync" sections + new stamps for both). Status flipped to Done.
+
+Files changed (Task 4): tldw_chatbook/Library/library_shell_state.py,
+tldw_chatbook/Widgets/Library/library_rail.py,
+tldw_chatbook/Widgets/Library/library_search_rag_panel.py,
+tldw_chatbook/Widgets/Library/library_notes_canvas.py,
+tldw_chatbook/Widgets/Library/library_file_notes_workspace.py,
+tldw_chatbook/Widgets/AppFooterStatus.py,
+tldw_chatbook/css/components/_agentic_terminal.tcss,
+tldw_chatbook/css/tldw_cli_modular.tcss,
+Tests/Library/test_library_shell_state.py,
+Tests/Widgets/Library/test_library_rail.py,
+Tests/Widgets/Library/test_library_notes_canvas.py (new),
+Tests/UI/test_app_footer_shortcut_context.py,
+Tests/UI/test_library_file_notes_workspace.py,
+Tests/UI/test_library_shell.py (one pre-existing test updated to match
+the LIB-18 fix, not weakened),
+Docs/User_Guide/library.md, Docs/User_Guide/library/notes.md,
+Docs/User_Guide/library/file-notes.md,
+backlog/tasks/task-3200 (new, out-of-scope nav-bar follow-up).
 <!-- SECTION:NOTES:END -->
