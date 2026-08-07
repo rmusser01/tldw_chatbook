@@ -41,7 +41,6 @@ import asyncio
 import base64
 import json
 from html import unescape
-import pytest
 import random
 import re
 import time
@@ -577,42 +576,6 @@ async def analyze_and_aggregate(
     }
 
 
-@pytest.mark.asyncio
-async def test_perplexity_pipeline():
-    # Phase 1: Generate sub-queries and perform web searches
-    search_params = {
-        "engine": "google",
-        "content_country": "countryUS",
-        "search_lang": "en",
-        "output_lang": "en",
-        "result_count": 10,
-        "date_range": None,
-        "safesearch": "active",
-        "site_blacklist": ["spam-site.com"],
-        "exactTerms": None,
-        "excludeTerms": None,
-        "filter": None,
-        "geolocation": None,
-        "search_result_language": None,
-        "sort_results_by": None,
-        "subquery_generation": True,
-        "subquery_generation_llm": "openai",
-        "relevance_analysis_llm": "openai",
-        "final_answer_llm": "openai",
-    }
-    phase1_results = generate_and_search(
-        "What is the capital of France?", search_params
-    )
-    # Review the results here if needed
-    # Phase 2: Analyze relevance and aggregate final answer
-    phase2_results = await analyze_and_aggregate(
-        phase1_results["web_search_results_dict"],
-        phase1_results["sub_query_dict"],
-        search_params,
-    )
-    logger.info(phase2_results["final_answer"])
-
-
 ######################### Question Analysis #########################
 #
 #
@@ -1069,8 +1032,11 @@ def perform_websearch(
         - brave: Brave Search API
         - duckduckgo: DuckDuckGo (HTML scraping)
         - kagi: Kagi Search API
+        - exa: Exa Search API
+        - serper: Serper (Google Search proxy) API
         - tavily: Tavily Search API
         - searx: SearX instance
+        - yandex: Yandex Cloud Search API v2
     """
     start_time = time.time()
 
@@ -2864,7 +2830,7 @@ def search_web_serper(search_query, content_country=None, search_lang=None, resu
     """
     serper_api_key = loaded_config_data["search_engines"].get("serper_search_api_key", "")
     if not serper_api_key:
-        raise ValueError("Please provide a valid Serper API key ([search_engines] serper_search_api_key)")
+        raise ValueError("Please provide a valid Serper API key ([SearchEngines] serper_search_api_key)")
     headers = {"X-API-KEY": serper_api_key, "Content-Type": "application/json"}
     payload = {
         "q": search_query,
