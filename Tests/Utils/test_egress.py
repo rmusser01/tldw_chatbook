@@ -1157,3 +1157,35 @@ def test_hop_headers_keeps_x_goog_api_key_same_origin():
     headers = {"x-goog-api-key": "secret-key"}
     kept = _hop_headers(headers, True)
     assert kept.get("x-goog-api-key") == "secret-key"
+
+
+# --- is_public_http_url: pre-scrape SSRF guard (task-1356) ------------------
+#
+# Strict "genuinely public internet" classifier -- unlike evaluate_url_policy,
+# NOT affected by trusted_origins or [web_security] allowed_hosts/enabled
+# (the autouse fixture above neutralizes both anyway). Used by the deep-search
+# relevance phase to refuse pre-fetch before Playwright ever navigates.
+
+def test_is_public_http_url_blocks_private_and_metadata(monkeypatch):
+    from tldw_chatbook.Utils import egress
+    for bad in ("http://127.0.0.1/", "http://10.0.0.5/x", "http://169.254.169.254/latest",
+                "http://[::1]/", "ftp://x/", "not a url"):
+        assert egress.is_public_http_url(bad) is False
+
+
+def test_is_public_http_url_allows_public(monkeypatch):
+    import socket
+    from tldw_chatbook.Utils import egress
+    monkeypatch.setattr(socket, "getaddrinfo",
+                        lambda *a, **k: [(2, 1, 6, "", ("93.184.216.34", 80))])
+    assert egress.is_public_http_url("https://example.com/page") is True
+
+
+def test_is_public_http_url_blocks_multicast(monkeypatch):
+    # CRITICAL 1 (task-1356 re-review): ipaddress.is_global is True for
+    # multicast, so without an explicit check a multicast address sails
+    # through both _classify_ip's public/private split and this function.
+    # 239.255.255.250 is a real SSDP/UPnP discovery address.
+    from tldw_chatbook.Utils import egress
+    for bad in ("http://224.0.0.1/", "http://239.255.255.250:1900/description.xml"):
+        assert egress.is_public_http_url(bad) is False, bad

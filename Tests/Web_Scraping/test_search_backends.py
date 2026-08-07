@@ -73,6 +73,7 @@ def test_serper_request_shape(monkeypatch):
     assert call["url"] == "https://google.serper.dev/search"
     assert call["headers"]["X-API-KEY"] == "test-serper-key"
     assert call["headers"]["Content-Type"] == "application/json"
+    assert call["timeout"] == 30
     body = json.loads(call["data"]) if "data" in call else call["json"]
     assert body == {"q": "cherry cake", "gl": "us", "hl": "en", "num": 7}
 
@@ -159,6 +160,7 @@ def test_exa_request_shape(monkeypatch):
     call = fake.calls[0]
     assert call["url"] == "https://api.exa.ai/search"
     assert call["headers"]["x-api-key"] == "test-exa-key"
+    assert call["timeout"] == 30
     body = call.get("json") or json.loads(call["data"])
     assert body == {"query": "cherry cake", "numResults": 5, "type": "auto",
                     "contents": {"highlights": True}}
@@ -249,6 +251,7 @@ def test_yandex_request_shape(monkeypatch):
     call = fake.calls[0]
     assert call["url"] == "https://searchapi.api.cloud.yandex.net/v2/web/search"
     assert call["headers"]["Authorization"] == "Api-Key test-ya-key"
+    assert call["timeout"] == 30
     body = call.get("json") or json.loads(call["data"])
     assert body == {
         "query": {"searchType": "SEARCH_TYPE_COM", "queryText": "cherry cake"},

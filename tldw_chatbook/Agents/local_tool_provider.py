@@ -20,8 +20,19 @@ from tldw_chatbook.MCP.hub_tool_catalog import HubTool
 from tldw_chatbook.MCP.local_runtime_delegate import PERMISSION_STATE_UNRESOLVED_CLAUSE
 from tldw_chatbook.MCP.permission_store import EffectiveToolState
 
+from ..config import coerce_bool_setting, get_cli_setting
 from .agent_models import ToolCatalogEntry, ToolResult, ToolSchema
 from .mcp_tool_provider import MCPPendingCall
+
+# Module-level (not the function-local imports the other `_default_specs`
+# tool modules use) SPECIFICALLY so tests can patch this one name via
+# `monkeypatch.setattr("tldw_chatbook.Agents.local_tool_provider.
+# get_cli_setting", ...)` -- a function-local `from ..config import
+# get_cli_setting` re-resolves the ..config module's OWN attribute on every
+# call, which is also patchable, but at a different (and less obvious)
+# target than the one this gate check's own tests assert against. Read by
+# `_default_specs` to decide whether `web_deep_search` is registered at
+# all (task-1356 Task 6's double opt-in).
 
 SOURCE = "local"
 LOCAL_SERVER_KEY = "local:__local__"
@@ -54,6 +65,33 @@ LOCAL_GATE_ERROR_REFUSAL = f"blocked — {PERMISSION_STATE_UNRESOLVED_CLAUSE}; r
 
 _MAX_RESULT_BYTES = 32 * 1024
 _MAX_ERROR_CHARS = 300
+
+# web_deep_search's own internal deadline can run up to deep_search_timeout_s
+# (operator-configured, default 240s) + a 30s asyncio.wait_for grace + a 5s
+# thread-join slack = deep_search_timeout_s + 35s worst case before ITS OWN
+# partial-synthesis return (see Tools/web_tool_impls.py's
+# _DEEP_SEARCH_DEADLINE_GRACE_S / _DEEP_SEARCH_THREAD_JOIN_SLACK_S
+# docstrings). The agent runtime's default per-call ceiling (RunBudget.
+# max_tool_call_seconds = 300s) only covers that for the DEFAULT
+# deep_search_timeout_s -- an operator who raises deep_search_timeout_s (the
+# key is deliberately uncapped; see config.py's template comment), or an
+# agent config that sets a SHORTER budget for its other, much faster tools,
+# would otherwise preempt this one before it gets to return that honest
+# partial answer instead of nothing.
+#
+# Fix round 1 (task-1356 review): the override used to be this hardcoded
+# constant, computed once against the SHIPPED default and never revisited --
+# so any configured deep_search_timeout_s in 256-299 (a range the config
+# template explicitly invited) fired the outer override BEFORE the tool's
+# own graceful sequence finished. LocalToolProvider.timeout_for (below) now
+# calls Tools/web_tool_impls.deep_search_outer_timeout_s() instead, which
+# reads the SAME settings seam the tool itself uses and DERIVES the ceiling
+# from it (configured deep_search_timeout_s + grace + join-slack + a
+# scheduling-jitter margin) -- the invariant "outer > internal worst case"
+# now holds for every configured value, not just the default. At the 240
+# default this still yields 290s, exactly what shipped before; no clamp is
+# applied anywhere, so an operator who sets 3600 gets a 3650s outer
+# ceiling -- their explicit, documented choice.
 
 
 @dataclass(frozen=True)
@@ -223,6 +261,38 @@ class LocalToolProvider:
             stale=False,
             executable=True,
         )
+
+    def timeout_for(self, tool_id: str) -> float | None:
+        """Per-call timeout override; every local tool but ``web_deep_search``
+        keeps the caller's own run budget.
+
+        Duck-typed: ``ToolCatalogRegistry.timeout_for``
+        (Agents/tool_catalog.py) calls this via ``getattr(provider,
+        "timeout_for", None)`` and falls back to the run's
+        ``config.budget.max_tool_call_seconds`` (default 300s) when it
+        returns ``None`` -- which is every tool here except the one
+        override below (see the module comment above this class's
+        ``web_deep_search``-related constants for why that one needs a
+        floor independent of the surrounding budget).
+
+        Args:
+            tool_id: Catalog id (``local:<name>``) or bare LLM-facing name
+                -- same prefix tolerance as ``invoke()``/``load_schema()``.
+
+        Returns:
+            ``Tools.web_tool_impls.deep_search_outer_timeout_s()`` for
+            ``web_deep_search`` (registered or not -- this method does not
+            consult the catalog), ``None`` for every other name including
+            unknown ones. Fix round 1: DERIVED per call from the configured
+            ``deep_search_timeout_s`` (not a module-load-time constant) --
+            see that function's docstring for the exact formula.
+        """
+        name = tool_id.split(":", 1)[1] if ":" in tool_id else tool_id
+        if name != "web_deep_search":
+            return None
+        from tldw_chatbook.Tools.web_tool_impls import deep_search_outer_timeout_s
+
+        return deep_search_outer_timeout_s()
 
     # -- approval stamps (mirror MCPToolProvider) ----------------------
 
@@ -646,7 +716,9 @@ def _default_specs(
         SEARCH_DEFAULT_RESULT_COUNT,
         SEARCH_ENGINES,
         SEARCH_MAX_RESULT_COUNT,
+        _deep_search_settings,
         web_crawl,
+        web_deep_search,
         web_fetch,
         web_search,
     )
@@ -1001,6 +1073,79 @@ def _default_specs(
                 },
                 handler=_make_todo_write_handler(todo_store, on_todo_change),
                 tags=("mutates",),
+            )
+        )
+    # Fail-closed coercion (Qodo, PR #1422): get_cli_setting returns the RAW
+    # TOML value, and a mis-typed string like "false" is truthy -- raw
+    # truthiness would have ENABLED this security gate. coerce_bool_setting
+    # applies load_settings' own bool rules ("false"/unrecognized -> False).
+    if coerce_bool_setting(
+        get_cli_setting("tools", "web_deep_search_enabled", False), False
+    ):
+        # Double opt-in (Docs/superpowers/specs/2026-08-07-deep-search-tool-
+        # design.md): a [tools] gate on top of the tool's own per-call
+        # permission Ask default, so web_deep_search is absent from BOTH
+        # the Console catalog and MCP exposure (which reuses this same
+        # provider -- MCP/server.py's module docstring) until explicitly
+        # enabled. The provider builds its spec list once at construction
+        # (see the class docstring), so flipping the gate needs an app
+        # restart -- documented below and in the config template comment
+        # ([SearchSettings] block, config.py).
+        #
+        # Fix round 1: the deadline sentence below used to bake in a static
+        # "240s", drifting silently if an operator configured a different
+        # deep_search_timeout_s. Read from the same settings seam the tool
+        # itself (and timeout_for's derived override) use, at spec-
+        # construction time -- consistent with the restart-to-apply note
+        # already on this whole spec (the provider builds its list once).
+        _deep_search_deadline_s = _deep_search_settings()["deep_search_timeout_s"]
+        specs.append(
+            LocalToolSpec(
+                name="web_deep_search",
+                description=(
+                    "Multi-query web research: expands the question into "
+                    "sub-queries (when [SearchSettings] search_enable_subquery "
+                    "is on), searches, scores results for relevance, and "
+                    "synthesizes a cited answer with a Sources list. Costs "
+                    "real money on paid providers -- makes ~2x-results+3 LLM "
+                    "calls plus up to max_results page fetches per call "
+                    "(~25 LLM calls at defaults). Runs under an internal "
+                    f"{_deep_search_deadline_s}s deadline (configurable via "
+                    "[SearchSettings].deep_search_timeout_s; restart to "
+                    "apply); if that deadline fires before synthesis "
+                    "finishes, returns a partial, explicitly labeled answer "
+                    "instead of failing outright. Opt-in: requires [tools] "
+                    "web_deep_search_enabled = true in config.toml and an "
+                    "app restart to take effect."
+                ),
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "question": {"type": "string", "description": "The research question."},
+                        "engine": {
+                            "type": "string",
+                            "enum": list(SEARCH_ENGINES),
+                            "description": "Search engine to use (default: [SearchSettings] search_provider_default).",
+                        },
+                        "max_results": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "description": "Results per query, clamped to [SearchSettings] search_result_max (default: that cap).",
+                        },
+                    },
+                    "required": ["question"],
+                },
+                handler=lambda args: web_deep_search(
+                    args["question"],
+                    engine=args.get("engine"),
+                    max_results=args.get("max_results"),
+                ),
+                # network-classed: default ask from the permission store's
+                # global default, same as web_fetch/web_search/web_crawl;
+                # read-only (no repository/filesystem mutation), so no risk
+                # tags -- the [tools] gate above is the extra guard this one
+                # gets beyond that shared default.
+                tags=(),
             )
         )
     return specs
