@@ -11,6 +11,7 @@ from textual import on
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal, VerticalScroll
 from textual.widgets.markdown import MarkdownTableOfContents
+from tldw_chatbook.Widgets.reader_scroll import ReaderVerticalScroll
 from textual.widgets import (
     Label,
     Button,
@@ -279,11 +280,19 @@ class ModelCardViewer(Container):
                     # open_links=False: link handling goes through the
                     # tiered resolver below (TASK-1991) — relative links
                     # and #anchors were dead with the default auto-open.
+                    # parser_factory: HF READMEs carry YAML front matter,
+                    # which the default parser renders as noise (TASK-1993;
+                    # observed live on the 1992 capture).
+                    from tldw_chatbook.Utils.markdown_parsing import (
+                        front_matter_parser_factory,
+                    )
+
                     readme_display = Markdown(
                         "",
                         id="readme-display",
                         classes="readme-content",
                         open_links=False,
+                        parser_factory=front_matter_parser_factory(),
                     )
                     # TASK-1992: heading-tree TOC for long READMEs. Hidden by
                     # default (compact layouts stay clean); the toolbar button
@@ -298,7 +307,9 @@ class ModelCardViewer(Container):
                         )
                     with Horizontal(classes="readme-body"):
                         yield toc
-                        with VerticalScroll(
+                        # ReaderVerticalScroll: j/k line + space/b page keys
+                        # when the README pane has focus (TASK-1994).
+                        with ReaderVerticalScroll(
                             classes="tab-content", id="readme-scroll"
                         ):
                             yield readme_display

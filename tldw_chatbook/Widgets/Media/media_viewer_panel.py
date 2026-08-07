@@ -30,6 +30,8 @@ from textual.message import Message
 from loguru import logger
 import re
 
+from tldw_chatbook.Widgets.reader_scroll import ReaderVerticalScroll
+
 if TYPE_CHECKING:
     from ...app import TldwCli
 
@@ -718,13 +720,13 @@ class MediaViewerPanel(Container):
                     )
 
                 # Content display
-                with VerticalScroll(classes="content-viewer"):
+                with ReaderVerticalScroll(classes="content-viewer"):
                     yield Markdown("", id="content-display")
 
             # Analysis tab
             with TabPane("Analysis", id="analysis-tab"):
                 # Wrap everything in a scrollable container
-                with VerticalScroll(id="analysis-scroll-fix"):
+                with ReaderVerticalScroll(id="analysis-scroll-fix"):
                     # API Settings in a Collapsible
                     with Collapsible(
                         title="API Settings",

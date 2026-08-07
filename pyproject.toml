@@ -141,6 +141,11 @@ image_generation = [
 svg = [
     "cairosvg",  # SVG rasterization for image attachments; needs the cairo C library (e.g. `brew install cairo`)
 ]
+frontmatter = [
+    # YAML front matter consumed (not rendered as noise) in note/README
+    # markdown previews (TASK-1993); absence falls back to default parsing.
+    "mdit-py-plugins",
+]
 pdf = [
     "pymupdf",
     "pymupdf4llm",
