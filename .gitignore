@@ -209,3 +209,5 @@ List.txt
 # Local credential scratch files (repository root only)
 /openai-api-key.txt
 /moonshot-api-key.txt
+*-api-key.txt
+/yandex-folder-id.txt
