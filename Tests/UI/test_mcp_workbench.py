@@ -917,6 +917,10 @@ def test_set_mode_defers_async_workers_as_callables():
     workbench = SimpleNamespace(
         _active_mode="servers",
         ModeChanged=lambda mode: SimpleNamespace(mode=mode),
+        # task-2901: set_mode probes for the target canvas before touching
+        # the switcher (deferred canvases stash instead); a non-empty result
+        # models "canvas mounted".
+        query=lambda _selector: [object()],
         query_one=lambda _widget_type: switcher,
         post_message=lambda message: posted.append(message),
         run_worker=lambda work, **kwargs: queued.append((work, kwargs)),
