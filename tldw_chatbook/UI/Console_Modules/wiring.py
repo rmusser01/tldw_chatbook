@@ -33,14 +33,16 @@ summary, as it applies to this file:
   callable): it never changes identity over a controller's life.
 - Controllers own no DOM.
 
-`Screens/chat_screen.py` still imports the controller CLASSES even though it
-no longer names most of them in code. That is deliberate, and re-deleting
-them is a regression: 18 sites across five test files reach them as
-`chat_screen_module.ConsoleDictationController` /
-`...ConsoleWorkspaceController` patch handles, and dropping the imports
-turned 28 of those tests red during this very extraction. They are re-export
-surface, in the same way as the ~30 other unused-but-imported names that file
-already carries.
+`Screens/chat_screen.py` no longer imports the controller CLASSES at all --
+this module is the only place they are constructed. It used to keep them as
+re-export surface because 32 sites across five test files reached them as
+`chat_screen_module.ConsoleDictationController` / `...ConsoleWorkspaceController`
+patch handles, and deleting the imports turned those tests red during this
+very extraction. Task-3023 repointed every one of those sites at the defining
+module, which is safe because they patch the CLASS OBJECT (or just read it),
+never the screen module's namespace -- so the alias and the owning module
+hand back the same object. Patch a controller on the module that defines it;
+do not reintroduce a re-export in `chat_screen.py` to patch through.
 """
 
 from typing import TYPE_CHECKING
