@@ -847,3 +847,47 @@ edits a different id.
    (not generic `SQLITE_CORRUPT`) the first time a row in that state is deleted or
    updated. Fix forward with `INSERT INTO fts_tbl(fts_tbl) VALUES ('rebuild')`, which is
    safe and idempotent for exactly this "shadow tables drifted from content" situation.
+
+---
+
+## A single red run is not causation — run both arms
+
+**The incident (2026-08-07, Console decomposition wave 4).** I deleted 35 lines of
+provably dead code from `on_button_pressed` — a branch whose button id had been
+removed by an earlier commit, confirmed dead by a whole-repo sweep and by an
+independent reviewer. Immediately afterwards
+`test_console_workspace_context_rail.py::test_conversation_status_row_label_and_value_are_separate_visual_runs`
+failed. It failed again in isolation. It passed on the commit before the deletion.
+Three signals all pointing the same way, and all of them wrong.
+
+The controlled version: three runs with the change and three without.
+
+- **Without** the deletion: 1 passed, 2 failed.
+- **With** the deletion: 2 passed, 1 failed.
+
+Same distribution. The test is nondeterministic on its own — it asserts on
+`_composited_rows(...)[0]` and the rail's composited rows do not always arrive in
+the same order (filed as task-3025, as a possible product nondeterminism rather
+than only a flaky test).
+
+Had I stopped at "it passes on the parent commit and fails on mine", I would have
+reverted a correct deletion and gone looking for a mechanism that does not exist.
+A subagent on the same task had earlier called the same test "a cross-file flake,
+investigated and cleared" after re-running it a couple of times — which was the
+right conclusion reached by a method that would equally have produced the wrong
+one.
+
+**What to do.**
+1. Before attributing a failure to your change, run it **N times on both arms**
+   (three is usually enough to expose a coin-flip; one is never enough). Restore
+   your change with `cp` from a scratch copy or an `Edit`, **never**
+   `git checkout --`, which silently discards uncommitted work — that has cost a
+   whole test rewrite in this repo before.
+2. "Passes on the parent commit" is one sample, not a control. So is "fails in
+   isolation" — isolation removes cross-file order dependence, but says nothing
+   about nondeterminism inside the test itself.
+3. A test that indexes into a rendered/composited collection (`rows[0]`,
+   `children[2]`) is a prime candidate: it will fail the moment ordering varies,
+   and ordering varies for reasons that have nothing to do with your diff. When
+   you find one, ask whether the *product's* ordering is guaranteed before you
+   "fix" the test to match whatever it did today.

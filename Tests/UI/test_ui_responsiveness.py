@@ -293,16 +293,21 @@ def test_console_transcript_sync_timer_updates_responsiveness_monitor():
 def _console_controller_slots() -> set[str]:
     """The controller attributes `MagicMock(spec=ChatScreen)` cannot see.
 
-    The decomposition wires each controller in `__init__`, so they are
-    *instance* attributes; `spec=` reads the CLASS and therefore never stubs
-    them. `_sync_native_console_chat_ui` reaches some of them directly rather
-    than through a screen-level delegation, so an unstubbed slot fails with
-    `Mock object has no attribute '_session'` — which is how wave 2 shipped
-    this test red to dev.
+    The decomposition wires each controller onto the screen at construction
+    time, so they are *instance* attributes; `spec=` reads the CLASS and
+    therefore never stubs them. `_sync_native_console_chat_ui` reaches some of
+    them directly rather than through a screen-level delegation, so an
+    unstubbed slot fails with `Mock object has no attribute '_session'` —
+    which is how wave 2 shipped this test red to dev.
 
-    Read back out of `__init__` rather than re-listed here, so the next wave's
-    controller does not re-open the treadmill `_make_sync_probe_screen`'s
-    docstring warns about.
+    Read back out of the wiring's own source rather than re-listed here, so
+    the next wave's controller does not re-open the treadmill
+    `_make_sync_probe_screen`'s docstring warns about. Wave 4 (task 1) moved
+    the six constructions out of `ChatScreen.__init__` and into
+    `Console_Modules/wiring.py`'s `build_console_controllers`, which binds
+    them to a `screen` parameter instead of `self`; this helper follows the
+    code, and the assertion below is what made that move loud rather than
+    silent.
 
     Returns:
         set[str]: Attribute names assigned a `Console*Controller(...)`.
@@ -315,9 +320,10 @@ def _console_controller_slots() -> set[str]:
     import inspect
     import textwrap
 
-    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+    from tldw_chatbook.UI.Console_Modules.wiring import build_console_controllers
 
-    tree = ast.parse(textwrap.dedent(inspect.getsource(ChatScreen.__init__)))
+    tree = ast.parse(textwrap.dedent(inspect.getsource(build_console_controllers)))
+    bound = build_console_controllers.__code__.co_varnames[0]
     slots = {
         target.attr
         for node in ast.walk(tree)
@@ -328,11 +334,11 @@ def _console_controller_slots() -> set[str]:
         for target in node.targets
         if isinstance(target, ast.Attribute)
         and isinstance(target.value, ast.Name)
-        and target.value.id == "self"
+        and target.value.id == bound
     }
     assert slots, (
-        "no Console*Controller assignments found in ChatScreen.__init__; the "
-        "wiring shape changed and this helper now stubs nothing."
+        "no Console*Controller assignments found in build_console_controllers; "
+        "the wiring shape changed and this helper now stubs nothing."
     )
     return slots
 

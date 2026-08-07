@@ -162,7 +162,7 @@ def _resume_with_markers(
         agent_runs_db=agent_db, store=resumed_store, provider_gateway=None
     )
     screen._console_agent_bridge = fresh_bridge
-    markers = screen._inject_resume_agent_markers(
+    markers = screen._agent._inject_resume_agent_markers(
         resumed_store.messages_for_session(resumed_session.id), conversation_id
     )
     resumed_store.apply_resume_marker_overlay(resumed_session.id, markers)

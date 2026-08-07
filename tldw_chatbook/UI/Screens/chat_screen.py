@@ -51,16 +51,33 @@ from ..Console_Modules.frame import (
     CONSOLE_QUIET_FRAME_BORDER,
     frame_console_region,
 )
+# Symbols below marked `# noqa: F401  (alias re-export; ...)` are NOT
+# referenced by this module's code -- the decomposition moved their users into
+# `..Console_Modules/` -- but they are load-bearing anyway: tests reach them
+# through THIS module's namespace, as `chat_screen_module.<Name>` or as
+# `setattr(chat_screen_module, "<Name>", ...)`. Neither form is visible to an
+# import-grep, and the quoted one is not even an identifier. Deleting them --
+# by hand, or via `ruff --fix` / autoflake acting on the F401s they raise --
+# fails those tests with `AttributeError`. That was tripped once while making
+# the wave-4 move, and the first attempt to mark them got the set wrong in
+# BOTH directions (four classes marked that nothing reaches; six symbols
+# reached that were unmarked, one in this very block). So the set is now
+# DERIVED, not hand-maintained:
+# `Tests/Architecture/test_module_alias_reexports.py` recomputes it and fails
+# if an at-risk import is unmarked. Add or remove markers in response to that
+# test, not by eye. The clean fix is repointing the test sites at the owning
+# modules (task-3023); the markers are the holding position until then.
+from ..Console_Modules.agent import ConsoleAgentController
 from ..Console_Modules.dictation import (
-    CONSOLE_DICTATION_MAX_BYTES,
-    CONSOLE_DICTATION_MAX_SECONDS,
-    CONSOLE_DICTATION_SAMPLE_RATE,
-    CONSOLE_DICTATION_SAMPLE_WIDTH,
-    ConsoleDictationController,
+    CONSOLE_DICTATION_MAX_BYTES,  # noqa: F401  (alias re-export; see note above)
+    CONSOLE_DICTATION_MAX_SECONDS,  # noqa: F401  (alias re-export; see note above)
+    CONSOLE_DICTATION_SAMPLE_RATE,  # noqa: F401  (alias re-export; see note above)
+    CONSOLE_DICTATION_SAMPLE_WIDTH,  # noqa: F401  (alias re-export; see note above)
+    ConsoleDictationController,  # noqa: F401  (alias re-export; see note above)
     ConsoleDictationEvent,
     ConsoleDictationLimitSignal,
-    ConsoleStreamingDictationSession,
-    _join_segments,
+    ConsoleStreamingDictationSession,  # noqa: F401  (alias re-export; see note above)
+    _join_segments,  # noqa: F401  (alias re-export; see note above)
     _VOICE_ACK_NOT_SENT,
     _VOICE_ACK_SESSION_CHANGED,
 )
@@ -76,7 +93,8 @@ from ..Console_Modules.transcript import (
     ConsoleTranscriptRegion,
     _ConsoleTranscriptReadingState,
 )
-from ..Console_Modules.workspace import ConsoleWorkspaceController
+from ..Console_Modules.wiring import build_console_controllers
+from ..Console_Modules.workspace import ConsoleWorkspaceController  # noqa: F401  (alias re-export; see note above)
 from ..Console_Modules.session import (
     ConsoleSessionController,
     _canonical_card_character_id,
@@ -473,7 +491,6 @@ from ...Widgets.Console.console_model_popover import (
     CONSOLE_POPOVER_OPEN_FULL_SETTINGS,
     ConsoleModelPopover,
 )
-from ...Widgets.Console.console_run_log_modal import ConsoleRunLogModal
 from ...Widgets.Console.console_skill_picker_modal import ConsoleSkillPickerModal
 from ...Widgets.Console.console_style_picker_modal import ConsoleStylePickerModal
 from ...Widgets.Console.console_setup_modal import (
@@ -2303,7 +2320,6 @@ class ChatScreen(BaseAppScreen):
         #: on the SAME task) can resolve which session's stash entry above
         #: is its own, without changing that hook's public no-arg contract.
         self._console_submit_session_by_task: dict[asyncio.Task, str] = {}
-        self._console_agent_bridge: Any | None = None
         # TASK-1141: round/request ids (namespaced "mcp:<round_id>" /
         # "install:<request_id>" / "script:<request_id>") this screen has
         # already fired a park toast for -- see `_park_console_approval`'s
@@ -2328,16 +2344,6 @@ class ChatScreen(BaseAppScreen):
         #: for the same "bounded by distinct sessions ever parked" reason
         #: as `_console_toasted_park_round_ids` above.
         self._console_last_parked_round_ids: dict[str, frozenset[str]] = {}
-        self._console_agent_drilldown_run_id: str | None = None
-        # Finding C: the conversation the drill-in was set for -- used to
-        # detect a conversation/session switch and drop back to the
-        # overview instead of showing a foreign conversation's sub-agent.
-        self._console_agent_drilldown_conversation_id: str | None = None
-        # Finding A: batched sub-agent badge-count cache + the staleness
-        # markers used to decide whether it needs a fresh DB round trip.
-        self._console_subagent_counts_cache: Dict[str, int] = {}
-        self._console_subagent_counts_cache_row_ids: frozenset = frozenset()
-        self._console_subagent_counts_cache_at: float = 0.0
         # TASK-251: TTL cache for `_sync_persisted_console_browser_rows` --
         # see `CONSOLE_PERSISTED_ROWS_CACHE_TTL_SECONDS`.
         self._console_persisted_rows_cache: (
@@ -2345,132 +2351,28 @@ class ChatScreen(BaseAppScreen):
         ) = None
         self._console_persisted_rows_cache_key: tuple[str, str | None] | None = None
         self._console_persisted_rows_cache_at: float = 0.0
-        # TASK-251: last-applied payloads for equality-guarded tick sub-syncs
-        # (skip Static.update()/style work when the computed payload hasn't
-        # changed since the last successful apply).
+        # TASK-251: last-applied payload for the equality-guarded Agent
+        # rail sub-sync (skip Static.update()/style work when the payload
+        # `ConsoleAgentController._console_agent_section_payload` computes
+        # hasn't changed since the last successful apply). Stays here, with
+        # `_sync_console_agent_section` itself -- it is that DOM write's
+        # memo and nothing else's (wave-4 console decomposition, task 3).
         self._console_agent_section_last: (
             tuple[str, str, str, str, bool, bool, bool] | None
         ) = None
-        # Finding D (review round 2): cache of the "View full log"
-        # affordance's availability, keyed by the target run id -- see
-        # `_console_agent_full_log_available`'s docstring for why this
-        # exists (avoids a filesystem/DB probe on every 0.2s rail tick).
-        self._console_agent_full_log_cache_run_id: str | None = None
-        self._console_agent_full_log_cache_available: bool = False
-        # TASK-915: transient (never persisted) "user collapsed the Agent
-        # section while the fleet was busy" flag. Set by
-        # `_toggle_console_rail_section` when the user closes the section
-        # with a non-empty fleet line; consulted by
-        # `_apply_fleet_agent_section_auto_open` to skip its force-open for
-        # the REST of this busy window; cleared the moment the fleet goes
-        # quiet (next busy window auto-opens again) or the user reopens the
-        # section manually. See `_apply_fleet_agent_section_auto_open`'s
-        # docstring for why the force itself must stay a rendered-state-only
-        # override.
-        self._agent_section_user_dismissed_while_busy = False
         self._console_rail_system_line_last: tuple[str, bool] | None = None
         self._console_rail_prune_dispatched = False
-        #: Workspace policy context, lifecycle, and resume-flow state and
-        #: behaviour moved to `ConsoleWorkspaceController` (wave-2 console
-        #: decomposition, task 2) -- the largest cluster in wave 2.
-        #: `self._console_workspace_conversation_query`/`_search_timer`/
-        #: `_search_token`/`_search_rows`/`_search_total`/`_search_error`
-        #: stay readable/writable via the six proxy properties defined near
-        #: `_console_composer_or_none`, so `on_console_workspace_
-        #: conversation_search_changed` (a sibling conversation-browser
-        #: handler that only mirrors three of them) and `on_button_pressed`'s
-        #: workspace-search branches needed no change. See `workspace.py`'s
-        #: module docstring for the full map of what moved and why.
-        self._workspace = ConsoleWorkspaceController(
-            self,
-            app_instance=self.app_instance,
-            # Late-binding lambdas, not the bound methods directly -- same
-            # staleness reason as `ConsoleDictationController`'s own wiring
-            # just below: a bound method captured here would freeze the
-            # CURRENT screen method, invisible to a later
-            # `monkeypatch.setattr` on this screen instance.
-            chat_store_accessor=lambda: self._ensure_console_chat_store(),
-            current_chat_store_accessor=lambda: self._console_chat_store,
-            current_conversation_id_accessor=(
-                lambda: self._session._current_console_conversation_id()
-            ),
-            native_session_rows_accessor=(
-                lambda state: self._session._with_native_console_session_rows(state)
-            ),
-            conversation_browser_state_accessor=(
-                lambda state, current_conversation_id: (
-                    self._with_console_conversation_browser_state(
-                        state, current_conversation_id=current_conversation_id
-                    )
-                )
-            ),
-            capture_draft_switch_snapshot=(
-                lambda: self._session._capture_console_draft_switch_snapshot()
-            ),
-            sync_chat_core_state=lambda: self._sync_console_chat_core_state(),
-            sync_native_console_chat_ui=lambda: self._sync_native_console_chat_ui(),
-            sync_temporary_chip=lambda: self._sync_console_temporary_chip(),
-            default_session_settings_accessor=(
-                lambda: self._session._default_console_session_settings()
-            ),
-            scope_picker_listers_accessor=(
-                lambda: self._console_scope_picker_listers()
-            ),
-            active_native_session_accessor=(
-                lambda: self._session._active_native_console_session()
-            ),
-            refresh_effective_scope_and_sync=(
-                lambda session: self._refresh_console_effective_scope_and_sync(
-                    session
-                )
-            ),
-            # Message <-> workspace seam (the reverse direction of the
-            # session/message seams the message controller's own
-            # constructor takes): the resume flow's tree flattener now
-            # lives on `ConsoleMessageController` (wave-3 task 1). This
-            # accessor already existed as a named callable before that
-            # move (wave-2 task 2); only its target changed, from the
-            # screen's own delegation to the controller directly. Python
-            # resolves `self._message` at CALL time, so construction order
-            # (workspace built before message) does not matter.
-            messages_from_conversation_tree_accessor=(
-                lambda tree: self._message._console_messages_from_conversation_tree(
-                    tree
-                )
-            ),
-            session_settings_for_resume_accessor=(
-                lambda conversation: self._session._console_session_settings_for_resume(
-                    conversation
-                )
-            ),
-            resolve_resumed_character_name=(
-                lambda character_id: self._resolve_resumed_character_name(
-                    character_id
-                )
-            ),
-            inject_resume_agent_markers_accessor=(
-                lambda messages, conversation_id: self._inject_resume_agent_markers(
-                    messages, conversation_id
-                )
-            ),
-            resolve_effective_scope_state=(
-                lambda session: self._resolve_console_effective_scope_state(session)
-            ),
-            sync_retrieval_scope_row=(
-                lambda: self._sync_console_retrieval_scope_row()
-            ),
-            note_follow_intent=lambda: self._note_console_follow_intent(),
-            focus_composer_if_needed=(
-                lambda **kwargs: self._focus_console_composer_if_needed(**kwargs)
-            ),
-            conversation_section_config_accessor=(
-                lambda: self._console_conversation_section_config()
-            ),
-            focus_conversation_search=(
-                lambda: self._focus_console_workspace_conversation_search()
-            ),
-            sync_workspace_context=lambda: self._sync_console_workspace_context(),
-        )
+        # The six Console controllers -- their construction and every
+        # named dependency they take -- moved verbatim to
+        # `Console_Modules/wiring.py` (wave-4 console decomposition,
+        # task 1); not one keyword argument changed, only the call
+        # site. This call sits at exactly the point the first
+        # construction (`self._workspace`) occupied, because some of
+        # the ~250 attribute assignments around it here are read by the
+        # wiring's late-binding lambdas. See `build_console_
+        # controllers`' docstring for the build order and why it is
+        # documentation rather than a constraint.
+        build_console_controllers(self)
         self._console_conversation_browser_query = ""
         self._console_conversation_browser_search_timer: Any | None = None
         self._console_conversation_browser_search_token = 0
@@ -2479,388 +2381,6 @@ class ChatScreen(BaseAppScreen):
         ] = ()
         self._console_conversation_browser_total: int | None = None
         self._console_conversation_browser_error = ""
-        #: Native session lifecycle -- start/activate/swap/promote/rename,
-        #: per-session settings, the Ctrl+K switcher's choice handling,
-        #: draft sync, and one-session (de)serialization -- moved to
-        #: `ConsoleSessionController` (wave-2 console decomposition, task 3).
-        #: `self._console_visible_draft_session_id`/`_console_undo_histories`
-        #: stay readable/writable via the two proxy properties defined near
-        #: `_console_composer_or_none`, so nothing outside this cluster
-        #: (screen-state (de)serialization, the submit path, `on_button_
-        #: pressed`'s tab-close branch, tests) had to change.
-        #: `_console_active_session_is_ephemeral` keeps a one-line
-        #: delegation instead of a proxy property (see that method's own
-        #: docstring: an external, non-controller consumer reaches it by
-        #: bare name off `self.screen`). See `session.py`'s module
-        #: docstring for the full map of what moved and why.
-        self._session = ConsoleSessionController(
-            self,
-            app_instance=self.app_instance,
-            chat_store_accessor=lambda: self._ensure_console_chat_store(),
-            current_chat_store_accessor=lambda: self._console_chat_store,
-            ensure_console_chat_controller=(
-                lambda: self._ensure_console_chat_controller()
-            ),
-            composer_accessor=lambda: self._console_composer_or_none(),
-            effective_console_provider_model=(
-                lambda: self._effective_console_provider_model()
-            ),
-            provider_readiness_app_config=(
-                lambda: self._provider_readiness_app_config()
-            ),
-            sync_native_console_chat_ui=lambda: self._sync_native_console_chat_ui(),
-            sync_chat_core_state=lambda: self._sync_console_chat_core_state(),
-            sync_temporary_chip=lambda: self._sync_console_temporary_chip(),
-            sync_settings_summary=lambda: self._sync_console_settings_summary(),
-            sync_control_bar=lambda: self._sync_console_control_bar(),
-            sync_command_popup=lambda: self._sync_console_command_popup(),
-            note_follow_intent=lambda: self._note_console_follow_intent(),
-            focus_composer_if_needed=(
-                lambda **kwargs: self._focus_console_composer_if_needed(**kwargs)
-            ),
-            invalidate_persisted_rows_cache=(
-                lambda: self._invalidate_console_persisted_rows_cache()
-            ),
-            mark_conversation_row_broken=(
-                lambda conversation_id: self._mark_console_conversation_row_broken(
-                    conversation_id
-                )
-            ),
-            refresh_effective_scope_and_sync=(
-                lambda session: self._refresh_console_effective_scope_and_sync(
-                    session
-                )
-            ),
-            # Session<->workspace seam (design spec: "a named callable
-            # between them; design it deliberately, never a back-door
-            # through the screen"). `self._workspace` was constructed just
-            # above; Python resolves it at CALL time inside these lambdas,
-            # so construction order does not matter.
-            set_active_workspace_for_session=(
-                lambda session_id: (
-                    self._workspace._set_active_workspace_for_console_session(
-                        session_id
-                    )
-                )
-            ),
-            resume_workspace_conversation=(
-                lambda conversation_id, **kwargs: (
-                    self._workspace._resume_console_workspace_conversation(
-                        conversation_id, **kwargs
-                    )
-                )
-            ),
-            workspace_initial_session_title=(
-                lambda workspace_id: (
-                    self._workspace._console_initial_session_title_for_workspace(
-                        workspace_id
-                    )
-                )
-            ),
-            merge_workspace_rows=(
-                lambda native_rows, rows: self._workspace._merge_console_workspace_rows(
-                    native_rows, rows
-                )
-            ),
-            session_id_for_workspace_conversation=(
-                lambda row_key: (
-                    self._workspace._console_session_id_for_workspace_conversation(
-                        row_key
-                    )
-                )
-            ),
-        )
-        #: Dictation's own state and lifecycle moved to
-        #: `ConsoleDictationController` (wave-1 console decomposition,
-        #: task 5) -- this is wave 1's proof of the controller collaborator
-        #: kind. `self._console_dictation_*` / `self._console_pending_
-        #: voice_action` stay readable/writable via the properties defined
-        #: near `_console_composer_or_none`, so nothing outside this
-        #: cluster (the hands-free wiring, `on_button_pressed`, tests) had
-        #: to change. See `dictation.py`'s module docstring for the full
-        #: map of what moved and why.
-        self._dictation = ConsoleDictationController(
-            self,
-            app_instance=self.app_instance,
-            # Late-binding lambdas, not the bound methods directly: a
-            # bound method captured here would freeze the CURRENT
-            # `_console_composer_or_none`/`_ensure_console_chat_store`/
-            # `_speak_status`, invisible to a later `monkeypatch.setattr`
-            # on this screen instance. The lambda instead closes over
-            # `self` (this screen, whose identity never changes) and does
-            # the attribute lookup at CALL time, so a later instance-level
-            # patch is still picked up -- see `ConsoleDictationController.
-            # __init__`'s docstring, binding kind 3.
-            composer_accessor=lambda: self._console_composer_or_none(),
-            chat_store_accessor=lambda: self._ensure_console_chat_store(),
-            speak_status=lambda reason: self._speak_status(reason),
-            # The four reach-backs wave 1 left as a disclosed, temporary
-            # exception (bare `self._screen.X` properties) now that hands-
-            # free has a controller of its own to hand a named dependency
-            # to (wave-2 console decomposition, task 1) -- late-binding
-            # lambdas onto `self._hands_free`, constructed just below.
-            # Python resolves `self._hands_free` at CALL time, not here, so
-            # construction order between the two controllers does not
-            # matter.
-            hands_free_session_accessor=lambda: self._hands_free._console_hands_free,
-            set_hands_free_vad_degraded=(
-                lambda value: setattr(
-                    self._hands_free, "_console_hands_free_vad_degraded", value
-                )
-            ),
-            enter_hands_free_loop=(
-                lambda **kwargs: self._hands_free._enter_console_hands_free_loop(
-                    **kwargs
-                )
-            ),
-            hands_free_force_immediate_send=(
-                lambda: self._hands_free._console_hands_free_force_immediate_send()
-            ),
-            deliver_hands_free_capture_ended=(
-                lambda session, had_segments: (
-                    self._hands_free._deliver_console_hands_free_capture_ended(
-                        session, had_segments
-                    )
-                )
-            ),
-            # Realtime stays screen-owned (not extracted this wave); this
-            # was the same "temporary exception" shape as the four above,
-            # for the same staleness reason, now closed out the same way.
-            realtime_adopt_transcript=(
-                lambda transcript: self._console_realtime_adopt_transcript(
-                    transcript
-                )
-            ),
-            run_pending_voice_action=(
-                lambda session_id: self._run_pending_console_voice_action(
-                    session_id
-                )
-            ),
-            undo_histories_accessor=lambda: self._console_undo_histories,
-            visible_draft_session_id_accessor=(
-                lambda: self._console_visible_draft_session_id
-            ),
-        )
-        #: The V3 pipeline hands-free loop's state and lifecycle, plus the
-        #: two-engine fork/action coordination it shares with the V4
-        #: realtime loop, moved to `ConsoleHandsFreeController` (wave-2
-        #: console decomposition, task 1). `self._console_hands_free`/
-        #: `_console_hands_free_vad_degraded` stay readable/writable via
-        #: the properties defined near `_console_composer_or_none`, so
-        #: nothing outside this cluster (`on_key`, `on_button_pressed`,
-        #: `on_unmount`, the realtime engine's own loud fallback, tests)
-        #: had to change. See `hands_free.py`'s module docstring for the
-        #: full map of what moved and why, including the two-engine
-        #: boundary this controller draws around the still-on-screen
-        #: realtime engine.
-        self._hands_free = ConsoleHandsFreeController(
-            self,
-            app_instance=self.app_instance,
-            composer_accessor=lambda: self._console_composer_or_none(),
-            chat_store_accessor=lambda: self._ensure_console_chat_store(),
-            dictation_state_accessor=lambda: self._console_dictation_state,
-            dictation_origin_session_id_accessor=(
-                lambda: self._console_dictation_origin_session_id
-            ),
-            set_pending_voice_action=(
-                lambda value: setattr(self, "_console_pending_voice_action", value)
-            ),
-            request_dictation_start=lambda: self._request_console_dictation_start(),
-            request_dictation_stop=lambda: self._request_console_dictation_stop(),
-            run_pending_voice_action=(
-                lambda session_id: self._run_pending_console_voice_action(
-                    session_id
-                )
-            ),
-            realtime_session_accessor=lambda: self._console_realtime,
-            enter_realtime_loop=(
-                lambda capture_live: self._enter_console_realtime_loop(
-                    capture_live=capture_live
-                )
-            ),
-        )
-        #: The native message-transcript cluster -- serialize/restore,
-        #: resume-tree flattening, screen-state rehydration, per-message
-        #: save-as/edit/retry/continue/regenerate/variant navigation, and
-        #: `handle_console_message_action`'s full dispatch -- moved to
-        #: `ConsoleMessageController` (wave-3 console decomposition, task
-        #: 1), the largest cluster in wave 3. `self._console_message_action_
-        #: service`/`_last_console_action`/`_pending_console_delete_message_
-        #: id`/`_console_original_attempt_previews`/`_console_speaking_
-        #: message_id`/`_pending_console_swipe_selection` stay readable/
-        #: writable via the proxy properties defined near
-        #: `_console_composer_or_none`, so nothing outside this cluster (a
-        #: few DOM-touching siblings, `console_transcript.py`'s bare-name
-        #: reach for `_console_speaking_message_id`, tests) had to change.
-        #: See `message.py`'s module docstring for the full map of what
-        #: moved, the delegation table its own pre-move test coupling
-        #: required, and why.
-        self._message = ConsoleMessageController(
-            self,
-            app_instance=self.app_instance,
-            chat_store_accessor=lambda: self._ensure_console_chat_store(),
-            current_chat_store_accessor=lambda: self._console_chat_store,
-            ensure_console_chat_controller=(
-                lambda: self._ensure_console_chat_controller()
-            ),
-            current_chat_controller_accessor=(
-                lambda: self._console_chat_controller
-            ),
-            sync_native_console_chat_ui=lambda: self._sync_native_console_chat_ui(),
-            # Session <-> message seam (design spec: "a named callable
-            # between them; design it deliberately, never a back-door
-            # through the screen"). `self._session` was constructed above;
-            # Python resolves it at CALL time inside these lambdas, so
-            # construction order does not matter.
-            #
-            # `active_session_is_ephemeral` is the one exception, routed
-            # through the screen's OWN `_console_active_session_is_
-            # ephemeral` delegation (session.py's disclosed exception for
-            # `console_transcript.py`'s bare-name reach) rather than
-            # straight to `self._session`: the pre-existing test suite
-            # monkeypatches `screen._console_active_session_is_ephemeral`
-            # directly (4 sites, `test_console_native_chat_flow.py`) to
-            # stub ephemeral state for `_console_save_as_destinations`
-            # scenarios -- reaching `self._session` directly here would
-            # silently stop observing that patch.
-            active_session_is_ephemeral=(
-                lambda: self._console_active_session_is_ephemeral()
-            ),
-            active_native_console_session=(
-                lambda: self._session._active_native_console_session()
-            ),
-            current_console_conversation_id=(
-                lambda: self._session._current_console_conversation_id()
-            ),
-            active_console_provider_model_display=(
-                lambda: self._active_console_provider_model_display()
-            ),
-            # Workspace <-> message seam, same shape.
-            console_initial_session_title_for_workspace=(
-                lambda workspace_id: (
-                    self._workspace._console_initial_session_title_for_workspace(
-                        workspace_id
-                    )
-                )
-            ),
-            # The change-review, image-generation, and image-view clusters
-            # stay screen-owned this wave (out of scope) -- each reach is a
-            # named callable, never a back-door through screen attributes.
-            console_change_review_run_id=(
-                lambda store, message_id: self._console_change_review_run_id(
-                    store, message_id
-                )
-            ),
-            open_change_review=lambda run_id: self._open_change_review(run_id),
-            start_console_transcript_sync_timer=(
-                lambda: self._start_console_transcript_sync_timer()
-            ),
-            clear_native_console_message_selection=(
-                lambda: self._clear_native_console_message_selection()
-            ),
-            regenerate_console_generation_variant=(
-                lambda message_id: self._regenerate_console_generation_variant(
-                    message_id
-                )
-            ),
-            select_console_generation_variant=(
-                lambda message, direction: self._select_console_generation_variant(
-                    message, direction=direction
-                )
-            ),
-            keep_console_generation_variant=(
-                lambda message: self._keep_console_generation_variant(message)
-            ),
-            handle_console_toggle_image_view=(
-                lambda message_id: self._handle_console_toggle_image_view(message_id)
-            ),
-            invalidate_console_persisted_rows_cache=(
-                lambda: self._invalidate_console_persisted_rows_cache()
-            ),
-        )
-        #: The prompt cluster -- Prompt Library modal, `/prompt` + `/system`
-        #: resolution and their pickers, the system-prompt editor and its
-        #: save-to-Library flow, the Library staged-insert handoff, and the
-        #: shared prompt-history store (wave-3 console decomposition, task
-        #: 3). Every dependency below is a LATE-BINDING lambda, never a
-        #: bound method: eleven of the eighteen are replaced by name on the
-        #: screen instance somewhere in the pre-existing suite, and a
-        #: constructor snapshot would silently stop observing every one of
-        #: those. See `Console_Modules/prompts.py`'s `__init__` docstring
-        #: for the per-parameter rationale.
-        self._prompts = ConsolePromptsController(
-            self,
-            app_instance=self.app_instance,
-            composer_accessor=lambda: self._console_composer_or_none(),
-            chat_store_accessor=lambda: self._ensure_console_chat_store(),
-            # Session <-> prompts seam (design spec: "a named callable
-            # between them; design it deliberately, never a back-door
-            # through the screen"). `self._session` was constructed above;
-            # Python resolves it at CALL time inside these lambdas, so
-            # construction order does not matter.
-            ensure_active_console_session_settings=(
-                lambda: self._session._ensure_active_console_session_settings()
-            ),
-            apply_console_session_system_prompt=(
-                lambda system_prompt: (
-                    self._session._apply_console_session_system_prompt(system_prompt)
-                )
-            ),
-            sync_console_session_draft=(
-                lambda: self._session._sync_console_session_draft()
-            ),
-            active_console_provider_model_display=(
-                lambda: self._active_console_provider_model_display()
-            ),
-            build_console_provider_selection=(
-                lambda: self._build_console_provider_selection()
-            ),
-            ensure_console_provider_gateway=(
-                lambda: self._ensure_console_provider_gateway()
-            ),
-            console_provider_blocker_copy=(
-                lambda: self._console_provider_blocker_copy()
-            ),
-            # A bare-attribute READ, not a call: the modal opener hands
-            # this straight to `ConsolePromptsModal(configure_provider=...)`
-            # without calling it, so the accessor must return the screen's
-            # current attribute rather than a wrapper around it -- that is
-            # what keeps `test_console_workbench_contract.py`'s
-            # `console._open_console_provider_recovery = AsyncMock()`
-            # reaching the modal exactly as it did pre-move.
-            open_console_provider_recovery_accessor=(
-                lambda: self._open_console_provider_recovery
-            ),
-            console_setup_blocked_reason=(
-                lambda: self._console_setup_blocked_reason()
-            ),
-            focus_console_composer_if_needed=(
-                lambda **kwargs: self._focus_console_composer_if_needed(**kwargs)
-            ),
-            # DOM-touching, so it stays on the screen (`query_one` on the
-            # native composer) -- and six pre-existing test sites replace it
-            # there by name.
-            insert_prompt_text_into_composer=(
-                lambda text, *, replace: self._insert_prompt_text_into_composer(
-                    text, replace=replace
-                )
-            ),
-            clear_console_composer_draft=(
-                lambda: self._clear_console_composer_draft()
-            ),
-            append_native_console_system_message=(
-                lambda text: self._append_native_console_system_message(text)
-            ),
-            sync_console_chat_core_state=(
-                lambda: self._sync_console_chat_core_state()
-            ),
-            sync_console_rail_system_line=(
-                lambda: self._sync_console_rail_system_line()
-            ),
-            sync_console_settings_summary=(
-                lambda: self._sync_console_settings_summary()
-            ),
-        )
         #: The realtime (V4) hands-free loop's live session, or None when
         #: that loop is not running. Mutually exclusive with
         #: `_console_hands_free` by construction: the engine fork in
@@ -3658,353 +3178,25 @@ class ChatScreen(BaseAppScreen):
         self._sync_console_rail_system_line()
         self._sync_console_agent_section()
 
-    def _console_agent_section_lines(self) -> tuple[str, str, str]:
-        """Return the Agent rail's (status, steps, sub-agents) line text.
-
-        Reads the live in-memory run snapshot (or, when drilled into one
-        sub-agent, that run's durable record) via the Console agent bridge --
-        the same bridge whose ``AgentRunsDB`` backs resume re-derivation, so
-        this always reflects the latest known state without any extra event
-        plumbing (the 0.2s Console poll re-calls this on every tick).
-
-        Finding B: none of this text is escaped -- every string returned
-        here is rendered into a ``markup=False`` Static (see the compose
-        block below), so escaping would be a second guard stacked on top
-        of ``markup=False`` and would render literal backslashes (e.g.
-        ``fetch [docs]`` -> ``fetch \\[docs]``). Contrast with the
-        conversation-browser badge label (``format_console_conversation_
-        row_label``), which renders through ``Text.from_markup`` and must
-        stay escaped.
-
-        Finding C: a drill-in is scoped to the conversation active when
-        the user drilled in. Every call here re-checks that scope --
-        catching any switch path that doesn't itself clear the drill-down
-        -- and falls back to the overview on a mismatch rather than show
-        a foreign conversation's sub-agent detail.
-
-        Gate Finding 2 (agent-runtime live gate): the top-level overview
-        line used to read only ``bridge.live_snapshot`` -- an in-memory,
-        per-process cache that starts empty every new bridge instance, so
-        it showed "Agent: idle" for a resumed conversation right after an
-        app restart even though the drill-in and the conversation-row
-        badge both correctly re-derived from ``AgentRunsDB``. An idle live
-        snapshot now falls back to ``bridge.historical_snapshot`` (cached
-        by the bridge itself, so this does not add a DB hit per 0.2s poll
-        tick) -- a live/in-process run always reports non-"idle" and keeps
-        precedence over the fallback.
-        """
-        bridge = self._ensure_console_agent_bridge()
-        conversation_id = self._current_console_rail_conversation_id() or ""
-        if bridge is None:
-            return ("Agent: unavailable", "", "")
-        if conversation_id != self._console_agent_drilldown_conversation_id:
-            # The active conversation/session changed since the drill-in
-            # (tab switch, Ctrl+K switcher, saved-conversation resume,
-            # workspace switch, ...) -- this self-heals even for a switch
-            # path that doesn't explicitly clear the drill-down itself.
-            self._console_agent_drilldown_run_id = None
-            self._console_agent_drilldown_conversation_id = conversation_id
-        drill = self._console_agent_drilldown_run_id
-        if drill:
-            record = bridge.subagent_run(drill)
-            if record is not None and record.get("conversation_id") == conversation_id:
-                # Finding A (review round 2): this used to slice the raw
-                # `summary`/`result` field to a hardcoded 80 characters,
-                # bypassing `_summarize_persisted_step` entirely -- so a
-                # drilled-in sub-agent's step text neither respected the
-                # user-configurable display cap (TASK-870) nor got the
-                # word-boundary truncation affordance every other render
-                # path shares. Route through the same helper the top-level
-                # overview's persisted/resumed steps already use (see
-                # `ConsoleAgentBridge._derive_historical_snapshot`).
-                from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
-
-                steps = "\n".join(
-                    f"{s.get('kind')}: "
-                    f"{ConsoleAgentBridge._summarize_persisted_step(s)}"
-                    for s in record.get("steps", [])
-                )
-                return (
-                    f"Sub-agent · {record.get('status')} (Back)",
-                    steps,
-                    str(record.get("task") or ""),
-                )
-            # The drilled-into run vanished, or (defensive re-check) its
-            # recorded conversation_id no longer matches the one now
-            # active -- fall back to the live snapshot instead of showing
-            # a stale/foreign drill-in view.
-            self._console_agent_drilldown_run_id = None
-        snapshot = bridge.live_snapshot(conversation_id)
-        if snapshot.status == "idle":
-            # Finding 2 (Plan-B agent-runtime gate): this bridge instance
-            # has never run this conversation in-process -- most likely a
-            # resumed conversation right after an app restart, since
-            # ``live_snapshot`` is an in-memory-only, per-process cache
-            # that starts empty every new instance. Fall back to
-            # AgentRunsDB so the summary reflects history immediately
-            # instead of showing "Agent: idle" until the next live run.
-            # A live run already in progress/finished in this process
-            # always reports a non-"idle" status above and keeps
-            # precedence -- this fallback is only ever consulted when
-            # there is nothing live to show. ``getattr`` tolerates a bare
-            # test double that only implements ``live_snapshot``.
-            historical = getattr(bridge, "historical_snapshot", None)
-            if historical is not None:
-                snapshot = historical(conversation_id)
-        status = f"Agent: {snapshot.status}"
-        if snapshot.status == "running":
-            status = f"Agent: running · step {snapshot.step}"
-        # Finding A (review round 2): `s.text` is already truncated to the
-        # user-configurable cap by whichever bridge helper built this
-        # snapshot (`_summarize` for a live step, `_summarize_persisted_
-        # step` for a resumed/historical one) -- re-slicing to a hardcoded
-        # 80 here silently overrode any configured value above 80 with no
-        # visible effect, defeating the whole point of that setting.
-        steps = "\n".join(f"· {s.text}" for s in snapshot.steps)
-        glyphs = {
-            "done": "✓",
-            "running": "●",
-            "stuck": "⚠",
-            "error": "✗",
-            "cancelled": "✗",
-        }
-        subagents = "\n".join(
-            f"{glyphs.get(s.status, '●')} {s.text[:60]}" for s in snapshot.subagents
-        )
-        return (status, steps, subagents)
-
-    def _console_agent_fleet_summary_line(self) -> str:
-        """Return the Agent rail's fleet summary line (parallel-agents spec §6).
-
-        Sourced from ``ConsoleChatController.fleet_summary_counts`` (other
-        running / other pending-approval sessions, relative to the active
-        one). Copy is VERBATIM per spec §6 -- no singular/plural grammar
-        handling, so ``"1 other agents running, ..."`` is intentional, not a
-        bug. Returns ``""`` when both counts are zero; the caller hides the
-        fleet Static in that case (absent, not present-but-blank) so it
-        never crowds the rail with an empty line.
-        """
-        controller = getattr(self, "_console_chat_controller", None)
-        if controller is None:
-            return ""
-        running, pending = controller.fleet_summary_counts()
-        if running + pending <= 0:
-            return ""
-        return f"{running} other agents running, {pending} waiting for approval."
-
-    def _console_agent_full_log_run_id(self) -> str | None:
-        """Return the run id the "View full log" affordance should target.
-
-        TASK-870: mirrors ``_console_agent_section_lines``'s own
-        drill-vs-overview precedence -- the drilled-into sub-agent run
-        (when drilled in and still valid for the active conversation, the
-        same check that method uses), else the conversation's latest
-        primary run, which is what the top-level overview is summarizing.
-
-        Returns:
-            The relevant run id, or ``None`` when there is nothing to
-            target -- no bridge, no active conversation, a stale drill-in
-            left over from a conversation switch, or a conversation that
-            has never run an agent. Callers must still confirm
-            ``ConsoleAgentBridge.run_log_available`` before showing the
-            affordance for whatever id this returns -- a valid run id does
-            not imply a log was ever written for it.
-        """
-        bridge = self._ensure_console_agent_bridge()
-        if bridge is None:
-            return None
-        conversation_id = self._current_console_rail_conversation_id() or ""
-        if not conversation_id:
-            return None
-        drill = self._console_agent_drilldown_run_id
-        if drill:
-            record = bridge.subagent_run(drill)
-            if record is not None and record.get("conversation_id") == conversation_id:
-                return drill
-            return None
-        # getattr tolerates a bare test double that only implements the
-        # older bridge surface (subagent_run/subagent_runs/live_snapshot) --
-        # same idiom _console_agent_section_lines already uses for
-        # historical_snapshot, immediately below this method in this file.
-        latest_primary_run_id = getattr(bridge, "latest_primary_run_id", None)
-        if latest_primary_run_id is None:
-            return None
-        return latest_primary_run_id(conversation_id)
-
-    def _console_agent_full_log_available(self, *, allow_probe: bool = True) -> bool:
-        """Whether the "View full log" affordance should be shown right now.
-
-        TASK-870 (AC#6/#7): ``True`` only when ``_console_agent_full_log_
-        run_id`` resolves to a run AND that run actually has an on-disk log
-        -- absent (button hidden) for every other case, including a bridge
-        or filesystem lookup that raises, so a resolution failure can never
-        surface as a dangling or erroring button.
-
-        Finding D (review round 2): the underlying check costs a SQLite
-        lookup (``_console_agent_full_log_run_id``, to resolve the target
-        run id) plus a filesystem probe (``bridge.run_log_available``, to
-        confirm a log directory/segment exists -- for a drilled-in
-        sub-agent this can also mean parsing its primary's whole log, see
-        finding B) -- paying that unconditionally on every 0.2s rail tick
-        is real, avoidable I/O for a value that is overwhelmingly the same
-        tick to tick. The filesystem/DB probe result is cached keyed by
-        the resolved run id and only redone when that id changes; when
-        ``allow_probe`` is ``False`` (the periodic sync passes this while
-        the Agent section is collapsed -- see
-        ``_sync_console_agent_section``), this returns the last cached
-        answer WITHOUT even resolving the current run id, so a collapsed
-        section's steady-state tick touches neither disk nor the DB.
-
-        Args:
-            allow_probe: Whether a cache miss may fall through to the
-                SQLite/filesystem lookup. Callers that need a fresh,
-                authoritative answer (the one-shot compose-time render,
-                and the "open the viewer" press-time re-check) should
-                leave this ``True``; the periodic rail sync passes
-                ``section_open`` here.
-
-        Returns:
-            Whether the affordance should be visible for the current
-            target run -- possibly a stale cached value when
-            ``allow_probe`` is ``False`` and the target has since changed
-            unobserved (self-corrects the moment the section reopens).
-        """
-        if not allow_probe:
-            return self._console_agent_full_log_cache_available
-        run_id = self._console_agent_full_log_run_id()
-        if run_id == self._console_agent_full_log_cache_run_id:
-            return self._console_agent_full_log_cache_available
-        if not run_id:
-            available = False
-        else:
-            bridge = self._ensure_console_agent_bridge()
-            if bridge is None:
-                available = False
-            else:
-                try:
-                    available = bool(bridge.run_log_available(run_id))
-                except Exception:
-                    logger.opt(exception=True).warning(
-                        "console agent rail: run_log_available check failed for "
-                        f"run_id={run_id}; hiding the View full log affordance"
-                    )
-                    available = False
-        self._console_agent_full_log_cache_run_id = run_id
-        self._console_agent_full_log_cache_available = available
-        return available
-
-    def _open_console_agent_run_log_viewer(self) -> None:
-        """Kick off loading the full run log for whatever "View full log" targets.
-
-        TASK-870 (AC#6): re-resolves the target run id at press time
-        (rather than trusting a value cached from the last 0.2s sync) so a
-        drill-in change between sync ticks can never open the wrong run's
-        log. No-ops quietly if there is no current target.
-
-        Finding C (review round 2): the actual filesystem read + record
-        parse + formatting now happens off the UI thread (see
-        ``_load_console_agent_run_log``) -- a run's segments can total
-        many megabytes (4MB per segment, no cap on segment count), and
-        doing that synchronously on the Textual event loop could freeze
-        the whole app for the duration of the read.
-        """
-        run_id = self._console_agent_full_log_run_id()
-        if not run_id:
-            return
-        bridge = self._ensure_console_agent_bridge()
-        if bridge is None:
-            return
-        self._load_console_agent_run_log(bridge, run_id)
-
-    @work(thread=True)
-    def _load_console_agent_run_log(self, bridge: Any, run_id: str) -> None:
-        """Load, filter, and format one run's full log off the UI thread.
-
-        Finding C: the worker half of ``_open_console_agent_run_log_
-        viewer`` -- everything here is filesystem/CPU work (no widget
-        access), so it is safe to run in a real thread. The modal is only
-        ever pushed back on the UI thread, via ``call_from_thread``.
-
-        Args:
-            bridge: The already-resolved Console agent bridge (resolved on
-                the UI thread by the caller -- lazy bridge construction
-                touches ``self.app_instance``/config and should not run
-                off-thread).
-            run_id: The run id to load, as resolved by the caller at press
-                time.
-        """
-        try:
-            if not bridge.run_log_available(run_id):
-                return
-            log_text = bridge.load_run_log_text(run_id)
-        except Exception:
-            logger.opt(exception=True).warning(
-                f"console agent rail: failed to load run log for run_id={run_id}"
-            )
-            return
-        if not log_text:
-            return
-        self.app.call_from_thread(
-            self._show_console_agent_run_log_modal, run_id, log_text
-        )
-
-    def _show_console_agent_run_log_modal(self, run_id: str, log_text: str) -> None:
-        """Push the full-log modal. UI-thread only -- see ``_load_console_agent_run_log``.
-
-        Args:
-            run_id: The run id the loaded text belongs to.
-            log_text: The fully rendered, untruncated log text.
-        """
-        self.app.push_screen(ConsoleRunLogModal(run_id=run_id, log_text=log_text))
-
     def _sync_console_agent_section(self) -> None:
-        """Refresh the mounted Agent rail Statics + Back-button visibility.
+        """Apply the Agent rail's derived payload to the mounted widgets.
 
-        TASK-251: equality-guarded against the last successfully-applied
-        payload -- the 0.2s tick called this unconditionally, forcing three
-        ``Static.update()`` calls plus a style write per tick even when
-        nothing agent-related had changed.
+        The equality guard plus the nine ``query_one`` writes; the
+        derivation itself is `ConsoleAgentController._console_agent_section_
+        payload` (wave-4 console decomposition, task 3) -- controllers own
+        no DOM, so the cluster's boundary runs between the two halves.
+        Every "why" behind the values applied below (TASK-251's equality
+        guard, the fleet force-open the periodic tick must re-apply,
+        TASK-870's "View full log" visibility) is documented on that method.
 
-        Fix round 2 (parallel-agents spec §6 live-smoke finding): also
-        tracks and applies the Agent section's own open/collapsed state
-        (header chevron + body ``display``). Compose-time already applies
-        ``_apply_fleet_agent_section_auto_open`` once at mount, but that is
-        a one-shot snapshot -- a background session's run starting or
-        ending *after* mount (the overwhelmingly common case) must reopen
-        or release the section on this same periodic sync, or the fleet
-        line would only ever be reachable for whichever fleet state
-        happened to exist at the moment the screen was first composed.
-
-        TASK-870: also tracks the "View full log" affordance's visibility
-        (``_console_agent_full_log_available``) -- present only while a run
-        log actually exists for whatever run the section is currently
-        showing (AC#6/#7).
+        The memo is written only after a successful apply, so a tick that
+        raised part-way through the writes below is re-attempted next tick
+        rather than recorded as painted.
         """
-        status_line, steps_text, subagents_text = self._console_agent_section_lines()
-        fleet_line = self._console_agent_fleet_summary_line()
-        back_visible = bool(self._console_agent_drilldown_run_id)
-        try:
-            section_open = self._current_console_rail_state().agent_open
-        except (AttributeError, NoActiveAppError):
-            # A bare/unmounted screen (several tests construct
-            # `ChatScreen(app)` directly with no active Textual app
-            # context -- e.g. `test_console_provider_selection_carries_
-            # active_session_system_prompt`) has no real rail width to
-            # derive responsive state from: `_console_rail_available_
-            # columns` reads `self.size`, which raises here rather than
-            # returning `None` (`Screen.size` needs `self.app`). Same
-            # guard idiom `_provider_readiness_app_config` already uses
-            # for this exact failure mode. Fall back to the persisted
-            # default (collapsed) -- the Statics-only updates below are
-            # still worth applying even when the section's own open state
-            # cannot be derived.
-            section_open = False
-        # Finding D: never probe disk/DB for the full-log affordance while
-        # the section is collapsed -- `section_open` must be known first.
-        full_log_visible = self._console_agent_full_log_available(
-            allow_probe=section_open
-        )
-        payload = (
+        payload = self._agent._console_agent_section_payload()
+        if payload == self._console_agent_section_last:
+            return
+        (
             status_line,
             steps_text,
             subagents_text,
@@ -4012,9 +3204,7 @@ class ChatScreen(BaseAppScreen):
             back_visible,
             section_open,
             full_log_visible,
-        )
-        if payload == self._console_agent_section_last:
-            return
+        ) = payload
         try:
             self.query_one("#console-agent-section-status", Static).update(status_line)
             self.query_one("#console-agent-section-steps", Static).update(steps_text)
@@ -4037,39 +3227,6 @@ class ChatScreen(BaseAppScreen):
         except (NoMatches, QueryError):
             return
         self._console_agent_section_last = payload
-
-    def _toggle_console_agent_drilldown_from_subagents_click(self) -> None:
-        """Step the drill-in through this conversation's sub-agent runs.
-
-        Finding D: a conversation can have more than one sub-agent run,
-        but the combined ``subagents`` rail line only ever opened
-        ``runs[0]`` no matter how many times it was clicked, leaving every
-        other sub-agent unreachable. Repeated clicks now cycle through
-        ``runs[0], runs[1], ..., runs[n-1]`` (newest first, matching
-        ``AgentRunsDB.list_runs``' order) and then back to the overview,
-        rather than adding a new per-row widget for what is usually a
-        small N. The dedicated Back button always returns to the overview
-        directly, regardless of where the cycle currently is.
-        """
-        bridge = self._ensure_console_agent_bridge()
-        conversation_id = self._current_console_rail_conversation_id() or ""
-        runs = bridge.subagent_runs(conversation_id) if bridge is not None else []
-        run_ids = [run.get("id") for run in runs]
-        current = self._console_agent_drilldown_run_id
-        if not run_ids:
-            next_run_id = None
-        elif current in run_ids:
-            next_index = run_ids.index(current) + 1
-            next_run_id = run_ids[next_index] if next_index < len(run_ids) else None
-        else:
-            next_run_id = run_ids[0]
-        self._console_agent_drilldown_run_id = next_run_id
-        self._console_agent_drilldown_conversation_id = conversation_id
-        self.run_worker(
-            self._sync_native_console_chat_ui,
-            exclusive=True,
-            group="console-sync",
-        )
 
     def _focus_console_workspace_conversation_search(self) -> None:
         """Restore focus to the conversation search input when it is mounted."""
@@ -4233,39 +3390,19 @@ class ChatScreen(BaseAppScreen):
     def _ensure_console_agent_bridge(self) -> Any:
         """Return the native Console agent bridge, creating it lazily.
 
-        Returns ``None`` (no agent runtime) when there is no durable
-        ChaChaNotes DB to key the sibling ``AgentRunsDB`` file off of (e.g. an
-        in-memory test harness) -- callers use the provider-direct Console
-        stream in that case regardless of the config gate.
+        One-line delegation (wave-4 console decomposition, task 3). Reached
+        from five screen-level call sites outside the agent cluster (the
+        chat controller's construction and its core-state sync, the
+        conversation browser's badge counts, the Change Review opener) and
+        replaced by name on the screen instance by three tests
+        (`Tests/Chat/test_change_turn_tracking.py`,
+        `Tests/Chat/test_console_agent_swap.py`), which is why it keeps its
+        original name here rather than moving with no residue. See
+        `ConsoleAgentController._ensure_console_agent_bridge` for the real
+        implementation, and `agent.py`'s module docstring for what such a
+        patch does and does not steer.
         """
-        if self._console_agent_bridge is not None:
-            return self._console_agent_bridge
-        db = getattr(self.app_instance, "chachanotes_db", None)
-        db_path = getattr(db, "db_path", None) if db is not None else None
-        if not db_path or str(db_path) == ":memory:":
-            self._console_agent_bridge = None
-            return None
-        from pathlib import Path
-
-        from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
-        from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
-
-        runs_db = AgentRunsDB(Path(db_path).parent / "agent_runs.db")
-        # TASK-1971 (Agent Change Review): the tracker is None when git is
-        # absent -- the bridge then skips tracking entirely, and runs behave
-        # exactly as before the feature existed (spec gating decision).
-        from tldw_chatbook.Workspaces.change_turn_tracker import ChangeTurnTracker
-
-        change_tracker = ChangeTurnTracker()
-        self._console_agent_bridge = ConsoleAgentBridge(
-            agent_runs_db=runs_db,
-            store=self._ensure_console_chat_store(),
-            provider_gateway=self._ensure_console_provider_gateway(),
-            skills_service=getattr(self.app_instance, "skills_scope_service", None),
-            native_tools_enabled=self._console_native_tool_calls_enabled,
-            change_tracker=change_tracker if change_tracker.available else None,
-        )
-        return self._console_agent_bridge
+        return self._agent._ensure_console_agent_bridge()
 
     def _console_agent_runtime_enabled(self) -> bool:
         """Return whether ``[console] agent_runtime`` gates in the agent loop (default on)."""
@@ -5013,6 +4150,55 @@ class ChatScreen(BaseAppScreen):
     @_console_hands_free_store_tap_installed.setter
     def _console_hands_free_store_tap_installed(self, value: bool) -> None:
         self._hands_free._console_hands_free_store_tap_installed = value
+
+    # Agent-cluster state moved to `ConsoleAgentController` (wave-4 console
+    # decomposition, task 3). These three properties keep
+    # `self._console_agent_bridge`/`_console_agent_drilldown_run_id`/
+    # `_agent_section_user_dismissed_while_busy` readable AND writable
+    # exactly as before, for the
+    # screen methods outside the agent cluster that still touch this state
+    # (`compose_content`, `_build_console_inspector_state`,
+    # `_toggle_console_rail_section`, `on_button_pressed`'s drill-down Back
+    # branch), for `ConsoleSessionController`/`ConsoleWorkspaceController`'s
+    # own drill-down clears (both reach `self._screen._console_agent_
+    # drilldown_run_id` through their own proxies of the same name), and for
+    # the tests that poke this state directly -- each proxies straight
+    # through to `self._agent`, so none of those call sites needed to
+    # change. Every one is read-WRITE: at baseline each was a plain
+    # assignable instance attribute set in `ChatScreen.__init__`, and
+    # `Tests/UI/test_console_agent_rail.py` alone assigns two of them 20+
+    # times, so a getter-only property would turn a legal write into
+    # `AttributeError`.
+    #
+    # The cluster's other six attributes (`_console_agent_drilldown_
+    # conversation_id`, `_console_agent_full_log_cache_run_id`/`..._
+    # available`, `_console_subagent_counts_cache`/`..._row_ids`/`..._at`)
+    # get no proxy: no production code outside the moved methods ever read
+    # or wrote them, and the tests that set the first one were repointed at
+    # `screen._agent` alongside this move.
+    @property
+    def _console_agent_bridge(self) -> Any:
+        return self._agent._console_agent_bridge
+
+    @_console_agent_bridge.setter
+    def _console_agent_bridge(self, value: Any) -> None:
+        self._agent._console_agent_bridge = value
+
+    @property
+    def _console_agent_drilldown_run_id(self) -> str | None:
+        return self._agent._console_agent_drilldown_run_id
+
+    @_console_agent_drilldown_run_id.setter
+    def _console_agent_drilldown_run_id(self, value: str | None) -> None:
+        self._agent._console_agent_drilldown_run_id = value
+
+    @property
+    def _agent_section_user_dismissed_while_busy(self) -> bool:
+        return self._agent._agent_section_user_dismissed_while_busy
+
+    @_agent_section_user_dismissed_while_busy.setter
+    def _agent_section_user_dismissed_while_busy(self, value: bool) -> None:
+        self._agent._agent_section_user_dismissed_while_busy = value
 
     # Workspace conversation-search state moved to `ConsoleWorkspaceController`
     # (wave-2 console decomposition, task 2). These six properties keep
@@ -9132,54 +8318,6 @@ class ChatScreen(BaseAppScreen):
         points at `self._message` directly, bypassing this delegation."""
         return self._message._console_messages_from_conversation_tree(tree)
 
-    def _inject_resume_agent_markers(
-        self,
-        messages: list[ConsoleChatMessage],
-        conversation_id: str,
-    ) -> list[ConsoleChatMessage]:
-        """Re-derive and interleave TOOL markers from ``AgentRunsDB`` on resume.
-
-        Plan-B final-review Medium-1: the rail already re-derives from
-        ``AgentRunsDB`` on resume (``_console_agent_section_lines`` ->
-        ``bridge.historical_snapshot``, and the ``[N Sub-Agents]`` badge);
-        the inline transcript TOOL markers did not, since
-        ``_console_messages_from_conversation_tree`` only ever reads
-        persisted ChaChaNotes rows, where markers never land
-        (``ConsoleAgentBridge._append_marker`` uses ``persist=False`` so
-        agent activity survives a restart without being written into the
-        conversation itself).
-
-        Task 3: ``resume_marker_messages`` now pairs each run's block with
-        the ``assistant_message_id`` of the reply it produced, and
-        ``inject_resume_agent_markers`` anchors placement to that id
-        against ``messages``'s own ``persisted_message_id``s -- a run
-        whose reply isn't on the active path (edited/regenerated onto
-        another branch) has its block hidden rather than misattributed to
-        a different reply; a legacy/null-id run keeps the prior ordinal
-        placement. ``messages`` is the caller's already-active-path
-        transcript (``_console_messages_from_conversation_tree`` walks the
-        active thread only), so this composes correctly with branching
-        without any extra filtering here. See ``inject_resume_agent_
-        markers`` for the full placement/idempotency contract, and
-        ``resume_marker_messages`` for how each run's marker block and
-        anchor id are derived.
-
-        Returns ``messages`` unchanged when there is no durable agent
-        bridge available (e.g. an in-memory test harness, matching
-        ``_ensure_console_agent_bridge``'s own fallback).
-        """
-        bridge = self._ensure_console_agent_bridge()
-        if bridge is None:
-            return messages
-        from tldw_chatbook.Chat.console_agent_bridge import inject_resume_agent_markers
-
-        # bridge.resume_marker_messages returns the (anchor_id, block) pairs
-        # inject_resume_agent_markers now expects directly -- no reshaping
-        # needed here, just passed straight through.
-        return inject_resume_agent_markers(
-            messages, bridge.resume_marker_messages(conversation_id)
-        )
-
 
 
     async def _resolve_resumed_character_name(self, character_id: int) -> str:
@@ -10031,79 +9169,6 @@ class ChatScreen(BaseAppScreen):
         await self._refresh_console_conversation_browser_search(query, token)
 
 
-    def _console_subagent_counts_refresh_needed(self, row_ids: frozenset) -> bool:
-        """Decide whether the sub-agent badge-count cache needs a DB round trip.
-
-        Finding A: refreshing on every 0.2s poll tick would re-issue the
-        batched count query up to 5x/second even when nothing sub-agent
-        related changed. This gates the refresh to three cheap-to-check
-        conditions instead of refreshing unconditionally:
-
-        1. The visible conversation row set changed (a rebuild) -- new
-           rows may need counts we have never cached.
-        2. A run is actively streaming/validating/retrying for this
-           screen -- a just-spawned sub-agent's count should show up
-           promptly rather than wait out the full TTL.
-        3. The cache has aged past ``CONSOLE_SUBAGENT_COUNTS_CACHE_TTL_SECONDS``
-           -- a fallback bound covering counts that changed from a
-           different Console session/tab or a resumed run, where neither
-           of the above two signals fires on this screen.
-
-        Args:
-            row_ids: The conversation ids of the currently visible browser
-                rows (deduplicated, blanks excluded).
-
-        Returns:
-            ``True`` when the cache should be rebuilt from the DB.
-        """
-        if row_ids != self._console_subagent_counts_cache_row_ids:
-            return True
-        controller = self._console_chat_controller
-        if (
-            controller is not None
-            and controller.run_state.status in CONSOLE_ACTIVE_RUN_STATUSES
-        ):
-            return True
-        age = time.monotonic() - self._console_subagent_counts_cache_at
-        return age >= CONSOLE_SUBAGENT_COUNTS_CACHE_TTL_SECONDS
-
-    def _console_subagent_counts_for_rows(
-        self,
-        bridge: Any | None,
-        rows: Iterable[Any],
-    ) -> Dict[str, int]:
-        """Return ``conversation_id -> sub-agent count`` for browser rows.
-
-        Finding A: previously called ``bridge.subagent_count(cid)`` once
-        per row (a fresh sqlite connection per call) on every poll tick --
-        up to ~75 queries/tick. Replaced with one batched
-        ``bridge.subagent_counts(...)`` call, gated by
-        ``_console_subagent_counts_refresh_needed`` so it isn't reissued
-        unconditionally every tick either.
-
-        Args:
-            bridge: The Console agent bridge, or ``None`` when the agent
-                runtime is unavailable (e.g. in-memory test harness).
-            rows: The conversation-browser input rows currently visible.
-
-        Returns:
-            Mapping of ``conversation_id -> count``; conversations with
-            zero sub-agent runs are simply absent (see
-            ``AgentRunsDB.count_subagents_by_conversation``).
-        """
-        if bridge is None:
-            return {}
-        row_ids = frozenset(
-            cid for row in rows if (cid := getattr(row, "conversation_id", None))
-        )
-        if self._console_subagent_counts_refresh_needed(row_ids):
-            self._console_subagent_counts_cache = (
-                bridge.subagent_counts(list(row_ids)) if row_ids else {}
-            )
-            self._console_subagent_counts_cache_row_ids = row_ids
-            self._console_subagent_counts_cache_at = time.monotonic()
-        return self._console_subagent_counts_cache
-
     def _with_console_conversation_browser_state(
         self,
         state: ConsoleWorkspaceContextState,
@@ -10121,7 +9186,7 @@ class ChatScreen(BaseAppScreen):
             current_conversation_id=current_conversation_id,
         )
         bridge = self._ensure_console_agent_bridge()
-        subagent_counts = self._console_subagent_counts_for_rows(bridge, rows)
+        subagent_counts = self._agent._console_subagent_counts_for_rows(bridge, rows)
         browser = build_console_conversation_browser_state(
             rows=rows,
             active_workspace_id=self._workspace._current_console_workspace_context().active_workspace_id,
@@ -10193,22 +9258,6 @@ class ChatScreen(BaseAppScreen):
             str(group_id): bool(collapsed)
             for group_id, collapsed in collapsed_groups.items()
         }
-
-    def _set_console_conversation_browser_group_collapsed(
-        self,
-        group_id: str,
-        collapsed: bool,
-    ) -> None:
-        """Store one grouped browser collapse preference."""
-        normalized_group_id = str(group_id or "").strip()
-        if not normalized_group_id:
-            return
-        browser_config = self._console_conversation_browser_config()
-        collapsed_groups = browser_config.get("collapsed_groups")
-        if not isinstance(collapsed_groups, dict):
-            collapsed_groups = {}
-            browser_config["collapsed_groups"] = collapsed_groups
-        collapsed_groups[normalized_group_id] = bool(collapsed)
 
     def _console_rail_state_config(self) -> dict[str, Any]:
         """Return mutable Console rail-state config, initializing it if needed."""
@@ -10830,64 +9879,7 @@ class ChatScreen(BaseAppScreen):
         rail_state = self._apply_pending_launch_inspector_auto_open(
             rail_state, pending_launch
         )
-        return self._apply_fleet_agent_section_auto_open(rail_state)
-
-    def _apply_fleet_agent_section_auto_open(
-        self, rail_state: ConsoleRailState
-    ) -> ConsoleRailState:
-        """Force the Agent rail section open while the fleet has anything to report.
-
-        Parallel-agents spec §6, fix round 2 (live-smoke finding): the Agent
-        section's persisted preference defaults collapsed (``agent_open=
-        False``, see ``ConsoleRailPreferences``) and nothing previously
-        reopened it, so its BODY -- the status/step/sub-agent detail for
-        the viewed session's own run -- stayed ``display: none`` even
-        while another session was running or parked on an approval.
-        Scrolling the rail only ever reached the still-collapsed header;
-        that detail was unreachable regardless of scroll position.
-
-        TASK-1140 (UAT F1, fix round 1): ``#console-agent-fleet-summary``
-        itself no longer lives inside this section's body -- it is now a
-        pinned, non-scrolling sibling of the rail's own header (see the
-        compose block a few hundred lines up), painted unconditionally
-        whenever the fleet has anything to report, independent of this
-        section's open/collapsed state. This method's force-open still
-        matters for the Agent section's OWN contextual detail (status/
-        steps/sub-agents for whichever conversation is viewed), just not
-        for fleet-line visibility anymore.
-
-        Mirrors ``_apply_pending_launch_inspector_auto_open``: an ephemeral
-        override applied to the RENDERED rail state only, never written back
-        to the persisted preference, so a user's own explicit collapse still
-        takes effect the moment the fleet goes quiet (``fleet_summary_
-        counts()`` returns to ``(0, 0)``). Uses ``_console_agent_fleet_
-        summary_line()`` -- the exact same non-empty-string signal the
-        pinned fleet Static's own ``display`` toggles on -- so "must render
-        the section open" and "has a line to show" can never disagree.
-
-        TASK-915: fix round 3 (live-smoke finding). Round 2's force was a
-        one-shot-per-rendered-state override, but the 0.2s sync tick
-        recomputes it every time the agent-section payload changes (e.g. a
-        second background run starting/finishing) -- so a manual collapse
-        while the fleet was busy held only until the NEXT such change, then
-        got silently re-forced open. `_toggle_console_rail_section` now sets
-        `_agent_section_user_dismissed_while_busy` when the user closes this
-        section with a non-empty fleet line; honoured here so the force
-        stays suppressed for the rest of THIS busy window. Still never
-        touches the persisted preference -- only the transient flag and the
-        returned dataclass change.
-        """
-        fleet_line = self._console_agent_fleet_summary_line()
-        if not fleet_line:
-            # Fleet is quiet: release any sticky dismissal so the NEXT busy
-            # window auto-opens again (TASK-915 AC2).
-            self._agent_section_user_dismissed_while_busy = False
-            return rail_state
-        if rail_state.agent_open:
-            return rail_state
-        if self._agent_section_user_dismissed_while_busy:
-            return rail_state
-        return replace(rail_state, agent_open=True)
+        return self._agent._apply_fleet_agent_section_auto_open(rail_state)
 
     def _set_console_rail_preference(
         self,
@@ -10949,7 +9941,7 @@ class ChatScreen(BaseAppScreen):
             # explicit choice either way.
             if next_open:
                 self._agent_section_user_dismissed_while_busy = False
-            elif self._console_agent_fleet_summary_line():
+            elif self._agent._console_agent_fleet_summary_line():
                 self._agent_section_user_dismissed_while_busy = True
         self._set_console_rail_preference(
             section_updates={section_id: next_open},
@@ -13015,7 +12007,7 @@ class ChatScreen(BaseAppScreen):
             rail_state,
             pending_launch,
         )
-        rail_state = self._apply_fleet_agent_section_auto_open(rail_state)
+        rail_state = self._agent._apply_fleet_agent_section_auto_open(rail_state)
         workbench_state = self._build_console_workbench_state(control_state)
         shell_classes = (
             f"workbench-frame console-workbench-frame density-{workbench_state.density}"
@@ -13116,13 +12108,13 @@ class ChatScreen(BaseAppScreen):
                 # session-settings resolution, the agent bridge, and
                 # character avatar rendering all stay screen-owned; only the
                 # already-computed results are handed to `ConsoleLeftRail`.
-                fleet_line = self._console_agent_fleet_summary_line()
+                fleet_line = self._agent._console_agent_fleet_summary_line()
                 settings_summary_state = self._build_console_settings_summary_state()
                 system_line_text, system_line_dim = (
                     self._console_rail_system_line_state()
                 )
                 agent_status_line, agent_steps_text, agent_subagents_text = (
-                    self._console_agent_section_lines()
+                    self._agent._console_agent_section_lines()
                 )
                 show_character_section = resolve_show_character_avatar(
                     getattr(getattr(self, "app_instance", None), "app_config", {})
@@ -13165,7 +12157,9 @@ class ChatScreen(BaseAppScreen):
                     agent_steps_text=agent_steps_text,
                     agent_subagents_text=agent_subagents_text,
                     agent_drilldown_active=bool(self._console_agent_drilldown_run_id),
-                    agent_full_log_available=self._console_agent_full_log_available(),
+                    agent_full_log_available=(
+                        self._agent._console_agent_full_log_available()
+                    ),
                     show_character_section=show_character_section,
                     character_avatar_widget_builder=character_avatar_widget_builder,
                     character_avatar_name=character_avatar_name,
@@ -17874,7 +16868,7 @@ class ChatScreen(BaseAppScreen):
             return
         if getattr(target, "id", None) == "console-agent-section-subagents":
             event.stop()
-            self._toggle_console_agent_drilldown_from_subagents_click()
+            self._agent._toggle_console_agent_drilldown_from_subagents_click()
             return
         try:
             composer = self.query_one("#console-native-composer", ConsoleComposerBar)
@@ -18382,34 +17376,7 @@ class ChatScreen(BaseAppScreen):
             return
         if button_id == "console-dictation":
             event.stop()
-            if self._console_hands_free is not None:
-                # Task 5: mic press exits the hands-free loop from any
-                # state, exactly like Esc/spoken "stop" -- superseding the
-                # ordinary one-shot toggle below for as long as the loop is
-                # running.
-                self._console_hands_free.controller.on_exit_request()
-                return
-            if self._console_realtime is not None:
-                # V4 task 5 (final review C1): the SAME rule for the
-                # realtime engine, and it matters more here. Falling
-                # through to the dictation toggle below would open a
-                # second `AudioRecordingService` (at 16 kHz, alongside the
-                # tap's 24 kHz stream), load the entire STT stack the
-                # realtime engine exists to avoid, and arm the V2 spoken-
-                # command classifier mid-session -- all while the realtime
-                # session kept running and billing. The docs promise this
-                # button exits the loop; it exits the loop.
-                self._console_realtime.controller.on_exit_request()
-                return
-            if self._console_dictation_state == "idle":
-                self._request_console_dictation_start()
-            elif self._console_dictation_state == "starting":
-                # A first-run model load runs for minutes; this is the only
-                # in-app way out of it. "transcribing" has no cancel -- the
-                # capture is already recorded and worth finishing.
-                self._request_console_dictation_cancel()
-            elif self._console_dictation_state == "recording":
-                self._request_console_dictation_stop()
+            self._dictation._handle_console_dictation_button()
             return
         if button_id in {
             "console-stop-generation",
@@ -18434,7 +17401,7 @@ class ChatScreen(BaseAppScreen):
             return
         if button_id == "console-agent-view-full-log":
             event.stop()
-            self._open_console_agent_run_log_viewer()
+            self._agent._open_console_agent_run_log_viewer()
             return
         if button_id == "console-new-chat-tab":
             event.stop()
@@ -18444,148 +17411,36 @@ class ChatScreen(BaseAppScreen):
             "console-conversation-browser-section-toggle-"
         ):
             event.stop()
-            group_id = str(getattr(event.button, "group_id", "") or "").strip()
-            state = self._workspace._build_console_workspace_context_state()
-            section_id = group_id.removeprefix("section:")
-            section = None
-            browser = state.conversation_browser
-            if browser is not None:
-                section = next(
-                    (
-                        candidate
-                        for candidate in browser.sections
-                        if candidate.section_id == section_id
-                    ),
-                    None,
-                )
-            collapsed = not bool(section.collapsed if section is not None else False)
-            self._set_console_conversation_browser_group_collapsed(group_id, collapsed)
-            self._sync_console_workspace_context()
+            self._workspace._toggle_console_conversation_browser_section(
+                str(getattr(event.button, "group_id", "") or "").strip()
+            )
             return
         if button_id and button_id.startswith(
             "console-conversation-browser-group-toggle-"
         ):
             event.stop()
-            group_id = str(getattr(event.button, "group_id", "") or "").strip()
-            state = self._workspace._build_console_workspace_context_state()
-            group = None
-            browser = state.conversation_browser
-            if browser is not None:
-                for section in browser.sections:
-                    group = next(
-                        (
-                            candidate
-                            for candidate in section.groups
-                            if candidate.group_id == group_id
-                        ),
-                        None,
-                    )
-                    if group is not None:
-                        break
-            collapsed = not bool(group.collapsed if group is not None else False)
-            self._set_console_conversation_browser_group_collapsed(group_id, collapsed)
-            self._sync_console_workspace_context()
+            self._workspace._toggle_console_conversation_browser_group(
+                str(getattr(event.button, "group_id", "") or "").strip()
+            )
             return
         if button_id and button_id.startswith("console-conversation-star-"):
             event.stop()
-            conversation_id = str(
-                getattr(event.button, "conversation_id", "") or ""
-            ).strip()
-            if not conversation_id:
-                self.app_instance.notify(
-                    "Save this conversation before starring it.",
-                    severity="warning",
-                )
-                return
-            marks_service = getattr(
-                self.app_instance,
-                "conversation_local_marks_service",
-                None,
+            self._workspace._toggle_console_conversation_star(
+                str(getattr(event.button, "conversation_id", "") or "").strip(),
+                starred=bool(getattr(event.button, "starred", False)),
+                conversation_title=str(
+                    getattr(event.button, "conversation_title", "") or ""
+                ),
             )
-            if marks_service is None:
-                self.app_instance.notify(
-                    "Local stars are unavailable.",
-                    severity="warning",
-                )
-                return
-            star_action = "resolve"
-            try:
-                is_starred = getattr(marks_service, "is_starred", None)
-                currently_starred = (
-                    bool(is_starred(conversation_id))
-                    if callable(is_starred)
-                    else bool(getattr(event.button, "starred", False))
-                )
-                star_action = "unstar" if currently_starred else "star"
-                if currently_starred:
-                    marks_service.unstar_conversation(conversation_id)
-                else:
-                    marks_service.star_conversation(conversation_id)
-            except Exception:
-                logger.exception(
-                    "Unable to update local conversation star "
-                    "conversation_id={} action={}",
-                    conversation_id,
-                    star_action,
-                )
-                self.app_instance.notify(
-                    "Unable to update local star.",
-                    severity="warning",
-                )
-                return
-            # TASK-357: confirm the toggle so a star/unstar is not a silent state
-            # change (the review saw an accidental star go unnoticed).
-            title = (
-                str(getattr(event.button, "conversation_title", "") or "")
-                .splitlines()[0]
-                .strip()
-            )
-            # notify() interprets Rich markup, so escape the stored title before
-            # interpolating it (a title like "[red]x[/red]" would otherwise inject
-            # styling into the toast) — matches the escape_markup convention used
-            # for the attachment toasts above.
-            title_suffix = f' "{escape_markup(title)}"' if title else ""
-            if star_action == "star":
-                self.app_instance.notify(f"Starred{title_suffix}.")
-            elif star_action == "unstar":
-                self.app_instance.notify(f"Unstarred{title_suffix}.")
-            self._sync_console_workspace_context()
             return
-        if button_id == "console-workspace-conversations-toggle":
-            event.stop()
-            try:
-                workspace_context = self.query_one(
-                    "#console-workspace-context",
-                    ConsoleWorkspaceContextTray,
-                )
-            except (NoMatches, QueryError):
-                self._sync_console_workspace_context()
-                return
-            state = getattr(workspace_context, "state", None)
-            if (
-                state is not None
-                and getattr(state, "conversation_browser", None) is None
-            ):
-                section = getattr(state, "conversation_section", None)
-                if section is None:
-                    return
-                collapsed = not bool(section.collapsed)
-                self._workspace._set_console_workspace_conversations_collapsed(
-                    section.workspace_id,
-                    collapsed,
-                )
-                workspace_context.sync_state(
-                    replace(
-                        state,
-                        conversation_section=replace(
-                            section,
-                            collapsed=collapsed,
-                        ),
-                    )
-                )
-                return
-            self._sync_console_workspace_context()
-            return
+        # NOTE: the `console-workspace-conversations-toggle` branch that stood
+        # here was deleted in wave 4. Commit 3b0374479 removed the only button
+        # carrying that id; the string survives only as a CSS class on toggles
+        # whose ids are `console-conversation-browser-{section,group}-toggle-*`,
+        # and those take their own branches below. The body was dead twice over:
+        # it also required `state.conversation_browser is None`, a state that
+        # same commit retired. `Tests/UI/test_console_button_routing.py` pins the
+        # id's absence so it cannot quietly come back as a branch nobody reaches.
         if button_id == "console-new-workspace-conversation":
             event.stop()
             await self._session._create_native_console_session_from_active_context()
@@ -18694,51 +17549,15 @@ class ChatScreen(BaseAppScreen):
             return
         if button_id and button_id.startswith("console-close-session-tab-"):
             event.stop()
-            session_id = button_id.removeprefix("console-close-session-tab-")
-            store = self._ensure_console_chat_store()
-            try:
-                messages = store.messages_for_session(session_id)
-            except KeyError:
-                messages = []
-            closing_ids = [m.id for m in messages]
-
-            def _evict_closing_session_images() -> None:
-                _state, cache = self._ensure_console_image_view()
-                cache.evict_session(closing_ids)
-
-            if messages:
-                from ...Widgets.confirmation_dialog import ConfirmationDialog
-
-                async def _do_close() -> None:
-                    self._ensure_console_chat_controller().close_session(session_id)
-                    # TASK-1281: drop the closed session's undo/redo history
-                    # too -- it can never be switched back into.
-                    self._console_undo_histories.pop(session_id, None)
-                    _evict_closing_session_images()
-                    await self._sync_native_console_chat_ui()
-
-                dialog = ConfirmationDialog(
-                    title="Close Tab",
-                    message="This tab has messages that will be lost.\n\nClose it anyway?",
-                    confirm_label="Close",
-                    cancel_label="Keep",
-                    confirm_callback=_do_close,
-                )
-                self.app.push_screen(dialog)
-            else:
-                self._ensure_console_chat_controller().close_session(session_id)
-                self._console_undo_histories.pop(session_id, None)
-                _evict_closing_session_images()
-                await self._sync_native_console_chat_ui()
+            await self._session._close_console_session_tab(
+                button_id.removeprefix("console-close-session-tab-")
+            )
             return
         if button_id and button_id.startswith("console-session-tab-"):
             event.stop()
-            session_id = button_id.removeprefix("console-session-tab-")
-            controller = self._ensure_console_chat_controller()
-            if controller.store.active_session_id == session_id:
-                self._session._open_console_session_rename_modal(session_id)
-                return
-            await self._session._activate_native_console_session(session_id)
+            await self._session._handle_console_session_tab_press(
+                button_id.removeprefix("console-session-tab-")
+            )
             return
         if button_id and button_id.startswith("console-message-action-"):
             handled = await self.handle_console_message_action(event)

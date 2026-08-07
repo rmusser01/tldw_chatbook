@@ -1205,7 +1205,7 @@ async def test_manual_collapse_of_agent_section_sticks_across_busy_payload_chang
         )
         await console._sync_native_console_chat_ui()
         await pilot.pause(0.2)
-        assert console._console_agent_fleet_summary_line()
+        assert console._agent._console_agent_fleet_summary_line()
         assert _agent_section_open(console)
         assert console._current_console_rail_state().agent_open is True
         assert console._agent_section_user_dismissed_while_busy is False
@@ -1232,7 +1232,7 @@ async def test_manual_collapse_of_agent_section_sticks_across_busy_payload_chang
         await console._sync_native_console_chat_ui()
         await pilot.pause(0.2)
         assert (
-            console._console_agent_fleet_summary_line()
+            console._agent._console_agent_fleet_summary_line()
             == "2 other agents running, 0 waiting for approval."
         )
         assert not _agent_section_open(console)
@@ -1279,7 +1279,7 @@ async def test_agent_section_auto_opens_again_for_new_busy_window_after_quiet() 
         controller.mark_session_visited(background)
         await console._sync_native_console_chat_ui()
         await pilot.pause(0.2)
-        assert console._console_agent_fleet_summary_line() == ""
+        assert console._agent._console_agent_fleet_summary_line() == ""
         assert console._agent_section_user_dismissed_while_busy is False
         # Persisted preference (collapsed, from the manual toggle above) is
         # honored once quiet -- unchanged behavior, not this task's AC, but
@@ -1298,7 +1298,7 @@ async def test_agent_section_auto_opens_again_for_new_busy_window_after_quiet() 
         )
         await console._sync_native_console_chat_ui()
         await pilot.pause(0.2)
-        assert console._console_agent_fleet_summary_line()
+        assert console._agent._console_agent_fleet_summary_line()
         assert _agent_section_open(console)  # auto-open fires again
         assert console._current_console_rail_state().agent_open is True
 

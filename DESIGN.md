@@ -443,6 +443,32 @@ than the crash, because the tests go green over a dead write. An `ast` audit
 comparing every new property against the baseline attribute's shape catches
 both, and is cheap enough to run every wave.
 
+**Controller construction lives in `UI/Console_Modules/wiring.py`, not in the
+screen's `__init__`.** Wiring six controllers with named callable dependencies
+is verbose by design — the verbosity IS the dependency list — and by wave 4 it
+had grown `ChatScreen.__init__` to 782 lines, 411 of them construction. Those
+statements now live in `build_console_controllers(screen)`, which the screen
+calls at the point the first construction occupied. Two rules come with it.
+First, **the constructions move verbatim**: every named keyword argument stays
+character for character, because a controller's dependencies are its signature
+and collapsing them into a per-controller dependency object would hide exactly
+what the binding rule above exists to expose. Second, **the call site's position
+matters** — the screen sets ~250 attributes around it, and the late-binding
+lambdas read them — so a new controller is added to `wiring.py`, never back into
+`__init__`.
+
+**An import an extraction leaves behind may be load-bearing for tests.** When
+code moves out of a module, the imports it used often become code-unused, and
+deleting them looks like tidying. It is not always: tests patch symbols through
+whatever module namespace they can reach, and
+`monkeypatch.setattr(chat_screen_module, "ConsoleDictationController", ...)`
+keeps a `chat_screen`-level import alive with **no reference an import-grep can
+find**. Wave 4 deleted five such imports and turned 28 tests red across five
+files. Before removing an import an extraction orphaned, grep the test suite for
+the SYMBOL as an attribute of the module you are editing, not just for the name.
+An import kept for this reason carries `# noqa: F401` and a comment saying so,
+because otherwise the next `ruff --fix` harvests it.
+
 **New Console code goes in `UI/Console_Modules/`, and a ratchet enforces it.**
 The decomposition's first two waves extracted ~4,900 lines out of
 `chat_screen.py` and the file still ended up *larger* than when the work

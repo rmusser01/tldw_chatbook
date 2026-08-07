@@ -299,28 +299,28 @@ async def test_subagent_counts_are_batched_and_gated_not_refreshed_every_tick(
             lambda: fake_time["t"],
         )
 
-        counts = console._console_subagent_counts_for_rows(bridge, rows)
+        counts = console._agent._console_subagent_counts_for_rows(bridge, rows)
         assert counts == {f"c{i}": 2 for i in range(5)}
         assert len(calls) == 1  # one batched call for 5 rows, not 5 calls
 
         # Same row set, no active run, within TTL: cache reused verbatim --
         # this is the "0.2s poll tick with nothing sub-agent related
         # changed" case that previously re-queried every tick.
-        console._console_subagent_counts_for_rows(bridge, rows)
+        console._agent._console_subagent_counts_for_rows(bridge, rows)
         assert len(calls) == 1
 
         # The visible row set changes (conversation list rebuilt) -> refresh.
-        console._console_subagent_counts_for_rows(bridge, rows[:2])
+        console._agent._console_subagent_counts_for_rows(bridge, rows[:2])
         assert len(calls) == 2
 
         # Same (smaller) row set again, still within TTL, no active run:
         # cached, no extra call.
-        console._console_subagent_counts_for_rows(bridge, rows[:2])
+        console._agent._console_subagent_counts_for_rows(bridge, rows[:2])
         assert len(calls) == 2
 
         # Cache TTL elapses -> refresh even though nothing else changed.
         fake_time["t"] += 5.0
-        console._console_subagent_counts_for_rows(bridge, rows[:2])
+        console._agent._console_subagent_counts_for_rows(bridge, rows[:2])
         assert len(calls) == 3
 
         # An active run forces a refresh even inside the TTL window, so a
@@ -330,7 +330,7 @@ async def test_subagent_counts_are_batched_and_gated_not_refreshed_every_tick(
             console._console_chat_controller = SimpleNamespace(
                 run_state=SimpleNamespace(status=ConsoleRunStatus.STREAMING)
             )
-            console._console_subagent_counts_for_rows(bridge, rows[:2])
+            console._agent._console_subagent_counts_for_rows(bridge, rows[:2])
             assert len(calls) == 4
         finally:
             console._console_chat_controller = original_controller
@@ -434,7 +434,7 @@ async def test_agent_section_lines_render_brackets_literally_not_escaped():
 
         console._console_agent_bridge = _FakeBridge()
         console._console_agent_drilldown_run_id = None
-        status_line, steps_text, subagents_text = console._console_agent_section_lines()
+        status_line, steps_text, subagents_text = console._agent._console_agent_section_lines()
 
         assert "fetch [docs] ok" in steps_text
         assert "\\[" not in steps_text
@@ -481,7 +481,7 @@ async def test_agent_section_falls_back_to_historical_snapshot_when_live_is_idle
 
         console._console_agent_bridge = _FakeBridge()
         console._console_agent_drilldown_run_id = None
-        status_line, steps_text, subagents_text = console._console_agent_section_lines()
+        status_line, steps_text, subagents_text = console._agent._console_agent_section_lines()
 
         assert status_line == "Agent: done"
         assert "Paris" in steps_text
@@ -515,7 +515,7 @@ async def test_agent_section_prefers_live_snapshot_over_historical_when_present(
 
         console._console_agent_bridge = _FakeBridge()
         console._console_agent_drilldown_run_id = None
-        status_line, _steps, _subagents = console._console_agent_section_lines()
+        status_line, _steps, _subagents = console._agent._console_agent_section_lines()
 
         assert status_line == "Agent: running · step 2"
         assert calls == []  # historical_snapshot must not even be consulted
@@ -618,16 +618,16 @@ async def test_drilldown_falls_back_to_overview_after_conversation_switch():
         )
 
         # Drill into the (only) sub-agent run of conv-A.
-        console._toggle_console_agent_drilldown_from_subagents_click()
+        console._agent._toggle_console_agent_drilldown_from_subagents_click()
         assert console._console_agent_drilldown_run_id == "run-1"
-        status_line, _steps, _subagents = console._console_agent_section_lines()
+        status_line, _steps, _subagents = console._agent._console_agent_section_lines()
         assert status_line.startswith("Sub-agent ·")
 
         # Switch to a different conversation -- the drill-in must not
         # survive, even though bridge.subagent_run("run-1") would still
         # happily return the (now-foreign) record.
         fake_bridge.active_conversation_id = "conv-B"
-        status_line, _steps, _subagents = console._console_agent_section_lines()
+        status_line, _steps, _subagents = console._agent._console_agent_section_lines()
         assert console._console_agent_drilldown_run_id is None
         assert not status_line.startswith("Sub-agent ·")
         assert status_line.startswith("Agent:")
@@ -666,9 +666,9 @@ async def test_drilldown_render_path_rejects_record_from_other_conversation():
         # Bypass the click-handler's own conversation tracking to isolate
         # the render path's independent conversation_id verification.
         console._console_agent_drilldown_run_id = "run-x"
-        console._console_agent_drilldown_conversation_id = "conv-active"
+        console._agent._console_agent_drilldown_conversation_id = "conv-active"
 
-        status_line, _steps, _subagents = console._console_agent_section_lines()
+        status_line, _steps, _subagents = console._agent._console_agent_section_lines()
         assert console._console_agent_drilldown_run_id is None
         assert not status_line.startswith("Sub-agent ·")
 
@@ -716,17 +716,17 @@ async def test_drilldown_step_text_grows_with_a_configured_cap_above_eighty(
         console._console_agent_bridge = _FakeBridge()
         console._current_console_rail_conversation_id = lambda: "conv-A"
         console._console_agent_drilldown_run_id = "run-x"
-        console._console_agent_drilldown_conversation_id = "conv-A"
+        console._agent._console_agent_drilldown_conversation_id = "conv-A"
 
         monkeypatch.setattr(
             "tldw_chatbook.config.get_cli_setting", lambda *a, **k: 40
         )
-        _status, steps_at_40, _subagents = console._console_agent_section_lines()
+        _status, steps_at_40, _subagents = console._agent._console_agent_section_lines()
 
         monkeypatch.setattr(
             "tldw_chatbook.config.get_cli_setting", lambda *a, **k: 300
         )
-        _status, steps_at_300, _subagents = console._console_agent_section_lines()
+        _status, steps_at_300, _subagents = console._agent._console_agent_section_lines()
 
         # A bare `[:80]` slice (the pre-fix behavior) would make BOTH of
         # these identical (both capped at 80) regardless of the configured
@@ -774,7 +774,7 @@ async def test_full_log_probe_never_touches_the_bridge_while_collapsed():
         console._console_agent_bridge = _FakeBridge()
         console._console_agent_drilldown_run_id = None
         console._current_console_rail_conversation_id = lambda: "conv-A"
-        console._console_agent_drilldown_conversation_id = "conv-A"
+        console._agent._console_agent_drilldown_conversation_id = "conv-A"
         console._current_console_rail_state = lambda: SimpleNamespace(agent_open=False)
 
         # Several "ticks" while collapsed: not even the run-id resolution
@@ -821,7 +821,7 @@ async def test_full_log_probe_is_cached_per_run_id_while_open():
         console._console_agent_bridge = fake_bridge
         console._console_agent_drilldown_run_id = None
         console._current_console_rail_conversation_id = lambda: "conv-A"
-        console._console_agent_drilldown_conversation_id = "conv-A"
+        console._agent._console_agent_drilldown_conversation_id = "conv-A"
         console._current_console_rail_state = lambda: SimpleNamespace(agent_open=True)
 
         # Steady state (same target run id across ticks): probed once, then
@@ -875,10 +875,10 @@ async def test_view_full_log_loads_off_thread_then_opens_the_modal():
         console._console_agent_bridge = _FakeBridge()
         console._console_agent_drilldown_run_id = None
         console._current_console_rail_conversation_id = lambda: "conv-A"
-        console._console_agent_drilldown_conversation_id = "conv-A"
+        console._agent._console_agent_drilldown_conversation_id = "conv-A"
 
         stack_len_before = len(host.screen_stack)
-        console._open_console_agent_run_log_viewer()
+        console._agent._open_console_agent_run_log_viewer()
         # The call itself only dispatches a worker -- it must return without
         # blocking and without having pushed the modal yet.
         assert len(host.screen_stack) == stack_len_before
@@ -907,7 +907,7 @@ async def test_view_full_log_no_ops_when_there_is_no_target_run():
         console._console_agent_drilldown_run_id = None
 
         stack_len_before = len(host.screen_stack)
-        console._open_console_agent_run_log_viewer()
+        console._agent._open_console_agent_run_log_viewer()
         await host.workers.wait_for_complete()
         await pilot.pause()
 
@@ -991,7 +991,7 @@ async def test_subagents_click_cycles_through_every_run_then_overview():
 
         clicked_sequence = []
         for _ in range(5):
-            console._toggle_console_agent_drilldown_from_subagents_click()
+            console._agent._toggle_console_agent_drilldown_from_subagents_click()
             clicked_sequence.append(console._console_agent_drilldown_run_id)
             await pilot.pause()  # drain the background rail-sync worker
 

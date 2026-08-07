@@ -10592,7 +10592,7 @@ def test_resume_wiring_injects_agent_markers_from_agent_runs_db(tmp_path):
         ),
     ]
 
-    resumed = screen._inject_resume_agent_markers(messages, "conv-x")
+    resumed = screen._agent._inject_resume_agent_markers(messages, "conv-x")
 
     tool_rows = [m for m in resumed if m.role is ConsoleMessageRole.TOOL]
     assert len(tool_rows) == 1
@@ -10600,7 +10600,7 @@ def test_resume_wiring_injects_agent_markers_from_agent_runs_db(tmp_path):
     assert resumed[-1] is tool_rows[0]  # placed right after the assistant answer
 
     # Idempotent: injecting again onto the already-injected list adds nothing.
-    resumed_again = screen._inject_resume_agent_markers(resumed, "conv-x")
+    resumed_again = screen._agent._inject_resume_agent_markers(resumed, "conv-x")
     assert len(resumed_again) == len(resumed)
 
 

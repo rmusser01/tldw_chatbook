@@ -284,6 +284,48 @@ teaches the wrong lesson:
 `__init__` remains the largest method on the class and grows with each wave's
 controller wiring — a real cost of this pattern, and the next wave's problem.
 
+**Wave 4 (this branch)** — `Console_Modules/wiring.py`, button-dispatch routing,
+`ConsoleAgentController`, and the ratchet lowered again.
+
+`chat_screen.py` **18,930 → 17,743 lines**, `ChatScreen` **600 → 593 methods**
+(−1,187 / −7), measured after the final rebase. `UI/Console_Modules/` now holds
+seven controllers, three region widgets, the frame helper, and the wiring module.
+
+**Wave 4 closed the cost wave 3 flagged.** `__init__` had reached **782 lines**,
+of which **411 were six controller-construction statements** — the pattern's own
+overhead, growing with every wave. Those statements now live in
+`build_console_controllers(screen)` in `Console_Modules/wiring.py`, **verbatim**:
+every named keyword argument preserved character for character, proved two ways
+(a `tokenize`-based `self`→`screen` rename over 123 NAME tokens leaves the 483
+lines byte-identical, and all six `Call` nodes are `ast.dump`-identical).
+`__init__` is now **310 lines**. A reviewer proposed collapsing the wiring into
+per-controller dependency objects instead; that was declined, because explicit
+signatures are what make a controller's dependencies readable, and a builder
+function relocates the call site without touching them.
+
+Two things wave 4 learned that generalise:
+
+- **An import left behind by an extraction can be load-bearing for tests.**
+  Deleting the five now-code-unused controller imports from `chat_screen.py`
+  turned **28 tests red**: 18 sites patch them as
+  `chat_screen_module.ConsoleDictationController`, which **no import-grep can
+  see**, because the alias hides the reference. They are kept as deliberate
+  re-exports with `# noqa: F401` so a `ruff --fix` pass cannot harvest them
+  (task-3023 repoints the tests properly).
+- **A dispatcher's branches can outlive their buttons.** Routing
+  `on_button_pressed` (381 → 233 lines) surfaced a 35-line branch that nothing
+  could reach — the button carrying its id had been deleted in an earlier
+  commit, and the id survived only as a CSS class on buttons whose ids take
+  other branches. It was dead twice over, since its body also required a state
+  that same commit retired. Deleted as its own commit, with the id's absence
+  pinned by a test.
+
+Six of nineteen branches moved; **thirteen stayed, deliberately**. A branch that
+coordinates two controllers stays on the screen (the wave-2 precedent), and five
+of the small ones pass the `Button.Pressed` event itself — moving those would
+breach the no-DOM-and-no-events-in-a-controller invariant. An honest stays-list
+is worth more than a flattering diff.
+
 ## Migration safety
 
 This is the section that matters most, because this refactor walks directly through this
