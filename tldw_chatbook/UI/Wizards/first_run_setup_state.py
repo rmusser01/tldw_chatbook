@@ -579,6 +579,13 @@ ROW_ATTENTION = "attention"
 
 _TEMPLATE_DEFAULT_THEME = "textual-dark"
 
+#: Shipped template defaults that get merged into app_config at load time.
+#: Like `_TEMPLATE_DEFAULT_THEME`, their mere presence is not a user choice
+#: (task-2724: a Ctrl+N-only walk rendered "✓ Default model — gpt-5.6-terra"
+#: and "✓ RAG — embedding model: e5-small-v2" beneath "✗ Provider").
+_TEMPLATE_DEFAULT_RAG_MODEL = "e5-small-v2"
+_TEMPLATE_DEFAULT_MODEL = "gpt-5.6-terra"
+
 
 @dataclass(frozen=True)
 class SummaryRow:
@@ -718,17 +725,33 @@ def build_summary_rows(
 
     if not rag_deps_installed:
         rag_row = SummaryRow("RAG", ROW_DEFAULT, "optional — embeddings deps not installed")
-    elif rag_model:
+    elif rag_model and rag_model != _TEMPLATE_DEFAULT_RAG_MODEL:
         rag_row = SummaryRow("RAG", ROW_CONFIGURED, f"embedding model: {rag_model}")
+    elif rag_model:
+        # The untouched template value — matches the header's "RAG off"
+        # sentence instead of contradicting it (task-2724).
+        rag_row = SummaryRow(
+            "RAG", ROW_DEFAULT, f"off by default — embedding model {rag_model}"
+        )
     else:
         rag_row = SummaryRow("RAG", ROW_DEFAULT, "no embedding model selected")
 
-    if prefill.model_id:
+    if prefill.model_id and provider_ok:
         model_row = SummaryRow("Default model", ROW_CONFIGURED, prefill.model_id)
     elif provider_ok:
         # A provider without a model is half-finished — worth flagging.
         model_row = SummaryRow("Default model", ROW_ATTENTION, "not selected")
+    elif prefill.model_id and prefill.model_id != _TEMPLATE_DEFAULT_MODEL:
+        # Typed/selected by the user, but with no provider it cannot take
+        # effect — name it honestly without claiming a finished setup.
+        model_row = SummaryRow(
+            "Default model",
+            ROW_DEFAULT,
+            f"{prefill.model_id} — takes effect once a provider is connected",
+        )
     else:
+        # With no provider, whatever sits in chat_defaults.model is the
+        # merged template default, not a choice (task-2724).
         model_row = SummaryRow("Default model", ROW_DEFAULT, "not selected")
 
     theme_is_custom = bool(

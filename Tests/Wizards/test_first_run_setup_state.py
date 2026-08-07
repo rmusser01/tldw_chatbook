@@ -826,3 +826,72 @@ class TestRerunModelPrefill:
         assert rerun_model_prefill(
             {"chat_defaults": {"provider": "openai", "model": "m"}}, provider_value=""
         ) == ""
+
+
+class TestSummaryTemplateHonesty:
+    """task-2724: a Ctrl+N-only wizard walk (nothing chosen, no credentials)
+    must not earn ✓ rows from template defaults merged in at config load.
+    Observed live: '✗ Provider' directly above '✓ Default model — gpt-5.6-terra'
+    and '✓ RAG — embedding model: e5-small-v2' under a header saying 'RAG off'."""
+
+    _WALKED_TEMPLATE_CFG = {
+        "api_settings": {"openai": {"api_key_env_var": "OPENAI_API_KEY"}},
+        "chat_defaults": {"provider": "OpenAI", "model": "gpt-5.6-terra"},
+        "embedding_config": {"default_model_id": "e5-small-v2"},
+        "first_run": {"setup_started": True, "setup_completed": True},
+    }
+
+    def test_skipped_walkthrough_earns_no_configured_rows(self):
+        rows = build_summary_rows(
+            self._WALKED_TEMPLATE_CFG, {}, rag_deps_installed=True
+        )
+        configured = [row.label for row in rows if row.ok]
+        assert configured == [], (
+            f"template defaults claimed as user choices: {configured}"
+        )
+
+    def test_template_model_without_provider_reads_as_default(self):
+        from tldw_chatbook.UI.Wizards.first_run_setup_state import ROW_DEFAULT
+
+        rows = {
+            r.label: r
+            for r in build_summary_rows(
+                self._WALKED_TEMPLATE_CFG, {}, rag_deps_installed=True
+            )
+        }
+        assert rows["Default model"].state == ROW_DEFAULT
+        assert rows["Default model"].detail == "not selected"
+
+    def test_template_rag_model_reads_as_off_by_default(self):
+        from tldw_chatbook.UI.Wizards.first_run_setup_state import ROW_DEFAULT
+
+        rows = {
+            r.label: r
+            for r in build_summary_rows(
+                self._WALKED_TEMPLATE_CFG, {}, rag_deps_installed=True
+            )
+        }
+        assert rows["RAG"].state == ROW_DEFAULT
+        assert "off by default" in rows["RAG"].detail
+
+    def test_typed_model_without_provider_is_named_but_not_checked(self):
+        cfg = dict(self._WALKED_TEMPLATE_CFG)
+        cfg["chat_defaults"] = {"provider": "OpenAI", "model": "my-local-model"}
+        rows = {
+            r.label: r
+            for r in build_summary_rows(cfg, {}, rag_deps_installed=True)
+        }
+        row = rows["Default model"]
+        assert row.ok is False
+        assert "my-local-model" in row.detail
+        assert "provider" in row.detail
+
+    def test_user_selected_rag_model_still_earns_configured(self):
+        cfg = dict(self._WALKED_TEMPLATE_CFG)
+        cfg["embedding_config"] = {"default_model_id": "bge-large-en"}
+        rows = {
+            r.label: r
+            for r in build_summary_rows(cfg, {}, rag_deps_installed=True)
+        }
+        assert rows["RAG"].ok is True
+        assert "bge-large-en" in rows["RAG"].detail
