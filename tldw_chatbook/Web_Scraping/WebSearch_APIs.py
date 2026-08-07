@@ -312,6 +312,60 @@ def initialize_web_search_results_dict(search_params: Dict) -> Dict:
     }
 
 
+def _sanitize_sub_questions(raw_values: Any) -> List[str]:
+    """Normalize model-generated sub-questions into a deduplicated list of strings.
+
+    Ported from tldw_server2's WebSearch_APIs._sanitize_sub_questions (~:255-286),
+    extended to also accept a dict carrying "sub_questions"/"search_queries" at the
+    top level -- folding in the unwrapping the server does at its analyze_question
+    call site (~:751-754) so callers can hand this function a raw parsed LLM
+    response directly, list or dict, without pre-extracting the list themselves.
+
+    Args:
+        raw_values: A list/tuple/set of str or dict items, a single string, a dict
+            carrying "sub_questions" or "search_queries", or None/anything else.
+
+    Returns:
+        A list of stripped, non-empty strings with case-insensitive duplicates
+        dropped (first occurrence wins).
+    """
+    if isinstance(raw_values, dict):
+        raw_values = raw_values.get("sub_questions", raw_values.get("search_queries", []))
+
+    if isinstance(raw_values, str):
+        candidates: List[Any] = [raw_values]
+    elif isinstance(raw_values, (list, tuple, set)):
+        candidates = list(raw_values)
+    else:
+        return []
+
+    sanitized: List[str] = []
+    seen: set = set()
+    for item in candidates:
+        text = ""
+        if isinstance(item, str):
+            text = item.strip()
+        elif isinstance(item, dict):
+            query_value = item.get("sub_question")
+            if not isinstance(query_value, str):
+                query_value = item.get("query")
+            if not isinstance(query_value, str):
+                query_value = item.get("text")
+            if isinstance(query_value, str):
+                text = query_value.strip()
+        else:
+            continue
+
+        if not text:
+            continue
+        key = text.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        sanitized.append(text)
+    return sanitized
+
+
 def generate_and_search(question: str, search_params: Dict) -> Dict:
     """
     Generate sub-queries and perform web searches.
@@ -409,14 +463,23 @@ def generate_and_search(question: str, search_params: Dict) -> Dict:
         api_endpoint = search_params.get("subquery_generation_llm", "openai")
         sub_query_dict = analyze_question(question, api_endpoint)
 
-    # Merge original question with sub-queries
-    sub_queries = sub_query_dict.get("sub_questions", [])
+    # Merge original question with sub-queries, dropping any sub-query that's
+    # just the original question again (case-insensitive) before fan-out
+    # (port of server generate_and_search ~:522-528).
+    sub_queries = _sanitize_sub_questions(sub_query_dict.get("sub_questions", []))
+    question_key = question.strip().casefold()
+    sub_queries = [
+        sub_query for sub_query in sub_queries if sub_query.strip().casefold() != question_key
+    ]
+    sub_query_dict["sub_questions"] = sub_queries
+    sub_query_dict["search_queries"] = sub_queries
     logger.info(f"Sub-queries generated: {sub_queries}")
     all_queries = [question] + sub_queries
 
     # 2. Initialize a single web_search_results_dict
     web_search_results_dict = initialize_web_search_results_dict(search_params)
     web_search_results_dict["search_query"] = question
+    web_search_results_dict["warnings"] = []
 
     # 3. Perform searches and accumulate all raw results
     for q in all_queries:
@@ -448,9 +511,10 @@ def generate_and_search(question: str, search_params: Dict) -> Dict:
             logger.error(
                 f"Error or invalid data returned for query '{q}': {raw_results}"
             )
-            logger.error(
-                f"Error or invalid data returned for query '{q}': {raw_results}"
-            )
+            if isinstance(raw_results, dict):
+                error_text = str(raw_results.get("processing_error") or "").strip()
+                if error_text:
+                    web_search_results_dict["warnings"].append(f"{q!r}: {error_text}")
             continue
 
         logger.info(
@@ -466,6 +530,12 @@ def generate_and_search(question: str, search_params: Dict) -> Dict:
         logger.info(
             f"Total results found so far: {len(web_search_results_dict['results'])}"
         )
+
+    # If every query came back empty and at least one provider errored,
+    # surface the first such error as the top-level error (port of server
+    # generate_and_search ~:624-627).
+    if not web_search_results_dict["results"] and web_search_results_dict["warnings"]:
+        web_search_results_dict["error"] = web_search_results_dict["warnings"][0]
 
     return {
         "web_search_results_dict": web_search_results_dict,
@@ -651,7 +721,7 @@ def analyze_question(question: str, api_endpoint) -> Dict:
                 try:
                     # Try to parse as JSON first
                     parsed_response = json.loads(response)
-                    sub_questions = parsed_response.get("sub_questions", [])
+                    sub_questions = _sanitize_sub_questions(parsed_response)
                     if sub_questions:
                         logger.info("Successfully generated sub-questions from JSON")
                         break
@@ -661,7 +731,7 @@ def analyze_question(question: str, api_endpoint) -> Dict:
                         "Failed to parse as JSON. Attempting regex extraction."
                     )
                     matches = re.findall(r'"([^"]*)"', response)
-                    sub_questions = matches if matches else []
+                    sub_questions = _sanitize_sub_questions(matches)
                     if sub_questions:
                         logger.info("Successfully extracted sub-questions using regex")
                         break
@@ -673,7 +743,11 @@ def analyze_question(question: str, api_endpoint) -> Dict:
         logger.error(
             "Failed to extract sub-questions from API response after all attempts."
         )
-        sub_questions = [original_query]  # Fallback to the original query
+        sub_questions = []  # No fallback to the original query (task-1356; port of
+        # server analyze_question, which never re-seeds sub_questions with the
+        # original query on total failure -- generate_and_search already always
+        # searches the original question, so [original_query] here just meant a
+        # duplicate, wasted search on total LLM failure).
 
     # Construct and return the result dictionary
     logger.info("Sub-questions generated successfully")
@@ -2919,7 +2993,7 @@ def search_web_serper(
         "hl": search_lang or "en",
         "num": int(result_count) if result_count else 10,
     }
-    response = requests.post("https://google.serper.dev/search", headers=headers, json=payload)
+    response = requests.post("https://google.serper.dev/search", headers=headers, json=payload, timeout=30)
     response.raise_for_status()
     return response.json()
 
@@ -2989,7 +3063,7 @@ def search_web_exa(search_query: str, result_count: Optional[int] = None) -> dic
         "type": "auto",
         "contents": {"highlights": True},
     }
-    response = requests.post("https://api.exa.ai/search", headers=headers, json=payload)
+    response = requests.post("https://api.exa.ai/search", headers=headers, json=payload, timeout=30)
     response.raise_for_status()
     return response.json()
 
@@ -3160,7 +3234,7 @@ def search_web_yandex(search_query: str, result_count: Optional[int] = None) -> 
         "responseFormat": "FORMAT_XML",
     }
     response = requests.post(
-        "https://searchapi.api.cloud.yandex.net/v2/web/search", headers=headers, json=payload
+        "https://searchapi.api.cloud.yandex.net/v2/web/search", headers=headers, json=payload, timeout=30
     )
     response.raise_for_status()
     return response.json()
