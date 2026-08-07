@@ -37,6 +37,22 @@ from tldw_chatbook.UI.Screens.scheduling.schedules_workbench import (
 )
 from tldw_chatbook.UI.Screens.workflows_screen import WorkflowsScreen
 
+#: One poll of a UI condition. Small enough that a satisfied condition exits
+#: promptly, large enough not to spin the event loop.
+_POLL_INTERVAL_SECONDS = 0.02
+
+#: Polls to wait for the Console-follow RECOVERY (~12s). Deliberately generous:
+#: the loop exits the instant the condition holds, so the budget only bounds
+#: the failure case -- and this recovery is the load-sensitive one documented
+#: on `test_watchlists_destination_retries_console_follow_after_initial_adapter_failure`.
+_RECOVERY_POLL_LIMIT = 600
+
+#: Polls to wait for an already-triggered action's observable EFFECT (~2s).
+#: Shorter than the recovery budget on purpose: by this point the press has
+#: landed, so a long wait here would only slow a genuine failure down.
+_EFFECT_POLL_LIMIT = 100
+
+
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 PHASE3_STATUS_CARD_EVIDENCE = (
@@ -1223,7 +1239,7 @@ async def test_watchlists_destination_retries_console_follow_after_initial_adapt
         # genuinely exceeds it on a loaded machine -- raising it is not
         # papering over a race, because the loop exits the instant the
         # condition holds; the budget only bounds the failure case.
-        for _ in range(600):
+        for _ in range(_RECOVERY_POLL_LIMIT):
             try:
                 button = screen.query_one("#watchlists-follow-in-console")
             except NoMatches:
@@ -1234,7 +1250,7 @@ async def test_watchlists_destination_retries_console_follow_after_initial_adapt
                 # and a press in that window is dropped.
                 if "Recovered run" in str(button.label) and not button.disabled:
                     break
-            await pilot.pause(0.02)
+            await pilot.pause(_POLL_INTERVAL_SECONDS)
         else:
             raise AssertionError(
                 f"Console follow did not recover. Text: {_screen_static_text(screen)}"
@@ -1257,10 +1273,10 @@ async def test_watchlists_destination_retries_console_follow_after_initial_adapt
         button.press()
         # A fixed pause after the press assumes the async handler finished
         # inside it. Wait for the observable effect instead.
-        for _ in range(100):
+        for _ in range(_EFFECT_POLL_LIMIT):
             if app.open_active_home_item_in_console.call_count:
                 break
-            await pilot.pause(0.02)
+            await pilot.pause(_POLL_INTERVAL_SECONDS)
         else:
             raise AssertionError(
                 "Console follow click produced no open_active_home_item_in_console "
