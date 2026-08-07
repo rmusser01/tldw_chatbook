@@ -1856,7 +1856,22 @@ async def _click_console_workspace_conversation_for_session(
     """Click a workspace conversation row once Textual hit-testing is ready."""
     row_id = _console_workspace_conversation_row_id_for_session(console, session_id)
     for _ in range(attempts):
-        if await pilot.click(f"#{row_id}"):
+        # task-2902 investigation: `pilot.click(selector)` computes its click
+        # coordinates from the target's `.region`, but the workspace rows are
+        # rebuilt by every Console sync pass and a rebuilt row's region can be
+        # zero (pre-layout) or stale relative to the rendered cell map for
+        # whole retry windows — synthetic clicks then land where the row
+        # isn't (minimal repro in task-2902's notes; real mouse input is
+        # unaffected because the driver resolves against the rendered cell
+        # map). `press()` drives the identical Pressed->handler chain the
+        # click would, without deriving coordinates from a racing layout.
+        try:
+            row = console.query_one(f"#{row_id}", Button)
+        except Exception:
+            await pilot.pause(0.05)
+            continue
+        if not row.disabled:
+            row.press()
             for _ in range(10):
                 if store.active_session_id == session_id:
                     return
