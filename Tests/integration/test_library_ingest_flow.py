@@ -179,6 +179,51 @@ def test_options_persist_to_config(monkeypatch):
     ]
 
 
+def test_snapshot_coerces_display_string_chunk_numbers(monkeypatch):
+    """task-3301: the generic panel's Inputs hand back display text
+    (``"1000"``); the submitted snapshot must carry ints so processors and
+    the persisted config never see a string chunk size/overlap."""
+    monkeypatch.setattr(
+        library_screen_module,
+        "save_settings_to_cli_config",
+        lambda section_values: True,
+    )
+
+    submitted_jobs = []
+    screen = library_screen_module.LibraryScreen.__new__(
+        library_screen_module.LibraryScreen
+    )
+    screen.app_instance = SimpleNamespace(
+        submit_library_ingest_job=lambda **kwargs: submitted_jobs.append(kwargs)
+    )
+    screen._library_ingest_form = SimpleNamespace(
+        type_options={
+            "generic": {"chunk_size": "1000", "chunk_overlap": "150"}
+        },
+        analyze=False,
+        chunk=True,
+        chunk_size="1000",
+        title="",
+        author="",
+        keywords="",
+        path="notes.txt",
+        preflight=_preflight_result(type_groups={"generic": ["notes.txt"]}),
+        preflight_checking=False,
+    )
+    screen._cancel_library_ingest_preflight = lambda: None
+    screen._library_ingest_preflight_generation = 0
+    screen.refresh = lambda **_kwargs: None
+
+    library_screen_module.LibraryScreen._do_submit_ingest(screen, "notes.txt")
+
+    assert len(submitted_jobs) == 1
+    generic = submitted_jobs[0]["ingest_options"]["generic"]
+    assert generic["chunk_size"] == 1000
+    assert generic["chunk_overlap"] == 150
+    assert isinstance(generic["chunk_size"], int)
+    assert isinstance(generic["chunk_overlap"], int)
+
+
 @pytest.mark.asyncio
 async def test_job_persists_to_db(library_screen, tmp_path):
     """Start ingest, verify row in Library_Ingest_Jobs_DB has ingest_options."""

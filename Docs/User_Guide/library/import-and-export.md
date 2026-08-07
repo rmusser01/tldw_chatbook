@@ -83,6 +83,9 @@ the rest of the session.
 | Pre-check warnings ("⚠ …") | Name a missing optional package, what it's needed for, and the install command that fixes it. |
 | "Choose a file…" / "Retry" | Offered under pre-check errors — pick a different path, or re-run the check after a network hiccup. |
 | Per-type options | PDF documents: "PDF engine" (pymupdf / pymupdf4llm / docling) and "Enable OCR". Audio & video: "Transcription provider" (default / parakeet-onnx / faster-whisper), "Local Parakeet model folder", "Transcription model" (tiny–large), "Language", "Include timestamps", "Speaker diarization". E-books: "Extraction method" (filtered / markdown / basic), "Include table of contents". Plain text / documents / HTML: "Analyze after import", "Chunk content", "Chunk size", "Chunk overlap", "Encoding". Web pages (URLs): "What to fetch", "Maximum pages", "Maximum depth". |
+| "Analyze after import" | Runs an LLM summary of each imported item, stored alongside it (visible from the media viewer's analysis panel). The provider comes from `[analysis_defaults] provider` in `config.toml` — the same default the Media analysis panel uses — and its key from `[api_settings.<provider>]` or the provider's usual environment variable. When the option is on but no provider is callable, a line above Start says so ("Analyze after import is on, but … Imports will run without analysis.") and finished rows read "Imported name — analysis skipped: <reason>" instead of silently skipping. |
+| "Chunk content" | Governs every type: off means no retrieval chunks are stored at all; on chunks plain text / documents / HTML too (not just PDF/e-book/audio), using "Chunk size" and "Chunk overlap" — both measured in words. |
+| "Encoding" | How plain text and HTML files are decoded: auto (utf-8, then detection) or an explicit utf-8 / utf-16 / latin-1 / cp1252. A wrong explicit choice shows up as replacement characters rather than failing the import. |
 | "Install verified Parakeet v2 INT8 (630.6 MiB)…" | In the Audio & video fold, enabled when the provider is parakeet-onnx. Opens a consent dialog listing Source, Revision, License, Download size, and Destination, ending "All four files are checked against pinned sizes and SHA-256 digests before the bundle becomes usable." Buttons: "Cancel" / "Install". |
 | "Start import" | Queues everything the pre-check found. If warnings are outstanding, the "Some files may fail to import:" dialog appears first (see below). |
 | Queue rows | "● queued / parsing / writing · name" while working, "✓ done · name · 4s" on success, "✗ failed · name · reason" (plus " · retry 1" after a retry) on failure, "⊘ cancelled · name" when stopped on purpose. Server jobs carry an " · on server" suffix. |
@@ -159,8 +162,10 @@ keys live in the [guide index](../index.md).
 | `ingest_options.<group>.<field>` | Every per-type option, saved when you start an import (e.g. `ingest_options.generic.chunk_size`). |
 | `ingest_directory_scan_limit` | Folder scan cap (default 1000). |
 
-"Chunk size" is kept between 100 and 5000 — values outside that range are
-pulled back to the nearest bound when the import starts.
+"Chunk size" is kept between 100 and 5000 words — values outside that
+range are pulled back to the nearest bound when the import starts. An
+untouched form submits the defaults the panel displays (size 1000,
+overlap 100), identically on the local and server paths.
 
 Deep dives: [TRANSCRIPTION.md](../../Features/TRANSCRIPTION.md) covers the
 audio/video transcription providers and their optional extras. See also
@@ -219,3 +224,14 @@ focuses the path field, Esc returns to the landing, `i` works from any
 Library canvas, the footer/F1 advertise `enter start import` / `esc back
 to hub`, and focused fields/compact buttons show a heavy structural focus
 edge instead of a color-only change)*
+
+*Verified against feat/media-ingest-ux-parity @ 7c451678e — 2026-08-07
+(task-3301: "Analyze after import", "Chunk content" OFF, and "Encoding"
+are wired for real on the local path — analysis resolves the
+`[analysis_defaults]` provider (readiness hint above Start, "analysis
+skipped: …" on done rows when unconfigured), Chunk OFF stores no chunks
+for any type while Chunk ON now chunks plain text/HTML/documents too,
+the Encoding select governs text decoding, the chunk size/overlap unit
+hints read "words", and an untouched form submits overlap 100 on both
+the local and server paths — previously all three options were silent
+no-ops locally and the local overlap fallback was 50)*

@@ -24,6 +24,7 @@ from tldw_chatbook.Workspaces.conversation_browser_state import (
 )
 from tldw_chatbook.Library.ingest_capabilities import (
     _is_installed as _dependency_installed,
+    generic_option_default,
     get_capabilities,
     list_type_groups,
 )
@@ -43,12 +44,11 @@ def _generic_default(name: str, fallback: Any) -> Any:
     This form echo used to hard-code its own, which disagreed with it
     (``analyze``, ``chunk_size``) and with the other ingest surface
     (``chunk``) -- three answers to the same question, so a user's actual
-    defaults depended on which screen they happened to open.
+    defaults depended on which screen they happened to open. (task-3301)
+    Delegates to ``ingest_capabilities.generic_option_default``, the shared
+    accessor every consumer of these defaults now goes through.
     """
-    for field_spec in get_capabilities("generic").fields:
-        if field_spec.name == name:
-            return field_spec.default
-    return fallback
+    return generic_option_default(name, fallback)
 
 # Exact copy values (binding -- see the L3b plan's Global Constraints).
 INGEST_HEADER_COPY = "Import media"
@@ -652,6 +652,13 @@ class LibraryIngestCanvasState:
     #: server is actually configured.
     show_backend_switch: bool = False
     transcribe_cpp_configured: bool = False
+    #: (task-3301) Rendered beside the Start gate when "Analyze after
+    #: import" is ON but the configured analysis provider cannot actually
+    #: be called (no provider configured / missing key). Informational
+    #: only -- analysis is optional, so it never disables Start; the same
+    #: resolution stamps the job's "analysis skipped" reason, so the
+    #: promise made here and the record left on the done row agree.
+    analysis_hint_line: str = ""
 
 
 def _basename(source_path: str) -> str:
@@ -1248,6 +1255,7 @@ def build_library_ingest_state(
     recent_ledger: Sequence[LibraryIngestJob] = (),
     clear_finished_armed: bool = False,
     expanded_details: frozenset[str] | set[str] = frozenset(),
+    analysis_unready_hint: str = "",
 ) -> LibraryIngestCanvasState:
     """Build the ingest canvas's full display state.
 
@@ -1662,6 +1670,11 @@ def build_library_ingest_state(
         queue_groups=queue_groups,
         latest_batch_line=latest_batch_line,
         transcribe_cpp_configured=transcribe_cpp_configured,
+        # (task-3301) Only meaningful while the Analyze toggle is ON; the
+        # caller supplies the resolved-unready sentence, this builder
+        # gates it on the toggle so an OFF form never nags about a
+        # provider it isn't going to use.
+        analysis_hint_line=(analysis_unready_hint if form.analyze else ""),
     )
 
 

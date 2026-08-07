@@ -85,6 +85,7 @@ from ...Library.library_export_state import (
     next_media_quality,
     normalize_export_destination,
 )
+from ...Library.ingest_analysis import resolve_ingest_analysis_provider
 from ...Library.ingest_capabilities import get_capabilities, list_type_groups
 from ...Library.ingest_preflight import analyze_path
 from ...Library.ingest_types import PreflightResult
@@ -9413,6 +9414,17 @@ class LibraryScreen(BaseAppScreen):
         except (NoMatches, QueryError):
             return
         quiet_line.update(new_state.start_quiet_line)
+        # (task-3301) The Analyze-readiness hint shares the gate's in-place
+        # update path so toggling the option or fixing the config never
+        # needs a recompose to change the message.
+        try:
+            analysis_hint = self.query_one(
+                "#library-ingest-analysis-hint", Static
+            )
+        except (NoMatches, QueryError):
+            return
+        analysis_hint.update(new_state.analysis_hint_line)
+        analysis_hint.display = bool(new_state.analysis_hint_line)
 
     def _update_library_ingest_dynamic_regions(self) -> None:
         """Refresh ONLY the pre-flight summary + queue children (task-2042).
@@ -9569,6 +9581,14 @@ class LibraryScreen(BaseAppScreen):
             and bool(getattr(runtime_state, "server_configured", False))
             and not self._server_binding_is_shipped_placeholder()
         )
+        # (task-3301) Resolve the Analyze-after-import provider so the panel
+        # can say -- BEFORE Start -- when the option is a promise the run
+        # cannot keep. The builder gates the hint on the analyze toggle.
+        analysis_unready_hint = ""
+        if form.analyze:
+            analysis_unready_hint = resolve_ingest_analysis_provider(
+                getattr(self.app_instance, "app_config", None)
+            ).hint
         return build_library_ingest_state(
             jobs,
             form=form,
@@ -9581,6 +9601,7 @@ class LibraryScreen(BaseAppScreen):
             clear_finished_armed=self._library_ingest_clear_finished_armed,
             recent_ledger=tuple(self._library_ingest_recent_ledger),
             expanded_details=self._library_ingest_expanded_details,
+            analysis_unready_hint=analysis_unready_hint,
         )
 
     def _ensure_library_notes_sync_config_loaded(self) -> None:
@@ -18546,6 +18567,21 @@ class LibraryScreen(BaseAppScreen):
         # otherwise fall back to the legacy top-level form field.
         if "chunk_size" not in generic:
             generic["chunk_size"] = clamp_chunk_size(form.chunk_size)
+        # (task-3301) The panel's number Inputs hand back display TEXT
+        # ("1000"); this snapshot is both what the job pipeline consumes
+        # and what gets persisted to config, so numbers are coerced to
+        # ints here, at the boundary, and never downstream. The values
+        # were already gate-validated (``collect_ingest_option_errors``
+        # blocks Start on a non-integer), so the clamp/fallback below is
+        # defensive, not a second validator.
+        generic["chunk_size"] = clamp_chunk_size(str(generic["chunk_size"]))
+        if "chunk_overlap" in generic:
+            try:
+                generic["chunk_overlap"] = max(
+                    0, int(str(generic["chunk_overlap"]).strip())
+                )
+            except (TypeError, ValueError):
+                generic.pop("chunk_overlap")  # fall back to the schema default
         return snapshot
 
     @staticmethod

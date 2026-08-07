@@ -811,7 +811,13 @@ def process_pdf(
         logger.debug(
             f"PROCESS_PDF: Checking condition -> perform_analysis={perform_analysis}, api_name='{api_name}', api_key='{api_key}', chunks_exist={bool(processed_chunks)}"
         )  # Keep this log
-        if perform_analysis and api_name and api_key and processed_chunks:
+        # (task-3301) No ``api_key`` in the gate: keyless local providers
+        # (ollama, llama.cpp, ...) analyze without a credential, and
+        # ``analyze()`` loads a key from config when handed ``None``. Same
+        # lenient gate the audio and document processors already use. The
+        # only in-repo caller is ``local_file_ingestion``, which only sets
+        # ``api_name`` when the provider resolved as ready.
+        if perform_analysis and api_name and processed_chunks:
             from ..LLM_Calls.Summarization_General_Lib import analyze
 
             logger.info(

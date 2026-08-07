@@ -1134,7 +1134,11 @@ def process_epub(
 
         # 3. Summarization / Analysis
         final_analysis = None  # Renamed for consistency
-        if perform_analysis and api_name and api_key and processed_chunks:
+        # (task-3301) No ``api_key`` in the gate: keyless local providers
+        # analyze without a credential and ``analyze()`` loads a key from
+        # config when handed ``None`` -- the same lenient gate the audio
+        # and document processors already use.
+        if perform_analysis and api_name and processed_chunks:
             from ..LLM_Calls.Summarization_General_Lib import analyze
 
             logger.info(
@@ -1805,7 +1809,8 @@ def _process_markup_or_plain_text(
         # 3. Summarization / Analysis
         final_analysis = None
         # `processed_chunks` is guaranteed to be non-empty list here if markdown_content was valid.
-        if perform_analysis and api_name and api_key:
+        # (task-3301) No ``api_key`` in the gate -- see the epub path's note.
+        if perform_analysis and api_name:
             from ..LLM_Calls.Summarization_General_Lib import analyze
 
             logger.info(
@@ -2254,7 +2259,8 @@ def process_mobi(
                 result["chunks"] = processed_chunks
 
             # Perform analysis if requested
-            if perform_analysis and api_name and api_key and processed_chunks:
+            # (task-3301) No ``api_key`` in the gate -- see the epub path's note.
+            if perform_analysis and api_name and processed_chunks:
                 # Similar analysis logic as in process_epub
                 # Simplified for brevity
                 result["analysis"] = "Analysis not implemented for MOBI yet"
@@ -2432,7 +2438,8 @@ def process_fb2(
             result["chunks"] = processed_chunks
 
         # Perform analysis if requested
-        if perform_analysis and api_name and api_key and processed_chunks:
+        # (task-3301) No ``api_key`` in the gate -- see the epub path's note.
+        if perform_analysis and api_name and processed_chunks:
             # Similar analysis logic as in process_epub
             # Simplified for brevity
             result["analysis"] = "Analysis not implemented for FB2 yet"

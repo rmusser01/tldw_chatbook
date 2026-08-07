@@ -1581,3 +1581,32 @@ async def test_severity_colour_supplements_glyphs_and_invalid_field_marked() -> 
             "an invalid field must stay marked without focus"
         )
         assert pilot.app.focused is not invalid
+
+
+@pytest.mark.asyncio
+async def test_analysis_hint_renders_when_state_carries_one():
+    """task-3301: the Analyze-readiness hint renders beside the Start gate."""
+    form = LibraryIngestFormState(path="/tmp/test", analyze=True)
+    state = build_library_ingest_state(
+        (),
+        form=form,
+        analysis_unready_hint=(
+            "Analyze after import is on, but OpenAI is not ready: Missing "
+            "API key. Imports will run without analysis."
+        ),
+    )
+    app = _CanvasHost(state)
+    async with app.run_test() as pilot:
+        hint = pilot.app.query_one("#library-ingest-analysis-hint", Static)
+        assert hint.display is True
+        assert "OpenAI" in str(hint.renderable)
+        assert "without analysis" in str(hint.renderable)
+
+
+@pytest.mark.asyncio
+async def test_analysis_hint_hidden_when_state_has_none():
+    state = build_library_ingest_state((), form=_default_form())
+    app = _CanvasHost(state)
+    async with app.run_test() as pilot:
+        hint = pilot.app.query_one("#library-ingest-analysis-hint", Static)
+        assert hint.display is False

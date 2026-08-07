@@ -1266,3 +1266,25 @@ inside a max-width container folds full-width lines into black continuation
 rows on dark themes (content width = max-width − padding; drop the padding or
 shrink the build width). The regression shape that caught both: mount the
 real holder and assert region non-zero with height == mosaic rows.
+## A wired kwarg is not a working option — assert the OUTPUT varies with the INPUT (task-3301, 2026-08-07)
+
+**The incident.** Task-3301 wired the ingest form's "Chunk size" through to the
+chunking service and wrote a test that a plaintext file chunked with
+`{"method": "sentences", "max_size": 120}` produces more than one chunk. It
+produced exactly one — 2,389 characters of it. The chunking stack's methods
+size in their OWN units (`sentences` = sentence COUNT, `words` = word count),
+so a form labeled "characters · 100–5000" feeding a hardcoded
+`method: "sentences"` meant "120 sentences per chunk": the option was dead at
+a SECOND layer even after the kwarg plumbing was fixed, and the PDF path had
+shipped this exact combination for months (`max_size: 500` sentences ≈ one
+chunk per document) without any test noticing — because every existing test
+asserted the kwarg ARRIVED, none asserted the output CHANGED.
+
+**What to do.** For any "wire option X through" task, the end-to-end test must
+vary the option and assert the observable output varies with it (governance),
+not merely that the value lands in a call's kwargs. A kwarg can land perfectly
+and still be a no-op because of unit or key-name mismatches downstream
+(`size` vs `max_size` was ALSO live here — `improved_chunking_process` reads
+only the latter). The kwargs-arrival test and the governance test catch
+disjoint bug classes; you need both.
+>>>>>>> e28d31d76 (feat(library): wire Analyze, Chunk toggle, and Encoding for real; unify chunk defaults (task-3301))

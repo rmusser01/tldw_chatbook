@@ -84,10 +84,14 @@ class TestIngestJobOptions:
         assert options["author"] is None
         assert options["keywords"] is None
         assert options["perform_analysis"] is True
+        # task-3301: overlap default is the generic schema default (100, the
+        # value the UI shows), not the old hardcoded 50; ``max_size`` mirrors
+        # ``size`` because ``improved_chunking_process`` reads that spelling;
+        # no ``method`` is forced -- each consumer applies its own default.
         assert options["chunk_options"] == {
-            "method": "sentences",
             "size": 1234,
-            "overlap": 50,
+            "max_size": 1234,
+            "overlap": 100,
         }
 
     def test_generic_ingest_options_override_deprecated_fields(self) -> None:
@@ -110,8 +114,8 @@ class TestIngestJobOptions:
 
         assert options["perform_analysis"] is True
         assert options["chunk_options"] == {
-            "method": "sentences",
             "size": 2048,
+            "max_size": 2048,
             "overlap": 100,
         }
 
@@ -457,6 +461,223 @@ class TestIngestJobOptions:
         options = app._ingest_job_options(job)
 
         assert options["chunk_options"] is None
+
+
+class TestIngestJobOptionsWiring:
+    """task-3301: the dead controls resolve to real option values."""
+
+    def test_untouched_overlap_default_is_schema_default(self) -> None:
+        """Local fallback overlap == the generic schema default (100), the
+        value the UI displays -- it used to be a hardcoded 50."""
+        from tldw_chatbook.Library.ingest_capabilities import get_capabilities
+
+        schema_overlap = next(
+            f.default
+            for f in get_capabilities("generic").fields
+            if f.name == "chunk_overlap"
+        )
+        app = _minimal_app()
+        job = _make_job(
+            source_path="/tmp/test.txt",
+            ingest_options={"generic": {"chunk": True, "chunk_size": 1000}},
+        )
+
+        options = app._ingest_job_options(job)
+
+        assert options["chunk_options"]["overlap"] == schema_overlap == 100
+
+    def test_untouched_form_local_and_server_paths_agree_on_overlap(self) -> None:
+        from tldw_chatbook.Library.server_ingest_request import (
+            build_server_ingest_kwargs,
+        )
+
+        screen = object.__new__(LibraryScreen)
+        screen._library_ingest_form = LibraryIngestFormState()
+        snapshot = screen._build_ingest_options_snapshot()
+
+        app = _minimal_app()
+        job = _make_job(source_path="/tmp/test.txt", ingest_options=snapshot)
+        local_options = app._ingest_job_options(job)
+        server_kwargs = build_server_ingest_kwargs(
+            "/tmp/test.txt", options=snapshot
+        )
+
+        assert local_options["chunk_options"] is not None
+        assert (
+            local_options["chunk_options"]["overlap"]
+            == server_kwargs["chunk_overlap"]
+        )
+        assert (
+            local_options["chunk_options"]["size"] == server_kwargs["chunk_size"]
+        )
+
+    def test_display_string_sizes_are_coerced_to_int(self) -> None:
+        """The panel Inputs hand back display text; processors get ints."""
+        app = _minimal_app()
+        job = _make_job(
+            source_path="/tmp/test.txt",
+            ingest_options={
+                "generic": {
+                    "chunk": True,
+                    "chunk_size": "1000",
+                    "chunk_overlap": "150",
+                }
+            },
+        )
+
+        options = app._ingest_job_options(job)
+
+        assert options["chunk_options"]["size"] == 1000
+        assert options["chunk_options"]["overlap"] == 150
+        assert isinstance(options["chunk_options"]["size"], int)
+        assert isinstance(options["chunk_options"]["overlap"], int)
+
+    def test_chunk_options_carry_max_size_for_chunking_service(self) -> None:
+        """``improved_chunking_process`` reads ``max_size``; the legacy
+        audio/video option map reads ``size``. Both spellings must travel."""
+        app = _minimal_app()
+        job = _make_job(
+            source_path="/tmp/test.txt",
+            ingest_options={"generic": {"chunk": True, "chunk_size": 777}},
+        )
+
+        options = app._ingest_job_options(job)
+
+        assert options["chunk_options"]["size"] == 777
+        assert options["chunk_options"]["max_size"] == 777
+
+    def test_encoding_selection_reaches_options(self) -> None:
+        app = _minimal_app()
+        job = _make_job(
+            source_path="/tmp/test.txt",
+            ingest_options={"generic": {"encoding": "latin-1"}},
+        )
+
+        options = app._ingest_job_options(job)
+
+        assert options["encoding"] == "latin-1"
+
+    def test_analysis_provider_resolved_from_config(self) -> None:
+        app = _minimal_app()
+        app.app_config = {
+            "analysis_defaults": {"provider": "OpenAI"},
+            "api_settings": {"openai": {"api_key": "sk-test-configured"}},
+        }
+        job = _make_job(
+            source_path="/tmp/test.txt",
+            ingest_options={"generic": {"analyze": True}},
+        )
+
+        options = app._ingest_job_options(job)
+
+        assert options["perform_analysis"] is True
+        assert options["api_name"] == "OpenAI"
+        assert options["api_key"] == "sk-test-configured"
+        assert "analysis_skipped_reason" not in options
+
+    def test_analysis_provider_resolved_from_env(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-test-env")
+        app = _minimal_app()
+        app.app_config = {"analysis_defaults": {"provider": "OpenAI"}}
+        job = _make_job(
+            source_path="/tmp/test.txt",
+            ingest_options={"generic": {"analyze": True}},
+        )
+
+        options = app._ingest_job_options(job)
+
+        assert options["api_name"] == "OpenAI"
+        assert options["api_key"] == "sk-test-env"
+
+    def test_unready_analysis_records_skip_reason(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+        app = _minimal_app()
+        app.app_config = {"analysis_defaults": {"provider": "OpenAI"}}
+        job = _make_job(
+            source_path="/tmp/test.txt",
+            ingest_options={"generic": {"analyze": True}},
+        )
+
+        options = app._ingest_job_options(job)
+
+        assert options.get("api_key") is None
+        assert options["analysis_skipped_reason"]
+        assert "OpenAI" in options["analysis_skipped_reason"]
+
+    def test_no_provider_configured_records_skip_reason(self) -> None:
+        app = _minimal_app()
+        app.app_config = {}
+        job = _make_job(
+            source_path="/tmp/test.txt",
+            ingest_options={"generic": {"analyze": True}},
+        )
+
+        options = app._ingest_job_options(job)
+
+        assert options["analysis_skipped_reason"]
+        assert "provider" in options["analysis_skipped_reason"]
+
+    def test_analyze_off_skips_provider_resolution_entirely(self) -> None:
+        app = _minimal_app()
+        app.app_config = {
+            "analysis_defaults": {"provider": "OpenAI"},
+            "api_settings": {"openai": {"api_key": "sk-test-configured"}},
+        }
+        job = _make_job(
+            source_path="/tmp/test.txt",
+            ingest_options={"generic": {"analyze": False}},
+        )
+
+        options = app._ingest_job_options(job)
+
+        assert options["perform_analysis"] is False
+        assert "api_name" not in options
+        assert "api_key" not in options
+        assert "analysis_skipped_reason" not in options
+
+
+class TestIngestDoneProgress:
+    """task-3301: the done row records analysis skipped-with-reason."""
+
+    def test_plain_import_message(self) -> None:
+        progress = app_module._library_ingest_done_progress(
+            "/tmp/notes.txt", was_duplicate=False, payload={}
+        )
+        assert progress == {"message": "Imported notes.txt"}
+
+    def test_analysis_skip_reason_appended(self) -> None:
+        progress = app_module._library_ingest_done_progress(
+            "/tmp/notes.txt",
+            was_duplicate=False,
+            payload={
+                "analysis_skipped_reason": "OpenAI is not ready (Missing API key)"
+            },
+        )
+        assert (
+            progress["message"]
+            == "Imported notes.txt — analysis skipped: OpenAI is not ready "
+            "(Missing API key)"
+        )
+        assert (
+            progress["analysis_skipped"]
+            == "OpenAI is not ready (Missing API key)"
+        )
+
+    def test_duplicate_message_keeps_matched_prefix(self) -> None:
+        from tldw_chatbook.Library.library_ingest_jobs import (
+            INGEST_DUPLICATE_PROGRESS_PREFIX,
+        )
+
+        progress = app_module._library_ingest_done_progress(
+            "/tmp/notes.txt",
+            was_duplicate=True,
+            payload={"analysis_skipped_reason": "whatever"},
+        )
+        assert progress["message"].startswith(INGEST_DUPLICATE_PROGRESS_PREFIX)
 
 
 class TestSubmitLibraryIngestJob:

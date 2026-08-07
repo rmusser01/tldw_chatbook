@@ -188,7 +188,11 @@ from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
 from tldw_chatbook.config import CLI_APP_CLIENT_ID
 from tldw_chatbook.Chatbooks import LocalChatbookService, ServerChatbookService
 from tldw_chatbook.Library import LocalLibraryCollectionsService
-from tldw_chatbook.Library.ingest_capabilities import get_type_group
+from tldw_chatbook.Library.ingest_analysis import resolve_ingest_analysis_provider
+from tldw_chatbook.Library.ingest_capabilities import (
+    generic_option_default,
+    get_type_group,
+)
 from tldw_chatbook.Library.ingest_preflight import collect_directory_files
 from tldw_chatbook.Library.server_ingest_reconcile import (
     pending_remote_batches,
@@ -1699,6 +1703,47 @@ def _sanitize_library_ingest_error(exc: Exception) -> str:
     return sanitized if sanitized else exc.__class__.__name__[:200]
 
 
+def _library_ingest_done_progress(
+    source_path: str, *, was_duplicate: bool, payload: Dict[str, Any]
+) -> Dict[str, Any]:
+    """Build a done job's ``progress`` dict from its persisted payload.
+
+    (task-3301) Pure and module-level so the analysis-skipped annotation is
+    unit-testable without a writer thread. When the parse payload carries
+    ``analysis_skipped_reason`` (analysis was requested but no callable
+    provider was configured at dispatch time), the done row says so --
+    "analysis skipped: ..." on the row's progress sub-line -- instead of
+    the analysis being silently absent. Duplicate-match outcomes keep their
+    exact ``INGEST_DUPLICATE_PROGRESS_PREFIX`` message untouched: nothing
+    new was imported, so there was nothing to analyze.
+
+    Args:
+        source_path: The job's source path (basename feeds the message).
+        was_duplicate: Whether the write resolved to an existing item.
+        payload: The parse payload that was just persisted.
+
+    Returns:
+        The ``progress`` dict for ``LibraryIngestJobRegistry.mark_done``.
+    """
+    if was_duplicate:
+        return {
+            "message": (
+                f"{INGEST_DUPLICATE_PROGRESS_PREFIX} — "
+                "matched an existing item; nothing new was "
+                "imported."
+            )
+        }
+    # (task-2016) The basename, not the absolute path: the row line already
+    # identifies the file and the details surface carries the full path.
+    source_name = Path(source_path).name or source_path
+    progress: Dict[str, Any] = {"message": f"Imported {source_name}"}
+    skip_reason = str(payload.get("analysis_skipped_reason") or "").strip()
+    if skip_reason:
+        progress["message"] += f" — analysis skipped: {skip_reason}"
+        progress["analysis_skipped"] = skip_reason
+    return progress
+
+
 def _stream_fileno(stream: Any) -> int:
     """Best-effort file descriptor for a possibly-fake stream object.
 
@@ -2323,9 +2368,28 @@ class LibraryIngestQueueMixin:
         as deprecated fallbacks when ``ingest_options`` is empty or does not
         contain a value.
 
+        (task-3301) The three previously dead controls resolve here:
+
+        * ``encoding`` (generic group) travels to the plaintext/html readers.
+        * ``chunk_options`` carries the form's size/overlap as ints (the
+          snapshot boundary coerces, but restored/persisted jobs may still
+          hold display strings), in both the ``size`` spelling (audio/video
+          option maps) and the ``max_size`` spelling
+          (``improved_chunking_process``); the overlap fallback is the
+          generic schema default -- the value the UI displays -- not a
+          hardcoded constant. No ``method`` is forced: each consumer
+          applies its own default (pdf: sentences, ebook: chapters, text
+          tail: words).
+        * When analysis is requested, the configured analysis provider
+          (``[analysis_defaults] provider``) is resolved through the shared
+          readiness seam: ready adds ``api_name``/``api_key`` (the key may
+          legitimately be ``None`` for keyless local providers); not ready
+          adds ``analysis_skipped_reason`` so the job records WHY analysis
+          is absent instead of silently dropping it.
+
         The Library queue never sets ``custom_prompt``/``system_prompt``/
-        ``api_name``/``api_key``/``metadata``, so they're simply absent (``None``
-        inside the worker's ``options.get(...)`` reads).
+        ``metadata``, so they're simply absent (``None`` inside the worker's
+        ``options.get(...)`` reads).
         """
         opts = job.ingest_options or {}
         group = get_type_group(job.source_path)
@@ -2335,21 +2399,47 @@ class LibraryIngestQueueMixin:
         flat_opts: dict[str, Any] = dict(opts.get("generic", {}))
         flat_opts.update(opts.get(group, {}) or {})
 
+        def _as_int(value: Any, fallback: int) -> int:
+            """Coerce a possibly-display-string number, falling back."""
+            try:
+                return int(str(value).strip())
+            except (TypeError, ValueError):
+                return fallback
+
+        perform_analysis = bool(flat_opts.get("analyze", job.perform_analysis))
+        overlap_default = _as_int(generic_option_default("chunk_overlap", 100), 100)
+        chunk_size = _as_int(
+            flat_opts.get("chunk_size", job.chunk_size), job.chunk_size
+        )
         options: dict[str, Any] = {
             "title": job.title or None,
             "author": job.author or None,
             "keywords": list(job.keywords) or None,
-            "perform_analysis": flat_opts.get("analyze", job.perform_analysis),
+            "perform_analysis": perform_analysis,
+            "encoding": flat_opts.get("encoding"),
             "chunk_options": (
                 {
-                    "method": "sentences",
-                    "size": flat_opts.get("chunk_size", job.chunk_size),
-                    "overlap": flat_opts.get("chunk_overlap", 50),
+                    "size": chunk_size,
+                    "max_size": chunk_size,
+                    "overlap": _as_int(
+                        flat_opts.get("chunk_overlap", overlap_default),
+                        overlap_default,
+                    ),
                 }
                 if flat_opts.get("chunk", job.chunk_enabled)
                 else None
             ),
         }
+
+        if perform_analysis:
+            resolution = resolve_ingest_analysis_provider(
+                getattr(self, "app_config", None)
+            )
+            if resolution.ready:
+                options["api_name"] = resolution.provider
+                options["api_key"] = resolution.api_key
+            else:
+                options["analysis_skipped_reason"] = resolution.short_reason
 
         if group == "pdf":
             options["pdf_engine"] = flat_opts.get("engine") or flat_opts.get(
@@ -4048,20 +4138,13 @@ class LibraryIngestQueueMixin:
                             media_id = existing.get("id")
                             if content_hash is None:
                                 content_hash = existing.get("content_hash")
-                    if was_duplicate:
-                        progress = {
-                            "message": (
-                                f"{INGEST_DUPLICATE_PROGRESS_PREFIX} — "
-                                "matched an existing item; nothing new was "
-                                "imported."
-                            )
-                        }
-                    else:
-                        # (task-2016) The basename, not the absolute path:
-                        # the row line already identifies the file and the
-                        # details surface carries the full path.
-                        source_name = Path(job.source_path).name or job.source_path
-                        progress = {"message": f"Imported {source_name}"}
+                    # (task-3301) Includes the "analysis skipped: ..."
+                    # annotation when the payload carries a skip reason.
+                    progress = _library_ingest_done_progress(
+                        job.source_path,
+                        was_duplicate=was_duplicate,
+                        payload=payload,
+                    )
                     self.call_from_thread(
                         self.library_ingest_jobs.mark_done,
                         job.job_id,

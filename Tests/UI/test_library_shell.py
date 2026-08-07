@@ -1209,8 +1209,10 @@ async def test_rail_shows_a_visible_scrollbar_when_content_overflows():
 async def test_landing_footer_advertises_the_landing_keyboard_story():
     """task-2237 (R2): the landing footer advertises every key that works
     there -- `/` focus search, the hub accelerators `i` (import content) and
-    `n` (new note), and F6 pane cycling -- instead of the bare one-key
-    hint F-012 shipped."""
+    `n` (new note) -- instead of the bare one-key hint F-012 shipped.
+    (task-3302 made the footer append the shared global hints, sourced
+    here from the footer's own constant so the two can't drift; this
+    assertion previously pinned the pre-3302 "F6 next pane" tail.)"""
     app = _build_test_app()
     _seed_conversations(app, _two_conversations())
     host = LibraryHarness(app)
@@ -1221,7 +1223,8 @@ async def test_landing_footer_advertises_the_landing_keyboard_story():
 
         footer = screen.query_one(AppFooterStatus)
         assert footer.shortcut_text == (
-            "/ focus search | i import content | n new note | F6 next pane"
+            "/ focus search | i import content | n new note | "
+            f"{AppFooterStatus.GLOBAL_HINTS}"
         )
 
 

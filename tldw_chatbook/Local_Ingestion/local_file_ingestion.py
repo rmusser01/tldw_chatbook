@@ -365,6 +365,120 @@ def get_supported_extensions() -> Dict[str, List[str]]:
     }
 
 
+# (task-3301) Text-shaped types that produce no chunks of their own: when
+# chunking is requested they are chunked here in the parse worker with the
+# same ``improved_chunking_process`` the PDF/ebook processors use, and the
+# chunks are stored through the same ``persist_parsed_media`` ->
+# ``add_media_with_keywords(chunks=...)`` path. There is NO deferred
+# chunking pass to defer to: ``Media.chunking_status`` is written but
+# consumed nowhere, and the DB layer explicitly ignores ``chunk_options``
+# as a placeholder -- so "the database will handle it" (the old comment on
+# these branches) handled nothing.
+_TEXT_CHUNK_TYPES = frozenset({"plaintext", "html", "document", "article"})
+
+# Text-shaped types whose branch produces no analysis of its own. The
+# ``document`` type is excluded: ``process_document`` runs its own
+# ``analyze`` pass internally (``auto_summarize``), so analyzing it again
+# here would double the LLM spend.
+_TEXT_ANALYSIS_TYPES = frozenset({"plaintext", "html", "article"})
+
+
+def _decode_ingest_text(raw: bytes, encoding: Optional[str]) -> str:
+    """Decode raw text-file bytes per the ingest form's Encoding selection.
+
+    (task-3301) The Encoding select (auto / utf-8 / utf-16 / latin-1 /
+    cp1252) was defined in ``ingest_capabilities`` but consumed nowhere --
+    plaintext reads hardcoded utf-8-with-replace and HTML reads hardcoded
+    *strict* utf-8 (so a latin-1 HTML file failed the whole job).
+
+    Args:
+        raw: The file's raw bytes.
+        encoding: The selection. ``None``/empty/``"auto"`` mean automatic:
+            strict utf-8 first, then chardet detection when available (the
+            repo's incumbent detector, already used by
+            ``Utils/Utils.safe_read_file``), then utf-8-with-replace as the
+            last resort. Any other value is used directly, with
+            ``errors="replace"`` so an explicit wrong choice degrades to
+            visible replacement characters rather than failing the job.
+
+    Returns:
+        The decoded text.
+    """
+    choice = str(encoding or "auto").strip().lower()
+    if choice and choice != "auto":
+        return raw.decode(choice, errors="replace")
+    try:
+        return raw.decode("utf-8")
+    except UnicodeDecodeError:
+        pass
+    try:  # optional dependency -- degrade quietly when absent
+        import chardet
+
+        detected = (chardet.detect(raw) or {}).get("encoding")
+        if detected:
+            try:
+                return raw.decode(detected, errors="replace")
+            except (LookupError, ValueError):
+                pass
+    except ImportError:
+        pass
+    return raw.decode("utf-8", errors="replace")
+
+
+def _chunk_text_for_ingest(
+    content: str, method: Any, max_size: Any, overlap: Any
+) -> tuple[list[Dict[str, Any]], list[str]]:
+    """Chunk extracted text with the repo's shared chunking service.
+
+    Mirrors ``process_pdf``'s behavior at the seams: an empty result or a
+    chunking failure degrades to one full-text chunk plus a warning, never
+    a failed job.
+
+    Args:
+        content: The extracted text (non-empty).
+        method: Chunking method name (``sentences``, ``words``, ...).
+        max_size: Target chunk size (display strings are coerced).
+        overlap: Chunk overlap (display strings are coerced).
+
+    Returns:
+        ``(chunks, warnings)`` -- chunks in the ``{"text", "metadata"}``
+        shape ``persist_parsed_media`` stores.
+    """
+
+    def _as_int(value: Any, fallback: int) -> int:
+        try:
+            return int(str(value).strip())
+        except (TypeError, ValueError):
+            return fallback
+
+    warnings: list[str] = []
+    try:
+        from ..RAG_Search.chunking_service import improved_chunking_process
+
+        chunks = improved_chunking_process(
+            content,
+            {
+                "method": str(method or "sentences"),
+                "max_size": _as_int(max_size, 500),
+                "overlap": _as_int(overlap, 100),
+            },
+        )
+    except Exception as chunk_err:
+        logger.opt(exception=True).error(f"Text chunking failed: {chunk_err}")
+        warnings.append(f"Chunking failed: {chunk_err}")
+        return (
+            [{"text": content, "metadata": {"chunk_num": 0}}],
+            warnings,
+        )
+    if not chunks:
+        warnings.append("Chunking yielded no results; using full text.")
+        return (
+            [{"text": content, "metadata": {"chunk_num": 0}}],
+            warnings,
+        )
+    return chunks, warnings
+
+
 def parse_local_file_for_ingest(
     file_path: Union[str, Path],
     options: Dict[str, Any],
@@ -480,6 +594,16 @@ def parse_local_file_for_ingest(
     api_key = options.get("api_key")
     chunk_options = options.get("chunk_options")
     metadata = options.get("metadata")
+    encoding = options.get("encoding")
+    # (task-3301) ``chunk_options is None`` IS the Chunk-content toggle:
+    # the Library queue passes a dict when the option is ON and ``None``
+    # when it is OFF. The processors used to be called with a hardcoded
+    # ``perform_chunking=True`` regardless, which made the OFF state a
+    # silent no-op. Derived BEFORE the ``{}`` defaulting below erases the
+    # distinction. (Programmatic callers that pass ``{}`` -- e.g.
+    # ``local_media_reading_service`` -- keep their always-chunk behavior:
+    # an empty dict is not ``None``.)
+    perform_chunking = chunk_options is not None
 
     # Set default values
     if title is None:
@@ -553,7 +677,8 @@ def parse_local_file_for_ingest(
                 title_override=title,
                 author_override=author,
                 keywords=keywords,
-                perform_chunking=True,
+                # (task-3301) The real toggle, not a hardcoded True.
+                perform_chunking=perform_chunking,
                 chunk_options=chunk_options,
                 perform_analysis=perform_analysis,
                 api_name=api_name,
@@ -587,7 +712,8 @@ def parse_local_file_for_ingest(
                 keywords=keywords,
                 custom_prompt=custom_prompt,
                 system_prompt=system_prompt,
-                perform_chunking=True,
+                # (task-3301) The real toggle, not a hardcoded True.
+                perform_chunking=perform_chunking,
                 chunk_options=chunk_options,
                 perform_analysis=perform_analysis,
                 api_name=api_name,
@@ -634,7 +760,8 @@ def parse_local_file_for_ingest(
                 transcription_batch_route_resolved=options.get(
                     "transcription_batch_route_resolved", False
                 ),
-                perform_chunking=True,
+                # (task-3301) The real toggle, not a hardcoded True.
+                perform_chunking=perform_chunking,
                 chunk_method=chunk_options.get("method", "sentences"),
                 max_chunk_size=chunk_options.get("size", 500),
                 chunk_overlap=chunk_options.get("overlap", 200),
@@ -724,7 +851,8 @@ def parse_local_file_for_ingest(
                 transcription_batch_route_resolved=options.get(
                     "transcription_batch_route_resolved", False
                 ),
-                perform_chunking=True,
+                # (task-3301) The real toggle, not a hardcoded True.
+                perform_chunking=perform_chunking,
                 chunk_method=chunk_options.get("method", "sentences"),
                 max_chunk_size=chunk_options.get("size", 500),
                 chunk_overlap=chunk_options.get("overlap", 200),
@@ -784,8 +912,11 @@ def parse_local_file_for_ingest(
             raise FileIngestionError("XML file processing is not yet implemented")
 
         elif file_type == "plaintext":
-            # For plaintext files, we'll process them directly
-            content = file_path.read_text(encoding="utf-8", errors="replace")
+            # (task-3301) Decoded per the form's Encoding selection; chunks
+            # and analysis are produced in the shared text-type tail below --
+            # the old "chunking will be handled by the database" comment
+            # described a placeholder that never chunked anything.
+            content = _decode_ingest_text(file_path.read_bytes(), encoding)
 
             # Simple result structure for plaintext
             result = {
@@ -793,19 +924,17 @@ def parse_local_file_for_ingest(
                 "title": title,
                 "author": author or "Unknown",
                 "keywords": keywords,
-                "chunks": [],  # Chunking will be handled by the database
+                "chunks": [],
                 "analysis": "",
             }
-
-            # If chunking is requested, we'll let the database handle it
-            # The MediaDatabase.add_media_with_keywords method will handle chunking
 
         elif file_type == "html":
             # For HTML files, we'll extract text content
             from bs4 import BeautifulSoup
 
-            with open(file_path, "r", encoding="utf-8") as f:
-                html_content = f.read()
+            # (task-3301) Decoded per the form's Encoding selection -- the
+            # old strict-utf-8 open failed the whole job on latin-1 bytes.
+            html_content = _decode_ingest_text(file_path.read_bytes(), encoding)
 
             # Parse HTML and extract text
             soup = BeautifulSoup(html_content, "html.parser")
@@ -823,7 +952,7 @@ def parse_local_file_for_ingest(
                 "title": title or file_path.stem,
                 "author": author or "Unknown",
                 "keywords": keywords,
-                "chunks": [],  # Chunking will be handled by the database
+                "chunks": [],  # produced by the shared text-type tail below
                 "analysis": "",
             }
 
@@ -856,6 +985,74 @@ def parse_local_file_for_ingest(
         analysis = result.get("analysis", "")
         warnings = result.get("warnings", []) if result else []
 
+        # (task-3301) ``process_document`` reports its internal analysis
+        # under ``summary``; surface it as the payload's analysis rather
+        # than dropping it on the floor.
+        if not analysis and isinstance(result.get('summary'), str):
+            analysis = result['summary']
+
+        if not perform_chunking:
+            # (task-3301) Chunk OFF means no chunk rows. Several processors
+            # return a single full-text "chunk" as an internal convenience
+            # even with chunking disabled (e.g. ``process_pdf``'s
+            # consistency fallback); storing it would make the OFF state
+            # indistinguishable from a one-chunk ON state in the DB.
+            chunks = []
+        elif (
+            file_type in _TEXT_CHUNK_TYPES
+            and not chunks
+            and content
+        ):
+            # (task-3301) Chunk ON must chunk text types too. These
+            # branches produce no chunks of their own, and no deferred
+            # pass exists downstream (``add_media_with_keywords`` ignores
+            # ``chunk_options`` as a placeholder), so the form's
+            # size/overlap are applied right here with the same chunking
+            # service the PDF path uses. An explicit method wins; the
+            # default is the service's own word method, whose size unit
+            # (words) is what the form's hint advertises -- the config's
+            # per-media ``chunk_method`` is deliberately NOT consulted
+            # here, because its methods size in different units
+            # (sentences/paragraphs) than the form promises.
+            chunks, chunk_warnings = _chunk_text_for_ingest(
+                content,
+                chunk_options.get("method") or "words",
+                chunk_options.get("max_size", chunk_options.get("size", 500)),
+                chunk_options.get("overlap", 100),
+            )
+            warnings = list(warnings) + chunk_warnings
+
+        if (
+            perform_analysis
+            and api_name
+            and not analysis
+            and content
+            and file_type in _TEXT_ANALYSIS_TYPES
+        ):
+            # (task-3301) Analyze-after-import for the text types that
+            # hardcoded ``analysis: ""``. One call over the full content
+            # (the ``process_document`` pattern); a failure is a warning on
+            # the payload, never a failed job.
+            try:
+                from ..LLM_Calls.Summarization_General_Lib import analyze
+
+                analysis_text = analyze(
+                    api_name=api_name,
+                    input_data=content,
+                    custom_prompt_arg=custom_prompt
+                    or "Please provide a comprehensive summary of this document.",
+                    api_key=api_key,
+                    system_message=system_prompt,
+                    temp=0.7,
+                )
+                if isinstance(analysis_text, str) and analysis_text.strip():
+                    analysis = analysis_text
+            except Exception as analysis_err:
+                logger.opt(exception=True).warning(
+                    f"Analysis failed for {file_path}: {analysis_err}"
+                )
+                warnings = list(warnings) + [f"Analysis failed: {analysis_err}"]
+
         # Combine keywords
         all_keywords = list(set(keywords + extracted_keywords))
 
@@ -880,7 +1077,7 @@ def parse_local_file_for_ingest(
         media_metadata["file_path"] = raw_source if is_url else str(file_path)
         media_metadata["file_type"] = file_type
 
-        return {
+        payload = {
             "media_type": file_type,
             "file_type": file_type,
             "title": extracted_title,
@@ -897,6 +1094,14 @@ def parse_local_file_for_ingest(
             "transcription_model": result.get("transcription_model"),
             "transcription_provenance": result.get("transcription_provenance"),
         }
+        # (task-3301) Analysis was requested but the job-option builder
+        # found no callable provider: carry the reason through so the
+        # queue's done row can say "analysis skipped: ..." instead of the
+        # analysis being silently absent.
+        skip_reason = str(options.get("analysis_skipped_reason") or "").strip()
+        if perform_analysis and skip_reason:
+            payload["analysis_skipped_reason"] = skip_reason
+        return payload
 
     except DirectLocalSTTIngestError:
         raise
@@ -1050,9 +1255,13 @@ def ingest_local_file(
         perform_analysis: Whether to perform analysis (summarization)
         api_name: API provider name for analysis (if enabled)
         api_key: API key for analysis provider (if needed)
-        chunk_options: Dictionary with chunking options:
+        chunk_options: Dictionary with chunking options. (task-3301)
+            ``None`` disables chunking for EVERY type -- the processors
+            used to be called with a hardcoded ``perform_chunking=True``
+            regardless. Pass ``{}`` (or any dict) to chunk with defaults.
+            Keys:
             - method: 'semantic', 'tokens', 'paragraphs', 'sentences', 'words', 'ebook_chapters'
-            - size: chunk size (default varies by method)
+            - size / max_size: chunk size (default varies by method)
             - overlap: chunk overlap (default varies by method)
             - adaptive: use adaptive chunking (bool)
             - multi_level: use multi-level chunking (bool)

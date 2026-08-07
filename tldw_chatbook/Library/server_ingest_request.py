@@ -19,7 +19,10 @@ from __future__ import annotations
 
 from typing import Any, Iterable, Mapping
 
-from tldw_chatbook.Library.ingest_capabilities import get_capabilities, get_type_group
+from tldw_chatbook.Library.ingest_capabilities import (
+    generic_option_default,
+    get_type_group,
+)
 from tldw_chatbook.Library.library_ingest_jobs import DEFAULT_CHUNK_SIZE
 from tldw_chatbook.Local_Ingestion.local_file_ingestion import (
     FileIngestionError,
@@ -131,11 +134,12 @@ def _coerce_int(value: Any, fallback: int) -> int:
 
 
 def _generic_default(name: str, fallback: Any) -> Any:
-    """Return the ``generic`` group's declared default for ``name``."""
-    for field_spec in get_capabilities("generic").fields:
-        if field_spec.name == name:
-            return field_spec.default
-    return fallback
+    """Return the ``generic`` group's declared default for ``name``.
+
+    (task-3301) Delegates to the shared schema accessor so the server and
+    local paths can never disagree about an untouched form's defaults.
+    """
+    return generic_option_default(name, fallback)
 
 
 def build_server_ingest_kwargs(

@@ -2348,3 +2348,49 @@ def test_queue_tally_and_group_header_agree_on_matched() -> None:
     headed = next(g for g in state.queue_groups if g.header_line)
     assert "1 done" in headed.header_line
     assert "1 matched" in headed.header_line
+
+
+# ---------------------------------------------------------------------------
+# task-3301: Analyze-after-import readiness hint
+# ---------------------------------------------------------------------------
+
+
+def test_analysis_hint_renders_when_analyze_on_and_provider_unready() -> None:
+    form = LibraryIngestFormState(analyze=True)
+    state = build_library_ingest_state(
+        (),
+        form=form,
+        analysis_unready_hint=(
+            "Analyze after import is on, but OpenAI is not ready: Missing "
+            "API key. Imports will run without analysis."
+        ),
+    )
+    assert "OpenAI" in state.analysis_hint_line
+    assert "without analysis" in state.analysis_hint_line
+
+
+def test_analysis_hint_empty_when_analyze_off() -> None:
+    form = LibraryIngestFormState(analyze=False)
+    state = build_library_ingest_state(
+        (),
+        form=form,
+        analysis_unready_hint="Analyze after import is on, but nothing is ready.",
+    )
+    assert state.analysis_hint_line == ""
+
+
+def test_analysis_hint_empty_when_provider_ready() -> None:
+    form = LibraryIngestFormState(analyze=True)
+    state = build_library_ingest_state((), form=form, analysis_unready_hint="")
+    assert state.analysis_hint_line == ""
+
+
+def test_analysis_hint_does_not_block_start() -> None:
+    """The hint informs; analysis is optional, so Start stays available."""
+    form = LibraryIngestFormState(path="/tmp/file.txt", analyze=True)
+    state = build_library_ingest_state(
+        (),
+        form=form,
+        analysis_unready_hint="Analyze after import is on, but X is not ready.",
+    )
+    assert state.start_enabled is True

@@ -855,6 +855,20 @@ class LibraryIngestCanvas(VerticalScroll):
         )
         start_quiet_line.styles.height = 1
         yield start_quiet_line
+        # (task-3301) Analyze-readiness hint: says BEFORE Start that
+        # "Analyze after import" cannot actually run (no provider / missing
+        # key) and that imports will proceed without analysis. Always
+        # mounted, display-managed -- the screen's gate updater owns its
+        # content and visibility in place, same non-structural contract as
+        # the commit-summary line above.
+        analysis_hint = Static(
+            state.analysis_hint_line,
+            id="library-ingest-analysis-hint",
+            classes="library-ingest-quiet-line",
+            markup=False,
+        )
+        analysis_hint.display = bool(state.analysis_hint_line)
+        yield analysis_hint
         yield Button(
             "Start import",
             id="library-ingest-start",

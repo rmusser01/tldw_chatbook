@@ -466,7 +466,13 @@ _TYPE_GROUPS: dict[str, TypeGroupCapabilities] = {
                 type="number",
                 default=1000,
                 enabled_when="chunk",
-                hint="characters · 100–5000",
+                # (task-3301) The unit is words, not characters: every
+                # chunking method in the shared service sizes by its own
+                # unit (words/sentences/paragraphs), and the ingest
+                # pipeline chunks text with the service's word method. The
+                # old "characters" hint described a pipeline that never
+                # chunked at all.
+                hint="words · 100–5000",
             ),
             OptionField(
                 name="chunk_overlap",
@@ -474,7 +480,7 @@ _TYPE_GROUPS: dict[str, TypeGroupCapabilities] = {
                 type="number",
                 default=100,
                 enabled_when="chunk",
-                hint="characters · at least 0",
+                hint="words · at least 0",
             ),
             OptionField(
                 name="encoding",
@@ -601,6 +607,30 @@ def _url_type_group(url: str) -> str:
     if classified == "article":
         return "web"
     return "generic"
+
+
+def generic_option_default(name: str, fallback: Any = None) -> Any:
+    """Return the ``generic`` group's declared default for ``name``.
+
+    (task-3301) The capability schema is the single source of ingest option
+    defaults. Three consumers used to carry private copies of this lookup
+    (``library_ingest_state``, ``server_ingest_request``) while the local
+    job-option builder hardcoded its own values -- which is exactly how the
+    UI displayed a chunk overlap of 100 while an untouched local submit fell
+    back to 50. Every fallback question about a generic option goes through
+    here now.
+
+    Args:
+        name: The generic option's machine name (e.g. ``chunk_overlap``).
+        fallback: Returned when the schema has no field of that name.
+
+    Returns:
+        The schema default, or ``fallback`` for an unknown name.
+    """
+    for field_spec in _TYPE_GROUPS["generic"].fields:
+        if field_spec.name == name:
+            return field_spec.default
+    return fallback
 
 
 def get_capabilities(group: str) -> TypeGroupCapabilities:
