@@ -284,25 +284,33 @@ def test_agent_enum_engines_all_dispatchable():
 
 
 # ---------------------------------------------------------------------------
-# Live smoke (double-gated: key file AND TLDW_LIVE_SEARCH_TESTS=1 — spec §5)
+# Live smoke (triple-gated: --run-live + TLDW_LIVE_SEARCH_TESTS=1 + key files)
 # ---------------------------------------------------------------------------
 
 import os
 from pathlib import Path
 
+# Key files are read from this checkout's root (where no .gitignore applies);
+# when running from a worktree, copy key files there before running with --run-live.
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _LIVE_ENABLED = os.environ.get("TLDW_LIVE_SEARCH_TESTS") == "1"
 
 
 def _key_file(name):
+    """Read a key file. Only called inside gated test bodies, never at collection time."""
     p = _REPO_ROOT / name
     return p.read_text().strip() if p.exists() else ""
 
 
 def _live_gate(*key_names):
-    missing = [n for n in key_names if not _key_file(n)]
+    """Double-gated marker: env flag first (short-circuit), then file existence.
+
+    Returns pytest.mark.skip if env flag off or files missing; pytest.mark.live otherwise.
+    This marker is then subject to the --run-live CLI backstop in conftest.
+    """
     if not _LIVE_ENABLED:
         return pytest.mark.skip(reason="TLDW_LIVE_SEARCH_TESTS != 1")
+    missing = [n for n in key_names if not (_REPO_ROOT / n).exists()]
     if missing:
         return pytest.mark.skip(reason=f"missing key file(s): {', '.join(missing)}")
     return pytest.mark.live
