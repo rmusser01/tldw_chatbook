@@ -21,3 +21,14 @@ Found while verifying wave 3, both reproduced on clean dev at 22c08f958 in dispo
 - [ ] #1 The generation-actions failure passes in isolation
 - [ ] #2 The live-work-handoffs flake is either fixed or its load dependency is documented
 <!-- AC:END -->
+
+## Addendum (wave-4 task 1, 2026-08-07)
+
+A **third** pre-existing failure in the same file, distinct from the two above:
+`Tests/UI/test_console_live_work_handoffs.py`'s `_bare_console_screen_for_restore()`
+builds a screen with no app, so the tests using it fail on dev. Same
+hand-built-screen-fixture class this programme has shipped once per wave.
+Also confirmed pre-existing:
+`Tests/UI/test_console_dictation_streaming.py::test_the_transcribing_indication_reverts_on_a_mid_capture_stop`
+is a timing flake (failed 1 of 4 isolated runs on a clean baseline worktree,
+passes in a full-file run).
