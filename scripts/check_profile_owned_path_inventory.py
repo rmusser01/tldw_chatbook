@@ -516,22 +516,6 @@ APPROVED_EXCEPTIONS: tuple[ExceptionRule, ...] = (
         "shared downloadable TTS model artifact root",
     ),
     ExceptionRule(
-        "tldw_chatbook/UI/STTS_Window.py",
-        "function:_chatterbox_profile_choices",
-        "join:.config/tldw_cli",
-        1,
-        Disposition.SHARED_ARTIFACT,
-        "reusable Chatterbox voice profile artifact root",
-    ),
-    ExceptionRule(
-        "tldw_chatbook/UI/STTS_Window.py",
-        "function:_higgs_profile_choices",
-        "join:.config/tldw_cli",
-        1,
-        Disposition.SHARED_ARTIFACT,
-        "reusable Higgs voice profile artifact root",
-    ),
-    ExceptionRule(
         "tldw_chatbook/UI/Screens/settings_speech_tts.py",
         "module:_PROVIDER_NON_SECRET_DEFAULTS",
         "literal:~/.config/tldw_cli/chatterbox_voices",
