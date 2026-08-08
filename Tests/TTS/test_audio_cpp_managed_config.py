@@ -7,6 +7,7 @@ from typing import Any
 
 import pytest
 
+from tldw_chatbook.TTS import audio_cpp_managed_config as managed_config_module
 from tldw_chatbook.TTS.audio_cpp_config import AudioCppConfig
 from tldw_chatbook.TTS.audio_cpp_managed_config import (
     AudioCppManagedLaunchConfig,
@@ -37,6 +38,53 @@ COMMON_MAPPING: dict[str, float | int] = {
     "max_voices_per_model": 105,
     "max_identifier_characters": 106,
 }
+
+EXPECTED_CHILD_ENV_ALLOWLIST = frozenset(
+    {
+        "PATH",
+        "PATHEXT",
+        "SystemRoot",
+        "SYSTEMROOT",
+        "WINDIR",
+        "COMSPEC",
+        "HOME",
+        "USER",
+        "LOGNAME",
+        "USERPROFILE",
+        "HOMEDRIVE",
+        "HOMEPATH",
+        "APPDATA",
+        "LOCALAPPDATA",
+        "PROGRAMDATA",
+        "LANG",
+        "LANGUAGE",
+        "LC_ALL",
+        "LC_CTYPE",
+        "TMPDIR",
+        "TMP",
+        "TEMP",
+        "LD_LIBRARY_PATH",
+        "DYLD_LIBRARY_PATH",
+        "DYLD_FALLBACK_LIBRARY_PATH",
+        "OMP_NUM_THREADS",
+        "OMP_THREAD_LIMIT",
+        "OPENBLAS_NUM_THREADS",
+        "MKL_NUM_THREADS",
+        "VECLIB_MAXIMUM_THREADS",
+        "BLIS_NUM_THREADS",
+        "CUDA_VISIBLE_DEVICES",
+        "CUDA_HOME",
+        "CUDA_PATH",
+        "ROCR_VISIBLE_DEVICES",
+        "HIP_VISIBLE_DEVICES",
+        "HIP_PATH",
+        "ROCM_PATH",
+        "VK_ICD_FILENAMES",
+        "VK_LAYER_PATH",
+        "GGML_METAL_PATH_RESOURCES",
+        "GGML_VK_VISIBLE_DEVICES",
+    }
+)
 
 
 def _write_executable(path: Path) -> Path:
@@ -452,3 +500,109 @@ def test_launch_snapshot_uses_json_parent_as_cwd_and_derives_origin(
     assert launch.startup_timeout_seconds == 31.0
     assert launch.health_check_interval_seconds == 11.0
     assert launch.termination_grace_seconds == 6.0
+
+
+def test_credential_inventory_includes_fixed_and_configured_provider_names() -> None:
+    app_config = {
+        "api_settings": {
+            "custom": {"api_key_env_var": "CUSTOM_PROVIDER_CREDENTIAL"},
+            "blank": {"api_key_env_var": "   "},
+            "digit": {"api_key_env_var": "9INVALID"},
+            "hyphen": {"api_key_env_var": "INVALID-NAME"},
+            "dot": {"api_key_env_var": "INVALID.NAME"},
+            "non_string": {"api_key_env_var": 123},
+            "not_a_mapping": "ignored",
+        }
+    }
+
+    inventory = managed_config_module.collect_provider_credential_environment_names(
+        app_config
+    )
+
+    assert {
+        "OPENAI_API_KEY",
+        "ANTHROPIC_API_KEY",
+        "COHERE_API_KEY",
+        "DEEPSEEK_API_KEY",
+        "GOOGLE_API_KEY",
+        "GROQ_API_KEY",
+        "HUGGINGFACE_API_KEY",
+        "MISTRAL_API_KEY",
+        "MOONSHOT_API_KEY",
+        "OPENROUTER_API_KEY",
+        "ZAI_API_KEY",
+        "ELEVENLABS_API_KEY",
+        "CUSTOM_PROVIDER_CREDENTIAL",
+    } <= inventory
+    assert inventory.isdisjoint(
+        {"", "   ", "9INVALID", "INVALID-NAME", "INVALID.NAME", "123"}
+    )
+
+
+def test_child_environment_copies_only_the_exact_allowlist() -> None:
+    source: dict[str, Any] = {
+        name: f"safe-value-{index}"
+        for index, name in enumerate(sorted(EXPECTED_CHILD_ENV_ALLOWLIST))
+    }
+    source.update(
+        {
+            "APPLICATION_INTERNAL_STATE": "private-state",
+            "OPENAI_API_KEY": "synthetic-openai-secret",
+            "HTTP_PROXY": "http://private-proxy.invalid",
+            "path": "lowercase-path-is-not-the-allowlisted-name",
+            "LC_TIME": "not-explicitly-allowed",
+        }
+    )
+    source["TEMP"] = 123
+
+    child = managed_config_module.build_audio_cpp_child_environment(
+        source,
+        provider_credential_names=frozenset(),
+    )
+
+    assert child == {
+        name: source[name]
+        for name in EXPECTED_CHILD_ENV_ALLOWLIST
+        if isinstance(source[name], str)
+    }
+
+
+def test_child_environment_drops_casefolded_credential_collisions() -> None:
+    child = managed_config_module.build_audio_cpp_child_environment(
+        {"PATH": "/safe/bin", "LANG": "en_US.UTF-8"},
+        provider_credential_names=frozenset({"path"}),
+    )
+
+    assert child == {"LANG": "en_US.UTF-8"}
+
+
+@pytest.mark.parametrize(
+    "secretish_name",
+    [
+        "FUTURE_API_KEY_SOCKET",
+        "FUTURE_APIKEY_SOCKET",
+        "FUTURE_TOKEN_SOCKET",
+        "FUTURE_SECRET_SOCKET",
+        "FUTURE_PASSWORD_SOCKET",
+        "FUTURE_CREDENTIAL_SOCKET",
+        "FUTURE_AUTHORIZATION_SOCKET",
+        "FUTURE_AUTH_SOCKET",
+    ],
+)
+def test_child_environment_drops_secretish_names_even_if_allowlisted(
+    secretish_name: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        managed_config_module,
+        "_AUDIO_CPP_CHILD_ENV_ALLOWLIST",
+        frozenset({secretish_name, "LANG"}),
+        raising=False,
+    )
+
+    child = managed_config_module.build_audio_cpp_child_environment(
+        {secretish_name: "synthetic-secret", "LANG": "C"},
+        provider_credential_names=frozenset(),
+    )
+
+    assert child == {"LANG": "C"}

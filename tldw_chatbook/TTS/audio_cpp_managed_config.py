@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import os
+import re
+from collections.abc import Mapping, Set as AbstractSet
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, NoReturn
@@ -21,6 +23,79 @@ _SERVER_HOST_DIAGNOSTIC = "audio.cpp server.json host must be exactly 127.0.0.1"
 _SERVER_PORT_DIAGNOSTIC = (
     "audio.cpp server.json port must be an integer from 1 through 65535"
 )
+_AUDIO_CPP_CHILD_ENV_ALLOWLIST = frozenset(
+    {
+        "APPDATA",
+        "BLIS_NUM_THREADS",
+        "COMSPEC",
+        "CUDA_HOME",
+        "CUDA_PATH",
+        "CUDA_VISIBLE_DEVICES",
+        "DYLD_FALLBACK_LIBRARY_PATH",
+        "DYLD_LIBRARY_PATH",
+        "GGML_METAL_PATH_RESOURCES",
+        "GGML_VK_VISIBLE_DEVICES",
+        "HIP_PATH",
+        "HIP_VISIBLE_DEVICES",
+        "HOME",
+        "HOMEDRIVE",
+        "HOMEPATH",
+        "LANG",
+        "LANGUAGE",
+        "LC_ALL",
+        "LC_CTYPE",
+        "LD_LIBRARY_PATH",
+        "LOCALAPPDATA",
+        "LOGNAME",
+        "MKL_NUM_THREADS",
+        "OMP_NUM_THREADS",
+        "OMP_THREAD_LIMIT",
+        "OPENBLAS_NUM_THREADS",
+        "PATH",
+        "PATHEXT",
+        "PROGRAMDATA",
+        "ROCM_PATH",
+        "ROCR_VISIBLE_DEVICES",
+        "SYSTEMROOT",
+        "SystemRoot",
+        "TEMP",
+        "TMP",
+        "TMPDIR",
+        "USER",
+        "USERPROFILE",
+        "VECLIB_MAXIMUM_THREADS",
+        "VK_ICD_FILENAMES",
+        "VK_LAYER_PATH",
+        "WINDIR",
+    }
+)
+_FIXED_PROVIDER_CREDENTIAL_ENV_NAMES = frozenset(
+    {
+        "ANTHROPIC_API_KEY",
+        "COHERE_API_KEY",
+        "DEEPSEEK_API_KEY",
+        "ELEVENLABS_API_KEY",
+        "GOOGLE_API_KEY",
+        "GROQ_API_KEY",
+        "HUGGINGFACE_API_KEY",
+        "MISTRAL_API_KEY",
+        "MOONSHOT_API_KEY",
+        "OPENAI_API_KEY",
+        "OPENROUTER_API_KEY",
+        "ZAI_API_KEY",
+    }
+)
+_ENVIRONMENT_NAME_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\Z")
+_SECRET_ENV_NAME_FRAGMENTS = (
+    "api_key",
+    "apikey",
+    "token",
+    "secret",
+    "password",
+    "credential",
+    "authorization",
+    "auth",
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -38,6 +113,61 @@ class AudioCppManagedLaunchConfig:
 
 class _StrictJSONError(ValueError):
     """Internal marker for JSON extensions forbidden by the managed contract."""
+
+
+def collect_provider_credential_environment_names(
+    app_config: Mapping[str, Any],
+) -> frozenset[str]:
+    """Collect fixed and valid configured provider credential variable names.
+
+    Args:
+        app_config: Application configuration containing optional ``api_settings``.
+
+    Returns:
+        Credential environment names to exclude from the managed child process.
+    """
+    names = set(_FIXED_PROVIDER_CREDENTIAL_ENV_NAMES)
+    api_settings = app_config.get("api_settings")
+    if not isinstance(api_settings, Mapping):
+        return frozenset(names)
+
+    for provider_settings in api_settings.values():
+        if not isinstance(provider_settings, Mapping):
+            continue
+        candidate = provider_settings.get("api_key_env_var")
+        if isinstance(candidate, str) and _ENVIRONMENT_NAME_RE.fullmatch(candidate):
+            names.add(candidate)
+    return frozenset(names)
+
+
+def build_audio_cpp_child_environment(
+    source: Mapping[str, Any],
+    *,
+    provider_credential_names: AbstractSet[str],
+) -> dict[str, str]:
+    """Build the minimal non-secret environment for a managed audio.cpp child.
+
+    Args:
+        source: Parent-process environment mapping.
+        provider_credential_names: Credential variable names to exclude.
+
+    Returns:
+        A new environment containing allowlisted string values only.
+    """
+    credential_names = {
+        name.casefold() for name in provider_credential_names if isinstance(name, str)
+    }
+    child: dict[str, str] = {}
+    for name in _AUDIO_CPP_CHILD_ENV_ALLOWLIST:
+        folded_name = name.casefold()
+        if folded_name in credential_names or any(
+            fragment in folded_name for fragment in _SECRET_ENV_NAME_FRAGMENTS
+        ):
+            continue
+        value = source.get(name)
+        if isinstance(value, str):
+            child[name] = value
+    return child
 
 
 def _reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
