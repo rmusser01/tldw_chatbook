@@ -143,7 +143,10 @@ def test_enums_have_exact_stable_string_values() -> None:
             "engine_crashed",
             "cancelled",
         ),
-        TranscriptionWarningCode: ("requested_language_not_enforced",),
+        TranscriptionWarningCode: (
+            "requested_language_not_enforced",
+            "device_fallback_to_cpu",
+        ),
     }
 
     for enum_type, values in expected.items():

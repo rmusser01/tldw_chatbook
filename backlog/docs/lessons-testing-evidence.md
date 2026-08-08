@@ -162,6 +162,21 @@ the state that implies it.
 
 ---
 
+## Reloading an IPC module can split exact type identity across spawn
+
+**TASK-601, 2026-08-08.** A POSIX import-boundary test called
+`importlib.reload()` on the module defining `WorkerContainmentIdentity`. The
+already-imported executor retained the old dataclass object, while spawned workers
+imported the reloaded class. Pickling still succeeded, but the parent's deliberate
+exact-type bootstrap check rejected every worker identity; one test-side reload
+therefore surfaced as 19 executor startup failures.
+
+**What to do.** Test fresh-import boundaries in a subprocess. Do not reload a module
+that owns IPC or serialized contract classes inside the shared pytest process; stale
+importers keep the previous class identity even though the module name is unchanged.
+
+---
+
 ## A text scan for "is this method called?" passes vacuously
 
 **What happened.** TASK-895 needed a guard proving every `WatchlistBundleService`

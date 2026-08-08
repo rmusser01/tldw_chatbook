@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-import importlib
 import multiprocessing
 import os
 import shutil
 import signal
+import subprocess
+import sys
 import time
 from pathlib import Path
 
@@ -321,21 +322,24 @@ def test_posix_crashed_leader_still_reaps_term_ignoring_descendant(
             shutil.rmtree(scratch)
 
 
-def test_module_import_does_not_touch_windows_runtime_on_posix(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_module_import_does_not_touch_windows_runtime_on_posix() -> None:
     if os.name != "posix":
         pytest.skip("POSIX import boundary")
-    import ctypes
+    script = """
+import ctypes
 
-    monkeypatch.setattr(
-        ctypes,
-        "WinDLL",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(
-            AssertionError("WinDLL loaded during module import")
-        ),
-        raising=False,
+def fail(*_args, **_kwargs):
+    raise AssertionError("WinDLL loaded during module import")
+
+ctypes.WinDLL = fail
+import tldw_chatbook.STT.executor_process_tree
+"""
+
+    completed = subprocess.run(
+        [sys.executable, "-c", script],
+        capture_output=True,
+        text=True,
+        check=False,
     )
 
-    module = importlib.import_module("tldw_chatbook.STT.executor_process_tree")
-    importlib.reload(module)
+    assert completed.returncode == 0, completed.stderr
