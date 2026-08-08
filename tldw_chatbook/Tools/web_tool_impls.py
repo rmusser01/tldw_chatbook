@@ -1058,8 +1058,9 @@ def _search_cache_put(key: tuple[str, str, int], text: str) -> None:
     """Insert into the search cache, evicting earliest-expiry at capacity."""
     if key not in _search_cache and len(_search_cache) >= SEARCH_CACHE_MAX_ENTRIES:
         oldest = min(_search_cache, key=lambda k: _search_cache[k][0])
-        del _search_cache[oldest]
+        _search_cache.pop(oldest, None)
     _search_cache[key] = (time.monotonic() + SEARCH_CACHE_TTL_SECONDS, text)
+
 
 _TRUNCATED_MARKER = "… [truncated]"
 
@@ -1122,7 +1123,9 @@ def web_search(
         expires_at, cached_text = cached
         if time.monotonic() < expires_at:
             return cached_text
-        del _search_cache[cache_key]
+        # pop-not-del (review Minor 3): concurrent tool threads can both
+        # observe the same expired entry; the loser's del would KeyError.
+        _search_cache.pop(cache_key, None)
 
     # Local import: WebSearch_APIs pulls the config/metrics stack; keep this
     # module cheap to import and let tests monkeypatch the source attribute.

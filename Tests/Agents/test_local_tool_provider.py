@@ -24,7 +24,9 @@ def _reset_web_tool_state():
     """task-2832: web_search gained a module-level result cache, so any
     test file invoking web tools through the provider must reset module
     state or a cached "python" search from one test leaks into the next
-    (5 tests here failed exactly that way when the cache landed)."""
+    (5 tests here failed exactly that way when the cache landed). Any
+    NEW test file that invokes web tools through the provider needs the
+    same reset (or move this to a Tests/Agents/conftest.py autouse)."""
     web_tool_impls._reset_state_for_tests()
     yield
     web_tool_impls._reset_state_for_tests()

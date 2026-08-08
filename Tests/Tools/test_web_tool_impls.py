@@ -1462,8 +1462,16 @@ def test_search_confirmed_empty_not_cached(fetch_env, monkeypatch):
 def test_search_cache_eviction_bounds_size(fetch_env, monkeypatch):
     _patch_search(monkeypatch, lambda **kw: _search_payload())
     for i in range(web_tool_impls.SEARCH_CACHE_MAX_ENTRIES + 5):
+        # Distinct expiry per entry (review Minor 4): with a frozen clock
+        # every entry ties on expires_at and "earliest-expiry" is
+        # untestable; advancing the clock makes the POLICY assertable.
+        fetch_env.clock.now += 1
         web_tool_impls.web_search(f"query number {i}")
     assert len(web_tool_impls._search_cache) == web_tool_impls.SEARCH_CACHE_MAX_ENTRIES
+    # Earliest-expiry policy: the very first entries are the evicted ones.
+    remaining = {k[1] for k in web_tool_impls._search_cache}
+    assert "query number 0" not in remaining
+    assert f"query number {web_tool_impls.SEARCH_CACHE_MAX_ENTRIES + 4}" in remaining
 
 
 def test_search_cache_logs_never_carry_query_text(fetch_env, monkeypatch, capsys):
@@ -1480,10 +1488,20 @@ def test_search_cache_logs_never_carry_query_text(fetch_env, monkeypatch, capsys
         return item
 
     _patch_search(monkeypatch, backend)
-    web_tool_impls.web_search(secret)          # miss + store
-    web_tool_impls.web_search(secret)          # hit
-    web_tool_impls.web_search(secret + " v2")  # failure path (logs engine only)
-    captured = capsys.readouterr()
+    # Review Important 1: capsys does NOT observe loguru here (its handler
+    # binds pytest's global capture at import) -- a sink is the only real
+    # observer. The house pattern (~15 files) is a list-appending sink.
+    from loguru import logger as _logger
+    records: list[str] = []
+    sink_id = _logger.add(lambda m: records.append(str(m)), level="DEBUG")
+    try:
+        web_tool_impls.web_search(secret)          # miss + store
+        web_tool_impls.web_search(secret)          # hit
+        web_tool_impls.web_search(secret + " v2")  # failure path (logs engine only)
+    finally:
+        _logger.remove(sink_id)
+    assert not any(secret in r for r in records), records
+    captured = capsys.readouterr()  # still catches stray print()s
     assert secret not in captured.err
     assert secret not in captured.out
 
@@ -1498,8 +1516,11 @@ def test_deep_search_phase1_bypasses_search_cache(fetch_env, monkeypatch):
 
     calls = []
     _patch_search(monkeypatch, lambda **kw: (calls.append(kw), _search_payload())[1])
-    # Warm the web_search cache for this exact normalized query.
-    web_tool_impls.web_search("shared question")
+    # Warm the web_search cache for this exact normalized query AND count
+    # (review Important 2: the deep call below forwards result_count=2, so
+    # the warm entry must use count=2 or the keys never coincide and the
+    # test proves nothing).
+    web_tool_impls.web_search("shared question", result_count=2)
     assert len(calls) == 1
     # Real generate_and_search, sub-queries off -> exactly one search call.
     out = WebSearch_APIs.generate_and_search(
@@ -1515,6 +1536,9 @@ def test_deep_search_phase1_bypasses_search_cache(fetch_env, monkeypatch):
     )
     assert len(calls) == 2, "deep-search phase 1 must not consult the web_search cache"
     assert out["web_search_results_dict"]
+    # And phase 1 must not WRITE the shared cache either: still exactly the
+    # one entry web_search itself stored.
+    assert len(web_tool_impls._search_cache) == 1
 
 
 def test_fetch_cache_ttl_expiry_refetches(fetch_env):
