@@ -436,9 +436,24 @@ async def test_main_navigation_overflow_hint_does_not_overlap_settings_at_defaul
         await pilot.pause(0.4)
         more = nav.query_one("#nav-overflow-hint")
         assert more.display is True
+        # Overflow regime (F-key labels made the bar wider than 140): the
+        # hint is docked outside the strip, so it can never sit on a
+        # button; a destination that doesn't fit whole is ghosted --
+        # blanked to match the bar's background (task-3200) -- rather
+        # than clipped mid-label or removed from layout. Ghosting (not
+        # `display: none`) is deliberate: hiding would shrink the strip's
+        # virtual size and break reachability of destinations further
+        # along (see main_navigation.py's `_ghost_clipped_buttons`
+        # docstring for the full incident).
         assert more.region.x >= strip.region.right, (
             "More hint must dock right of the destination strip"
         )
+        ghosted = [
+            button
+            for button in nav.query(".nav-button")
+            if button.has_class("nav-button-clip-ghost")
+        ]
+        assert ghosted, "Overflow hint shown but no destination is ghosted"
 
 
 @pytest.mark.asyncio

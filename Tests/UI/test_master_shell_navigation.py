@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 from textual.app import App
+from textual.containers import Horizontal
 from textual.widgets import Button
 
 from tldw_chatbook.UI.Navigation.main_navigation import MainNavigationBar
@@ -519,3 +520,133 @@ async def test_more_hint_never_scrolls_the_strip_so_it_cannot_overscroll():
 
         assert app.screen_stack[-1].__class__.__name__ == "NavOverflowMenu"
         assert strip.scroll_offset.x == 0
+
+
+# --- task-3200: nav-bar mid-word tab cut at narrow widths -----------------
+#
+# UAT (task-2858 P2 batch, LIB-18) found the destination strip's
+# `overflow-x: auto` scroll clipping a partially-visible trailing button
+# mid-word at 80 columns -- e.g. "Watchlists" rendered as "Watc" right
+# before the "More ›" hint. `_ghost_clipped_buttons` blanks (rather than
+# hides) any button whose CURRENT render straddles either edge of the
+# strip's scroll viewport by coloring every surface to match the bar's
+# background (`.nav-button-clip-ghost` in `DEFAULT_CSS`), so the same
+# geometric straddle that used to leak a partial word now paints nothing
+# readable. These tests pin BOTH the geometry (region no longer straddles
+# in a way that shows any label glyphs -- a ghosted straddle is exempted)
+# AND the actual POST-CLIP rendered text (via the compositor, not the
+# un-clipped `Button.label` source), at two active-tab positions --  an
+# early one (no scrolling needed) and a late one (the strip must scroll,
+# which is what exposes a straddling neighbor) -- since scroll position is
+# what determines which button (if any) lands on the edge.
+
+
+def _readable_nav_text(app: App) -> str:
+    """Every compositor segment's text that is actually READABLE, joined --
+    what a person looking at the terminal would see, as opposed to any
+    widget's un-clipped `.label` source string.
+
+    `render_strips()` (Textual 8.2.7 has no `App.export_text()`, per the
+    same-shaped helper in `test_console_session_tab_strip.py`) returns the
+    POST-CLIP characters, but ghosting (`.nav-button-clip-ghost`) makes a
+    straddling button invisible by setting its foreground color EQUAL to
+    its background, not by removing the characters -- so a segment whose
+    `style.color == style.bgcolor` renders nothing a person can read even
+    though its `.text` still contains the real glyphs. Filtering those out
+    before joining is what makes this an honest "what did the screen show"
+    check instead of a "what characters exist in the buffer" one.
+    """
+    strips = app.screen._compositor.render_strips()
+    lines = []
+    for strip in strips:
+        chars = []
+        for segment in strip:
+            style = segment.style
+            if style is not None and style.color == style.bgcolor:
+                continue  # foreground matches background: invisible
+            chars.append(segment.text)
+        lines.append("".join(chars))
+    return "\n".join(lines)
+
+
+def _straddling_buttons(app: App, strip) -> list[str]:
+    """Nav buttons whose region partially overlaps the strip's visible
+    edge WITHOUT being clip-ghosted -- i.e. buttons that would leak a
+    partial label onto the screen."""
+    offenders = []
+    for button in app.query(".nav-button"):
+        if not button.display or button.has_class("nav-button-clip-ghost"):
+            continue
+        region = button.region
+        if region.width <= 0:
+            continue
+        fully_in = region.x >= strip.region.x and region.right <= strip.region.right
+        fully_out = region.right <= strip.region.x or region.x >= strip.region.right
+        if not fully_in and not fully_out:
+            offenders.append(button.id)
+    return offenders
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "width,active",
+    [
+        (80, "home"),  # early destination: no scrolling needed
+        (80, "settings"),  # late destination: forces a scroll
+        (100, "home"),
+        (100, "watchlists_collections"),
+    ],
+)
+async def test_nav_strip_never_renders_a_partial_destination_label(width, active):
+    class TestApp(App):
+        def compose(self):
+            yield MainNavigationBar(active=active)
+
+    app = TestApp()
+
+    async with app.run_test(size=(width, 24)) as pilot:
+        await pilot.pause(0.6)
+
+        strip = app.query_one("#nav-destination-strip", Horizontal)
+
+        # Geometry: nothing straddles the viewport edge with real content.
+        assert _straddling_buttons(app, strip) == []
+
+        # The active destination is always fully, genuinely visible (never
+        # ghosted) -- the one invariant this fix must not regress.
+        active_button = app.query_one(f"#nav-{active}", Button)
+        assert active_button.display
+        assert not active_button.has_class("nav-button-clip-ghost")
+        assert active_button.region.width > 0
+        assert active_button.region.x >= strip.region.x
+        assert active_button.region.right <= strip.region.right
+
+        # Rendered-text pin: every ghosted button's label contributes NO
+        # READABLE fragment to the actual painted screen (foreground ==
+        # background, not merely absent characters). Compare against the
+        # first several characters (past the hotkey prefix) of each
+        # ghosted button's label -- long enough that a coincidental
+        # substring match elsewhere on screen is not a concern here.
+        painted = _readable_nav_text(app)
+        ghosted = [
+            button
+            for button in app.query(".nav-button")
+            if button.has_class("nav-button-clip-ghost")
+        ]
+        for button in ghosted:
+            label_text = str(button.label).strip()
+            # Strip the "⌃N " / "F7 " hotkey prefix to get the destination
+            # word itself (e.g. "Watchlists"), then check a chunk of it.
+            word = label_text.split(" ", 1)[-1]
+            fragment = word[:4]
+            assert fragment not in painted, (
+                f"{button.id} is ghosted but '{fragment}' still readable"
+            )
+        if width == 100 and active == "home":
+            # Pin the specific finding this task fixed (task-2858 P2 /
+            # LIB-18): at a narrow width with the strip scrolled to its
+            # default position, some destination WILL straddle the "More
+            # ›" hint's edge -- if nothing were ever ghosted here, the
+            # geometry/rendered-text assertions above would be vacuous.
+            assert ghosted, "test premise: expected a straddling destination at 100 cols"
+

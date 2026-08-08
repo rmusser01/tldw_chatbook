@@ -160,6 +160,26 @@ class MainNavigationBar(Container):
         text-style: bold;
     }
 
+    /* task-3200: a destination button whose render straddles the strip's
+       scroll viewport edge gets this class instead of `display: none` --
+       it keeps its normal layout box (so `max_scroll_x` is unaffected --
+       see `_ghost_clipped_buttons`), but every visible surface matches
+       the bar's own background, so whatever
+       sliver of it happens to be on-screen reads as empty space rather
+       than a mid-word cut ("Watchlists" -> "Watc"). Listed after (and so
+       overriding) hover/focus/active so a straddling button can never
+       flash real content via those states. */
+    .nav-button.nav-button-clip-ghost,
+    .nav-button.nav-button-clip-ghost:hover,
+    .nav-button.nav-button-clip-ghost:focus,
+    .nav-button.nav-button-clip-ghost.is-active,
+    .nav-button.nav-button-clip-ghost.is-active:focus {
+        background: $background;
+        border: solid $background;
+        color: $background;
+        text-style: none;
+    }
+
     .nav-overflow-hint {
         width: auto;
         min-width: 0;
@@ -280,7 +300,26 @@ class MainNavigationBar(Container):
         """Re-sync the overflow affordance when the bar's width changes.
 
         The strip's overflow is a function of the bar's rendered width, so
-        every resize re-evaluates whether the "More ▾" control shows.
+        every resize re-evaluates whether the "More ▾" control shows, and
+        (task-3200) re-measures which buttons clip -- a resize can
+        un-straddle (or newly straddle) a destination at the edge.
+
+        Both calls below are deferred (`call_after_refresh`); the first,
+        `_update_overflow_hints`, itself unconditionally ends by chaining
+        into `_scroll_active_destination_into_view` (re-scroll, THEN
+        ghost-check via `_ghost_clipped_buttons`) -- so a resize reaches
+        the ghost re-check through that existing chain rather than calling
+        `_ghost_clipped_buttons` directly. That matters for the same
+        reason it did before this rename: a screen transition fires
+        several resizes while content is still settling, and ghost-
+        checking against whatever `scroll_x` happens to be at THIS
+        particular resize, without first re-scrolling for the CURRENT
+        viewport width, can check a stale position. If a later resize is
+        the last one that actually lands before the widget goes idle, its
+        ghost state persists uncorrected (live-reproduced: navigating to a
+        destination that needs scrolling left a straddling neighbor
+        un-ghosted because the final settle's ghost-check ran against an
+        intermediate, not the final, scroll_x).
         """
         self.call_after_refresh(self._update_overflow_hints)
         self.call_after_refresh(self._refresh_overflow_hint_visibility)
@@ -309,7 +348,8 @@ class MainNavigationBar(Container):
         hint.display = strip_virtual > strip_width + reclaimable
 
     def _scroll_active_destination_into_view(self) -> None:
-        """Bring the active destination's button into the strip's visible scroll window."""
+        """Bring the active destination's button into the strip's visible
+        scroll window, then re-check for a straddling neighbor."""
         try:
             strip = self.query_one("#nav-destination-strip", Horizontal)
             button = strip.query_one(
@@ -321,6 +361,57 @@ class MainNavigationBar(Container):
             strip.scroll_to_widget(button, animate=False)
         except Exception:
             return
+        self.call_after_refresh(self._ghost_clipped_buttons)
+
+    def _ghost_clipped_buttons(self) -> None:
+        """Visually blank (never partially render) any nav button whose
+        current position straddles either edge of the strip's scroll
+        viewport (task-3200: a destination label must never be cut
+        mid-word, e.g. "Watchlists" -> "Watc").
+
+        This is purely cosmetic (`.nav-button-clip-ghost`, defined in
+        `DEFAULT_CSS`, colors every surface to match the bar's own
+        background) -- it does NOT touch `display`, so the button keeps
+        its normal layout box. That distinction is what makes this safe
+        to call from every settle path (mount, resize, activating a
+        destination) with no iteration and no ordering constraints:
+        earlier attempts hid straddling buttons via `display: none`,
+        which shrinks the strip's virtual size and therefore
+        `max_scroll_x` -- that broke reachability of destinations further
+        along the strip (nothing left to scroll to) and, when the active
+        destination sat near the end of the strip, cascaded into hiding
+        nearly every other destination (removing a LEADING straddler reflows
+        everything after it, including the active button itself, which
+        can newly expose a different straddler; for some
+        active-destination/viewport-width combinations no scroll offset
+        can make the active destination fully visible AND land flush on a
+        button boundary, so that cascade never converged on a clean
+        state). Ghosting sidesteps all of it: geometry is never touched,
+        so there is nothing to iterate or race.
+        """
+        if not self.is_attached or not self.screen.is_active:
+            return
+        try:
+            strip = self.query_one("#nav-destination-strip", Horizontal)
+        except Exception:
+            return
+        strip_region = strip.region
+        if strip_region.width <= 0:
+            return
+        active_id = f"nav-{self.active_destination_id}"
+        for button in strip.query(NavigationButton):
+            region = button.region
+            if region.width <= 0:
+                continue
+            straddles = (
+                region.x < strip_region.x < region.right
+                or region.x < strip_region.right < region.right
+            )
+            # The active destination is guaranteed fully visible by
+            # `_scroll_active_destination_into_view` and must never be
+            # ghosted, even transiently.
+            should_ghost = straddles and button.id != active_id
+            button.set_class(should_ghost, "nav-button-clip-ghost")
 
     @on(Button.Pressed, "#nav-overflow-hint")
     def handle_overflow_hint(self, event: Button.Pressed) -> None:
@@ -414,3 +505,7 @@ class MainNavigationBar(Container):
                 nav_button.id == f"nav-{self.active_destination_id}",
                 "is-active",
             )
+        # The restored destination may have been clip-ghosted (task-3200)
+        # while it wasn't active -- re-scroll so it's guaranteed visible
+        # now that it is, same as a normal click-driven activation.
+        self.call_after_refresh(self._scroll_active_destination_into_view)

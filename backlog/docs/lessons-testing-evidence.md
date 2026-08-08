@@ -1550,3 +1550,67 @@ the FULL bubble chain, not just checking that `.press()` "ran" — the visual `-
 class flip is a false-positive signal; instrument `Message._bubble_to` (or count how
 far a message travels) when a `Button.Pressed` handler mysteriously never fires despite
 the button visibly reacting to the press.
+
+## Constructing a widget directly in a test is not the same as driving it through real navigation -- and a "real navigation" pytest attempt can itself be a non-deterministic regression gate (2026-08-08)
+
+**TASK-3200.** Fixing the shared `MainNavigationBar`'s mid-word tab-label clip (a
+straddling destination button now gets a CSS "ghost" treatment — colors matched to the
+bar's background — instead of `display: none`, since hiding a button changes the
+strip's virtual size and can cascade). `Tests/UI/test_master_shell_navigation.py`
+already had — and my own new tests added — coverage that constructed
+`MainNavigationBar(active="settings")` directly inside a bare `TestApp`, at 80/100
+columns, both an early and a late active destination, and every one of those tests
+passed cleanly. Live tmux verification at 80 columns then reproduced a DIFFERENT bug
+in the exact same scenario: navigating from Home to Settings via the command palette
+left "Schedules" straddling and fully readable (un-ghosted) while an unrelated,
+already-off-screen "Watchlists" stayed ghosted for no reason. Root cause: `on_resize`
+ghost-checked directly, without first re-scrolling for the CURRENT viewport — a real
+screen-to-screen navigation fires several resize events while content is still
+settling, and whichever resize is the LAST one to land can ghost-check against a
+scroll position computed for an EARLIER, narrower or offset layout. A widget
+constructed directly in a `TestApp` sees exactly one clean mount → one clean resize;
+it structurally cannot reproduce a sequence of several interleaved resizes racing a
+still-settling scroll target.
+
+**Second half of the incident, easy to miss.** Having root-caused it live, I wrote a
+pytest test driving the REAL app (`Tests.UI.app_factory._build_test_app()`) through an
+actual `NavigateToScreen` message, polling for the nav bar to reach a correct state.
+It reliably failed against the buggy code and passed against the fix — until re-run a
+few more times each way: the SAME buggy code sometimes passed within an 8s poll, and
+disabling `MainNavigationBar`'s periodic 0.5s interval (which calls the same
+scroll-then-ghost pair on its own schedule, independent of `on_resize`) via monkeypatch
+made even the FIXED code fail a 20s poll. The honest conclusion: overlapping
+`call_after_refresh` chains from several resize events can interleave such that the
+last ghost-check to physically execute is not guaranteed to be from the freshest
+chain — a genuine, narrow residual race that the fix reduces but does not eliminate,
+and that the ALWAYS-PRESENT interval (this codebase's existing, intentional
+"settle every tick" mechanism) papers over within a variable amount of real time. No
+pytest timeout value reliably distinguished buggy from fixed once the interval was
+back in play, so a test whose pass/fail depended on it was providing FALSE confidence,
+not real regression coverage — it was deleted (along with its exclusive helpers)
+rather than shipped in that state.
+
+**What to do.**
+1. A test that constructs a widget directly and pumps `pilot.pause()` is evidence the
+   widget's OWN logic is internally consistent — it is NOT evidence the widget behaves
+   correctly when driven by the app's real navigation/layout churn, which can fire the
+   same hooks (e.g. `on_resize`) multiple times with different timing than a synthetic
+   single-shot test ever produces. For a defect involving scroll/layout state that must
+   "settle", drive the real navigation path at least once (post the actual message,
+   wait for the actual screen class to change) BEFORE declaring victory on
+   direct-construction tests alone — that is what surfaces this class of bug.
+2. Before trusting a NEW test as a regression gate, re-run it several times against
+   BOTH the buggy and the fixed code, not once each. A single RED + a single GREEN can
+   still be a coin flip if the code involves unmocked real-time async settling
+   (`call_after_refresh` chains, `set_interval` timers) — the fact that it says
+   "5 failed" once and "3 passed" against the identical buggy commit later in the same
+   session is itself the tell, not a fluke to shrug off.
+3. If a bug is fundamentally a timing race between two async mechanisms (here: a
+   settle-chain fix and an always-on periodic interval), a fast deterministic pytest
+   assertion may not exist for it at all. Neither "leave the interval running,
+   generous timeout" nor "disable the interval, even more generous timeout" reliably
+   discriminated buggy from fixed here. Don't force a flaky or falsely-reassuring test
+   into existence to satisfy a coverage checklist — ship the deterministic tests that
+   DO reliably discriminate (the direct-construction geometry/rendered-text ones, in
+   this case) and rely on documented, reproducible LIVE verification (tmux, before vs.
+   after) for the part that genuinely can't be pinned by a fast unit test.
