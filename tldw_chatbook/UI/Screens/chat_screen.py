@@ -17389,10 +17389,14 @@ class ChatScreen(BaseAppScreen):
                 event.stop()
                 event.prevent_default()
                 return
-        if event.key in {"ctrl+a", "super+a", "cmd+a", "meta+a"}:
-            composer.select_all_draft()
-            event.stop()
-            event.prevent_default()
+        # Decomposition wave 5: the keys whose whole handling is a composer
+        # operation (select-all and caret movement, including Up/Down's
+        # history-recall-first shape, which still falls through UNCONSUMED
+        # on a boundary row where nothing moved) now live on the composer
+        # itself. Everything below stays because it reaches past the
+        # composer -- Workbench/guidance resync, the clipboard, undo/redo's
+        # store persistence, send, transcript paging.
+        if composer.handle_console_key(event):
             return
         if (
             event.key in {"ctrl+c", "super+c", "cmd+c", "meta+c"}
@@ -17413,52 +17417,6 @@ class ChatScreen(BaseAppScreen):
         if event.key == "delete":
             composer.delete_right()
             self._sync_console_workbench_actions_from_draft()
-            event.stop()
-            event.prevent_default()
-            return
-        if event.key == "left":
-            composer.move_cursor_left()
-            event.stop()
-            event.prevent_default()
-            return
-        if event.key == "right":
-            # TASK-1364: with a ghost-text suggestion visible (caret at end,
-            # live draft), Right accepts it instead of moving the caret.
-            if not composer.accept_ghost_text():
-                composer.move_cursor_right()
-            event.stop()
-            event.prevent_default()
-            return
-        # Vertical caret movement differs from every neighbor above: those
-        # always consume the key (there is always somewhere to move -- even
-        # at a boundary, left/right/home/end land on a valid, if unchanged,
-        # offset). `move_cursor_up`/`move_cursor_down` instead return False
-        # on the first/last visual row, and the composer moves nothing at
-        # all -- so the event must fall through UNCONSUMED in that case,
-        # preserving whatever up/down would otherwise do on this screen
-        # (nothing today; a future transcript scroll or default focus
-        # behavior must not be silently swallowed by a no-op composer move).
-        # TASK-1364: on exactly those boundary rows, Up/Down first offer
-        # prompt-history recall (the composer gates on first/last visual row
-        # of the wrapped draft); only when recall declines does ordinary
-        # caret movement get its chance.
-        if event.key == "up":
-            if composer.recall_history_previous() or composer.move_cursor_up():
-                event.stop()
-                event.prevent_default()
-                return
-        if event.key == "down":
-            if composer.recall_history_next() or composer.move_cursor_down():
-                event.stop()
-                event.prevent_default()
-                return
-        if event.key == "home":
-            composer.move_cursor_home()
-            event.stop()
-            event.prevent_default()
-            return
-        if event.key == "end":
-            composer.move_cursor_end()
             event.stop()
             event.prevent_default()
             return

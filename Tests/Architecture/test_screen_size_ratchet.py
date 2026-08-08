@@ -48,7 +48,12 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 #: patched controllers through this module's namespace and so freed the
 #: wave-4 re-export imports for deletion: 17,749 -> 17,727 lines (methods
 #: unchanged at 593 — only imports went).
-#: Lowered 2026-08-07 at the wave-4 close (controller wiring out of
+#: NOT lowered by wave 5's composer-keymap task, deliberately. That task
+#: earned 42 lines, but between its start and its merge ~540 lines of feature
+#: work landed in `chat_screen.py` on dev and this budget was ALREADY exceeded
+#: (see task-3751). Lowering to the earned number would have been meaningless
+#: and raising it to the measured number would have defeated the mechanism, so
+#: the number is left exactly as dev has it. Lowered 2026-08-07 at the wave-4 close (controller wiring out of
 #: `__init__`, button-dispatch routing, the agent cluster): 18,930/600 ->
 #: 17,749/593. Wave 3 recorded 18,909/598; dev grew the screen by 21 lines
 #: and 2 methods while wave 4 was in flight, which is the whole reason this
