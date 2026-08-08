@@ -120,7 +120,7 @@ transcription_lightning_whisper = [
     "lightning-whisper-mlx; sys_platform == 'darwin'",  # Fast Whisper for Apple Silicon
 ]
 transcription_parakeet = [
-    "parakeet-mlx; sys_platform == 'darwin'",  # Real-time ASR for Apple Silicon
+    "onnx-asr[cpu]==0.12.0",  # Cross-platform Parakeet ONNX runtime
 ]
 # Legacy alias for backward compatibility
 mlx_whisper = [
@@ -171,6 +171,7 @@ audio = [
     # preference could never engage on a normal macOS install, and audio ingest
     # failed with "faster-whisper is not installed" instead (task-839).
     "parakeet-mlx; sys_platform == 'darwin'",
+    "onnx-asr[cpu]==0.12.0",  # Cross-platform Parakeet ONNX batch runtime
     # Fallback everywhere, and the default off darwin.
     "faster-whisper",
     # For the other Apple Silicon engine:
@@ -186,6 +187,7 @@ video = [
     # preference could never engage on a normal macOS install, and audio ingest
     # failed with "faster-whisper is not installed" instead (task-839).
     "parakeet-mlx; sys_platform == 'darwin'",
+    "onnx-asr[cpu]==0.12.0",  # Cross-platform Parakeet ONNX batch runtime
     # Fallback everywhere, and the default off darwin.
     "faster-whisper",
     # For the other Apple Silicon engine:
@@ -197,6 +199,7 @@ media_processing = [
     "yt-dlp",
     "numpy",
     "faster-whisper",  # Default transcription provider
+    "onnx-asr[cpu]==0.12.0",  # Cross-platform Parakeet ONNX batch runtime
     # Note: For Apple Silicon optimized transcription, also install:
     # pip install -e ".[media_processing,transcription_lightning_whisper]" or
     # pip install -e ".[media_processing,transcription_parakeet]"

@@ -182,6 +182,29 @@ def test_parakeet_onnx_feature_probes_onnx_asr(monkeypatch) -> None:
     assert probed == ["onnx_asr"]
 
 
+def test_canonical_parakeet_extra_probes_onnx_asr(monkeypatch) -> None:
+    """The historical extra name now represents the cross-platform ONNX path."""
+    probed = []
+    monkeypatch.setattr(
+        tldw_chatbook.Library.ingest_capabilities.importlib.util,
+        "find_spec",
+        lambda name: probed.append(name) or object(),
+    )
+
+    assert _is_installed("transcription_parakeet") is True
+    assert probed == ["onnx_asr"]
+
+
+def test_parakeet_recovery_uses_onnx_profile_and_preserves_legacy_mlx_alias() -> None:
+    """Recovery copy installs ONNX without making the legacy MLX alias lie."""
+    assert _install_hint("parakeet_onnx")["command"] == (
+        'pip install -e ".[transcription_parakeet]"'
+    )
+    assert _install_hint("parakeet_mlx")["command"] == (
+        'pip install -e ".[mlx_whisper]"'
+    )
+
+
 def test_get_capabilities_ebook() -> None:
     caps = get_capabilities("ebook")
     assert caps.group == "ebook"
