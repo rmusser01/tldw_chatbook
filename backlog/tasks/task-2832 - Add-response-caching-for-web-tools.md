@@ -1,11 +1,11 @@
 ---
 id: TASK-2832
 title: Add response caching for web tools
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-08-05 06:05'
-updated_date: '2026-08-08 21:29'
+updated_date: '2026-08-08 21:56'
 labels:
   - web-tools
 dependencies:
