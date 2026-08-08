@@ -18,10 +18,12 @@ from tldw_chatbook.STT.contracts import (
 )
 from tldw_chatbook.STT.executor import (
     ExecutorBusyError,
+    ExecutorEvent,
     ExecutorFailure,
     ExecutorResult,
     ExecutorUnavailableError,
     ModelIdentity,
+    WorkerPhase,
 )
 from tldw_chatbook.STT.parakeet_dispatch import ParakeetDispatch
 
@@ -178,6 +180,24 @@ class FakeExecutor:
             )
         )
 
+    def emit_event(
+        self,
+        generation: int,
+        *,
+        attempt_id: str | None = None,
+        phase: WorkerPhase = WorkerPhase.PREPARING,
+    ) -> None:
+        with self._condition:
+            assert self.active is not None
+            submission = self.active
+        submission["on_event"](
+            ExecutorEvent(
+                generation,
+                attempt_id or submission["attempt_id"],
+                phase,
+            )
+        )
+
     def _take_active(self) -> dict[str, Any]:
         with self._condition:
             assert self.active is not None
@@ -229,6 +249,7 @@ def _library_kwargs(
     *,
     attempt_id: str = "library-attempt",
     model_id: str = "parakeet-tdt-0.6b-v3",
+    on_event: Callable[[ExecutorEvent], None] = lambda _event: None,
     on_result: Callable[[ExecutorResult], None] = lambda _result: None,
     on_failure: Callable[[ExecutorFailure], None] = lambda _failure: None,
 ) -> dict[str, Any]:
@@ -238,6 +259,7 @@ def _library_kwargs(
         "source": FileAudioSource(Path(f"/tmp/{attempt_id}.wav")),
         "identity": _identity(model_id),
         "options": {"language": "en"},
+        "on_event": on_event,
         "on_result": on_result,
         "on_failure": on_failure,
     }
@@ -683,6 +705,54 @@ def test_stale_and_duplicate_terminals_are_ignored_once(
     executor.deliver_duplicate_result()
 
     assert delivered == ["real"]
+
+
+def test_current_preparing_event_advances_library_generation_once_outside_lock(
+    coordinator_module: Any,
+) -> None:
+    events: list[ExecutorEvent] = []
+    results: list[str] = []
+    result_delivered = threading.Event()
+    callback_blocked: list[bool] = []
+    executor = FakeExecutor()
+    coordinator = coordinator_module.LocalSTTDispatchCoordinator(executor)
+
+    def on_event(event: ExecutorEvent) -> None:
+        reader = threading.Thread(
+            target=lambda: coordinator.dictation_reserved,
+            name="event-callback-lock-probe",
+        )
+        reader.start()
+        reader.join(0.05)
+        callback_blocked.append(reader.is_alive())
+        events.append(event)
+
+    def on_result(result: ExecutorResult) -> None:
+        results.append(result.payload["text"])
+        result_delivered.set()
+
+    assert coordinator.submit_library(
+        **_library_kwargs(on_event=on_event, on_result=on_result)
+    ) == 1
+    submission = executor.submissions[0]
+
+    executor.emit_event(3, attempt_id="different-attempt")
+    executor.emit_event(2)
+    submission["on_result"](
+        ExecutorResult(1, submission["attempt_id"], {"text": "stale"})
+    )
+    assert results == []
+    submission["on_result"](
+        ExecutorResult(2, submission["attempt_id"], {"text": "cpu retry"})
+    )
+    _wait_for(result_delivered)
+    executor.emit_event(2)
+
+    assert [(event.generation, event.phase) for event in events] == [
+        (2, WorkerPhase.PREPARING)
+    ]
+    assert callback_blocked == [False]
+    assert results == ["cpu retry"]
 
 
 def test_nonretryable_worker_failure_clears_capture_with_sanitized_category(

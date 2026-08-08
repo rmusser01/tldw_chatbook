@@ -13,10 +13,12 @@ from typing import Any, Literal
 from .contracts import BufferAudioSource, TranscriptionFailureCode
 from .executor import (
     ExecutorBusyError,
+    ExecutorEvent,
     ExecutorFailure,
     ExecutorResult,
     ExecutorUnavailableError,
     LocalSTTExecutor,
+    WorkerPhase,
 )
 from .parakeet_dispatch import ParakeetDispatch
 
@@ -110,6 +112,7 @@ class _Callbacks:
     attempt_id: str
     on_result: Callable[[ExecutorResult], None]
     on_failure: Callable[[ExecutorFailure], None]
+    on_event: Callable[[ExecutorEvent], None] = lambda _event: None
     request: _Request | None = None
     generation: int | None = None
     started: bool = False
@@ -214,6 +217,7 @@ class LocalSTTDispatchCoordinator:
             attempt_id,
             executor_kwargs.pop("on_result", lambda _result: None),
             executor_kwargs.pop("on_failure", lambda _failure: None),
+            on_event=executor_kwargs.pop("on_event", lambda _event: None),
         )
         with self._lock:
             if self._closed:
@@ -226,6 +230,7 @@ class LocalSTTDispatchCoordinator:
         try:
             generation = self._executor.submit(
                 **executor_kwargs,
+                on_event=lambda value: self._event(callbacks, value),
                 on_result=lambda value: self._terminal(callbacks, value),
                 on_failure=lambda value: self._terminal(callbacks, value),
             )
@@ -497,7 +502,7 @@ class LocalSTTDispatchCoordinator:
             request.attempt_id,
             lambda _result: None,
             lambda _failure: None,
-            request,
+            request=request,
             handoff=handoff or _Handoff(),
         )
         capture = request.capture
@@ -544,10 +549,34 @@ class LocalSTTDispatchCoordinator:
 
     def _publish_generation(self, callbacks: _Callbacks, generation: int) -> None:
         with self._lock:
-            callbacks.generation, early = generation, callbacks.early
+            if callbacks.generation is None:
+                callbacks.generation = generation
+            early = callbacks.early
             callbacks.early = None
         if early is not None:
             self._terminal(callbacks, early)
+
+    def _event(self, callbacks: _Callbacks, event: ExecutorEvent) -> None:
+        with self._lock:
+            if (
+                callbacks.started
+                or event.attempt_id != callbacks.attempt_id
+                or not self._matches_locked(callbacks.kind, callbacks.attempt_id)
+            ):
+                return
+            generation = callbacks.generation
+            if generation is None:
+                if event.phase is not WorkerPhase.PREPARING:
+                    return
+                callbacks.generation = event.generation
+            elif event.generation != generation:
+                if (
+                    event.phase is not WorkerPhase.PREPARING
+                    or event.generation < generation
+                ):
+                    return
+                callbacks.generation = event.generation
+        self._deliver(callbacks.on_event, event)
 
     def _terminal(
         self,
