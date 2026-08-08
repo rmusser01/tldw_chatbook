@@ -1,11 +1,11 @@
 ---
 id: TASK-3750
 title: Diagnostic inventory digests key on logger line numbers
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-08-08 21:06'
-updated_date: '2026-08-08 23:13'
+updated_date: '2026-08-08 23:14'
 labels:
   - tech-debt
 dependencies: []
