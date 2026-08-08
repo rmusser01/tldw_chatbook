@@ -2,7 +2,7 @@
 target: Console rail label setting design
 total_score: 25
 max_score: 40
-na_heuristics: 
+na_heuristics:
 p0_count: 0
 p1_count: 5
 timestamp: 2026-08-08T14-25-34Z
