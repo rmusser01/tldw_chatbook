@@ -50,14 +50,20 @@ the harness tests only.
     harness proves they're NOT retrieved today),
   - distractors.
 - **Golden set**: ~40 hand-authored queries in one TOML file:
-  `query`, `relevant_ids` (stable fixture doc ids), `category`
-  (keyword / paraphrase / vocabulary-mismatch / negative).
+  `query`, `relevant_ids` (**stable fixture slugs**, never DB ids — the
+  real writer APIs assign autoincrement ids per run; the ingestion step
+  records the slug→runtime-id mapping and hands it to the metric layer),
+  `category` (keyword / paraphrase / vocabulary-mismatch / negative).
   Categories make P2 deltas legible per capability
   ("HyDE: paraphrase recall +0.12, keyword unchanged").
   - `negative` queries have empty `relevant_ids` (the validator permits
     this for that category only); they are excluded from averaged
-    P/R/MRR/NDCG and instead report **results-returned@k** (the
-    junk-retrieval count a good pipeline keeps low).
+    P/R/MRR/NDCG. Their per-mode measure differs because vector search
+    always returns the k nearest regardless of relevance: **keyword mode
+    reports results-returned@k** (FTS genuinely returns nothing on no
+    match), while **semantic/hybrid report the top vector similarity**
+    (expectation: below the strong-band threshold — the no-false-confidence
+    measure, which later feeds P3's abstention work).
   - No `scoped` category in P1: measuring scoped-retrieval quality needs
     scope machinery in the harness that P0's behavioral tests already
     cover; it joins the harness in P2 when scope-aware hybrid lands.
@@ -88,7 +94,14 @@ the harness tests only.
   `LibraryLocalRagSearchService` (the Library seam), NOT the engine —
   P0 proved seam bugs are invisible at engine level. Each query runs under
   three modes: profile-semantic, profile-plain (four-seam keyword),
-  profile-hybrid, by switching the harness service's active profile config.
+  profile-hybrid — **one service, one index, mode switched between
+  passes** (Chroma commonly refuses a second persistent client on the same
+  path in-process; three services are structurally ruled out).
+- **Retrieved-id canonicalization**: seam rows are chunk-level; metrics are
+  computed at **document level**. Each row canonicalizes to its fixture doc
+  via provenance (`source_type` + `source_id`/`doc_id` — exact keys pinned
+  in the plan), duplicate chunks of one doc dedup to the first-hit rank.
+  Without this, a multi-chunk hit would pollute P@k with self-duplicates.
 - **Embeddings**: the real default model (sentence-transformers
   MiniLM-L6-v2, local, no API cost). No mock mode — mock embeddings would
   measure nothing. Model loads once per session (~10s); full run budget
@@ -101,7 +114,9 @@ the harness tests only.
 ### 4. Baselines → `Tests/RAG_Eval/baselines/*.json` (committed)
 
 - One baseline file per mode, produced by
-  `RAG_EVAL=1 RAG_EVAL_UPDATE_BASELINES=1 pytest Tests/RAG_Eval/`.
+  `RAG_EVAL=1 RAG_EVAL_UPDATE_BASELINES=1 pytest Tests/RAG_Eval/`. The
+  update path prints every metric's old→new delta so the baseline commit's
+  diff is reviewable, never a silent overwrite.
 - `MetricBaseline.metadata` carries an **environment fingerprint**: model
   name, sentence-transformers version, corpus content hash, platform.
   On fingerprint mismatch the harness reports **"environment changed —
@@ -132,6 +147,9 @@ the harness tests only.
 
 - Missing `embeddings_rag` extras → the harness skips with an explicit
   reason naming the install command (same honesty register as the app).
+- Embedding model not locally cached (first-run download would be needed)
+  → skip with a reason naming the model, never a failure or a surprise
+  network download inside a test run.
 - Corpus/golden-set integrity is validated before any query runs (ids
   unique, every `relevant_ids` entry exists in the corpus, every category
   non-empty) — a malformed golden set fails fast with the exact defect,
@@ -160,9 +178,11 @@ the harness tests only.
 2. How the harness switches profile mode per run cleanly (three service
    configs vs one service re-configured — pick the one that cannot leak
    state between modes).
-3. Whether Chroma reuses the scratch persist dir deterministically across
-   the three modes (one index, three search modes — index once, query
-   thrice).
+3. The clean mode-switch mechanism on the single service (config field
+   swap vs a per-mode config view) — whichever cannot leak state between
+   passes; index once, query thrice.
+3b. The exact provenance keys seam rows carry per source type for the
+   doc-level canonicalization (media vs note vs conversation rows).
 4. Confirm pydantic v2 API parity for the ported models in chatbook's
    pinned version.
 5. Where the standing config-isolation fixture lives for non-UI tests
