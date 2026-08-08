@@ -290,8 +290,13 @@ class ArticleListPane(RecomposeCaptureGuard, Vertical):
             elif status not in self._READER_STATUSES:
                 continue
             if query:
+                # TASK-3603 plan task 3: the instant pre-filter reads the
+                # same columns the corpus-wide FTS path indexes
+                # (title/content/author) -- a content-matched search result
+                # must not be filtered OUT of the page it just arrived on.
                 text = " ".join(
-                    str(item.get(key) or "") for key in ("title", "url", "source_name", "status")
+                    str(item.get(key) or "")
+                    for key in ("title", "url", "source_name", "status", "content", "author")
                 ).lower()
                 if query not in text:
                     continue

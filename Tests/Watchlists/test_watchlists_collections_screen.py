@@ -2540,3 +2540,176 @@ async def test_a_failed_tree_write_start_does_not_wedge_later_writes():
             if ran:
                 break
         assert ran, "the next write must still be able to start"
+
+
+# --- TASK-3603 plan task 3: `/` and the corpus-wide search --------------------
+
+
+@pytest.mark.asyncio
+async def test_slash_focuses_the_items_search_box():
+    """`/` on the Read tab puts the caret in the search input."""
+    from textual.widgets import Input
+
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+        assert screen.active_section == "items", "precondition: lands on Read"
+
+        await pilot.press("/")
+        await pilot.pause()
+        focused = screen.focused
+        assert isinstance(focused, Input) and focused.id == "items-search-input"
+
+
+@pytest.mark.asyncio
+async def test_slash_types_literally_once_the_search_box_has_focus():
+    """The verb guard: once an Input has focus, `/` is text, not a verb."""
+    from textual.widgets import Input
+
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+        await pilot.press("/")
+        await pilot.pause()
+        search = screen.query_one("#items-search-input", Input)
+
+        await pilot.press("/")
+        await pilot.pause()
+        assert search.value == "/", "a second `/` must type into the box"
+
+
+@pytest.mark.asyncio
+async def test_a_search_reaches_beyond_the_first_page():
+    """The corpus-wide path: an item past the newest-100 page still surfaces."""
+    from textual.widgets import Input
+
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+        db = app.watchlist_bundle_service._db
+        source_id = db.add_subscription(
+            name="ArXiv", type="rss", source="https://a.example/f"
+        )
+        # 105 items, newest-first by created_at; the unique-token item is the
+        # OLDEST, so the default page (limit 100) cannot contain it.
+        for index in range(105):
+            day = 1 + index // 24
+            hour = index % 24
+            _seed_item(
+                db, source_id, f"generic {index:03d}",
+                created_at=f"2026-08-0{day} {hour:02d}:00:00",
+            )
+        _seed_item(db, source_id, "zzqtoken oldest", created_at="2026-08-01 00:00:00")
+        await screen._load_items()
+        pane = screen.query_one("#watchlists-items-pane", ArticleListPane)
+        await _wait_for_items(pilot, pane)
+        assert len(pane.displayed_items()) == 100, "precondition: page is capped"
+        assert all(
+            "zzqtoken" not in str(item.get("title")) for item in pane.displayed_items()
+        ), "precondition: the oldest item fell off the page"
+
+        search = screen.query_one("#items-search-input", Input)
+        search.value = "zzqtoken"
+        found = False
+        for _ in range(80):
+            await pilot.pause(0.05)
+            if any(
+                "zzqtoken" in str(item.get("title"))
+                for item in pane.displayed_items()
+            ):
+                found = True
+                break
+        assert found, "a corpus-wide search must surface items beyond the page"
+
+
+@pytest.mark.asyncio
+async def test_clearing_the_search_restores_the_unsearched_page():
+    from textual.widgets import Input
+
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+        db = app.watchlist_bundle_service._db
+        source_id = db.add_subscription(
+            name="ArXiv", type="rss", source="https://a.example/f"
+        )
+        _seed_item(db, source_id, "alpha post")
+        _seed_item(db, source_id, "beta post")
+        await screen._load_items()
+        pane = screen.query_one("#watchlists-items-pane", ArticleListPane)
+        await _wait_for_items(pilot, pane)
+        assert len(pane.displayed_items()) == 2, "precondition"
+
+        search = screen.query_one("#items-search-input", Input)
+        search.value = "no such token anywhere"
+        # Track `_loaded_items` (the SERVER page), not `displayed_items()`:
+        # the pane's client-side filter would answer instantly and race the
+        # debounced reload this test is actually about.
+        for _ in range(80):
+            await pilot.pause(0.05)
+            if screen._loaded_items == []:
+                break
+        assert screen._loaded_items == [], "the corpus query returned nothing"
+        assert pane.displayed_items() == []
+
+        # The empty-page reload recomposed the pane, so the Input handle from
+        # before it is a dead widget -- re-query before the second edit.
+        screen.query_one("#items-search-input", Input).value = ""
+        for _ in range(80):
+            await pilot.pause(0.05)
+            if len(screen._loaded_items) == 2:
+                break
+        await pilot.pause(0.4)  # let any trailing debounce land
+        displayed = pane.displayed_items()
+        assert len(displayed) == 2, (
+            "clearing the box must restore the unsearched page "
+            f"(mirror={screen._items_search_query!r} pane.query={pane.search_query!r} "
+            f"loaded={len(screen._loaded_items)} pane.items={len(pane.items)} "
+            f"rendered={len(pane._rendered_items)})"
+        )
+
+
+@pytest.mark.asyncio
+async def test_search_keeps_the_open_item_pinned():
+    """The pin is unconditional since TASK-3072: searching away from the open
+    item must not vanish the article being read."""
+    from textual.widgets import Input
+
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+        db = app.watchlist_bundle_service._db
+        source_id = db.add_subscription(
+            name="ArXiv", type="rss", source="https://a.example/f"
+        )
+        _seed_item(db, source_id, "aaa keepme", created_at="2026-08-06 09:00:00")
+        _seed_item(db, source_id, "bbb findme", created_at="2026-08-06 09:01:00")
+        await screen._load_items()
+        pane = screen.query_one("#watchlists-items-pane", ArticleListPane)
+        await _wait_for_items(pilot, pane)
+
+        pane.select_item_by_id(
+            str(next(i["id"] for i in pane.items if "aaa" in str(i.get("title"))))
+        )
+        await pilot.pause(0.3)
+        assert "aaa" in str(screen._selected_content_item.get("title")), "precondition"
+
+        screen.query_one("#items-search-input", Input).value = "bbb"
+        for _ in range(80):
+            await pilot.pause(0.05)
+            titles = [str(i.get("title")) for i in pane.displayed_items()]
+            if any("bbb" in t for t in titles):
+                break
+        titles = [str(i.get("title")) for i in pane.displayed_items()]
+        assert any("bbb" in t for t in titles), "the match is listed"
+        assert any("aaa" in t for t in titles), "the open item stays pinned"

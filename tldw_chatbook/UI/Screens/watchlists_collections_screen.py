@@ -448,6 +448,9 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         # http/https only (the URL is a remote-derived string reaching an OS
         # primitive, so the scheme check lives in the handler, not here).
         ("o", "open_in_browser", "Open in browser"),
+        # TASK-3603 plan task 3: jump to the search box; typing then drives
+        # the corpus-wide FTS path through the debounced reload below.
+        ("/", "focus_items_search", "Search"),
         ("a", "mark_all_read", "Mark all read"),
         ("u", "undo_mark_all_read", "Undo mark-all-read"),
         ("z", "toggle_region", "Collapse"),
@@ -8559,12 +8562,17 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     async def _load_items(self) -> None:
         notify = getattr(self.app_instance, "notify", None)
         try:
+            # TASK-3603 plan task 3: a non-blank search term is part of the
+            # query (the corpus-wide FTS path, falling back to LIKE), not a
+            # client-side-only filter over the newest 100.
+            query = self._items_search_query.strip()
             items = await self._controller.list_items(
                 runtime_backend=self.runtime_backend,
                 limit=100,
                 offset=0,
                 **self._items_status_kwargs(),
                 **self._items_scope_query(),
+                **({"search": query} if query else {}),
             )
             # Mirror to screen state (Finding 2, fix round 2) — see the note
             # on `_loaded_sources` in `_load_sources` above; same rebuild,
@@ -9112,17 +9120,19 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
 
     @on(ItemsFilterChanged)
     def handle_items_filter_changed(self, event: ItemsFilterChanged) -> None:
-        """Mirror the Items filter/search, and re-page when the STATUS moves.
+        """Mirror the Items filter/search, and re-page when EITHER moves.
 
         Review wave, I2. The status is now part of the query
         (`_items_status_kwargs`), so changing it has to re-fetch or the pane is
         left filtering the previous status's page in memory -- which is exactly
         the "the filter can only narrow what was already fetched" defect this
-        fix removes.
+        fix removes. TASK-3603 extends the same rule to the search box: the
+        term is part of the query too (`_load_items` weaves it in), so a
+        search reaches the whole corpus rather than the newest-100 page --
+        debounced, since this message fires on every keystroke.
 
-        Gated on the status ACTUALLY changing. This message also fires on every
-        keystroke in the search box, which is a purely in-memory filter and
-        must not cost a query per character. Both sides are compared through
+        The status branch re-fetches immediately; the search branch re-arms a
+        0.3s timer. Both sides are compared through
         `_normalize_items_status_filter` (TASK-3072): a pre-reader `new`
         still sitting in the mirror IS the reader's `unread`, and must not
         trigger a spurious reload when the pane first posts it.
@@ -9132,12 +9142,36 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         status_changed = incoming != _normalize_items_status_filter(
             self._items_status_filter
         )
+        query_changed = event.search_query != self._items_search_query
         self._items_status_filter = incoming
         self._items_search_query = event.search_query
         if status_changed:
             # Own group, as in `watch_tree_scope`: an exclusive reload in
             # the default group cancels unrelated in-flight workers.
             self.run_worker(self._load_items(), exclusive=True, group="wc_items")
+        elif query_changed:
+            # TASK-3603 plan task 3: a search edit re-fetches too, now that
+            # the term is part of the query (`_load_items` weaves it in) --
+            # debounced, because this message fires on every keystroke and a
+            # query per character is exactly what the debounce timer shape
+            # (`_request_tree_counts_refresh`) already exists to avoid.
+            self._request_items_search_reload()
+
+    #: Debounce for the search-driven items reload (TASK-3603): one corpus
+    #: query per typing pause, not one per keystroke.
+    _ITEMS_SEARCH_DEBOUNCE_SECONDS = 0.3
+
+    def _request_items_search_reload(self) -> None:
+        """Re-arm the single search-reload timer (the counts-refresh shape)."""
+        timer = getattr(self, "_items_search_reload_timer", None)
+        if timer is not None:
+            timer.stop()
+        self._items_search_reload_timer = self.set_timer(
+            self._ITEMS_SEARCH_DEBOUNCE_SECONDS,
+            lambda: self.run_worker(
+                self._load_items(), exclusive=True, group="wc_items"
+            ),
+        )
 
     @on(RefreshItemsRequested)
     def handle_refresh_items_requested(self, event: RefreshItemsRequested) -> None:
@@ -10195,6 +10229,20 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         if item is None:
             return
         self._open_item_in_browser(item)
+
+    def action_focus_items_search(self) -> None:
+        """`/`: put the caret in the items search box (TASK-3603 plan task 3).
+
+        Gated by `_reader_verb_blocked` like every other Read-tab verb:
+        once any Input has focus, `/` is text, not a verb (and off the Read
+        tab there is no search box to focus).
+        """
+        if self._reader_verb_blocked():
+            return
+        try:
+            self.query_one("#items-search-input", Input).focus()
+        except NoMatches:
+            return
 
     @on(OpenInBrowserRequested)
     def handle_open_in_browser_requested(self, event: OpenInBrowserRequested) -> None:

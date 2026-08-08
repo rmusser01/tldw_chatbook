@@ -503,3 +503,28 @@ async def test_update_item_starred_cell_toggles_the_glyph_in_place():
             "display-only: the repaint must not freshen the shared dict "
             "(the mark-unread guard's staleness invariant)"
         )
+
+
+async def test_the_client_side_filter_reads_content_and_author_too():
+    """TASK-3603 plan task 3: the instant pre-filter's haystack must cover
+    the same columns the FTS path indexes (title/content/author) -- a
+    content-matched corpus result must not be filtered OUT of the loaded
+    page it just arrived on."""
+    app = ArticleListHarness()
+    async with app.run_test(size=(120, 40)) as pilot:
+        pane = app.query_one(ArticleListPane)
+        items = [
+            _item(1, title="plain title", content="the zzqtoken body"),
+            _item(2, title="another plain", author="zzqtoken writer"),
+            _item(3, title="entirely unrelated", content="nothing"),
+        ]
+        pane.items = items
+        await pilot.pause()
+        assert len(pane.displayed_items()) == 3, "precondition"
+
+        pane.search_query = "zzqtoken"
+        await pilot.pause()
+        assert {str(i.get("id")) for i in pane.displayed_items()} == {
+            str(items[0]["id"]),
+            str(items[1]["id"]),
+        }, "content- and author-only matches must survive the client filter"
