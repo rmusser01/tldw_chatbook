@@ -245,3 +245,25 @@ def test_cancellation_before_second_segment_prevents_second_asr_call(
         )
 
     assert len(model.asr.calls) == 1
+
+
+def test_long_direct_local_model_without_managed_vad_fails_with_retry_action(
+    tmp_path: Path,
+) -> None:
+    from tldw_chatbook.STT.parakeet_onnx import ParakeetOnnxFailure
+
+    runtime, _model, _vad, _root, _dependency = _runtime(duration=40.0)
+    runtime._vad = None
+
+    with pytest.raises(ParakeetOnnxFailure) as raised:
+        runtime.transcribe(
+            audio_path=tmp_path / "long.wav",
+            attempt_id="attempt-no-vad",
+            language="en",
+            timestamps=True,
+        )
+
+    assert raised.value.error_detail == {
+        "code": "artifact_incompatible",
+        "actions": ["retry_faster_whisper"],
+    }

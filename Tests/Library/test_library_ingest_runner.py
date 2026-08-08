@@ -28,6 +28,7 @@ import subprocess
 import sys
 import textwrap
 import threading
+from types import SimpleNamespace
 from pathlib import Path
 from typing import Any, Callable, Optional
 from unittest.mock import patch
@@ -1344,6 +1345,95 @@ async def test_explicit_parakeet_directory_uses_central_validated_path(
 
     assert len(executor.calls) == 1
     assert executor.calls[0]["options"]["transcription_model_dir"] == str(validated_dir)
+
+
+def test_managed_parakeet_dispatch_selects_exact_model_and_precision(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tldw_chatbook.Local_Ingestion import parakeet_v2_artifact as artifacts
+    from tldw_chatbook.Local_Ingestion.stt_batch_routing import PARAKEET_V3_MODEL
+    from tldw_chatbook.Model_Artifacts import store as artifact_store
+
+    reference = artifacts.parakeet_reference(PARAKEET_V3_MODEL, "f32")
+    handle = SimpleNamespace(
+        root=reference,
+        closure_fingerprint="exact-closure-fingerprint",
+    )
+
+    class _Lease:
+        def __init__(self) -> None:
+            self.handle = handle
+            self.closed = False
+
+        def close(self) -> None:
+            self.closed = True
+
+    lease = _Lease()
+    service = SimpleNamespace(acquire=lambda selected: lease)
+    monkeypatch.setattr(
+        artifacts,
+        "active_managed_parakeet_dir",
+        lambda model, precision, service=None: tmp_path / "managed-root",
+    )
+    monkeypatch.setattr(artifacts, "parakeet_v2_managed_service", lambda: service)
+    monkeypatch.setattr(
+        artifact_store,
+        "managed_model_artifact_root",
+        lambda: tmp_path / "managed",
+    )
+
+    app = _IngestRunnerHarness(None)
+    job = LibraryIngestJob(job_id="job-v3-f32", source_path="speech.wav")
+    dispatch = app._build_local_stt_dispatch(
+        job,
+        {
+            "transcription_provider": "parakeet-onnx",
+            "transcription_model": PARAKEET_V3_MODEL,
+            "transcription_precision": "f32",
+        },
+    )
+
+    assert dispatch["identity"].model_id == PARAKEET_V3_MODEL
+    assert dispatch["identity"].precision == "f32"
+    assert dispatch["identity"].root_revision == reference.revision
+    assert dispatch["identity"].closure_fingerprint == "exact-closure-fingerprint"
+    assert dispatch["managed_artifact_ref"] == (
+        reference.artifact_id,
+        reference.revision,
+        reference.variant,
+    )
+    assert lease.closed is True
+
+
+def test_explicit_f32_folder_snapshots_the_f32_payload_files(tmp_path: Path) -> None:
+    from tldw_chatbook.Local_Ingestion.stt_batch_routing import PARAKEET_V2_MODEL
+
+    model_root = tmp_path / "parakeet-f32"
+    model_root.mkdir()
+    required = (
+        "config.json",
+        "vocab.txt",
+        "encoder-model.onnx",
+        "encoder-model.onnx.data",
+        "decoder_joint-model.onnx",
+    )
+    for filename in required:
+        (model_root / filename).write_bytes(filename.encode())
+    app = _IngestRunnerHarness(None)
+    job = LibraryIngestJob(job_id="job-v2-f32", source_path="speech.wav")
+
+    dispatch = app._build_local_stt_dispatch(
+        job,
+        {
+            "transcription_provider": "parakeet-onnx",
+            "transcription_model": PARAKEET_V2_MODEL,
+            "transcription_precision": "f32",
+            "transcription_model_dir": str(model_root),
+        },
+    )
+
+    assert dispatch["local_source"].paths == tuple(model_root / item for item in required)
 
 
 @pytest.mark.asyncio

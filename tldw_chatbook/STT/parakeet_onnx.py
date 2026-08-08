@@ -21,6 +21,7 @@ from .contracts import (
     ExecutionDevice,
     ProducedCapabilities,
     TimestampGranularity,
+    TranscriptionFailureCode,
     TranscriptionProvenance,
     TranscriptionResult,
     TranscriptionSegment,
@@ -35,6 +36,17 @@ LONG_FORM_SECONDS = 30.0
 
 class ParakeetOnnxCancelled(RuntimeError):
     """Raised when cancellation is observed before an inference batch."""
+
+
+class ParakeetOnnxFailure(RuntimeError):
+    """Typed path-private failure consumed by the executor boundary."""
+
+    def __init__(self, code: TranscriptionFailureCode, message: str) -> None:
+        self.error_detail = {
+            "code": code.value,
+            "actions": ["retry_faster_whisper"],
+        }
+        super().__init__(message)
 
 
 def _onnx_asr_api() -> tuple[Any, Callable[..., Any], Callable[..., Any]]:
@@ -188,9 +200,10 @@ class ParakeetOnnxRuntime:
             use_vad = vad or duration > LONG_FORM_SECONDS
             if use_vad:
                 if self._vad is None:
-                    raise RuntimeError(
+                    raise ParakeetOnnxFailure(
+                        TranscriptionFailureCode.ARTIFACT_INCOMPATIBLE,
                         "Long-form Parakeet requires the managed VAD dependency. "
-                        "Retry with faster-whisper."
+                        "Retry with faster-whisper.",
                     )
                 text, raw_segments = self._transcribe_segments(
                     wav_path,
@@ -301,4 +314,8 @@ class ParakeetOnnxRuntime:
         self._vad = None
 
 
-__all__ = ["ParakeetOnnxCancelled", "ParakeetOnnxRuntime"]
+__all__ = [
+    "ParakeetOnnxCancelled",
+    "ParakeetOnnxFailure",
+    "ParakeetOnnxRuntime",
+]

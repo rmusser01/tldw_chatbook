@@ -5,6 +5,7 @@ import threading
 import time
 from dataclasses import FrozenInstanceError
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -15,11 +16,18 @@ from Tests.STT.executor_test_support import (
     private_log_executor_worker,
     resident_executor_worker,
 )
+from tldw_chatbook.Local_Ingestion.stt_batch_routing import PARAKEET_V2_MODEL
 from tldw_chatbook.Model_Artifacts import ArtifactInUseError, ModelArtifactService
 from tldw_chatbook.STT.contracts import (
     DeviceFailureOrigin,
     ExecutionDevice,
+    ProducedCapabilities,
+    TimestampGranularity,
     TranscriptionFailureCode,
+    TranscriptionProvenance,
+    TranscriptionResult,
+    TranscriptionTask,
+    TranscriptionTimings,
 )
 from tldw_chatbook.STT.executor import (
     ExecutorBusyError,
@@ -40,6 +48,9 @@ from tldw_chatbook.STT.executor import (
 from tldw_chatbook.STT.executor_worker import (
     _ProviderLoadFailure,
     _failure_from_exception,
+    _failure_from_worker_exception,
+    _load_resident,
+    _parakeet_provider,
 )
 
 
@@ -771,6 +782,185 @@ def test_worker_reuses_runtime_and_holds_managed_closure_lease_until_exit(
 
     ModelArtifactService(tmp_path / "store").delete(dependency.reference)
     assert service.artifact_path(dependency.reference).exists() is False
+
+
+def test_provider_builder_receives_the_full_verified_managed_handle(
+    tmp_path: Path,
+) -> None:
+    service, root, dependency, identity = _managed_request_values(tmp_path)
+    request = ExecutorRequest(
+        generation=1,
+        attempt_id="managed-handle",
+        job_id="job-managed-handle",
+        source_path=tmp_path / "speech.wav",
+        identity=identity,
+        options={},
+        managed_store_root=tmp_path / "store",
+        managed_artifact_ref=(
+            root.reference.artifact_id,
+            root.reference.revision,
+            root.reference.variant,
+        ),
+    )
+    captured = {}
+
+    def builder(_request, model_root, handle, is_cancelled):
+        from tldw_chatbook.STT.executor_worker import ProviderRuntime
+
+        captured.update(
+            model_root=model_root,
+            handle=handle,
+            is_cancelled=is_cancelled,
+        )
+        return ProviderRuntime(runner=lambda *_args, **_kwargs: {}, close=lambda: None)
+
+    resident = _load_resident(request, builder, lambda: False)
+    try:
+        handle = captured["handle"]
+        paths = dict(handle.paths)
+        assert captured["model_root"] == paths[root.reference]
+        assert paths[dependency.reference] == service.artifact_path(
+            dependency.reference
+        )
+        assert handle.lease_keys == (
+            *(reference.lease_key() for reference in handle.closure),
+        )
+        assert captured["is_cancelled"]() is False
+    finally:
+        resident.close()
+
+
+def test_provider_exception_after_cancellation_is_reported_as_cancelled() -> None:
+    request = _request()
+
+    failure = _failure_from_worker_exception(
+        request,
+        RuntimeError("provider stopped at a segment boundary"),
+        cancelled=True,
+    )
+
+    assert failure.code is TranscriptionFailureCode.CANCELLED
+    assert failure.recovery_actions == ()
+
+
+def test_parakeet_provider_persists_normalized_managed_provenance(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tldw_chatbook.Model_Artifacts import ArtifactRef
+    from tldw_chatbook.STT.parakeet_onnx import ParakeetOnnxRuntime
+
+    root = ArtifactRef("parakeet-v2", "root-revision", "int8")
+    dependency = ArtifactRef("silero-vad", "vad-revision", "f32")
+    model_root = tmp_path / "model"
+    vad_root = tmp_path / "vad"
+    model_root.mkdir()
+    vad_root.mkdir()
+    handle = SimpleNamespace(
+        root=root,
+        closure=(root, dependency),
+        paths=((root, model_root), (dependency, vad_root)),
+    )
+    captured = {}
+
+    class _Runtime:
+        def transcribe(self, **kwargs):
+            captured["transcribe"] = kwargs
+            return TranscriptionResult(
+                text="managed transcript",
+                segments=(),
+                provenance=TranscriptionProvenance(
+                    schema_version=1,
+                    attempt_id=kwargs["attempt_id"],
+                    batch_id=kwargs["batch_id"],
+                    job_id=kwargs["job_id"],
+                    retry_of_attempt_id=None,
+                    retry_of_job_id=None,
+                    provider_id="parakeet-onnx",
+                    model_id=PARAKEET_V2_MODEL,
+                    artifact_root=root.lease_key(),
+                    artifact_dependencies=(dependency.lease_key(),),
+                    precision="int8",
+                    requested_device=ExecutionDevice.CPU,
+                    effective_device=ExecutionDevice.CPU,
+                    requested_language="en",
+                    effective_language="en",
+                    detected_language=None,
+                    task=TranscriptionTask.TRANSCRIBE,
+                ),
+                produced_capabilities=ProducedCapabilities(
+                    timestamps=TimestampGranularity.NONE,
+                    punctuation=True,
+                    capitalization=True,
+                    vad=False,
+                    diarization=False,
+                ),
+                duration_seconds=1.0,
+                timings=TranscriptionTimings(total_seconds=0.1),
+            )
+
+        def close(self):
+            return None
+
+    def fake_load(**kwargs):
+        captured["load"] = kwargs
+        return _Runtime()
+
+    monkeypatch.setattr(ParakeetOnnxRuntime, "load", fake_load)
+    request = ExecutorRequest(
+        generation=1,
+        attempt_id="attempt-managed",
+        job_id="job-managed",
+        source_path=tmp_path / "speech.wav",
+        identity=_identity(
+            root_revision=root.revision,
+            closure_fingerprint="closure",
+            local_snapshot_token=None,
+        ),
+        options={
+            "language": "en",
+            "timestamps": False,
+            "transcription_context": {"batch_id": "batch-managed"},
+        },
+    )
+
+    provider = _parakeet_provider(request, model_root, handle, lambda: False)
+    payload = provider.runner(str(request.source_path))
+
+    assert captured["load"]["model_root"] == model_root
+    assert captured["load"]["vad_root"] == vad_root
+    assert captured["load"]["artifact_root"] == root.lease_key()
+    assert captured["load"]["artifact_dependencies"] == (dependency.lease_key(),)
+    provenance = payload["transcription_provenance"]
+    assert provenance["artifact_root"] == {
+        "artifact_id": root.artifact_id,
+        "revision": root.revision,
+        "variant": root.variant,
+    }
+    assert provenance["artifact_dependencies"] == [
+        {
+            "artifact_id": dependency.artifact_id,
+            "revision": dependency.revision,
+            "variant": dependency.variant,
+        }
+    ]
+    assert provenance["batch_id"] == "batch-managed"
+
+
+def test_managed_parakeet_provider_rejects_a_closure_without_vad(
+    tmp_path: Path,
+) -> None:
+    from tldw_chatbook.Model_Artifacts import ArtifactRef
+
+    root = ArtifactRef("parakeet-v2", "root-revision", "int8")
+    model_root = tmp_path / "model"
+    model_root.mkdir()
+    handle = SimpleNamespace(root=root, closure=(root,), paths=((root, model_root),))
+
+    with pytest.raises(_ProviderLoadFailure) as raised:
+        _parakeet_provider(_request(), model_root, handle, lambda: False)
+
+    assert raised.value.code is TranscriptionFailureCode.ARTIFACT_INCOMPATIBLE
 
 
 def test_loaded_residency_is_reported_before_first_parse_failure(
