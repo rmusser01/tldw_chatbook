@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from rich.cells import cell_len
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal
 from textual.widgets import Button, Static
@@ -124,6 +125,42 @@ async def test_vertical_handles_use_bundled_full_height_geometry_and_keep_badge_
         assert left_button.tooltip == "Open Context rail"
         assert right_button.tooltip == "Open Inspector rail"
         assert right_badge.tooltip == "1 approval"
+
+
+@pytest.mark.asyncio
+async def test_vertical_buttons_paint_a_single_centered_column() -> None:
+    """Button paint stays inside the centered one-cell layout contract."""
+    app = _VerticalRailHandleHarness()
+
+    async with app.run_test(size=(32, 20)) as pilot:
+        await pilot.pause()
+        pairs = (
+            (
+                app.query_one("#vertical-context-handle", ConsoleRailHandle),
+                app.query_one("#vertical-context-button", Button),
+            ),
+            (
+                app.query_one("#vertical-inspector-handle", ConsoleRailHandle),
+                app.query_one("#vertical-inspector-button", Button),
+            ),
+        )
+
+        for handle, button in pairs:
+            expected_x = handle.region.x + (
+                handle.region.width - ConsoleRailHandle.VERTICAL_CONTENT_WIDTH
+            ) // 2
+            painted_lines = [
+                strip
+                for y in range(button.region.height)
+                if (strip := button.render_line(y)).text.strip()
+            ]
+
+            assert painted_lines
+            assert all(
+                cell_len(strip.text) == button.region.width
+                for strip in painted_lines
+            )
+            assert button.region.x == expected_x
 
 
 def test_vertical_context_label_stacks_without_direction_glyph() -> None:

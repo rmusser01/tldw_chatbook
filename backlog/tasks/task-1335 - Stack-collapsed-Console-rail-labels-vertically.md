@@ -63,13 +63,20 @@ deliberately opt-in: non-Console destination handles, persistence, responsive
 state, and expanded headers are unchanged.
 
 TDD/review evidence: dedicated contract tests cover vertical labels, geometry,
-badge visibility/tooltips, and the unchanged horizontal default. On the
-rebased tree, 80 focused tests passed across
+badge visibility/tooltips, paint containment, centered columns, and the
+unchanged horizontal default. On the rebased tree, 81 focused tests passed across
 `Tests/UI/test_console_rail_handle.py`, `Tests/UI/test_destination_rail.py`,
 `Tests/UI/test_console_inspector_compact_access.py`,
 `Tests/Chat/test_console_rail_state.py`, and
 `Tests/UI/test_css_build_integrity.py`. The mounted compact-access coverage
 exercises both real Console handles at narrow terminal widths.
+
+Post-PR visual review exposed that Textual's compact `Button` still painted one
+cell of line padding on each side of the declared one-cell vertical control.
+That overflow was masked by the framed left handle but visibly displaced the
+unframed right handle. The follow-up clears `line_pad` inline, centers the
+one-cell child inside both three-cell handles, and adds a paint-level regression
+that failed on the broken render before passing with the correction.
 
 The repository-wide `pytest -q` command was run before PR creation but stopped
 during collection with 28 environment/unrelated errors: the standard `[dev]`
@@ -92,8 +99,10 @@ Reason: The completed work is a reversible, opt-in presentation refinement;
 it changes no stored state, service contract, provider boundary, or long-lived
 application architecture.
 
-Lessons learned: no new general lesson was added. The rebase reinforced the
-existing generated-CSS rule in `backlog/docs/lessons-backlog-hygiene.md`; the
-component source was reconciled first and the bundle was regenerated rather
-than hand-merged.
+Lessons learned: no duplicate lesson was added. The existing "A button's region
+width proves nothing about whether its label renders" entry in
+`backlog/docs/lessons-testing-evidence.md` describes this exact Textual
+`line_pad` trap; the new paint-level regression applies that lesson directly.
+The component source was updated first and the bundle was regenerated rather
+than hand-edited.
 <!-- SECTION:NOTES:END -->

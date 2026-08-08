@@ -74,6 +74,7 @@ class ConsoleRailHandle(DestinationRailHandle):
                 child.styles.height = "1fr"
                 child.styles.min_height = 0
                 child.styles.max_height = None
+                child.styles.line_pad = 0
             elif isinstance(child, Static):
                 child.add_class("console-rail-handle-badge-vertical")
                 child.styles.width = self.VERTICAL_CONTENT_WIDTH

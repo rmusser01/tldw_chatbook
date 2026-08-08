@@ -2707,6 +2707,7 @@ with stray left-edge border fragments), and padding 0 1 so the full
     height: 100%;
     min-height: 20;
     max-height: 100%;
+    align-horizontal: center;
 }
 
 .console-rail-handle-button-vertical {
