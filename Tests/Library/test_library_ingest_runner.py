@@ -28,7 +28,8 @@ import subprocess
 import sys
 import textwrap
 import threading
-from types import SimpleNamespace
+import time
+from types import MappingProxyType, SimpleNamespace
 from pathlib import Path
 from typing import Any, Callable, Optional
 from unittest.mock import patch
@@ -37,6 +38,7 @@ import pytest
 from textual.app import App
 
 import tldw_chatbook.app as _app_module
+import tldw_chatbook.STT.parakeet_dispatch as _parakeet_dispatch_module
 from tldw_chatbook.app import LibraryIngestQueueMixin
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
 from tldw_chatbook.Library.library_ingest_jobs import (
@@ -57,6 +59,7 @@ from tldw_chatbook.STT.executor import (
     ModelIdentity,
     WorkerPhase,
 )
+from tldw_chatbook.STT.parakeet_dispatch import ParakeetDispatch
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -242,8 +245,9 @@ class _IngestRunnerHarness(LibraryIngestQueueMixin, App):
         self._ingest_parse_pool_stop_event: Optional[threading.Event] = None
         self._ingest_parsed_payloads: dict[str, dict] = {}
         self._ingest_shutdown = False
-        self._local_stt_executor_lock = threading.Lock()
+        self._local_stt_executor_lock = threading.RLock()
         self._local_stt_executor = local_stt_executor
+        self._local_stt_dispatch_coordinator = None
         self._ingest_local_stt_jobs: dict[str, tuple[int, str]] = {}
         self._pool_factory = pool_factory or (lambda: _FakeIngestParsePool())
         self._pool_create_count = 0
@@ -287,6 +291,23 @@ def _fake_local_stt_dispatch(job, options) -> dict[str, Any]:
         "managed_store_root": None,
         "managed_artifact_ref": None,
     }
+
+
+def _fake_parakeet_dispatch() -> ParakeetDispatch:
+    return ParakeetDispatch(
+        identity=ModelIdentity(
+            provider_id="parakeet-onnx",
+            model_id="nemo-parakeet-tdt-0.6b-v2",
+            root_revision=None,
+            closure_fingerprint=None,
+            precision="int8",
+            device=ExecutionDevice.CPU,
+        ),
+        local_source=None,
+        managed_store_root=None,
+        managed_artifact_ref=None,
+        option_updates=MappingProxyType({}),
+    )
 
 
 def _make_db(tmp_path: Path, name: str = "library_ingest.db") -> MediaDatabase:
@@ -1327,8 +1348,9 @@ async def test_explicit_parakeet_directory_uses_central_validated_path(
     ):
         (validated_dir / filename).write_bytes(filename.encode("utf-8"))
 
-    with patch(
-        "tldw_chatbook.Utils.path_validation.validate_path_simple",
+    with patch.object(
+        _parakeet_dispatch_module,
+        "validate_path_simple",
         return_value=validated_dir,
     ):
         async with app.run_test() as pilot:
@@ -1349,13 +1371,117 @@ async def test_explicit_parakeet_directory_uses_central_validated_path(
     assert executor.calls[0]["options"]["transcription_model_dir"] == str(validated_dir)
 
 
+def test_parakeet_dispatch_delegates_to_shared_resolver_and_copies_updates(
+    tmp_path: Path,
+) -> None:
+    app = _IngestRunnerHarness(None)
+    job = LibraryIngestJob(job_id="job-shared-resolver", source_path="speech.wav")
+    identity = ModelIdentity(
+        provider_id="parakeet-onnx",
+        model_id="fixture-model",
+        root_revision="fixture-revision",
+        closure_fingerprint="fixture-closure",
+        precision="f32",
+        device=ExecutionDevice.CPU,
+    )
+    resolved = ParakeetDispatch(
+        identity=identity,
+        local_source=None,
+        managed_store_root=tmp_path / "managed",
+        managed_artifact_ref=("artifact", "revision", "variant"),
+        option_updates=MappingProxyType(
+            {
+                "transcription_model_dir": str(tmp_path / "resolved"),
+                "_verify_legacy_parakeet_v2": True,
+            }
+        ),
+    )
+    requested = tmp_path / "requested"
+    requested.mkdir()
+    for filename in (
+        "config.json",
+        "vocab.txt",
+        "encoder-model.onnx",
+        "encoder-model.onnx.data",
+        "decoder_joint-model.onnx",
+    ):
+        (requested / filename).write_bytes(filename.encode())
+    options = {
+        "transcription_provider": "parakeet-onnx",
+        "transcription_model": "fixture-model",
+        "transcription_precision": "f32",
+        "transcription_model_dir": str(requested),
+    }
+
+    with patch.object(
+        _parakeet_dispatch_module,
+        "resolve_parakeet_dispatch",
+        autospec=True,
+        return_value=resolved,
+    ) as resolver:
+        dispatch = app._build_local_stt_dispatch(job, options)
+
+    resolver.assert_called_once_with(
+        model_id="fixture-model",
+        precision="f32",
+        model_dir=str(requested),
+    )
+    assert dispatch == {
+        "attempt_id": "job-shared-resolver-attempt-1",
+        "identity": identity,
+        "local_source": None,
+        "managed_store_root": tmp_path / "managed",
+        "managed_artifact_ref": ("artifact", "revision", "variant"),
+    }
+    assert options["transcription_model_dir"] == str(tmp_path / "resolved")
+    assert options["_verify_legacy_parakeet_v2"] is True
+
+
+def test_transcribe_cpp_dispatch_stays_on_gguf_resolution(
+    tmp_path: Path,
+) -> None:
+    model_path = tmp_path / "model.gguf"
+    model_path.write_bytes(b"gguf")
+    app = _IngestRunnerHarness(None)
+    options = {
+        "transcription_provider": "transcribe-cpp",
+        "transcription_precision": "native",
+        "transcription_context": {"model_path": str(model_path)},
+    }
+    admission = SimpleNamespace(
+        path=model_path,
+        metadata=SimpleNamespace(architecture="whisper"),
+    )
+
+    with (
+        patch(
+            "tldw_chatbook.Model_Artifacts.gguf_admission.validate_local_gguf",
+            return_value=admission,
+        ),
+        patch.object(
+            _parakeet_dispatch_module,
+            "resolve_parakeet_dispatch",
+            side_effect=AssertionError("Parakeet resolver used for transcribe.cpp"),
+        ),
+    ):
+        dispatch = app._build_local_stt_dispatch(
+            LibraryIngestJob(job_id="job-gguf", source_path="speech.wav"),
+            options,
+        )
+
+    assert dispatch["identity"].provider_id == "transcribe-cpp"
+    assert dispatch["identity"].model_id == "local-gguf:whisper"
+    assert dispatch["identity"].device is ExecutionDevice.AUTO
+    assert dispatch["local_source"].paths == (model_path,)
+    assert "transcription_model_dir" not in options
+
+
 def test_managed_parakeet_dispatch_selects_exact_model_and_precision(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from tldw_chatbook.Local_Ingestion import parakeet_v2_artifact as artifacts
     from tldw_chatbook.Local_Ingestion.stt_batch_routing import PARAKEET_V3_MODEL
-    from tldw_chatbook.Model_Artifacts import store as artifact_store
 
     reference = artifacts.parakeet_reference(PARAKEET_V3_MODEL, "f32")
     handle = SimpleNamespace(
@@ -1374,13 +1500,17 @@ def test_managed_parakeet_dispatch_selects_exact_model_and_precision(
     lease = _Lease()
     service = SimpleNamespace(acquire=lambda selected: lease)
     monkeypatch.setattr(
-        artifacts,
+        _parakeet_dispatch_module,
         "active_managed_parakeet_dir",
         lambda model, precision, service=None: tmp_path / "managed-root",
     )
-    monkeypatch.setattr(artifacts, "parakeet_v2_managed_service", lambda: service)
     monkeypatch.setattr(
-        artifact_store,
+        _parakeet_dispatch_module,
+        "parakeet_v2_managed_service",
+        lambda: service,
+    )
+    monkeypatch.setattr(
+        _parakeet_dispatch_module,
         "managed_model_artifact_root",
         lambda: tmp_path / "managed",
     )
@@ -1442,7 +1572,6 @@ def test_unqualified_legacy_v2_folder_cannot_satisfy_a_v3_dispatch(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from tldw_chatbook.Local_Ingestion import parakeet_v2_artifact as artifacts
     from tldw_chatbook.Local_Ingestion.stt_batch_routing import PARAKEET_V3_MODEL
 
     legacy_v2 = tmp_path / "legacy-v2-int8"
@@ -1464,29 +1593,26 @@ def test_unqualified_legacy_v2_folder_cannot_satisfy_a_v3_dispatch(
         else None,
     )
     monkeypatch.setattr(
-        artifacts,
+        _parakeet_dispatch_module,
         "active_managed_parakeet_dir",
         lambda model, precision, service=None: None,
     )
     monkeypatch.setattr(
-        artifacts,
+        _parakeet_dispatch_module,
         "parakeet_v2_managed_service",
         lambda: SimpleNamespace(),
     )
     app = _IngestRunnerHarness(None)
 
-    dispatch = app._build_local_stt_dispatch(
-        LibraryIngestJob(job_id="job-v3", source_path="speech.wav"),
-        {
-            "transcription_provider": "parakeet-onnx",
-            "transcription_model": PARAKEET_V3_MODEL,
-            "transcription_precision": "int8",
-        },
-    )
-
-    assert dispatch["identity"].model_id == PARAKEET_V3_MODEL
-    assert dispatch["local_source"] is None
-    assert dispatch["managed_artifact_ref"] is None
+    with pytest.raises(FileNotFoundError, match="No installed Parakeet artifact"):
+        app._build_local_stt_dispatch(
+            LibraryIngestJob(job_id="job-v3", source_path="speech.wav"),
+            {
+                "transcription_provider": "parakeet-onnx",
+                "transcription_model": PARAKEET_V3_MODEL,
+                "transcription_precision": "int8",
+            },
+        )
 
 
 @pytest.mark.asyncio
@@ -1548,6 +1674,134 @@ async def test_executor_heavy_job_leaves_remaining_pool_slots_for_documents(
         assert len(executor.calls) == 1
         assert len(pool.calls) == 2
         assert app.library_ingest_jobs.counts()["parsing"] == 3
+
+
+@pytest.mark.asyncio
+async def test_dictation_reservation_gates_only_heavy_library_work(
+    tmp_path: Path,
+) -> None:
+    pool = _FakeIngestParsePool(auto_run=False)
+    executor = _FakeLocalSTTExecutor()
+    app = _IngestRunnerHarness(
+        _make_db(tmp_path),
+        pool_factory=lambda: pool,
+        worker_count=2,
+        heavy_lane=1,
+        local_stt_executor=executor,
+        local_stt_dispatch_factory=_fake_local_stt_dispatch,
+    )
+    coordinator = app._ensure_local_stt_dispatch_coordinator()
+    coordinator.begin_dictation(
+        capture_generation=1,
+        dispatch=_fake_parakeet_dispatch(),
+        sample_rate=16_000,
+        channels=1,
+        sample_width=2,
+        language="en",
+        on_logical_segment=lambda _sequence, _text: None,
+    )
+    audio = tmp_path / "reserved.wav"
+    audio.write_bytes(b"fixture")
+    document = _write_text_file(tmp_path, "document.txt", "document body")
+
+    async with app.run_test() as pilot:
+        audio_job = app.submit_library_ingest_job(
+            source_path=str(audio),
+            ingest_options={"audio_video": {"transcription_provider": "parakeet-onnx"}},
+        )
+        document_job = app.submit_library_ingest_job(source_path=str(document))
+        await pilot.pause()
+
+        states = {job.job_id: job.state for job in app.library_ingest_jobs.jobs()}
+        assert states[audio_job.job_id] is IngestJobState.QUEUED
+        assert states[document_job.job_id] is IngestJobState.PARSING
+        assert len(pool.calls) == 1
+        assert pool.calls[0]["args"][0] == document_job.source_path
+        assert executor.calls == []
+        reserved_audio = app.library_ingest_jobs.get_job(audio_job.job_id)
+        assert reserved_audio is not None
+        assert reserved_audio.error == ""
+
+
+@pytest.mark.asyncio
+async def test_library_terminal_hands_executor_to_pending_dictation_before_top_up(
+    tmp_path: Path,
+) -> None:
+    executor = _FakeLocalSTTExecutor()
+    app = _IngestRunnerHarness(
+        _make_db(tmp_path),
+        worker_count=1,
+        heavy_lane=1,
+        local_stt_executor=executor,
+        local_stt_dispatch_factory=_fake_local_stt_dispatch,
+    )
+    first_path = tmp_path / "first.wav"
+    first_path.write_bytes(b"first")
+    second_path = tmp_path / "second.wav"
+    second_path.write_bytes(b"second")
+
+    async with app.run_test() as pilot:
+        first = app.submit_library_ingest_job(
+            source_path=str(first_path),
+            ingest_options={"audio_video": {"transcription_provider": "parakeet-onnx"}},
+        )
+        await pilot.pause()
+        coordinator = app._ensure_local_stt_dispatch_coordinator()
+        handle = coordinator.begin_dictation(
+            capture_generation=2,
+            dispatch=_fake_parakeet_dispatch(),
+            sample_rate=16_000,
+            channels=1,
+            sample_width=2,
+            language="en",
+            on_logical_segment=lambda _sequence, _text: None,
+        )
+        handle.append_segment(b"\x00\x00")
+        handle.finish()
+        second = app.submit_library_ingest_job(
+            source_path=str(second_path),
+            ingest_options={"audio_video": {"transcription_provider": "parakeet-onnx"}},
+        )
+        await pilot.pause()
+        first_attempt = executor.calls[0]["attempt_id"]
+
+        executor.trigger_failure(
+            0,
+            ExecutorFailure(
+                1,
+                first_attempt,
+                TranscriptionFailureCode.CANCELLED,
+            ),
+        )
+        for _ in range(_POLL_ATTEMPTS):
+            if len(executor.calls) >= 2:
+                break
+            await pilot.pause(_POLL_INTERVAL)
+
+        assert [call["job_id"] for call in executor.calls] == [first.job_id, None]
+        second_job = app.library_ingest_jobs.get_job(second.job_id)
+        assert second_job is not None
+        assert second_job.state is IngestJobState.QUEUED
+
+        dictation_attempt = executor.calls[1]["attempt_id"]
+        executor.trigger_result(
+            1,
+            ExecutorResult(
+                1,
+                dictation_attempt,
+                {"logical_segments": ["dictated"]},
+            ),
+        )
+        for _ in range(_POLL_ATTEMPTS):
+            if len(executor.calls) >= 3:
+                break
+            await pilot.pause(_POLL_INTERVAL)
+
+        assert [call["job_id"] for call in executor.calls] == [
+            first.job_id,
+            None,
+            second.job_id,
+        ]
 
 
 @pytest.mark.asyncio
@@ -1971,6 +2225,92 @@ def test_shutdown_closes_local_executor_off_caller_thread(tmp_path: Path) -> Non
     assert app._local_stt_executor is None
     assert executor.close_thread_ident is not None
     assert executor.close_thread_ident != caller_thread
+
+
+def test_shutdown_closes_and_detaches_coordinator_before_executor_teardown(
+    tmp_path: Path,
+) -> None:
+    class _BlockingExecutor(_FakeLocalSTTExecutor):
+        def __init__(self) -> None:
+            super().__init__()
+            self.close_started = threading.Event()
+            self.close_release = threading.Event()
+
+        def close(self) -> None:
+            self.close_started.set()
+            assert self.close_release.wait(5.0)
+            super().close()
+
+    executor = _BlockingExecutor()
+    app = _IngestRunnerHarness(_make_db(tmp_path), local_stt_executor=executor)
+    coordinator = app._ensure_local_stt_dispatch_coordinator()
+    handle = coordinator.begin_dictation(
+        capture_generation=3,
+        dispatch=_fake_parakeet_dispatch(),
+        sample_rate=16_000,
+        channels=1,
+        sample_width=2,
+        language="en",
+        on_logical_segment=lambda _sequence, _text: None,
+    )
+
+    started = time.monotonic()
+    teardown = app._shutdown_ingest_parse_pool()
+    elapsed = time.monotonic() - started
+
+    assert elapsed < 0.5
+    assert app._local_stt_dispatch_coordinator is None
+    assert app._local_stt_executor is None
+    with pytest.raises(RuntimeError, match="closed"):
+        coordinator.begin_dictation(
+            capture_generation=4,
+            dispatch=_fake_parakeet_dispatch(),
+            sample_rate=16_000,
+            channels=1,
+            sample_width=2,
+            language="en",
+            on_logical_segment=lambda _sequence, _text: None,
+        )
+    with pytest.raises(RuntimeError) as cancelled:
+        handle.wait()
+    assert cancelled.value.args == (TranscriptionFailureCode.CANCELLED,)
+    assert executor.cancel_calls == []
+    assert executor.close_started.wait(1.0)
+    assert executor.close_thread_ident is None
+
+    executor.close_release.set()
+    assert teardown is not None
+    teardown.join(timeout=5.0)
+    assert not teardown.is_alive()
+    assert executor.close_thread_ident is not None
+
+
+def test_shutdown_cooperatively_cancels_active_dictation_before_executor_close(
+    tmp_path: Path,
+) -> None:
+    executor = _FakeLocalSTTExecutor()
+    app = _IngestRunnerHarness(_make_db(tmp_path), local_stt_executor=executor)
+    coordinator = app._ensure_local_stt_dispatch_coordinator()
+    handle = coordinator.begin_dictation(
+        capture_generation=5,
+        dispatch=_fake_parakeet_dispatch(),
+        sample_rate=16_000,
+        channels=1,
+        sample_width=2,
+        language="en",
+        on_logical_segment=lambda _sequence, _text: None,
+    )
+    handle.append_segment(b"\x00\x00")
+    attempt_id = executor.calls[0]["attempt_id"]
+
+    teardown = app._shutdown_ingest_parse_pool()
+
+    assert executor.cancel_calls == [attempt_id]
+    assert app._local_stt_dispatch_coordinator is None
+    assert app._local_stt_executor is None
+    assert teardown is not None
+    teardown.join(timeout=5.0)
+    assert not teardown.is_alive()
 
 
 def test_shutdown_thread_waits_for_executor_and_parse_pool(tmp_path: Path) -> None:

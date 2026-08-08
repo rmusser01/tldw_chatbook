@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any
+from unittest.mock import patch
 
 import pytest
 
@@ -26,6 +29,87 @@ def _minimal_app(media_db: Any = None) -> TldwCli:
     app.media_db = media_db
     app._top_up_ingest_parse_pool = lambda: None  # type: ignore[method-assign]
     return app
+
+
+def _minimal_stt_app() -> TldwCli:
+    app = object.__new__(TldwCli)
+    app._ingest_shutdown = False
+    app._local_stt_executor_lock = threading.RLock()
+    app._local_stt_executor = None
+    app._local_stt_dispatch_coordinator = None
+    app._marshal_local_stt_call = lambda callback: callback()  # type: ignore[method-assign]
+    app._top_up_ingest_parse_pool = lambda: None  # type: ignore[method-assign]
+    return app
+
+
+def test_local_stt_accessors_share_one_executor_and_coordinator_without_deadlock(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = _minimal_stt_app()
+    created: list[object] = []
+
+    def create_executor() -> object:
+        executor = object()
+        created.append(executor)
+        return executor
+
+    monkeypatch.setattr(app, "_create_local_stt_executor", create_executor)
+    barrier = threading.Barrier(8)
+
+    def resolve(index: int) -> tuple[object, object]:
+        barrier.wait(timeout=2.0)
+        if index % 2:
+            coordinator = app._ensure_local_stt_dispatch_coordinator()
+            executor = app._ensure_local_stt_executor()
+        else:
+            executor = app._ensure_local_stt_executor()
+            coordinator = app._ensure_local_stt_dispatch_coordinator()
+        return executor, coordinator
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        futures = [pool.submit(resolve, index) for index in range(8)]
+        resolved = [future.result(timeout=2.0) for future in futures]
+
+    executors = {id(executor) for executor, _coordinator in resolved}
+    coordinators = {id(coordinator) for _executor, coordinator in resolved}
+    assert len(created) == 1
+    assert len(executors) == 1
+    assert len(coordinators) == 1
+    assert resolved[0][1]._executor is resolved[0][0]
+
+
+def test_console_dictation_factory_injects_app_owned_coordinator() -> None:
+    app = _minimal_stt_app()
+    coordinator = object()
+    app._ensure_local_stt_dispatch_coordinator = lambda: coordinator  # type: ignore[method-assign]
+
+    class _FakeTranscriptionService:
+        def __init__(self, *, local_stt_dispatcher: object) -> None:
+            self.local_stt_dispatcher = local_stt_dispatcher
+
+    class _FakeLazyService:
+        def __init__(self, **kwargs: Any) -> None:
+            self.kwargs = kwargs
+
+    with (
+        patch(
+            "tldw_chatbook.Audio.dictation_service_lazy.LazyLiveDictationService",
+            _FakeLazyService,
+        ),
+        patch(
+            "tldw_chatbook.Local_Ingestion.transcription_service.TranscriptionService",
+            _FakeTranscriptionService,
+        ),
+    ):
+        service = app._create_console_dictation_service(
+            transcription_provider="parakeet-onnx",
+            language="en",
+        )
+
+    assert service.kwargs["transcription_provider"] == "parakeet-onnx"
+    assert service.kwargs["language"] == "en"
+    transcription = service.kwargs["transcription_service_factory"]()
+    assert transcription.local_stt_dispatcher is coordinator
 
 
 def _make_job(

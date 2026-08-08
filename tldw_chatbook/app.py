@@ -251,6 +251,7 @@ from tldw_chatbook.STT.executor import (
     WorkerPhase,
     snapshot_local_source,
 )
+from tldw_chatbook.STT.dispatch_coordinator import LocalSTTDispatchCoordinator
 from tldw_chatbook.Home.active_work_adapter import (
     HomeControlAction,
     HomeControlResult,
@@ -2654,6 +2655,43 @@ class LibraryIngestQueueMixin:
                 self._local_stt_executor = executor
             return executor
 
+    def _ensure_local_stt_dispatch_coordinator(
+        self,
+    ) -> LocalSTTDispatchCoordinator:
+        """Return the one app-owned admission coordinator lazily."""
+
+        with self._local_stt_executor_lock:
+            if self._ingest_shutdown:
+                raise ExecutorUnavailableError("Local STT is shutting down")
+            executor = self._ensure_local_stt_executor()
+            coordinator = getattr(self, "_local_stt_dispatch_coordinator", None)
+            if coordinator is None:
+                coordinator = LocalSTTDispatchCoordinator(
+                    executor,
+                    on_dictation_idle=lambda: self._marshal_local_stt_call(
+                        self._top_up_ingest_parse_pool
+                    ),
+                )
+                self._local_stt_dispatch_coordinator = coordinator
+            return coordinator
+
+    def _create_console_dictation_service(self, **kwargs: Any) -> Any:
+        """Build Console dictation without importing its native stack eagerly."""
+
+        from tldw_chatbook.Audio.dictation_service_lazy import (
+            LazyLiveDictationService,
+        )
+        from tldw_chatbook.Local_Ingestion.transcription_service import (
+            TranscriptionService,
+        )
+
+        return LazyLiveDictationService(
+            **kwargs,
+            transcription_service_factory=lambda: TranscriptionService(
+                local_stt_dispatcher=self._ensure_local_stt_dispatch_coordinator()
+            ),
+        )
+
     def _build_local_stt_dispatch(
         self,
         job: LibraryIngestJob,
@@ -2703,84 +2741,23 @@ class LibraryIngestQueueMixin:
                     else None
                 )
 
-            if selected_dir:
-                from tldw_chatbook.Utils.path_validation import (
-                    validate_path_simple,
-                )
+            from tldw_chatbook.STT.parakeet_dispatch import (
+                resolve_parakeet_dispatch,
+            )
 
-                model_root = validate_path_simple(
-                    selected_dir,
-                    require_exists=True,
-                )
-                filenames = (
-                    (
-                        "config.json",
-                        "vocab.txt",
-                        "encoder-model.int8.onnx",
-                        "decoder_joint-model.int8.onnx",
-                    )
-                    if precision == "int8"
-                    else (
-                        "config.json",
-                        "vocab.txt",
-                        "encoder-model.onnx",
-                        "encoder-model.onnx.data",
-                        "decoder_joint-model.onnx",
-                    )
-                )
-                required = tuple(model_root / filename for filename in filenames)
-                local_source = snapshot_local_source(required)
-                options["transcription_model_dir"] = str(model_root)
-            else:
-                from tldw_chatbook.Local_Ingestion.parakeet_v2_artifact import (
-                    active_managed_parakeet_dir,
-                    parakeet_reference,
-                    parakeet_v2_managed_service,
-                )
-                from tldw_chatbook.Local_Ingestion.parakeet_v2_installer import (
-                    PARAKEET_V2_FILES,
-                    VERIFICATION_RECEIPT,
-                    parakeet_v2_install_dir,
-                )
-                from tldw_chatbook.Model_Artifacts.store import (
-                    managed_model_artifact_root,
-                )
-
-                service = parakeet_v2_managed_service()
-                reference = parakeet_reference(model_id, precision)
-                if (
-                    active_managed_parakeet_dir(
-                        model_id,
-                        precision,
-                        service=service,
-                    )
-                    is not None
-                ):
-                    leased = service.acquire(reference)
-                    try:
-                        root_revision = leased.handle.root.revision
-                        closure_fingerprint = leased.handle.closure_fingerprint
-                    finally:
-                        leased.close()
-                    managed_store_root = managed_model_artifact_root()
-                    managed_artifact_ref = (
-                        reference.artifact_id,
-                        reference.revision,
-                        reference.variant,
-                    )
-                elif model_id == PARAKEET_V2_MODEL and precision == "int8":
-                    legacy_root = parakeet_v2_install_dir()
-                    legacy_paths = (
-                        legacy_root / VERIFICATION_RECEIPT,
-                        *(
-                            legacy_root / descriptor.filename
-                            for descriptor in PARAKEET_V2_FILES
-                        ),
-                    )
-                    if all(path.is_file() for path in legacy_paths):
-                        local_source = snapshot_local_source(legacy_paths)
-                        options["transcription_model_dir"] = str(legacy_root)
-                        options["_verify_legacy_parakeet_v2"] = True
+            resolved = resolve_parakeet_dispatch(
+                model_id=model_id,
+                precision=precision,
+                model_dir=selected_dir,
+            )
+            options.update(resolved.option_updates)
+            return {
+                "attempt_id": attempt_id,
+                "identity": resolved.identity,
+                "local_source": resolved.local_source,
+                "managed_store_root": resolved.managed_store_root,
+                "managed_artifact_ref": resolved.managed_artifact_ref,
+            }
 
         identity = ModelIdentity(
             provider_id=provider,
@@ -2832,8 +2809,8 @@ class LibraryIngestQueueMixin:
             dispatch = self._build_local_stt_dispatch(job, options)
             if dispatch["attempt_id"] != attempt_id:
                 raise RuntimeError("Local STT attempt identity changed")
-            executor = self._ensure_local_stt_executor()
-            generation = executor.submit(
+            coordinator = self._ensure_local_stt_dispatch_coordinator()
+            generation = coordinator.submit_library(
                 attempt_id=attempt_id,
                 job_id=job.job_id,
                 source=FileAudioSource(Path(job.source_path)),
@@ -3184,7 +3161,15 @@ class LibraryIngestQueueMixin:
             # A legacy heavy-lane override above one must not turn the next
             # queued audio/video job into a spurious ExecutorBusyError.
             local_stt_busy = bool(self._ingest_local_stt_jobs)
-            heavy_full = heavy_parsing_count >= heavy_cap or local_stt_busy
+            coordinator = getattr(self, "_local_stt_dispatch_coordinator", None)
+            dictation_reserved = bool(
+                coordinator is not None and coordinator.dictation_reserved
+            )
+            heavy_full = (
+                heavy_parsing_count >= heavy_cap
+                or local_stt_busy
+                or dictation_reserved
+            )
             job = self.library_ingest_jobs.next_queued(
                 skip_types=_INGEST_HEAVY_TYPES if heavy_full else frozenset()
             )
@@ -3551,7 +3536,11 @@ class LibraryIngestQueueMixin:
         """
         self._ingest_shutdown = True
         with self._local_stt_executor_lock:
+            coordinator = getattr(self, "_local_stt_dispatch_coordinator", None)
             executor = getattr(self, "_local_stt_executor", None)
+            if coordinator is not None:
+                coordinator.close()
+            self._local_stt_dispatch_coordinator = None
             self._local_stt_executor = None
         local_jobs = getattr(self, "_ingest_local_stt_jobs", None)
         if local_jobs is None:
@@ -5656,8 +5645,11 @@ class TldwCli(
         self._ingest_parse_jobs_by_generation: dict[int, set[str]] = {}
         self._ingest_parse_pool_stop_event: Optional[threading.Event] = None
         self._ingest_parsed_payloads: dict[str, dict] = {}
-        self._local_stt_executor_lock = threading.Lock()
+        self._local_stt_executor_lock = threading.RLock()
         self._local_stt_executor: Optional[LocalSTTExecutor] = None
+        self._local_stt_dispatch_coordinator: Optional[
+            LocalSTTDispatchCoordinator
+        ] = None
         self._ingest_local_stt_jobs: dict[str, tuple[int, str]] = {}
         self._ingest_shutdown: bool = False
 
