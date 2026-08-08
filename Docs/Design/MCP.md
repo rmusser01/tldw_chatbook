@@ -211,6 +211,31 @@ Ingest media from URLs or files (placeholder).
   - `tags`: Optional tags
 - **Returns**: Ingestion status and media ID
 
+### Library Tools (read-only, descriptor-backed)
+
+In addition to the legacy tools above, the local MCP surface exposes 18
+read-only `library_*` tools — `library_list_*`, `library_get_*`, and
+`library_search_*` for each of Media, Notes, Prompts, Skills, Conversations,
+and Collections. They answer factual Library questions (list, count, view,
+lexical search) without touching the RAG/embedding pipeline.
+
+- **Registration**: appended to the capability manifest from the descriptor
+  table in `Library/library_tool_contract.py`
+  (`_describe_local_library_tools` in `server.py`); dispatched in-process by
+  `LocalMCPRuntimeDelegate` to the shared synchronous service. Entirely
+  FastMCP-free.
+- **Semantics**: bounded pages with exact totals; opaque stable IDs
+  (`type:<base64url>`); literal keyword-only search (no semantic/embedding);
+  get tools read bounded windows with revision-checked continuation cursors;
+  every serialized response fits within 32 KiB.
+- **Compatibility**: the legacy tools above are unchanged; the `library_*`
+  namespace is additive and independent of the Console
+  `[console].direct_library_tools` toggle.
+
+See `Docs/Development/Agent-Tools/local-library-tools.md` for the full
+contract (exact names, pagination, continuation, error codes, and security
+boundaries).
+
 ## MCP Resources
 
 Resources provide direct access to tldw_chatbook data through URI templates:
