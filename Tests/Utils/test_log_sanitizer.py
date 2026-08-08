@@ -61,7 +61,9 @@ def test_real_shipped_sensitive_key_names_are_redacted() -> None:
         "dsn",
     ],
 )
-def test_log_protocol_fields_are_redacted_without_expanding_config_policy(key: str) -> None:
+def test_log_protocol_fields_are_redacted_without_expanding_config_policy(
+    key: str,
+) -> None:
     """Redact protocol-only fields while keeping config policy intentionally narrow."""
     assert not is_sensitive_config_key(key)
     assert sanitize_dict({key: "PRIVATE_PROTOCOL_VALUE"})[key] == "***REDACTED***"
@@ -174,7 +176,9 @@ def test_explicit_provider_labels_redact_quoted_and_unquoted_values(label: str) 
     assert sanitize_string(f"{label}=PRIVATE_UNQUOTED") == f"{label}=***REDACTED***"
 
 
-def test_all_config_derived_sensitive_labels_redact_quoted_and_unquoted_values() -> None:
+def test_all_config_derived_sensitive_labels_redact_quoted_and_unquoted_values() -> (
+    None
+):
     """Keep string logging aligned with the shared sensitive-key policy."""
     default_config = tomllib.loads(CONFIG_TOML_CONTENT)
     labels = {
@@ -182,9 +186,7 @@ def test_all_config_derived_sensitive_labels_redact_quoted_and_unquoted_values()
         for key in _iter_leaf_key_names(default_config)
         if is_sensitive_config_key(key)
     }
-    labels.update(
-        key for key in DEFAULT_APP_TTS_CONFIG if is_sensitive_config_key(key)
-    )
+    labels.update(key for key in DEFAULT_APP_TTS_CONFIG if is_sensitive_config_key(key))
 
     for index, label in enumerate(sorted(labels)):
         quoted = f'{label}="PRIVATE_QUOTED_{index}"'
@@ -277,7 +279,9 @@ def test_sanitize_string_keeps_non_string_str_fallback() -> None:
     assert sanitize_string(1234) == "1234"
 
 
-def test_formatting_failure_sanitizes_template_without_interpolating_raw_arguments() -> None:
+def test_formatting_failure_sanitizes_template_without_interpolating_raw_arguments() -> (
+    None
+):
     """Do not leak raw arguments when formatting falls back to its template."""
     result = create_safe_log_message("api_key={missing}", "PRIVATE_ARGUMENT")
 

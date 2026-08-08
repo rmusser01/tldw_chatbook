@@ -139,6 +139,7 @@ def _redact_assignments(text: str) -> str:
 
     return _apply_replacements(text, spans)
 
+
 def sanitize_string(text: str) -> str:
     """
     Sanitize a string by removing sensitive data patterns.

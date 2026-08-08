@@ -1606,8 +1606,7 @@ class URLMonitor:
             pruned = cursor.rowcount
             if pruned > 0:
                 logger.debug(
-                    "Pruned {} snapshot(s) for subscription {}, "
-                    "keeping the newest {}",
+                    "Pruned {} snapshot(s) for subscription {}, keeping the newest {}",
                     pruned,
                     subscription_id,
                     _SNAPSHOTS_KEPT_PER_URL,

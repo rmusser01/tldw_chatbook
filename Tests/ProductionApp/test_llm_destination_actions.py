@@ -667,7 +667,9 @@ def test_ollama_success_payloads_are_bounded_and_redacted() -> None:
     assert names == ["claude-opus-4-20250514", "org/model injected"]
 
 
-def test_transformers_model_scan_preserves_claude_ids_as_one_line(tmp_path: Path) -> None:
+def test_transformers_model_scan_preserves_claude_ids_as_one_line(
+    tmp_path: Path,
+) -> None:
     model_root = tmp_path / "models--anthropic--claude-opus-4-20250514"
     model_root.mkdir()
     (model_root / "config.json").write_text("{}", encoding="utf-8")
@@ -685,7 +687,9 @@ def test_transformers_model_scan_normalizes_multiline_names(tmp_path: Path) -> N
     (model_root / "config.json").write_text("{}", encoding="utf-8")
     (model_root / "model.safetensors").touch()
 
-    assert transformers_events.scan_transformers_local_models(tmp_path) == ["org/line name"]
+    assert transformers_events.scan_transformers_local_models(tmp_path) == [
+        "org/line name"
+    ]
 
 
 def test_transformers_download_has_no_root_worker_completion_owner() -> None:
