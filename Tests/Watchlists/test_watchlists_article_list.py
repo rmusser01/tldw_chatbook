@@ -479,3 +479,27 @@ async def test_unread_filter_with_nothing_unread_says_all_caught_up():
 
         assert pane.query_one("#items-empty-state", Static)
         assert "caught up" in str(pane.query_one("#items-empty-state", Static).renderable)
+
+
+async def test_update_item_starred_cell_toggles_the_glyph_in_place():
+    """TASK-3072 plan task 7: the star repaint composes with the other
+    per-row repaints and -- like them -- never writes the shared dict."""
+    app = ArticleListHarness()
+    async with app.run_test(size=(120, 40)) as pilot:
+        pane = app.query_one(ArticleListPane)
+        items = [_item(1)]
+        pane.items = items
+        await pilot.pause()
+
+        pane.update_item_starred_cell(items[0]["id"], True)
+        await pilot.pause()
+        assert pane._STAR_GLYPH in str(_item_rows(pane)[0].query_one(Static).renderable)
+
+        pane.update_item_starred_cell(items[0]["id"], False)
+        await pilot.pause()
+        assert pane._STAR_GLYPH not in str(_item_rows(pane)[0].query_one(Static).renderable)
+
+        assert not items[0].get("is_flagged"), (
+            "display-only: the repaint must not freshen the shared dict "
+            "(the mark-unread guard's staleness invariant)"
+        )

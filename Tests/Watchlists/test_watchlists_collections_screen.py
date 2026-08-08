@@ -614,6 +614,129 @@ async def test_m_refuses_on_ingested_item():
         )
 
 
+# --- TASK-3072 plan task 7: `s` and the reader's Star button -------------------
+
+
+def _flagged_value(db, item_id: int) -> int:
+    row = db.conn.execute(
+        "SELECT is_flagged FROM subscription_items WHERE id = ?", (item_id,)
+    ).fetchone()
+    return int(row[0]) if row else -1
+
+
+@pytest.mark.asyncio
+async def test_s_toggles_star_on_the_open_item():
+    """`s` stars, then unstars, the open item through the service; the row's
+    star repaints in place and the Starred badge catches up through the
+    debounced counts path."""
+    from textual.widgets import Static
+
+    from tldw_chatbook.UI.Watchlists_Modules.watchlist_tree import STARRED_BUCKET
+
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+        db = app.watchlist_bundle_service._db
+        source_id = db.add_subscription(
+            name="ArXiv", type="rss", source="https://a.example/f"
+        )
+        item_id = _seed_item(db, source_id, "Star me")
+        await screen._load_items()
+        pane = screen.query_one("#watchlists-items-pane", ArticleListPane)
+        await _wait_for_items(pilot, pane)
+
+        pane.select_item_by_id(str(pane.items[0]["id"]))
+        await pilot.pause(0.3)
+        assert screen._selected_content_item is not None, "precondition: item open"
+
+        await pilot.press("s")
+        for _ in range(60):
+            await pilot.pause()
+            if _flagged_value(db, item_id) == 1:
+                break
+        assert _flagged_value(db, item_id) == 1, "`s` must star the open item"
+
+        row_widget = pane._find_row(str(pane.items[0]["id"]))
+        assert pane._STAR_GLYPH in str(row_widget.query_one(Static).renderable), (
+            "the row's star repaints in place -- no recompose"
+        )
+
+        for _ in range(80):
+            await pilot.pause(0.05)
+            if screen._tree_counts.get(STARRED_BUCKET, {}).get("unread") == 1:
+                break
+        assert screen._tree_counts[STARRED_BUCKET]["unread"] == 1, (
+            "the Starred badge must refresh through the debounced counts path"
+        )
+
+        # The open dict was patched, so the second press unstars rather than
+        # re-deriving from a stale flag.
+        await pilot.press("s")
+        for _ in range(60):
+            await pilot.pause()
+            if _flagged_value(db, item_id) == 0:
+                break
+        assert _flagged_value(db, item_id) == 0, "a second `s` must unstar"
+
+
+@pytest.mark.asyncio
+async def test_s_with_no_open_item_is_a_noop():
+    """`s` with nothing open writes nothing and raises nothing."""
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+        db = app.watchlist_bundle_service._db
+        source_id = db.add_subscription(
+            name="ArXiv", type="rss", source="https://a.example/f"
+        )
+        item_id = _seed_item(db, source_id, "Never opened")
+        await screen._load_items()
+        assert screen._selected_content_item is None, "precondition: nothing open"
+
+        await pilot.press("s")
+        await pilot.pause(0.3)
+        assert _flagged_value(db, item_id) == 0
+
+
+@pytest.mark.asyncio
+async def test_star_toggle_requested_toggles_the_same_path():
+    """The reader's Star button and the `s` key share one handler."""
+    from tldw_chatbook.UI.Watchlists_Modules.content_pane import StarToggleRequested
+
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+        db = app.watchlist_bundle_service._db
+        source_id = db.add_subscription(
+            name="ArXiv", type="rss", source="https://a.example/f"
+        )
+        item_id = _seed_item(db, source_id, "Button-starred")
+        await screen._load_items()
+        pane = screen.query_one("#watchlists-items-pane", ArticleListPane)
+        await _wait_for_items(pilot, pane)
+
+        pane.select_item_by_id(str(pane.items[0]["id"]))
+        await pilot.pause(0.3)
+        assert screen._selected_content_item is not None, "precondition: item open"
+
+        screen.post_message(
+            StarToggleRequested(dict(screen._selected_content_item))
+        )
+        for _ in range(60):
+            await pilot.pause()
+            if _flagged_value(db, item_id) == 1:
+                break
+        assert _flagged_value(db, item_id) == 1, (
+            "the button's message must reach the same write the `s` key does"
+        )
+
+
 @pytest.mark.asyncio
 async def test_space_opens_next_unread():
     """`space` walks to the next UNREAD item, skipping reviewed rows."""

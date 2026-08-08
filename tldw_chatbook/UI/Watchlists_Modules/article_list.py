@@ -418,6 +418,15 @@ class ArticleListPane(RecomposeCaptureGuard, Vertical):
         """
         self._repaint_row(item_id, queued_for_briefing=queued)
 
+    def update_item_starred_cell(self, item_id: Any, starred: bool) -> None:
+        """Repaint one row after a star write (TASK-3072 plan task 7).
+
+        Same naming note as `update_item_status_cell`. The star composes
+        with the status and queue repaints through the per-row overrides,
+        and -- like them -- never writes the shared dict back.
+        """
+        self._repaint_row(item_id, is_flagged=starred)
+
     def on_button_pressed(self, event: Button.Pressed) -> None:
         button_id = str(event.button.id)
         if button_id == "items-refresh-button":

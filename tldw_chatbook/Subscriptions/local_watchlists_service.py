@@ -635,6 +635,28 @@ class LocalWatchlistsService:
                 raise ValueError(f"Invalid watchlist item id: {item_id!r}") from exc
         return self._db().restore_items_new(row_ids)
 
+    async def set_item_flagged(self, *, item_id: Any, flagged: bool) -> None:
+        """Star or unstar one item (TASK-3072 plan task 7).
+
+        The write behind the reader's `s` key and Star button. Thin delegate
+        to `SubscriptionsDB.set_item_flagged` -- one row, one global flag,
+        with the same ``int(...)`` id normalization `restore_items_new`
+        applies to its ids.
+
+        Args:
+            item_id: The local row id (bare, already denamespaced by the
+                scope service).
+            flagged: `True` to star the item, `False` to unstar it.
+
+        Raises:
+            ValueError: If the id is not an integer id.
+        """
+        try:
+            row_id = int(item_id)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"Invalid watchlist item id: {item_id!r}") from exc
+        self._db().set_item_flagged(row_id, bool(flagged))
+
     async def delete_source(self, source_id: Any) -> dict[str, Any]:
         success = self._db().delete_subscription(int(source_id))
         return {

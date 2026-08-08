@@ -2652,3 +2652,80 @@ async def test_selecting_an_html_item_shows_readable_prose_in_the_mounted_reader
         assert "<p>" not in rendered and "<a href=" not in rendered
         assert "here" in rendered
         assert "https://example.test/post" in rendered
+
+
+# --- TASK-3072 plan task 7: the reader's Star button ---------------------------
+
+
+@pytest.mark.asyncio
+async def test_the_star_button_reflects_the_open_items_state():
+    """The button is seeded from the open item's `is_flagged`: starred items
+    read "★ Starred", unstarred read "☆ Star" -- the same vocabulary the
+    rail's Starred root and the list row's glyph speak."""
+    from textual.app import App
+    from textual.widgets import Button
+
+    from tldw_chatbook.UI.Watchlists_Modules.content_pane import ContentPane
+
+    class _PaneHost(App):
+        def compose(self):
+            pane = ContentPane()
+            pane.item = {
+                "title": "x",
+                "content": "y",
+                "content_kind": "article",
+                "is_flagged": True,
+            }
+            yield pane
+
+    app = _PaneHost()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        assert str(app.query_one("#content-star-button", Button).label) == "★ Starred"
+
+
+@pytest.mark.asyncio
+async def test_the_star_button_posts_the_toggle_and_flips_its_label():
+    """Pressing Star posts `StarToggleRequested` with the full item (the same
+    message the screen's `s` handler serves) and flips its own label
+    optimistically -- the authoritative dict patch lands screen-side, and
+    the next open re-seeds from it."""
+    from textual.app import App
+    from textual.widgets import Button
+
+    from tldw_chatbook.UI.Watchlists_Modules.content_pane import (
+        ContentPane,
+        StarToggleRequested,
+    )
+
+    class _PaneHost(App):
+        def __init__(self) -> None:
+            super().__init__()
+            self.captured: list[dict] = []
+
+        def compose(self):
+            pane = ContentPane()
+            pane.item = {"title": "x", "content": "y", "content_kind": "article"}
+            yield pane
+
+        def on_star_toggle_requested(self, message: StarToggleRequested) -> None:
+            self.captured.append(message.item)
+
+    app = _PaneHost()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        button = app.query_one("#content-star-button", Button)
+        assert str(button.label) == "☆ Star", (
+            "an unstarred item must offer the star, not hide the state"
+        )
+
+        button.press()
+        await pilot.pause()
+
+        assert [item.get("title") for item in app.captured] == ["x"], (
+            "pressing the button must post StarToggleRequested exactly once, "
+            "carrying the open item"
+        )
+        assert str(button.label) == "★ Starred", (
+            "the flip is optimistic; the dict patch lands screen-side"
+        )

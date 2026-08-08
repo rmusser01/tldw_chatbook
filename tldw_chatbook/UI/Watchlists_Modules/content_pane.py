@@ -39,6 +39,14 @@ _GLOBAL_STATUS_NOTE = (
     "everywhere it appears, in every watchlist that includes its source."
 )
 
+# The star is the same shape of fact as the read status (TASK-3072): one
+# global flag on the `subscription_items` row, not a per-watchlist copy, so
+# the tooltip says its scope the same way `_GLOBAL_STATUS_NOTE` does.
+_GLOBAL_STAR_NOTE = (
+    "Starring is shared: the star shows on this item everywhere it appears, "
+    "and feeds the Starred smart feed in the rail."
+)
+
 # Remote markdown bodies must not produce real terminal hyperlinks (PR #1091
 # review, F3; TASK-1348 AC#2 -- this is that decision, recorded).
 #
@@ -272,6 +280,18 @@ class ViewSnapshotRequested(Message):
         super().__init__()
 
 
+class StarToggleRequested(Message):
+    """Posted when the reader's Star button is pressed (TASK-3072 plan task 7).
+
+    Carries the full item dict (not just an id), same as
+    `UnreadToggleRequested`, so the screen's one star handler serves both
+    this button and the `s` key without a second lookup.
+    """
+
+    def __init__(self, item: dict[str, Any] | None) -> None:
+        self.item = item
+        super().__init__()
+
 class ExpandReaderRequested(Message):
     """Posted when the reader asks for (or gives back) the whole centre stack.
 
@@ -354,6 +374,17 @@ class ContentPane(RecomposeCaptureGuard, Vertical):
                 tooltip=_GLOBAL_STATUS_NOTE,
                 compact=True,
             )
+            # TASK-3072 plan task 7: the same star the `s` key toggles, as a
+            # button. The label reflects the open item's state on compose;
+            # the press flips it optimistically in `on_button_pressed` (the
+            # authoritative dict patch lands screen-side, and the next open
+            # re-seeds from it).
+            yield Button(
+                "★ Starred" if self.item.get("is_flagged") else "☆ Star",
+                id="content-star-button",
+                tooltip=_GLOBAL_STAR_NOTE,
+                compact=True,
+            )
             # AC#2. `Z` does the same thing from the keyboard, and the tooltip
             # says so -- but only once the user knows the region has to be
             # focused first, which is exactly the knowledge F27 says nothing
@@ -392,6 +423,17 @@ class ContentPane(RecomposeCaptureGuard, Vertical):
         if event.button.id == "content-mark-unread-button":
             event.stop()
             self.post_message(UnreadToggleRequested(self.item))
+        elif event.button.id == "content-star-button":
+            event.stop()
+            self.post_message(StarToggleRequested(self.item))
+            # Optimistic flip: no recompose (the reader must not tear down
+            # mid-press), and the shared item dict is patched screen-side on
+            # success -- the next open re-seeds the label from it.
+            event.button.label = (
+                "☆ Star"
+                if str(event.button.label).startswith("★")
+                else "★ Starred"
+            )
         elif event.button.id == "content-full-page-button":
             event.stop()
             self.post_message(ViewSnapshotRequested(self.item, "full_page"))

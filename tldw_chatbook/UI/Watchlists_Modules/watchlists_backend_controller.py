@@ -314,6 +314,20 @@ class WatchlistsBackendController:
         )
         return int(result)
 
+    async def set_item_flagged(self, *, runtime_backend: str | None = None, item_id: Any, flagged: bool) -> None:
+        """Star or unstar one item (TASK-3072 plan task 7).
+
+        The write behind the reader's `s` key and Star button; the id
+        forwards untouched (the scope service denamespaces it, exactly as
+        `update_item_status`'s does).
+        """
+        backend = self._normalize_backend(runtime_backend)
+        await self._maybe_await(
+            self.scope_service.set_item_flagged(
+                runtime_backend=backend, item_id=item_id, flagged=bool(flagged)
+            )
+        )
+
     async def _safe_list(self, method_name: str, **kwargs: Any) -> list[dict[str, Any]]:
         """Call a scope-service list method if it exists, otherwise return []."""
         if self.scope_service is None:

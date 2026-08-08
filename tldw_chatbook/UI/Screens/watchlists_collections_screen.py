@@ -131,6 +131,7 @@ from ..Watchlists_Modules.briefing_preset_modal import BriefingPresetModal
 from ..Watchlists_Modules.content_pane import (
     ContentPane,
     ExpandReaderRequested,
+    StarToggleRequested,
     UnreadToggleRequested,
     ViewSnapshotRequested,
 )
@@ -436,6 +437,10 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         # deliberately NOT here — it is bound on ItemsPane so it cannot fire
         # from the rail (see `NextUnreadRequested`).
         ("m", "toggle_read_selected", "Read/Unread"),
+        # TASK-3072 plan task 7: NNW's one-key star. Same resolution and
+        # gating as `m` (`_reader_verb_blocked`, the open item), one shared
+        # handler with the reader's Star button.
+        ("s", "toggle_star_selected", "Star"),
         ("a", "mark_all_read", "Mark all read"),
         ("u", "undo_mark_all_read", "Undo mark-all-read"),
         ("z", "toggle_region", "Collapse"),
@@ -10058,6 +10063,72 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             item_id,
             _ItemStatusIntent(status=target, gate=True, refresh=False, patch_item=item),
         )
+        self._request_tree_counts_refresh()
+
+    def action_toggle_star_selected(self) -> None:
+        """`s`: star or unstar the open item (TASK-3072 plan task 7).
+
+        Resolves the item and gates exactly like `action_toggle_read_selected`
+        (typing in an Input is typing, and the verb is scoped to the Read
+        tab), then shares `_toggle_item_star` with the reader's Star button.
+        """
+        if self._reader_verb_blocked():
+            return
+        item = self._selected_content_item
+        if item is None:
+            return
+        self._toggle_item_star(item)
+
+    @on(StarToggleRequested)
+    def handle_star_toggle_requested(self, event: StarToggleRequested) -> None:
+        """The reader's Star button takes the same path as `s`."""
+        event.stop()
+        item = event.item or self._selected_content_item
+        if item is None:
+            return
+        self._toggle_item_star(item)
+
+    def _toggle_item_star(self, item: dict[str, Any]) -> None:
+        """Flip one item's star: write, patch, repaint, badge refresh.
+
+        The target reads from the live dict, which the worker patches after
+        a successful write -- so a second toggle unstars instead of
+        re-deriving from a stale flag (`patch_item`'s contract on the
+        read/unread side, restated for a flag there is no gate on: starring
+        is orthogonal to status, so an ingested item can be starred).
+        """
+        item_id = item.get("id")
+        if item_id is None:
+            return
+        target = not bool(item.get("is_flagged"))
+        self.run_worker(
+            self._toggle_star_worker(item_id, item, target),
+            exclusive=True,
+            group="wl-star-toggle",
+        )
+
+    async def _toggle_star_worker(
+        self, item_id: Any, item: dict[str, Any], target: bool
+    ) -> None:
+        """The write half of a star toggle, mirroring every other write
+        handler on this screen (a worker, never a render-path query)."""
+        notify = getattr(self.app_instance, "notify", None)
+        try:
+            await self._controller.set_item_flagged(
+                runtime_backend=self.runtime_backend, item_id=item_id, flagged=target
+            )
+        except Exception:
+            logger.opt(exception=True).debug("Failed to toggle an item's star.")
+            if callable(notify):
+                notify("Could not update the star.", severity="error")
+            return
+        item["is_flagged"] = target
+        try:
+            pane = self.query_one("#watchlists-items-pane", ArticleListPane)
+        except NoMatches:
+            pane = None
+        if pane is not None:
+            pane.update_item_starred_cell(item_id, target)
         self._request_tree_counts_refresh()
 
     @on(NextUnreadRequested)

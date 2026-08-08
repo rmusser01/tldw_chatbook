@@ -445,6 +445,45 @@ class WatchlistScopeService:
             await self._maybe_await(service.restore_items_new(item_ids=row_ids))
         )
 
+    async def set_item_flagged(
+        self,
+        *,
+        runtime_backend: WatchlistBackend | str | None = None,
+        item_id: Any,
+        flagged: bool,
+    ) -> None:
+        """Star or unstar one item (TASK-3072 plan task 7).
+
+        Routed as ``items.update`` like `update_item`/`mark_all_read`: it is
+        the same kind of write -- one flag on one `subscription_items` row.
+
+        Args:
+            runtime_backend: Target backend (``local`` or ``server``).
+            item_id: Item identifier, namespaced
+                (``local:watchlist_item:7``) or bare -- denamespaced exactly
+                as `update_item` does.
+            flagged: `True` to star the item, `False` to unstar it.
+
+        Raises:
+            ValueError: If the server backend is requested; item writes are
+                local-only, mirroring `update_item` -- the server API carries
+                no item-flag route.
+        """
+        backend = self._normalize_backend(runtime_backend)
+        self._enforce_policy(backend, "items.update")
+        if backend == WatchlistBackend.SERVER:
+            raise ValueError(
+                "Item star updates are only supported for the local backend "
+                "in this slice."
+            )
+        service = self._service_for_backend(backend)
+        await self._maybe_await(
+            service.set_item_flagged(
+                item_id=self._source_id_from_item_id(item_id),
+                flagged=bool(flagged),
+            )
+        )
+
     async def get_watch_item_detail(
         self,
         item_id: Any,

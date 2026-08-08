@@ -244,3 +244,33 @@ async def test_restore_items_new_server_backend_rejected():
             runtime_backend=WatchlistBackend.SERVER, item_ids=[1]
         )
     local_service.restore_items_new.assert_not_awaited()
+
+
+# --- TASK-3072 plan task 7: the star write ------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_set_item_flagged_forwards_denamespaced_id_to_local_service():
+    scope_service, local_service, _ = make_scope_service()
+    local_service.set_item_flagged = AsyncMock(return_value=None)
+
+    await scope_service.set_item_flagged(
+        runtime_backend=WatchlistBackend.LOCAL,
+        item_id="local:watchlist_item:7",
+        flagged=True,
+    )
+
+    # `_source_id_from_item_id` strips the display namespace, exactly as
+    # `update_item` and `restore_items_new` already do.
+    local_service.set_item_flagged.assert_awaited_once_with(item_id="7", flagged=True)
+
+
+@pytest.mark.asyncio
+async def test_set_item_flagged_server_backend_rejected():
+    scope_service, local_service, _ = make_scope_service()
+    local_service.set_item_flagged = AsyncMock(return_value=None)
+    with pytest.raises(ValueError, match="only supported for the local backend"):
+        await scope_service.set_item_flagged(
+            runtime_backend=WatchlistBackend.SERVER, item_id=7, flagged=True
+        )
+    local_service.set_item_flagged.assert_not_awaited()
