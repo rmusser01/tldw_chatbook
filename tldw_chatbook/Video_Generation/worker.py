@@ -4,6 +4,8 @@ never on the UI loop, because the adapters are synchronous and blocking.
 """
 from __future__ import annotations
 
+import inspect
+import threading
 from typing import Any
 
 from tldw_chatbook.Video_Generation.adapter_registry import get_registry
@@ -70,7 +72,35 @@ def build_request(
     )
 
 
-def run_generation(request: VideoGenRequest) -> VideoGenResult:
+def _generate_with_optional_cancel(
+    adapter: Any, request: VideoGenRequest, cancel_event: threading.Event | None
+) -> VideoGenResult:
+    """Dispatch to the adapter, threading ``cancel_event`` only when supported.
+
+    Adapters with cooperative cancellation (minimax, task-3401.3) declare a
+    ``cancel_event`` keyword; adapters that predate it are called without
+    it. Detected by signature (never by catching TypeError from inside
+    ``generate``, which would misclassify an adapter's own type errors).
+    """
+    if cancel_event is not None:
+        try:
+            parameters = inspect.signature(adapter.generate).parameters
+        except (TypeError, ValueError):
+            parameters = {}
+        accepts = "cancel_event" in parameters or any(
+            parameter.kind is inspect.Parameter.VAR_KEYWORD
+            for parameter in parameters.values()
+        )
+        if accepts:
+            return adapter.generate(request, cancel_event=cancel_event)
+    return adapter.generate(request)
+
+
+def run_generation(
+    request: VideoGenRequest,
+    *,
+    cancel_event: threading.Event | None = None,
+) -> VideoGenResult:
     """Validate, resolve the backend, and invoke its adapter. Blocking.
 
     Enforces the request-validation layer (bounds + per-backend
@@ -83,6 +113,9 @@ def run_generation(request: VideoGenRequest) -> VideoGenResult:
 
     Args:
         request: The video generation request.
+        cancel_event: Optional cooperative-cancellation event, threaded to
+            adapters that declare support for it (minimax); silently not
+            passed to adapters that don't.
 
     Returns:
         The generated :class:`VideoGenResult`.
@@ -119,4 +152,4 @@ def run_generation(request: VideoGenRequest) -> VideoGenResult:
     adapter = registry.get_adapter(resolved)
     if adapter is None:
         raise VideoGenerationError(f"Adapter for backend {resolved!r} failed to load.")
-    return adapter.generate(request)
+    return _generate_with_optional_cancel(adapter, request, cancel_event)

@@ -1382,6 +1382,7 @@ class ConsoleChatStore:
         *,
         video_metadata: "VideoGenerationMetadata",
         persist: bool = False,
+        message_id: str | None = None,
     ) -> ConsoleChatMessage:
         """Append an assistant video-generation message (task-3401.4).
 
@@ -1400,6 +1401,10 @@ class ConsoleChatStore:
             video_metadata: Structured facts about the generated video;
                 ``video_metadata.name`` is the slug the marker renders.
             persist: When True, persist through the durable adapter.
+            message_id: Optional pre-allocated native id (task-3401.5): the
+                caller saves the video bytes under this id BEFORE appending
+                (the VideoStore keys by message id), so the id must be known
+                ahead of the append. Defaults to a fresh uuid4.
 
         Returns:
             The LIVE internal message node (parity with
@@ -1417,6 +1422,7 @@ class ConsoleChatStore:
                 role=ConsoleMessageRole.ASSISTANT, content=content
             ),
             video_metadata=video_metadata,
+            **({"id": message_id} if message_id else {}),
         )
         self._sessions[session_id].updated_at = _utc_now_iso()
         old_leaf = self._active_leaf_by_session[session_id]

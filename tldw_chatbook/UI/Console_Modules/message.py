@@ -126,7 +126,10 @@ from ...Chat.console_chat_models import (
     MessageAttachment,
 )
 from ...Chat.console_chat_store import ConsoleChatStore
-from ...Chat.console_command_grammar import GENERATE_IMAGE_COMMAND_HANDLER_ID
+from ...Chat.console_command_grammar import (
+    GENERATE_IMAGE_COMMAND_HANDLER_ID,
+    GENERATE_VIDEO_COMMAND_HANDLER_ID,
+)
 from ...Chat.console_ephemeral import blocked_reason
 from ...Chat.console_image_view import IMAGE_CACHE_MAX_ENTRIES
 from ...Chat.console_message_actions import ConsoleActionResult, ConsoleMessageActionService
@@ -1252,6 +1255,20 @@ class ConsoleMessageController:
                     return True
                 await self._regenerate_console_generation_variant(message_id)
                 return True
+            if getattr(message, "video_metadata", None) is not None:
+                # task-3401.5: a video message's regenerate rebuilds the
+                # request from the persisted video facts and appends a NEW
+                # video message (there are no variants to swap). Same
+                # ephemeral gate as /generate-video's command path.
+                video_blocked = blocked_reason(
+                    GENERATE_VIDEO_COMMAND_HANDLER_ID,
+                    ephemeral=self._console_active_session_is_ephemeral(),
+                )
+                if video_blocked is not None:
+                    self.app_instance.notify(video_blocked, severity="warning")
+                    return True
+                await self._regenerate_console_video_message(message_id)
+                return True
             controller = self._ensure_console_chat_controller()
             target_session_id = controller.store.active_session_id
             refusal = controller.send_refusal_copy(target_session_id)
@@ -1312,6 +1329,16 @@ class ConsoleMessageController:
                 self._save_console_message_image(message_id),
                 exclusive=True,
                 group="console-save-image",
+            )
+            return True
+        if action_id == "video-play" and result.status == "completed":
+            await self._play_console_video(message_id)
+            return True
+        if action_id == "video-save-copy" and result.status == "completed":
+            self.run_worker(
+                self._save_console_video_copy(message_id),
+                exclusive=True,
+                group="console-save-video",
             )
             return True
         if action_id == "delete" and result.status == "completed":
