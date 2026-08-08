@@ -38,6 +38,86 @@ def test_missing_media_db_returns_empty_and_creates_nothing(tmp_path):
     assert list(tmp_path.glob("*.db")) == []              # no rogue DB anywhere
 
 
+def test_traversal_shaped_media_db_path_is_rejected_before_any_db_open(
+    tmp_path, monkeypatch
+):
+    """(Qodo PR #1428 finding 1) `config.search.media_db_path` reached a
+    filesystem check + DB open without running through path_validation.py.
+    Proof this matters (not just a naive existence check): the traversal
+    string below resolves, at the OS level, to a REAL db file -- so
+    pre-fix code's `.exists()`/`.is_file()` gate would happily pass it
+    through to `get_connection_pool`. The fix must reject it earlier, by
+    running it through the shared path_validation helpers (mirroring
+    config.py's `_get_custom_database_path` treatment), before
+    `get_connection_pool` -- and therefore `MediaDatabase` -- is ever
+    reached, degrading to [] the same way a missing DB does (never raise,
+    never write)."""
+    import tldw_chatbook.RAG_Search.simplified.rag_service as rag_service_mod
+
+    real_subdir = tmp_path / "a" / "b"
+    real_subdir.mkdir(parents=True)
+    real_db_path = tmp_path / "media.db"
+    from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
+
+    db = MediaDatabase(db_path=str(real_db_path), client_id="test_traversal_guard")
+    db.close_connection()
+
+    calls = []
+    original_get_connection_pool = rag_service_mod.get_connection_pool
+
+    def _spy(*args, **kwargs):
+        calls.append((args, kwargs))
+        return original_get_connection_pool(*args, **kwargs)
+
+    monkeypatch.setattr(rag_service_mod, "get_connection_pool", _spy)
+
+    # OS-resolvable traversal: a/b/../../media.db -> tmp_path/media.db,
+    # a real, valid MediaDatabase -- unlike an unresolvable nonsense path,
+    # this would actually be opened by pre-fix code.
+    malicious_path = str(real_subdir / ".." / ".." / "media.db")
+    assert "../.." in malicious_path, "test setup must produce a traversal string"
+
+    service = _make_service(tmp_path, media_db_path=malicious_path)
+    results = asyncio.run(service._keyword_search("anything", top_k=5))
+
+    assert results == []
+    assert calls == [], "get_connection_pool must never be reached for a rejected path"
+
+
+def test_symlinked_media_db_path_yields_empty_and_no_db_open(tmp_path):
+    """A `media_db_path` pointing at a symlink must never actually open a
+    database through it. `validate_path_simple` defers symlink authority to
+    the private SQLite owner (mirrors config.py's `_get_custom_database_
+    path`), so this is enforced by `MediaDatabase` -> `connect_private_
+    sqlite`'s no-follow open. Proven end to end: the symlink target is a
+    REAL, searchable MediaDatabase with a matching row, so if the no-follow
+    guard ever regressed this test would see that row come back instead
+    of []."""
+    outside_dir = tmp_path / "outside"
+    outside_dir.mkdir()
+    real_target = outside_dir / "real_media.db"
+
+    from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
+
+    db = MediaDatabase(db_path=str(real_target), client_id="test_symlink_guard")
+    media_id, _, message = db.add_media_with_keywords(
+        title="Symlink Bait",
+        content="This row must never be reachable through a symlinked media_db_path.",
+        media_type="article",
+        author="Tester",
+        url="https://example.com/symlink-bait",
+    )
+    assert media_id is not None, f"seed failed: {message}"
+    db.close_connection()
+
+    symlink_path = tmp_path / "media_via_symlink.db"
+    symlink_path.symlink_to(real_target)
+
+    service = _make_service(tmp_path, media_db_path=symlink_path)
+    results = asyncio.run(service._keyword_search("Bait", top_k=5))
+    assert results == []
+
+
 def test_keyword_rows_carry_media_source_type(tmp_path):
     db_path = tmp_path / "tldw_cli_media_v2.db"
     # Create a real MediaDatabase and insert one item via its public API

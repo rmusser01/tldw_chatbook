@@ -239,6 +239,42 @@ class TestResolveSemanticRagService:
         assert resolved is service
         assert reason is None
 
+    def test_cache_publishes_one_atomic_service_generation_tuple(self):
+        """(Qodo PR #1428 finding 2) `cache_app_rag_service` used to publish
+        `app._rag_service` and the generation attr as two separate writes,
+        leaving a window where a concurrent reader saw the service with no
+        generation stamp yet and hit the unstamped-injection carve-out,
+        skipping staleness validation for a service that WAS resolved
+        through the shared seam. The fix publishes `(service, generation)`
+        as one attribute; pin that it exists and holds the exact pair."""
+        service = StrictRagService()
+        app = SimpleNamespace()
+
+        sa.cache_app_rag_service(app, service, generation=7)
+
+        stamp = getattr(app, sa.APP_RAG_SERVICE_STAMP_ATTR)
+        assert stamp == (service, 7)
+
+    def test_atomic_stamp_is_the_single_source_when_present(self):
+        """Prove the atomic stamp -- not the legacy raw `_rag_service`
+        attribute -- governs `current_app_rag_service` once it is present,
+        by making the two disagree (simulating exactly the torn-write
+        window the finding describes) and confirming the stamp wins."""
+        from tldw_chatbook.RAG_Search import ingestion_indexing
+
+        stamped_service = StrictRagService()
+        other_service = StrictRagService()
+        app = SimpleNamespace()
+        generation = ingestion_indexing.shared_rag_service_generation()
+
+        sa.cache_app_rag_service(app, stamped_service, generation)
+        # Simulate a stale/disagreeing raw attribute -- the atomic stamp
+        # must still be what `current_app_rag_service` trusts.
+        app._rag_service = other_service
+
+        resolved = sa.current_app_rag_service(app)
+        assert resolved is stamped_service
+
 
 class TestSemanticIndexIsEmpty:
     """Trustworthy-count probe: only an error-free integer 0 counts as empty."""

@@ -134,8 +134,22 @@ def record_semantic_ok(
 
 #: Attribute the shared-service generation is stamped under when a resolver
 #: caches a runtime on the app. Deliberately paired with ``_rag_service``:
-#: the two are written together and read together.
+#: the two are written together and read together. Kept (write-only from
+#: `cache_app_rag_service`'s perspective, see below) for back-compat with
+#: anything introspecting this exact name; the atomic stamp below is now
+#: the source of truth for a real resolver write.
 APP_RAG_SERVICE_GENERATION_ATTR = "_rag_service_generation"
+
+#: Single attribute publishing ``(service, generation)`` as one immutable
+#: tuple. Qodo PR #1428 finding: `cache_app_rag_service` used to publish
+#: `app._rag_service` and `APP_RAG_SERVICE_GENERATION_ATTR` as two separate
+#: writes; a concurrent reader landing in the window between them saw a
+#: service with no generation stamp yet and hit the direct-injection
+#: carve-out below, skipping staleness validation for a service that WAS
+#: resolved through the shared seam. A single attribute assignment is
+#: atomic under the GIL, so a reader either sees the fully-formed pair or
+#: nothing -- never a torn service-without-generation.
+APP_RAG_SERVICE_STAMP_ATTR = "_rag_service_stamp"
 
 
 def current_app_rag_service(app: Any) -> Optional[Any]:
@@ -155,6 +169,14 @@ def current_app_rag_service(app: Any) -> Optional[Any]:
     through the shared seam), so the shared generation says nothing about
     it and evicting it would break injection.
 
+    The atomic ``APP_RAG_SERVICE_STAMP_ATTR`` tuple (task-3170 remediation)
+    is checked FIRST and, when present, is the single source of truth --
+    it is only ever written by `cache_app_rag_service`, in one assignment,
+    so it can never be observed with a service that has no matching
+    generation. Only when that attribute is entirely absent does this fall
+    back to the legacy raw-attribute pair, which is what a direct
+    `SimpleNamespace(_rag_service=service)` test injection looks like.
+
     Args:
         app: App-like object carrying ``_rag_service``.
 
@@ -162,6 +184,23 @@ def current_app_rag_service(app: Any) -> Optional[Any]:
         The cached runtime when it has a callable ``search`` and has not
         been superseded, else None (the caller re-resolves).
     """
+    stamp = getattr(app, APP_RAG_SERVICE_STAMP_ATTR, None)
+    if stamp is not None:
+        service, stamped_generation = stamp
+        if service is None or not callable(getattr(service, "search", None)):
+            return None
+        if stamped_generation == shared_rag_service_generation():
+            return service
+        logger.info(
+            "Cached RAG runtime superseded by a profile change; re-resolving "
+            "the shared service."
+        )
+        return None
+
+    # No atomic stamp: either a direct-injection carve-out (tests, or any
+    # surface that never went through the shared seam) or a legacy caller
+    # that wrote the raw pair itself. Preserve the original two-attribute
+    # behavior for that case.
     service = getattr(app, "_rag_service", None)
     if service is None or not callable(getattr(service, "search", None)):
         return None
@@ -178,6 +217,17 @@ def current_app_rag_service(app: Any) -> Optional[Any]:
 def cache_app_rag_service(app: Any, service: Any, generation: int) -> None:
     """Cache a resolved runtime on the app together with its generation.
 
+    Publishes ``(service, generation)`` as ONE atomic attribute
+    (``APP_RAG_SERVICE_STAMP_ATTR``) FIRST, before touching the legacy
+    ``_rag_service`` / ``APP_RAG_SERVICE_GENERATION_ATTR`` pair that ~20
+    existing tests (and any other direct reader of the raw attribute) still
+    rely on. Writing the atomic stamp first means a concurrent
+    `current_app_rag_service` reader either observes nothing yet (falls
+    back to the not-yet-set raw attribute -> None -> re-resolve, safe) or
+    observes the fully-formed pair -- never the raw service with a missing
+    generation, which is the torn read this ordering exists to prevent
+    (Qodo PR #1428 finding).
+
     Args:
         app: App-like object receiving ``_rag_service``.
         service: The resolved shared runtime.
@@ -188,6 +238,7 @@ def cache_app_rag_service(app: Any, service: Any, generation: int) -> None:
             reset was meant to discard.
     """
     try:
+        app._rag_service_stamp = (service, generation)
         app._rag_service = service
         setattr(app, APP_RAG_SERVICE_GENERATION_ATTR, generation)
     except Exception:

@@ -790,9 +790,37 @@ class RAGService:
             # a list of candidate filenames, and no create-on-miss: a search
             # must never have the side effect of creating a database.
             from tldw_chatbook.config import get_media_db_path
+            from tldw_chatbook.Utils.path_validation import validate_path_simple
+            from tldw_chatbook.Utils.private_paths import lexical_path
 
-            db_path = self.config.search.media_db_path or get_media_db_path()
-            db_path = Path(db_path)
+            db_path_raw = self.config.search.media_db_path or get_media_db_path()
+
+            # Qodo PR #1428 finding 1: `config.search.media_db_path` is a
+            # config-sourced override reaching a filesystem check + DB open
+            # without running through path_validation.py. Mirror config.py's
+            # `_get_custom_database_path` treatment for custom DB paths --
+            # lexical normalization plus `validate_path_simple`'s
+            # traversal/injection screen -- rather than a base-dir jail that
+            # would reject a legitimate custom media DB living outside the
+            # default data dir. `probe_existing=False` matches that same
+            # helper: filesystem/symlink authority is deferred to the
+            # private SQLite owner (MediaDatabase -> connect_private_sqlite)
+            # that actually opens the file below.
+            try:
+                db_path = lexical_path(
+                    validate_path_simple(
+                        Path(str(db_path_raw)).expanduser(),
+                        require_exists=False,
+                        probe_existing=False,
+                    )
+                )
+            except ValueError as e:
+                logger.warning(
+                    f"Rejected media_db_path from config ({db_path_raw!r}): "
+                    f"{e}; keyword search returning no results (a search "
+                    "never creates a database)."
+                )
+                return []
 
             if not db_path.exists() or not db_path.is_file():
                 logger.warning(
