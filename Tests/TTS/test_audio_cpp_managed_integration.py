@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
+import socket
 import struct
 from collections.abc import Awaitable, Callable, Mapping
 from pathlib import Path
@@ -10,6 +12,8 @@ from typing import Any
 import httpx
 import pytest
 
+from Tests.TTS.fixtures.fake_audiocpp_server import write_executable_wrapper
+from tldw_chatbook.TTS import audio_cpp_supervisor as supervisor_module
 from tldw_chatbook.TTS.adapter_registry import TTSAdapterRegistry
 from tldw_chatbook.TTS._async_lifecycle import current_shutdown_deadline
 from tldw_chatbook.TTS.adapter_types import (
@@ -25,6 +29,7 @@ from tldw_chatbook.TTS.audio_cpp_supervisor import (
     AudioCppProcessAdmissionSnapshot,
     AudioCppProcessSnapshot,
     AudioCppReadyEndpoint,
+    AudioCppSupervisor,
     _AudioCppGenerationChanged,
 )
 from tldw_chatbook.TTS.effective_settings import (
@@ -1010,3 +1015,152 @@ async def test_lifecycle_retry_clears_prior_transition_unavailable_state(
     finally:
         await service.close()
         await service.wait_closed()
+
+
+@pytest.mark.asyncio
+async def test_real_child_argv_cwd_environment_readiness_and_cleanup(
+    tmp_path: Path,
+) -> None:
+    if os.name != "posix":
+        pytest.skip("direct executable shebang wrappers require a POSIX host")
+    wrapper = write_executable_wrapper(tmp_path / "fake_audiocpp_server")
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
+        listener.bind(("127.0.0.1", 0))
+        port = int(listener.getsockname()[1])
+    server_json = tmp_path / "server.json"
+    server_json.write_text(
+        json.dumps(
+            {
+                "host": "127.0.0.1",
+                "port": port,
+                "test_behavior": {
+                    "readiness_delay_seconds": 0.05,
+                    "stdout_chunks": ["fixture stdout line\n"],
+                    "stderr_chunks": ["fixture stderr line\n"],
+                    "observe_environment_names": [
+                        "PATH",
+                        "LANG",
+                        "OPENAI_API_KEY",
+                        "UNRELATED_SECRET",
+                    ],
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    managed = AudioCppConfig(
+        mode="managed",
+        managed_binary_path=str(wrapper),
+        managed_server_json_path=str(server_json),
+        managed_startup_timeout_seconds=3.0,
+        managed_health_check_interval_seconds=2.0,
+        managed_termination_grace_seconds=0.1,
+    ).to_mapping()
+    launched: list[asyncio.subprocess.Process] = []
+
+    async def capture_launch(launch: Any, environment: dict[str, str]) -> Any:
+        owned = await supervisor_module._default_process_launcher(
+            launch,
+            environment,
+        )
+        launched.append(owned.process)
+        return owned
+
+    supervisor = AudioCppSupervisor(
+        source_environment={
+            "PATH": os.environ.get("PATH", ""),
+            "LANG": "C",
+            "OPENAI_API_KEY": "SYNTHETIC_PRIVATE_PROVIDER_SECRET",
+            "UNRELATED_SECRET": "SYNTHETIC_PRIVATE_UNRELATED_SECRET",
+        },
+        process_launcher=capture_launch,
+    )
+
+    def factory(config: Mapping[str, Any]) -> AudioCppAdapter:
+        return AudioCppAdapter(
+            AudioCppConfig.from_mapping(config),
+            supervisor=supervisor,
+        )
+
+    registry = TTSAdapterRegistry(
+        specs=(
+            TTSProviderSpec(
+                descriptor=TTSProviderDescriptor(
+                    provider_id="audio_cpp",
+                    display_name="audio.cpp",
+                    native=True,
+                ),
+                factory=factory,
+                initial_config=managed,
+                exclusive_reconfigure=True,
+            ),
+        ),
+        aliases={},
+    )
+    service = TTSService(
+        registry,
+        preferences_snapshot=_preferences(),
+        audio_cpp_supervisor=supervisor,
+    )
+
+    try:
+        catalog = await service.start_and_test_audio_cpp()
+        snapshot = service.audio_cpp_process_snapshot()
+        assert snapshot.endpoint is not None
+        async with httpx.AsyncClient(
+            base_url=snapshot.endpoint,
+            trust_env=False,
+            follow_redirects=False,
+            timeout=1.0,
+        ) as client:
+            state_response = await client.get("/test/state")
+            state_response.raise_for_status()
+            state = state_response.json()
+
+        response = await service.synthesize(
+            TTSRequest(
+                provider_id="audio_cpp",
+                model_id="fixture-model",
+                text="character roleplay response",
+                voice=None,
+                response_format="wav",
+            )
+        )
+        audio = [chunk async for chunk in response.byte_stream]
+        await response.aclose()
+
+        assert [model.model_id for model in catalog.models] == ["fixture-model"]
+        assert audio == [_wav()]
+        assert state["pid"] == launched[0].pid
+        assert state["argv"] == [
+            str(wrapper),
+            "--config",
+            str(server_json),
+        ]
+        assert state["cwd"] == str(tmp_path)
+        assert state["environment_present"] == {
+            "PATH": True,
+            "LANG": True,
+            "OPENAI_API_KEY": False,
+            "UNRELATED_SECRET": False,
+        }
+        assert {line.text for line in snapshot.diagnostics} == {
+            "fixture stdout line",
+            "fixture stderr line",
+        }
+    finally:
+        try:
+            await service.close()
+            await service.wait_closed()
+        finally:
+            for process in launched:
+                if process.returncode is None:
+                    process.kill()
+                    await process.wait()
+
+    assert launched[0].returncode is not None
+    with pytest.raises(ProcessLookupError):
+        os.kill(launched[0].pid, 0)
+    assert supervisor._generation is None
+    assert supervisor._startup_task is None
+    assert supervisor._stop_task is None

@@ -64,6 +64,7 @@ from tldw_chatbook.TTS.adapter_types import (
     TTSRegistryClosedError,
 )
 from tldw_chatbook.TTS.audio_player import PlaybackState
+from tldw_chatbook.TTS.audio_cpp_supervisor import AudioCppSupervisor
 from tldw_chatbook.TTS.playground_types import STTSGeneratedAudio
 from tldw_chatbook.UI import stts_profile_library as profile_library_module
 from tldw_chatbook.UI.stts_playground_catalog import (
@@ -217,6 +218,29 @@ class _PaneHost(App[None]):
             self.generation_events.append(message)
             return True
         return super().post_message(message)
+
+
+@pytest.mark.asyncio
+async def test_mounting_external_audio_cpp_speech_lab_never_starts_managed_child(
+    monkeypatch: pytest.MonkeyPatch,
+    audio_cpp_playground: FakeTTSService,
+) -> None:
+    del audio_cpp_playground
+    launches: list[str] = []
+
+    async def forbidden_start(self, *_args, **_kwargs):
+        del self
+        launches.append("ensure_running")
+        raise AssertionError("Speech Lab launched managed audio.cpp while mounting")
+
+    monkeypatch.setattr(AudioCppSupervisor, "ensure_running", forbidden_start)
+    app = _PaneHost(provider="audio_cpp")
+
+    async with app.run_test(size=(150, 60)) as pilot:
+        await pilot.pause()
+        assert app.query_one("#speech-playground-pane", SpeechPlaygroundPane)
+
+    assert launches == []
 
 
 class _PaneScreen(Screen):

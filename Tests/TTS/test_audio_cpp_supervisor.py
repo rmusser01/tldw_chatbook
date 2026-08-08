@@ -3,13 +3,19 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
+import signal
+import socket
+import sys
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+import httpx
 import pytest
 from loguru import logger
 
+from Tests.TTS.fixtures.fake_audiocpp_server import write_executable_wrapper
 from tldw_chatbook.TTS import audio_cpp_supervisor as supervisor_module
 from tldw_chatbook.TTS._async_lifecycle import shutdown_deadline_scope
 from tldw_chatbook.TTS.adapter_types import (
@@ -285,6 +291,174 @@ async def _run_periodic_probe(
     await _wait_until(lambda: hooks.health_calls == prior_calls + 1)
     if isinstance(result, bool):
         await _wait_until(lambda: hooks.active_health_calls == 0)
+
+
+def _require_real_child_support() -> None:
+    if os.name != "posix":
+        pytest.skip("direct executable shebang wrappers require a POSIX host")
+    if any(character.isspace() for character in sys.executable):
+        pytest.skip("the current Python path cannot be represented in a shebang")
+
+
+def _unused_loopback_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
+        listener.bind(("127.0.0.1", 0))
+        return int(listener.getsockname()[1])
+
+
+def _make_real_launch(
+    tmp_path: Path,
+    *,
+    behavior: dict[str, Any] | None = None,
+    startup_timeout_seconds: float = 3.0,
+    termination_grace_seconds: float = 0.1,
+) -> AudioCppManagedLaunchConfig:
+    _require_real_child_support()
+    wrapper = write_executable_wrapper(tmp_path / "fake_audiocpp_server")
+    server_json = tmp_path / "server.json"
+    port = _unused_loopback_port()
+    server_json.write_text(
+        json.dumps(
+            {
+                "host": "127.0.0.1",
+                "port": port,
+                "test_behavior": behavior or {},
+            }
+        ),
+        encoding="utf-8",
+    )
+    return AudioCppManagedLaunchConfig(
+        binary_path=wrapper,
+        server_json_path=server_json,
+        working_directory=tmp_path,
+        base_url=f"http://127.0.0.1:{port}",
+        startup_timeout_seconds=startup_timeout_seconds,
+        health_check_interval_seconds=2.0,
+        termination_grace_seconds=termination_grace_seconds,
+    )
+
+
+class _CountingProcess:
+    def __init__(self, process: asyncio.subprocess.Process) -> None:
+        self._process = process
+        self.stdout = process.stdout
+        self.stderr = process.stderr
+        self.wait_calls = 0
+
+    @property
+    def pid(self) -> int:
+        return self._process.pid
+
+    @property
+    def returncode(self) -> int | None:
+        return self._process.returncode
+
+    async def wait(self) -> int:
+        self.wait_calls += 1
+        return await self._process.wait()
+
+    def terminate(self) -> None:
+        self._process.terminate()
+
+    def kill(self) -> None:
+        self._process.kill()
+
+
+class _RealLauncher:
+    def __init__(self) -> None:
+        self.processes: list[_CountingProcess] = []
+
+    async def __call__(
+        self,
+        launch: AudioCppManagedLaunchConfig,
+        child_environment: dict[str, str],
+    ) -> _OwnedAudioCppProcess:
+        owned = await supervisor_module._default_process_launcher(
+            launch,
+            child_environment,
+        )
+        process = _CountingProcess(owned.process)
+        self.processes.append(process)
+        return _OwnedAudioCppProcess(
+            process=process,
+            close_parent_pipes=owned.close_parent_pipes,
+        )
+
+
+class _RealHttpHooksFactory:
+    def __init__(self, base_url: str) -> None:
+        self._base_url = base_url
+        self.clients: list[httpx.AsyncClient] = []
+
+    async def __call__(self, _generation: int) -> AudioCppGenerationHooks:
+        client = httpx.AsyncClient(
+            base_url=self._base_url,
+            trust_env=False,
+            follow_redirects=False,
+            timeout=0.2,
+        )
+        self.clients.append(client)
+
+        async def health_probe() -> bool:
+            try:
+                response = await client.get("/health")
+                return response.status_code == 200
+            except httpx.HTTPError:
+                return False
+
+        async def contract_probe() -> str:
+            response = await client.get("/v1/models")
+            response.raise_for_status()
+            return "available"
+
+        async def cleanup() -> None:
+            await client.aclose()
+
+        return AudioCppGenerationHooks(
+            contract_probe=contract_probe,
+            health_probe=health_probe,
+            cleanup=cleanup,
+        )
+
+
+def _pid_exists(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+async def _wait_for_pid_exit(pid: int, *, timeout: float = 3.0) -> None:
+    deadline = asyncio.get_running_loop().time() + timeout
+    while _pid_exists(pid):
+        if asyncio.get_running_loop().time() >= deadline:
+            raise AssertionError(f"fixture process {pid} did not exit")
+        await asyncio.sleep(0.01)
+
+
+async def _wait_for_real_condition(
+    predicate: Callable[[], bool],
+    *,
+    timeout: float = 3.0,
+) -> None:
+    deadline = asyncio.get_running_loop().time() + timeout
+    while not predicate():
+        if asyncio.get_running_loop().time() >= deadline:
+            raise AssertionError("real-child condition did not become true")
+        await asyncio.sleep(0.01)
+
+
+async def _terminate_fixture_pid(pid: int) -> None:
+    if not _pid_exists(pid):
+        return
+    try:
+        os.kill(pid, signal.SIGKILL)
+    except ProcessLookupError:
+        return
+    await _wait_for_pid_exit(pid)
 
 
 def _snapshot_texts(ring: _AudioCppDiagnosticRing) -> tuple[str, ...]:
@@ -1741,3 +1915,164 @@ async def test_inherited_pipe_descriptor_cannot_block_generation_cleanup(
     assert cleanup_calls == 1
     assert process.close_parent_calls == 1
     assert supervisor.snapshot().state == "unavailable"
+
+
+@pytest.mark.asyncio
+async def test_real_child_early_exit_drains_output_and_leaves_no_process(
+    tmp_path: Path,
+) -> None:
+    launch = _make_real_launch(
+        tmp_path,
+        behavior={
+            "early_exit": True,
+            "exit_code": 9,
+            "stdout_chunks": ["fixture early stdout\n"],
+            "stderr_chunks": ["fixture early stderr\n"],
+        },
+    )
+    launcher = _RealLauncher()
+    supervisor = AudioCppSupervisor(
+        source_environment={"PATH": os.environ.get("PATH", "")},
+        process_launcher=launcher,
+    )
+
+    try:
+        with pytest.raises(TTSOperationError) as raised:
+            await supervisor.ensure_running(
+                launch,
+                generation_hooks_factory=_RealHttpHooksFactory(launch.base_url),
+            )
+        snapshot = supervisor.snapshot()
+
+        assert raised.value.code == "process_exited"
+        assert {line.text for line in snapshot.diagnostics} == {
+            "fixture early stdout",
+            "fixture early stderr",
+        }
+        assert snapshot.state == "unavailable"
+        assert supervisor._generation is None
+        assert len(launcher.processes) == 1
+        process = launcher.processes[0]
+        await _wait_for_pid_exit(process.pid)
+        assert process.wait_calls == 1
+    finally:
+        await supervisor.close()
+        await supervisor.wait_closed()
+
+
+@pytest.mark.asyncio
+async def test_real_child_force_kill_and_monitor_cleanup(tmp_path: Path) -> None:
+    launch = _make_real_launch(
+        tmp_path,
+        behavior={"ignore_terminate": True},
+        termination_grace_seconds=0.1,
+    )
+    launcher = _RealLauncher()
+    supervisor = AudioCppSupervisor(
+        source_environment={"PATH": os.environ.get("PATH", "")},
+        process_launcher=launcher,
+    )
+
+    try:
+        await supervisor.ensure_running(
+            launch,
+            generation_hooks_factory=_RealHttpHooksFactory(launch.base_url),
+        )
+        process = launcher.processes[0]
+
+        await supervisor.stop()
+
+        await _wait_for_pid_exit(process.pid)
+        assert process.returncode == -signal.SIGKILL
+        assert process.wait_calls == 1
+        assert supervisor.snapshot().state == "stopped"
+        assert supervisor._generation is None
+        assert supervisor._startup_task is None
+        assert supervisor._stop_task is None
+    finally:
+        await supervisor.close()
+        await supervisor.wait_closed()
+
+
+@pytest.mark.asyncio
+async def test_real_child_inherited_pipes_finish_cleanup_without_killing_descendant(
+    tmp_path: Path,
+) -> None:
+    descendant_pid_file = tmp_path / "descendant.pid"
+    launch = _make_real_launch(
+        tmp_path,
+        behavior={
+            "inherit_pipes_descendant": True,
+            "descendant_pid_file": str(descendant_pid_file),
+            "descendant_hold_seconds": 30.0,
+            "exit_after_models": True,
+            "stdout_chunks": ["parent output before inherited pipe\n"],
+        },
+    )
+    launcher = _RealLauncher()
+    supervisor = AudioCppSupervisor(
+        source_environment={"PATH": os.environ.get("PATH", "")},
+        process_launcher=launcher,
+    )
+    descendant_pid: int | None = None
+
+    try:
+        try:
+            await supervisor.ensure_running(
+                launch,
+                generation_hooks_factory=_RealHttpHooksFactory(launch.base_url),
+            )
+        except TTSOperationError as error:
+            assert error.code == "process_exited"
+        await _wait_for_real_condition(descendant_pid_file.exists)
+        descendant_pid = int(descendant_pid_file.read_text(encoding="ascii"))
+        await _wait_for_real_condition(lambda: supervisor._generation is None)
+
+        process = launcher.processes[0]
+        await _wait_for_pid_exit(process.pid)
+        assert process.wait_calls == 1
+        assert supervisor.snapshot().state == "unavailable"
+        assert _pid_exists(descendant_pid)
+
+        await supervisor.close()
+        await supervisor.wait_closed()
+
+        assert _pid_exists(descendant_pid)
+    finally:
+        if descendant_pid is not None:
+            await _terminate_fixture_pid(descendant_pid)
+        await supervisor.close()
+        await supervisor.wait_closed()
+
+
+@pytest.mark.asyncio
+async def test_repeated_real_spawn_stop_has_one_reaper_and_no_retained_generation(
+    tmp_path: Path,
+) -> None:
+    launch = _make_real_launch(tmp_path)
+    launcher = _RealLauncher()
+    supervisor = AudioCppSupervisor(
+        source_environment={"PATH": os.environ.get("PATH", "")},
+        process_launcher=launcher,
+    )
+
+    try:
+        for expected_generation in range(1, 6):
+            endpoint = await supervisor.ensure_running(
+                launch,
+                generation_hooks_factory=_RealHttpHooksFactory(launch.base_url),
+            )
+            process = launcher.processes[-1]
+
+            await supervisor.stop()
+
+            await _wait_for_pid_exit(process.pid)
+            assert endpoint.process_generation == expected_generation
+            assert process.wait_calls == 1
+            assert supervisor._generation is None
+            assert supervisor._startup_task is None
+            assert supervisor._stop_task is None
+        assert len(launcher.processes) == 5
+    finally:
+        await supervisor.close()
+        await supervisor.wait_closed()

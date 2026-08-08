@@ -1080,7 +1080,7 @@ class AudioCppSupervisor:
             )
 
     async def _monitor_exit(self, record: _ProcessGeneration) -> None:
-        await record.owned.process.wait()
+        await self._await_owned_process_exit(record)
         record.process_exited.set()
         await record.hooks_ready.wait()
 
@@ -1118,6 +1118,22 @@ class AudioCppSupervisor:
                 self._last_failure = record.failure
             self._observation_version += 1
 
+    async def _await_owned_process_exit(self, record: _ProcessGeneration) -> None:
+        """Run the sole wait while bounding inherited-pipe transport blocking."""
+        process = record.owned.process
+        waiter = asyncio.create_task(process.wait())
+        try:
+            while not waiter.done():
+                if process.returncode is not None:
+                    self._close_parent_pipes(record)
+                    break
+                await asyncio.wait({waiter}, timeout=0.05)
+            await asyncio.shield(waiter)
+        except asyncio.CancelledError:
+            waiter.cancel()
+            await asyncio.gather(waiter, return_exceptions=True)
+            raise
+
     async def _join_output_drains(self, record: _ProcessGeneration) -> None:
         drains = [
             task
@@ -1138,6 +1154,7 @@ class AudioCppSupervisor:
             (joined, timer), return_when=asyncio.FIRST_COMPLETED
         )
         if joined not in done:
+            self._close_parent_pipes(record)
             for task in drains:
                 if not task.done():
                     task.cancel()
