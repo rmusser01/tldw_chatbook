@@ -203,11 +203,15 @@ async def test_an_arrow_queued_behind_the_slash_still_navigates_the_popup():
     `popup.is_open` already True and moved the highlight instead of
     falling through to the composer's own caret/history handling.
 
-    The blast radius of the gap is one ignored arrow key: the popup still
-    opens, the draft is untouched, and the next arrow works. A batched
-    "/"+Enter was checked too and does NOT send -- Enter's own path
-    re-reads the Send action AFTER stashing the draft, so it is unaffected
-    by when this sync runs.
+    Blast radius, measured as a two-arm A/B (this code vs. the baseline
+    callback restored synchronously in its place): exactly one ignored
+    keystroke. Batched "/"+Down -- baseline highlights the second entry,
+    this ignores the Down. Batched "/"+Enter -- baseline accepts the
+    highlighted suggestion into the draft, this ignores the Enter. In both
+    arms the popup ends up open and the draft is "/", and in neither does
+    the stray key send anything: Enter's own path re-reads the Send action
+    AFTER stashing the draft, so it never depended on this sync's timing.
+    The next keypress behaves normally.
     """
     _, host = _ready_host()
     async with host.run_test(size=APP_SIZE) as pilot:
