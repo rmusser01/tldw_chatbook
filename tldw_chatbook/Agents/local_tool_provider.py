@@ -1015,7 +1015,7 @@ def _default_specs(
         ),
         LocalToolSpec(
             name="web_search",
-            description="Search the web and return formatted results (title, URL, snippet), size-bounded per result and in total.",
+            description="Search the web and return formatted results (title, URL, snippet), size-bounded per result and in total. Identical queries are cached for 15 minutes.",
             parameters={
                 "type": "object",
                 "properties": {

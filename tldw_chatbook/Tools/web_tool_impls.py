@@ -188,10 +188,11 @@ _transport: "httpx.BaseTransport | None" = None
 
 
 def _reset_state_for_tests() -> None:
-    """Clear the module-level fetch cache, rate-limit state, and robots cache."""
+    """Clear the module-level fetch/search caches, rate-limit state, and robots cache."""
     _fetch_cache.clear()
     _domain_last_fetch.clear()
     _robots_cache.clear()
+    _search_cache.clear()
 
 
 def _cache_put(key: tuple[str, int], text: str) -> None:
@@ -1041,6 +1042,32 @@ SEARCH_MAX_RESULT_COUNT = 10
 # it, so provider fitting never triggers even for multibyte (CJK) content.
 SEARCH_RESULT_MAX_BYTES = 4 * 1024
 SEARCH_TOTAL_MAX_BYTES = 24 * 1024
+# task-2832: identical searches in a session waste provider quota and
+# latency. Same shape as _fetch_cache (15-min TTL, bounded, earliest-expiry
+# eviction, cleared by _reset_state_for_tests). Key is the POST-coercion
+# argument tuple — (engine, whitespace-collapsed casefolded query, count) —
+# and ONLY the genuine success-blocks output is ever stored (the design
+# doc enumerates web_search's five other return shapes, all transient-
+# failure-adjacent; none may pin for the TTL).
+SEARCH_CACHE_TTL_SECONDS = 900.0
+SEARCH_CACHE_MAX_ENTRIES = 128
+_search_cache: dict[tuple[str, str, int], tuple[float, str]] = {}
+# Qodo PR #1444: tool calls each run on their own worker thread, so the
+# eviction scan (min() ITERATES the dict) can race a concurrent put/pop
+# into "dictionary changed size during iteration". The lock covers only
+# the short cache ops — never the backend call. The two older caches
+# (_fetch_cache/_robots_cache) share this race pre-existing: task-3770.
+_search_cache_lock = threading.Lock()
+
+
+def _search_cache_put(key: tuple[str, str, int], text: str) -> None:
+    """Insert into the search cache, evicting earliest-expiry at capacity."""
+    with _search_cache_lock:
+        if key not in _search_cache and len(_search_cache) >= SEARCH_CACHE_MAX_ENTRIES:
+            oldest = min(_search_cache, key=lambda k: _search_cache[k][0])
+            _search_cache.pop(oldest, None)
+        _search_cache[key] = (time.monotonic() + SEARCH_CACHE_TTL_SECONDS, text)
+
 
 _TRUNCATED_MARKER = "… [truncated]"
 
@@ -1070,6 +1097,11 @@ def web_search(
     and error envelopes return an error string rather than raising (legacy
     tool contract); only invalid arguments raise LocalToolError.
 
+    Successful results are cached for SEARCH_CACHE_TTL_SECONDS keyed by
+    the post-coercion (engine, normalized query, count) — identical
+    searches within a session stop re-billing the provider (task-2832).
+    Failure shapes and confirmed-empty results are never cached.
+
     Raises:
         LocalToolError: if ``query`` is empty.
     """
@@ -1087,6 +1119,22 @@ def web_search(
         count = SEARCH_DEFAULT_RESULT_COUNT
     if count < 1 or count > SEARCH_MAX_RESULT_COUNT:
         count = SEARCH_DEFAULT_RESULT_COUNT
+
+    # Cache check AFTER validation/coercion (invalid args raise without
+    # touching the cache), BEFORE the backend import/call. First populator's
+    # raw query text wins for everyone sharing the normalized key — the
+    # design doc records the trade-off.
+    cache_key = (engine, " ".join(query.split()).casefold(), count)
+    with _search_cache_lock:
+        cached = _search_cache.get(cache_key)
+        if cached is not None:
+            expires_at, cached_text = cached
+            if time.monotonic() < expires_at:
+                return cached_text
+            # pop-not-del (review Minor 3): concurrent tool threads can
+            # both observe the same expired entry; the loser's del would
+            # KeyError. The lock makes the observe+pop atomic anyway.
+            _search_cache.pop(cache_key, None)
 
     # Local import: WebSearch_APIs pulls the config/metrics stack; keep this
     # module cheap to import and let tests monkeypatch the source attribute.
@@ -1150,7 +1198,13 @@ def web_search(
             break
         blocks.append(block)
         total_bytes += block_bytes
-    return "\n\n".join(blocks)
+    output = "\n\n".join(blocks)
+    # The ONE cacheable point (design doc ruling 1): only the genuine
+    # success-blocks output is stored — never the [search-failed] strings,
+    # the unmarked malformed-response strings, or the confirmed-empty
+    # message (a transient zero must not pin for the TTL).
+    _search_cache_put(cache_key, output)
+    return output
 
 
 # ---------------------------------------------------------------------------
