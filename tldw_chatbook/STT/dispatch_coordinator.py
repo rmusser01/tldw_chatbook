@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import threading
 import uuid
+import weakref
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
@@ -53,7 +54,7 @@ class RetryableDictationFailure(RuntimeError):
         super().__init__("Parakeet transcription failed.")
 
 
-@dataclass(slots=True)
+@dataclass(slots=True, eq=False, weakref_slot=True)
 class _Capture:
     generation: int
     dispatch: ParakeetDispatch
@@ -192,7 +193,7 @@ class LocalSTTDispatchCoordinator:
         self._active_attempt_id: str | None = None
         self._reservation: _Capture | None = None
         self._pending: _Pending | None = None
-        self._retry_owner: _Capture | None = None
+        self._retry_owners: weakref.WeakSet[_Capture] = weakref.WeakSet()
         self._closed = False
 
     @property
@@ -338,8 +339,8 @@ class LocalSTTDispatchCoordinator:
             if self._closed:
                 return
             self._closed = True
-            if self._retry_owner is not None:
-                self._release_retry_locked(self._retry_owner)
+            for owner in tuple(self._retry_owners):
+                self._release_retry_locked(owner)
             capture = self._reservation
             if capture is None:
                 return
@@ -453,8 +454,7 @@ class LocalSTTDispatchCoordinator:
     def _take_retry(self, capture: _Capture) -> RetryableDictationBuffer | None:
         with self._lock:
             value, capture.retry_buffer = capture.retry_buffer, None
-            if self._retry_owner is capture:
-                self._retry_owner = None
+            self._retry_owners.discard(capture)
             return value
 
     def _append_pending_locked(self, capture: _Capture, audio: bytes) -> None:
@@ -686,8 +686,6 @@ class LocalSTTDispatchCoordinator:
 
     def _finalize_retry_locked(self, capture: _Capture) -> None:
         if capture.retry_buffer is None and capture.retry_audio:
-            if self._retry_owner is not None and self._retry_owner is not capture:
-                self._release_retry_locked(self._retry_owner)
             capture.retry_buffer = RetryableDictationBuffer(
                 BufferAudioSource(
                     bytes(capture.retry_audio),
@@ -697,7 +695,7 @@ class LocalSTTDispatchCoordinator:
                 ),
                 tuple(capture.retry_ends),
             )
-            self._retry_owner = capture
+            self._retry_owners.add(capture)
         capture.retry_audio.clear()
         capture.retry_ends.clear()
 
@@ -711,8 +709,7 @@ class LocalSTTDispatchCoordinator:
         capture.retry_audio.clear()
         capture.retry_ends.clear()
         capture.retry_buffer = None
-        if self._retry_owner is capture:
-            self._retry_owner = None
+        self._retry_owners.discard(capture)
 
     def _discard_pending_locked(self, capture: _Capture) -> None:
         if self._pending is not None and self._pending.capture is capture:

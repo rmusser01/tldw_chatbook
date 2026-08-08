@@ -948,6 +948,62 @@ def test_close_releases_a_completed_untransferred_retry_buffer(
     assert handle.take_retry_buffer() is None
 
 
+def test_second_retryable_capture_does_not_invalidate_first_retry_buffer(
+    coordinator_module: Any,
+) -> None:
+    executor = FakeExecutor()
+    coordinator = coordinator_module.LocalSTTDispatchCoordinator(executor)
+    first = _begin(coordinator_module, coordinator, capture_generation=11)
+    first.append_segment(b"\x01\x00")
+    first.finish()
+    executor.fail(
+        TranscriptionFailureCode.INFERENCE_FAILED,
+        recovery_actions=("retry_faster_whisper",),
+    )
+    with pytest.raises(coordinator_module.RetryableDictationFailure) as first_error:
+        first.wait()
+
+    second = _begin(coordinator_module, coordinator, capture_generation=12)
+    second.append_segment(b"\x02\x00")
+    second.finish()
+    executor.fail(
+        TranscriptionFailureCode.INFERENCE_FAILED,
+        recovery_actions=("retry_faster_whisper",),
+    )
+    with pytest.raises(coordinator_module.RetryableDictationFailure) as second_error:
+        second.wait()
+
+    assert first.take_retry_buffer() is first_error.value.retry_buffer
+    assert second.take_retry_buffer() is second_error.value.retry_buffer
+
+
+def test_close_releases_all_live_handles_untransferred_retry_buffers(
+    coordinator_module: Any,
+) -> None:
+    executor = FakeExecutor()
+    coordinator = coordinator_module.LocalSTTDispatchCoordinator(executor)
+    handles = []
+    for generation, audio in ((21, b"\x01\x00"), (22, b"\x02\x00")):
+        handle = _begin(
+            coordinator_module,
+            coordinator,
+            capture_generation=generation,
+        )
+        handle.append_segment(audio)
+        handle.finish()
+        executor.fail(
+            TranscriptionFailureCode.INFERENCE_FAILED,
+            recovery_actions=("retry_faster_whisper",),
+        )
+        with pytest.raises(coordinator_module.RetryableDictationFailure):
+            handle.wait()
+        handles.append(handle)
+
+    coordinator.close()
+
+    assert [handle.take_retry_buffer() for handle in handles] == [None, None]
+
+
 def test_identity_change_resubmits_off_reader_then_preserves_callback_order(
     coordinator_module: Any,
 ) -> None:
