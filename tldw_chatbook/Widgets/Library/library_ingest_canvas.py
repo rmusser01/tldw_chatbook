@@ -20,6 +20,7 @@ from tldw_chatbook.Library.ingest_capabilities import (
     _is_installed,
     field_disabled_state,
     get_capabilities,
+    select_option_label,
 )
 from tldw_chatbook.Library.library_ingest_jobs import IngestJobState
 from tldw_chatbook.Workspaces.conversation_browser_state import (
@@ -426,14 +427,17 @@ class LibraryIngestQueuePanel(Vertical):
                         else ""
                     )
                     age_suffix = f" · {age}" if age else ""
+                    # (task-3305, MI-14) ``markup=False`` already renders
+                    # these literally -- escaping on top of it painted the
+                    # escape backslashes into bracketed filenames.
                     yield Static(
-                        f"{escape_markup(name)} — "
+                        f"{name} — "
                         f"{job.state.value}{dismissed_suffix}{age_suffix}",
                         classes="library-ingest-recent-item",
                         markup=False,
                     )
                     yield Static(
-                        escape_markup(str(job.source_path)),
+                        str(job.source_path),
                         classes="library-ingest-recent-path",
                         markup=False,
                     )
@@ -462,11 +466,69 @@ def _summarise_option(field: Any, value: Any) -> str:
 
     The title used to be a dump of internal field names and repr'd values
     (``analyze=False, chunk=False, chunk_size=500, chunk_overlap=100``), which
-    told a first-time user nothing about what any of it does.
+    told a first-time user nothing about what any of it does. (task-3305)
+    Select values resolve through their display labels -- the raw token
+    (``pymupdf4llm``) must not leak into the title either.
     """
     if field.type == "checkbox":
         return f"{field.label}: {'on' if value else 'off'}"
+    if field.type == "select":
+        return f"{field.label}: {select_option_label(field, value)}"
     return f"{field.label}: {value}"
+
+
+def _option_is_default(field: Any, value: Any) -> bool:
+    """Whether ``value`` is (semantically) the field's schema default.
+
+    Form echoes hold display text, so a number field's ``"1000"`` must
+    compare equal to its schema default ``1000``.
+    """
+    if field.type == "checkbox":
+        return bool(value) == bool(field.default)
+    return str(value) == str(field.default)
+
+
+#: (task-3305, MI-16) Collapsed titles cap at this many name:value pairs --
+#: the audio panel's full dump ran ~140 characters with a dangling empty
+#: value; a receipt nobody can scan is not a receipt.
+_TITLE_MAX_PAIRS = 3
+
+
+def build_type_group_title(cap: TypeGroupCapabilities, values: dict[str, Any]) -> str:
+    """Collapsed-panel title: group label + the few most salient pairs.
+
+    (task-3305, MI-16) Shared by ``_compose_type_group`` and the screen's
+    in-place receipt update so the two renders can never drift. Rules:
+    empty values are skipped outright (never ``"…folder: ,"``);
+    changed-from-default pairs outrank untouched defaults (a receipt is
+    about what the user chose); at most :data:`_TITLE_MAX_PAIRS` pairs
+    render, with a trailing ``…`` naming the omission.
+
+    Args:
+        cap: The group's capability schema.
+        values: Current per-group option values (missing keys fall back to
+            schema defaults).
+
+    Returns:
+        The full title string, e.g.
+        ``"Audio & video — Transcription provider: Auto (faster-whisper),
+        Transcription model: Base (fast), Language: en, …"``.
+    """
+    changed: list[str] = []
+    untouched: list[str] = []
+    for field in cap.fields:
+        value = values.get(field.name, field.default)
+        if value is None or str(value).strip() == "":
+            continue
+        bucket = untouched if _option_is_default(field, value) else changed
+        bucket.append(_summarise_option(field, value))
+    pairs = changed + untouched
+    shown = pairs[:_TITLE_MAX_PAIRS]
+    if len(pairs) > len(shown):
+        shown.append("…")
+    if not shown:
+        return cap.label
+    return f"{cap.label} — {', '.join(shown)}"
 
 
 def ingest_scope_label(cap: TypeGroupCapabilities, has_files: bool) -> str:
@@ -482,12 +544,16 @@ def ingest_scope_label(cap: TypeGroupCapabilities, has_files: bool) -> str:
         has_files: Whether the current pre-flight staged files for it.
 
     Returns:
-        The scope sentence for the panel.
+        The scope sentence for the panel. (task-3305, MI-16) Composed from
+        the group's noun phrases, not its category label -- "Applies to all
+        Plain text & HTML in this import." was not a sentence.
     """
+    singular = cap.noun_singular or cap.label
+    plural = cap.noun_plural or cap.label
     return (
-        f"Applies to all {cap.label} in this import."
+        f"Applies to every {singular} in this import."
         if has_files
-        else f"Applies to {cap.label} if this import contains any."
+        else f"Applies to {plural} if this import contains any."
     )
 
 
@@ -579,12 +645,10 @@ class LibraryIngestCanvas(VerticalScroll):
         # with zero such files staged was a false statement.
         scope_label = ingest_scope_label(cap, has_files)
         children: list[Any] = [Static(scope_label, classes="type-group-scope")]
-        summary_parts: list[str] = []
         cap_fields_by_name = {f.name: f for f in cap.fields}
 
         for field in cap.fields:
             value = values.get(field.name, field.default)
-            summary_parts.append(_summarise_option(field, value))
             # Two independent reasons a field can be uneditable: its tooling
             # is not installed, or the sibling field that gates it is off.
             # (task-3304, MI-07) One shared computation returns BOTH the
@@ -624,7 +688,13 @@ class LibraryIngestCanvas(VerticalScroll):
                     )
                 )
             elif field.type == "select":
-                select_options = [(opt, opt) for opt in field.options]
+                # (task-3305, MI-09) Human display labels; the VALUE side
+                # (and everything persisted/submitted) stays the internal
+                # token.
+                select_options = [
+                    (select_option_label(field, opt), opt)
+                    for opt in field.options
+                ]
                 select_value = value if value in field.options else field.default
                 if select_value not in field.options and field.options:
                     select_value = field.options[0]
@@ -695,7 +765,10 @@ class LibraryIngestCanvas(VerticalScroll):
                 children.append(
                     Input(
                         value=str(value),
-                        placeholder=field.label,
+                        # (task-3305) Example content when the schema
+                        # provides it; a placeholder repeating the label
+                        # line directly above is stutter.
+                        placeholder=field.placeholder or field.label,
                         id=widget_id,
                         disabled=disabled,
                     )
@@ -772,7 +845,9 @@ class LibraryIngestCanvas(VerticalScroll):
         )
 
         panel = Vertical(*children, classes="type-group-contents")
-        title = f"{cap.label} — {', '.join(summary_parts)}"
+        # (task-3305, MI-16) Shared with the screen's in-place receipt
+        # update: capped, empty-skipping, changed-values-first.
+        title = build_type_group_title(cap, values)
         return Collapsible(
             panel,
             title=title,

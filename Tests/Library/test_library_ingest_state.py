@@ -106,7 +106,7 @@ def test_available_seams_and_typed_path_enable_start():
 
 def test_start_quiet_line_shown_when_path_blank_and_seams_available():
     state = build_library_ingest_state((), form=LibraryIngestFormState(path=""))
-    assert state.start_quiet_line == "Enter a file path to start."
+    assert state.start_quiet_line == "Enter a file path or URL to start."
 
 
 def test_start_quiet_line_hidden_once_path_is_typed():
@@ -118,7 +118,7 @@ def test_start_quiet_line_hidden_once_path_is_typed():
 
 def test_start_quiet_line_shown_for_whitespace_only_path():
     state = build_library_ingest_state((), form=LibraryIngestFormState(path="   "))
-    assert state.start_quiet_line == "Enter a file path to start."
+    assert state.start_quiet_line == "Enter a file path or URL to start."
 
 
 def test_start_quiet_line_hidden_when_media_db_unavailable():
@@ -523,9 +523,9 @@ def test_queue_counts_line_omits_zero_states():
         ),
     )
     state = build_library_ingest_state(jobs, form=LibraryIngestFormState())
-    # (task-2043) The suffix says the totals span ALL ingests (the
-    # registry restores prior sessions from the jobs DB).
-    assert state.queue_counts_line == "2 done · 1 failed — in queue"
+    # (task-3305, MI-14) All jobs terminal: the "— in queue" suffix
+    # would read as a contradiction over a finished run.
+    assert state.queue_counts_line == "2 done · 1 failed"
 
 
 def test_queue_counts_line_hidden_with_no_jobs():
@@ -1779,7 +1779,8 @@ def test_unsupported_line_names_files_and_matches_gate():
     assert blocked.start_enabled is False
     assert blocked.unsupported_line == (
         "Unsupported: x.json, y.jpg."
-        " Supported: PDF documents, Word/Office documents, audio/video files, e-books, plain text files."
+        " Supported: PDF documents, Word/Office documents, audio/video files,"
+        " e-books, plain text files, web pages (by URL)."
     )
 
     many = build_library_ingest_state(
@@ -2068,7 +2069,7 @@ def test_skipped_jobs_render_neutral_and_count_separately():
     assert row.line.startswith("○ skipped · photo.jpg")
     assert row.can_retry is False
     assert row.can_dismiss is True
-    assert state.queue_counts_line == "1 done · 1 skipped — in queue"
+    assert state.queue_counts_line == "1 done · 1 skipped"
     assert state.queue_clear_finished_label == (
         "Press again to clear 2 finished"
     )
@@ -2395,7 +2396,7 @@ def test_queue_tally_and_group_header_agree_on_matched() -> None:
     state = build_library_ingest_state(
         (imported, matched), form=LibraryIngestFormState()
     )
-    assert state.queue_counts_line == "1 done · 1 matched — in queue"
+    assert state.queue_counts_line == "1 done · 1 matched"
     headed = next(g for g in state.queue_groups if g.header_line)
     assert "1 done" in headed.header_line
     assert "1 matched" in headed.header_line
@@ -2506,3 +2507,106 @@ def test_state_exposes_deduped_warning_commands_in_order() -> None:
 def test_warning_commands_empty_without_preflight() -> None:
     state = build_library_ingest_state((), form=LibraryIngestFormState())
     assert state.warning_commands == ()
+
+
+# --- task-3305: copy & labels batch -----------------------------------------
+
+
+def test_counts_line_drops_in_queue_suffix_when_every_job_is_terminal():
+    """(task-3305, MI-14) "1 done — in queue" over a finished run read as a
+    contradiction; the queue-scope suffix belongs only while something is
+    still actually queued/working."""
+    jobs = (
+        _job(job_id="ingest-job-1", state=IngestJobState.DONE),
+        _job(job_id="ingest-job-2", state=IngestJobState.FAILED, error="x"),
+    )
+    state = build_library_ingest_state(jobs, form=LibraryIngestFormState())
+    assert state.queue_counts_line == "1 done · 1 failed"
+
+
+def test_counts_line_keeps_in_queue_suffix_while_any_job_is_active():
+    jobs = (
+        _job(job_id="ingest-job-1", state=IngestJobState.DONE),
+        _job(job_id="ingest-job-2", state=IngestJobState.QUEUED),
+    )
+    state = build_library_ingest_state(jobs, form=LibraryIngestFormState())
+    assert state.queue_counts_line == "1 queued · 1 done — in queue"
+
+
+def test_type_breakdown_names_web_pages():
+    """(task-3305, MI-18) A URL selection used to read "1 web" -- the label
+    table had no ``web`` entry, so the fallback pluralised the group id."""
+    assert build_type_breakdown_line({"web": ["https://a.example"]}) == "1 web page"
+    assert (
+        build_type_breakdown_line({"web": ["https://a.example", "https://b.example"]})
+        == "2 web pages"
+    )
+
+
+def test_intro_line_promises_web_pages():
+    from tldw_chatbook.Library.library_ingest_state import build_intro_lines
+
+    what_line = build_intro_lines()[0]
+    assert "web pages" in what_line
+
+
+def test_supported_copy_and_start_gate_name_urls():
+    """(task-3305, MI-12) The surface accepts URLs, so the supported list
+    and the blank-path nudge must say so."""
+    from tldw_chatbook.Library.library_ingest_state import (
+        START_QUIET_LINE_COPY,
+        SUPPORTED_FORMATS_COPY,
+    )
+
+    assert "web pages (by URL)" in SUPPORTED_FORMATS_COPY
+    assert START_QUIET_LINE_COPY == "Enter a file path or URL to start."
+
+
+def test_estimate_line_omitted_for_url_sources():
+    """(task-3305, MI-19) A URL is not a 0-byte file: the estimate line
+    ("1 file · 0 B") is dropped for URL sources -- the breakdown line
+    already names what the URL is."""
+    preflight = PreflightResult(
+        type_groups={"web": ["https://example.com/article"]},
+        warnings=[],
+        errors=[],
+        total_size=0,
+        truncated=False,
+        total_files=1,
+        source_is_url=True,
+    )
+    state = build_library_ingest_state(
+        (), form=LibraryIngestFormState(path="https://example.com/article"),
+        preflight=preflight,
+    )
+    assert state.estimate_line == ""
+    assert state.type_breakdown_line == "1 web page"
+
+
+def test_failed_row_detail_drops_leading_basename_echo():
+    """(task-3305) "✗ failed · empty.txt · empty.txt is empty…" repeated the
+    name; the detail drops the echo when it starts with the row's own
+    basename."""
+    job = _job(
+        job_id="ingest-job-9",
+        source_path="/tmp/empty.txt",
+        state=IngestJobState.FAILED,
+        error="empty.txt is empty; there was nothing to ingest.",
+    )
+    state = build_library_ingest_state((job,), form=LibraryIngestFormState())
+    assert state.queue_rows[0].line == (
+        "✗ failed · empty.txt · is empty; there was nothing to ingest."
+    )
+
+
+def test_failed_row_detail_without_basename_echo_passes_through():
+    job = _job(
+        job_id="ingest-job-9",
+        source_path="/tmp/broken.pdf",
+        state=IngestJobState.FAILED,
+        error="PDF Extraction Error.",
+    )
+    state = build_library_ingest_state((job,), form=LibraryIngestFormState())
+    assert state.queue_rows[0].line == (
+        "✗ failed · broken.pdf · PDF Extraction Error."
+    )

@@ -791,3 +791,66 @@ def test_every_value_gated_field_carries_a_disabled_reason() -> None:
                 f"{caps.group}.{field.name} is value-gated with no hint and "
                 "no disabled_reason -- its inert state would be unexplained"
             )
+
+
+# --- task-3305 (MI-09): human display labels for every select option -------
+
+
+def test_every_select_field_labels_every_option_with_human_copy() -> None:
+    """Meta-guard: every ``select`` field must carry a display label for
+    every one of its options, and no label may be the raw internal token
+    echoed back -- ``pymupdf4llm``, ``url_level``, ``recursive_scraping``
+    et al. used to render verbatim as user-facing values (task-3305)."""
+    select_fields = 0
+    for caps in _TYPE_GROUPS.values():
+        for field in caps.fields:
+            if field.type != "select":
+                continue
+            select_fields += 1
+            labels = dict(field.option_labels)
+            assert set(labels) == set(field.options), (
+                f"{caps.group}.{field.name}: option_labels must cover exactly "
+                f"the declared options (missing: "
+                f"{set(field.options) - set(labels)}, stray: "
+                f"{set(labels) - set(field.options)})"
+            )
+            for value, label in labels.items():
+                assert label and label.strip(), (
+                    f"{caps.group}.{field.name}.{value}: blank display label"
+                )
+                assert label != value, (
+                    f"{caps.group}.{field.name}.{value}: display label is the "
+                    "raw internal token"
+                )
+                assert "," not in label, (
+                    f"{caps.group}.{field.name}.{value}: option labels feed "
+                    "comma-joined panel titles and must stay comma-free"
+                )
+    assert select_fields >= 9, "schema sweep looks broken -- too few selects"
+
+
+def test_select_option_label_resolves_labels_and_falls_back() -> None:
+    """The label helper returns the curated display copy for a mapped value
+    and echoes an unmapped value unchanged (never crashes on stale
+    persisted values)."""
+    from tldw_chatbook.Library.ingest_capabilities import select_option_label
+
+    engine = next(
+        f for f in get_capabilities("pdf").fields if f.name == "pdf_engine"
+    )
+    label = select_option_label(engine, "pymupdf4llm")
+    assert label != "pymupdf4llm"
+    assert "PyMuPDF4LLM" in label
+
+    bare = OptionField(name="x", label="X", type="select", options=("a",))
+    assert select_option_label(bare, "a") == "a"
+    assert select_option_label(engine, "no-such-engine") == "no-such-engine"
+
+
+def test_scope_nouns_exist_for_every_group() -> None:
+    """(task-3305, MI-16) Every group carries singular/plural scope nouns so
+    the panel scope line can say "every PDF document" instead of gluing the
+    category label into an unnatural sentence."""
+    for caps in _TYPE_GROUPS.values():
+        assert caps.noun_singular, f"{caps.group}: missing noun_singular"
+        assert caps.noun_plural, f"{caps.group}: missing noun_plural"

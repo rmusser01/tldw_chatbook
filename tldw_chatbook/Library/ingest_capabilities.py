@@ -58,6 +58,18 @@ class OptionField:
             whose static ``hint`` already names the gate (task-3303's
             "docling or docext engines only" style) deliberately leave both
             empty so the label is never double-annotated.
+        option_labels: (task-3305, MI-09) ``(value, display label)`` pairs
+            for ``select`` fields -- what the user reads while the raw
+            token is what persists and travels to the pipeline. Every
+            select option must be covered (meta-tested); labels state the
+            consequence where one exists ("Auto (faster-whisper)") and
+            stay comma-free because the collapsed panel titles comma-join
+            them. Resolve through :func:`select_option_label`, never by
+            indexing this tuple directly.
+        placeholder: Example content for an empty text Input (e.g.
+            ``/path/to/parakeet-model``). Empty falls back to the field
+            label -- but a placeholder that merely repeats the label is
+            stutter, so empty-by-default text fields should set one.
     """
 
     name: str
@@ -70,6 +82,8 @@ class OptionField:
     hint: str = ""
     enabled_when_values: tuple[Any, ...] = ()
     disabled_reason: str = ""
+    option_labels: tuple[tuple[str, str], ...] = ()
+    placeholder: str = ""
 
 
 @dataclass(frozen=True)
@@ -84,6 +98,13 @@ class TypeGroupCapabilities:
         optional_features: Feature IDs that enhance the group but are not
             strictly required.
         fields: Configurable options for this group.
+        noun_singular: (task-3305, MI-16) Singular noun phrase for one item
+            of this group ("PDF document", "web page") -- the panel scope
+            line composes sentences from it ("Applies to every PDF document
+            in this import."), which the bare category ``label`` cannot do
+            grammatically ("Applies to all Plain text & HTML in this
+            import.").
+        noun_plural: Plural counterpart of ``noun_singular``.
     """
 
     group: str
@@ -91,11 +112,35 @@ class TypeGroupCapabilities:
     required_features: tuple[str, ...]
     optional_features: tuple[str, ...]
     fields: tuple[OptionField, ...]
+    noun_singular: str = ""
+    noun_plural: str = ""
 
     @property
     def field_names(self) -> tuple[str, ...]:
         """Return the machine names of all configured fields."""
         return tuple(f.name for f in self.fields)
+
+
+def select_option_label(field: OptionField, value: Any) -> str:
+    """Display copy for one select option value.
+
+    (task-3305, MI-09) The single resolution seam between a select's
+    persisted internal token and what the user reads -- used by the canvas
+    select builder AND the collapsed-title summariser so the two can never
+    disagree. An unmapped value (a stale persisted token, a test double)
+    echoes through unchanged rather than crashing.
+
+    Args:
+        field: The select field whose ``option_labels`` to consult.
+        value: The internal option value.
+
+    Returns:
+        The curated display label, or ``str(value)`` when none is defined.
+    """
+    for candidate, label in field.option_labels:
+        if candidate == value:
+            return label
+    return str(value)
 
 
 # PyPI package names used in the UI/planning documents map to the names that
@@ -339,6 +384,8 @@ _TYPE_GROUPS: dict[str, TypeGroupCapabilities] = {
     "pdf": TypeGroupCapabilities(
         group="pdf",
         label="PDF documents",
+        noun_singular="PDF document",
+        noun_plural="PDF documents",
         required_features=("pdf_processing",),
         optional_features=("pymupdf4llm", "docling"),
         fields=(
@@ -350,6 +397,17 @@ _TYPE_GROUPS: dict[str, TypeGroupCapabilities] = {
                 # (task-3303) docext joins: a valid ``process_pdf`` parser
                 # (vision-model OCR) that had no UI path.
                 options=("pymupdf", "pymupdf4llm", "docling", "docext"),
+                # (task-3305, MI-09) What each engine costs/buys, verified
+                # against ``PDF_Processing_Lib``: pymupdf extracts plain
+                # text; pymupdf4llm emits Markdown; docling is the
+                # layout-aware converter (and an OCR route); docext runs a
+                # vision-model OCR backend.
+                option_labels=(
+                    ("pymupdf", "PyMuPDF (plain text)"),
+                    ("pymupdf4llm", "PyMuPDF4LLM (Markdown)"),
+                    ("docling", "Docling (layout-aware · OCR-capable)"),
+                    ("docext", "Docext (vision-model OCR)"),
+                ),
                 depends_on="pdf_processing",
             ),
             OptionField(
@@ -393,6 +451,14 @@ _TYPE_GROUPS: dict[str, TypeGroupCapabilities] = {
                     "paddleocr",
                     "docling",
                 ),
+                option_labels=(
+                    ("auto", "Auto (let Docext choose)"),
+                    ("docext", "Docext (vision model)"),
+                    ("tesseract", "Tesseract"),
+                    ("easyocr", "EasyOCR"),
+                    ("paddleocr", "PaddleOCR"),
+                    ("docling", "Docling"),
+                ),
                 enabled_when="pdf_engine",
                 enabled_when_values=("docext",),
                 disabled_reason="needs the docext engine",
@@ -408,6 +474,8 @@ _TYPE_GROUPS: dict[str, TypeGroupCapabilities] = {
     "document": TypeGroupCapabilities(
         group="document",
         label="Word/Office documents",
+        noun_singular="Word/Office document",
+        noun_plural="Word/Office documents",
         # No required features: per-format native parsers (python-docx,
         # odfpy, striprtf) and docling are ALTERNATIVES, and docling alone
         # can stand in for all of them -- a missing-parser failure is
@@ -425,6 +493,11 @@ _TYPE_GROUPS: dict[str, TypeGroupCapabilities] = {
                 # ``process_document(processing_method=...)``: auto prefers
                 # docling when installed, else the per-format native parser.
                 options=("auto", "docling", "native"),
+                option_labels=(
+                    ("auto", "Auto (Docling when installed)"),
+                    ("docling", "Docling (layout-aware · OCR-capable)"),
+                    ("native", "Native per-format parser"),
+                ),
             ),
             OptionField(
                 name="ocr",
@@ -454,6 +527,8 @@ _TYPE_GROUPS: dict[str, TypeGroupCapabilities] = {
     "audio_video": TypeGroupCapabilities(
         group="audio_video",
         label="Audio & video",
+        noun_singular="audio/video file",
+        noun_plural="audio/video files",
         required_features=("audio_processing",),
         optional_features=(
             "faster_whisper",
@@ -475,6 +550,16 @@ _TYPE_GROUPS: dict[str, TypeGroupCapabilities] = {
                     "faster-whisper",
                     "transcribe-cpp",
                 ),
+                # (task-3305, MI-09) "default" is not a provider: the batch
+                # router sends it to faster-whisper on this surface
+                # (task-3301 verified the ingest call site never opens the
+                # Parakeet promotion gate) -- say so at the control.
+                option_labels=(
+                    ("default", "Auto (faster-whisper)"),
+                    ("parakeet-onnx", "Parakeet (ONNX)"),
+                    ("faster-whisper", "Faster Whisper"),
+                    ("transcribe-cpp", "transcribe.cpp (GGUF)"),
+                ),
                 depends_on="audio_processing",
             ),
             OptionField(
@@ -482,6 +567,9 @@ _TYPE_GROUPS: dict[str, TypeGroupCapabilities] = {
                 label="Local Parakeet model folder",
                 type="text",
                 default="",
+                # (task-3305) Example content, not the label repeated: an
+                # empty Input otherwise shows label-as-placeholder stutter.
+                placeholder="/path/to/parakeet-model",
                 depends_on="parakeet_onnx",
                 enabled_when="transcription_provider",
                 enabled_when_values=("parakeet-onnx",),
@@ -503,6 +591,13 @@ _TYPE_GROUPS: dict[str, TypeGroupCapabilities] = {
                 type="select",
                 default="base",
                 options=("tiny", "base", "small", "medium", "large"),
+                option_labels=(
+                    ("tiny", "Tiny (fastest · least accurate)"),
+                    ("base", "Base (fast)"),
+                    ("small", "Small (balanced)"),
+                    ("medium", "Medium (more accurate · slower)"),
+                    ("large", "Large (most accurate · slowest)"),
+                ),
                 depends_on="faster_whisper",
                 enabled_when="transcription_provider",
                 enabled_when_values=("faster-whisper",),
@@ -559,6 +654,8 @@ _TYPE_GROUPS: dict[str, TypeGroupCapabilities] = {
     "ebook": TypeGroupCapabilities(
         group="ebook",
         label="E-books",
+        noun_singular="e-book",
+        noun_plural="e-books",
         required_features=("ebook_processing",),
         optional_features=("html2text", "lxml", "beautifulsoup4"),
         fields=(
@@ -568,6 +665,16 @@ _TYPE_GROUPS: dict[str, TypeGroupCapabilities] = {
                 type="select",
                 default="filtered",
                 options=("filtered", "markdown", "basic"),
+                # (task-3305, MI-09) Verified against
+                # ``Book_Ingestion_Lib``: filtered follows the spine and
+                # skips known front matter; markdown converts with TOC and
+                # heading structure; basic reads every document item as
+                # plain text.
+                option_labels=(
+                    ("filtered", "Filtered (skips covers & front matter)"),
+                    ("markdown", "Markdown (keeps headings & structure)"),
+                    ("basic", "Basic (every section · plain text)"),
+                ),
                 depends_on="ebook_processing",
             ),
             OptionField(
@@ -583,6 +690,12 @@ _TYPE_GROUPS: dict[str, TypeGroupCapabilities] = {
                 type="select",
                 default="chapters",
                 options=("chapters", "sentences", "words", "paragraphs"),
+                option_labels=(
+                    ("chapters", "By chapter"),
+                    ("sentences", "By sentence"),
+                    ("words", "By word count"),
+                    ("paragraphs", "By paragraph"),
+                ),
                 depends_on="ebook_processing",
             ),
             OptionField(
@@ -597,6 +710,8 @@ _TYPE_GROUPS: dict[str, TypeGroupCapabilities] = {
     "generic": TypeGroupCapabilities(
         group="generic",
         label="Plain text & HTML",
+        noun_singular="plain text & HTML file",
+        noun_plural="plain text & HTML files",
         required_features=(),
         optional_features=(),
         fields=(
@@ -652,6 +767,16 @@ _TYPE_GROUPS: dict[str, TypeGroupCapabilities] = {
                 # text -- typed garbage silently degraded parsing.
                 type="select",
                 options=("auto", "utf-8", "utf-16", "latin-1", "cp1252"),
+                # (task-3305, MI-09) "auto" per ``_decode_ingest_text``:
+                # strict UTF-8 first, then chardet detection, then UTF-8
+                # with replacement characters.
+                option_labels=(
+                    ("auto", "Auto-detect (UTF-8 first)"),
+                    ("utf-8", "UTF-8"),
+                    ("utf-16", "UTF-16"),
+                    ("latin-1", "Latin-1 (ISO-8859-1)"),
+                    ("cp1252", "Windows-1252 (Western)"),
+                ),
                 default="auto",
                 depends_on=None,
             ),
@@ -660,6 +785,8 @@ _TYPE_GROUPS: dict[str, TypeGroupCapabilities] = {
     "web": TypeGroupCapabilities(
         group="web",
         label="Web pages",
+        noun_singular="web page",
+        noun_plural="web pages",
         # No local packages are required: the article extractor is part of the
         # app, and a server-backed clip runs entirely on the server.
         required_features=(),
@@ -674,6 +801,14 @@ _TYPE_GROUPS: dict[str, TypeGroupCapabilities] = {
                 # document. The local extractor only does the single-page case,
                 # which is why that is the default for both backends.
                 options=("individual", "sitemap", "url_level", "recursive_scraping"),
+                # (task-3305, MI-09) The enum tokens are server-facing; the
+                # user-facing question is scope.
+                option_labels=(
+                    ("individual", "This page only"),
+                    ("sitemap", "Site map"),
+                    ("url_level", "Pages under this URL"),
+                    ("recursive_scraping", "Follow links (recursive)"),
+                ),
                 depends_on=None,
             ),
             OptionField(

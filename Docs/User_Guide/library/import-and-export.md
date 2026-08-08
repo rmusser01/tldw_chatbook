@@ -42,13 +42,16 @@ In server mode the **Export** rail row is disabled, with the tooltip
   (once something is typed) "Clear". On a fresh visit, two orientation
   lines sit below: "Import a file, a whole folder, or a URL. Supported:
   PDF documents, Word/Office documents, audio/video files, e-books, plain
-  text files." and "Imported items are searchable in your Library and can
-  be used as context in chat."
+  text files, web pages." and "Imported items are searchable in your
+  Library and can be used as context in chat."
 - **Pre-check summary** — as soon as you enter a path the form shows
   "Checking…", then replaces it with a type breakdown ("1 PDF document,
-  2 audio/video files"), a size estimate ("3 files · 1.2 MB"), any
-  "⚠" warnings about missing tooling, and — if some files can't be
-  handled — "2 unsupported files will be recorded as failures."
+  2 audio/video files"; a URL reads "1 web page"), a size estimate
+  ("3 files · 1.2 MB" — omitted for URLs, whose size isn't known ahead of
+  time), any "⚠" warnings about missing tooling, and — if some files
+  can't be handled — "2 unsupported files will be skipped: …". An
+  unreachable URL reports a plain reason ("URL unreachable — the server
+  name could not be found."), never a raw error dump.
 - **Options** — "Expand all" / "Collapse all", then one fold per detected
   content type, titled with its current settings (for example "Plain text
   & HTML — Analyze after import: off, Chunk content: on, …"). Word/Office
@@ -57,8 +60,8 @@ In server mode the **Export** rail row is disabled, with the tooltip
   always-present base. Each fold ends with "Reset to defaults".
 - **Metadata** — "Title (optional)", "Author (optional)", "Keywords,
   comma-separated (optional)". These apply to everything in the import.
-- **Start** — a quiet gate line ("Enter a file path to start.") and the
-  "Start import" button.
+- **Start** — a quiet gate line ("Enter a file path or URL to start.")
+  and the "Start import" button.
 - **Queue** — the "Queue" heading, a per-state count line while jobs
   exist ("1 parsing · 2 queued · 1 done"), one line per job with action
   buttons underneath, "Clear finished", and a collapsed "Recent imports"
@@ -89,7 +92,7 @@ the rest of the session.
 | "Browse…" | Opens the "Import media" file picker (remembers your last folder). The listing shows Name / Size / Modified column headers, human-readable sizes ("512 B", "2.4 MB", never a bare byte count), no size on folder rows (including ".."), and a labeled "File name:" input at the bottom. Folders and URLs are typed or pasted into the path field instead. |
 | Pre-check warnings ("⚠ …") | Name a missing optional package, what it's needed for, and the install command that fixes it. A compact "Copy install command" button sits right under the warnings — you no longer have to open the guardrail dialog to copy it (with several distinct commands, each button names its extra, e.g. "Copy install command (.[audio])"). |
 | "Choose a file…" / "Retry" | Offered under pre-check errors — pick a different path, or re-run the check after a network hiccup. |
-| Per-type options | PDF documents: "PDF engine" (pymupdf / pymupdf4llm / docling / docext), "Enable OCR (docling or docext engines only)", "OCR language", "OCR backend" (auto / docext / tesseract / easyocr / paddleocr / docling — docext engine only). Word/Office documents: "Processing method" (auto / docling / native), "Enable OCR (docling method only)", "OCR language". Audio & video: "Transcription provider" (default / parakeet-onnx / faster-whisper / transcribe-cpp), "Local Parakeet model folder", "Transcription model" (tiny–large), "Language", "Translate to English (via faster-whisper)", "Include timestamps", "Speaker diarization", "Voice activity detection (VAD) filter". E-books: "Extraction method" (filtered / markdown / basic), "Chunking method" (chapters / sentences / words / paragraphs), "Include table of contents". Plain text & HTML: "Analyze after import", "Chunk content", "Chunk size", "Chunk overlap", "Encoding". Web pages (URLs): "What to fetch", "Maximum pages", "Maximum depth". |
+| Per-type options | Every dropdown shows a plain-language choice (the internal value still travels to the pipeline). PDF documents: "PDF engine" ("PyMuPDF (plain text)" / "PyMuPDF4LLM (Markdown)" / "Docling (layout-aware · OCR-capable)" / "Docext (vision-model OCR)"), "Enable OCR (docling or docext engines only)", "OCR language", "OCR backend" ("Auto (let Docext choose)" / Docext / Tesseract / EasyOCR / PaddleOCR / Docling — docext engine only). Word/Office documents: "Processing method" ("Auto (Docling when installed)" / Docling / "Native per-format parser"), "Enable OCR (docling method only)", "OCR language". Audio & video: "Transcription provider" ("Auto (faster-whisper)" / "Parakeet (ONNX)" / "Faster Whisper" / "transcribe.cpp (GGUF)"), "Local Parakeet model folder", "Transcription model" ("Tiny (fastest · least accurate)" through "Large (most accurate · slowest)"), "Language", "Translate to English (via faster-whisper)", "Include timestamps", "Speaker diarization", "Voice activity detection (VAD) filter". E-books: "Extraction method" ("Filtered (skips covers & front matter)" / "Markdown (keeps headings & structure)" / "Basic (every section · plain text)"), "Chunking method" ("By chapter" / "By sentence" / "By word count" / "By paragraph"), "Include table of contents". Plain text & HTML: "Analyze after import", "Chunk content", "Chunk size", "Chunk overlap", "Encoding". Web pages (URLs): "What to fetch" ("This page only" / "Site map" / "Pages under this URL" / "Follow links (recursive)"), "Maximum pages", "Maximum depth". |
 | PDF / document OCR | The OCR checkbox is inert under engines that cannot OCR — the label names the capable ones. "OCR language" rides the OCR toggle; the PDF "OCR backend" applies to the docext engine only. |
 | Inert (grayed) options | Any option whose precondition isn't met renders dimmed on a darker field AND says why at its label — "Local Parakeet model folder — needs the parakeet-onnx provider", "Maximum pages — single-page fetch selected", "Chunk size — needs Chunk content on", "OCR language — needs Enable OCR on"; a missing optional package reads "— needs <package> installed". Flip the named gate and the field wakes up. |
 | "Translate to English" | Transcribes audio/video into English regardless of the spoken language. Runs via faster-whisper — the toggle is inert under parakeet-onnx and transcribe-cpp, which cannot translate. |
@@ -97,7 +100,7 @@ the rest of the session.
 | Web "What to fetch" on a local import | The multi-page methods (sitemap / url_level / recursive_scraping) run only on the server. Selecting one while importing on this machine shows "Multi-page fetch runs on the server — this local import fetches one page." right under the control. |
 | "Analyze after import" | Runs an LLM summary of each imported item, stored alongside it (visible from the media viewer's analysis panel). The provider comes from `[analysis_defaults] provider` in `config.toml` — the same default the Media analysis panel uses — and its key from `[api_settings.<provider>]` or the provider's usual environment variable. When the option is on but no provider is callable, a line above Start says so ("Analyze after import is on, but … Imports will run without analysis.") and finished rows read "Imported name — analysis skipped: <reason>" instead of silently skipping. |
 | "Chunk content" | Governs every type: off means no retrieval chunks are stored at all; on chunks plain text / documents / HTML too (not just PDF/e-book/audio), using "Chunk size" and "Chunk overlap" — both measured in words. |
-| "Encoding" | How plain text and HTML files are decoded: auto (utf-8, then detection) or an explicit utf-8 / utf-16 / latin-1 / cp1252. A wrong explicit choice shows up as replacement characters rather than failing the import. |
+| "Encoding" | How plain text and HTML files are decoded: "Auto-detect (UTF-8 first)" (strict UTF-8, then detection) or an explicit UTF-8 / UTF-16 / "Latin-1 (ISO-8859-1)" / "Windows-1252 (Western)". A wrong explicit choice shows up as replacement characters rather than failing the import. |
 | "Install verified Parakeet v2 INT8 (630.6 MiB)…" | In the Audio & video fold, enabled when the provider is parakeet-onnx (under any other provider the button is inert and its label ends "— needs the parakeet-onnx provider"). Opens a consent dialog listing Source, Revision, License, Download size, and Destination, ending "All four files are checked against pinned sizes and SHA-256 digests before the bundle becomes usable." Buttons: "Cancel" / "Install". |
 | "Start import" | Queues everything the pre-check found. If warnings are outstanding, the "Some files may fail to import:" dialog appears first (see below). |
 | Queue rows | "● queued / parsing / writing · name" while working, "✓ done · name · 4s" on success, "✗ failed · name · reason" (plus " · retry 1" after a retry) on failure, "⊘ cancelled · name" when stopped on purpose. Server jobs carry an " · on server" suffix. |
@@ -272,3 +275,19 @@ the Browse picker gained Name/Size/Modified headers, humanized sizes, no
 size on folder rows, and a "File name:" label; "Copy install command" now
 also sits under the pre-check "⚠" warnings, not only in the guardrail
 dialog)*
+
+*Verified against feat/media-ingest-ux-parity @ 0ba5bf44c — 2026-08-08
+(task-3305: every option dropdown shows plain-language choices ("PyMuPDF4LLM
+(Markdown)", "Auto (faster-whisper)", "This page only") while the internal
+value still persists; the supported-formats list and the Start gate name
+URLs ("Enter a file path or URL to start."); URL pre-check failures read as
+plain reasons ("URL unreachable — the server name could not be found."),
+never a raw exception; a URL pre-check reads "1 web page" with no bogus
+"1 file · 0 B" estimate; bracketed filenames render clean in Recent
+imports; a finished queue's tally drops the "— in queue" suffix; collapsed
+option-fold titles cap at the three most salient settings (changed values
+first) and never render a dangling empty value; the empty Parakeet folder
+field shows an example path instead of repeating its label; a failed row
+no longer repeats its own filename inside the reason; and the "N will
+import" commit line hides while the fix-your-options gate is blocking
+Start)*

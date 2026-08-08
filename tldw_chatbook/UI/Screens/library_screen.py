@@ -90,7 +90,7 @@ from ...Library.ingest_capabilities import get_capabilities, list_type_groups
 from ...Library.ingest_preflight import analyze_path
 from ...Library.ingest_types import PreflightResult
 from ...Widgets.Library.library_ingest_canvas import (
-    _summarise_option,
+    build_type_group_title,
     ingest_scope_label,
 )
 from ...Library.library_ingest_jobs import (
@@ -9414,6 +9414,21 @@ class LibraryScreen(BaseAppScreen):
         except (NoMatches, QueryError):
             return
         quiet_line.update(new_state.start_quiet_line)
+        # (task-3305, MI-16) The commit forecast rides the SAME update as
+        # the gate: a text/number option edit takes the in-place path, and
+        # syncing the gate but not the forecast left "1 will import"
+        # beside "Fix the highlighted options to start" -- a mixed
+        # message. The state builder already empties the line whenever the
+        # gate is closed, so one sync here keeps the two agreeing.
+        try:
+            commit_summary = self.query_one(
+                "#library-ingest-commit-summary", Static
+            )
+        except (NoMatches, QueryError):
+            pass
+        else:
+            commit_summary.update(new_state.commit_summary_line)
+            commit_summary.display = bool(new_state.commit_summary_line)
         # (task-3301) The Analyze-readiness hint shares the gate's in-place
         # update path so toggling the option or fixing the config never
         # needs a recompose to change the message.
@@ -9505,16 +9520,9 @@ class LibraryScreen(BaseAppScreen):
         for intro in canvas.query(".library-ingest-intro"):
             intro.display = bool(new_state.intro_lines)
         # (task-2140) The commit-summary line is canvas-level and
-        # display-managed -- update content and visibility here so a
-        # non-structural pre-flight apply (or a Clear) can never leave it
-        # unmounted or stale.
-        try:
-            commit_summary = canvas.query_one("#library-ingest-commit-summary", Static)
-        except (NoMatches, QueryError):
-            pass
-        else:
-            commit_summary.update(new_state.commit_summary_line)
-            commit_summary.display = bool(new_state.commit_summary_line)
+        # display-managed; its content/visibility sync lives in
+        # ``_update_library_ingest_gate`` (called below) so the forecast
+        # and the gate can never disagree (task-3305, MI-16).
         try:
             clear_button = canvas.query_one("#library-ingest-clear-path", Button)
         except (NoMatches, QueryError):
@@ -19111,14 +19119,13 @@ class LibraryScreen(BaseAppScreen):
             values["analyze"] = form.analyze
             values["chunk"] = form.chunk
             values["chunk_size"] = form.chunk_size
-        summary = ", ".join(
-            _summarise_option(f, values.get(f.name, f.default)) for f in cap.fields
-        )
         try:
             panel = self.query_one(f"#type-group-{group}", Collapsible)
         except (NoMatches, QueryError):
             return
-        panel.title = f"{cap.label} — {summary}"
+        # (task-3305, MI-16) One title builder for compose-time and this
+        # in-place path: capped, empty-skipping, changed-values-first.
+        panel.title = build_type_group_title(cap, values)
 
     # ----- Export canvas: section entry points --------------------------
 

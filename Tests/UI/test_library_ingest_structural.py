@@ -366,7 +366,11 @@ async def test_schema_disabled_fields_paint_legibly_inert():
             model = pilot.app.query_one(
                 "#opt-audio_video-transcription_model", Select
             )
-            select_style = _painted_style_of_text(pilot.app, model.region, "base")
+            # (task-3305) The select renders its display label now, not
+            # the raw "base" token.
+            select_style = _painted_style_of_text(
+                pilot.app, model.region, "Base (fast)"
+            )
             assert select_style is not None and select_style.color is not None
             select_ratio = _contrast(select_style.color, select_style.bgcolor)
             assert select_ratio >= 3.0, (

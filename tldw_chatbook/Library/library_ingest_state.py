@@ -70,10 +70,11 @@ QUEUE_HEADING_COPY = "Queue"
 QUEUE_EMPTY_COPY = "No import jobs yet."
 # (task-2130) After a session with activity the old line was a lie.
 QUEUE_EMPTY_AFTER_ACTIVITY_COPY = "Queue is empty."
-START_QUIET_LINE_COPY = "Enter a file path to start."
+# (task-3305, MI-12) The surface accepts URLs, so the nudge must say so.
+START_QUIET_LINE_COPY = "Enter a file path or URL to start."
 SUPPORTED_FORMATS_COPY = (
     "Supported: PDF documents, Word/Office documents, audio/video files, "
-    "e-books, plain text files."
+    "e-books, plain text files, web pages (by URL)."
 )
 
 
@@ -297,6 +298,29 @@ def unwrap_ingest_error(error: str) -> str:
         error = unwrapped
 
 
+def _strip_basename_echo(detail: str, basename: str) -> str:
+    """Drop a leading repeat of the row's own basename from its detail.
+
+    (task-3305) The pipeline's error copy often opens with the filename
+    (``"empty.txt is empty; there was nothing to ingest."``), which the
+    queue row already carries -- ``"✗ failed · empty.txt · empty.txt is
+    empty…"`` read as a stutter. Only an exact leading repeat is dropped;
+    anything else passes through whole.
+
+    Args:
+        detail: The short error text destined for the row line.
+        basename: The row's displayed basename.
+
+    Returns:
+        ``detail`` without the leading basename echo (and any separator
+        punctuation that followed it), or ``detail`` unchanged.
+    """
+    if not basename or not detail.startswith(basename):
+        return detail
+    trimmed = detail[len(basename):].lstrip().lstrip(":-·—").lstrip()
+    return trimmed if trimmed else detail
+
+
 def _retry_suffix(job: LibraryIngestJob) -> str:
     """Return a `` · retry {n}`` suffix once a job has been requeued.
 
@@ -319,6 +343,9 @@ _TYPE_GROUP_LABELS: dict[str, tuple[str, str]] = {
     "audio_video": ("audio/video file", "audio/video files"),
     "ebook": ("e-book", "e-books"),
     "generic": ("plain text file", "plain text files"),
+    # (task-3305, MI-18) The fallback pluralised the group id -- a URL
+    # selection read "1 web".
+    "web": ("web page", "web pages"),
 }
 
 
@@ -893,14 +920,15 @@ def _build_queue_row_for_state(job: LibraryIngestJob, *, now: float) -> IngestQu
             error_detail=job.error_detail,
         )
     # FAILED -- the only remaining IngestJobState member.
-    short_error = short_ingest_error(job.error)
+    # (task-3305) The detail never repeats the basename the row leads with.
+    short_error = _strip_basename_echo(short_ingest_error(job.error), basename)
     if job.state == IngestJobState.CANCELLED:
         # Neither ✓ nor ✗: the user stopped this on purpose, so it is not an
         # error they caused. Retry is withheld because ``requeue`` is
         # FAILED-only and would no-op; dismissing the row is still offered.
         line = f"{_GLYPH_CANCELLED} cancelled · {basename}"
         if job.error:
-            line += f" · {short_ingest_error(job.error)}"
+            line += f" · {short_error}"
         return IngestQueueRow(
             job_id=job.job_id,
             glyph=_GLYPH_CANCELLED,
@@ -920,7 +948,7 @@ def _build_queue_row_for_state(job: LibraryIngestJob, *, now: float) -> IngestQu
         # file. No Retry (requeue is FAILED-only); dismiss offered.
         line = f"{_GLYPH_SKIPPED} skipped · {basename}"
         if job.error:
-            line += f" · {short_ingest_error(job.error)}"
+            line += f" · {short_error}"
         return IngestQueueRow(
             job_id=job.job_id,
             glyph=_GLYPH_SKIPPED,
@@ -1012,7 +1040,22 @@ def _queue_counts_line(jobs: Sequence[LibraryIngestJob]) -> str:
     # clears finished rows, while Recent imports keeps the real history.
     # Saying "all ingests" over a number that shrinks was a lie the label
     # itself denied.
-    return f"{joined} — in queue" if joined else ""
+    # (task-3305, MI-14) But "1 done — in queue" over a FINISHED run reads
+    # as a contradiction: the suffix stays only while something is still
+    # actually queued or working; a fully terminal tally sits under the
+    # "Queue" heading, which already scopes it.
+    if not joined:
+        return ""
+    any_active = any(
+        job.state
+        in (
+            IngestJobState.QUEUED,
+            IngestJobState.PARSING,
+            IngestJobState.WRITING,
+        )
+        for job in jobs
+    )
+    return f"{joined} — in queue" if any_active else joined
 
 
 #: Suffix appended to a queue row for a job that runs on the server. Local is
@@ -1455,11 +1498,17 @@ def build_library_ingest_state(
             estimate_line = ""
         else:
             type_breakdown_line = build_type_breakdown_line(type_groups)
-            estimate_line = build_estimate_line(
-                active_preflight.total_files,
-                active_preflight.total_size,
-                active_preflight.truncated,
-            )
+            # (task-3305, MI-19) A URL is not a 0-byte file: the probe
+            # cannot know its size, so "1 file · 0 B" was a fabrication.
+            # The breakdown line above already names what the URL is.
+            if getattr(active_preflight, "source_is_url", False):
+                estimate_line = ""
+            else:
+                estimate_line = build_estimate_line(
+                    active_preflight.total_files,
+                    active_preflight.total_size,
+                    active_preflight.truncated,
+                )
         warning_lines = build_warning_lines(active_preflight.warnings)
         warning_commands = preflight_install_commands(active_preflight.warnings)
         already = getattr(active_preflight, "already_in_library", 0) or 0
