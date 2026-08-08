@@ -1181,3 +1181,30 @@ because that path is testing the template, not the code. The read site's own
 literal default needs a separate, direct assertion (stub the accessor, assert
 the literal argument passed to it), not an inference from observed runtime
 behavior.
+
+## A guard test must be PROVEN to discriminate — twice in one day it wasn't (2026-08-08, tasks 1359/2832)
+
+Two review-verified tests, written by the same controller, both passed while
+guarding nothing:
+
+1. **`capsys` does not observe loguru.** The task-2832 log-privacy test
+   asserted a secret query never appears in `capsys.readouterr()`. The
+   reviewer emitted `logger.warning("… query=<the secret>")` DURING that
+   exact test via a plugin — **1 passed**. loguru's default handler binds
+   pytest's *global* stderr capture at import, so the per-test fixture sees
+   nothing (and `capfd` misses it too). The house pattern is a list-appending
+   sink: `sink_id = logger.add(lambda m: records.append(str(m)))` /
+   `logger.remove(sink_id)` in `finally` — ~15 files already use it.
+2. **A single-chunk MockTransport body makes any early-abort test vacuous.**
+   The task-1359 crawl regression test proved a body was "read in full past
+   the sniff window" — but `httpx.Response(200, content=bytes_blob)` delivers
+   ONE `iter_bytes()` chunk, which the read loop appends before any abort
+   check runs, so the whole body is captured even under the buggy predicate.
+   Only multi-chunk (generator) delivery lets an abort actually cut a body.
+
+**What to do.** For any test whose value is "this would catch the
+regression": run the regression. Mutate the guarded code back to the buggy
+shape (Edit-based, unique marker strings) and READ the red result before
+trusting the green one. Both of these were caught only because the review
+step re-ran the pre-fix code against the new test; neither red-check had been
+done by the author, and both tests were the SOLE pin for their spec clause.
