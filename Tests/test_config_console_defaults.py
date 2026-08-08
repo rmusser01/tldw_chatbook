@@ -5,6 +5,7 @@ from pathlib import Path
 import tomllib
 
 from loguru import logger
+import pytest
 
 CONFIG_PATH_BEFORE_CONFIG_IMPORT = os.environ.get("TLDW_CONFIG_PATH")
 from tldw_chatbook import config as config_module  # noqa: E402
@@ -68,6 +69,16 @@ def test_console_large_paste_collapse_defaults_enabled():
     )
 
 
+def test_console_rail_labels_ship_horizontal_by_default():
+    """The generated config keeps the established horizontal rail handles."""
+    assert (
+        config_module.DEFAULT_CONFIG_FROM_TOML["console"][
+            "stack_collapsed_rail_labels"
+        ]
+        is False
+    )
+
+
 def test_console_background_effect_defaults_disabled():
     background = config_module.DEFAULT_CONFIG_FROM_TOML["console"]["background_effects"]
 
@@ -87,6 +98,33 @@ def test_load_settings_exposes_console_defaults(tmp_path, monkeypatch):
 
     assert settings["console"]["collapse_large_pastes"] is True
     assert settings["console"]["paste_collapse_threshold"] == 50
+    assert settings["console"]["stack_collapsed_rail_labels"] is False
+
+
+@pytest.mark.parametrize(
+    ("raw_value", "expected"),
+    [
+        ("false", False),
+        ("true", True),
+        ('"false"', False),
+        ('"true"', True),
+        ('"sideways"', False),
+    ],
+)
+def test_load_settings_normalizes_console_rail_label_style(
+    tmp_path, monkeypatch, raw_value, expected
+):
+    """Only valid boolean-like values can opt into stacked rail labels."""
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        f"[console]\nstack_collapsed_rail_labels = {raw_value}\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+
+    settings = config_module.load_settings(force_reload=True)
+
+    assert settings["console"]["stack_collapsed_rail_labels"] is expected
 
 
 def test_load_settings_coerces_console_paste_threshold(tmp_path, monkeypatch):
