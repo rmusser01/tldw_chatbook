@@ -70,6 +70,7 @@ DEPENDENCIES_AVAILABLE = {
     "pydub": False,
     "pyaudio": False,
     "av": False,
+    "textual_canvas": False,
     # STT
     "stt_processing": False,
     "nemo_toolkit": False,
@@ -307,6 +308,18 @@ OPTIONAL_FEATURES: dict[str, OptionalFeatureInfo] = {
         # [media_creation.swarmui] in config.toml.
         "Console > /generate-image",
         "Image generation",
+        OWNER_CONSOLE_PROVIDER,
+    ),
+    "video_playback": _feature(
+        "video_playback",
+        "In-app video playback",
+        AREA_MEDIA_CREATION,
+        ("av", "textual-canvas"),
+        # In-transcript silent previews (task-3401.9) and the full player
+        # screen (task-3401.10) degrade to guidance when absent; generation
+        # itself never depends on these.
+        "Console > video card > Preview",
+        "In-app video playback (external player unaffected)",
         OWNER_CONSOLE_PROVIDER,
     ),
     "local_mlx": _feature(
