@@ -1310,6 +1310,36 @@ def test_fetch_zip_normal_members_carry_no_encrypted_annotation_and_sizes(fetch_
     assert "readme.txt — 5 B" in result
 
 
+def test_fetch_zip_nonbadzipfile_parse_errors_normalized(fetch_env, monkeypatch):
+    """Qodo PR #1442 (2): only LocalToolError may escape web_fetch — a
+    hostile central directory raising beyond BadZipFile (struct/Overflow/
+    Value errors) must still surface as [archive-error], with a FIXED
+    message (never an attacker-influenced exception string)."""
+    body = _zip_bytes({"a.txt": b"x"})  # build BEFORE the patch: zipfile is one shared module
+
+    def explode(*args, **kwargs):
+        raise ValueError("weird central directory field")
+    monkeypatch.setattr(web_tool_impls.zipfile, "ZipFile", explode)
+    fetch_env.routes["http://example.com/weird.zip"] = _binary_response(body, "application/zip")
+    with pytest.raises(LocalToolError, match=r"\[archive-error\] could not read ZIP \(malformed metadata\)"):
+        web_fetch("http://example.com/weird.zip")
+
+
+def test_fetch_zip_long_member_names_display_capped(fetch_env):
+    """Qodo PR #1442 (3): member names are attacker-controlled (the zip
+    format allows 64 KiB per name); the listing must bound each line
+    itself, not rely on the runtime's head-first truncation (which would
+    eat the '… and N more' marker off the END)."""
+    long_name = "a" * 5000 + ".txt"
+    body = _zip_bytes({long_name: b"x", "short.txt": b"y"})
+    fetch_env.routes["http://example.com/long.zip"] = _binary_response(body, "application/zip")
+    result = web_fetch("http://example.com/long.zip")
+    for line in result.split("\n"):
+        assert len(line) <= web_tool_impls.ARCHIVE_MEMBER_NAME_MAX + 40, f"unbounded line: {len(line)} chars"
+    assert "… [name truncated]" in result
+    assert "short.txt — 1 B" in result
+
+
 @requires_pymupdf
 def test_fetch_small_max_bytes_still_fills_sniff_window_for_mislabeled_pdf(fetch_env):
     """Review Minor 3: a caller max_bytes below the 12-byte sniff window

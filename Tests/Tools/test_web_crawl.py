@@ -852,6 +852,26 @@ def test_crawl_mislabeled_binary_declared_html_reads_full_body(crawl_env):
     assert "TAILMARKER" in out
 
 
+def test_crawl_warm_cache_does_not_mask_binary_metadata_for_later_fetch(crawl_env):
+    """task-3280 / Qodo PR #1442 (1): crawl's mojibake decode of a
+    MISLABELED binary must not warm the (url, FETCH_MAX_BYTES) cache key
+    web_fetch reads — otherwise the same URL returns different result
+    shapes depending on which tool touched it first, for the whole cache
+    TTL. Crawl-then-fetch must yield the binary metadata shape."""
+    png = b"\x89PNG\r\n\x1a\n" + b"\x00" * 20 + b"tail bytes beyond the sniff window"
+    _site(crawl_env, {"http://example.com/": ("root", ["/pic"])})
+    crawl_env.routes["http://example.com/pic"] = httpx.Response(
+        200, content=png, headers={"content-type": "text/html"}
+    )
+    web_crawl("http://example.com/")
+    # The body is magic-only (not a valid PNG), so the metadata path
+    # refuses with [image-error] — the point is the SHAPE: web_fetch must
+    # take the binary path and raise, never return crawl's cached
+    # mojibake text (which would come back as a plain string).
+    with pytest.raises(LocalToolError, match=r"\[image-error\]"):
+        web_tool_impls.web_fetch("http://example.com/pic")
+
+
 def test_crawl_nonpdf_nonhtml_marker_uses_declared_type(crawl_env):
     """The is_pdf branch must not swallow every non-HTML response into a
     hardcoded '[application/pdf]' marker: a genuinely non-PDF, non-HTML

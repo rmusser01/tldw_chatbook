@@ -143,6 +143,12 @@ PDF_MAX_BYTES = 20 * 1024 * 1024  # refusal threshold, never a truncation (spec 
 # a byte-truncated binary body is refused, never processed partially.
 BINARY_MAX_BYTES = 10 * 1024 * 1024
 ARCHIVE_LIST_MAX = 20  # display cap on ZIP member lines (design doc ruling 2, Minor 10)
+# Per-member display cap (Qodo PR #1442): zip member names are attacker-
+# controlled and the format allows up to 64 KiB per name — 20 such lines
+# would blow the 32 KiB provider cap / 16,000-char runtime ceiling and get
+# head-truncated, eating the "… and N more" marker off the end. Applied
+# AFTER the suspicious-name repr-escaping, so it bounds that output too.
+ARCHIVE_MEMBER_NAME_MAX = 200
 
 _USER_AGENT = "tldw-chatbook-web-fetch/1.0"
 _REDIRECT_STATUSES = frozenset({301, 302, 303, 307, 308})
@@ -512,9 +518,17 @@ def _describe_archive(body: bytes) -> str:
             infos = zf.infolist()
     except zipfile.BadZipFile as exc:
         raise LocalToolError(f"[archive-error] could not read ZIP: {exc}") from exc
+    except Exception as exc:  # noqa: BLE001 — error contract: only LocalToolError escapes
+        # Hostile central directories can raise beyond BadZipFile
+        # (struct/Overflow/Value errors on absurd fields); normalize with a
+        # fixed message — never interpolate an arbitrary exception string
+        # derived from attacker-controlled bytes (Qodo PR #1442).
+        raise LocalToolError("[archive-error] could not read ZIP (malformed metadata)") from exc
     lines = [f"[archive] ZIP, {_format_size(len(body))}, {len(infos)} members"]
     for info in infos[:ARCHIVE_LIST_MAX]:
         name = _member_display_name(info.filename)
+        if len(name) > ARCHIVE_MEMBER_NAME_MAX:
+            name = name[:ARCHIVE_MEMBER_NAME_MAX] + "… [name truncated]"
         encrypted = " (encrypted)" if (info.flag_bits & 0x1) else ""
         lines.append(f"{name} — {_format_size(info.file_size)}{encrypted}")
     if len(infos) > ARCHIVE_LIST_MAX:
@@ -1717,10 +1731,15 @@ def web_crawl(
                 full_text = _extract_text(body, headers.get("content-type", ""))
             except LocalToolError:
                 full_text = ""
-            if full_text:
+            if full_text and kind not in ("image", "zip", "audio"):
                 # Parity with web_fetch: a body already sliced to FETCH_MAX_BYTES
                 # must carry the same marker web_fetch would have appended, or a
                 # default web_fetch() cache hit silently hands back a cut page.
+                # Sniffed binary kinds are excluded from the warm-write
+                # (task-3280 / Qodo PR #1442): crawl's mojibake decode of a
+                # mislabeled binary must not occupy the cache key web_fetch
+                # reads, or web_fetch returns garbage instead of its binary
+                # metadata shape for the whole cache TTL.
                 cache_text = full_text
                 if truncated:
                     cache_text += f"\n\n[... truncated: response exceeded max_bytes={FETCH_MAX_BYTES} ...]"
