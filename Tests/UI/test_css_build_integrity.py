@@ -1,5 +1,6 @@
 """Regression coverage for deterministic, complete modular CSS builds."""
 
+import ast
 from contextlib import suppress
 from pathlib import Path
 import re
@@ -15,12 +16,356 @@ _AGENTIC_SOURCE = _CSS_ROOT / "components/_agentic_terminal.tcss"
 _SETTINGS_SOURCE = _CSS_ROOT / "components/_settings_splash_theme.tcss"
 _SHARED_SOURCE = _CSS_ROOT / "components/_shared_components.tcss"
 _BUNDLED_STYLESHEET = _CSS_ROOT / "tldw_cli_modular.tcss"
+_LIBRARY_SCREEN_SOURCE = _REPO_ROOT / "tldw_chatbook/UI/Screens/library_screen.py"
+
+_LIBRARY_NOTES_COMPACT_GEOMETRY = {
+    "#library-shell-grid.library-notes-compact": {
+        "padding": "0",
+        "margin": "0",
+        "border": "none",
+    },
+    "#library-canvas.library-notes-compact": {
+        "padding": "0",
+        "margin": "0",
+        "border": "none",
+    },
+    "#library-canvas.library-notes-compact #library-notes-canvas": {
+        "height": "100%",
+        "min-height": "0",
+        "padding": "0",
+        "margin": "0",
+    },
+    "#library-canvas.library-notes-compact #library-notes-header": {
+        "height": "1",
+        "min-height": "1",
+        "max-height": "1",
+        "text-wrap": "nowrap",
+        "text-overflow": "ellipsis",
+    },
+    "#library-canvas.library-notes-compact #library-notes-filter-row": {
+        "height": "1",
+        "min-height": "1",
+        "max-height": "1",
+    },
+    "#library-canvas.library-notes-compact #library-notes-browse-actions": {
+        "height": "1",
+        "min-height": "1",
+        "max-height": "1",
+        "overflow-x": "hidden",
+    },
+    "#library-canvas.library-notes-compact #library-notes-sort-choices": {
+        "height": "1",
+        "min-height": "1",
+        "max-height": "1",
+        "overflow-x": "hidden",
+    },
+    "#library-canvas.library-notes-compact #library-notes-transfer-actions": {
+        "height": "1",
+        "min-height": "1",
+        "max-height": "1",
+        "overflow-x": "hidden",
+    },
+    "#library-canvas.library-notes-compact #library-notes-selection-actions": {
+        "height": "1",
+        "min-height": "1",
+        "max-height": "1",
+        "overflow-x": "hidden",
+    },
+    "#library-canvas.library-notes-compact #library-notes-status-row": {
+        "height": "1",
+        "min-height": "1",
+        "max-height": "1",
+    },
+    "#library-canvas.library-notes-compact #library-notes-selection-status": {
+        "height": "1",
+        "min-height": "1",
+        "max-height": "1",
+    },
+    "#library-canvas.library-notes-compact #library-notes-list": {
+        "height": "1fr",
+        "min-height": "0",
+        "overflow-y": "auto",
+        "overflow-x": "hidden",
+    },
+    "#library-canvas.library-notes-compact #library-note-heading": {
+        "height": "1",
+        "min-height": "1",
+        "max-height": "1",
+    },
+    "#library-canvas.library-notes-compact #library-note-title-row": {
+        "height": "1",
+        "min-height": "1",
+        "max-height": "1",
+    },
+    "#library-canvas.library-notes-compact #library-note-editor-region": {
+        "height": "1fr",
+        "min-height": "0",
+        "overflow-y": "hidden",
+        "overflow-x": "hidden",
+    },
+    "#library-canvas.library-notes-compact #library-note-body": {
+        "height": "1fr",
+        "min-height": "0",
+        "max-height": "100%",
+        "overflow-x": "hidden",
+    },
+    "#library-canvas.library-notes-compact #library-note-preview-region": {
+        "height": "1fr",
+        "min-height": "0",
+        "max-height": "100%",
+        "overflow-y": "auto",
+        "overflow-x": "hidden",
+    },
+    "#library-canvas.library-notes-compact #library-note-preview-body": {
+        "height": "auto",
+        "min-height": "0",
+        "border": "none",
+        "overflow-y": "hidden",
+        "overflow-x": "hidden",
+    },
+    "#library-canvas.library-notes-compact #library-note-status": {
+        "height": "1",
+        "min-height": "1",
+        "max-height": "1",
+        "text-wrap": "nowrap",
+        "text-overflow": "ellipsis",
+    },
+    "#library-canvas.library-notes-compact #library-notes-canvas.library-note-validation #library-note-status": {
+        "height": "2",
+        "min-height": "2",
+        "max-height": "2",
+        "text-wrap": "wrap",
+    },
+    "#library-canvas.library-notes-compact #library-note-primary-actions": {
+        "height": "1",
+        "min-height": "1",
+        "max-height": "1",
+        "overflow-x": "hidden",
+    },
+    "#library-canvas.library-notes-compact #library-note-conflict-region": {
+        "height": "3",
+        "min-height": "3",
+        "max-height": "3",
+    },
+    "#library-canvas.library-notes-compact #library-note-conflict-copy": {
+        "height": "2",
+        "min-height": "2",
+        "max-height": "2",
+    },
+    "#library-canvas.library-notes-compact #library-note-conflict-actions": {
+        "height": "1",
+        "min-height": "1",
+        "max-height": "1",
+        "overflow-x": "hidden",
+    },
+    "#library-canvas.library-notes-compact #library-note-delete-confirmation": {
+        "height": "2",
+        "min-height": "2",
+        "max-height": "2",
+    },
+    "#library-canvas.library-notes-compact #library-note-delete-confirm-copy": {
+        "height": "1",
+        "min-height": "1",
+        "max-height": "1",
+        "text-wrap": "nowrap",
+        "text-overflow": "ellipsis",
+    },
+    "#library-canvas.library-notes-compact #library-note-delete-actions": {
+        "height": "1",
+        "min-height": "1",
+        "max-height": "1",
+        "overflow-x": "hidden",
+    },
+    "#library-canvas.library-notes-compact #library-note-context-region": {
+        "height": "1fr",
+        "min-height": "0",
+        "overflow-y": "auto",
+        "overflow-x": "hidden",
+    },
+    "#library-canvas.library-notes-compact #library-note-context-status": {
+        "height": "1",
+        "min-height": "1",
+        "max-height": "1",
+        "text-wrap": "nowrap",
+        "text-overflow": "ellipsis",
+    },
+    "#library-canvas.library-notes-compact #library-notes-create-heading": {
+        "height": "1",
+        "min-height": "1",
+        "max-height": "1",
+    },
+    "#library-canvas.library-notes-compact #library-notes-create-viewport": {
+        "height": "1fr",
+        "min-height": "0",
+        "overflow-y": "auto",
+        "overflow-x": "hidden",
+    },
+    "#library-canvas.library-notes-compact #library-notes-sync-heading": {
+        "height": "1",
+        "min-height": "1",
+        "max-height": "1",
+    },
+    "#library-canvas.library-notes-compact #library-notes-sync-viewport": {
+        "height": "1fr",
+        "min-height": "0",
+        "overflow-y": "auto",
+        "overflow-x": "hidden",
+    },
+    "#library-canvas.library-notes-compact #library-notes-sync-purpose": {
+        "height": "1",
+        "min-height": "1",
+        "max-height": "1",
+        "margin": "0",
+        "overflow-x": "hidden",
+    },
+    "#library-canvas.library-notes-compact #library-notes-sync-folder-row": {
+        "height": "1",
+        "min-height": "1",
+        "max-height": "1",
+        "margin": "0",
+        "overflow-x": "hidden",
+    },
+    "#library-canvas.library-notes-compact #library-notes-sync-direction-row": {
+        "height": "1",
+        "min-height": "1",
+        "max-height": "1",
+        "margin": "0",
+        "overflow-x": "hidden",
+    },
+    "#library-canvas.library-notes-compact #library-notes-sync-conflict-row": {
+        "height": "1",
+        "min-height": "1",
+        "max-height": "1",
+        "margin": "0",
+        "overflow-x": "hidden",
+    },
+    "#library-canvas.library-notes-compact #library-notes-sync-actions": {
+        "height": "1",
+        "min-height": "1",
+        "max-height": "1",
+        "margin": "0",
+        "overflow-x": "hidden",
+    },
+    "#library-canvas.library-notes-compact #library-notes-sync-status": {
+        "height": "1",
+        "min-height": "1",
+        "max-height": "1",
+        "margin": "0",
+        "overflow-x": "hidden",
+    },
+    "#library-canvas.library-notes-compact #library-notes-sync-activity": {
+        "height": "auto",
+        "min-height": "1",
+        "overflow-x": "hidden",
+    },
+    "#library-canvas.library-notes-compact #library-note-load-heading": {
+        "height": "1",
+        "min-height": "1",
+        "max-height": "1",
+    },
+    "#library-canvas.library-notes-compact #library-note-loading": {
+        "height": "1",
+        "min-height": "1",
+        "max-height": "1",
+        "text-wrap": "nowrap",
+        "text-overflow": "ellipsis",
+    },
+    "#library-canvas.library-notes-compact #library-note-loading-viewport": {
+        "height": "1fr",
+        "min-height": "0",
+        "overflow-y": "auto",
+        "overflow-x": "hidden",
+    },
+}
 
 
 def _rule_body(css: str, selector: str) -> str:
-    match = re.search(rf"{re.escape(selector)}\s*\{{(?P<body>[^{{}}]*)\}}", css)
-    assert match is not None, f"Missing CSS rule for {selector}"
-    return match.group("body")
+    without_comments = re.sub(r"/\*.*?\*/", "", css, flags=re.DOTALL)
+    body = None
+    for match in re.finditer(
+        r"(?P<selectors>[^{}]+)\{(?P<body>[^{}]*)\}", without_comments
+    ):
+        selectors = tuple(
+            candidate.strip() for candidate in match.group("selectors").split(",")
+        )
+        if selector in selectors:
+            body = match.group("body")
+    if body is None:
+        raise AssertionError(f"Missing CSS rule for {selector}")
+    return body
+
+
+def _declarations(css: str, selector: str) -> dict[str, str]:
+    """Return cascaded declarations for one literal selector."""
+    without_comments = re.sub(r"/\*.*?\*/", "", css, flags=re.DOTALL)
+    declarations = {}
+    matched = False
+    for match in re.finditer(
+        r"(?P<selectors>[^{}]+)\{(?P<body>[^{}]*)\}", without_comments
+    ):
+        selectors = tuple(
+            candidate.strip() for candidate in match.group("selectors").split(",")
+        )
+        if selector not in selectors:
+            continue
+        matched = True
+        for raw in match.group("body").split(";"):
+            if ":" not in raw:
+                continue
+            name, value = raw.split(":", 1)
+            declarations[name.strip()] = value.strip()
+    if not matched:
+        raise AssertionError(f"Missing CSS rule for {selector}")
+    return declarations
+
+
+def _library_screen_default_css() -> str:
+    """Read LibraryScreen.DEFAULT_CSS without importing the application."""
+    module = ast.parse(_LIBRARY_SCREEN_SOURCE.read_text(encoding="utf-8"))
+    for node in module.body:
+        if not isinstance(node, ast.ClassDef) or node.name != "LibraryScreen":
+            continue
+        for statement in node.body:
+            if not isinstance(statement, ast.Assign):
+                continue
+            if any(
+                isinstance(target, ast.Name) and target.id == "DEFAULT_CSS"
+                for target in statement.targets
+            ):
+                value = ast.literal_eval(statement.value)
+                assert isinstance(value, str)
+                return value
+    raise AssertionError("LibraryScreen.DEFAULT_CSS not found")
+
+
+def _bundled_module(bundle: str, module_path: str) -> str:
+    marker = f"/* ===== MODULE: {module_path} ===== */"
+    assert marker in bundle
+    return bundle.split(marker, 1)[1].split("/* ===== MODULE:", 1)[0].strip()
+
+
+def test_library_notes_compact_source_module_is_exactly_bundled() -> None:
+    source = _AGENTIC_SOURCE.read_text(encoding="utf-8").strip()
+    bundle = _BUNDLED_STYLESHEET.read_text(encoding="utf-8")
+
+    assert _bundled_module(bundle, "components/_agentic_terminal.tcss") == source
+
+
+def test_library_notes_compact_geometry_matches_fallback_source_and_bundle() -> None:
+    stylesheets = (
+        _library_screen_default_css(),
+        _AGENTIC_SOURCE.read_text(encoding="utf-8"),
+        _BUNDLED_STYLESHEET.read_text(encoding="utf-8"),
+    )
+
+    for selector, expected in _LIBRARY_NOTES_COMPACT_GEOMETRY.items():
+        declarations = [_declarations(css, selector) for css in stylesheets]
+        for name, value in expected.items():
+            assert [declaration.get(name) for declaration in declarations] == [
+                value,
+                value,
+                value,
+            ], (selector, name, declarations)
 
 
 def _missing_fixture(

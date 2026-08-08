@@ -375,6 +375,27 @@ async def test_library_registration_updates_the_screens_own_footer():
         assert "u" in screen_footer.shortcut_text
 
 
+def test_library_note_footer_shortcut_contract_is_exact():
+    """Keep screen-owned Notes copy stable without cross-test private imports."""
+    from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+
+    assert LibraryScreen.LIBRARY_NOTES_NAVIGATOR_SHORTCUTS == (
+        ("Ctrl+N", "New · / Find · Esc Library"),
+    )
+    assert LibraryScreen.LIBRARY_NOTES_EDITOR_SHORTCUTS == (
+        ("Ctrl+S", "Save · Esc Notes"),
+    )
+    assert LibraryScreen.LIBRARY_NOTES_PREVIEW_SHORTCUTS == (
+        ("Pg", "Scroll · Esc Notes"),
+    )
+    assert LibraryScreen.LIBRARY_NOTES_CONTEXT_SHORTCUTS == (
+        ("Enter", "Act · Esc Note"),
+    )
+    assert LibraryScreen.LIBRARY_NOTES_CONFLICT_SHORTCUTS == (
+        ("Enter", "Choose · Esc Locked"),
+    )
+
+
 @pytest.mark.asyncio
 async def test_settings_registration_updates_the_screens_own_footer():
     """task-264 review Important: Settings' footer hints must reach its own
