@@ -1049,31 +1049,37 @@ Re-run the complete focused commands from Steps 1–5 plus the installed-wheel t
 - The first latest-dev diagnostic mismatch was reviewed at
   `ceede62fe46d7aa090df4a36307077e097d8c044`: checked
   `466/1144/6851/6` versus generated `467/1151/6854/6`. Commit
-  `3305befb9` records only that reviewed pre-existing inventory reconciliation.
+  rebased commit `2299da555` records only that reviewed pre-existing inventory
+  reconciliation.
 - After Tasks 1–3 reviewed cleanly, `origin/dev` advanced to
   `85a46bea8704d076fd6b544e56bead760fd3e9d9`. Scoped TASK-856 files were
   unchanged, but five upstream `app.py` diagnostics and related line movement
   changed the generated repository-wide manifest from checked
-  `467/1151/6854/6` to `467/1151/6859/6`. Commit `f44b5ff01` records the
+  `467/1151/6854/6` to `467/1151/6859/6`. Rebased commit `a25f5c792` records the
   separately reviewed rebase boundary immediately before the Task 3 consumer
   commit.
-- At `f44b5ff01`, the monitoring owner is TASK-494 with 16 calls, digest
+- After verified closeout, `origin/dev` advanced again to
+  `b030b0b73f217b955b298a45fce3a0256403447c`. No TASK-856 file or diagnostic
+  call changed, but Console rail line movement changed three owner digests and
+  the `config.py` sink line. Rebased commit `2862505e7` records that third
+  reviewed boundary immediately before the Task 3 consumer commit.
+- At `2862505e7`, the monitoring owner is TASK-494 with 16 calls, digest
   `f9ccee6989b39da1333b`, and non-monitoring SHA-256
-  `a927b4bc7a229d3c3328a5336054c410aabdedfe5fd40219ab1152a9880763eb`.
+  `5ce06a13eb48f8007eddfa92a0616b41e5122b89e6b2b7d494d4c81fb48723ac`.
   Final generated state retains the owner, reason, count, fingerprint, and six
   sinks while changing only that digest to `911bf9d65817bf259923`.
 - The first Task 4 verification exposed four branch-introduced Ruff format
-  failures. Commit `7e1462300` applied deterministic formatting only to the
-  approved full files and edited legacy range, then patched only the resulting
-  monitoring digest.
+  failures. Rebased commit `dce39f0d2` applied deterministic formatting only
+  to the approved full files and edited legacy range, then patched only the
+  resulting monitoring digest.
 - Whole-branch review reported no Critical issues, two related Important
   scanner-complexity issues, and one Minor annotation mismatch. The added dense
   matched-input test deterministically measured 94,996,790 CR/LF-search work
-  characters for 46,888 input characters before the fix. Commit `b847da509`
-  routes quoted values directly to their quote scanner; scoped re-review found
-  both Important issues resolved and no new Critical/Important issue. The
-  compatible `sanitize_dict` non-string-key annotation Minor is explicitly
-  deferred.
+  characters for 46,888 input characters before the fix. Rebased commit
+  `1c1686cfa` routes quoted values directly to their quote scanner; scoped
+  re-review found both Important issues resolved and no new Critical/Important
+  issue. The compatible `sanitize_dict` non-string-key annotation Minor is
+  explicitly deferred.
 - Final pre-closeout gates had 77 sanitizer/security tests, four selected
   TASK-856 consumers, one isolated installed-wheel test, and three diagnostic
   architecture tests passing. Inventory was `467/1151/6859/6`; Ruff lint,
@@ -1085,7 +1091,6 @@ Re-run the complete focused commands from Steps 1–5 plus the installed-wheel t
   and `test_production_llm_destination_owns_navigation_actions_and_recovery`.
   The identical clean-`origin/dev` command returned the same failure set at
   **2 failed, 23 passed**; the branch adds three passing TASK-856 tests.
-- Task 4 Steps 8 and 9 remain unchecked in this closeout document because the
-  commit and its post-commit verification are necessarily performed after the
-  document is staged. Their exact results are recorded in the ignored SDD
-  `task-4-report.md` ledger rather than falsified pre-commit.
+- Rebased closeout commit `d70bd448f` recorded the verified design/task/lesson
+  state. Follow-up commit `15d6d4b0c` checked completed Steps 8 and 9 after the
+  post-commit gates; scoped re-review found the marker-only correction clean.

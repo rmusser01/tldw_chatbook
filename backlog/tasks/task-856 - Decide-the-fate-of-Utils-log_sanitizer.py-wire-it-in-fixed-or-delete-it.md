@@ -94,18 +94,20 @@ recursive/non-mutating containers, contextual and standalone credentials,
 false-positive model identifiers, formatting fallback, installed-wheel imports,
 and deterministic matched-input scan work. The final review caught a superlinear
 quoted-match path: the pre-fix implementation searched 94,996,790 CR/LF characters
-for 46,888 input characters. Commit `b847da509` made quoted values bypass repeated
-line-end scans and the scoped re-review found no remaining Critical or Important
-issue. The compatible `sanitize_dict` non-string-key annotation mismatch remains
-an explicitly deferred Minor.
+for 46,888 input characters. Rebased commit `1c1686cfa` made quoted values bypass
+repeated line-end scans; the scoped re-review found no remaining Critical or
+Important issue. The compatible `sanitize_dict`
+non-string-key annotation mismatch remains an explicitly deferred Minor.
 
-Diagnostic drift was reconciled without checker `--write` at two reviewed
-boundaries: `3305befb9` for the first latest-dev mismatch and `f44b5ff01` after
-the later rebase. At `f44b5ff01`, `monitoring_engine.py` was TASK-494 with 16
-calls and digest `f9ccee6989b39da1333b`; the final head changes only that digest
-to `911bf9d65817bf259923`. The non-monitoring SHA-256 remains
-`a927b4bc7a229d3c3328a5336054c410aabdedfe5fd40219ab1152a9880763eb`,
-with inventory `467/1151/6859/6` and unchanged sink topology.
+Diagnostic drift was reconciled without checker `--write` at three reviewed
+boundaries: rebased commits `2299da555`, `a25f5c792`, and `2862505e7`. The last
+boundary follows the final rebase onto
+`b030b0b73f217b955b298a45fce3a0256403447c`. At `2862505e7`,
+`monitoring_engine.py` was TASK-494 with 16 calls and digest
+`f9ccee6989b39da1333b`; the final head changes only that digest to
+`911bf9d65817bf259923`. The current non-monitoring SHA-256 remains
+`5ce06a13eb48f8007eddfa92a0616b41e5122b89e6b2b7d494d4c81fb48723ac`, with
+inventory `467/1151/6859/6` and unchanged sink topology.
 
 ADR-029 is the governing privacy boundary; no new ADR was required. Changed
 areas are the sanitizer and its focused/packaging tests, Ollama/Transformers
