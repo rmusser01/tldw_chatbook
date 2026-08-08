@@ -10,11 +10,13 @@ from __future__ import annotations
 import asyncio
 import re
 import threading
+import webbrowser
 from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 from loguru import logger
 from rich.markup import escape as escape_markup
@@ -131,6 +133,7 @@ from ..Watchlists_Modules.briefing_preset_modal import BriefingPresetModal
 from ..Watchlists_Modules.content_pane import (
     ContentPane,
     ExpandReaderRequested,
+    OpenInBrowserRequested,
     StarToggleRequested,
     UnreadToggleRequested,
     ViewSnapshotRequested,
@@ -441,6 +444,10 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         # gating as `m` (`_reader_verb_blocked`, the open item), one shared
         # handler with the reader's Star button.
         ("s", "toggle_star_selected", "Star"),
+        # TASK-3072 plan task 8: open the item in the system browser,
+        # http/https only (the URL is a remote-derived string reaching an OS
+        # primitive, so the scheme check lives in the handler, not here).
+        ("o", "open_in_browser", "Open in browser"),
         ("a", "mark_all_read", "Mark all read"),
         ("u", "undo_mark_all_read", "Undo mark-all-read"),
         ("z", "toggle_region", "Collapse"),
@@ -10130,6 +10137,45 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         if pane is not None:
             pane.update_item_starred_cell(item_id, target)
         self._request_tree_counts_refresh()
+
+    def action_open_in_browser(self) -> None:
+        """`o`: open the open item's URL in the system browser (TASK-3072 plan
+        task 8). Gated and resolved exactly like `m`/`s`."""
+        if self._reader_verb_blocked():
+            return
+        item = self._selected_content_item
+        if item is None:
+            return
+        self._open_item_in_browser(item)
+
+    @on(OpenInBrowserRequested)
+    def handle_open_in_browser_requested(self, event: OpenInBrowserRequested) -> None:
+        """The reader's Open button takes the same path as `o`."""
+        event.stop()
+        item = event.item or self._selected_content_item
+        if item is None:
+            return
+        self._open_item_in_browser(item)
+
+    def _open_item_in_browser(self, item: dict[str, Any]) -> None:
+        """`webbrowser.open`, http/https only.
+
+        A feed item's `url` is a REMOTE-derived string and `webbrowser.open`
+        hands it to the OS: a `javascript:`/`file:`/empty URL is refused
+        with a notification, never passed on -- validate at this boundary,
+        per `input_validation`'s convention that the sink's own contract
+        decides what is acceptable.
+        """
+        notify = getattr(self.app_instance, "notify", None)
+        url = str(item.get("url") or "").strip()
+        if not url or urlsplit(url).scheme.lower() not in ("http", "https"):
+            if callable(notify):
+                notify(
+                    "This item has no web URL to open (http/https only).",
+                    severity="warning",
+                )
+            return
+        webbrowser.open(url)
 
     @on(NextUnreadRequested)
     def handle_next_unread_requested(self, event: NextUnreadRequested) -> None:

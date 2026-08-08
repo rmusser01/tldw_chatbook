@@ -20,6 +20,7 @@ from ...Subscriptions.html_text import readable_body_text, strip_control_charact
 from ...Subscriptions.item_persist import CONTENT_KIND_CHANGE
 from ...Widgets.recompose_capture_guard import RecomposeCaptureGuard
 from .humane_time import humane_timestamp
+from .inspector_pane import IngestRequested, ToggleBriefingQueueRequested
 
 # Every item persisted before Phase A carries `content = NULL`, and it cannot
 # be recovered without re-fetching the source. Say so rather than rendering an
@@ -292,6 +293,19 @@ class StarToggleRequested(Message):
         self.item = item
         super().__init__()
 
+class OpenInBrowserRequested(Message):
+    """Posted when the reader's Open button is pressed (TASK-3072 plan task 8).
+
+    Carries the full item dict, same as `StarToggleRequested`: the screen's
+    one open-in-browser handler serves both this button and the `o` key,
+    and the URL scheme check lives screen-side (this pane holds no handle
+    on any OS primitive -- see `ContentPane`'s own docstring).
+    """
+
+    def __init__(self, item: dict[str, Any] | None) -> None:
+        self.item = item
+        super().__init__()
+
 class ExpandReaderRequested(Message):
     """Posted when the reader asks for (or gives back) the whole centre stack.
 
@@ -385,6 +399,37 @@ class ContentPane(RecomposeCaptureGuard, Vertical):
                 tooltip=_GLOBAL_STAR_NOTE,
                 compact=True,
             )
+            # TASK-3072 plan task 8: the rest of the reader's verbs. Open is
+            # the `o` key's button half; Ingest and Queue/Unqueue post the
+            # Inspector's OWN message classes, so one screen handler serves
+            # both surfaces (the queue label states the CURRENT value, the
+            # Inspector's own `_queue_briefing_button` rule). Buttons only --
+            # the spec assigns no keys to these two.
+            yield Button(
+                "Open",
+                id="content-open-button",
+                tooltip="Open this item in your browser (keyboard: o).",
+                compact=True,
+            )
+            yield Button(
+                "Ingest",
+                id="content-ingest-button",
+                tooltip=(
+                    "File this item into the library. Ingesting is shared: "
+                    "it shows as ingested everywhere it appears."
+                ),
+                compact=True,
+            )
+            yield Button(
+                "Unqueue" if self.item.get("queued_for_briefing") else "Queue",
+                id="content-queue-button",
+                tooltip=(
+                    "Remove this item from the pool the next briefing draws from."
+                    if self.item.get("queued_for_briefing")
+                    else "Add this item to the pool the next briefing draws from."
+                ),
+                compact=True,
+            )
             # AC#2. `Z` does the same thing from the keyboard, and the tooltip
             # says so -- but only once the user knows the region has to be
             # focused first, which is exactly the knowledge F27 says nothing
@@ -434,6 +479,24 @@ class ContentPane(RecomposeCaptureGuard, Vertical):
                 if str(event.button.label).startswith("★")
                 else "★ Starred"
             )
+        elif event.button.id == "content-open-button":
+            event.stop()
+            self.post_message(OpenInBrowserRequested(self.item))
+        elif event.button.id == "content-ingest-button":
+            event.stop()
+            self.post_message(IngestRequested(self.item))
+        elif event.button.id == "content-queue-button":
+            event.stop()
+            # The Inspector's own press-site shape: the raw row id, and the
+            # value to set the flag TO (the flip of the current one).
+            item = self.item or {}
+            item_id = item.get("item_id")
+            if item_id is not None:
+                self.post_message(
+                    ToggleBriefingQueueRequested(
+                        item_id, not bool(item.get("queued_for_briefing"))
+                    )
+                )
         elif event.button.id == "content-full-page-button":
             event.stop()
             self.post_message(ViewSnapshotRequested(self.item, "full_page"))

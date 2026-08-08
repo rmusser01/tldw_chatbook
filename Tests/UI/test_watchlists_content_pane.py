@@ -2729,3 +2729,105 @@ async def test_the_star_button_posts_the_toggle_and_flips_its_label():
         assert str(button.label) == "★ Starred", (
             "the flip is optimistic; the dict patch lands screen-side"
         )
+
+
+# --- TASK-3072 plan task 8: the reader's remaining action-row verbs ------------
+
+
+def _action_row_app(item: dict):
+    """A ContentPane host carrying `item`, capturing the three verb messages."""
+    from textual.app import App
+
+    from tldw_chatbook.UI.Watchlists_Modules.content_pane import (
+        ContentPane,
+        OpenInBrowserRequested,
+    )
+    from tldw_chatbook.UI.Watchlists_Modules.inspector_pane import (
+        IngestRequested,
+        ToggleBriefingQueueRequested,
+    )
+
+    class _PaneHost(App):
+        def __init__(self) -> None:
+            super().__init__()
+            self.opened: list[dict] = []
+            self.ingested: list[dict] = []
+            self.queue_toggles: list[tuple] = []
+
+        def compose(self):
+            pane = ContentPane()
+            pane.item = item
+            yield pane
+
+        def on_open_in_browser_requested(self, message: OpenInBrowserRequested) -> None:
+            self.opened.append(message.item)
+
+        def on_ingest_requested(self, message: IngestRequested) -> None:
+            self.ingested.append(message.entity)
+
+        def on_toggle_briefing_queue_requested(
+            self, message: ToggleBriefingQueueRequested
+        ) -> None:
+            self.queue_toggles.append((message.item_id, message.queued))
+
+    return _PaneHost()
+
+
+@pytest.mark.asyncio
+async def test_the_reader_action_row_offers_open_ingest_and_queue():
+    """The reader strip shares the Inspector's verbs (TASK-3072 plan task 8):
+    Open in browser, Ingest, and Queue -- the queue button's label states
+    the CURRENT value, the Inspector's own rule."""
+    from textual.widgets import Button
+
+    app = _action_row_app(
+        {"title": "x", "content": "y", "content_kind": "article", "item_id": 7}
+    )
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        assert str(app.query_one("#content-open-button", Button).label) == "Open"
+        assert str(app.query_one("#content-ingest-button", Button).label) == "Ingest"
+        assert str(app.query_one("#content-queue-button", Button).label) == "Queue"
+
+
+@pytest.mark.asyncio
+async def test_the_queue_button_label_reflects_queued_state():
+    from textual.widgets import Button
+
+    app = _action_row_app(
+        {
+            "title": "x",
+            "content": "y",
+            "content_kind": "article",
+            "item_id": 7,
+            "queued_for_briefing": True,
+        }
+    )
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        assert str(app.query_one("#content-queue-button", Button).label) == "Unqueue"
+
+
+@pytest.mark.asyncio
+async def test_the_reader_action_row_buttons_post_their_messages():
+    """Open posts the reader's own request; Ingest and Queue post the
+    Inspector's OWN message classes, so one screen handler serves both
+    surfaces (the message-layer sharing the plan specifies)."""
+    from textual.widgets import Button
+
+    app = _action_row_app(
+        {"title": "x", "content": "y", "content_kind": "article", "item_id": 7}
+    )
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.query_one("#content-open-button", Button).press()
+        app.query_one("#content-ingest-button", Button).press()
+        app.query_one("#content-queue-button", Button).press()
+        await pilot.pause()
+
+        assert [item.get("title") for item in app.opened] == ["x"]
+        assert [entity.get("title") for entity in app.ingested] == ["x"]
+        assert app.queue_toggles == [(7, True)], (
+            "Queue on an unqueued item must request the flip TO queued, "
+            "carrying the raw item id exactly as the Inspector does"
+        )

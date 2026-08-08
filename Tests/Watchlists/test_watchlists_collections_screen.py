@@ -737,6 +737,134 @@ async def test_star_toggle_requested_toggles_the_same_path():
         )
 
 
+# --- TASK-3072 plan task 8: `o` opens the item in the browser -----------------
+
+
+async def _open_item_and_get_url(pilot, screen, db, title: str, url: str) -> int:
+    """Seed one item carrying exactly `url`, open it in the reader."""
+    source_id = db.add_subscription(
+        name="ArXiv", type="rss", source="https://a.example/f"
+    )
+    item_id = _seed_item(db, source_id, title)
+    with db.transaction() as conn:
+        conn.execute(
+            "UPDATE subscription_items SET url = ? WHERE id = ?", (url, item_id)
+        )
+    await screen._load_items()
+    pane = screen.query_one("#watchlists-items-pane", ArticleListPane)
+    await _wait_for_items(pilot, pane)
+    pane.select_item_by_id(str(pane.items[0]["id"]))
+    await pilot.pause(0.3)
+    assert screen._selected_content_item is not None, "precondition: item open"
+    return item_id
+
+
+@pytest.mark.asyncio
+async def test_o_opens_the_open_items_url(monkeypatch):
+    """`o` hands the open item's http URL to the system browser."""
+    opened: list[str] = []
+    monkeypatch.setattr("webbrowser.open", opened.append)
+
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+        db = app.watchlist_bundle_service._db
+        await _open_item_and_get_url(
+            pilot, screen, db, "Readable", "https://example.com/post"
+        )
+
+        await pilot.press("o")
+        await pilot.pause(0.2)
+        assert opened == ["https://example.com/post"]
+
+
+@pytest.mark.asyncio
+async def test_o_refuses_a_non_http_url(monkeypatch):
+    """A `javascript:`/`file:`/empty URL is a remote-derived string reaching
+    an OS primitive: it is refused with a notification, never passed on."""
+    from unittest.mock import Mock
+
+    opened: list[str] = []
+    monkeypatch.setattr("webbrowser.open", opened.append)
+
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+        db = app.watchlist_bundle_service._db
+        app.notify = Mock()
+        await _open_item_and_get_url(
+            pilot, screen, db, "Hostile", "javascript:alert(1)"
+        )
+
+        await pilot.press("o")
+        for _ in range(20):
+            await pilot.pause()
+            if app.notify.called:
+                break
+
+        assert opened == [], "a non-http(s) scheme must never reach webbrowser"
+        assert app.notify.called, "a refusal must say so"
+        _args, kwargs = app.notify.call_args
+        assert kwargs.get("severity") == "warning"
+
+
+@pytest.mark.asyncio
+async def test_o_with_no_open_item_is_a_noop(monkeypatch):
+    opened: list[str] = []
+    monkeypatch.setattr("webbrowser.open", opened.append)
+
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+        db = app.watchlist_bundle_service._db
+        source_id = db.add_subscription(
+            name="ArXiv", type="rss", source="https://a.example/f"
+        )
+        _seed_item(db, source_id, "Never opened")
+        await screen._load_items()
+        assert screen._selected_content_item is None, "precondition: nothing open"
+
+        await pilot.press("o")
+        await pilot.pause(0.2)
+        assert opened == []
+
+
+@pytest.mark.asyncio
+async def test_open_in_browser_requested_takes_the_same_path(monkeypatch):
+    """The reader's Open button and the `o` key share one handler."""
+    from tldw_chatbook.UI.Watchlists_Modules.content_pane import (
+        OpenInBrowserRequested,
+    )
+
+    opened: list[str] = []
+    monkeypatch.setattr("webbrowser.open", opened.append)
+
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+        db = app.watchlist_bundle_service._db
+        await _open_item_and_get_url(
+            pilot, screen, db, "Button-opened", "https://example.com/via-button"
+        )
+
+        screen.post_message(
+            OpenInBrowserRequested(dict(screen._selected_content_item))
+        )
+        for _ in range(20):
+            await pilot.pause()
+            if opened:
+                break
+        assert opened == ["https://example.com/via-button"]
+
+
 @pytest.mark.asyncio
 async def test_space_opens_next_unread():
     """`space` walks to the next UNREAD item, skipping reviewed rows."""
