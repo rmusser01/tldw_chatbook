@@ -485,6 +485,13 @@ def _cover_mosaic():
 
 @pytest.mark.asyncio
 async def test_avatar_thumbnail_static_matches_mosaic_grid_no_fold():
+    """task-3401 regression: the editor avatar thumb must not fold into stripes.
+
+    Asserts the mounted Static's painted height equals the mosaic row count
+    (no continuation rows), its width fits the container's content box, and
+    the container carries no padding that would shrink the content box below
+    the mosaic build width (the fold-into-stripes root cause).
+    """
     from textual.containers import Container
     from textual.widgets import Static
 
@@ -512,6 +519,12 @@ async def test_avatar_thumbnail_static_matches_mosaic_grid_no_fold():
 
 @pytest.mark.asyncio
 async def test_expression_thumbnail_static_matches_mosaic_grid_no_fold():
+    """task-3401 regression: expression-slot thumbs must not fold into stripes.
+
+    Same contract as the avatar thumb, scoped to one expression state: the
+    mounted Static's painted height equals the mosaic row count, its width
+    fits the container's content box, and the container has zero padding.
+    """
     from textual.containers import Container
     from textual.widgets import Static
 
@@ -536,3 +549,40 @@ async def test_expression_thumbnail_static_matches_mosaic_grid_no_fold():
             0,
             0,
         )
+
+
+@pytest.mark.asyncio
+async def test_thumbnails_fall_back_to_box_dims_for_non_text_renderable():
+    """Non-Text renderables get the thumb box dims, not a default-width Static.
+
+    Pins the documented ``explicit_cell_size`` contract (PR #1434 review) for
+    both ``set_avatar_thumbnail`` and ``set_expression_thumbnail``: when the
+    renderable's grid cannot be read (e.g. a ``rich_pixels`` renderable), the
+    helpers fall back to the container box (AVATAR_THUMB_COLS x
+    AVATAR_THUMB_LINES), matching the console builder.
+    """
+    from rich.panel import Panel
+    from textual.containers import Container
+    from textual.widgets import Static
+
+    from tldw_chatbook.UI.Screens.personas_screen import (
+        AVATAR_THUMB_COLS,
+        AVATAR_THUMB_LINES,
+    )
+
+    app = _Host()
+    async with app.run_test() as pilot:
+        ed = app.query_one(PersonasCharacterEditorWidget)
+        ed.load_character({"name": "A", "image": b"x"})
+        await pilot.pause()
+        ed.set_avatar_thumbnail(Panel("portrait"))
+        ed.set_expression_thumbnail("thinking", Panel("thinking"))
+        await pilot.pause()
+        avatar_box = ed.query_one("#personas-char-editor-avatar-thumb", Container)
+        expr_box = ed.query_one(
+            "#personas-char-editor-expr-thinking-thumb", Container
+        )
+        for box in (avatar_box, expr_box):
+            static = box.query_one(Static)
+            assert static.styles.width.value == AVATAR_THUMB_COLS
+            assert static.styles.height.value == AVATAR_THUMB_LINES

@@ -776,3 +776,31 @@ async def test_avatar_thumbnail_static_matches_mosaic_grid_no_fold():
             0,
             0,
         )
+
+
+
+async def test_avatar_thumbnail_falls_back_to_box_dims_for_non_text_renderable():
+    """Non-Text renderables get the thumb box dims, not a default-width Static.
+
+    Pins the documented ``explicit_cell_size`` contract (PR #1434 review):
+    when the renderable's grid cannot be read (e.g. a ``rich_pixels``
+    renderable), ``set_avatar_thumbnail`` falls back to the container box
+    (AVATAR_THUMB_COLS x AVATAR_THUMB_LINES), matching the console builder.
+    """
+    from rich.panel import Panel
+    from textual.containers import Container
+
+    from tldw_chatbook.UI.Screens.personas_screen import (
+        AVATAR_THUMB_COLS,
+        AVATAR_THUMB_LINES,
+    )
+
+    app = InspectorApp()
+    async with app.run_test() as pilot:
+        pane = pilot.app.query_one(PersonasInspectorPane)
+        pane.set_avatar_thumbnail(Panel("portrait"))
+        await pilot.pause()
+        thumb_box = pane.query_one("#personas-inspector-avatar-thumb", Container)
+        static = thumb_box.query_one(Static)
+        assert static.styles.width.value == AVATAR_THUMB_COLS
+        assert static.styles.height.value == AVATAR_THUMB_LINES

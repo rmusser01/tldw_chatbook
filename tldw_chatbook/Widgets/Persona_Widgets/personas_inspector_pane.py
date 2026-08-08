@@ -44,6 +44,13 @@ _CONSOLE_ACTION_APPLICABLE_KINDS = {"character", "persona"}
 _EXPORT_JSON_APPLICABLE_KINDS = {"character", "persona"}
 _EXPORT_PNG_APPLICABLE_KINDS = {"character"}
 
+# Portrait thumb box in character cells. Must stay in sync with
+# #personas-inspector-avatar-thumb's CSS max-width/max-height below and with
+# AVATAR_THUMB_COLS/AVATAR_THUMB_LINES in personas_screen.py - change one,
+# change all three.
+_THUMB_BOX_COLS = 24
+_THUMB_BOX_LINES = 10
+
 
 class PersonasInspectorPane(Vertical):
     """Identity, validation, conversations, readiness, and actions."""
@@ -617,6 +624,13 @@ class PersonasInspectorPane(Vertical):
         grid_size = explicit_cell_size(renderable)
         if grid_size is not None:
             thumb.styles.width, thumb.styles.height = grid_size
+        else:
+            # Per explicit_cell_size's documented contract, fall back to the
+            # box dimensions when the grid can't be read (e.g. rich_pixels
+            # Pixels, which is baked for the box anyway) - same fallback as
+            # ChatScreen._build_character_avatar_widget.
+            thumb.styles.width = _THUMB_BOX_COLS
+            thumb.styles.height = _THUMB_BOX_LINES
         holder.mount(thumb)
 
     @on(ListView.Selected, "#personas-conversations-list")

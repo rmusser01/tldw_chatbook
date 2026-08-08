@@ -237,6 +237,7 @@ def test_monochrome_mosaic_is_never_blank_for_a_dark_portrait():
 
 
 def test_explicit_cell_size_reads_mosaic_grid():
+    """explicit_cell_size returns (max line length, line count) for a Text mosaic."""
     from tldw_chatbook.Utils.mosaic_render import explicit_cell_size
 
     image = PILImage.new("RGB", (820, 1230), (64, 200, 180))
@@ -247,6 +248,7 @@ def test_explicit_cell_size_reads_mosaic_grid():
 
 
 def test_explicit_cell_size_none_for_non_text_renderable():
+    """explicit_cell_size returns None for non-Text renderables (caller falls back to box dims)."""
     from tldw_chatbook.Utils.mosaic_render import explicit_cell_size
 
     assert explicit_cell_size(object()) is None

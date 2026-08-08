@@ -802,6 +802,13 @@ class _AvatarHolderApp(App):
 
 @pytest.mark.asyncio
 async def test_pixels_avatar_paints_nonzero_region_in_auto_holder():
+    """task-3401 regression: the pixels avatar must paint a non-zero region.
+
+    Mounts the real builder output in an auto/auto holder replicating
+    ``ClickableAvatarBox`` and asserts the painted region is non-zero with
+    the explicit cell size clamped to the avatar box; before the fix the
+    default-width Static collapsed to 0x0 and painted nothing.
+    """
     from PIL import Image as PILImage
 
     from tldw_chatbook.UI.Screens.chat_screen import character_avatar_box
@@ -829,6 +836,11 @@ async def test_pixels_avatar_paints_nonzero_region_in_auto_holder():
 
 @pytest.mark.asyncio
 async def test_avatar_placeholder_paints_nonzero_region_in_auto_holder():
+    """task-3401 regression: the no-character placeholder must stay visible.
+
+    Same auto/auto holder as the pixels case: the placeholder Static needs
+    ``width auto`` so it cannot collapse to 0x0 under Textual 8.
+    """
     screen = _bare_console_screen(ConsoleChatStore())
     app = _AvatarHolderApp(screen, None)
     async with app.run_test(size=(60, 30)):

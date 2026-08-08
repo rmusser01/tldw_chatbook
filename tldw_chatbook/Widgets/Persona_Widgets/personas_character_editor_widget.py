@@ -65,6 +65,14 @@ _CONTEXT_MODE_LABELS = {
 }
 
 
+# Avatar/expression thumb box in character cells. Must stay in sync with
+# #personas-char-editor-avatar-thumb / .personas-char-editor-expr-thumb CSS
+# max-width/max-height below and with AVATAR_THUMB_COLS/AVATAR_THUMB_LINES in
+# personas_screen.py - change one, change all three.
+_THUMB_BOX_COLS = 24
+_THUMB_BOX_LINES = 10
+
+
 class PersonasCharacterEditorWidget(Container):
     """ds-field-row character form with an Advanced section and avatar status."""
 
@@ -1073,6 +1081,13 @@ class PersonasCharacterEditorWidget(Container):
         grid_size = explicit_cell_size(renderable)
         if grid_size is not None:
             thumb.styles.width, thumb.styles.height = grid_size
+        else:
+            # Per explicit_cell_size's documented contract, fall back to the
+            # box dimensions when the grid can't be read (e.g. rich_pixels
+            # Pixels, which is baked for the box anyway) - same fallback as
+            # ChatScreen._build_character_avatar_widget.
+            thumb.styles.width = _THUMB_BOX_COLS
+            thumb.styles.height = _THUMB_BOX_LINES
         holder.mount(thumb)
 
     def expression_character_id(self) -> int | None:
@@ -1144,6 +1159,13 @@ class PersonasCharacterEditorWidget(Container):
         grid_size = explicit_cell_size(renderable)
         if grid_size is not None:
             thumb.styles.width, thumb.styles.height = grid_size
+        else:
+            # Per explicit_cell_size's documented contract, fall back to the
+            # box dimensions when the grid can't be read (e.g. rich_pixels
+            # Pixels, which is baked for the box anyway) - same fallback as
+            # ChatScreen._build_character_avatar_widget.
+            thumb.styles.width = _THUMB_BOX_COLS
+            thumb.styles.height = _THUMB_BOX_LINES
         holder.mount(thumb)
 
     def set_style_readout(self, text: str) -> None:
