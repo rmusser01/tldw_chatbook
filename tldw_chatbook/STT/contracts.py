@@ -124,6 +124,7 @@ class TranscriptionWarningCode(str, Enum):
     """Stable non-fatal warning codes."""
 
     REQUESTED_LANGUAGE_NOT_ENFORCED = "requested_language_not_enforced"
+    DEVICE_FALLBACK_TO_CPU = "device_fallback_to_cpu"
 
 
 class TranscriptionAction(str, Enum):

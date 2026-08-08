@@ -7,9 +7,10 @@ e-books, etc.) without going through the UI, leveraging existing processing capa
 """
 
 import time
-from pathlib import Path
-from typing import Dict, List, Optional, Any, Union
 from datetime import datetime
+from pathlib import Path
+from typing import Any, Callable, Dict, List, Optional, Union
+
 from loguru import logger
 
 # Per-format processing libraries (process_pdf/process_document/process_ebook/
@@ -365,7 +366,10 @@ def get_supported_extensions() -> Dict[str, List[str]]:
 
 
 def parse_local_file_for_ingest(
-    file_path: Union[str, Path], options: Dict[str, Any]
+    file_path: Union[str, Path],
+    options: Dict[str, Any],
+    *,
+    transcription_runner: Optional[Callable[..., Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     """
     Parse a local file into a picklable payload, performing no database I/O.
@@ -599,7 +603,12 @@ def parse_local_file_for_ingest(
             # via content-hash dedup and no-ops against -- returning
             # media_id=None for every audio ingest (see the docstring's
             # bug-mechanism paragraph and the regression test named there).
-            audio_processor = _ensure_local_audio_processor()(None)
+            audio_processor_class = _ensure_local_audio_processor()
+            audio_processor = (
+                audio_processor_class(None, transcription_runner=transcription_runner)
+                if transcription_runner is not None
+                else audio_processor_class(None)
+            )
 
             # Process single audio file
             results = audio_processor.process_audio_files(
@@ -626,15 +635,15 @@ def parse_local_file_for_ingest(
                     "transcription_batch_route_resolved", False
                 ),
                 perform_chunking=True,
-                chunk_method=chunk_options.get('method', 'sentences'),
-                max_chunk_size=chunk_options.get('size', 500),
-                chunk_overlap=chunk_options.get('overlap', 200),
-                use_adaptive_chunking=chunk_options.get('adaptive', False),
-                use_multi_level_chunking=chunk_options.get('multi_level', False),
-                chunk_language=chunk_options.get('language', 'en'),
-                diarize=options.get('diarization', chunk_options.get('diarize', False)),
-                vad_use=chunk_options.get('vad_filter', False),
-                timestamp_option=options.get('timestamps', True),
+                chunk_method=chunk_options.get("method", "sentences"),
+                max_chunk_size=chunk_options.get("size", 500),
+                chunk_overlap=chunk_options.get("overlap", 200),
+                use_adaptive_chunking=chunk_options.get("adaptive", False),
+                use_multi_level_chunking=chunk_options.get("multi_level", False),
+                chunk_language=chunk_options.get("language", "en"),
+                diarize=options.get("diarization", chunk_options.get("diarize", False)),
+                vad_use=chunk_options.get("vad_filter", False),
+                timestamp_option=options.get("timestamps", True),
                 perform_analysis=perform_analysis,
                 api_name=api_name,
                 api_key=api_key,
@@ -649,7 +658,10 @@ def parse_local_file_for_ingest(
             if results["results"]:
                 result_data = results["results"][0]
                 if result_data["status"] == "Error":
-                    if result_data.get("error_detail", {}).get("category") == "stt_failure":
+                    if (
+                        result_data.get("error_detail", {}).get("category")
+                        == "stt_failure"
+                    ):
                         raise DirectLocalSTTIngestError(
                             result_data.get("error", "Speech-to-text failed."),
                             error_detail=result_data["error_detail"],
@@ -680,7 +692,12 @@ def parse_local_file_for_ingest(
         elif file_type == "video":
             # Initialize video processor. media_db is intentionally None --
             # see the matching comment in the 'audio' branch above.
-            video_processor = _ensure_local_video_processor()(None)
+            video_processor_class = _ensure_local_video_processor()
+            video_processor = (
+                video_processor_class(None, transcription_runner=transcription_runner)
+                if transcription_runner is not None
+                else video_processor_class(None)
+            )
 
             # Process single video file
             results = video_processor.process_videos(
@@ -708,15 +725,15 @@ def parse_local_file_for_ingest(
                     "transcription_batch_route_resolved", False
                 ),
                 perform_chunking=True,
-                chunk_method=chunk_options.get('method', 'sentences'),
-                max_chunk_size=chunk_options.get('size', 500),
-                chunk_overlap=chunk_options.get('overlap', 200),
-                use_adaptive_chunking=chunk_options.get('adaptive', False),
-                use_multi_level_chunking=chunk_options.get('multi_level', False),
-                chunk_language=chunk_options.get('language', 'en'),
-                diarize=options.get('diarization', chunk_options.get('diarize', False)),
-                vad_use=chunk_options.get('vad_filter', False),
-                timestamp_option=options.get('timestamps', True),
+                chunk_method=chunk_options.get("method", "sentences"),
+                max_chunk_size=chunk_options.get("size", 500),
+                chunk_overlap=chunk_options.get("overlap", 200),
+                use_adaptive_chunking=chunk_options.get("adaptive", False),
+                use_multi_level_chunking=chunk_options.get("multi_level", False),
+                chunk_language=chunk_options.get("language", "en"),
+                diarize=options.get("diarization", chunk_options.get("diarize", False)),
+                vad_use=chunk_options.get("vad_filter", False),
+                timestamp_option=options.get("timestamps", True),
                 perform_analysis=perform_analysis,
                 api_name=api_name,
                 api_key=api_key,
@@ -731,7 +748,10 @@ def parse_local_file_for_ingest(
             if results["results"]:
                 result_data = results["results"][0]
                 if result_data["status"] == "Error":
-                    if result_data.get("error_detail", {}).get("category") == "stt_failure":
+                    if (
+                        result_data.get("error_detail", {}).get("category")
+                        == "stt_failure"
+                    ):
                         raise DirectLocalSTTIngestError(
                             result_data.get("error", "Speech-to-text failed."),
                             error_detail=result_data["error_detail"],
@@ -828,13 +848,13 @@ def parse_local_file_for_ingest(
             raise FileIngestionError(f"Failed to process {file_type} file: {error_msg}")
 
         # Extract content and metadata
-        content = result.get('content', '')
-        extracted_title = result.get('title', title)
-        extracted_author = result.get('author', author or 'Unknown')
-        extracted_keywords = result.get('keywords', [])
-        chunks = result.get('chunks', [])
-        analysis = result.get('analysis', '')
-        warnings = result.get('warnings', []) if result else []
+        content = result.get("content", "")
+        extracted_title = result.get("title", title)
+        extracted_author = result.get("author", author or "Unknown")
+        extracted_keywords = result.get("keywords", [])
+        chunks = result.get("chunks", [])
+        analysis = result.get("analysis", "")
+        warnings = result.get("warnings", []) if result else []
 
         # Combine keywords
         all_keywords = list(set(keywords + extracted_keywords))
@@ -861,21 +881,21 @@ def parse_local_file_for_ingest(
         media_metadata["file_type"] = file_type
 
         return {
-            'media_type': file_type,
-            'file_type': file_type,
-            'title': extracted_title,
-            'author': extracted_author,
-            'content': content,
-            'keywords': all_keywords,
-            'url': source_url,
-            'analysis_content': analysis,
-            'chunks': chunks if chunks else None,
-            'chunk_options': chunk_options if chunk_options else None,
-            'metadata': media_metadata,
-            'file_path': raw_source if is_url else str(file_path),
-            'warnings': warnings,
-            'transcription_model': result.get('transcription_model'),
-            'transcription_provenance': result.get('transcription_provenance'),
+            "media_type": file_type,
+            "file_type": file_type,
+            "title": extracted_title,
+            "author": extracted_author,
+            "content": content,
+            "keywords": all_keywords,
+            "url": source_url,
+            "analysis_content": analysis,
+            "chunks": chunks if chunks else None,
+            "chunk_options": chunk_options if chunk_options else None,
+            "metadata": media_metadata,
+            "file_path": raw_source if is_url else str(file_path),
+            "warnings": warnings,
+            "transcription_model": result.get("transcription_model"),
+            "transcription_provenance": result.get("transcription_provenance"),
         }
 
     except DirectLocalSTTIngestError:

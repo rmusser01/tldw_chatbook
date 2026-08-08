@@ -501,11 +501,12 @@ class IngestQueueRow:
     #: widget layer can style or filter by backend without reaching past
     #: this state object into the registry.
     origin: str = "local"
-    #: Whether this row offers Cancel. Server-only and in-flight-only:
-    #: ``cancel_media_ingest_jobs_batch`` addresses a batch on the server,
-    #: and the local pipeline has no cancel seam at all, so offering it
-    #: anywhere else would be dead bait.
+    #: Whether this row offers Cancel. Server batches and active local STT
+    #: executor attempts have distinct handlers behind the same affordance.
     can_cancel: bool = False
+    #: Whether a local STT row whose cooperative cancel is pending offers the
+    #: stronger process-tree stop. Never offered for server work.
+    can_force_stop: bool = False
     #: Whether this row offers "View on server". Server-only and done-only, and
     #: additionally requires an id: the server does not always report one, and
     #: an action that cannot resolve anything is worse than no action.
@@ -970,7 +971,21 @@ def _build_queue_row(
     """
     row = _build_queue_row_for_state(job, now=now)
     if job.origin == "local":
-        row = replace(row, origin=job.origin, can_cancel=False)
+        progress = job.progress or {}
+        executor_phase = progress.get("phase") in {
+            "preparing",
+            "loading",
+            "transcribing",
+            "post-processing",
+        }
+        cancel_requested = bool(progress.get("cancel_requested"))
+        active_local_stt = job.state is IngestJobState.PARSING and executor_phase
+        row = replace(
+            row,
+            origin=job.origin,
+            can_cancel=active_local_stt and not cancel_requested,
+            can_force_stop=active_local_stt and cancel_requested,
+        )
     else:
         can_cancel = (
             bool(job.batch_id) and job.state not in _TERMINAL_ROW_STATES

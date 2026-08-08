@@ -278,6 +278,41 @@ def test_faster_whisper_recovery_handler_uses_explicit_provider() -> None:
     )
 
 
+def test_local_cancel_handler_targets_the_job_attempt() -> None:
+    screen = _minimal_ingest_screen()
+    screen.app_instance = MagicMock()
+    screen.refresh = MagicMock()
+    screen.app_instance.library_ingest_jobs.get_job.return_value = LibraryIngestJob(
+        job_id="ingest-job-1",
+        source_path="/tmp/speech.wav",
+        state=IngestJobState.PARSING,
+        progress={"phase": "transcribing"},
+    )
+    event = MagicMock()
+    event.button.id = "library-ingest-cancel-ingest-job-1"
+
+    screen.handle_library_ingest_cancel(event)
+
+    event.stop.assert_called_once_with()
+    screen.app_instance.cancel_local_ingest_job.assert_called_once_with("ingest-job-1")
+    screen.app_instance.cancel_remote_ingest_batch.assert_not_called()
+
+
+def test_local_force_stop_handler_targets_the_job_attempt() -> None:
+    screen = _minimal_ingest_screen()
+    screen.app_instance = MagicMock()
+    screen.refresh = MagicMock()
+    event = MagicMock()
+    event.button.id = "library-ingest-force-stop-ingest-job-1"
+
+    screen.handle_library_ingest_force_stop(event)
+
+    event.stop.assert_called_once_with()
+    screen.app_instance.force_stop_local_ingest_job.assert_called_once_with(
+        "ingest-job-1"
+    )
+
+
 # ----- Pre-flight retry (Task 18) -------------------------------------------
 
 

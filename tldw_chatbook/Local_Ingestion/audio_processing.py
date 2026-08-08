@@ -80,7 +80,12 @@ class AudioTranscriptionError(AudioProcessingError):
 class LocalAudioProcessor:
     """Handles local audio processing including download, transcription, and analysis."""
 
-    def __init__(self, media_db: Optional[MediaDatabase] = None):
+    def __init__(
+        self,
+        media_db: Optional[MediaDatabase] = None,
+        *,
+        transcription_runner: Optional[Callable[..., Dict[str, Any]]] = None,
+    ):
         """
         Initialize the audio processor.
 
@@ -90,6 +95,7 @@ class LocalAudioProcessor:
         from ..RAG_Search.chunking_service import ChunkingService
 
         self.media_db = media_db
+        self._transcription_runner = transcription_runner
         self.config = get_media_ingestion_defaults("audio")
         self.chunking_service = ChunkingService()
         self._cancelled = False  # Flag to track cancellation
@@ -743,6 +749,21 @@ class LocalAudioProcessor:
             f"[AUDIO] Transcription kwargs: provider={kwargs.get('provider')}, model={kwargs.get('model')}, language={kwargs.get('language')}"
         )
 
+        def cancellable_progress_callback(progress, message, data=None):
+            if self.is_cancelled():
+                logger.info("[AUDIO] Transcription cancelled by user")
+                raise AudioTranscriptionError("Transcription cancelled by user")
+            if progress_callback:
+                logger.debug(f"[AUDIO] Progress update: {progress}% - {message}")
+                progress_callback(progress, message, data)
+
+        if self._transcription_runner is not None:
+            return self._transcription_runner(
+                audio_path,
+                progress_callback=cancellable_progress_callback,
+                **kwargs,
+            )
+
         if kwargs.get("provider") == "transcribe-cpp":
             from tldw_chatbook.STT.persistence import (
                 build_transcription_provenance_document,
@@ -782,15 +803,6 @@ class LocalAudioProcessor:
                 "transcription_model": normalized.provenance.model_id,
                 "transcription_provenance": provenance,
             }
-
-        # Wrap progress callback to check for cancellation
-        def cancellable_progress_callback(progress, message, data=None):
-            if self.is_cancelled():
-                logger.info("[AUDIO] Transcription cancelled by user")
-                raise AudioTranscriptionError("Transcription cancelled by user")
-            if progress_callback:
-                logger.debug(f"[AUDIO] Progress update: {progress}% - {message}")
-                progress_callback(progress, message, data)
 
         # Import transcription service when available
         try:

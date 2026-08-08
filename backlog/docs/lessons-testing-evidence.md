@@ -162,6 +162,39 @@ the state that implies it.
 
 ---
 
+## Reloading an IPC module can split exact type identity across spawn
+
+**TASK-601, 2026-08-08.** A POSIX import-boundary test called
+`importlib.reload()` on the module defining `WorkerContainmentIdentity`. The
+already-imported executor retained the old dataclass object, while spawned workers
+imported the reloaded class. Pickling still succeeded, but the parent's deliberate
+exact-type bootstrap check rejected every worker identity; one test-side reload
+therefore surfaced as 19 executor startup failures.
+
+**What to do.** Test fresh-import boundaries in a subprocess. Do not reload a module
+that owns IPC or serialized contract classes inside the shared pytest process; stale
+importers keep the previous class identity even though the module name is unchanged.
+
+---
+
+## One thread must own reaping each spawned process
+
+**TASK-601, 2026-08-08.** The local STT reader handled pipe EOF by calling
+`Process.join()` before checking whether the controller had already detached that
+generation. During graceful recycle, the controller also joined the same
+`multiprocessing.Process`. On POSIX, the competing `waitpid()` calls occasionally left
+the controller observing an unknown exit code and reporting a live worker even though
+the child had exited. Removing the reader join entirely then exposed the other half of
+the contract on macOS: an unreaped crashed group leader made `killpg()` return
+`EPERM`.
+
+**What to do.** Decide process ownership under the lifecycle lock before joining. A
+reader may reap an unexpectedly exited generation only while it is still current; once
+the controller detaches that generation, only the controller may reap it. Cover both
+branches: a deterministic stale-reader test and a repeated real-spawn recycle test.
+
+---
+
 ## A text scan for "is this method called?" passes vacuously
 
 **What happened.** TASK-895 needed a guard proving every `WatchlistBundleService`

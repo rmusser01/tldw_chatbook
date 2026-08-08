@@ -226,7 +226,24 @@ from tldw_chatbook.Local_Ingestion.local_file_ingestion import (
 )
 from tldw_chatbook.Local_Ingestion.stt_batch_routing import (
     BatchSTTRoutingError,
+    PARAKEET_V2_MODEL,
     resolve_batch_stt_route,
+)
+from tldw_chatbook.STT.contracts import (
+    TRANSCRIPTION_FAILURE_CONTRACT,
+    ExecutionDevice,
+    TranscriptionFailureCode,
+)
+from tldw_chatbook.STT.executor import (
+    ExecutorBusyError,
+    ExecutorEvent,
+    ExecutorFailure,
+    ExecutorResult,
+    ExecutorUnavailableError,
+    LocalSTTExecutor,
+    ModelIdentity,
+    WorkerPhase,
+    snapshot_local_source,
 )
 from tldw_chatbook.Home.active_work_adapter import (
     HomeControlAction,
@@ -1842,16 +1859,16 @@ class LibraryIngestQueueMixin:
     job or blocks the writer.
 
     Shutdown (quit path) order, in ``_shutdown_ingest_parse_pool`` (called
-    from ``TldwCli.on_unmount``): (1) ``_ingest_shutdown = True`` + pool
-    reference detached, synchronously -- pool callbacks short-circuit on
-    the result-handler thread before ever marshaling; (2)
-    ``pool.terminate()`` + ``pool.join()`` on a detached daemon thread,
+    from ``TldwCli.on_unmount``): (1) ``_ingest_shutdown = True`` + executor
+    and pool references detached, synchronously -- callbacks short-circuit
+    before ever marshaling; (2) executor close followed by
+    ``pool.terminate()`` + ``pool.join()`` on one detached daemon thread,
     never the event-loop thread (deadlock rationale in that method's
     docstring); (3) the writer thread is swept afterward by ``on_unmount``'s
     generic worker cancellation, its in-flight DB write completing as
-    before. Steps 2 and 3 run concurrently -- safe because the two stages
-    share no resources (parse workers never touch ``media_db``; the writer
-    never touches the pool).
+    before. Steps 2 and 3 run concurrently -- safe because the stages share
+    no resources (parse workers never touch ``media_db``; the writer never
+    touches either heavy worker).
     """
 
     def _restore_ingest_jobs(self) -> None:
@@ -2411,6 +2428,480 @@ class LibraryIngestQueueMixin:
 
         return options
 
+    def _create_local_stt_executor(self) -> LocalSTTExecutor:
+        """Construct the one app-owned heavy STT executor lazily."""
+
+        return LocalSTTExecutor()
+
+    def _ensure_local_stt_executor(self) -> LocalSTTExecutor:
+        with self._local_stt_executor_lock:
+            if self._ingest_shutdown:
+                raise ExecutorUnavailableError("Library ingest is shutting down")
+            executor = getattr(self, "_local_stt_executor", None)
+            if executor is None:
+                executor = self._create_local_stt_executor()
+                self._local_stt_executor = executor
+            return executor
+
+    def _build_local_stt_dispatch(
+        self,
+        job: LibraryIngestJob,
+        options: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Resolve the exact private model identity for one eligible job."""
+
+        provider = options["transcription_provider"]
+        attempt_id = f"{job.job_id}-attempt-{job.retry_count + 1}"
+        local_source = None
+        managed_store_root = None
+        managed_artifact_ref = None
+        root_revision = None
+        closure_fingerprint = None
+        device = ExecutionDevice.CPU
+
+        if provider == "transcribe-cpp":
+            from tldw_chatbook.Model_Artifacts.gguf_admission import (
+                validate_local_gguf,
+            )
+
+            context = options.get("transcription_context") or {}
+            configured_path = (
+                context.get("model_path") if isinstance(context, dict) else None
+            )
+            model_id = "local-gguf:unavailable"
+            if isinstance(configured_path, str) and configured_path:
+                admission = validate_local_gguf(Path(configured_path))
+                local_source = snapshot_local_source((admission.path,))
+                model_id = f"local-gguf:{admission.metadata.architecture}"
+            device = ExecutionDevice.AUTO
+        else:
+            model_id = options.get("transcription_model") or PARAKEET_V2_MODEL
+            selected_dir = options.get("transcription_model_dir")
+            if not selected_dir:
+                configured_dir = get_cli_setting(
+                    "transcription.parakeet_onnx_model_dir"
+                )
+                selected_dir = (
+                    configured_dir
+                    if isinstance(configured_dir, str) and configured_dir.strip()
+                    else None
+                )
+
+            if selected_dir:
+                from tldw_chatbook.Utils.path_validation import (
+                    validate_path_simple,
+                )
+
+                model_root = validate_path_simple(
+                    selected_dir,
+                    require_exists=True,
+                )
+                required = tuple(
+                    model_root / filename
+                    for filename in (
+                        "config.json",
+                        "vocab.txt",
+                        "encoder-model.int8.onnx",
+                        "decoder_joint-model.int8.onnx",
+                    )
+                )
+                local_source = snapshot_local_source(required)
+                options["transcription_model_dir"] = str(model_root)
+            elif model_id == PARAKEET_V2_MODEL:
+                from tldw_chatbook.Local_Ingestion.parakeet_v2_artifact import (
+                    active_managed_parakeet_v2_dir,
+                    parakeet_v2_managed_service,
+                    parakeet_v2_reference,
+                )
+                from tldw_chatbook.Local_Ingestion.parakeet_v2_installer import (
+                    PARAKEET_V2_FILES,
+                    VERIFICATION_RECEIPT,
+                    parakeet_v2_install_dir,
+                )
+                from tldw_chatbook.Model_Artifacts.store import (
+                    managed_model_artifact_root,
+                )
+
+                service = parakeet_v2_managed_service()
+                reference = parakeet_v2_reference()
+                if active_managed_parakeet_v2_dir(service) is not None:
+                    leased = service.acquire(reference)
+                    try:
+                        root_revision = leased.handle.root.revision
+                        closure_fingerprint = leased.handle.closure_fingerprint
+                    finally:
+                        leased.close()
+                    managed_store_root = managed_model_artifact_root()
+                    managed_artifact_ref = (
+                        reference.artifact_id,
+                        reference.revision,
+                        reference.variant,
+                    )
+                else:
+                    legacy_root = parakeet_v2_install_dir()
+                    legacy_paths = (
+                        legacy_root / VERIFICATION_RECEIPT,
+                        *(
+                            legacy_root / descriptor.filename
+                            for descriptor in PARAKEET_V2_FILES
+                        ),
+                    )
+                    if all(path.is_file() for path in legacy_paths):
+                        local_source = snapshot_local_source(legacy_paths)
+                        options["transcription_model_dir"] = str(legacy_root)
+                        options["_verify_legacy_parakeet_v2"] = True
+
+        identity = ModelIdentity(
+            provider_id=provider,
+            model_id=model_id,
+            root_revision=root_revision,
+            closure_fingerprint=closure_fingerprint,
+            precision=options.get("transcription_precision") or "int8",
+            device=device,
+            local_snapshot_token=(
+                local_source.token if local_source is not None else None
+            ),
+        )
+        return {
+            "attempt_id": attempt_id,
+            "identity": identity,
+            "local_source": local_source,
+            "managed_store_root": managed_store_root,
+            "managed_artifact_ref": managed_artifact_ref,
+        }
+
+    def _submit_local_stt_job(
+        self,
+        job: LibraryIngestJob,
+        options: dict[str, Any],
+    ) -> None:
+        attempt_id = f"{job.job_id}-attempt-{job.retry_count + 1}"
+        self._ingest_local_stt_jobs[job.job_id] = (0, attempt_id)
+        thread = threading.Thread(
+            target=self._dispatch_local_stt_job,
+            args=(job, options, attempt_id),
+            name=f"library-local-stt-dispatch-{job.job_id}",
+            daemon=True,
+        )
+        try:
+            thread.start()
+        except Exception:
+            self._ingest_local_stt_jobs.pop(job.job_id, None)
+            raise
+
+    def _dispatch_local_stt_job(
+        self,
+        job: LibraryIngestJob,
+        options: dict[str, Any],
+        attempt_id: str,
+    ) -> None:
+        """Build identity and perform the bounded spawn handshake off-loop."""
+
+        try:
+            dispatch = self._build_local_stt_dispatch(job, options)
+            if dispatch["attempt_id"] != attempt_id:
+                raise RuntimeError("Local STT attempt identity changed")
+            executor = self._ensure_local_stt_executor()
+            generation = executor.submit(
+                attempt_id=attempt_id,
+                job_id=job.job_id,
+                source_path=Path(job.source_path),
+                identity=dispatch["identity"],
+                options=options,
+                local_source=dispatch["local_source"],
+                managed_store_root=dispatch["managed_store_root"],
+                managed_artifact_ref=dispatch["managed_artifact_ref"],
+                on_event=functools.partial(self._ingest_local_stt_event, job.job_id),
+                on_result=functools.partial(self._ingest_local_stt_result, job.job_id),
+                on_failure=functools.partial(
+                    self._ingest_local_stt_failure, job.job_id
+                ),
+                explicit_retry=job.retry_count > 0,
+            )
+        except Exception as exc:
+            provider = str(options.get("transcription_provider") or "")
+            code, actions = self._classify_local_stt_dispatch_error(provider, exc)
+            self._marshal_local_stt_call(
+                self._on_ingest_local_stt_dispatch_failure,
+                job.job_id,
+                attempt_id,
+                code,
+                actions,
+                type(exc).__name__,
+            )
+            return
+        self._marshal_local_stt_call(
+            self._on_ingest_local_stt_submitted,
+            job.job_id,
+            generation,
+            attempt_id,
+        )
+
+    @staticmethod
+    def _classify_local_stt_dispatch_error(
+        provider: str,
+        error: BaseException,
+    ) -> tuple[TranscriptionFailureCode, tuple[str, ...]]:
+        unavailable = isinstance(error, (ExecutorBusyError, ExecutorUnavailableError))
+        code = (
+            TranscriptionFailureCode.PROVIDER_UNAVAILABLE
+            if unavailable
+            else TranscriptionFailureCode.ARTIFACT_INCOMPATIBLE
+        )
+        actions = ["retry_faster_whisper"]
+        if provider == "transcribe-cpp":
+            actions.insert(0, "choose_another_gguf")
+        return code, tuple(actions)
+
+    def _marshal_local_stt_call(
+        self,
+        callback: Callable[..., Any],
+        *args: Any,
+    ) -> None:
+        if self._ingest_shutdown:
+            return
+        try:
+            self.call_from_thread(callback, *args)
+        except RuntimeError:
+            if not self._ingest_shutdown:
+                callback_name = getattr(
+                    callback,
+                    "__name__",
+                    type(callback).__name__,
+                )
+                logger.error(
+                    "Library local STT callback could not be marshaled (callback={}).",
+                    callback_name,
+                )
+
+    def _on_ingest_local_stt_submitted(
+        self,
+        job_id: str,
+        generation: int,
+        attempt_id: str,
+    ) -> None:
+        binding = self._ingest_local_stt_jobs.get(job_id)
+        if (
+            self._ingest_shutdown
+            or binding is None
+            or binding[1] != attempt_id
+            or generation <= binding[0]
+        ):
+            return
+        self._ingest_local_stt_jobs[job_id] = (generation, attempt_id)
+
+    def cancel_local_ingest_job(self, job_id: str) -> bool:
+        """Request cooperative cancellation for one bound local STT attempt."""
+
+        binding = self._ingest_local_stt_jobs.get(job_id)
+        executor = getattr(self, "_local_stt_executor", None)
+        job = self.library_ingest_jobs.get_job(job_id)
+        if (
+            binding is None
+            or binding[0] <= 0
+            or executor is None
+            or job is None
+            or job.state is not IngestJobState.PARSING
+        ):
+            return False
+        if not executor.cancel(binding[1]):
+            return False
+        progress = dict(job.progress or {})
+        progress["cancel_requested"] = True
+        self.library_ingest_jobs.update_progress(job_id, progress=progress)
+        return True
+
+    def force_stop_local_ingest_job(self, job_id: str) -> bool:
+        """Force-stop one cancel-requested local STT attempt off the UI thread."""
+
+        binding = self._ingest_local_stt_jobs.get(job_id)
+        executor = getattr(self, "_local_stt_executor", None)
+        job = self.library_ingest_jobs.get_job(job_id)
+        if (
+            binding is None
+            or binding[0] <= 0
+            or executor is None
+            or job is None
+            or job.state is not IngestJobState.PARSING
+            or not bool((job.progress or {}).get("cancel_requested"))
+        ):
+            return False
+        thread = threading.Thread(
+            target=self._force_stop_local_stt_attempt,
+            args=(executor, binding[1]),
+            name=f"library-local-stt-force-stop-{job_id}",
+            daemon=True,
+        )
+        try:
+            thread.start()
+        except RuntimeError:
+            return False
+        return True
+
+    def _force_stop_local_stt_attempt(
+        self,
+        executor: LocalSTTExecutor,
+        attempt_id: str,
+    ) -> None:
+        if not executor.force_stop(attempt_id):
+            return
+        if executor.wait_for_retirement(10.0):
+            self._marshal_local_stt_call(self._top_up_ingest_parse_pool)
+
+    def _on_ingest_local_stt_dispatch_failure(
+        self,
+        job_id: str,
+        attempt_id: str,
+        code: TranscriptionFailureCode,
+        actions: tuple[str, ...],
+        error_type: str,
+    ) -> None:
+        if self._ingest_shutdown or self._ingest_local_stt_jobs.get(job_id) != (
+            0,
+            attempt_id,
+        ):
+            return
+        self._ingest_local_stt_jobs.pop(job_id, None)
+        message = TRANSCRIPTION_FAILURE_CONTRACT[code][0]
+        logger.error(
+            "Library local STT dispatch failed "
+            f"(job_id={job_id}, error_type={error_type})."
+        )
+        self.library_ingest_jobs.mark_failed(
+            job_id,
+            error=message,
+            permanent=False,
+            error_detail={
+                "category": "stt_failure",
+                "code": code.value,
+                "message": message,
+                "actions": list(actions),
+            },
+        )
+        self._top_up_ingest_parse_pool()
+
+    def _marshal_local_stt_callback(
+        self,
+        callback: Callable[..., Any],
+        job_id: str,
+        envelope: ExecutorEvent | ExecutorResult | ExecutorFailure,
+    ) -> None:
+        self._marshal_local_stt_call(callback, job_id, envelope)
+
+    def _ingest_local_stt_event(self, job_id: str, event: ExecutorEvent) -> None:
+        self._marshal_local_stt_callback(self._on_ingest_local_stt_event, job_id, event)
+
+    def _ingest_local_stt_result(self, job_id: str, result: ExecutorResult) -> None:
+        self._marshal_local_stt_callback(
+            self._on_ingest_local_stt_result, job_id, result
+        )
+
+    def _ingest_local_stt_failure(
+        self,
+        job_id: str,
+        failure: ExecutorFailure,
+    ) -> None:
+        self._marshal_local_stt_callback(
+            self._on_ingest_local_stt_failure, job_id, failure
+        )
+
+    def _local_stt_callback_matches(
+        self,
+        job_id: str,
+        envelope: ExecutorEvent | ExecutorResult | ExecutorFailure,
+    ) -> bool:
+        return self._ingest_local_stt_jobs.get(job_id) == (
+            envelope.generation,
+            envelope.attempt_id,
+        )
+
+    def _local_stt_terminal_matches(
+        self,
+        job_id: str,
+        envelope: ExecutorResult | ExecutorFailure,
+    ) -> bool:
+        """Adopt the first controller-fenced generation before submit returns."""
+
+        if self._local_stt_callback_matches(job_id, envelope):
+            return True
+        binding = self._ingest_local_stt_jobs.get(job_id)
+        if binding == (0, envelope.attempt_id) and envelope.generation > 0:
+            self._ingest_local_stt_jobs[job_id] = (
+                envelope.generation,
+                envelope.attempt_id,
+            )
+            return True
+        return False
+
+    def _on_ingest_local_stt_event(
+        self,
+        job_id: str,
+        event: ExecutorEvent,
+    ) -> None:
+        if self._ingest_shutdown:
+            return
+        if not self._local_stt_callback_matches(job_id, event):
+            binding = self._ingest_local_stt_jobs.get(job_id)
+            if (
+                binding is None
+                or binding[1] != event.attempt_id
+                or event.generation <= binding[0]
+                or event.phase is not WorkerPhase.PREPARING
+            ):
+                return
+            self._ingest_local_stt_jobs[job_id] = (
+                event.generation,
+                event.attempt_id,
+            )
+        existing = self.library_ingest_jobs.get_job(job_id)
+        progress = dict(existing.progress or {}) if existing is not None else {}
+        progress["phase"] = event.phase.value
+        self.library_ingest_jobs.update_progress(job_id, progress=progress)
+
+    def _on_ingest_local_stt_result(
+        self,
+        job_id: str,
+        result: ExecutorResult,
+    ) -> None:
+        if self._ingest_shutdown or not self._local_stt_terminal_matches(
+            job_id, result
+        ):
+            return
+        self._ingest_local_stt_jobs.pop(job_id, None)
+        self._ingest_parsed_payloads[job_id] = result.payload
+        self._start_library_ingest_queue_if_idle()
+        self._top_up_ingest_parse_pool()
+
+    def _on_ingest_local_stt_failure(
+        self,
+        job_id: str,
+        failure: ExecutorFailure,
+    ) -> None:
+        if self._ingest_shutdown or not self._local_stt_terminal_matches(
+            job_id, failure
+        ):
+            return
+        self._ingest_local_stt_jobs.pop(job_id, None)
+        message = TRANSCRIPTION_FAILURE_CONTRACT[failure.code][0]
+        if failure.code is TranscriptionFailureCode.CANCELLED:
+            self.library_ingest_jobs.mark_cancelled(job_id, reason=message)
+        else:
+            self.library_ingest_jobs.mark_failed(
+                job_id,
+                error=message,
+                permanent=False,
+                error_detail={
+                    "category": "stt_failure",
+                    "code": failure.code.value,
+                    "message": message,
+                    "actions": list(failure.recovery_actions),
+                },
+                stt_failure_provenance=failure.failed_attempt,
+            )
+        executor = getattr(self, "_local_stt_executor", None)
+        if executor is None or not executor.retiring:
+            self._top_up_ingest_parse_pool()
+
     def _top_up_ingest_parse_pool(self) -> None:
         """Submit ``QUEUED`` jobs to the parse pool up to the worker cap.
 
@@ -2458,7 +2949,11 @@ class LibraryIngestQueueMixin:
             _INGEST_HEAVY_TYPES
         )
         while parsing_count < worker_count:
-            heavy_full = heavy_parsing_count >= heavy_cap
+            # LocalSTTExecutor intentionally accepts one request at a time.
+            # A legacy heavy-lane override above one must not turn the next
+            # queued audio/video job into a spurious ExecutorBusyError.
+            local_stt_busy = bool(self._ingest_local_stt_jobs)
+            heavy_full = heavy_parsing_count >= heavy_cap or local_stt_busy
             job = self.library_ingest_jobs.next_queued(
                 skip_types=_INGEST_HEAVY_TYPES if heavy_full else frozenset()
             )
@@ -2515,6 +3010,39 @@ class LibraryIngestQueueMixin:
                 continue
             job_id = claimed.job_id
             source_path = claimed.source_path
+            if options.get("transcription_provider") in {
+                "parakeet-onnx",
+                "transcribe-cpp",
+            }:
+                try:
+                    self._submit_local_stt_job(claimed, options)
+                except Exception as exc:
+                    code, recovery_actions = self._classify_local_stt_dispatch_error(
+                        str(options.get("transcription_provider") or ""), exc
+                    )
+                    message = TRANSCRIPTION_FAILURE_CONTRACT[code][0]
+                    logger.error(
+                        "Library local STT dispatch failed "
+                        f"(job_id={job_id}, provider="
+                        f"{options.get('transcription_provider')}, "
+                        f"error_type={type(exc).__name__})."
+                    )
+                    self.library_ingest_jobs.mark_failed(
+                        job_id,
+                        error=message,
+                        permanent=False,
+                        error_detail={
+                            "category": "stt_failure",
+                            "code": code.value,
+                            "message": message,
+                            "actions": list(recovery_actions),
+                        },
+                    )
+                    parsing_count -= 1
+                    if claimed.detected_type in _INGEST_HEAVY_TYPES:
+                        heavy_parsing_count -= 1
+                    continue
+                continue
             try:
                 pool = self._ensure_ingest_parse_pool()
             except Exception as exc:
@@ -2771,35 +3299,75 @@ class LibraryIngestQueueMixin:
         pool callbacks -- ``_ingest_pool_callback``/
         ``_ingest_pool_error_callback``, running on the pool's
         result-handler thread -- short-circuit before marshaling from this
-        point on) and drops the ``_ingest_parse_pool`` reference (nothing
-        can submit to it anymore). The actual ``pool.terminate()`` +
-        ``pool.join()`` then run on a detached daemon thread, NEVER on the
-        caller's (loop) thread: CPython's ``Pool._terminate_pool`` does an
-        unbounded ``result_handler.join()``, and if that result-handler
-        thread is at that moment parked inside a ``call_from_thread`` it
-        entered just before the flag went up, joining it from the loop
-        thread would deadlock (the loop can't drain the marshaled call it
-        is itself waiting behind). Off-loop, the loop stays free: the
-        in-flight marshaled call runs, no-ops via the flag, the
-        result-handler thread unblocks, and the join completes. The daemon
-        thread is deliberately not joined by the caller -- worst case it
-        outlives the app briefly and dies with the process.
+        point on) and drops both worker references (nothing can submit to
+        either anymore). Executor close and parse-pool terminate/join then
+        run sequentially on one detached daemon thread, NEVER on the caller's
+        (loop) thread: CPython's ``Pool._terminate_pool`` does an unbounded
+        ``result_handler.join()``, and if that result-handler thread is at
+        that moment parked inside a ``call_from_thread`` it entered just
+        before the flag went up, joining it from the loop thread would
+        deadlock (the loop can't drain the marshaled call it is itself waiting
+        behind). Off-loop, the loop stays free: the in-flight marshaled call
+        runs, no-ops via the flag, the result-handler thread unblocks, and the
+        join completes. The daemon thread is deliberately not joined by the
+        caller -- worst case it outlives the app briefly and dies with the
+        process.
 
         Returns:
-            The teardown thread (so tests can bound-join it and assert
-            thread identity), or ``None`` when no pool was ever created --
-            the shutdown flag is still set in that case.
+            The one teardown thread that owns every detached ingest resource,
+            or ``None`` when neither worker was ever created. The shutdown
+            flag is still set in that case.
         """
         self._ingest_shutdown = True
+        with self._local_stt_executor_lock:
+            executor = getattr(self, "_local_stt_executor", None)
+            self._local_stt_executor = None
+        local_jobs = getattr(self, "_ingest_local_stt_jobs", None)
+        if local_jobs is None:
+            self._ingest_local_stt_jobs = {}
+        else:
+            local_jobs.clear()
         pool = getattr(self, "_ingest_parse_pool", None)
         stop_event = getattr(self, "_ingest_parse_pool_stop_event", None)
         if stop_event is not None:
             stop_event.set()
         self._ingest_parse_pool_stop_event = None
         self._ingest_parse_pool = None
-        if pool is None:
+        if executor is None and pool is None:
             return None
-        return self._terminate_ingest_parse_pool_off_thread(pool)
+        return self._shutdown_ingest_workers_off_thread(executor, pool)
+
+    @staticmethod
+    def _shutdown_ingest_workers_off_thread(
+        executor: Any | None,
+        pool: Any | None,
+    ) -> threading.Thread:
+        """Close detached ingest workers without blocking the UI thread."""
+
+        def _shutdown_workers() -> None:
+            if executor is not None:
+                try:
+                    executor.close()
+                except Exception:
+                    logger.opt(exception=True).error(
+                        "Error closing the Library local STT executor."
+                    )
+            if pool is not None:
+                try:
+                    pool.terminate()
+                    pool.join()
+                except Exception:
+                    logger.opt(exception=True).error(
+                        "Error terminating the Library ingest parse pool."
+                    )
+
+        thread = threading.Thread(
+            target=_shutdown_workers,
+            name="library-ingest-workers-shutdown",
+            daemon=True,
+        )
+        thread.start()
+        return thread
 
     # -- Remote poller (server-origin jobs) --------------------------------
 
@@ -4864,6 +5432,9 @@ class TldwCli(
         self._ingest_parse_jobs_by_generation: dict[int, set[str]] = {}
         self._ingest_parse_pool_stop_event: Optional[threading.Event] = None
         self._ingest_parsed_payloads: dict[str, dict] = {}
+        self._local_stt_executor_lock = threading.Lock()
+        self._local_stt_executor: Optional[LocalSTTExecutor] = None
+        self._ingest_local_stt_jobs: dict[str, tuple[int, str]] = {}
         self._ingest_shutdown: bool = False
 
     def _wire_research_services(self) -> None:
@@ -8588,19 +9159,17 @@ class TldwCli(
         self._ui_ready = False
         self._stop_ui_responsiveness_monitor()
 
-        # F3: shut down the Library ingest parse pool. Final shutdown
-        # order, explicit (Task 4 review):
-        #   1. `_ingest_shutdown = True` + pool reference detached
-        #      (synchronous, inside `_shutdown_ingest_parse_pool`) -- pool
-        #      callbacks short-circuit on their own thread before
-        #      marshaling from this point on.
-        #   2. `pool.terminate()` + `pool.join()` on a detached daemon
-        #      thread, NEVER this (loop) thread -- terminating inline here
-        #      could deadlock against a result-handler thread parked inside
-        #      `call_from_thread` (see `_shutdown_ingest_parse_pool`'s
-        #      docstring). `terminate()` kills every in-flight parse worker
-        #      process immediately -- no waiting on a possibly-long
-        #      transcription/OCR job.
+        # F3/TASK-601: shut down both Library ingest worker boundaries. Final
+        # shutdown order, explicit:
+        #   1. `_ingest_shutdown = True` + executor/pool references detached
+        #      (synchronous, inside `_shutdown_ingest_parse_pool`) -- their
+        #      callbacks short-circuit before marshaling from this point on.
+        #   2. Executor close, then `pool.terminate()` + `pool.join()`, on one
+        #      detached daemon thread, NEVER this (loop) thread -- terminating
+        #      inline here could deadlock against a result-handler thread
+        #      parked inside `call_from_thread` (see that method's docstring).
+        #      `terminate()` kills every in-flight light parse worker process
+        #      immediately -- no waiting on a possibly-long OCR job.
         #   3. The writer (the exclusive `library_ingest_queue` thread
         #      worker) is swept up by the generic worker cancellation
         #      below, same as every other worker.

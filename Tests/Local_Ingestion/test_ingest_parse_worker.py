@@ -495,6 +495,79 @@ def test_ingest_local_file_audio_returns_real_media_id(
     assert db.get_media_by_url(f"file://{source.absolute()}") is not None
 
 
+def test_audio_processor_uses_injected_transcription_runner_without_service(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tldw_chatbook.Local_Ingestion import transcription_service
+    from tldw_chatbook.Local_Ingestion.audio_processing import LocalAudioProcessor
+
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    def runner(audio_path: str, **kwargs: object) -> dict[str, object]:
+        calls.append((audio_path, kwargs))
+        return {"text": "resident transcript", "segments": []}
+
+    monkeypatch.setattr(
+        transcription_service,
+        "TranscriptionService",
+        lambda: (_ for _ in ()).throw(AssertionError("service constructed")),
+    )
+    processor = LocalAudioProcessor(None, transcription_runner=runner)
+
+    result = processor._transcribe_audio(
+        "/private/media.wav",
+        provider="parakeet-onnx",
+        model="nemo-parakeet-tdt-0.6b-v2",
+        language="en",
+    )
+
+    assert result == {"text": "resident transcript", "segments": []}
+    assert calls[0][0] == "/private/media.wav"
+    assert callable(calls[0][1]["progress_callback"])
+
+
+def test_video_processor_forwards_injected_transcription_runner() -> None:
+    from tldw_chatbook.Local_Ingestion.video_processing import LocalVideoProcessor
+
+    def runner(*_args, **_kwargs):
+        return {"text": "hello", "segments": []}
+
+    processor = LocalVideoProcessor(None, transcription_runner=runner)
+
+    assert processor.audio_processor._transcription_runner is runner
+
+
+def test_parse_audio_for_ingest_passes_worker_owned_transcription_runner(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from tldw_chatbook.Local_Ingestion import local_file_ingestion as lfi
+
+    source = tmp_path / "speech.wav"
+    source.write_bytes(b"fixture")
+
+    def runner(*_args, **_kwargs):
+        return {"text": "hello", "segments": []}
+
+    observed: dict[str, object] = {}
+
+    class InjectedAudioProcessor(_StubAudioProcessor):
+        def __init__(self, media_db=None, *, transcription_runner=None):
+            super().__init__(media_db)
+            observed["runner"] = transcription_runner
+
+    monkeypatch.setattr(lfi, "LocalAudioProcessor", InjectedAudioProcessor)
+
+    payload = parse_local_file_for_ingest(
+        source,
+        {"perform_analysis": False},
+        transcription_runner=runner,
+    )
+
+    assert observed["runner"] is runner
+    assert payload["content"] == "Transcribed words from the stub."
+
+
 # --- classify_parse_failure ---------------------------------------------------
 
 

@@ -43,6 +43,18 @@ from tldw_chatbook.Library.library_ingest_jobs import (
     LibraryIngestJob,
     LibraryIngestJobRegistry,
 )
+from tldw_chatbook.STT.contracts import (
+    ExecutionDevice,
+    TranscriptionFailureCode,
+)
+from tldw_chatbook.STT.executor import (
+    ExecutorEvent,
+    ExecutorFailure,
+    ExecutorResult,
+    ExecutorUnavailableError,
+    ModelIdentity,
+    WorkerPhase,
+)
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -143,6 +155,62 @@ class _FakeIngestParsePool:
         pass
 
 
+class _FakeLocalSTTExecutor:
+    """Manual executor stand-in that records dispatch and emits off-thread."""
+
+    def __init__(self, *, submit_error: BaseException | None = None) -> None:
+        self.calls: list[dict[str, Any]] = []
+        self.submit_error = submit_error
+        self.generation = 1
+        self.submit_thread_ident: int | None = None
+        self.close_thread_ident: int | None = None
+        self.cancel_calls: list[str] = []
+        self.force_stop_calls: list[str] = []
+        self.retiring = False
+        self._retirement_complete = threading.Event()
+        self._retirement_complete.set()
+
+    def submit(self, **kwargs: Any) -> int:
+        self.submit_thread_ident = threading.get_ident()
+        if self.submit_error is not None:
+            raise self.submit_error
+        self.calls.append(kwargs)
+        return self.generation
+
+    def trigger_event(self, index: int, event: ExecutorEvent) -> None:
+        self._spawn(self.calls[index]["on_event"], event)
+
+    def trigger_result(self, index: int, result: ExecutorResult) -> None:
+        self._spawn(self.calls[index]["on_result"], result)
+
+    def trigger_failure(self, index: int, failure: ExecutorFailure) -> None:
+        self._spawn(self.calls[index]["on_failure"], failure)
+
+    def cancel(self, attempt_id: str) -> bool:
+        self.cancel_calls.append(attempt_id)
+        return True
+
+    def force_stop(self, attempt_id: str) -> bool:
+        self.force_stop_calls.append(attempt_id)
+        self.retiring = True
+        self._retirement_complete.clear()
+        return True
+
+    def wait_for_retirement(self, timeout: float | None = None) -> bool:
+        return self._retirement_complete.wait(timeout)
+
+    def complete_retirement(self) -> None:
+        self.retiring = False
+        self._retirement_complete.set()
+
+    @staticmethod
+    def _spawn(callback: Callable[[Any], None], value: Any) -> None:
+        threading.Thread(target=callback, args=(value,), daemon=True).start()
+
+    def close(self) -> None:
+        self.close_thread_ident = threading.get_ident()
+
+
 class _IngestRunnerHarness(LibraryIngestQueueMixin, App):
     """Minimal headless App hosting the ingest registry + coordinator + writer.
 
@@ -160,6 +228,8 @@ class _IngestRunnerHarness(LibraryIngestQueueMixin, App):
         pool_factory: Optional[Callable[[], Any]] = None,
         worker_count: Optional[int] = None,
         heavy_lane: Optional[int] = None,
+        local_stt_executor: _FakeLocalSTTExecutor | None = None,
+        local_stt_dispatch_factory: Callable[..., dict[str, Any]] | None = None,
     ) -> None:
         super().__init__()
         self.library_ingest_jobs = LibraryIngestJobRegistry()
@@ -170,10 +240,14 @@ class _IngestRunnerHarness(LibraryIngestQueueMixin, App):
         self._ingest_parse_pool_stop_event: Optional[threading.Event] = None
         self._ingest_parsed_payloads: dict[str, dict] = {}
         self._ingest_shutdown = False
+        self._local_stt_executor_lock = threading.Lock()
+        self._local_stt_executor = local_stt_executor
+        self._ingest_local_stt_jobs: dict[str, tuple[int, str]] = {}
         self._pool_factory = pool_factory or (lambda: _FakeIngestParsePool())
         self._pool_create_count = 0
         self._worker_count_override = worker_count
         self._heavy_lane_override = heavy_lane
+        self._local_stt_dispatch_factory = local_stt_dispatch_factory
 
     def _create_ingest_parse_pool(self):
         self._pool_create_count += 1
@@ -188,6 +262,29 @@ class _IngestRunnerHarness(LibraryIngestQueueMixin, App):
         if self._heavy_lane_override is not None:
             return self._heavy_lane_override
         return super()._ingest_heavy_lane_max_workers()
+
+    def _build_local_stt_dispatch(self, job, options):
+        if self._local_stt_dispatch_factory is not None:
+            return self._local_stt_dispatch_factory(job, options)
+        return super()._build_local_stt_dispatch(job, options)
+
+
+def _fake_local_stt_dispatch(job, options) -> dict[str, Any]:
+    provider = options["transcription_provider"]
+    return {
+        "attempt_id": f"{job.job_id}-attempt-{job.retry_count + 1}",
+        "identity": ModelIdentity(
+            provider_id=provider,
+            model_id=options.get("transcription_model") or "local-gguf:whisper",
+            root_revision=None,
+            closure_fingerprint=None,
+            precision=options.get("transcription_precision") or "native",
+            device=ExecutionDevice.CPU,
+        ),
+        "local_source": None,
+        "managed_store_root": None,
+        "managed_artifact_ref": None,
+    }
 
 
 def _make_db(tmp_path: Path, name: str = "library_ingest.db") -> MediaDatabase:
@@ -966,6 +1063,696 @@ async def test_retried_transcription_still_obeys_the_heavy_lane_cap(
         states_after = {j.job_id: j.state for j in app.library_ingest_jobs.jobs()}
         assert states_after[requeued.job_id] == IngestJobState.QUEUED
         assert states_after[a2.job_id] == IngestJobState.PARSING
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("provider", ["parakeet-onnx", "transcribe-cpp"])
+async def test_eligible_local_stt_uses_executor_not_general_pool(
+    tmp_path: Path,
+    provider: str,
+) -> None:
+    pool = _FakeIngestParsePool(auto_run=False)
+    executor = _FakeLocalSTTExecutor()
+    app = _IngestRunnerHarness(
+        _make_db(tmp_path),
+        pool_factory=lambda: pool,
+        local_stt_executor=executor,
+        local_stt_dispatch_factory=_fake_local_stt_dispatch,
+    )
+    source = tmp_path / "speech.wav"
+    source.write_bytes(b"fixture")
+
+    async with app.run_test() as pilot:
+        job = app.submit_library_ingest_job(
+            source_path=str(source),
+            ingest_options={"audio_video": {"transcription_provider": provider}},
+        )
+        await pilot.pause()
+
+        assert len(executor.calls) == 1
+        assert executor.calls[0]["job_id"] == job.job_id
+        assert executor.calls[0]["options"]["transcription_provider"] == provider
+        assert pool.calls == []
+
+
+@pytest.mark.asyncio
+async def test_library_retry_clears_executor_unhealthy_gate_explicitly(
+    tmp_path: Path,
+) -> None:
+    executor = _FakeLocalSTTExecutor()
+    app = _IngestRunnerHarness(
+        _make_db(tmp_path),
+        local_stt_executor=executor,
+        local_stt_dispatch_factory=_fake_local_stt_dispatch,
+    )
+    source = tmp_path / "speech.wav"
+    source.write_bytes(b"fixture")
+
+    async with app.run_test() as pilot:
+        original = app.submit_library_ingest_job(
+            source_path=str(source),
+            ingest_options={"audio_video": {"transcription_provider": "parakeet-onnx"}},
+        )
+        await pilot.pause()
+        assert executor.calls[0]["explicit_retry"] is False
+        executor.trigger_failure(
+            0,
+            ExecutorFailure(
+                1,
+                executor.calls[0]["attempt_id"],
+                TranscriptionFailureCode.ENGINE_CRASHED,
+                recovery_actions=("retry_faster_whisper",),
+            ),
+        )
+        await _wait_for_job_state(
+            app,
+            pilot,
+            original.job_id,
+            IngestJobState.FAILED,
+        )
+
+        replacement = app.retry_library_ingest_job(original.job_id)
+        assert replacement is not None
+        for _ in range(_POLL_ATTEMPTS):
+            if len(executor.calls) == 2:
+                break
+            await pilot.pause(_POLL_INTERVAL)
+        assert len(executor.calls) == 2
+        assert executor.calls[1]["explicit_retry"] is True
+
+
+@pytest.mark.asyncio
+async def test_local_stt_cancel_and_force_stop_are_exact_attempt_scoped(
+    tmp_path: Path,
+) -> None:
+    pool = _FakeIngestParsePool(auto_run=False)
+    executor = _FakeLocalSTTExecutor()
+    app = _IngestRunnerHarness(
+        _make_db(tmp_path),
+        pool_factory=lambda: pool,
+        local_stt_executor=executor,
+        local_stt_dispatch_factory=_fake_local_stt_dispatch,
+    )
+    app._ingest_parse_pool = pool
+    source = tmp_path / "speech.wav"
+    source.write_bytes(b"fixture")
+
+    async with app.run_test() as pilot:
+        job = app.submit_library_ingest_job(
+            source_path=str(source),
+            ingest_options={"audio_video": {"transcription_provider": "parakeet-onnx"}},
+        )
+        await pilot.pause()
+        attempt_id = executor.calls[0]["attempt_id"]
+        executor.trigger_event(
+            0,
+            ExecutorEvent(1, attempt_id, WorkerPhase.TRANSCRIBING),
+        )
+        await pilot.pause()
+
+        assert app.cancel_local_ingest_job(job.job_id) is True
+        assert executor.cancel_calls == [attempt_id]
+        current = app.library_ingest_jobs.get_job(job.job_id)
+        assert current is not None
+        assert current.progress == {
+            "phase": "transcribing",
+            "cancel_requested": True,
+        }
+        executor.trigger_event(
+            0,
+            ExecutorEvent(1, attempt_id, WorkerPhase.POST_PROCESSING),
+        )
+        await pilot.pause()
+        current = app.library_ingest_jobs.get_job(job.job_id)
+        assert current is not None
+        assert current.progress == {
+            "phase": "post-processing",
+            "cancel_requested": True,
+        }
+
+        topups: list[str] = []
+        app._top_up_ingest_parse_pool = lambda: topups.append("top-up")
+        assert app.force_stop_local_ingest_job(job.job_id) is True
+        for _ in range(_POLL_ATTEMPTS):
+            if executor.force_stop_calls:
+                break
+            await pilot.pause(_POLL_INTERVAL)
+        assert executor.force_stop_calls == [attempt_id]
+        assert topups == []
+        assert app._ingest_parse_pool is pool
+
+        executor.complete_retirement()
+        for _ in range(_POLL_ATTEMPTS):
+            if topups:
+                break
+            await pilot.pause(_POLL_INTERVAL)
+        assert topups == ["top-up"]
+
+
+@pytest.mark.asyncio
+async def test_local_stt_cancel_rejects_stale_or_unbound_job(tmp_path: Path) -> None:
+    executor = _FakeLocalSTTExecutor()
+    app = _IngestRunnerHarness(
+        _make_db(tmp_path),
+        local_stt_executor=executor,
+        local_stt_dispatch_factory=_fake_local_stt_dispatch,
+    )
+
+    async with app.run_test():
+        assert app.cancel_local_ingest_job("missing-job") is False
+        assert app.force_stop_local_ingest_job("missing-job") is False
+        assert executor.cancel_calls == []
+        assert executor.force_stop_calls == []
+
+
+@pytest.mark.asyncio
+async def test_executor_identity_build_and_submit_run_off_textual_thread(
+    tmp_path: Path,
+) -> None:
+    executor = _FakeLocalSTTExecutor()
+    dispatch_threads: list[int] = []
+
+    def build_dispatch(job, options):
+        dispatch_threads.append(threading.get_ident())
+        return _fake_local_stt_dispatch(job, options)
+
+    app = _IngestRunnerHarness(
+        _make_db(tmp_path),
+        local_stt_executor=executor,
+        local_stt_dispatch_factory=build_dispatch,
+    )
+    source = tmp_path / "speech.wav"
+    source.write_bytes(b"fixture")
+    textual_thread = threading.get_ident()
+
+    async with app.run_test() as pilot:
+        app.submit_library_ingest_job(
+            source_path=str(source),
+            ingest_options={"audio_video": {"transcription_provider": "parakeet-onnx"}},
+        )
+        for _ in range(_POLL_ATTEMPTS):
+            if executor.calls:
+                break
+            await pilot.pause(_POLL_INTERVAL)
+        else:
+            raise AssertionError("local STT dispatch never reached the executor")
+
+        assert dispatch_threads
+        assert dispatch_threads[0] != textual_thread
+        assert executor.submit_thread_ident != textual_thread
+
+
+@pytest.mark.asyncio
+async def test_explicit_parakeet_directory_is_snapshotted_before_dispatch(
+    tmp_path: Path,
+) -> None:
+    executor = _FakeLocalSTTExecutor()
+    app = _IngestRunnerHarness(
+        _make_db(tmp_path),
+        local_stt_executor=executor,
+    )
+    source = tmp_path / "speech.wav"
+    source.write_bytes(b"fixture")
+    model_dir = tmp_path / "parakeet"
+    model_dir.mkdir()
+    for filename in (
+        "config.json",
+        "vocab.txt",
+        "encoder-model.int8.onnx",
+        "decoder_joint-model.int8.onnx",
+    ):
+        (model_dir / filename).write_bytes(filename.encode("utf-8"))
+
+    async with app.run_test() as pilot:
+        app.submit_library_ingest_job(
+            source_path=str(source),
+            ingest_options={
+                "audio_video": {
+                    "transcription_provider": "parakeet-onnx",
+                    "transcription_model_dir": str(model_dir),
+                }
+            },
+        )
+        await pilot.pause()
+
+        assert len(executor.calls) == 1
+        snapshot = executor.calls[0]["local_source"]
+        identity = executor.calls[0]["identity"]
+        assert snapshot is not None
+        assert identity.local_snapshot_token == snapshot.token
+        assert str(model_dir) not in repr(snapshot)
+
+
+@pytest.mark.asyncio
+async def test_explicit_parakeet_directory_uses_central_validated_path(
+    tmp_path: Path,
+) -> None:
+    executor = _FakeLocalSTTExecutor()
+    app = _IngestRunnerHarness(
+        _make_db(tmp_path),
+        local_stt_executor=executor,
+    )
+    source = tmp_path / "speech.wav"
+    source.write_bytes(b"fixture")
+    validated_dir = tmp_path / "validated-parakeet"
+    validated_dir.mkdir()
+    for filename in (
+        "config.json",
+        "vocab.txt",
+        "encoder-model.int8.onnx",
+        "decoder_joint-model.int8.onnx",
+    ):
+        (validated_dir / filename).write_bytes(filename.encode("utf-8"))
+
+    with patch(
+        "tldw_chatbook.Utils.path_validation.validate_path_simple",
+        return_value=validated_dir,
+    ):
+        async with app.run_test() as pilot:
+            app.submit_library_ingest_job(
+                source_path=str(source),
+                ingest_options={
+                    "audio_video": {
+                        "transcription_provider": "parakeet-onnx",
+                        "transcription_model_dir": str(
+                            tmp_path / "unvalidated-parakeet"
+                        ),
+                    }
+                },
+            )
+            await pilot.pause()
+
+    assert len(executor.calls) == 1
+    assert executor.calls[0]["options"]["transcription_model_dir"] == str(validated_dir)
+
+
+@pytest.mark.asyncio
+async def test_faster_whisper_stays_in_general_pool(tmp_path: Path) -> None:
+    pool = _FakeIngestParsePool(auto_run=False)
+    executor = _FakeLocalSTTExecutor()
+    app = _IngestRunnerHarness(
+        _make_db(tmp_path),
+        pool_factory=lambda: pool,
+        local_stt_executor=executor,
+        local_stt_dispatch_factory=_fake_local_stt_dispatch,
+    )
+    source = tmp_path / "speech.wav"
+    source.write_bytes(b"fixture")
+
+    async with app.run_test() as pilot:
+        app.submit_library_ingest_job(
+            source_path=str(source),
+            ingest_options={
+                "audio_video": {"transcription_provider": "faster-whisper"}
+            },
+        )
+        await pilot.pause()
+
+        assert len(pool.calls) == 1
+        assert executor.calls == []
+
+
+@pytest.mark.asyncio
+async def test_executor_heavy_job_leaves_remaining_pool_slots_for_documents(
+    tmp_path: Path,
+) -> None:
+    pool = _FakeIngestParsePool(auto_run=False)
+    executor = _FakeLocalSTTExecutor()
+    app = _IngestRunnerHarness(
+        _make_db(tmp_path),
+        pool_factory=lambda: pool,
+        worker_count=3,
+        heavy_lane=1,
+        local_stt_executor=executor,
+        local_stt_dispatch_factory=_fake_local_stt_dispatch,
+    )
+    audio = tmp_path / "speech.wav"
+    audio.write_bytes(b"fixture")
+    documents = [
+        _write_text_file(tmp_path, f"doc-{index}.txt", f"body {index}")
+        for index in range(3)
+    ]
+
+    async with app.run_test() as pilot:
+        app.submit_library_ingest_job(
+            source_path=str(audio),
+            ingest_options={"audio_video": {"transcription_provider": "parakeet-onnx"}},
+        )
+        for document in documents:
+            app.submit_library_ingest_job(source_path=str(document))
+        await pilot.pause()
+
+        assert len(executor.calls) == 1
+        assert len(pool.calls) == 2
+        assert app.library_ingest_jobs.counts()["parsing"] == 3
+
+
+@pytest.mark.asyncio
+async def test_executor_admits_only_one_local_job_when_legacy_heavy_cap_is_higher(
+    tmp_path: Path,
+) -> None:
+    pool = _FakeIngestParsePool(auto_run=False)
+    executor = _FakeLocalSTTExecutor()
+    app = _IngestRunnerHarness(
+        _make_db(tmp_path),
+        pool_factory=lambda: pool,
+        worker_count=3,
+        heavy_lane=2,
+        local_stt_executor=executor,
+        local_stt_dispatch_factory=_fake_local_stt_dispatch,
+    )
+    first_audio = tmp_path / "first.wav"
+    first_audio.write_bytes(b"fixture")
+    second_audio = tmp_path / "second.wav"
+    second_audio.write_bytes(b"fixture")
+    document = _write_text_file(tmp_path, "document.txt", "document body")
+
+    async with app.run_test() as pilot:
+        first_job = app.submit_library_ingest_job(
+            source_path=str(first_audio),
+            ingest_options={"audio_video": {"transcription_provider": "parakeet-onnx"}},
+        )
+        second_job = app.submit_library_ingest_job(
+            source_path=str(second_audio),
+            ingest_options={"audio_video": {"transcription_provider": "parakeet-onnx"}},
+        )
+        document_job = app.submit_library_ingest_job(source_path=str(document))
+        await pilot.pause()
+
+        states = {job.job_id: job.state for job in app.library_ingest_jobs.jobs()}
+        assert len(executor.calls) == 1
+        assert executor.calls[0]["job_id"] == first_job.job_id
+        assert states[second_job.job_id] == IngestJobState.QUEUED
+        assert states[document_job.job_id] == IngestJobState.PARSING
+        assert len(pool.calls) == 1
+
+        executor.trigger_failure(
+            0,
+            ExecutorFailure(
+                1,
+                executor.calls[0]["attempt_id"],
+                TranscriptionFailureCode.CANCELLED,
+            ),
+        )
+        await _wait_for_job_state(
+            app, pilot, first_job.job_id, IngestJobState.CANCELLED
+        )
+        await _wait_for_job_state(app, pilot, second_job.job_id, IngestJobState.PARSING)
+        assert len(executor.calls) == 2
+        assert executor.calls[1]["job_id"] == second_job.job_id
+
+
+@pytest.mark.asyncio
+async def test_executor_callbacks_are_fenced_and_progress_has_no_percentage(
+    tmp_path: Path,
+) -> None:
+    executor = _FakeLocalSTTExecutor()
+    app = _IngestRunnerHarness(
+        _make_db(tmp_path),
+        local_stt_executor=executor,
+        local_stt_dispatch_factory=_fake_local_stt_dispatch,
+    )
+    source = tmp_path / "speech.wav"
+    source.write_bytes(b"fixture")
+    wakes: list[str] = []
+    app._start_library_ingest_queue_if_idle = lambda: wakes.append("writer")
+
+    async with app.run_test() as pilot:
+        job = app.submit_library_ingest_job(
+            source_path=str(source),
+            ingest_options={"audio_video": {"transcription_provider": "parakeet-onnx"}},
+        )
+        await pilot.pause()
+        call = executor.calls[0]
+        attempt_id = call["attempt_id"]
+
+        executor.trigger_event(
+            0,
+            ExecutorEvent(1, attempt_id, WorkerPhase.TRANSCRIBING),
+        )
+        await pilot.pause()
+        current = app.library_ingest_jobs.get_job(job.job_id)
+        assert current is not None
+        assert current.progress == {"phase": "transcribing"}
+        assert "percent" not in current.progress
+
+        executor.trigger_result(
+            0,
+            ExecutorResult(2, attempt_id, {"content": "stale"}),
+        )
+        await pilot.pause()
+        assert job.job_id not in app._ingest_parsed_payloads
+
+        payload = {"content": "accepted"}
+        executor.trigger_result(0, ExecutorResult(1, attempt_id, payload))
+        await pilot.pause()
+        assert app._ingest_parsed_payloads[job.job_id] == payload
+        assert wakes == ["writer"]
+
+        executor.trigger_failure(
+            0,
+            ExecutorFailure(
+                1,
+                attempt_id,
+                TranscriptionFailureCode.ENGINE_CRASHED,
+            ),
+        )
+        await pilot.pause()
+        current = app.library_ingest_jobs.get_job(job.job_id)
+        assert current is not None and current.state == IngestJobState.PARSING
+
+
+@pytest.mark.asyncio
+async def test_executor_cpu_retry_generation_is_accepted_after_preparing_event(
+    tmp_path: Path,
+) -> None:
+    executor = _FakeLocalSTTExecutor()
+    app = _IngestRunnerHarness(
+        _make_db(tmp_path),
+        local_stt_executor=executor,
+        local_stt_dispatch_factory=_fake_local_stt_dispatch,
+    )
+    source = tmp_path / "speech.wav"
+    source.write_bytes(b"fixture")
+    app._start_library_ingest_queue_if_idle = lambda: None
+
+    async with app.run_test() as pilot:
+        job = app.submit_library_ingest_job(
+            source_path=str(source),
+            ingest_options={"audio_video": {"transcription_provider": "parakeet-onnx"}},
+        )
+        await pilot.pause()
+        attempt_id = executor.calls[0]["attempt_id"]
+
+        executor.trigger_event(
+            0,
+            ExecutorEvent(2, attempt_id, WorkerPhase.PREPARING),
+        )
+        await pilot.pause()
+        executor.trigger_result(
+            0,
+            ExecutorResult(2, attempt_id, {"content": "cpu retry"}),
+        )
+        await pilot.pause()
+
+        assert app._ingest_parsed_payloads[job.job_id] == {"content": "cpu retry"}
+
+
+@pytest.mark.asyncio
+async def test_executor_terminal_can_bind_before_submitted_callback(
+    tmp_path: Path,
+) -> None:
+    executor = _FakeLocalSTTExecutor()
+    app = _IngestRunnerHarness(
+        _make_db(tmp_path),
+        local_stt_executor=executor,
+        local_stt_dispatch_factory=_fake_local_stt_dispatch,
+    )
+    source = tmp_path / "speech.wav"
+    source.write_bytes(b"fixture")
+
+    async with app.run_test() as pilot:
+        job = app.submit_library_ingest_job(
+            source_path=str(source),
+            ingest_options={"audio_video": {"transcription_provider": "parakeet-onnx"}},
+        )
+        await pilot.pause()
+        attempt_id = executor.calls[0]["attempt_id"]
+        app._ingest_local_stt_jobs[job.job_id] = (0, attempt_id)
+
+        app._on_ingest_local_stt_failure(
+            job.job_id,
+            ExecutorFailure(
+                1,
+                attempt_id,
+                TranscriptionFailureCode.ENGINE_CRASHED,
+                recovery_actions=("retry_faster_whisper",),
+            ),
+        )
+        app._on_ingest_local_stt_submitted(job.job_id, 1, attempt_id)
+
+        terminal = app.library_ingest_jobs.get_job(job.job_id)
+        assert terminal is not None
+        assert terminal.state is IngestJobState.FAILED
+        assert job.job_id not in app._ingest_local_stt_jobs
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("code", "expected_state"),
+    [
+        (TranscriptionFailureCode.ARTIFACT_INCOMPATIBLE, IngestJobState.FAILED),
+        (TranscriptionFailureCode.ENGINE_CRASHED, IngestJobState.FAILED),
+        (TranscriptionFailureCode.CANCELLED, IngestJobState.CANCELLED),
+    ],
+)
+async def test_executor_failure_uses_stable_job_terminal(
+    tmp_path: Path,
+    code: TranscriptionFailureCode,
+    expected_state: IngestJobState,
+) -> None:
+    executor = _FakeLocalSTTExecutor()
+    app = _IngestRunnerHarness(
+        _make_db(tmp_path),
+        local_stt_executor=executor,
+        local_stt_dispatch_factory=_fake_local_stt_dispatch,
+    )
+    source = tmp_path / "speech.wav"
+    source.write_bytes(b"fixture")
+
+    async with app.run_test() as pilot:
+        job = app.submit_library_ingest_job(
+            source_path=str(source),
+            ingest_options={"audio_video": {"transcription_provider": "parakeet-onnx"}},
+        )
+        await pilot.pause()
+        attempt_id = executor.calls[0]["attempt_id"]
+        executor.trigger_failure(
+            0,
+            ExecutorFailure(
+                1,
+                attempt_id,
+                code,
+                recovery_actions=("retry_faster_whisper",),
+            ),
+        )
+        terminal = await _wait_for_job_state(app, pilot, job.job_id, expected_state)
+
+        assert terminal.error
+        assert "fixture" not in terminal.error
+        if code is not TranscriptionFailureCode.CANCELLED:
+            assert terminal.error_detail == {
+                "category": "stt_failure",
+                "code": code.value,
+                "message": terminal.error,
+                "actions": ["retry_faster_whisper"],
+            }
+
+
+@pytest.mark.asyncio
+async def test_executor_start_failure_does_not_retire_general_pool(
+    tmp_path: Path,
+) -> None:
+    pool = _FakeIngestParsePool(auto_run=False)
+    executor = _FakeLocalSTTExecutor(
+        submit_error=ExecutorUnavailableError("executor unavailable")
+    )
+    app = _IngestRunnerHarness(
+        _make_db(tmp_path),
+        pool_factory=lambda: pool,
+        worker_count=2,
+        local_stt_executor=executor,
+        local_stt_dispatch_factory=_fake_local_stt_dispatch,
+    )
+    audio = tmp_path / "speech.wav"
+    audio.write_bytes(b"fixture")
+    document = _write_text_file(tmp_path, "document.txt", "document body")
+
+    async with app.run_test() as pilot:
+        failed_job = app.submit_library_ingest_job(
+            source_path=str(audio),
+            ingest_options={"audio_video": {"transcription_provider": "parakeet-onnx"}},
+        )
+        document_job = app.submit_library_ingest_job(source_path=str(document))
+        failed = await _wait_for_job_state(
+            app, pilot, failed_job.job_id, IngestJobState.FAILED
+        )
+
+        assert failed.permanent is False
+        assert len(pool.calls) == 1
+        assert pool.calls[0]["args"][0] == document_job.source_path
+        assert app._ingest_parse_pool is pool
+
+
+def test_shutdown_closes_local_executor_off_caller_thread(tmp_path: Path) -> None:
+    executor = _FakeLocalSTTExecutor()
+    app = _IngestRunnerHarness(
+        _make_db(tmp_path),
+        local_stt_executor=executor,
+    )
+    caller_thread = threading.get_ident()
+
+    teardown = app._shutdown_ingest_parse_pool()
+    assert teardown is not None
+    teardown.join(timeout=5.0)
+
+    assert app._ingest_shutdown is True
+    assert app._local_stt_executor is None
+    assert executor.close_thread_ident is not None
+    assert executor.close_thread_ident != caller_thread
+
+
+def test_shutdown_thread_waits_for_executor_and_parse_pool(tmp_path: Path) -> None:
+    class _BlockingExecutor(_FakeLocalSTTExecutor):
+        def __init__(self) -> None:
+            super().__init__()
+            self.close_started = threading.Event()
+            self.close_release = threading.Event()
+
+        def close(self) -> None:
+            self.close_started.set()
+            assert self.close_release.wait(5.0)
+            super().close()
+
+    executor = _BlockingExecutor()
+    pool = _FakeIngestParsePool(auto_run=False)
+    app = _IngestRunnerHarness(
+        _make_db(tmp_path),
+        pool_factory=lambda: pool,
+        local_stt_executor=executor,
+    )
+    app._ingest_parse_pool = pool
+
+    teardown = app._shutdown_ingest_parse_pool()
+    assert teardown is not None
+    assert executor.close_started.wait(1.0)
+    teardown.join(timeout=0.05)
+    assert teardown.is_alive()
+
+    executor.close_release.set()
+    teardown.join(timeout=_FAKE_POOL_JOIN_TIMEOUT)
+
+    assert not teardown.is_alive()
+    assert executor.close_thread_ident is not None
+    assert pool.terminated is True
+
+
+def test_local_stt_marshal_failure_logs_callback_context(tmp_path: Path) -> None:
+    app = _IngestRunnerHarness(_make_db(tmp_path))
+
+    def safe_callback() -> None:
+        return None
+
+    with (
+        patch.object(app, "call_from_thread", side_effect=RuntimeError("closed")),
+        patch("tldw_chatbook.app.logger") as logger,
+    ):
+        app._marshal_local_stt_call(safe_callback)
+
+    logger.error.assert_called_once_with(
+        "Library local STT callback could not be marshaled (callback={}).",
+        "safe_callback",
+    )
 
 
 @pytest.mark.asyncio
