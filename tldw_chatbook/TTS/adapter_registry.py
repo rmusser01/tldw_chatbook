@@ -9,6 +9,7 @@ from types import MappingProxyType
 from typing import Any
 
 from tldw_chatbook.TTS._async_lifecycle import (
+    current_shutdown_deadline,
     join_retained_task,
     shutdown_deadline_scope,
 )
@@ -178,6 +179,11 @@ class TTSAdapterRegistry:
 
     def aliases(self) -> dict[str, str]:
         return dict(self._aliases)
+
+    @property
+    def shutdown_timeout_seconds(self) -> float:
+        """Return the one configured service/registry shutdown timeout."""
+        return self._shutdown_timeout_seconds
 
     def configuration_revision(self, provider_id: str) -> int:
         return self._slots[self._resolve_id(provider_id)].revision
@@ -537,11 +543,14 @@ class TTSAdapterRegistry:
             for slot in self._slots.values():
                 slot.lease_changed.set()
 
-            deadline = (
-                asyncio.get_running_loop().time() + self._shutdown_timeout_seconds
-            )
+            deadline = current_shutdown_deadline()
+            if deadline is None:
+                deadline = (
+                    asyncio.get_running_loop().time() + self._shutdown_timeout_seconds
+                )
             self._shutdown_deadline = deadline
-            self._close_task = asyncio.create_task(self._complete_close(deadline))
+            with shutdown_deadline_scope(deadline):
+                self._close_task = asyncio.create_task(self._complete_close(deadline))
             self._close_task.add_done_callback(self._observe_close_result)
             return self._close_task
 

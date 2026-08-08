@@ -1247,41 +1247,50 @@ async def _resolve_layers(
 class TTSEffectiveSettingsResolver:
     """Resolve immutable owner snapshots without reading or mutating storage."""
 
-    async def resolve_non_studio(
+    def project_provider(
         self,
         *,
         global_preferences: TTSPreferencesSnapshot | None,
-        global_preferences_revision: int,
-        provider_revision_reader: Callable[[str], int],
-        catalog_reader: Callable[[str], Awaitable[TTSProviderCatalog]],
-        native_capability_reader: NativeCapabilityReader | None = None,
         explicit: TTSSelectionOverrides | None = None,
         character_profile: TTSCharacterProfileSelection | None = None,
         default_profile: TTSDefaultProfileSelection | None = None,
-    ) -> TTSEffectiveSelectionSnapshot:
-        """Resolve explicit, character, default-profile, global, and fallback layers.
+        studio_preferences: StudioTTSPreferencesSnapshot | None = None,
+        studio_draft: TTSStudioDraftSelection | None = None,
+    ) -> str:
+        """Synchronously project the provider from the canonical layer order."""
+        studio_request = studio_preferences is not None or studio_draft is not None
+        if studio_request:
+            if (
+                explicit is not None
+                or character_profile is not None
+                or default_profile is not None
+            ):
+                raise TypeError("Studio TTS resolution cannot use non-Studio layers")
+            if studio_preferences is None:
+                raise TypeError("Studio TTS resolution requires saved preferences")
+            layers, _preview = self._studio_layers(
+                studio_preferences=studio_preferences,
+                studio_draft=studio_draft,
+                global_preferences=global_preferences,
+            )
+        else:
+            layers = self._non_studio_layers(
+                explicit=explicit,
+                character_profile=character_profile,
+                default_profile=default_profile,
+                global_preferences=global_preferences,
+            )
+        provider_id, _source = _provider_for_layers(layers)
+        return provider_id
 
-        Args:
-            global_preferences: Persisted global selection, when configured.
-            global_preferences_revision: Revision of the global selection snapshot.
-            provider_revision_reader: Reader for current provider configuration revisions.
-            catalog_reader: Asynchronous reader for provider model and voice catalogs.
-            native_capability_reader: Optional reader for observed native capabilities.
-            explicit: Optional request-scoped selection overrides.
-            character_profile: Optional authoritative character-owned selection.
-            default_profile: Optional app-wide default-voice profile selection,
-                consulted only when no character profile supplies an axis.
-
-        Returns:
-            The immutable effective selection and its provenance.
-
-        Raises:
-            TypeError: If a supplied selection object has an invalid type.
-            ValueError: If an authoritative character or default-profile selection
-                is incomplete.
-            TTSEffectiveResolutionError: If the layers cannot produce a valid selection.
-        """
-
+    @staticmethod
+    def _non_studio_layers(
+        *,
+        explicit: TTSSelectionOverrides | None,
+        character_profile: TTSCharacterProfileSelection | None,
+        default_profile: TTSDefaultProfileSelection | None,
+        global_preferences: TTSPreferencesSnapshot | None,
+    ) -> tuple[_SelectionLayer, ...]:
         if explicit is not None and type(explicit) is not TTSSelectionOverrides:
             raise TypeError("Explicit TTS selection is invalid")
         if character_profile is not None and (
@@ -1296,7 +1305,8 @@ class TTSEffectiveSettingsResolver:
             raise TypeError("Default-profile TTS selection is invalid")
         if default_profile is not None:
             _require_complete_profile_selection(
-                default_profile, source=TTSSelectionSource.DEFAULT_PROFILE
+                default_profile,
+                source=TTSSelectionSource.DEFAULT_PROFILE,
             )
         if global_preferences is not None and (
             type(global_preferences) is not TTSPreferencesSnapshot
@@ -1321,31 +1331,15 @@ class TTSEffectiveSettingsResolver:
             )
         if global_preferences is not None:
             layers.append(_global_layer(global_preferences))
-        return await _resolve_layers(
-            layers_without_fallback=tuple(layers),
-            global_preferences_revision=global_preferences_revision,
-            studio_preferences_revision=None,
-            character_profile=character_profile,
-            default_profile=default_profile,
-            provider_revision_reader=provider_revision_reader,
-            catalog_reader=catalog_reader,
-            native_capability_reader=native_capability_reader,
-            studio_preview=False,
-        )
+        return tuple(layers)
 
-    async def resolve_studio(
-        self,
+    @staticmethod
+    def _studio_layers(
         *,
         studio_preferences: StudioTTSPreferencesSnapshot,
+        studio_draft: TTSStudioDraftSelection | None,
         global_preferences: TTSPreferencesSnapshot | None,
-        global_preferences_revision: int,
-        provider_revision_reader: Callable[[str], int],
-        catalog_reader: Callable[[str], Awaitable[TTSProviderCatalog]],
-        native_capability_reader: NativeCapabilityReader | None = None,
-        studio_draft: TTSStudioDraftSelection | None = None,
-    ) -> TTSEffectiveSelectionSnapshot:
-        """Resolve Studio draft/preview, saved, global, and fallback layers."""
-
+    ) -> tuple[tuple[_SelectionLayer, ...], bool]:
         if type(studio_preferences) is not StudioTTSPreferencesSnapshot:
             raise TypeError("Saved Studio TTS preferences are invalid")
         if global_preferences is not None and (
@@ -1386,8 +1380,81 @@ class TTSEffectiveSettingsResolver:
         layers.append(_studio_saved_layer(studio_preferences, provider_id))
         if global_preferences is not None:
             layers.append(_global_layer(global_preferences))
+        return tuple(layers), bool(studio_draft and studio_draft.preview)
+
+    async def resolve_non_studio(
+        self,
+        *,
+        global_preferences: TTSPreferencesSnapshot | None,
+        global_preferences_revision: int,
+        provider_revision_reader: Callable[[str], int],
+        catalog_reader: Callable[[str], Awaitable[TTSProviderCatalog]],
+        native_capability_reader: NativeCapabilityReader | None = None,
+        explicit: TTSSelectionOverrides | None = None,
+        character_profile: TTSCharacterProfileSelection | None = None,
+        default_profile: TTSDefaultProfileSelection | None = None,
+    ) -> TTSEffectiveSelectionSnapshot:
+        """Resolve explicit, character, default-profile, global, and fallback layers.
+
+        Args:
+            global_preferences: Persisted global selection, when configured.
+            global_preferences_revision: Revision of the global selection snapshot.
+            provider_revision_reader: Reader for current provider configuration revisions.
+            catalog_reader: Asynchronous reader for provider model and voice catalogs.
+            native_capability_reader: Optional reader for observed native capabilities.
+            explicit: Optional request-scoped selection overrides.
+            character_profile: Optional authoritative character-owned selection.
+            default_profile: Optional app-wide default-voice profile selection,
+                consulted only when no character profile supplies an axis.
+
+        Returns:
+            The immutable effective selection and its provenance.
+
+        Raises:
+            TypeError: If a supplied selection object has an invalid type.
+            ValueError: If an authoritative character or default-profile selection
+                is incomplete.
+            TTSEffectiveResolutionError: If the layers cannot produce a valid selection.
+        """
+
+        layers = self._non_studio_layers(
+            explicit=explicit,
+            character_profile=character_profile,
+            default_profile=default_profile,
+            global_preferences=global_preferences,
+        )
         return await _resolve_layers(
-            layers_without_fallback=tuple(layers),
+            layers_without_fallback=layers,
+            global_preferences_revision=global_preferences_revision,
+            studio_preferences_revision=None,
+            character_profile=character_profile,
+            default_profile=default_profile,
+            provider_revision_reader=provider_revision_reader,
+            catalog_reader=catalog_reader,
+            native_capability_reader=native_capability_reader,
+            studio_preview=False,
+        )
+
+    async def resolve_studio(
+        self,
+        *,
+        studio_preferences: StudioTTSPreferencesSnapshot,
+        global_preferences: TTSPreferencesSnapshot | None,
+        global_preferences_revision: int,
+        provider_revision_reader: Callable[[str], int],
+        catalog_reader: Callable[[str], Awaitable[TTSProviderCatalog]],
+        native_capability_reader: NativeCapabilityReader | None = None,
+        studio_draft: TTSStudioDraftSelection | None = None,
+    ) -> TTSEffectiveSelectionSnapshot:
+        """Resolve Studio draft/preview, saved, global, and fallback layers."""
+
+        layers, studio_preview = self._studio_layers(
+            studio_preferences=studio_preferences,
+            studio_draft=studio_draft,
+            global_preferences=global_preferences,
+        )
+        return await _resolve_layers(
+            layers_without_fallback=layers,
             global_preferences_revision=global_preferences_revision,
             studio_preferences_revision=studio_preferences.revision,
             character_profile=None,
@@ -1395,7 +1462,7 @@ class TTSEffectiveSettingsResolver:
             provider_revision_reader=provider_revision_reader,
             catalog_reader=catalog_reader,
             native_capability_reader=native_capability_reader,
-            studio_preview=bool(studio_draft and studio_draft.preview),
+            studio_preview=studio_preview,
         )
 
 

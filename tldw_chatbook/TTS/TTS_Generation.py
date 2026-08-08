@@ -3,7 +3,16 @@ from __future__ import annotations
 import asyncio
 import logging
 import math
-from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Mapping
+from collections.abc import (
+    AsyncIterator,
+    Awaitable,
+    Callable,
+    Coroutine,
+    Iterable,
+    Mapping,
+)
+from contextlib import asynccontextmanager, nullcontext
+from contextvars import ContextVar
 from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -11,7 +20,10 @@ from types import MappingProxyType
 from typing import Any, Literal
 from uuid import uuid4
 
-from tldw_chatbook.TTS._async_lifecycle import join_retained_task
+from tldw_chatbook.TTS._async_lifecycle import (
+    join_retained_task,
+    shutdown_deadline_scope,
+)
 from tldw_chatbook.TTS.adapter_registry import (
     ReconfigureResult,
     TTSAdapterLease,
@@ -36,6 +48,13 @@ from tldw_chatbook.TTS.adapter_types import (
     TTSVoiceDiscoveryResult,
 )
 from tldw_chatbook.TTS.audio_schemas import OpenAISpeechRequest
+from tldw_chatbook.TTS.audio_cpp_config import AudioCppConfig
+from tldw_chatbook.TTS.audio_cpp_supervisor import (
+    AudioCppProcessAdmissionSnapshot,
+    AudioCppProcessSnapshot,
+    AudioCppSupervisor,
+    _AudioCppGenerationChanged,
+)
 from tldw_chatbook.TTS.legacy_bridge import resolve_legacy_route
 from tldw_chatbook.TTS.playground_types import TTSRequestedSelectionSnapshot
 from tldw_chatbook.TTS.preferences import TTSPreferencesSnapshot
@@ -211,6 +230,25 @@ class _OperationCapacityReservation:
         self._operation_limit.release()
 
 
+@dataclass(frozen=True, slots=True)
+class _AudioCppPreparation:
+    """One deliberate operation's managed-generation admission fence."""
+
+    require_existing: AudioCppProcessAdmissionSnapshot | None
+
+
+def _adapter_admission_scope(
+    adapter: object,
+    preparation: _AudioCppPreparation | None,
+) -> Any:
+    if preparation is None:
+        return nullcontext()
+    scope_factory = getattr(adapter, "managed_admission", None)
+    if not callable(scope_factory):
+        return nullcontext()
+    return scope_factory(preparation.require_existing)
+
+
 class _OperationResources:
     def __init__(
         self,
@@ -300,6 +338,7 @@ class _AdmittedTTSOperation:
             _ManagedAudioResponse,
         ],
         observe_cleanup: Callable[[asyncio.Task[None]], None],
+        audio_cpp_preparation: _AudioCppPreparation | None,
     ) -> None:
         self._request = request
         self._resources = resources
@@ -307,6 +346,7 @@ class _AdmittedTTSOperation:
         self._on_finished = on_finished
         self._manage_response = manage_response
         self._observe_cleanup = observe_cleanup
+        self._audio_cpp_preparation = audio_cpp_preparation
         self._claimed = False
         self._used = False
         self._executing = False
@@ -340,8 +380,12 @@ class _AdmittedTTSOperation:
         lease = self._resources._lease
         safe_sink = _isolate_progress_sink(progress_sink)
         try:
-            await lease.adapter.ensure_ready()
-            response = await lease.adapter.synthesize(self._request, safe_sink)
+            with _adapter_admission_scope(
+                lease.adapter,
+                self._audio_cpp_preparation,
+            ):
+                await lease.adapter.ensure_ready()
+                response = await lease.adapter.synthesize(self._request, safe_sink)
         except BaseException as error:
             try:
                 await _cleanup_preserving_primary(self._resources.close, error)
@@ -441,10 +485,20 @@ class TTSService:
         studio_preferences_loader: Callable[[], StudioTTSPreferencesSnapshot]
         | None = None,
         native_capability_reader: NativeCapabilityReader | None = None,
+        audio_cpp_supervisor: AudioCppSupervisor | None = None,
     ) -> None:
         if max_concurrent_operations < 1:
             raise ValueError("max_concurrent_operations must be positive")
         self.registry = registry
+        self._audio_cpp_supervisor = audio_cpp_supervisor
+        self._audio_cpp_preparation: ContextVar[_AudioCppPreparation | None] = (
+            ContextVar(
+                f"tts_audio_cpp_preparation_{id(self)}",
+                default=None,
+            )
+        )
+        self._audio_cpp_lifecycle_lock = asyncio.Lock()
+        self._audio_cpp_lifecycle_tasks: set[asyncio.Task[Any]] = set()
         self._operation_limit = asyncio.Semaphore(max_concurrent_operations)
         self._close_signal = asyncio.Event()
         self._registry_close_task: asyncio.Task[None] | None = None
@@ -480,6 +534,83 @@ class TTSService:
             native_capability_reader,
         )
 
+    @asynccontextmanager
+    async def _prepared_provider_read(
+        self,
+        provider_id: str,
+        *,
+        deliberate: bool,
+    ) -> AsyncIterator[_AudioCppPreparation | None]:
+        """Apply an eligible stage, then hold the shared admission side."""
+        supervisor = self._audio_cpp_supervisor
+        if provider_id != "audio_cpp" or supervisor is None or not deliberate:
+            async with self._request_admission._gate.read():
+                token = self._audio_cpp_preparation.set(None)
+                try:
+                    yield None
+                finally:
+                    self._audio_cpp_preparation.reset(token)
+            return
+
+        while True:
+            async with self._request_admission._publication_lock:
+                configuration = await self.registry.provider_configuration_snapshot(
+                    "audio_cpp"
+                )
+                admission = supervisor.admission_snapshot()
+                if (
+                    configuration.staged_config is not None
+                    and admission.stage_application_eligible
+                ):
+                    async with self._request_admission._gate.write():
+                        current_configuration = (
+                            await self.registry.provider_configuration_snapshot(
+                                "audio_cpp"
+                            )
+                        )
+                        current_admission = supervisor.admission_snapshot()
+                        if (
+                            current_configuration.staged_config is None
+                            or not current_admission.stage_application_eligible
+                        ):
+                            continue
+                        await self.registry.run_exclusive_provider_transition(
+                            "audio_cpp",
+                            on_draining=supervisor.begin_draining,
+                            action=supervisor.stop,
+                            apply_staged=True,
+                        )
+                    continue
+
+            async with self._request_admission._gate.read():
+                configuration = await self.registry.provider_configuration_snapshot(
+                    "audio_cpp"
+                )
+                admission = supervisor.admission_snapshot()
+                if (
+                    configuration.staged_config is not None
+                    and admission.stage_application_eligible
+                ):
+                    continue
+                applied = AudioCppConfig.from_mapping(configuration.applied_config)
+                preparation = (
+                    _AudioCppPreparation(
+                        require_existing=(
+                            admission
+                            if admission.state in {"starting", "running", "unhealthy"}
+                            else None
+                        )
+                    )
+                    if applied.mode == "managed"
+                    else None
+                )
+                token = self._audio_cpp_preparation.set(preparation)
+                try:
+                    yield preparation
+                finally:
+                    self._audio_cpp_preparation.reset(token)
+                return
+
     async def admit(
         self,
         request: TTSRequest,
@@ -498,11 +629,21 @@ class TTSService:
         reservation: _OperationCapacityReservation | None = None
         try:
             reservation = await self._reserve_operation_capacity()
-            return await self._admit_reserved(
-                request,
-                reservation,
-                expected_configuration_revision=expected_configuration_revision,
-            )
+            while True:
+                try:
+                    async with self._prepared_provider_read(
+                        request.provider_id,
+                        deliberate=True,
+                    ):
+                        return await self._admit_reserved(
+                            request,
+                            reservation,
+                            expected_configuration_revision=(
+                                expected_configuration_revision
+                            ),
+                        )
+                except _AudioCppGenerationChanged:
+                    continue
         except BaseException:
             if reservation is not None:
                 reservation.release_if_untransferred()
@@ -532,6 +673,15 @@ class TTSService:
             reservation.release_if_untransferred()
             raise
 
+        preparation = self._audio_cpp_preparation.get()
+        if preparation is not None and lease.provider_id == "audio_cpp":
+            try:
+                with _adapter_admission_scope(lease.adapter, preparation):
+                    await lease.adapter.ensure_ready()
+            except BaseException as error:
+                await _cleanup_preserving_primary(lease.release, error)
+                raise
+
         resources = _OperationResources(lease, reservation)
         if self._close_signal.is_set():
             closed_error = TTSRegistryClosedError("The TTS service is closed")
@@ -545,6 +695,7 @@ class TTSService:
             on_finished=self._admitted_operations.discard,
             manage_response=self._manage_response,
             observe_cleanup=self._observe_shutdown_result,
+            audio_cpp_preparation=preparation,
         )
         self._admitted_operations.add(operation)
         if self._close_signal.is_set():
@@ -757,6 +908,32 @@ class TTSService:
         exact_voice_model_ids: Iterable[str],
     ) -> TTSNativeCapabilitySnapshot:
         """Observe one bounded native capability snapshot without exposing a lease."""
+        return await self._get_native_capability_snapshot(
+            provider_id,
+            exact_voice_model_ids,
+            already_prepared=False,
+        )
+
+    async def _get_native_capability_snapshot_already_prepared(
+        self,
+        provider_id: str,
+        exact_voice_model_ids: Iterable[str],
+    ) -> TTSNativeCapabilitySnapshot:
+        """Observe capabilities while the caller holds the admission read side."""
+        return await self._get_native_capability_snapshot(
+            provider_id,
+            exact_voice_model_ids,
+            already_prepared=True,
+        )
+
+    async def _get_native_capability_snapshot(
+        self,
+        provider_id: str,
+        exact_voice_model_ids: Iterable[str],
+        *,
+        already_prepared: bool,
+    ) -> TTSNativeCapabilitySnapshot:
+        """Build one native snapshot through prepared or public admission."""
         self._require_native_provider(provider_id)
         revision = self.configuration_revision(provider_id)
         if type(revision) is not int:
@@ -773,6 +950,10 @@ class TTSService:
             voice_results={},
         )
         model_ids = self._distinct_capability_model_ids(exact_voice_model_ids)
+        if provider_id == "audio_cpp" and self.saved_configuration_revision(
+            provider_id
+        ) != self.applied_configuration_revision(provider_id):
+            return result
         if asyncio.get_running_loop().time() >= deadline:
             return result
         catalog_request_generation = self._reserve_native_catalog_request(provider_id)
@@ -783,18 +964,29 @@ class TTSService:
         primary_error: BaseException | None = None
         try:
             async with asyncio.timeout_at(deadline):
-                (
-                    revision,
-                    lease,
-                ) = await self._request_admission.acquire_native_capability_lease(
-                    provider_id
-                )
-                result = await self._observe_native_capabilities(
-                    provider_id,
-                    revision,
+                if already_prepared:
+                    revision = self.configuration_revision(provider_id)
+                    lease = await self.registry.acquire(
+                        provider_id,
+                        expected_revision=revision,
+                    )
+                else:
+                    (
+                        revision,
+                        lease,
+                    ) = await self._request_admission.acquire_native_capability_lease(
+                        provider_id
+                    )
+                with _adapter_admission_scope(
                     lease.adapter,
-                    model_ids,
-                )
+                    self._audio_cpp_preparation.get(),
+                ):
+                    result = await self._observe_native_capabilities(
+                        provider_id,
+                        revision,
+                        lease.adapter,
+                        model_ids,
+                    )
                 if self._close_signal.is_set():
                     result = self._unverified_native_capabilities(
                         provider_id,
@@ -1212,6 +1404,22 @@ class TTSService:
 
         return self.registry.configuration_generation(provider_id)
 
+    async def _get_catalog_already_prepared(
+        self,
+        provider_id: str,
+        refresh: bool = False,
+    ) -> TTSProviderCatalog:
+        """Read a catalog while the caller owns the shared admission side."""
+        lease = await self.registry.acquire(provider_id)
+        try:
+            with _adapter_admission_scope(
+                lease.adapter,
+                self._audio_cpp_preparation.get(),
+            ):
+                return await lease.adapter.get_catalog(refresh=refresh)
+        finally:
+            await lease.release()
+
     async def get_catalog(
         self,
         provider_id: str,
@@ -1230,15 +1438,32 @@ class TTSService:
             descriptor.provider_id == provider_id and descriptor.native
             for descriptor in self.provider_descriptors()
         )
-        configuration_revision = (
-            self.configuration_revision(provider_id) if native_provider else None
-        )
         request_generation = (
             self._reserve_native_catalog_request(provider_id)
             if native_provider
             else None
         )
-        catalog = await self.registry.get_catalog(provider_id, refresh=refresh)
+        while True:
+            lease: TTSAdapterLease | None = None
+            try:
+                async with self._prepared_provider_read(
+                    provider_id,
+                    deliberate=refresh,
+                ) as preparation:
+                    configuration_revision = (
+                        self.configuration_revision(provider_id)
+                        if native_provider
+                        else None
+                    )
+                    lease = await self.registry.acquire(provider_id)
+                    with _adapter_admission_scope(lease.adapter, preparation):
+                        catalog = await lease.adapter.get_catalog(refresh=refresh)
+            except _AudioCppGenerationChanged:
+                continue
+            finally:
+                if lease is not None:
+                    await lease.release()
+            break
         if (
             configuration_revision is not None
             and request_generation is not None
@@ -1270,11 +1495,25 @@ class TTSService:
         Returns:
             The provider's current voices for the selected model.
         """
-        return await self.registry.get_voices(
-            provider_id,
-            model_id,
-            refresh=refresh,
-        )
+        while True:
+            lease: TTSAdapterLease | None = None
+            try:
+                async with self._prepared_provider_read(
+                    provider_id,
+                    deliberate=refresh,
+                ) as preparation:
+                    lease = await self.registry.acquire(provider_id)
+                    with _adapter_admission_scope(lease.adapter, preparation):
+                        result = await lease.adapter.get_voices(
+                            model_id,
+                            refresh=refresh,
+                        )
+            except _AudioCppGenerationChanged:
+                continue
+            finally:
+                if lease is not None:
+                    await lease.release()
+            return result
 
     async def observe_voices(
         self,
@@ -1284,16 +1523,35 @@ class TTSService:
     ) -> TTSVoiceDiscoveryResult:
         """Return structured voice authority for one native provider model."""
         self._require_native_provider(provider_id)
-        configuration_revision = self.configuration_revision(provider_id)
         request_generation = self._reserve_native_voice_request(
             provider_id,
             model_id,
         )
-        result = await self.registry.observe_voices(
-            provider_id,
-            model_id,
-            refresh=refresh,
-        )
+        while True:
+            lease: TTSAdapterLease | None = None
+            try:
+                async with self._prepared_provider_read(
+                    provider_id,
+                    deliberate=refresh,
+                ) as preparation:
+                    configuration_revision = self.configuration_revision(provider_id)
+                    lease = await self.registry.acquire(provider_id)
+                    adapter = lease.adapter
+                    if not isinstance(adapter, TTSStructuredVoiceAdapter):
+                        raise TypeError(
+                            "TTS provider does not expose structured voice discovery"
+                        )
+                    with _adapter_admission_scope(adapter, preparation):
+                        result = await adapter.observe_voices(
+                            model_id,
+                            refresh=refresh,
+                        )
+            except _AudioCppGenerationChanged:
+                continue
+            finally:
+                if lease is not None:
+                    await lease.release()
+            break
         if self._native_voice_request_is_current(
             provider_id,
             model_id,
@@ -1321,6 +1579,79 @@ class TTSService:
             The registry's reconfiguration result.
         """
         return await self.registry.reconfigure_provider(provider_id, config)
+
+    def audio_cpp_process_snapshot(self) -> AudioCppProcessSnapshot:
+        """Return the current passive snapshot of the app-owned audio.cpp child."""
+        supervisor = self._audio_cpp_supervisor
+        if supervisor is None:
+            raise RuntimeError("Managed audio.cpp lifecycle is unavailable")
+        return supervisor.snapshot()
+
+    async def start_and_test_audio_cpp(self) -> TTSProviderCatalog:
+        """Deliberately prepare audio.cpp and refresh its native catalog."""
+        return await self.get_catalog("audio_cpp", refresh=True)
+
+    async def restart_audio_cpp(self) -> TTSProviderCatalog | None:
+        """Drain audio.cpp, apply the latest stage, and restart Managed mode."""
+        task = self._start_audio_cpp_lifecycle(
+            self._restart_audio_cpp(),
+            name="tts_audio_cpp_restart",
+        )
+        await join_retained_task(task)
+        return task.result()
+
+    async def shutdown_audio_cpp(self) -> None:
+        """Drain and stop audio.cpp while promoting the latest stage lazily."""
+        task = self._start_audio_cpp_lifecycle(
+            self._shutdown_audio_cpp(),
+            name="tts_audio_cpp_shutdown",
+        )
+        await join_retained_task(task)
+
+    def _start_audio_cpp_lifecycle(
+        self,
+        operation: Coroutine[Any, Any, Any],
+        *,
+        name: str,
+    ) -> asyncio.Task[Any]:
+        task: asyncio.Task[Any] = asyncio.create_task(operation, name=name)
+        self._audio_cpp_lifecycle_tasks.add(task)
+        task.add_done_callback(self._audio_cpp_lifecycle_tasks.discard)
+        task.add_done_callback(self._observe_background_result)
+        return task
+
+    async def _restart_audio_cpp(self) -> TTSProviderCatalog | None:
+        async with self._audio_cpp_lifecycle_lock:
+            await self._transition_audio_cpp_lifecycle(apply_staged=True)
+            configuration = await self.registry.provider_configuration_snapshot(
+                "audio_cpp"
+            )
+            if AudioCppConfig.from_mapping(configuration.applied_config).mode == (
+                "external"
+            ):
+                return None
+            return await self.get_catalog("audio_cpp", refresh=True)
+
+    async def _shutdown_audio_cpp(self) -> None:
+        async with self._audio_cpp_lifecycle_lock:
+            await self._transition_audio_cpp_lifecycle(apply_staged=True)
+
+    async def _transition_audio_cpp_lifecycle(
+        self,
+        *,
+        apply_staged: bool,
+    ) -> ReconfigureResult:
+        supervisor = self._audio_cpp_supervisor
+        if supervisor is None:
+            raise RuntimeError("Managed audio.cpp lifecycle is unavailable")
+        async with self._request_admission._publication_lock:
+            async with self._request_admission._gate.write():
+                return await self.registry.run_exclusive_provider_transition(
+                    "audio_cpp",
+                    on_draining=supervisor.begin_draining,
+                    action=supervisor.stop,
+                    apply_staged=apply_staged,
+                )
 
     def begin_preferences_publication(
         self,
@@ -1457,18 +1788,18 @@ class TTSService:
                 self._resolve_settings_foreground(foreground, result)
                 return result
 
-            # Expose durable, provider-scoped proof before a newer handoff can
-            # wake an older publication that it superseded.
-            for provider_id in provider_configs:
-                self._settings_persisted_provider_generations[provider_id] = max(
-                    generation,
-                    self._settings_persisted_provider_generations.get(provider_id, 0),
-                )
-
             async with self._request_admission._gate.write():
                 transition_failed = False
                 for provider_id, config in provider_configs.items():
                     try:
+                        staged_status = await self._stage_managed_boundary(
+                            provider_id,
+                            config,
+                            generation=generation,
+                        )
+                        if staged_status is not None:
+                            provider_statuses[provider_id] = staged_status
+                            continue
                         ticket = await self.registry.begin_reconfigure_provider(
                             provider_id,
                             config,
@@ -1485,6 +1816,16 @@ class TTSService:
                         {provider_id: "unavailable" for provider_id in provider_configs}
                     )
                 else:
+                    for provider_id in provider_configs:
+                        self._settings_persisted_provider_generations[provider_id] = (
+                            max(
+                                generation,
+                                self._settings_persisted_provider_generations.get(
+                                    provider_id,
+                                    0,
+                                ),
+                            )
+                        )
                     provider_statuses.update(
                         await self._bounded_reconfiguration_statuses(
                             tickets,
@@ -1530,6 +1871,37 @@ class TTSService:
             provider_revisions=final_revisions,
             published=True,
         )
+
+    async def _stage_managed_boundary(
+        self,
+        provider_id: str,
+        config: Mapping[str, Any],
+        *,
+        generation: int,
+    ) -> TTSSettingsProviderStatus | None:
+        """Stage audio.cpp changes that enter, leave, or alter Managed mode."""
+        if provider_id != "audio_cpp":
+            return None
+        snapshot = await self.registry.provider_configuration_snapshot(provider_id)
+        applied_config = dict(snapshot.applied_config)
+        desired_config = dict(config)
+        applied = AudioCppConfig.from_mapping(applied_config)
+        desired = AudioCppConfig.from_mapping(desired_config)
+        if desired_config != applied_config and (
+            applied.mode != "managed" and desired.mode != "managed"
+        ):
+            return None
+
+        result = await self.registry.stage_provider_configuration(
+            provider_id,
+            desired_config,
+            generation=generation,
+        )
+        if result is ReconfigureResult.CHANGED:
+            return "pending"
+        if result is ReconfigureResult.UNCHANGED:
+            return "unchanged"
+        return "superseded"
 
     async def _bounded_reconfiguration_statuses(
         self,
@@ -1710,19 +2082,26 @@ class TTSService:
         if self._registry_close_task is None:
             self._close_signal.set()
             publication_tasks = tuple(self._settings_publication_tasks)
+            lifecycle_tasks = tuple(self._audio_cpp_lifecycle_tasks)
             operation_tasks = tuple(
                 cleanup_task
                 for operation in tuple(self._admitted_operations)
                 if (cleanup_task := operation.start_close_if_pending()) is not None
             )
-            self._registry_close_task = asyncio.create_task(self.registry.close())
-            self._shutdown_task = asyncio.create_task(
-                self._complete_shutdown(
-                    self._registry_close_task,
-                    operation_tasks,
-                    publication_tasks,
-                )
+            deadline = (
+                asyncio.get_running_loop().time()
+                + self.registry.shutdown_timeout_seconds
             )
+            with shutdown_deadline_scope(deadline):
+                self._registry_close_task = asyncio.create_task(self.registry.close())
+                self._shutdown_task = asyncio.create_task(
+                    self._complete_shutdown(
+                        self._registry_close_task,
+                        operation_tasks,
+                        publication_tasks,
+                        lifecycle_tasks,
+                    )
+                )
             self._shutdown_task.add_done_callback(self._observe_shutdown_result)
         assert self._shutdown_task is not None
         return self._registry_close_task, self._shutdown_task
@@ -1732,51 +2111,69 @@ class TTSService:
         registry_close_task: asyncio.Task[None],
         operation_tasks: tuple[asyncio.Task[None], ...],
         publication_tasks: tuple[asyncio.Task[TTSSettingsPublication], ...],
+        lifecycle_tasks: tuple[asyncio.Task[Any], ...],
     ) -> None:
         failures: list[BaseException] = []
         try:
-            await asyncio.shield(registry_close_task)
-        except BaseException as error:
-            failures.append(error)
-
-        late_operation_tasks = tuple(
-            cleanup_task
-            for operation in tuple(self._admitted_operations)
-            if (cleanup_task := operation.start_shutdown_cleanup()) is not None
-            and cleanup_task not in operation_tasks
-        )
-        responses = tuple(self._responses)
-        response_tasks = [response.start_close() for response in responses]
-        resource_tasks = [response.start_resource_release() for response in responses]
-        registry_wait_task = asyncio.create_task(self.registry.wait_closed())
-        terminal_shutdown_tasks = (
-            registry_wait_task,
-            *operation_tasks,
-            *resource_tasks,
-            *publication_tasks,
-        )
-        results = await asyncio.gather(
-            *terminal_shutdown_tasks,
-            *late_operation_tasks,
-            return_exceptions=True,
-        )
-        # A still-executing operation may later produce the primary failure.
-        # Its joined resource error remains available to that cleanup path and
-        # must not be promoted ahead of the unfinished execution.
-        failures.extend(
-            result
-            for result in results[: len(terminal_shutdown_tasks)]
-            if isinstance(result, BaseException)
-        )
-        await asyncio.sleep(0)
-        for response_task in response_tasks:
-            if not response_task.done():
-                response_task.add_done_callback(self._observe_shutdown_result)
-                continue
             try:
-                response_task.result()
+                await asyncio.shield(registry_close_task)
             except BaseException as error:
                 failures.append(error)
+
+            late_operation_tasks = tuple(
+                cleanup_task
+                for operation in tuple(self._admitted_operations)
+                if (cleanup_task := operation.start_shutdown_cleanup()) is not None
+                and cleanup_task not in operation_tasks
+            )
+            responses = tuple(self._responses)
+            response_tasks = [response.start_close() for response in responses]
+            resource_tasks = [
+                response.start_resource_release() for response in responses
+            ]
+            registry_wait_task = asyncio.create_task(self.registry.wait_closed())
+            terminal_shutdown_tasks = (
+                registry_wait_task,
+                *operation_tasks,
+                *resource_tasks,
+                *publication_tasks,
+                *lifecycle_tasks,
+            )
+            results = await asyncio.gather(
+                *terminal_shutdown_tasks,
+                *late_operation_tasks,
+                return_exceptions=True,
+            )
+            # A still-executing operation may later produce the primary failure.
+            # Its joined resource error remains available to that cleanup path and
+            # must not be promoted ahead of the unfinished execution.
+            failures.extend(
+                result
+                for result in results[: len(terminal_shutdown_tasks)]
+                if isinstance(result, BaseException)
+            )
+            await asyncio.sleep(0)
+            for response_task in response_tasks:
+                if not response_task.done():
+                    response_task.add_done_callback(self._observe_shutdown_result)
+                    continue
+                try:
+                    response_task.result()
+                except BaseException as error:
+                    failures.append(error)
+        except BaseException as error:
+            failures.append(error)
+        finally:
+            supervisor = self._audio_cpp_supervisor
+            if supervisor is not None:
+                try:
+                    await supervisor.close()
+                except BaseException as error:
+                    failures.append(error)
+                try:
+                    await supervisor.wait_closed()
+                except BaseException as error:
+                    failures.append(error)
         if failures:
             raise _sanitized_shutdown_error(*failures) from None
 
@@ -1804,6 +2201,13 @@ class TTSService:
 
     @staticmethod
     def _observe_shutdown_result(task: asyncio.Task[None]) -> None:
+        try:
+            task.exception()
+        except BaseException:
+            pass
+
+    @staticmethod
+    def _observe_background_result(task: asyncio.Task[Any]) -> None:
         try:
             task.exception()
         except BaseException:

@@ -16,6 +16,15 @@ from tldw_chatbook.TTS.adapter_types import (
     VoiceDiscoveryState,
 )
 from tldw_chatbook.TTS.audio_schemas import NormalizationOptions, OpenAISpeechRequest
+from tldw_chatbook.TTS.audio_cpp_supervisor import (
+    AudioCppDiagnosticLine,
+    AudioCppProcessAdmissionSnapshot,
+    AudioCppProcessFailure,
+    AudioCppProcessSnapshot,
+    AudioCppProcessState,
+    AudioCppReadyEndpoint,
+    AudioCppTTSCapability,
+)
 from tldw_chatbook.TTS.character_request_resolver import (
     CharacterTTSRequestResolution,
     CharacterTTSRequestResolver,
@@ -70,6 +79,13 @@ from tldw_chatbook.TTS.TTS_Generation import (
 
 __all__ = [
     "AssignedTTSProfileSnapshot",
+    "AudioCppDiagnosticLine",
+    "AudioCppProcessAdmissionSnapshot",
+    "AudioCppProcessFailure",
+    "AudioCppProcessSnapshot",
+    "AudioCppProcessState",
+    "AudioCppReadyEndpoint",
+    "AudioCppTTSCapability",
     "CapabilitySnapshotState",
     "CharacterRef",
     "CharacterTTSRequestResolution",

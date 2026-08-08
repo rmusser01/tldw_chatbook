@@ -14,6 +14,10 @@ from tldw_chatbook.TTS.audio_cpp_config import (
     AudioCppConfig,
     project_audio_cpp_config,
 )
+from tldw_chatbook.TTS.audio_cpp_managed_config import (
+    collect_provider_credential_environment_names,
+)
+from tldw_chatbook.TTS.audio_cpp_supervisor import AudioCppSupervisor
 from tldw_chatbook.TTS.legacy_bridge import (
     _legacy_config_snapshot as _legacy_config_snapshot,
     legacy_provider_specs,
@@ -23,18 +27,25 @@ from tldw_chatbook.TTS.studio_preferences import StudioTTSPreferenceStore
 from tldw_chatbook.TTS.TTS_Generation import TTSService
 
 
-def _create_audio_cpp_adapter(config: Mapping[str, Any]) -> TTSAdapter:
+def _create_audio_cpp_adapter(
+    config: Mapping[str, Any],
+    supervisor: AudioCppSupervisor | None,
+) -> TTSAdapter:
     validated_config = AudioCppConfig.from_mapping(config)
     adapter_module = import_module("tldw_chatbook.TTS.adapters.audio_cpp")
     adapter_factory = cast(
-        Callable[[AudioCppConfig], TTSAdapter],
+        Callable[..., TTSAdapter],
         adapter_module.AudioCppAdapter,
     )
-    return adapter_factory(validated_config)
+    if supervisor is None:
+        return adapter_factory(validated_config)
+    return adapter_factory(validated_config, supervisor=supervisor)
 
 
 def audio_cpp_provider_spec(
     app_config: Mapping[str, Any],
+    *,
+    supervisor: AudioCppSupervisor | None = None,
 ) -> TTSProviderSpec:
     """Build the lazy native audio.cpp provider specification.
 
@@ -51,7 +62,10 @@ def audio_cpp_provider_spec(
             display_name="audio.cpp",
             native=True,
         ),
-        factory=_create_audio_cpp_adapter,
+        factory=lambda replacement: _create_audio_cpp_adapter(
+            replacement,
+            supervisor,
+        ),
         initial_config=config.to_mapping(),
         exclusive_reconfigure=True,
     )
@@ -69,9 +83,14 @@ def build_default_tts_service(
         A service whose adapters remain unmaterialized until first use.
     """
     preferences_snapshot = TTSPreferencesSnapshot.from_settings(app_config)
+    supervisor = AudioCppSupervisor(
+        provider_credential_names=(
+            collect_provider_credential_environment_names(app_config)
+        )
+    )
     registry = TTSAdapterRegistry(
         specs=(
-            audio_cpp_provider_spec(app_config),
+            audio_cpp_provider_spec(app_config, supervisor=supervisor),
             *legacy_provider_specs(app_config),
         ),
         aliases={},
@@ -84,4 +103,5 @@ def build_default_tts_service(
         studio_preferences_loader=lambda: (
             studio_preferences.load(migrate=False).snapshot
         ),
+        audio_cpp_supervisor=supervisor,
     )
