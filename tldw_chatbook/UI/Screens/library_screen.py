@@ -268,7 +268,6 @@ from ...Workspaces import (
 )
 from ...Workspaces.registry_service import next_local_workspace_identity
 from ...Widgets.destination_rail import (
-
     RAIL_SECTION_TOGGLE_PREFIX,
     DestinationRailSectionHeader,
 )
@@ -517,6 +516,7 @@ class _LibraryNotesRestoreGuard:
     scroll_generation: int | None = None
     focus_generation: int | None = None
 
+
 # PR-3 Task 4: the retrieval outcomes phase two runs on. `ready` is the
 # ordinary case; `empty` is answered too -- honestly, and without a provider
 # call (`generate_library_rag_answer` refuses to hand a model an evidence
@@ -524,6 +524,7 @@ class _LibraryNotesRestoreGuard:
 # retrieval did not run, so there is nothing to be grounded in and the
 # recovery copy those statuses already render is the honest answer.
 LIBRARY_RAG_ANSWERABLE_RETRIEVAL_STATUSES = frozenset({"ready", "empty"})
+
 
 class _LibraryDatabaseNoteSessionPort:
     """Adapt the existing Library note services to the portable session port."""
@@ -697,6 +698,7 @@ class _LibraryDatabaseNoteSessionPort:
         return DatabaseNotePortSaveReply.failed(
             "Save returned an unexpected result — edits kept. Press Save to retry."
         )
+
 
 LIBRARY_STUDY_HANDOFF_MODES = {
     "study": {
@@ -1113,9 +1115,7 @@ def _apply_library_row_toggle(
         # through to the same full-recompose fallback as every other
         # failure here.
         if kind == "media":
-            delete_button = screen.query_one(
-                "#library-media-delete-selected", Button
-            )
+            delete_button = screen.query_one("#library-media-delete-selected", Button)
             delete_button.disabled = selection.count == 0
             delete_button.tooltip = (
                 LIBRARY_DELETE_SELECTED_DISABLED_TOOLTIP
@@ -3783,32 +3783,6 @@ class LibraryScreen(BaseAppScreen):
         if user_intent:
             self._library_notes_last_user_scroll_focus = identity
 
-    def on_descendant_focus(self, event: events.DescendantFocus) -> None:
-        """Cache meaningful semantic focus changes for the next crossing."""
-        if not self.is_mounted:
-            return
-        focused = event.widget
-        stage = self._library_notes_focus_stage(focused)
-        relevant = self._library_notes_workflow_active() or stage == "rail"
-        target_restore = self._library_notes_programmatic_focus_target is focused
-        if target_restore:
-            self._library_notes_programmatic_focus_target = None
-        programmatic = bool(
-            target_restore
-            or self._library_notes_restoring_focus
-            or self._library_notes_resize_settling
-        )
-        user_intent = relevant and not programmatic
-        if user_intent:
-            # Veto every older deferred focus restore synchronously, before
-            # its next call_later turn can steal the newly chosen control.
-            self._library_notes_focus_intent_generation += 1
-        self.call_after_refresh(
-            self._record_library_notes_focus_interaction,
-            focused,
-            user_intent,
-        )
-
     def _record_library_notes_focus_interaction(
         self, expected: Widget, user_intent: bool
     ) -> None:
@@ -3933,11 +3907,6 @@ class LibraryScreen(BaseAppScreen):
     def _mark_library_notes_user_interaction(self) -> None:
         """End resize suppression only when a real input event can own changes."""
         self._library_notes_resize_settling = False
-
-    def on_key(self, event: events.Key) -> None:
-        """Let keyboard-driven focus/scroll changes supersede resize memory."""
-        del event
-        self._mark_library_notes_user_interaction()
 
     def on_mouse_down(self, event: events.MouseDown) -> None:
         """Let click-driven focus changes supersede resize memory."""
@@ -4112,31 +4081,6 @@ class LibraryScreen(BaseAppScreen):
             self.call_after_refresh(self._apply_library_notes_stage_visibility)
             self.call_after_refresh(self._apply_library_notes_footer_context)
         return result
-
-    def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
-        """Expose Notes accelerators only on their exact local surfaces."""
-        visible_notes = self._library_notes_workflow_active() and not (
-            self._library_notes_compact and self._library_notes_stage != "notes"
-        )
-        region = self._library_notes_focus_region()
-        if action == "library_notes_new":
-            return visible_notes and region in {
-                "navigator",
-                "editor",
-                "preview",
-                "context",
-            }
-        if action == "library_notes_focus_filter":
-            return bool(
-                visible_notes
-                and region == "navigator"
-                and not isinstance(self.focused, (Input, TextArea))
-            )
-        if action == "library_notes_save":
-            return visible_notes and region in {"editor", "preview", "context"}
-        if action == "library_notes_escape":
-            return visible_notes
-        return super().check_action(action, parameters)
 
     async def action_library_notes_new(self) -> None:
         """Open Create only after the active canonical draft flushes."""
@@ -4342,8 +4286,7 @@ class LibraryScreen(BaseAppScreen):
             event.prevent_default()
             return
         is_slash = (
-            event.key in {"/", "slash"}
-            or getattr(event, "character", None) == "/"
+            event.key in {"/", "slash"} or getattr(event, "character", None) == "/"
         )
         if is_slash:
             try:
@@ -4928,8 +4871,12 @@ class LibraryScreen(BaseAppScreen):
             self._library_list_entry_focus_timer = None
 
     def on_descendant_focus(self, event: DescendantFocus) -> None:
-        """Disarm a pending entry-focus request on any FOREIGN focus change
-        (task-2856 review round 2).
+        """Record Notes focus intent and disarm foreign list-entry focus.
+
+        The Notes workbench caches meaningful semantic focus changes so a
+        breakpoint crossing can restore the same control and scroll owner.
+        Independently, task-2856's list-entry settle window is disarmed as
+        soon as focus leaves the list rows it owns.
 
         Textual posts ``DescendantFocus`` for every focus change, including
         the system's OWN ``_focus_library_list_entry()`` call -- that case
@@ -4943,11 +4890,32 @@ class LibraryScreen(BaseAppScreen):
         ``on_key`` -- this hook is what also covers mouse clicks, which
         never reach ``on_key`` at all.
         """
+        focused = event.widget
+        if self.is_mounted:
+            stage = self._library_notes_focus_stage(focused)
+            relevant = self._library_notes_workflow_active() or stage == "rail"
+            target_restore = self._library_notes_programmatic_focus_target is focused
+            if target_restore:
+                self._library_notes_programmatic_focus_target = None
+            programmatic = bool(
+                target_restore
+                or self._library_notes_restoring_focus
+                or self._library_notes_resize_settling
+            )
+            user_intent = relevant and not programmatic
+            if user_intent:
+                # Veto every older deferred restore before its next turn can
+                # steal the control the user just chose.
+                self._library_notes_focus_intent_generation += 1
+            self.call_after_refresh(
+                self._record_library_notes_focus_interaction,
+                focused,
+                user_intent,
+            )
+
         if not self._library_pending_list_entry_focus:
             return
-        row_class = _LIBRARY_LIST_ROW_CLASS_BY_ROW_ID.get(
-            self._library_selected_row_id
-        )
+        row_class = _LIBRARY_LIST_ROW_CLASS_BY_ROW_ID.get(self._library_selected_row_id)
         widget = event.widget
         if row_class is not None and widget is not None and widget.has_class(row_class):
             return
@@ -4960,9 +4928,7 @@ class LibraryScreen(BaseAppScreen):
         (nothing to focus), the list is empty, or the query can't resolve
         (e.g. a recompose still in flight).
         """
-        row_class = _LIBRARY_LIST_ROW_CLASS_BY_ROW_ID.get(
-            self._library_selected_row_id
-        )
+        row_class = _LIBRARY_LIST_ROW_CLASS_BY_ROW_ID.get(self._library_selected_row_id)
         if row_class is None:
             return
         try:
@@ -5401,11 +5367,15 @@ class LibraryScreen(BaseAppScreen):
         self._library_loaded = True
         self._invalidate_library_workspace_depth_state()
         if self.is_mounted and not self._file_notes_active():
-            if self._library_selected_row_id == LIBRARY_ROW_INGEST_MEDIA or (
-                self._library_selected_row_id
-                in {LIBRARY_ROW_BROWSE_PROMPTS, LIBRARY_ROW_CREATE_PROMPT}
-                and self._library_prompts_view == "editor"
-            ) or self._library_selected_row_id == LIBRARY_ROW_BROWSE_SEARCH:
+            if (
+                self._library_selected_row_id == LIBRARY_ROW_INGEST_MEDIA
+                or (
+                    self._library_selected_row_id
+                    in {LIBRARY_ROW_BROWSE_PROMPTS, LIBRARY_ROW_CREATE_PROMPT}
+                    and self._library_prompts_view == "editor"
+                )
+                or self._library_selected_row_id == LIBRARY_ROW_BROWSE_SEARCH
+            ):
                 # A source refresh may update the Prompts count while a newly
                 # created Prompt remains open. Recompose only the rail so the
                 # shared block editor keeps its TextAreas, cursor, selection,
@@ -7232,9 +7202,7 @@ class LibraryScreen(BaseAppScreen):
                         yield LibraryMediaViewer(
                             build_library_media_viewer_state(
                                 self._library_media_detail,
-                                arrival_note=(
-                                    self._pop_library_media_arrival_note()
-                                ),
+                                arrival_note=(self._pop_library_media_arrival_note()),
                             ),
                             editing=self._library_media_editing,
                             confirming_delete=self._library_media_confirming_delete,
@@ -7551,15 +7519,27 @@ class LibraryScreen(BaseAppScreen):
                             # and tooltip match the rail-top primary button.
                             # task-2857: relabeled "Import…" for consistency
                             # with the canvas header/Start button/toast.
-                            ("Import…", "Add files, links, and transcripts to your Library.",
-                             LIBRARY_ROW_INGEST_MEDIA, "ingest-media",
-                             "library-hub-action-import"),
-                            ("Search", "Search everything in the Library.",
-                             LIBRARY_ROW_BROWSE_SEARCH, "search",
-                             "library-hub-action-search"),
-                            ("New note", "Create a new note.",
-                             LIBRARY_ROW_CREATE_NOTE, "notes-create",
-                             "library-hub-action-new-note"),
+                            (
+                                "Import…",
+                                "Add files, links, and transcripts to your Library.",
+                                LIBRARY_ROW_INGEST_MEDIA,
+                                "ingest-media",
+                                "library-hub-action-import",
+                            ),
+                            (
+                                "Search",
+                                "Search everything in the Library.",
+                                LIBRARY_ROW_BROWSE_SEARCH,
+                                "search",
+                                "library-hub-action-search",
+                            ),
+                            (
+                                "New note",
+                                "Create a new note.",
+                                LIBRARY_ROW_CREATE_NOTE,
+                                "notes-create",
+                                "library-hub-action-new-note",
+                            ),
                         ):
                             action = Button(
                                 label,
@@ -7576,9 +7556,12 @@ class LibraryScreen(BaseAppScreen):
                             yield action
                     # task-2238 (R2): the triad stays on top; the recents
                     # follow as clickable rows, not one dim text line.
-                    for source_type, record_id, title, source_label in (
-                        self._hub_recent_items()
-                    ):
+                    for (
+                        source_type,
+                        record_id,
+                        title,
+                        source_label,
+                    ) in self._hub_recent_items():
                         recent = Button(
                             f"{source_label} · {escape_markup(title)}",
                             id=f"library-hub-recent-{source_type}",
@@ -9338,9 +9321,7 @@ class LibraryScreen(BaseAppScreen):
         if cursor is not None and isinstance(widget, Input):
             widget.cursor_position = min(cursor, len(widget.value))
 
-    def _update_library_ingest_gate(
-        self, new_state: LibraryIngestCanvasState
-    ) -> None:
+    def _update_library_ingest_gate(self, new_state: LibraryIngestCanvasState) -> None:
         """Sync the Start button + gate line in place (never a recompose).
 
         Args:
@@ -9354,9 +9335,7 @@ class LibraryScreen(BaseAppScreen):
             return
         start_button.disabled = not new_state.start_enabled
         try:
-            quiet_line = self.query_one(
-                "#library-ingest-start-quiet-line", Static
-            )
+            quiet_line = self.query_one("#library-ingest-start-quiet-line", Static)
         except (NoMatches, QueryError):
             return
         quiet_line.update(new_state.start_quiet_line)
@@ -9411,18 +9390,14 @@ class LibraryScreen(BaseAppScreen):
         # non-structural pre-flight apply (or a Clear) can never leave it
         # unmounted or stale.
         try:
-            commit_summary = canvas.query_one(
-                "#library-ingest-commit-summary", Static
-            )
+            commit_summary = canvas.query_one("#library-ingest-commit-summary", Static)
         except (NoMatches, QueryError):
             pass
         else:
             commit_summary.update(new_state.commit_summary_line)
             commit_summary.display = bool(new_state.commit_summary_line)
         try:
-            clear_button = canvas.query_one(
-                "#library-ingest-clear-path", Button
-            )
+            clear_button = canvas.query_one("#library-ingest-clear-path", Button)
         except (NoMatches, QueryError):
             pass
         else:
@@ -9515,9 +9490,7 @@ class LibraryScreen(BaseAppScreen):
         server_ingest_available = (
             (
                 callable(getattr(server_service, "submit_ingest_jobs", None))
-                or callable(
-                    getattr(server_service, "submit_media_ingest_jobs", None)
-                )
+                or callable(getattr(server_service, "submit_media_ingest_jobs", None))
             )
             and bool(getattr(runtime_state, "server_configured", False))
             and not self._server_binding_is_shipped_placeholder()
@@ -10219,7 +10192,14 @@ class LibraryScreen(BaseAppScreen):
 
     @on(Button.Pressed, "#library-note-context")
     def handle_library_note_context_open(self, event: Button.Pressed) -> None:
-        """Show the stable Context region without replacing editor widgets."""
+        """Show the stable Context region without replacing editor widgets.
+
+        Args:
+            event: Button press emitted by the editor's Context action.
+
+        Returns:
+            None.
+        """
         event.stop()
         snapshot = self._library_note_session.snapshot
         if (
@@ -10239,7 +10219,14 @@ class LibraryScreen(BaseAppScreen):
 
     @on(Button.Pressed, "#library-note-context-back")
     def handle_library_note_context_back(self, event: Button.Pressed) -> None:
-        """Return Context to the Edit or Preview presentation that opened it."""
+        """Return to the Edit or Preview presentation that opened Context.
+
+        Args:
+            event: Button press emitted by the Context region's Back action.
+
+        Returns:
+            None.
+        """
         event.stop()
         if not self._library_note_context:
             return
@@ -11417,9 +11404,7 @@ class LibraryScreen(BaseAppScreen):
             return
         self.run_worker(self._delete_library_media_selection(media_ids))
 
-    async def _delete_library_media_selection(
-        self, media_ids: tuple[str, ...]
-    ) -> None:
+    async def _delete_library_media_selection(self, media_ids: tuple[str, ...]) -> None:
         """Soft-delete every selected Library media item (task-2853 AC3).
 
         Reuses the exact seam ``_delete_library_media_item`` uses for the
@@ -13136,7 +13121,9 @@ class LibraryScreen(BaseAppScreen):
                 # `disabled` (this patcher exists precisely to avoid a
                 # recompose, so the compose-time tooltip would go stale).
                 button.tooltip = (
-                    SKILL_DISCARD_TOOLTIP_DIRTY if enabled else SKILL_DISCARD_TOOLTIP_CLEAN
+                    SKILL_DISCARD_TOOLTIP_DIRTY
+                    if enabled
+                    else SKILL_DISCARD_TOOLTIP_CLEAN
                 )
 
     def _library_skill_editor_active(self) -> bool:
@@ -13148,8 +13135,7 @@ class LibraryScreen(BaseAppScreen):
         )
 
     def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
-        """Gate the skill-editor, Files-mode, list/detail Escape, and
-        Search/RAG evidence-card bindings (task-424/2850/2856/2858).
+        """Gate Notes, Skills, Files, list/detail, and Search/RAG bindings.
 
         Returning ``False`` deactivates the binding entirely, so Escape /
         Ctrl+S behave as if unbound anywhere else on the Library screen.
@@ -13170,6 +13156,32 @@ class LibraryScreen(BaseAppScreen):
         ``BINDINGS`` now has an explicit branch here; see
         ``test_library_screen_bindings_are_all_gated_or_universal``.
         """
+        if action in {
+            "library_notes_new",
+            "library_notes_focus_filter",
+            "library_notes_save",
+            "library_notes_escape",
+        }:
+            visible_notes = self._library_notes_workflow_active() and not (
+                self._library_notes_compact and self._library_notes_stage != "notes"
+            )
+            region = self._library_notes_focus_region()
+            if action == "library_notes_new":
+                return visible_notes and region in {
+                    "navigator",
+                    "editor",
+                    "preview",
+                    "context",
+                }
+            if action == "library_notes_focus_filter":
+                return bool(
+                    visible_notes
+                    and region == "navigator"
+                    and not isinstance(self.focused, (Input, TextArea))
+                )
+            if action == "library_notes_save":
+                return visible_notes and region in {"editor", "preview", "context"}
+            return visible_notes
         if action in ("library_skill_save", "library_skill_back"):
             return self._library_skill_editor_active()
         if action == "library_notes_files_back":
@@ -17171,8 +17183,7 @@ class LibraryScreen(BaseAppScreen):
         # but this handler avoids recomposing while typing -- hide/show them
         # in place so they track the field's content live.
         show_intros = (
-            not event.value.strip()
-            and self._library_ingest_form.preflight is None
+            not event.value.strip() and self._library_ingest_form.preflight is None
         )
         for intro in self.query(".library-ingest-intro"):
             intro.display = show_intros
@@ -17416,15 +17427,11 @@ class LibraryScreen(BaseAppScreen):
             # invalid), which is exactly the unreliable "highlighted" the
             # marker was added to fix.
             try:
-                field_input = self.query_one(
-                    f"#opt-{event.group}-{event.name}", Input
-                )
+                field_input = self.query_one(f"#opt-{event.group}-{event.name}", Input)
             except (NoMatches, QueryError):
                 pass
             else:
-                field_input.set_class(
-                    bool(message), "-ingest-option-invalid"
-                )
+                field_input.set_class(bool(message), "-ingest-option-invalid")
             self._update_library_ingest_gate(self._build_library_ingest_state())
 
     @on(LibraryIngestCanvas.ParakeetInstallRequested)
@@ -17738,16 +17745,12 @@ class LibraryScreen(BaseAppScreen):
                     or candidate_path.stat().st_size > 8 * 1024 * 1024
                 ):
                     continue
-                text = candidate_path.read_text(
-                    encoding="utf-8", errors="replace"
-                )
+                text = candidate_path.read_text(encoding="utf-8", errors="replace")
                 digest = hashlib.sha256(text.encode()).hexdigest()
                 if media_db.get_media_by_hash(digest) is not None:
                     already += 1
             except Exception as exc:
-                logger.debug(
-                    f"Pre-flight duplicate check skipped {candidate!r}: {exc}"
-                )
+                logger.debug(f"Pre-flight duplicate check skipped {candidate!r}: {exc}")
                 continue
         if not already:
             return result
@@ -18013,9 +18016,7 @@ class LibraryScreen(BaseAppScreen):
         """
         form = self._library_ingest_form
         self._transcribe_cpp_configured = bool(
-            get_cli_setting(
-                "transcription.transcribe_cpp", "model_path", None
-            )
+            get_cli_setting("transcription.transcribe_cpp", "model_path", None)
         )
         for group in list_type_groups():
             cap = get_capabilities(group)
@@ -18260,9 +18261,7 @@ class LibraryScreen(BaseAppScreen):
             self._open_transcribe_cpp_gguf_picker(retry_job_id=job_id)
 
     @on(Button.Pressed, ".library-ingest-retry-faster-whisper")
-    def handle_library_ingest_retry_faster_whisper(
-        self, event: Button.Pressed
-    ) -> None:
+    def handle_library_ingest_retry_faster_whisper(self, event: Button.Pressed) -> None:
         """Explicitly retry a direct-local failure with faster-whisper."""
         event.stop()
         job_id = self._ingest_job_id_from_button(
@@ -18377,10 +18376,7 @@ class LibraryScreen(BaseAppScreen):
             # dismissed record now survives in the Recent-ingests ledger,
             # marked as dismissed.
             if dismissed_job is not None:
-                known = {
-                    job.job_id
-                    for job in self._library_ingest_recent_ledger
-                }
+                known = {job.job_id for job in self._library_ingest_recent_ledger}
                 if dismissed_job.job_id not in known:
                     self._library_ingest_recent_ledger = [
                         dismissed_job,
@@ -18447,14 +18443,13 @@ class LibraryScreen(BaseAppScreen):
             # cure is to not disturb layout at all: no recompose, no
             # scroll, the confirm appears under the finger that armed it.
             try:
-                armed_button = self.query_one(
-                    "#library-ingest-clear-finished", Button
-                )
+                armed_button = self.query_one("#library-ingest-clear-finished", Button)
             except (NoMatches, QueryError):
                 self._update_library_ingest_dynamic_regions()
             else:
-                armed_button.label = self._build_library_ingest_state(
-                ).queue_clear_finished_label
+                armed_button.label = (
+                    self._build_library_ingest_state().queue_clear_finished_label
+                )
                 # The label got longer; without a layout pass the
                 # auto-width compact button keeps its old width and clips
                 # the confirm copy (live-caught: "Press again to").
@@ -18463,13 +18458,8 @@ class LibraryScreen(BaseAppScreen):
         # (task-2160) Double-click protection: a press landing within the
         # dead zone of the arming press is the same gesture, not a
         # decision -- ignore it (stays armed).
-        armed_at = getattr(
-            self, "_library_ingest_clear_finished_armed_at", 0.0
-        )
-        if (
-            time.monotonic() - armed_at
-            < self._CLEAR_FINISHED_DEAD_ZONE_SECONDS
-        ):
+        armed_at = getattr(self, "_library_ingest_clear_finished_armed_at", 0.0)
+        if time.monotonic() - armed_at < self._CLEAR_FINISHED_DEAD_ZONE_SECONDS:
             return
         self._library_ingest_clear_finished_armed = False
         self._library_ingest_expanded_details.clear()
@@ -18576,8 +18566,7 @@ class LibraryScreen(BaseAppScreen):
             values["chunk"] = form.chunk
             values["chunk_size"] = form.chunk_size
         summary = ", ".join(
-            _summarise_option(f, values.get(f.name, f.default))
-            for f in cap.fields
+            _summarise_option(f, values.get(f.name, f.default)) for f in cap.fields
         )
         try:
             panel = self.query_one(f"#type-group-{group}", Collapsible)
@@ -20196,7 +20185,10 @@ class LibraryScreen(BaseAppScreen):
         Args:
             mode: ``"rendered"`` or ``"raw"``.
         """
-        if self._library_media_view != "viewer" or self._library_media_content_mode == mode:
+        if (
+            self._library_media_view != "viewer"
+            or self._library_media_content_mode == mode
+        ):
             return
         self._library_media_content_mode = mode
         self.refresh(recompose=True)
@@ -20677,8 +20669,7 @@ class LibraryScreen(BaseAppScreen):
             return
 
         guidance_text = (
-            create_action.disabled_reason
-            or "Enter a Collection name to enable Create."
+            create_action.disabled_reason or "Enter a Collection name to enable Create."
         )
         if guidance_widgets:
             guidance_widgets[0].update(guidance_text)

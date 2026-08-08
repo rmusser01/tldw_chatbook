@@ -322,18 +322,15 @@ class LibraryRail(RecomposeCaptureGuard, Vertical):
             if row.row_id in changed_row_ids
         }
         for row_id, row in rows.items():
-            button = self.query_one(f"#{LIBRARY_RAIL_ROW_PREFIX}{row_id}", Button)
+            button = self.query_one(
+                f"#{LIBRARY_RAIL_ROW_PREFIX}{row_id}", LibraryRailRowButton
+            )
             selected = row_id == shell.selected_row_id
-            marker = "▸" if selected else " "
-            count_suffix = row.count_display or self._count_suffix(
-                row.count, row.count_known
-            )
-            section_hint = (
-                "opens screen" if row.target_kind == "screen" else "in Library"
-            )
-            button.label = (
-                f"{marker} {_visible_row_title(row.title)}{count_suffix}"
-                f"\n    {section_hint}"
+            button.library_row = row
+            button.label = self._row_label(
+                row,
+                selected,
+                width=button.content_region.width,
             )
             if button.has_class("library-rail-row-selected") != selected:
                 button.set_class(selected, "library-rail-row-selected")

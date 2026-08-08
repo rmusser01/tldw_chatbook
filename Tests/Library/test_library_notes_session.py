@@ -24,7 +24,10 @@ from tldw_chatbook.Library.library_notes_session import (
     NoteSaveOutcomeKind,
     PortLoadKind,
 )
-from tldw_chatbook.Library.library_notes_state import NormalizedDatabaseNote
+from tldw_chatbook.Library.library_notes_state import (
+    DatabaseNoteSavePayload,
+    NormalizedDatabaseNote,
+)
 
 
 NOW = datetime(2026, 7, 31, 12, 34, tzinfo=timezone.utc)
@@ -58,7 +61,7 @@ class FakeDatabaseNotePort:
             [DatabaseNotePortLoadReply.loaded(detail or _detail())]
         )
         self.load_gates: deque[asyncio.Event | None] = deque()
-        self.save_calls = []
+        self.save_calls: list[tuple[str, int, DatabaseNoteSavePayload]] = []
         self.save_replies: deque[DatabaseNotePortSaveReply] = deque()
         self.save_gates: deque[asyncio.Event | None] = deque()
         self.active_saves = 0
@@ -72,7 +75,12 @@ class FakeDatabaseNotePort:
             await gate.wait()
         return reply
 
-    async def save_note(self, note_id, expected_version, payload):
+    async def save_note(
+        self,
+        note_id: str,
+        expected_version: int,
+        payload: DatabaseNoteSavePayload,
+    ) -> DatabaseNotePortSaveReply:
         self.save_calls.append((note_id, expected_version, payload))
         reply = self.save_replies.popleft()
         gate = self.save_gates.popleft() if self.save_gates else None

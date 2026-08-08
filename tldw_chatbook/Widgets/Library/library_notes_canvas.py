@@ -119,6 +119,22 @@ class LibraryNotesCanvas(Vertical):
         create_status: str = "",
         **kwargs: Any,
     ) -> None:
+        """Initialize one list, editor, create, or sync canvas.
+
+        Args:
+            list_state: List-mode rows, counts, selection, and empty-state copy.
+            sort_mode: Active list sort key.
+            filter_value: Text prefilled into the list filter.
+            mode: Canvas surface to compose: list, editor, create, or sync.
+            presentation_state: Canonical editor snapshot and UI-only flags.
+            sync_state: Display state for the sync surface.
+            title_placeholder_only: Render an empty title with an Untitled
+                placeholder for a pristine newly-created note.
+            compact: Whether 60-column-safe controls and labels are active.
+            create_running: Whether note creation is in progress.
+            create_status: Visible creation completion or recovery status.
+            **kwargs: Additional keyword arguments forwarded to ``Vertical``.
+        """
         super().__init__(**kwargs)
         self.list_state = list_state
         self.sort_mode = sort_mode

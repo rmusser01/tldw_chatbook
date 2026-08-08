@@ -1,5 +1,6 @@
 """Library shell (L1) rail + conversations canvas pilot contracts."""
 
+import ast
 import asyncio
 import dataclasses
 import json
@@ -92,7 +93,10 @@ from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 from tldw_chatbook.Widgets.AppFooterStatus import AppFooterStatus
 from tldw_chatbook.Widgets.Library.library_ingest_canvas import LibraryIngestCanvas
 from tldw_chatbook.Widgets.Library.library_notes_canvas import LibraryNotesCanvas
-from tldw_chatbook.Widgets.Library.library_rail import LIBRARY_RAIL_ROW_PREFIX
+from tldw_chatbook.Widgets.Library.library_rail import (
+    LIBRARY_RAIL_ROW_PREFIX,
+    LibraryRail,
+)
 from Tests.UI.test_destination_shells import (
     PolicyDeniedLibraryNotesScopeService,
     StaticLibraryConversationScopeService,
@@ -804,6 +808,38 @@ def test_library_dead_hub_helpers_are_removed():
     assert not hasattr(library_screen_module, "LIBRARY_EMPTY_NEXT_ACTION_COPY")
 
 
+def test_library_screen_has_one_canonical_cross_cutting_handler_per_event():
+    """Notes integration must augment, not shadow, screen-wide handlers."""
+    source = Path(library_screen_module.__file__).read_text(encoding="utf-8")
+    module = ast.parse(source)
+    screen_class = next(
+        node
+        for node in module.body
+        if isinstance(node, ast.ClassDef) and node.name == "LibraryScreen"
+    )
+
+    method_names = [
+        node.name
+        for node in screen_class.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    ]
+    for handler_name in ("on_key", "on_descendant_focus", "check_action"):
+        assert method_names.count(handler_name) == 1, handler_name
+
+
+def test_library_notes_bindings_are_inactive_outside_notes_workflow():
+    """Notes-only bindings do not leak through the screen-wide action gate."""
+    screen = LibraryScreen(_open_source_test_app())
+
+    for action in (
+        "library_notes_new",
+        "library_notes_focus_filter",
+        "library_notes_save",
+        "library_notes_escape",
+    ):
+        assert screen.check_action(action, ()) is False, action
+
+
 def test_library_dead_inspector_copy_is_removed():
     """F-021: the retired inspector pane's empty-state copy is gone. The
     review flagged the next-action line as architecture-talk in user
@@ -860,6 +896,49 @@ async def test_rail_rows_are_one_line_by_default_with_meta_only_for_handoffs():
 
 
 @pytest.mark.asyncio
+async def test_rail_apply_selection_preserves_canonical_row_metadata():
+    """Selection-only updates retain canonical count, gloss, and handoff copy."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        rail = screen.query_one("#library-rail", LibraryRail)
+
+        row_ids = (
+            "browse-conversations",
+            "browse-search",
+            "create-study",
+        )
+        original_labels = {
+            row_id: screen.query_one(
+                f"#{LIBRARY_RAIL_ROW_PREFIX}{row_id}", Button
+            ).label.plain
+            for row_id in row_ids
+        }
+
+        previous_row_id = ""
+        for row_id in row_ids:
+            rail.apply_selection(
+                dataclasses.replace(rail.shell, selected_row_id=row_id)
+            )
+
+            selected_label = screen.query_one(
+                f"#{LIBRARY_RAIL_ROW_PREFIX}{row_id}", Button
+            ).label.plain
+            assert selected_label == f"▸{original_labels[row_id][1:]}"
+
+            if previous_row_id:
+                previous_label = screen.query_one(
+                    f"#{LIBRARY_RAIL_ROW_PREFIX}{previous_row_id}", Button
+                ).label.plain
+                assert previous_label == original_labels[previous_row_id]
+            previous_row_id = row_id
+
+
+@pytest.mark.asyncio
 async def test_rail_create_section_and_details_reachable_at_100x30():
     """F-011: the regression the stutter caused -- at 100x30 the Create
     section is inside the viewport without scrolling (it was pushed out of
@@ -889,7 +968,9 @@ async def test_rail_create_section_and_details_reachable_at_100x30():
         # Details toggle: one scroll to the bottom of the rail.
         rail.scroll_end(animate=False)
         await pilot.pause()
-        toggle = screen.query_one("#console-rail-section-toggle-library-details", Button)
+        toggle = screen.query_one(
+            "#console-rail-section-toggle-library-details", Button
+        )
         assert toggle.region.y + toggle.region.height <= fold, (
             f"details toggle unreachable after scroll_end: {toggle.region}"
         )
@@ -939,9 +1020,7 @@ async def test_jargon_rail_rows_render_a_dim_subtitle_on_the_same_line():
 
         plain_row = screen.query_one("#library-row-browse-notes", Button)
         assert "—" not in plain_row.label.plain
-        assert not [
-            s for s in plain_row.label.spans if "dim" in str(s.style)
-        ]
+        assert not [s for s in plain_row.label.spans if "dim" in str(s.style)]
 
 
 @pytest.mark.asyncio
@@ -1819,9 +1898,7 @@ async def test_library_shell_search_rag_mode_blocks_run_when_endpoint_named_but_
         settings["api_settings"] = api_settings
         return settings
 
-    monkeypatch.setattr(
-        app_config, "load_settings", _load_settings_with_no_openai_key
-    )
+    monkeypatch.setattr(app_config, "load_settings", _load_settings_with_no_openai_key)
     app = _build_test_app()
     _seed_conversations(app, _two_conversations())
     host = LibraryHarness(app)
@@ -6265,9 +6342,7 @@ async def test_library_open_source_context_uses_dirty_note_flush_and_veto(
         async def flush_note() -> NoteFlushOutcome:
             await flush()
             return NoteFlushOutcome(
-                NoteFlushOutcomeKind.BLOCKED
-                if veto
-                else NoteFlushOutcomeKind.PERMITTED
+                NoteFlushOutcomeKind.BLOCKED if veto else NoteFlushOutcomeKind.PERMITTED
             )
 
         monkeypatch.setattr(screen, "_open_library_item_by_id", opener)
@@ -9187,7 +9262,6 @@ async def test_library_shell_note_save_result_after_switch_is_discarded():
         # Force a replacement session while n-1's save is still sleeping.
         # The late save result must be typed STALE by the coordinator and
         # ignored by the screen presentation.
-        n1_meta_widget = screen.query_one("#library-note-meta", Static)
         screen._begin_library_note_load("n-2")
         screen.refresh(recompose=True)
 
@@ -9630,6 +9704,7 @@ async def test_library_shell_note_conflict_reload_discards_local_edits():
                 f"title_text={getattr(title_widget, 'value', '')!r}). "
                 f"Visible text: {_visible_text(screen)}"
             )
+
         await _wait_for_condition(
             pilot,
             lambda: (
@@ -16780,9 +16855,7 @@ async def test_library_shell_export_orphaned_run_completion_cannot_corrupt_a_lat
 
         # The orphaned export genuinely completed -- still notified...
         assert len(notified) == 1
-        assert (
-            notified[0][0] == f"Exported bundle to {tmp_path / 'orphaned_dest.zip'}"
-        )
+        assert notified[0][0] == f"Exported bundle to {tmp_path / 'orphaned_dest.zip'}"
         # ...but the CURRENT (fresh, second) visit is completely
         # undisturbed: still not running, still no error/status, the
         # SAME submit button instance, still correctly disabled (no
@@ -16928,8 +17001,7 @@ async def test_library_shell_export_submit_missing_service_surfaces_error_and_re
         for _ in range(150):
             if (
                 screen._library_export_running is False
-                and screen._library_export_error
-                == "Bundle export service unavailable."
+                and screen._library_export_error == "Bundle export service unavailable."
             ):
                 break
             await pilot.pause(0.02)
@@ -17383,9 +17455,9 @@ async def test_library_ingest_intro_lines_hide_while_typing(tmp_path):
         await pilot.pause()
         path_input.value = "/tmp/somewhere.txt"
         await pilot.pause()
-        assert all(
-            not w.display for w in screen.query(".library-ingest-intro")
-        ), "intro lines must hide once a path is typed"
+        assert all(not w.display for w in screen.query(".library-ingest-intro")), (
+            "intro lines must hide once a path is typed"
+        )
 
         path_input.value = ""
         await pilot.pause()
@@ -17418,18 +17490,18 @@ async def test_library_search_typed_text_survives_registry_recompose(tmp_path):
         screen._handle_library_ingest_registry_changed()
         await pilot.pause()
         await _wait_for_selector(screen, pilot, "#library-search-input")
-        assert (
-            screen.query_one("#library-search-input", Input).value == "cake"
-        ), "typed search text vanished on recompose"
+        assert screen.query_one("#library-search-input", Input).value == "cake", (
+            "typed search text vanished on recompose"
+        )
 
         screen.query_one("#library-search-input", Input).value = ""
         await pilot.pause()
         screen._handle_library_ingest_registry_changed()
         await pilot.pause()
         await _wait_for_selector(screen, pilot, "#library-search-input")
-        assert (
-            screen.query_one("#library-search-input", Input).value == ""
-        ), "deleted search text resurrected on recompose"
+        assert screen.query_one("#library-search-input", Input).value == "", (
+            "deleted search text resurrected on recompose"
+        )
 
 
 @pytest.mark.asyncio
@@ -17594,8 +17666,7 @@ async def test_library_search_rag_canvas_survives_ingest_done_count_growth(tmp_p
         # snapshot-driven sync never touches results/history.
         results_after = list(screen.query_one("#library-rag-results").children)
         assert len(results_after) == len(results_before) and all(
-            before is after
-            for before, after in zip(results_before, results_after)
+            before is after for before, after in zip(results_before, results_after)
         ), (
             "Evidence result widgets were rebuilt -- the snapshot-driven "
             "sync must never touch results/history"
@@ -17977,9 +18048,7 @@ async def test_clear_path_button_empties_the_widget_for_real(tmp_path):
         await _wait_for_selector(screen, pilot, "#library-ingest-path")
 
         widget = screen.query_one("#library-ingest-path", Input)
-        assert widget.value == "", (
-            f"Clear left the widget holding {widget.value!r}"
-        )
+        assert widget.value == "", f"Clear left the widget holding {widget.value!r}"
         assert screen._library_ingest_form.path == ""
 
         # Refocus + one more recompose: the emptiness must survive both.
@@ -18033,9 +18102,9 @@ async def test_completion_toast_reports_dedup_as_already_in_library(tmp_path):
             for call in harness.notify.call_args_list
             if call.args and str(call.args[0]).startswith("Import finished")
         ]
-        assert summaries and summaries[-1] == (
-            "Import finished — 1 matched"
-        ), f"dedup batch misreported: {summaries}"
+        assert summaries and summaries[-1] == ("Import finished — 1 matched"), (
+            f"dedup batch misreported: {summaries}"
+        )
         assert summaries[0] == "Import finished — 1 imported"
 
 
@@ -18243,23 +18312,17 @@ async def test_details_toggle_renders_and_hides_inline_lines(tmp_path):
         await _wait_for_selector(
             screen, pilot, f"#library-ingest-details-{failing.job_id}"
         )
-        screen.query_one(
-            f"#library-ingest-details-{failing.job_id}", Button
-        ).press()
+        screen.query_one(f"#library-ingest-details-{failing.job_id}", Button).press()
         await pilot.pause()
         await _wait_for_selector(
             screen, pilot, f"#library-ingest-detail-{failing.job_id}-0"
         )
-        button = screen.query_one(
-            f"#library-ingest-details-{failing.job_id}", Button
-        )
+        button = screen.query_one(f"#library-ingest-details-{failing.job_id}", Button)
         assert str(button.label) == "Hide details"
 
         button.press()
         for _ in range(_INGEST_POLL_ATTEMPTS):
-            if not list(
-                screen.query(f"#library-ingest-detail-{failing.job_id}-0")
-            ):
+            if not list(screen.query(f"#library-ingest-detail-{failing.job_id}-0")):
                 break
             await pilot.pause(_INGEST_POLL_INTERVAL)
         else:
@@ -18341,9 +18404,7 @@ async def test_options_loader_never_calls_get_cli_setting_without_default(
 
         import unittest.mock as _mock
 
-        with _mock.patch.object(
-            screen_module, "get_cli_setting", _two_shape_stub
-        ):
+        with _mock.patch.object(screen_module, "get_cli_setting", _two_shape_stub):
             screen._library_ingest_form = LibraryIngestFormState()
             screen._load_library_ingest_options_from_config()
 
@@ -18385,14 +18446,10 @@ async def test_retry_press_updates_queue_in_place(tmp_path):
         )
         start_before = screen.query_one("#library-ingest-start", Button)
 
-        screen.query_one(
-            f"#library-ingest-retry-{failing.job_id}", Button
-        ).press()
+        screen.query_one(f"#library-ingest-retry-{failing.job_id}", Button).press()
         await pilot.pause()
         for _ in range(_INGEST_POLL_ATTEMPTS):
-            if any(
-                j.retry_count for j in harness.library_ingest_jobs.jobs()
-            ):
+            if any(j.retry_count for j in harness.library_ingest_jobs.jobs()):
                 break
             await pilot.pause(_INGEST_POLL_INTERVAL)
 
@@ -18414,8 +18471,6 @@ async def test_focused_panel_title_keeps_its_label(tmp_path):
         await _wait_for_library_shell(screen, pilot)
         await _open_library_ingest_canvas(screen, pilot)
         await _wait_for_selector(screen, pilot, "#type-group-generic")
-
-        from textual.widgets._collapsible import CollapsibleTitle
 
         title = screen.query_one("#type-group-generic CollapsibleTitle")
         title.focus()
@@ -18505,17 +18560,13 @@ async def test_server_mode_line_requires_configured_server(tmp_path):
             submit_ingest_jobs=lambda **kwargs: None
         )
         harness.runtime_policy = SimpleNamespace(
-            state=SimpleNamespace(
-                active_source="local", server_configured=False
-            )
+            state=SimpleNamespace(active_source="local", server_configured=False)
         )
         state = screen._build_library_ingest_state()
         assert state.server_quiet_line == ""
 
         harness.runtime_policy = SimpleNamespace(
-            state=SimpleNamespace(
-                active_source="local", server_configured=True
-            )
+            state=SimpleNamespace(active_source="local", server_configured=True)
         )
         configured = screen._build_library_ingest_state()
         assert "server mode" in configured.server_quiet_line
@@ -18631,9 +18682,9 @@ async def test_option_input_edit_updates_receipt_error_and_gate(tmp_path):
         assert "Chunk size: 1500" in str(
             screen.query_one("#type-group-generic", Collapsible).title
         )
-        assert screen.query_one(
-            "#opt-generic-chunk_size-error", Static
-        ).display is False
+        assert (
+            screen.query_one("#opt-generic-chunk_size-error", Static).display is False
+        )
         assert screen.query_one("#library-ingest-start", Button).disabled is False
 
 
@@ -18805,9 +18856,7 @@ async def test_dismiss_preserves_failure_in_recent_ledger(tmp_path):
         await _wait_for_selector(
             screen, pilot, f"#library-ingest-dismiss-{failing.job_id}"
         )
-        screen.query_one(
-            f"#library-ingest-dismiss-{failing.job_id}", Button
-        ).press()
+        screen.query_one(f"#library-ingest-dismiss-{failing.job_id}", Button).press()
         await pilot.pause()
         await pilot.pause()
 

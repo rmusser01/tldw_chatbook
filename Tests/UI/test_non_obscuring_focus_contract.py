@@ -496,7 +496,6 @@ def test_shared_form_and_native_inputs_use_thin_non_semantic_focus():
     for selector in (
         "Input:focus",
         "TextArea:focus",
-        "Select:focus",
         ".form-input:focus",
         ".form-textarea:focus",
     ):
@@ -506,6 +505,17 @@ def test_shared_form_and_native_inputs_use_thin_non_semantic_focus():
         assert "border-bottom: solid $ds-input-focus-accent;" in block
         assert "$error" not in block
         assert "$warning" not in block
+
+    # TASK-2300: Select draws its visible focus border on SelectCurrent.
+    # Adding the shared parent border consumes the control's value row, so
+    # the parent keeps only the non-semantic colour cue.
+    select_focus = css_block(text, "Select:focus")
+    assert "outline: heavy" not in select_focus
+    assert "border:" not in select_focus
+    assert "background: $ds-input-focus-bg;" in select_focus
+    assert "color: $ds-text-primary;" in select_focus
+    assert "$error" not in select_focus
+    assert "$warning" not in select_focus
 
 
 def test_native_toggle_focus_states_use_non_obscuring_contracts():
@@ -1054,9 +1064,7 @@ def test_library_rag_collapsible_header_hover_uses_non_obscuring_surface_contrac
 def test_shared_collapsible_header_focus_is_underlined_and_non_heavy():
     text = WIDGETS.read_text(encoding="utf-8")
     block = css_block(text, "Collapsible > CollapsibleTitle:focus")
-    collapsed_focus = css_block(
-        text, "Collapsible.-collapsed > CollapsibleTitle:focus"
-    )
+    collapsed_focus = css_block(text, "Collapsible.-collapsed > CollapsibleTitle:focus")
     assert_non_obscuring_focus(block)
     assert "outline: heavy" not in block
     assert "border-bottom: solid $ds-focus-accent;" in collapsed_focus
@@ -1068,9 +1076,7 @@ def test_conversations_collapsible_active_header_uses_selected_contract():
         BUNDLE.read_text(encoding="utf-8"),
     ):
         blocks = css_blocks(text, "Collapsible.-active > CollapsibleTitle")
-        assert blocks, (
-            "Missing CSS block for Collapsible.-active > CollapsibleTitle"
-        )
+        assert blocks, "Missing CSS block for Collapsible.-active > CollapsibleTitle"
         active = blocks[-1]
         assert_readable_selected_state_contract(active)
         assert_no_dominant_selected_geometry(active)
