@@ -4,7 +4,7 @@ title: Stack collapsed Console rail labels vertically
 status: In Progress
 assignee: []
 created_date: '2026-08-03 03:05'
-updated_date: '2026-08-03 04:13'
+updated_date: '2026-08-07 21:53'
 labels: []
 dependencies: []
 ---
@@ -54,37 +54,35 @@ while the Console call sites use stable three-cell outer rails, stacked visible
 text, and full descriptive tooltips for controls and badges. The component TCSS
 was updated and the production modular TCSS was mechanically regenerated.
 
-Areas changed: Console rail handle widget, the two Console collapsed-handle
-call sites, component/generated TCSS, and focused Console/stylesheet tests.
-The trade-off is deliberately opt-in presentation behavior: Personas handles,
-persistence, responsive state, and expanded headers remain unchanged.
+Areas changed: the Console rail-handle subclass, the two collapsed-handle call
+sites, component/generated TCSS, and a dedicated focused test module. During
+the pre-PR rebase, current `dev`'s shared `DestinationRailHandle` refactor was
+preserved and the vertical behavior was layered onto that base. The deleted
+monolithic persistent-rails test was not resurrected. The trade-off remains
+deliberately opt-in: non-Console destination handles, persistence, responsive
+state, and expanded headers are unchanged.
 
 TDD/review evidence: dedicated contract tests cover vertical labels, geometry,
-badge visibility/tooltips, and the unchanged horizontal default; Tasks 1-3
-passed per-task spec and quality review. Targeted verification is green: 41
-tests from `Tests/UI/test_console_rail_handle.py`,
-`Tests/UI/test_console_persistent_rails.py::test_generated_console_stylesheet_includes_rail_rules`,
-the two specified `Tests/UI/test_personas_workbench.py::TestWorkbenchShell`
-selections, and `Tests/Chat/test_console_rail_state.py`; plus 5 CSS
-build-integrity tests from `Tests/UI/test_css_build_integrity.py`. The four
-changed Python modules/tests compiled with `py_compile`, and
-`git diff --check 659186711..HEAD` passed. Final diff review found only the
-intended Console widget/call-site/test/TCSS scope; the generated TCSS change is
-mechanical and no secrets were introduced.
+badge visibility/tooltips, and the unchanged horizontal default. On the
+rebased tree, 80 focused tests passed across
+`Tests/UI/test_console_rail_handle.py`, `Tests/UI/test_destination_rail.py`,
+`Tests/UI/test_console_inspector_compact_access.py`,
+`Tests/Chat/test_console_rail_state.py`, and
+`Tests/UI/test_css_build_integrity.py`. The mounted compact-access coverage
+exercises both real Console handles at narrow terminal widths.
 
-The two existing full-app mounted Console selections remain blocked before
-screen mount during `TldwCli()` construction by `sqlite3.OperationalError:
-attempt to write a readonly database` against user-data SQLite paths under
-`~/.local/share/tldw_cli` (scheduled-tasks and library-collections wiring).
-This is the documented pre-existing harness condition; it does not exercise or
-demonstrate a regression in the rail implementation.
+The repository-wide `pytest -q` command was run before PR creation but stopped
+during collection with 28 environment/unrelated errors: the standard `[dev]`
+extra does not install the optional NumPy/audio or Playwright stacks required
+by several suites, and `Tests/TTS/test_profile_store_lock.py` also raised an
+unrelated collection-time `TypeError`. These errors occur before the full suite
+can execute; they are not counted as passing evidence for this task.
 
 Implementation is complete and targeted verification is green, but this task
 remains In Progress. The repository's strict Definition of Done also requires
 the full suite, linter/formatter, and performance/security/licence gates to be
-run green; those repository-wide gates have not all been run. The two selected
-full-app integrations also remain baseline-blocked as described above, so task
-closure is withheld without exception.
+run green; those repository-wide gates have not all passed, so task closure is
+withheld without exception.
 
 ADR required: no
 
@@ -93,4 +91,9 @@ ADR path: N/A
 Reason: The completed work is a reversible, opt-in presentation refinement;
 it changes no stored state, service contract, provider boundary, or long-lived
 application architecture.
+
+Lessons learned: no new general lesson was added. The rebase reinforced the
+existing generated-CSS rule in `backlog/docs/lessons-backlog-hygiene.md`; the
+component source was reconciled first and the bundle was regenerated rather
+than hand-merged.
 <!-- SECTION:NOTES:END -->
