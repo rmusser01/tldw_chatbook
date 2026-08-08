@@ -57,7 +57,7 @@ Complete the remaining parent gaps in seven focused slices: (1) pin CPU-only Par
 - Updated first-run setup to inspect, install, activate, summarize, and persist
   the exact selected language/model/precision while retaining its skip-safe
   no-clobber gate and direct-local GGUF import.
-- Focused verification passed 450 tests plus the separately permitted
+- Focused verification passed 454 tests plus the separately permitted
   localhost acquisition test. Native Apple-silicon macOS smoke passed v2
   INT8, v3 INT8, v2 F32, long-form VAD, cancellation, resident reuse, and the
   faster-whisper retry action; see `Docs/STT_Evaluation/task-602/`.

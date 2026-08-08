@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
   "evidence_label": "native_macos_focused_smoke",
-  "generated_at": "2026-08-08T17:03:33Z",
-  "tested_commit": "d9ac5fdc87f4498131ed8ed93b14b00f70f0fd50",
+  "generated_at": "2026-08-08T17:20:03Z",
+  "tested_commit": "1b4ca642c942cdc4b833c8e42f65df1408429bd0",
   "host": {
     "system": "Darwin",
     "release": "24.6.0",
@@ -93,8 +93,9 @@
       "status": "passed",
       "text": "The local transcription stack is working on this Mac and does not need a network connection.",
       "segments": 1,
-      "model_load_seconds": 2.2350508749950677,
-      "inference_seconds": 0.3510036668740213,
+      "model_load_seconds": 1.7758584159892052,
+      "inference_seconds": 0.1422139168716967,
+      "total_seconds": 1.918072332860902,
       "effective_language": "en",
       "precision": "int8",
       "device": "cpu"
@@ -103,8 +104,8 @@
       "status": "passed",
       "text": "La transcription locale fonctionne correctement sur cet ordinateur sans connexion au réseau.",
       "segments": 1,
-      "model_load_seconds": 2.0251485840417445,
-      "inference_seconds": 0.5926129578147084,
+      "model_load_seconds": 1.4946535839699209,
+      "inference_seconds": 0.15747549990192056,
       "requested_language": "fr",
       "effective_language": "auto",
       "detected_language": null,
@@ -117,8 +118,8 @@
     "v2_f32": {
       "status": "passed",
       "text": "The local transcription stack is working on this Mac and does not need a network connection.",
-      "model_load_seconds": 9.756367458961904,
-      "inference_seconds": 2.066048457985744,
+      "model_load_seconds": 7.909066166030243,
+      "inference_seconds": 2.2369216659571975,
       "effective_language": "en",
       "precision": "f32",
       "device": "cpu"
@@ -127,7 +128,7 @@
       "status": "passed",
       "duration_seconds": 40.0,
       "segments": 2,
-      "inference_seconds": 2.4366254589986056,
+      "inference_seconds": 0.9123845000285655,
       "vad_used": true,
       "asr_batch_size": 1
     },
@@ -138,25 +139,28 @@
     },
     "resident_reuse": {
       "status": "passed",
-      "same_runtime_instance_processed_two_followup_jobs": true
+      "same_runtime_instance_processed_two_followup_jobs": true,
+      "followup_model_load_seconds": 0.0
     },
     "retry_action": {
       "status": "passed",
       "trigger": "long-form request with no managed VAD path",
       "failure": {
+        "category": "stt_failure",
         "code": "artifact_incompatible",
         "actions": [
           "retry_faster_whisper"
-        ]
+        ],
+        "failed_attempt_recorded": true
       }
     }
   },
   "focused_verification": {
     "pytest": {
       "status": "passed",
-      "passed": 450,
+      "passed": 454,
       "deselected": 2,
-      "duration_seconds": 51.35,
+      "duration_seconds": 50.57,
       "deselections": [
         "test_run_parakeet_v2_preflight_and_provision_against_localhost_fixture: rerun separately outside sandbox and passed",
         "test_optional_feature_metadata_covers_pyproject_extras: unrelated pre-existing frontmatter metadata mismatch"
@@ -171,7 +175,7 @@
       "passed": 7
     },
     "static_verification": {
-      "ruff": "passed on every changed Python file except Tests/Library/test_library_ingest_runner.py, whose two unrelated pre-existing findings remain at lines 2842 and 3079",
+      "ruff": "passed on every changed Python file except Tests/Library/test_library_ingest_runner.py, whose two unrelated pre-existing findings remain at lines 2925 and 3162",
       "compileall": "passed on all changed package modules",
       "toml_parse": "passed",
       "json_parse": "passed",

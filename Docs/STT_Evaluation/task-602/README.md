@@ -21,8 +21,9 @@ Exact host, artifact, audio, timing, and result data is in
   Cancellation observed immediately before the second segment prevented that
   second batch. The same loaded runtime handled two follow-up jobs.
 - A real long-form request without a managed VAD failed with
-  `artifact_incompatible` and the `retry_faster_whisper` action.
-- The focused union passed 450 tests. The localhost acquisition test was run
+  `artifact_incompatible`, a normalized failed-attempt record, and the
+  `retry_faster_whisper` action.
+- The focused union passed 454 tests. The localhost acquisition test was run
   separately with permission to bind an ephemeral loopback port and passed.
 
 ## Deliberate exclusions and open gates
@@ -32,8 +33,8 @@ inventory failure for the `frontmatter` extra. That mismatch predates TASK-602
 and is not part of this work stream.
 
 Ruff passed on the changed files except for two unrelated pre-existing findings
-in `Tests/Library/test_library_ingest_runner.py` (an unused local at line 2842
-and an unused local import at line 3079). Compileall, TOML/JSON parsing, and
+in `Tests/Library/test_library_ingest_runner.py` (an unused local at line 2925
+and an unused local import at line 3162). Compileall, TOML/JSON parsing, and
 `git diff --check` passed.
 
 Windows and Linux native wheel/install/runtime gates remain open because those
