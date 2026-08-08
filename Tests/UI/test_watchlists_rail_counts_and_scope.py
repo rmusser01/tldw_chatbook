@@ -625,3 +625,44 @@ async def test_starred_root_badge_counts_flagged_items():
             if _rail_label(screen, "wl-tree-node-starred").endswith("2"):
                 break
         assert _rail_label(screen, "wl-tree-node-starred") == "★ Starred  2"
+
+
+@pytest.mark.asyncio
+async def test_all_unread_and_today_badges_count_their_own_facts():
+    """TASK-3603 plan task 4: All Unread reuses the All-sources unread count
+    (one fact, two angles); Today counts unread items at/after local
+    midnight only."""
+    from datetime import datetime, timedelta, timezone
+
+    app = _build_test_app()
+    _watchlist_id, assigned_id, _unassigned = _seed_two_sources_one_assigned(app)
+    db = app.local_watchlists_service._db()
+    now = datetime.now(timezone.utc)
+    with db.transaction() as conn:
+        for index, published in enumerate(
+            (now.isoformat(), now.isoformat(), (now - timedelta(hours=49)).isoformat())
+        ):
+            persist_subscription_item(
+                conn,
+                assigned_id,
+                {
+                    "url": f"https://assigned.test/today-{index}/",
+                    "title": f"Today {index}",
+                    "content_hash": f"hash-today-{index}",
+                    "published_date": published,
+                },
+                run_id=None,
+                now=now.isoformat(),
+            )
+
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = await _mounted(host, pilot)
+        for _ in range(40):
+            await pilot.pause()
+            if _rail_label(screen, "wl-tree-node-unread").endswith("3"):
+                break
+        assert _rail_label(screen, "wl-tree-node-unread") == "All Unread  3"
+        assert _rail_label(screen, "wl-tree-node-today") == "Today  2", (
+            "the two fresh items count; the 49-hour-old one does not"
+        )

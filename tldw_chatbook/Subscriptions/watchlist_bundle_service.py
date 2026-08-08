@@ -387,3 +387,17 @@ class WatchlistBundleService:
             How many items are starred, across every source and status.
         """
         return self._db.get_flagged_items_count()
+
+    def get_unread_items_count_since(self, since: str) -> int:
+        """Unread items at/after `since`, for the Today root's badge (TASK-3603).
+
+        Thin delegation, same contract as `get_flagged_items_count` above.
+
+        Args:
+            since: Inclusive ISO floor (the screen passes local midnight,
+                UTC-shaped to match the stored dates).
+
+        Returns:
+            How many unread items carry an effective date at/after the floor.
+        """
+        return self._db.get_unread_items_count_since(since)

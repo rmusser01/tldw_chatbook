@@ -191,6 +191,7 @@ from ..Watchlists_Modules.sources_pane import (
 from ..Watchlists_Modules.watchlist_tree import (
     ALL_SOURCES_BUCKET,
     STARRED_BUCKET,
+    TODAY_BUCKET,
     AddSourceToWatchlistRequested,
     CreateWatchlistRequested,
     DeleteWatchlistRequested,
@@ -448,6 +449,12 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         # http/https only (the URL is a remote-derived string reaching an OS
         # primitive, so the scheme check lives in the handler, not here).
         ("o", "open_in_browser", "Open in browser"),
+        # TASK-3603 plan task 3: jump to the search box; typing then drives
+        # the corpus-wide FTS path through the debounced reload below.
+        ("/", "focus_items_search", "Search"),
+        # TASK-3603 plan task 5: refresh every active source, one aggregated
+        # toast + the new-items pill at the end -- never N toasts.
+        ("r", "refresh_all", "Refresh all"),
         ("a", "mark_all_read", "Mark all read"),
         ("u", "undo_mark_all_read", "Undo mark-all-read"),
         ("z", "toggle_region", "Collapse"),
@@ -1146,6 +1153,11 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             counts = dict(service.get_watchlist_item_counts())
             starred = service.get_flagged_items_count()
             counts[STARRED_BUCKET] = {"total": starred, "unread": starred}
+            # TASK-3603 plan task 4: the Today badge rides the same mapping
+            # -- unread items at/after local midnight, so the badge and the
+            # node's page answer the same question.
+            today = service.get_unread_items_count_since(self._today_floor_iso())
+            counts[TODAY_BUCKET] = {"total": today, "unread": today}
             self._tree_counts = counts
             self._tree_source_counts = service.get_source_item_counts()
         except Exception:
@@ -1774,6 +1786,10 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         scope = self.tree_scope
         if scope.kind == "starred":
             return "Starred"
+        if scope.kind == "unread":
+            return "All Unread"
+        if scope.kind == "today":
+            return "Today"
         if scope.kind == "unassigned":
             return "Unassigned"
         if scope.kind == "watchlist" and scope.watchlist_id is not None:
@@ -5110,10 +5126,11 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             backend listing's own order. Every loaded source when the scope is
             `all`, or when the runtime backend is not `local`.
         """
-        if self.tree_scope.kind in ("all", "starred") or self.runtime_backend != "local":
-            # `starred` scopes the ITEMS list (a flag predicate), not the
-            # Sources table -- every source can hold a starred item, so the
-            # truthful listing here is the same unscoped one `all` gets.
+        if self.tree_scope.kind in ("all", "starred", "unread", "today") or self.runtime_backend != "local":
+            # The smart feeds scope the ITEMS list (a flag/status/date
+            # predicate), not the Sources table -- every source can hold an
+            # unread/starred/today item, so the truthful listing here is the
+            # same unscoped one `all` gets.
             return list(self._loaded_sources)
         allowed = {
             str(row.get("id")) for row in self.scoped_source_rows() if row.get("id") is not None
@@ -8486,6 +8503,14 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             # global (same ADR-018 semantics as the briefing queue), so no
             # membership predicate -- just the flag itself.
             return {"is_flagged": True}
+        if scope.kind == "unread":
+            # TASK-3603 plan task 4: All Unread. The node forces the unread
+            # bucket regardless of the pane's filter -- `_load_items` drops
+            # any `statuses` kwarg when this scope is active, because the
+            # DB raises on status+statuses together.
+            return {"status": "new"}
+        if scope.kind == "today":
+            return {"since": self._today_floor_iso()}
         if scope.kind == "source" and scope.source_id is not None:
             return {"source_id": scope.source_id}
         if scope.kind == "watchlist" and scope.watchlist_id is not None:
@@ -8493,6 +8518,21 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         if scope.kind == "unassigned":
             return {"unassigned_only": True}
         return {}
+
+    @staticmethod
+    def _today_floor_iso() -> str:
+        """Local midnight tonight's floor, as a UTC ISO string (TASK-3603).
+
+        The Today feed is a LOCAL-day concept (the user's "today"), while
+        `subscription_items` dates are UTC ISO -- so the floor is computed
+        in local time and converted back to UTC before it reaches the
+        `COALESCE(published_date, created_at) >= ?` string comparison, which
+        is exact only between same-shape ISO strings.
+        """
+        local_midnight = datetime.now().astimezone().replace(
+            hour=0, minute=0, second=0, microsecond=0
+        )
+        return local_midnight.astimezone(timezone.utc).isoformat()
 
     def _with_open_item(
         self, page: list[dict[str, Any]]
@@ -8559,12 +8599,27 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     async def _load_items(self) -> None:
         notify = getattr(self.app_instance, "notify", None)
         try:
+            # TASK-3603 plan task 3: a non-blank search term is part of the
+            # query (the corpus-wide FTS path, falling back to LIKE), not a
+            # client-side-only filter over the newest 100.
+            query = self._items_search_query.strip()
+            items_kwargs = {
+                **self._items_status_kwargs(),
+                **self._items_scope_query(),
+                **({"search": query} if query else {}),
+            }
+            if self.tree_scope.kind == "unread":
+                # TASK-3603 plan task 4: the All Unread node forces the
+                # unread bucket (its scope kwarg above), so the filter's
+                # `statuses` must not ride along -- `get_new_items` raises
+                # on status and statuses together, and widening the list to
+                # the reader statuses would make the node lie besides.
+                items_kwargs.pop("statuses", None)
             items = await self._controller.list_items(
                 runtime_backend=self.runtime_backend,
                 limit=100,
                 offset=0,
-                **self._items_status_kwargs(),
-                **self._items_scope_query(),
+                **items_kwargs,
             )
             # Mirror to screen state (Finding 2, fix round 2) — see the note
             # on `_loaded_sources` in `_load_sources` above; same rebuild,
@@ -9112,17 +9167,19 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
 
     @on(ItemsFilterChanged)
     def handle_items_filter_changed(self, event: ItemsFilterChanged) -> None:
-        """Mirror the Items filter/search, and re-page when the STATUS moves.
+        """Mirror the Items filter/search, and re-page when EITHER moves.
 
         Review wave, I2. The status is now part of the query
         (`_items_status_kwargs`), so changing it has to re-fetch or the pane is
         left filtering the previous status's page in memory -- which is exactly
         the "the filter can only narrow what was already fetched" defect this
-        fix removes.
+        fix removes. TASK-3603 extends the same rule to the search box: the
+        term is part of the query too (`_load_items` weaves it in), so a
+        search reaches the whole corpus rather than the newest-100 page --
+        debounced, since this message fires on every keystroke.
 
-        Gated on the status ACTUALLY changing. This message also fires on every
-        keystroke in the search box, which is a purely in-memory filter and
-        must not cost a query per character. Both sides are compared through
+        The status branch re-fetches immediately; the search branch re-arms a
+        0.3s timer. Both sides are compared through
         `_normalize_items_status_filter` (TASK-3072): a pre-reader `new`
         still sitting in the mirror IS the reader's `unread`, and must not
         trigger a spurious reload when the pane first posts it.
@@ -9132,12 +9189,36 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         status_changed = incoming != _normalize_items_status_filter(
             self._items_status_filter
         )
+        query_changed = event.search_query != self._items_search_query
         self._items_status_filter = incoming
         self._items_search_query = event.search_query
         if status_changed:
             # Own group, as in `watch_tree_scope`: an exclusive reload in
             # the default group cancels unrelated in-flight workers.
             self.run_worker(self._load_items(), exclusive=True, group="wc_items")
+        elif query_changed:
+            # TASK-3603 plan task 3: a search edit re-fetches too, now that
+            # the term is part of the query (`_load_items` weaves it in) --
+            # debounced, because this message fires on every keystroke and a
+            # query per character is exactly what the debounce timer shape
+            # (`_request_tree_counts_refresh`) already exists to avoid.
+            self._request_items_search_reload()
+
+    #: Debounce for the search-driven items reload (TASK-3603): one corpus
+    #: query per typing pause, not one per keystroke.
+    _ITEMS_SEARCH_DEBOUNCE_SECONDS = 0.3
+
+    def _request_items_search_reload(self) -> None:
+        """Re-arm the single search-reload timer (the counts-refresh shape)."""
+        timer = getattr(self, "_items_search_reload_timer", None)
+        if timer is not None:
+            timer.stop()
+        self._items_search_reload_timer = self.set_timer(
+            self._ITEMS_SEARCH_DEBOUNCE_SECONDS,
+            lambda: self.run_worker(
+                self._load_items(), exclusive=True, group="wc_items"
+            ),
+        )
 
     @on(RefreshItemsRequested)
     def handle_refresh_items_requested(self, event: RefreshItemsRequested) -> None:
@@ -9875,12 +9956,13 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         """Show a notification with available keyboard shortcuts."""
         # TASK-3072 plan task 10: the reading-loop verbs join the help line.
         # Decision 031: advertise only implemented actions -- every verb
-        # named here is bound above and covered by tests.
+        # named here is bound above and covered by tests. TASK-3603 adds
+        # the search and refresh-all verbs.
         self.app_instance.notify(
             "1=Read 2=Sources 3=Runs 4=Rules 5=Notifications 6=Artifacts "
             "7=Overview | n=new d=delete/ignore c=check p=preview ?=help | "
             "j/k=move space=next-unread m=read/unread s=star o=open "
-            "a=mark-all-read u=undo",
+            "a=mark-all-read u=undo /=search r=refresh-all",
             severity="information",
             timeout=8,
         )
@@ -10195,6 +10277,95 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         if item is None:
             return
         self._open_item_in_browser(item)
+
+    def action_focus_items_search(self) -> None:
+        """`/`: put the caret in the items search box (TASK-3603 plan task 3).
+
+        Gated by `_reader_verb_blocked` like every other Read-tab verb:
+        once any Input has focus, `/` is text, not a verb (and off the Read
+        tab there is no search box to focus).
+        """
+        if self._reader_verb_blocked():
+            return
+        try:
+            self.query_one("#items-search-input", Input).focus()
+        except NoMatches:
+            return
+
+    #: One refresh-all batch at a time (TASK-3603): a second `r` while a
+    #: batch is in flight is a no-op, not a double launch.
+    _refresh_all_in_flight = False
+
+    def action_refresh_all(self) -> None:
+        """`r`: check every active source, then say so ONCE (TASK-3603 plan
+        task 5). Same gating as the other Read-tab verbs."""
+        if self._reader_verb_blocked():
+            return
+        if self._refresh_all_in_flight:
+            return
+        # Set SYNCHRONOUSLY, before the worker is scheduled (PR #1443
+        # review): setting it inside the worker leaves a window where two
+        # rapid `r` presses both pass the check and the second
+        # `exclusive=True` scheduling would cancel the first batch.
+        self._refresh_all_in_flight = True
+        self.run_worker(
+            self._refresh_all_worker(), exclusive=True, group="wl-refresh-all"
+        )
+
+    async def _refresh_all_worker(self) -> None:
+        """The batch half of `r`: launch, aggregate, notify once, pill.
+
+        Eligibility reads the normalized source dicts' `active` (already
+        `is_active AND NOT paused` -- `normalize_local_subscription_row`),
+        so a source auto-paused by repeated failures is skipped, not poked.
+        The "N new items" number is the ALL-sources unread DELTA across the
+        batch -- the same fact the rail counts, per the legend -- not a
+        per-run archaeology. One toast names the batch's shape (checks,
+        new items, failures); the tree counts refresh once, at the end,
+        through the same loader every other writer uses. The in-flight
+        flag is set by the action before this worker is scheduled; the
+        `finally` here is the one reset.
+        """
+        notify = getattr(self.app_instance, "notify", None)
+        try:
+            eligible = [
+                source
+                for source in self._loaded_sources
+                if source.get("active") and source.get("source_id") is not None
+            ]
+            if not eligible:
+                if callable(notify):
+                    notify("Nothing to check: no active sources.")
+                return
+            before = self._tree_counts.get(ALL_SOURCES_BUCKET, {}).get("unread", 0)
+            result = await self._controller.check_all(
+                runtime_backend=self.runtime_backend,
+                source_ids=[source["source_id"] for source in eligible],
+            )
+            try:
+                await self._load_tree_data().wait()
+            except Exception:
+                logger.opt(exception=True).debug(
+                    "Refresh-all: the terminal tree reload failed."
+                )
+            after = self._tree_counts.get(ALL_SOURCES_BUCKET, {}).get("unread", 0)
+            delta = max(0, after - before)
+            checked = int(result.get("checked", 0))
+            failed = list(result.get("failed") or [])
+            message = f"Checked {checked} sources — {delta} new items"
+            if failed:
+                message += f" ({len(failed)} failed)"
+            if callable(notify):
+                notify(message)
+            if delta:
+                try:
+                    pane = self.query_one("#watchlists-items-pane", ArticleListPane)
+                except NoMatches:
+                    pane = None
+                if pane is not None:
+                    pane.show_new_items_pill(delta)
+        finally:
+            self._refresh_all_in_flight = False
 
     @on(OpenInBrowserRequested)
     def handle_open_in_browser_requested(self, event: OpenInBrowserRequested) -> None:

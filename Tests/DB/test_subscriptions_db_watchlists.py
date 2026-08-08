@@ -977,3 +977,193 @@ def test_get_new_items_falls_back_to_created_at_when_unpublished(db):
         "https://f.example/undated",
         "https://f.example/dated",
     ]
+
+
+# --- TASK-3603: search/since predicates on get_new_items -----------------------
+
+
+def test_get_new_items_search_matches_title_content_and_author(db):
+    """The FTS path covers all three indexed columns."""
+    source_id = db.add_subscription(name="ArXiv", type="rss", source="https://a.example/f")
+    _insert_item(db, source_id, "https://a.example/1", "RAG Evaluation", "plain body")
+    _insert_item(db, source_id, "https://a.example/2", "Plain title", "retrieval quality rubric")
+    with db.transaction() as conn:
+        conn.execute(
+            "INSERT INTO subscription_items (subscription_id, url, title, content, author) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (source_id, "https://a.example/3", "Another plain", "plain body", "Coraline Ada"),
+        )
+    _insert_item(db, source_id, "https://a.example/4", "Unrelated", "nothing")
+
+    assert {r["url"] for r in db.get_new_items(status=None, search="RAG")} == {
+        "https://a.example/1"
+    }
+    assert {r["url"] for r in db.get_new_items(status=None, search="rubric")} == {
+        "https://a.example/2"
+    }
+    assert {r["url"] for r in db.get_new_items(status=None, search="Coraline")} == {
+        "https://a.example/3"
+    }
+
+
+def test_get_new_items_search_multi_term_is_and(db):
+    source_id = db.add_subscription(name="ArXiv", type="rss", source="https://a.example/f")
+    _insert_item(db, source_id, "https://a.example/1", "retrieval only", "plain")
+    _insert_item(db, source_id, "https://a.example/2", "retrieval quality", "the rubric")
+
+    assert {r["url"] for r in db.get_new_items(status=None, search="retrieval rubric")} == {
+        "https://a.example/2"
+    }, "every whitespace-separated term must match (AND semantics)"
+    assert db.get_new_items(status=None, search="retrieval missing") == []
+
+
+def test_get_new_items_search_hostile_queries_never_raise(db):
+    """FTS5 query-syntax injection attempts return a list, never an error."""
+    source_id = db.add_subscription(name="ArXiv", type="rss", source="https://a.example/f")
+    _insert_item(db, source_id, "https://a.example/1", "RAG Evaluation", "retrieval")
+
+    for hostile in (
+        '"unbalanced',
+        "[bracket]",
+        "NEAR/1",
+        "AND OR",
+        "title: x",
+        "*",
+        "a*b",
+        "()",
+        '"',
+        "NOT",
+    ):
+        rows = db.get_new_items(status=None, search=hostile)
+        assert isinstance(rows, list), f"search={hostile!r} must not raise"
+
+
+def test_get_new_items_search_falls_back_to_like_without_fts(db):
+    """When the FTS read raises (table absent on a pre-migration DB, fts5
+    compiled out), the LIKE fallback answers the same question -- and LIKE
+    wildcards in the query stay literal."""
+    source_id = db.add_subscription(name="ArXiv", type="rss", source="https://a.example/f")
+    _insert_item(db, source_id, "https://a.example/1", "fallback token here", "plain")
+    _insert_item(db, source_id, "https://a.example/2", "100x coverage", "plain")
+    _insert_item(db, source_id, "https://a.example/3", "100% coverage", "plain")
+    with db.transaction() as conn:
+        conn.execute("DROP TABLE subscription_items_fts")
+
+    assert {r["url"] for r in db.get_new_items(status=None, search="fallback")} == {
+        "https://a.example/1"
+    }, "the LIKE fallback must answer when FTS is unavailable"
+    assert {r["url"] for r in db.get_new_items(status=None, search="100%")} == {
+        "https://a.example/3"
+    }, "LIKE wildcards in the query must stay literal"
+
+
+def test_get_new_items_since_floor_uses_effective_date(db):
+    """`since` compares the EFFECTIVE date (published, else created) -- the
+    same COALESCE the ordering uses."""
+    source_id = db.add_subscription(name="Feed", type="rss", source="https://f.example/f")
+    for url in ("https://f.example/old-pub", "https://f.example/old-created",
+                "https://f.example/on-floor", "https://f.example/newer"):
+        _insert_item(db, source_id, url, url, "body")
+    with db.transaction() as conn:
+        conn.execute(
+            "UPDATE subscription_items SET published_date = ? WHERE url = ?",
+            ("2026-08-01T09:00:00+00:00", "https://f.example/old-pub"),
+        )
+        conn.execute(
+            "UPDATE subscription_items SET published_date = NULL, created_at = ? WHERE url = ?",
+            ("2026-08-01T09:00:00+00:00", "https://f.example/old-created"),
+        )
+        conn.execute(
+            "UPDATE subscription_items SET published_date = ? WHERE url = ?",
+            ("2026-08-07T00:00:00+00:00", "https://f.example/on-floor"),
+        )
+        conn.execute(
+            "UPDATE subscription_items SET published_date = ? WHERE url = ?",
+            ("2026-08-08T09:00:00+00:00", "https://f.example/newer"),
+        )
+
+    rows = db.get_new_items(status=None, since="2026-08-07T00:00:00+00:00")
+    assert {r["url"] for r in rows} == {
+        "https://f.example/on-floor",
+        "https://f.example/newer",
+    }, "the floor is inclusive, and falls back to created_at when published is NULL"
+
+
+def test_get_new_items_since_floor_handles_mixed_stored_formats(db):
+    """PR #1443 review: `created_at` defaults to CURRENT_TIMESTAMP's
+    SPACE-separated naive shape while ingest writes ISO `T`+offset, and a
+    bare string compare orders ' ' before 'T` -- a same-day item in the
+    space shape would wrongly fall BELOW an ISO floor. Both shapes must
+    count as today."""
+    from datetime import datetime, timezone
+
+    source_id = db.add_subscription(name="Feed", type="rss", source="https://f.example/f")
+    # `_insert_item` sets no created_at, so every row carries the schema's
+    # CURRENT_TIMESTAMP default -- the space shape, dated right now.
+    _insert_item(db, source_id, "https://f.example/space-shaped", "space", "body")
+    _insert_item(db, source_id, "https://f.example/iso-shaped", "iso", "body")
+    _insert_item(db, source_id, "https://f.example/old", "old", "body")
+    with db.transaction() as conn:
+        # The ISO leg, dated right now.
+        conn.execute(
+            "UPDATE subscription_items SET published_date = ? WHERE url = ?",
+            (datetime.now(timezone.utc).isoformat(), "https://f.example/iso-shaped"),
+        )
+        # Genuinely old, in the ISO shape.
+        conn.execute(
+            "UPDATE subscription_items SET published_date = NULL, created_at = ? WHERE url = ?",
+            ("2026-08-01T09:00:00+00:00", "https://f.example/old"),
+        )
+
+    rows = db.get_new_items(
+        status=None,
+        since=datetime.now(timezone.utc).strftime("%Y-%m-%dT00:00:00+00:00"),
+    )
+    assert {r["url"] for r in rows} == {
+        "https://f.example/space-shaped",
+        "https://f.example/iso-shaped",
+    }, "space-shaped and ISO-shaped same-day rows must BOTH clear the floor"
+
+
+def test_get_new_items_search_and_since_compose_with_the_other_predicates(db):
+    source_id = db.add_subscription(name="Feed", type="rss", source="https://f.example/f")
+    _insert_item(db, source_id, "https://f.example/hit", "rubric hit", "body")
+    _insert_item(db, source_id, "https://f.example/old", "rubric old", "body")
+    _insert_item(db, source_id, "https://f.example/other", "unrelated", "body")
+    with db.transaction() as conn:
+        conn.execute(
+            "UPDATE subscription_items SET published_date = ? WHERE url = ?",
+            ("2026-08-01T00:00:00+00:00", "https://f.example/old"),
+        )
+    db.set_item_flagged(
+        db.conn.execute(
+            "SELECT id FROM subscription_items WHERE url = ?",
+            ("https://f.example/hit",),
+        ).fetchone()[0],
+        True,
+    )
+
+    rows = db.get_new_items(
+        status=None, search="rubric", since="2026-08-07T00:00:00+00:00", is_flagged=True
+    )
+    assert {r["url"] for r in rows} == {"https://f.example/hit"}
+
+
+def test_get_unread_items_count_since_counts_only_newer_unread(db):
+    """The Today node badge: unread rows at/after the floor, nothing else."""
+    source_id = db.add_subscription(name="Feed", type="rss", source="https://f.example/f")
+    for url in ("https://f.example/a", "https://f.example/b", "https://f.example/c"):
+        _insert_item(db, source_id, url, url, "body")
+    with db.transaction() as conn:
+        conn.execute(
+            "UPDATE subscription_items SET published_date = ? WHERE url = ?",
+            ("2026-08-01T00:00:00+00:00", "https://f.example/a"),
+        )
+        conn.execute(
+            "UPDATE subscription_items SET status = ? WHERE url = ?",
+            ("reviewed", "https://f.example/c"),
+        )
+
+    assert db.get_unread_items_count_since("2026-08-07T00:00:00+00:00") == 1, (
+        "a is before the floor, c is reviewed -- only b counts"
+    )
