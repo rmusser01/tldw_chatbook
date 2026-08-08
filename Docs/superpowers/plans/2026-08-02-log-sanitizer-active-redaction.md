@@ -53,7 +53,7 @@ No reduced, fake, simplified, or test-only application may be created. Use direc
 - Reference: `tldw_chatbook/Utils/sensitive_config_keys.py`
 - Reference: `backlog/decisions/029-local-private-data-boundary.md`
 
-- [ ] **Step 1: Refresh and verify the implementation base before code**
+- [x] **Step 1: Refresh and verify the implementation base before code**
 
 Run:
 
@@ -78,7 +78,7 @@ git diff --stat origin/dev...HEAD -- \
 
 Expected: the worktree is clean except for committed task/spec/plan documents. If latest `dev` changed any listed file, stop and reconcile the spec and plan before writing tests.
 
-- [ ] **Step 2: Re-run the focused behavioral baseline**
+- [x] **Step 2: Re-run the focused behavioral baseline**
 
 Run:
 
@@ -92,7 +92,7 @@ Run:
 
 Expected: 26 tests pass. If the latest-dev count changes, record the new green count; do not proceed through a failure.
 
-- [ ] **Step 3: Reconcile the reviewed latest-dev inventory baseline before production edits**
+- [x] **Step 3: Reconcile the reviewed latest-dev inventory baseline before production edits**
 
 Run the checker before editing the manifest:
 
@@ -170,7 +170,7 @@ git add Docs/security/production-diagnostic-inventory.json
 git commit -m "chore(security): reconcile diagnostic inventory baseline"
 ```
 
-- [ ] **Step 4: Capture the reconciled diagnostic-inventory no-regression fingerprint**
+- [x] **Step 4: Capture the reconciled diagnostic-inventory no-regression fingerprint**
 
 Run this read-only command before production edits:
 
@@ -195,7 +195,7 @@ Record the actual output in the plan execution notes. If latest `dev` changes
 either value, reconcile it before proceeding rather than forcing the old
 baseline.
 
-- [ ] **Step 5: Move the existing sanitizer tests to their dedicated owner**
+- [x] **Step 5: Move the existing sanitizer tests to their dedicated owner**
 
 Create `Tests/Utils/test_log_sanitizer.py` with the existing `TestLogSanitizer` imports and test methods from `Tests/Utils/test_security_enhancements.py`. Remove only that class and its sanitizer imports from `test_security_enhancements.py`; keep every path-validation test unchanged.
 
@@ -210,7 +210,7 @@ Run:
 
 Expected: all relocated baseline tests pass before new assertions are added.
 
-- [ ] **Step 6: Write failing structured-redaction tests**
+- [x] **Step 6: Write failing structured-redaction tests**
 
 Add imports for `tomllib`, `CONFIG_TOML_CONTENT`, `DEFAULT_APP_TTS_CONFIG`, and `is_sensitive_config_key`. Add a local recursive leaf-key iterator rather than importing a helper from another test module.
 
@@ -265,7 +265,7 @@ Also add direct tests proving:
 - `api_key_env_var`, `max_tokens`, and an ordinary key remain unchanged; and
 - a sensitive key whose value is a dictionary or list replaces the entire container with the marker before recursion.
 
-- [ ] **Step 7: Run the structured tests and verify RED**
+- [x] **Step 7: Run the structured tests and verify RED**
 
 Run:
 
@@ -275,7 +275,7 @@ Run:
 
 Expected: failures show missing real config/log fields and the current non-string-key `.lower()` exception. Ensure each new test reaches the intended assertion rather than failing during setup.
 
-- [ ] **Step 8: Implement the exact structured classifier**
+- [x] **Step 8: Implement the exact structured classifier**
 
 In `tldw_chatbook/Utils/log_sanitizer.py`:
 
@@ -305,7 +305,7 @@ def _is_sensitive_log_key(key: object) -> bool:
 
 Delete the drifting `SENSITIVE_FIELDS` set. Change `sanitize_dict()` to call `_is_sensitive_log_key(key)` and use `REDACTION_MARKER`. Preserve the existing type fallback, `deep` branching order, direct-string sanitization, and list recursion exactly. Do not broaden the public functions to tuples, arbitrary mappings, or new container types.
 
-- [ ] **Step 9: Run structured and canonical-predicate tests GREEN**
+- [x] **Step 9: Run structured and canonical-predicate tests GREEN**
 
 Run:
 
@@ -319,7 +319,7 @@ Run:
 
 Expected: all structured and relocated baseline tests pass; string tests that have not yet been added are not part of this checkpoint.
 
-- [ ] **Step 10: Commit the structured classifier**
+- [x] **Step 10: Commit the structured classifier**
 
 ```bash
 git add \
@@ -339,7 +339,7 @@ git commit -m "fix(security): centralize structured credential fields"
 - Modify: `Tests/Packaging/test_installed_distribution.py`
 - Modify: `tldw_chatbook/Utils/log_sanitizer.py`
 
-- [ ] **Step 1: Add failing assignment-scanner and standalone-rule tests**
+- [x] **Step 1: Add failing assignment-scanner and standalone-rule tests**
 
 First update the relocated baseline assertions to the approved neutral-marker
 contract before adding the new RED cases:
@@ -398,7 +398,7 @@ Add separate tests proving:
   this with deterministic CR/LF search-work accounting on the real scanner,
   not a wall-clock threshold.
 
-- [ ] **Step 2: Extend the existing installed-wheel probe before implementation**
+- [x] **Step 2: Extend the existing installed-wheel probe before implementation**
 
 Inside `INSTALLED_PROBE` in `Tests/Packaging/test_installed_distribution.py`, import from the installed target only:
 
@@ -416,7 +416,7 @@ assert "PRIVATE_INSTALLED_SENTINEL" not in sanitize_string(
 
 Do not add a test application, editable install, second builder, or source-root fallback. The existing probe already excludes checkout/build roots and imports the real `TldwCli` from the installed wheel.
 
-- [ ] **Step 3: Run the new source and installed tests RED**
+- [x] **Step 3: Run the new source and installed tests RED**
 
 Run:
 
@@ -436,7 +436,7 @@ Run:
 
 Expected: FAIL in the isolated child because the installed sanitizer rewrites `claude-*` and/or misses a required labeled value. Confirm the failure is behavioral, not a build/network/environment failure.
 
-- [ ] **Step 4: Implement the monotonic assignment scanner**
+- [x] **Step 4: Implement the monotonic assignment scanner**
 
 Replace `SENSITIVE_PATTERNS` with private compiled rules. Use a prefix-only assignment pattern so classification happens before value consumption:
 
@@ -497,7 +497,7 @@ suffix for every value.
 
 Do not use repeated whole-string concatenation in the scan loop. Collect spans and build once.
 
-- [ ] **Step 5: Implement standalone passes in the specified order**
+- [x] **Step 5: Implement standalone passes in the specified order**
 
 Add:
 
@@ -524,7 +524,7 @@ _STANDALONE_CREDENTIALS = (
 
 No pattern recognizes `claude-*`. Do not add standalone Basic matching or speculative opaque-provider formats.
 
-- [ ] **Step 6: Run source tests GREEN**
+- [x] **Step 6: Run source tests GREEN**
 
 Run:
 
@@ -538,7 +538,7 @@ Run:
 
 Expected: all pass. Inspect exact outputs, not only absence assertions, for quoted/unquoted syntax and false-positive cases.
 
-- [ ] **Step 7: Run the installed-wheel proof GREEN**
+- [x] **Step 7: Run the installed-wheel proof GREEN**
 
 Run:
 
@@ -550,7 +550,7 @@ Run:
 
 Expected: PASS from the isolated installed target, with source/build roots excluded and the target hash unchanged.
 
-- [ ] **Step 8: Commit the scanner and wheel proof**
+- [x] **Step 8: Commit the scanner and wheel proof**
 
 ```bash
 git add \
@@ -573,7 +573,7 @@ git commit -m "fix(security): redact labeled credentials without model false pos
 - Modify: `tldw_chatbook/Subscriptions/monitoring_engine.py`
 - Modify: `Docs/security/production-diagnostic-inventory.json`
 
-- [ ] **Step 1: Write failing direct production-helper tests**
+- [x] **Step 1: Write failing direct production-helper tests**
 
 In `test_ollama_success_payloads_are_bounded_and_redacted`, strengthen the payload to include nested `x-api-key`/authorization fields and replace the credential-like model-name assertion with:
 
@@ -620,7 +620,7 @@ def test_transformers_model_scan_normalizes_multiline_names(tmp_path: Path) -> N
 
 Use direct production functions; do not construct a test app.
 
-- [ ] **Step 2: Write the failing real snapshot-pruning diagnostic test**
+- [x] **Step 2: Write the failing real snapshot-pruning diagnostic test**
 
 In `Tests/Subscriptions/test_watchlist_snapshot_pruning.py`, use the existing real DB/source helpers and `URLMonitor._store_snapshot()`:
 
@@ -677,7 +677,7 @@ async def test_prune_diagnostic_omits_the_monitored_url(monkeypatch) -> None:
 
 If the real logger is used by another `_store_snapshot()` branch during this test, give the replacement object only the methods actually observed; do not replace `URLMonitor` or the database with a simplified test implementation.
 
-- [ ] **Step 3: Run consumer tests RED**
+- [x] **Step 3: Run consumer tests RED**
 
 Run:
 
@@ -695,7 +695,7 @@ redaction or retain CR/LF/tab whitespace; the subscription test fails because
 the full sanitized URL is still present. On Windows only the explicitly
 non-portable Transformers filename case is skipped.
 
-- [ ] **Step 4: Split Ollama and Transformers display validation from redaction**
+- [x] **Step 4: Split Ollama and Transformers display validation from redaction**
 
 In Ollama:
 
@@ -729,7 +729,7 @@ Task 1, Step 4. Expected: both the non-monitoring SHA-256 and the monitoring
 entry still exactly match the reconciled baseline. If they do not, fix the
 line-count/scope error before proceeding.
 
-- [ ] **Step 5: Omit the subscription URL at the producer boundary**
+- [x] **Step 5: Omit the subscription URL at the producer boundary**
 
 Delete the dynamic log-sanitizer import and its stale Qodo comment. Change only the message and arguments:
 
@@ -744,7 +744,7 @@ logger.debug(
 
 Do not import `_log_origin()` from `Utils.egress`; the origin is unnecessary for this diagnostic.
 
-- [ ] **Step 6: Run the direct consumer tests GREEN**
+- [x] **Step 6: Run the direct consumer tests GREEN**
 
 Run the exact command from Step 3.
 
@@ -752,7 +752,7 @@ Expected: four selected tests pass using production helpers and the real
 snapshot producer on POSIX. Windows reports three passed and the one explicitly
 non-portable filename case skipped.
 
-- [ ] **Step 7: Prove TASK-856 changes only the monitoring inventory entry after reconciliation**
+- [x] **Step 7: Prove TASK-856 changes only the monitoring inventory entry after reconciliation**
 
 Re-run the read-only fingerprint command from Task 1, Step 4.
 
@@ -778,7 +778,7 @@ Expected: one digest line changes. The whole branch diff against `origin/dev`
 also contains the separately reviewed upstream reconciliation and must not be
 misreported as a TASK-856 sanitizer change.
 
-- [ ] **Step 8: Run the complete diagnostic-inventory gate GREEN**
+- [x] **Step 8: Run the complete diagnostic-inventory gate GREEN**
 
 Run:
 
@@ -798,7 +798,7 @@ Run:
 
 Expected: all three architecture tests pass.
 
-- [ ] **Step 9: Commit the corrected consumers**
+- [x] **Step 9: Commit the corrected consumers**
 
 ```bash
 git add \
@@ -855,9 +855,12 @@ commit them separately, and place that reconciliation immediately before the
 Task 3 consumer commit. At that boundary `monitoring_engine.py` still has digest
 `f9ccee6989b39da1333b`; the current non-monitoring fingerprint is
 `a927b4bc7a229d3c3328a5336054c410aabdedfe5fd40219ab1152a9880763eb`.
-Task 3 then changes only the monitoring digest to
+Task 3 initially changed only the monitoring digest to
 `3826b76482fd484ff194`, preserving the same non-monitoring fingerprint. The
-final checker must report 467 owners, 1,151 TASK-492 calls, 6,859 TASK-494
+scoped Ruff format repair subsequently changed only that source-sensitive
+monitoring digest to the current `911bf9d65817bf259923`; owner, reason,
+16-call count, sink topology, and non-monitoring fingerprint remain unchanged.
+The final checker must report 467 owners, 1,151 TASK-492 calls, 6,859 TASK-494
 calls, and six sink files.
 
 #### Final-dev rebase amendment
@@ -884,7 +887,7 @@ only that digest to `911bf9d65817bf259923`. Both sides share the current
 non-monitoring fingerprint
 `5ce06a13eb48f8007eddfa92a0616b41e5122b89e6b2b7d494d4c81fb48723ac`.
 
-- [ ] **Step 1: Run the complete focused sanitizer/security suite**
+- [x] **Step 1: Run the complete focused sanitizer/security suite**
 
 ```bash
 ../../.venv/bin/python -m pytest \
@@ -896,7 +899,7 @@ non-monitoring fingerprint
 
 Expected: all pass.
 
-- [ ] **Step 2: Run the full affected production-app and subscription modules**
+- [x] **Step 2: Run the full affected production-app and subscription modules**
 
 ```bash
 ../../.venv/bin/python -m pytest \
@@ -907,7 +910,7 @@ Expected: all pass.
 
 Expected: all pass. These are the real production app/direct producer owners; do not substitute a reduced app.
 
-- [ ] **Step 3: Re-run the installed-wheel test from a clean build**
+- [x] **Step 3: Re-run the installed-wheel test from a clean build**
 
 ```bash
 ../../.venv/bin/python -m pytest \
@@ -917,7 +920,7 @@ Expected: all pass. These are the real production app/direct producer owners; do
 
 Expected: pass from the isolated installed target with target hashes unchanged.
 
-- [ ] **Step 4: Run static and syntax checks on every changed Python file**
+- [x] **Step 4: Run static and syntax checks on every changed Python file**
 
 ```bash
 ../../.venv/bin/python -m ruff check \
@@ -975,7 +978,7 @@ unused import is removed. Every currently formatted changed Python file must
 pass a full-file format check, and every edited block in the two legacy files
 must pass an explicit range check.
 
-- [ ] **Step 5: Run hygiene and scope review**
+- [x] **Step 5: Run hygiene and scope review**
 
 ```bash
 git diff --check
@@ -1000,11 +1003,11 @@ Review every changed line for:
   reconciliations and the TASK-856 monitoring digest is included, and no user
   change is disturbed.
 
-- [ ] **Step 6: Request independent code review and address verified findings**
+- [x] **Step 6: Request independent code review and address verified findings**
 
 Use `superpowers:requesting-code-review` with TASK-856, ADR-029, the approved spec/plan, the exact base/head inventory evidence, and all verification output. Apply `superpowers:receiving-code-review` before accepting any suggestion. Re-run affected tests after each correction and repeat review until no Critical or Important issue remains.
 
-- [ ] **Step 7: Complete Backlog and design/plan documentation**
+- [x] **Step 7: Complete Backlog and design/plan documentation**
 
 Update TASK-856 only after code and reviews are complete:
 
@@ -1040,3 +1043,49 @@ git commit -m "docs(security): close TASK-856 sanitizer repair"
 - [ ] **Step 9: Run final verification after the closeout commit**
 
 Re-run the complete focused commands from Steps 1–5 plus the installed-wheel test. Confirm the worktree is clean, every implementation commit is based on the current `origin/dev`, and every required gate is green.
+
+## Execution and deviations
+
+- The first latest-dev diagnostic mismatch was reviewed at
+  `ceede62fe46d7aa090df4a36307077e097d8c044`: checked
+  `466/1144/6851/6` versus generated `467/1151/6854/6`. Commit
+  `3305befb9` records only that reviewed pre-existing inventory reconciliation.
+- After Tasks 1–3 reviewed cleanly, `origin/dev` advanced to
+  `85a46bea8704d076fd6b544e56bead760fd3e9d9`. Scoped TASK-856 files were
+  unchanged, but five upstream `app.py` diagnostics and related line movement
+  changed the generated repository-wide manifest from checked
+  `467/1151/6854/6` to `467/1151/6859/6`. Commit `f44b5ff01` records the
+  separately reviewed rebase boundary immediately before the Task 3 consumer
+  commit.
+- At `f44b5ff01`, the monitoring owner is TASK-494 with 16 calls, digest
+  `f9ccee6989b39da1333b`, and non-monitoring SHA-256
+  `a927b4bc7a229d3c3328a5336054c410aabdedfe5fd40219ab1152a9880763eb`.
+  Final generated state retains the owner, reason, count, fingerprint, and six
+  sinks while changing only that digest to `911bf9d65817bf259923`.
+- The first Task 4 verification exposed four branch-introduced Ruff format
+  failures. Commit `7e1462300` applied deterministic formatting only to the
+  approved full files and edited legacy range, then patched only the resulting
+  monitoring digest.
+- Whole-branch review reported no Critical issues, two related Important
+  scanner-complexity issues, and one Minor annotation mismatch. The added dense
+  matched-input test deterministically measured 94,996,790 CR/LF-search work
+  characters for 46,888 input characters before the fix. Commit `b847da509`
+  routes quoted values directly to their quote scanner; scoped re-review found
+  both Important issues resolved and no new Critical/Important issue. The
+  compatible `sanitize_dict` non-string-key annotation Minor is explicitly
+  deferred.
+- Final pre-closeout gates had 77 sanitizer/security tests, four selected
+  TASK-856 consumers, one isolated installed-wheel test, and three diagnostic
+  architecture tests passing. Inventory was `467/1151/6859/6`; Ruff lint,
+  full-file format, three legacy ranges, `py_compile`, and diff hygiene were
+  green.
+- The prescribed full affected-module command is not reported as passing. It
+  returned **2 failed, 26 passed** on the branch, with exactly
+  `test_llm_destination_action_census_is_complete_and_removed_controls_are_absent`
+  and `test_production_llm_destination_owns_navigation_actions_and_recovery`.
+  The identical clean-`origin/dev` command returned the same failure set at
+  **2 failed, 23 passed**; the branch adds three passing TASK-856 tests.
+- Task 4 Steps 8 and 9 remain unchecked in this closeout document because the
+  commit and its post-commit verification are necessarily performed after the
+  document is staged. Their exact results are recorded in the ignored SDD
+  `task-4-report.md` ledger rather than falsified pre-commit.

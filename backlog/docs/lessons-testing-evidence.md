@@ -1071,6 +1071,23 @@ only thing that reliably exposes the preemption.
 
 ---
 
+## A long no-match input does not prove a matched scanner is linear
+
+**TASK-856, 2026-08-08.** The sanitizer's long-input regression used only a
+string with no credential labels. It therefore exercised the scanner's cheap
+no-match path while completely missing repeated suffix scans after successful
+quoted-label matches. The final whole-branch review added a dense matched-input
+probe and measured the old quoted path performing **94,996,790 characters** of
+CR/LF search work on only **46,888 input characters**.
+
+**What to do.** A complexity claim about a scanner needs adversarial input that
+repeatedly takes the expensive matched branch. Count deterministic work—such as
+characters searched or cursor visits—and assert a structural bound alongside
+the exact output. Do not use wall-clock thresholds: they are noisy and can pass
+a superlinear implementation on a fast machine.
+
+---
+
 ## A button's region width proves nothing about whether its label renders
 
 **Incident.** TASK-2154.14 (DS-01) relabeled the Console composer's `☰`

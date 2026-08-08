@@ -1,6 +1,6 @@
 # Active Credential Redaction and Display Validation (TASK-856)
 
-**Status:** Approved
+**Status:** Implemented and verified
 
 **Task:** TASK-856
 
@@ -441,8 +441,11 @@ reconciled in its own commit immediately before the Task 3 consumer commit.
 The current boundary has `467/1151/6859/6`, monitoring digest
 `f9ccee6989b39da1333b`, and non-monitoring fingerprint
 `a927b4bc7a229d3c3328a5336054c410aabdedfe5fd40219ab1152a9880763eb`.
-The Task 3 head retains that fingerprint and changes only the monitoring digest
-to `3826b76482fd484ff194`.
+The Task 3 consumer commit retained that fingerprint and initially changed only
+the monitoring digest to `3826b76482fd484ff194`. The subsequent scoped Ruff
+format repair changed only the source-sensitive monitoring digest again, to the
+current `911bf9d65817bf259923`; the owner, reason, 16-call count, sink topology,
+and non-monitoring fingerprint remain unchanged.
 
 After closeout, the branch rebased once more onto
 `b030b0b73f217b955b298a45fce3a0256403447c`. The upstream Console rail
