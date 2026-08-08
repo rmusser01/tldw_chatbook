@@ -19,6 +19,17 @@ ASK = EffectiveToolState(state="ask", origin="global_default")
 DENY = EffectiveToolState(state="deny", origin="tool_override")
 
 
+@pytest.fixture(autouse=True)
+def _reset_web_tool_state():
+    """task-2832: web_search gained a module-level result cache, so any
+    test file invoking web tools through the provider must reset module
+    state or a cached "python" search from one test leaks into the next
+    (5 tests here failed exactly that way when the cache landed)."""
+    web_tool_impls._reset_state_for_tests()
+    yield
+    web_tool_impls._reset_state_for_tests()
+
+
 def make_provider(state=ALLOW, kill=False, **kwargs):
     kwargs.setdefault("resolve_state", lambda hub: state)
     kwargs.setdefault("kill_switch", lambda: kill)

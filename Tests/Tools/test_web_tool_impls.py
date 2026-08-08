@@ -1362,3 +1362,169 @@ def test_fetch_small_max_bytes_still_fills_sniff_window_for_mislabeled_pdf(fetch
     assert "tiny" in result
     assert "processed 1 of 1 pages" in result
     assert "[pdf-error]" not in result
+
+
+# ---------------------------------------------------------------------------
+# web_search result cache (task-2832) + the _fetch_cache TTL-expiry gap the
+# spec review found (design doc, "What already exists")
+# ---------------------------------------------------------------------------
+
+
+def _search_payload(n=2):
+    return {
+        "results": [
+            {"title": f"R{i}", "url": f"https://example.com/{i}", "content": f"body {i}"}
+            for i in range(1, n + 1)
+        ]
+    }
+
+
+def _patch_search(monkeypatch, fn):
+    monkeypatch.setattr(
+        "tldw_chatbook.Web_Scraping.WebSearch_APIs.perform_websearch", fn
+    )
+
+
+def test_search_cache_hit_skips_backend(fetch_env, monkeypatch):
+    calls = []
+    _patch_search(monkeypatch, lambda **kw: (calls.append(kw), _search_payload())[1])
+    first = web_tool_impls.web_search("python asyncio")
+    second = web_tool_impls.web_search("python asyncio")
+    assert len(calls) == 1
+    assert first == second
+    assert "R1" in first
+
+
+def test_search_cache_key_normalizes_whitespace_and_case(fetch_env, monkeypatch):
+    calls = []
+    _patch_search(monkeypatch, lambda **kw: (calls.append(kw), _search_payload())[1])
+    web_tool_impls.web_search("  Foo   BAR ")
+    web_tool_impls.web_search("foo bar")
+    assert len(calls) == 1
+    # Different engine or count = different entry.
+    web_tool_impls.web_search("foo bar", search_engine="bing")
+    web_tool_impls.web_search("foo bar", result_count=3)
+    assert len(calls) == 3
+
+
+def test_search_cache_ttl_expiry_reinvokes_backend(fetch_env, monkeypatch):
+    calls = []
+    _patch_search(monkeypatch, lambda **kw: (calls.append(kw), _search_payload())[1])
+    web_tool_impls.web_search("stale query")
+    fetch_env.clock.now += web_tool_impls.SEARCH_CACHE_TTL_SECONDS + 1
+    web_tool_impls.web_search("stale query")
+    assert len(calls) == 2
+
+
+def test_search_backend_exception_not_cached(fetch_env, monkeypatch):
+    calls = []
+
+    def boom(**kw):
+        calls.append(kw)
+        raise RuntimeError("provider down")
+
+    _patch_search(monkeypatch, boom)
+    out = web_tool_impls.web_search("flaky")
+    assert out.startswith("[search-failed]")
+    web_tool_impls.web_search("flaky")
+    assert len(calls) == 2  # second call re-invoked the backend
+
+
+def test_search_error_envelope_and_malformed_not_cached(fetch_env, monkeypatch):
+    """Design doc ruling 1 shapes (ii) and (iii): the unmarked
+    malformed-response string and the [search-failed] envelope string are
+    both transient-failure shapes — neither may pin for the TTL."""
+    payloads = iter([
+        {"error": "quota exceeded"},        # (iii) envelope error
+        "not a dict at all",                # (ii) non-dict
+        _search_payload(),                  # recovery
+    ])
+    calls = []
+    _patch_search(monkeypatch, lambda **kw: (calls.append(kw), next(payloads))[1])
+    assert "[search-failed]" in web_tool_impls.web_search("recovering")
+    assert "unexpected response format" in web_tool_impls.web_search("recovering")
+    assert "R1" in web_tool_impls.web_search("recovering")
+    assert len(calls) == 3  # nothing was cached until the genuine success
+
+
+def test_search_confirmed_empty_not_cached(fetch_env, monkeypatch):
+    """Design doc ruling 1 shape (v): a zero-result response is as often a
+    broken parser as a true empty (this repo's tavily/searx history) — it
+    must not pin for the TTL."""
+    calls = []
+    _patch_search(monkeypatch, lambda **kw: (calls.append(kw), {"results": []})[1])
+    out = web_tool_impls.web_search("nothing here")
+    assert out.startswith("No results found for")
+    web_tool_impls.web_search("nothing here")
+    assert len(calls) == 2
+
+
+def test_search_cache_eviction_bounds_size(fetch_env, monkeypatch):
+    _patch_search(monkeypatch, lambda **kw: _search_payload())
+    for i in range(web_tool_impls.SEARCH_CACHE_MAX_ENTRIES + 5):
+        web_tool_impls.web_search(f"query number {i}")
+    assert len(web_tool_impls._search_cache) == web_tool_impls.SEARCH_CACHE_MAX_ENTRIES
+
+
+def test_search_cache_logs_never_carry_query_text(fetch_env, monkeypatch, capsys):
+    """Design doc ruling 6 (scoped to the wrapper layer): across a
+    miss/hit/failure cycle, the query text appears in no captured log
+    output. loguru writes to stderr in tests."""
+    secret = "EXTREMELYUNIQUEQUERYTOKEN"
+    payloads = iter([_search_payload(), RuntimeError("down")])
+
+    def backend(**kw):
+        item = next(payloads)
+        if isinstance(item, Exception):
+            raise item
+        return item
+
+    _patch_search(monkeypatch, backend)
+    web_tool_impls.web_search(secret)          # miss + store
+    web_tool_impls.web_search(secret)          # hit
+    web_tool_impls.web_search(secret + " v2")  # failure path (logs engine only)
+    captured = capsys.readouterr()
+    assert secret not in captured.err
+    assert secret not in captured.out
+
+
+def test_deep_search_phase1_bypasses_search_cache(fetch_env, monkeypatch):
+    """Design doc ruling 4: web_deep_search's phase-1 fan-out must keep
+    hitting the live pipeline even when web_search has a warm entry for
+    the same normalized query. NEW fixture shape (spec review, Important
+    2): mock perform_websearch at source and let the REAL
+    generate_and_search run with sub-queries off."""
+    from tldw_chatbook.Web_Scraping import WebSearch_APIs
+
+    calls = []
+    _patch_search(monkeypatch, lambda **kw: (calls.append(kw), _search_payload())[1])
+    # Warm the web_search cache for this exact normalized query.
+    web_tool_impls.web_search("shared question")
+    assert len(calls) == 1
+    # Real generate_and_search, sub-queries off -> exactly one search call.
+    out = WebSearch_APIs.generate_and_search(
+        "shared question",
+        {
+            "engine": "duckduckgo",
+            "content_country": "US",
+            "search_lang": "en",
+            "output_lang": "en",
+            "result_count": 2,
+            "subquery_generation": False,
+        },
+    )
+    assert len(calls) == 2, "deep-search phase 1 must not consult the web_search cache"
+    assert out["web_search_results_dict"]
+
+
+def test_fetch_cache_ttl_expiry_refetches(fetch_env):
+    """The _fetch_cache expiry gap the task-2832 spec review found: hit and
+    size-eviction were tested, but nothing ever advanced the clock past
+    FETCH_CACHE_TTL_SECONDS."""
+    fetch_env.routes["http://example.com/page"] = _html_page()
+    web_fetch("http://example.com/page")
+    web_fetch("http://example.com/page")
+    assert fetch_env.calls.count("http://example.com/page") == 1  # warm hit
+    fetch_env.clock.now += web_tool_impls.FETCH_CACHE_TTL_SECONDS + 1
+    web_fetch("http://example.com/page")
+    assert fetch_env.calls.count("http://example.com/page") == 2  # stale -> refetch
