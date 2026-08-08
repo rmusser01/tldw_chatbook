@@ -58,11 +58,13 @@ it or a descendant -- both halves of the observed reality.
 from contextlib import asynccontextmanager
 
 import pytest
+from textual.widgets import Button
 
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
 )
+from tldw_chatbook.Widgets.Console.console_rail_handle import ConsoleRailHandle
 
 # (id, expected_at_160x45, expected_at_235x52, expected_at_120x30) where
 # expected is "hittable" | "hidden" | "clipped" -- filled from throwaway
@@ -106,6 +108,44 @@ async def make_console_pilot(*, size):
         await _wait_for_selector(console, pilot, "#console-native-composer")
         await pilot.pause(0.2)
         yield pilot
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("stacked", "left_width", "right_width", "left_label", "right_label"),
+    [
+        (False, 13, 11, "Context ▸", "Inspector"),
+        (True, 3, 3, "C\no\nn\nt\ne\nx\nt", "I\nn\ns\np\ne\nc\nt\no\nr"),
+    ],
+)
+async def test_fresh_console_composes_saved_rail_label_style(
+    stacked, left_width, right_width, left_label, right_label
+):
+    """A fresh Console reads the saved style for both collapsed handles."""
+    app = _build_test_app()
+    app.app_config.setdefault("console", {})[
+        "stack_collapsed_rail_labels"
+    ] = stacked
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 45)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        left = console.query_one(
+            "#console-context-rail-handle", ConsoleRailHandle
+        )
+        right = console.query_one(
+            "#console-inspector-rail-handle", ConsoleRailHandle
+        )
+        left_button = console.query_one("#console-context-rail-open", Button)
+        right_button = console.query_one("#console-inspector-rail-open", Button)
+
+        assert left.styles.width.value == left_width
+        assert right.styles.width.value == right_width
+        assert left._display_label() == left_label
+        assert right._display_label() == right_label
+        assert left_button.tooltip == "Open Context rail"
+        assert right_button.tooltip == "Open Inspector rail"
 
 
 @pytest.mark.asyncio

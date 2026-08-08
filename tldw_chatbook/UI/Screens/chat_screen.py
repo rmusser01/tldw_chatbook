@@ -12352,6 +12352,7 @@ class ChatScreen(BaseAppScreen):
                 )
             )
             workspace_grid.styles.min_height = 0
+            stack_rail_labels = self._stack_collapsed_rail_labels()
             with workspace_grid:
                 left_handle = ConsoleRailHandle(
                     label=rail_state.left_label,
@@ -12359,10 +12360,12 @@ class ChatScreen(BaseAppScreen):
                     button_id="console-context-rail-open",
                     badge_id="console-context-rail-badge",
                     side="left",
-                    vertical=True,
+                    vertical=stack_rail_labels,
                     id="console-context-rail-handle",
                 )
-                left_handle_width = ConsoleRailHandle.VERTICAL_WIDTH
+                left_handle_width = (
+                    ConsoleRailHandle.VERTICAL_WIDTH if stack_rail_labels else 13
+                )
                 left_handle.styles.width = left_handle_width
                 left_handle.styles.min_width = left_handle_width
                 left_handle.styles.max_width = left_handle_width
@@ -12535,10 +12538,12 @@ class ChatScreen(BaseAppScreen):
                     button_id="console-inspector-rail-open",
                     badge_id="console-inspector-rail-badge",
                     side="right",
-                    vertical=True,
+                    vertical=stack_rail_labels,
                     id="console-inspector-rail-handle",
                 )
-                right_handle_width = ConsoleRailHandle.VERTICAL_WIDTH
+                right_handle_width = (
+                    ConsoleRailHandle.VERTICAL_WIDTH if stack_rail_labels else 11
+                )
                 right_handle.styles.width = right_handle_width
                 right_handle.styles.min_width = right_handle_width
                 right_handle.styles.max_width = right_handle_width
@@ -12614,6 +12619,17 @@ class ChatScreen(BaseAppScreen):
             return True
         return coerce_bool_setting(
             console_config.get("collapse_large_pastes", True), True
+        )
+
+    def _stack_collapsed_rail_labels(self) -> bool:
+        """Return whether fresh collapsed Console handles use stacked labels."""
+        app_config = getattr(self.app_instance, "app_config", {}) or {}
+        console_config = app_config.get("console", {})
+        if not isinstance(console_config, dict):
+            return False
+        return coerce_bool_setting(
+            console_config.get("stack_collapsed_rail_labels", False),
+            False,
         )
 
     def _console_paste_collapse_threshold(self) -> int:
