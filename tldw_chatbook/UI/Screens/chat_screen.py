@@ -15762,6 +15762,20 @@ class ChatScreen(BaseAppScreen):
                 severity="warning",
             )
             return
+        # task-3401.10: the modal player screen is the real playback surface
+        # (audio + sync + seek); the OS player remains as the fallback when
+        # ffmpeg/ffplay are not installed (with one guidance notice).
+        from tldw_chatbook.Media_Playback.player_pipeline import (
+            playback_tools_available,
+        )
+
+        tools_ok, guidance = playback_tools_available()
+        if tools_ok:
+            from tldw_chatbook.UI.Screens.video_player_screen import VideoPlayerScreen
+
+            self.push_screen(VideoPlayerScreen(str(path), title=meta.name))
+            return
+        self.app_instance.notify(guidance, severity="information")
         try:
             if sys.platform == "darwin":
                 subprocess.Popen(["open", str(path)])  # nosec B603 - app-generated path
