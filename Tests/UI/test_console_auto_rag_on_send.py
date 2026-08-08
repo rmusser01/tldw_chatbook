@@ -28,7 +28,7 @@ from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
 )
 from tldw_chatbook.Chat.console_live_work import ConsoleLiveWorkLaunch
-from tldw_chatbook.Chat.rag_scope import EffectiveScope, SCOPE_EMPTY_NOTICE_TEMPLATE
+from tldw_chatbook.Chat.rag_scope import EffectiveScope, scope_empty_notice
 from tldw_chatbook.config import save_setting_to_cli_config
 from tldw_chatbook.Event_Handlers.Chat_Events.chat_rag_events import (
     LocalRagContextResult,
@@ -303,7 +303,7 @@ async def test_empty_scope_short_circuits_with_shared_copy(monkeypatch):
     assert screen._pending_console_launch_context is None
     assert screen.notices == [
         (
-            SCOPE_EMPTY_NOTICE_TEMPLATE.format(cause="deleted-items"),
+            scope_empty_notice("deleted-items"),
             "warning",
         )
     ]
