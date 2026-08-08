@@ -25,6 +25,7 @@ from .item_persist import (
     persist_subscription_item,
 )
 from .watchlist_content_alert_service import WatchlistContentAlertService
+from .watchlist_bundle_service import WatchlistBundleService
 from .watchlist_filter_service import WatchlistFilterService
 from .watchlist_normalizers import (
     WATCHLIST_NAME_SEPARATOR,
@@ -666,6 +667,59 @@ class LocalWatchlistsService:
         except (TypeError, ValueError) as exc:
             raise ValueError(f"Invalid watchlist item id: {item_id!r}") from exc
         self._db().set_item_flagged(row_id, bool(flagged))
+
+    async def find_source_id_by_url(self, url: str) -> int | None:
+        """The id of the source carrying exactly this URL, or `None`.
+
+        TASK-3604 (ADR-043 rule 6): OPML import dedupes against the existing
+        roster through this lookup -- `create_source` is a plain INSERT, so
+        without it a re-import duplicates every feed. Thin delegate to
+        `SubscriptionsDB.get_subscription_id_by_source`.
+
+        Args:
+            url: The exact source URL to match.
+
+        Returns:
+            The subscription's id, or `None` when no row carries it.
+        """
+        return self._db().get_subscription_id_by_source(str(url))
+
+    async def resolve_or_create_watchlist(self, name: str) -> tuple[dict[str, Any], bool]:
+        """The watchlist named `name` (case-insensitive), creating it if missing.
+
+        TASK-3604 (ADR-043 rule 4): OPML folder names map to watchlists by
+        case-insensitive match on the stripped name -- `"AI"` reuses `AI`
+        rather than creating a duplicate the rail cannot tell apart. The
+        membership SQL stays in `WatchlistBundleService`; this is the seam
+        the scope service reaches it through.
+
+        Args:
+            name: The folder's raw name (stripped here).
+
+        Returns:
+            ``(watchlist_dict, created)`` -- `created` is `True` when the
+            watchlist was just inserted.
+
+        Raises:
+            ValueError: If the stripped name is empty.
+        """
+        bundle = WatchlistBundleService(self._db())
+        wanted = str(name).strip()
+        if not wanted:
+            raise ValueError("watchlist name cannot be empty or whitespace-only")
+        for watchlist in bundle.list_watchlists(limit=10000):
+            if str(watchlist.get("name") or "").strip().lower() == wanted.lower():
+                return dict(watchlist), False
+        return bundle.create(wanted), True
+
+    async def add_source_to_watchlist(self, *, watchlist_id: Any, source_id: Any) -> None:
+        """Add a source to a watchlist (idempotent), via the bundle service.
+
+        Args:
+            watchlist_id: The watchlist's row id.
+            source_id: The subscription's bare row id.
+        """
+        WatchlistBundleService(self._db()).add_source(int(watchlist_id), int(source_id))
 
     async def delete_source(self, source_id: Any) -> dict[str, Any]:
         success = self._db().delete_subscription(int(source_id))

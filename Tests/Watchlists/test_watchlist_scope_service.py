@@ -58,6 +58,10 @@ async def test_check_now_delegates_to_launch_run():
 @pytest.mark.asyncio
 async def test_import_opml_creates_local_sources():
     scope_service, local_service, _ = make_scope_service()
+    # TASK-3604: import dedupes by URL first -- a bare AsyncMock would
+    # auto-truthy this lookup and skip creation, so the fixture names the
+    # "nothing exists yet" case explicitly.
+    local_service.find_source_id_by_url = AsyncMock(return_value=None)
     local_service.create_source = AsyncMock(side_effect=[{"id": 1, "name": "A"}, {"id": 2, "name": "B"}])
     xml_text = """<?xml version="1.0"?>
     <opml version="2.0">

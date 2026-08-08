@@ -163,3 +163,61 @@ def test_parse_malformed_xml_still_raises():
 
     with pytest.raises(ET.ParseError):
         WatchlistOpmlService().parse("<opml><body><outline")
+
+
+# --- TASK-3604 plan task 3: import against a real DB ----------------------------
+
+
+@pytest.mark.asyncio
+async def test_import_assigns_membership_and_reimport_is_a_structural_noop(tmp_path):
+    """ADR-043 end to end at the service layer: folders become watchlists,
+    members join them, top-level feeds stay Unassigned -- and importing the
+    same document twice changes nothing."""
+    from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
+    from tldw_chatbook.Subscriptions.local_watchlists_service import (
+        LocalWatchlistsService,
+    )
+    from tldw_chatbook.Subscriptions.watchlist_bundle_service import (
+        WatchlistBundleService,
+    )
+    from tldw_chatbook.Subscriptions.watchlist_scope_service import (
+        WatchlistBackend,
+        WatchlistScopeService,
+    )
+
+    xml = (
+        '<?xml version="1.0"?><opml version="2.0"><body>'
+        '<outline text="Tech">'
+        '<outline text="AI" type="rss" xmlUrl="http://example.com/ai"/>'
+        '<outline text="ML" type="rss" xmlUrl="http://example.com/ml"/>'
+        '</outline>'
+        '<outline text="Loose" type="rss" xmlUrl="http://example.com/loose"/>'
+        "</body></opml>"
+    )
+
+    db = SubscriptionsDB(str(tmp_path / "subs.db"), client_id="test")
+    local = LocalWatchlistsService(db_factory=lambda: db)
+    scope = WatchlistScopeService(local_service=local, server_service=None)
+    bundle = WatchlistBundleService(db)
+
+    result = await scope.import_opml(
+        runtime_backend=WatchlistBackend.LOCAL, xml_text=xml
+    )
+
+    watchlists = bundle.list_watchlists()
+    assert [w["name"] for w in watchlists] == ["Tech"]
+    members = bundle.list_source_rows(watchlists[0]["id"])
+    assert {row["name"] for row in members} == {"AI", "ML"}
+    total_sources = db.conn.execute("SELECT COUNT(*) FROM subscriptions").fetchone()[0]
+    assert total_sources == 3, "the loose feed exists but belongs nowhere"
+    assert result["created"] == 3
+    assert result["assignments"] == 2
+
+    again = await scope.import_opml(
+        runtime_backend=WatchlistBackend.LOCAL, xml_text=xml
+    )
+    assert again["created"] == 0 and again["existing"] == 3
+    assert len(bundle.list_watchlists()) == 1, "no duplicate watchlist"
+    assert len(bundle.list_source_rows(watchlists[0]["id"])) == 2
+    total_sources = db.conn.execute("SELECT COUNT(*) FROM subscriptions").fetchone()[0]
+    assert total_sources == 3, "no duplicate sources"

@@ -2304,6 +2304,27 @@ class SubscriptionsDB(BaseDB):
             ).fetchone()
         return int(row[0]) if row else 0
 
+    def get_subscription_id_by_source(self, source: str) -> Optional[int]:
+        """The id of the subscription with exactly this `source` URL, or None.
+
+        TASK-3604. OPML import resolves each feed against the existing
+        roster before creating anything -- `add_subscription` is a plain
+        INSERT with no uniqueness constraint on `source`, so without this
+        lookup a re-import duplicates every feed and the additive-only
+        round-trip (ADR-043 rule 6) is impossible.
+
+        Args:
+            source: The exact source URL/identifier to match.
+
+        Returns:
+            The subscription's id, or `None` when no row carries it.
+        """
+        with self.transaction() as conn:
+            row = conn.execute(
+                "SELECT id FROM subscriptions WHERE source = ?", (source,)
+            ).fetchone()
+        return int(row[0]) if row else None
+
     def insert_briefing(self, watchlist_id: int, status: str = "generating") -> int:
         """Create a new `briefings` row for a watchlist.
 

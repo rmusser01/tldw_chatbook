@@ -902,12 +902,20 @@ class WatchlistScopeService:
     ) -> dict[str, Any]:
         """Import watchlist sources from an OPML document.
 
+        ADR-043: folder outlines map to watchlists (resolved or created by
+        case-insensitive name), their feeds join as members, top-level
+        feeds stay Unassigned, and a feed URL already in the roster is
+        reused rather than duplicated -- import is additive only.
+
         Args:
             xml_text: Raw OPML XML string.
             runtime_backend: Target backend (``local`` or ``server``).
 
         Returns:
-            Summary with the number of created sources and their records.
+            Summary dict: ``created``/``existing`` source counts, the new
+            ``sources`` records, ``watchlists_created`` /
+            ``watchlists_reused`` name lists, and the membership
+            ``assignments`` count.
 
         Raises:
             ValueError: If the server backend is requested; OPML import is local-only.
@@ -919,10 +927,58 @@ class WatchlistScopeService:
         payloads = WatchlistOpmlService().parse(xml_text)
         service = self._service_for_backend(backend)
         created: list[dict[str, Any]] = []
+        existing_count = 0
+        assignments = 0
+        watchlists_created: list[str] = []
+        watchlists_reused: list[str] = []
+        # Per-folder memo: one resolve per unique folder name (normalized),
+        # so a 40-feed folder costs one lookup, and the summary's
+        # created/reused lists name each watchlist once.
+        resolved_folders: dict[str, dict[str, Any]] = {}
         for payload in payloads:
-            source = await self._maybe_await(service.create_source(payload))
-            created.append(dict(source))
-        return {"created": len(created), "sources": created}
+            # ADR-043 rule 6 (additive only): a feed URL already in the
+            # roster is reused, never duplicated.
+            url = str(payload.get("url") or "")
+            existing_id = None
+            if url:
+                existing_id = await self._maybe_await(
+                    service.find_source_id_by_url(url)
+                )
+            if existing_id is not None:
+                source_id = int(existing_id)
+                existing_count += 1
+            else:
+                source = await self._maybe_await(service.create_source(payload))
+                created.append(dict(source))
+                source_id = source.get("source_id")
+            folder = str(payload.get("folder") or "").strip()
+            if not folder or source_id is None:
+                continue
+            key = folder.lower()
+            if key not in resolved_folders:
+                watchlist, was_created = await self._maybe_await(
+                    service.resolve_or_create_watchlist(folder)
+                )
+                resolved_folders[key] = dict(watchlist)
+                name = str(watchlist.get("name") or folder)
+                if was_created:
+                    watchlists_created.append(name)
+                else:
+                    watchlists_reused.append(name)
+            await self._maybe_await(
+                service.add_source_to_watchlist(
+                    watchlist_id=resolved_folders[key]["id"], source_id=source_id
+                )
+            )
+            assignments += 1
+        return {
+            "created": len(created),
+            "existing": existing_count,
+            "sources": created,
+            "watchlists_created": watchlists_created,
+            "watchlists_reused": watchlists_reused,
+            "assignments": assignments,
+        }
 
     async def export_opml(
         self,
