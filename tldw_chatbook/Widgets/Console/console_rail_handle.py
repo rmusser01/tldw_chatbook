@@ -62,7 +62,11 @@ class ConsoleRailHandle(DestinationRailHandle):
             self.styles.max_width = self.VERTICAL_WIDTH
 
     def compose(self) -> ComposeResult:
-        """Render the base handle with opt-in vertical child geometry."""
+        """Render the base handle with opt-in vertical child geometry.
+
+        Returns:
+            Child widgets with vertical presentation classes when enabled.
+        """
         for child in super().compose():
             if not self.vertical:
                 yield child
@@ -72,8 +76,8 @@ class ConsoleRailHandle(DestinationRailHandle):
                 child.styles.width = self.VERTICAL_CONTENT_WIDTH
                 child.styles.max_width = self.VERTICAL_CONTENT_WIDTH
                 child.styles.height = "1fr"
-                child.styles.min_height = 0
-                child.styles.max_height = None
+                child.styles.clear_rule("min_height")
+                child.styles.clear_rule("max_height")
                 child.styles.line_pad = 0
             elif isinstance(child, Static):
                 child.add_class("console-rail-handle-badge-vertical")

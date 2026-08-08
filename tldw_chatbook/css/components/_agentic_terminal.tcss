@@ -2710,7 +2710,7 @@ with stray left-edge border fragments), and padding 0 1 so the full
     align-horizontal: center;
 }
 
-.console-rail-handle-button-vertical {
+.console-rail-handle-button.console-rail-handle-button-vertical {
     width: 1;
     min-width: 1;
     max-width: 1;

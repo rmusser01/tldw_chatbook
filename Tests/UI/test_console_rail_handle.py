@@ -109,6 +109,10 @@ async def test_vertical_handles_use_bundled_full_height_geometry_and_keep_badge_
         assert right.region.height == host.content_region.height
         assert left.content_region.width == ConsoleRailHandle.VERTICAL_CONTENT_WIDTH
         assert right.content_region.width > ConsoleRailHandle.VERTICAL_CONTENT_WIDTH
+        for button in (left_button, right_button):
+            assert button.styles.min_height.value == 7
+            assert button.styles.max_height.value == 100
+            assert button.styles.max_height.unit.name == "HEIGHT"
         assert left.styles.border.top[0] == "solid"
         assert right.styles.border.top[0] in {"", "none"}
         _assert_content_column_contained(left, left_button)
