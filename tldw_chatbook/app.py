@@ -237,6 +237,7 @@ from tldw_chatbook.Local_Ingestion.stt_batch_routing import (
 from tldw_chatbook.STT.contracts import (
     TRANSCRIPTION_FAILURE_CONTRACT,
     ExecutionDevice,
+    FileAudioSource,
     TranscriptionFailureCode,
 )
 from tldw_chatbook.STT.executor import (
@@ -2835,7 +2836,7 @@ class LibraryIngestQueueMixin:
             generation = executor.submit(
                 attempt_id=attempt_id,
                 job_id=job.job_id,
-                source_path=Path(job.source_path),
+                source=FileAudioSource(Path(job.source_path)),
                 identity=dispatch["identity"],
                 options=options,
                 local_source=dispatch["local_source"],

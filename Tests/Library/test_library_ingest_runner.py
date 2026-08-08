@@ -46,6 +46,7 @@ from tldw_chatbook.Library.library_ingest_jobs import (
 )
 from tldw_chatbook.STT.contracts import (
     ExecutionDevice,
+    FileAudioSource,
     TranscriptionFailureCode,
 )
 from tldw_chatbook.STT.executor import (
@@ -1092,6 +1093,7 @@ async def test_eligible_local_stt_uses_executor_not_general_pool(
 
         assert len(executor.calls) == 1
         assert executor.calls[0]["job_id"] == job.job_id
+        assert executor.calls[0]["source"] == FileAudioSource(source)
         assert executor.calls[0]["options"]["transcription_provider"] == provider
         assert pool.calls == []
 

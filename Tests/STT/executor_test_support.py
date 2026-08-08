@@ -31,6 +31,75 @@ class _FakeResidentRuntime:
         return
 
 
+def _protocol_provider_builder(
+    request: Any,
+    _model_root: Path | None,
+    _managed_handle: Any | None,
+    _is_cancelled: Any,
+) -> Any:
+    """Build a deterministic runtime that exposes both executor source paths."""
+
+    from tldw_chatbook.STT.executor_worker import ProviderRuntime
+
+    def file_runner(audio_path: str, **kwargs: Any) -> dict[str, Any]:
+        return {"audio_path": audio_path, "kwargs": kwargs}
+
+    def buffer_runner(source: Any, *, segment_end_frames: tuple[int, ...]) -> dict[str, Any]:
+        return {
+            "audio_bytes": len(source.audio),
+            "sample_rate": source.sample_rate,
+            "segment_end_frames": segment_end_frames,
+        }
+
+    return ProviderRuntime(
+        runner=file_runner,
+        buffer_runner=(
+            None if request.options.get("test_no_buffer_runner") else buffer_runner
+        ),
+        close=lambda: None,
+    )
+
+
+def _protocol_parse_job(
+    file_path: str | Path,
+    options: dict[str, Any],
+    *,
+    transcription_runner: Any,
+) -> dict[str, Any]:
+    """Expose the exact file-parser inputs in a worker result payload."""
+
+    return {
+        "file_path": str(file_path),
+        "options": dict(options),
+        "runner_payload": transcription_runner(
+            str(file_path),
+            provider=options.get("transcription_provider"),
+        ),
+    }
+
+
+def protocol_executor_worker(
+    connection: Connection,
+    admission_event: Any,
+    cancellation_event: Any,
+    generation: int,
+    scratch_path: str,
+) -> None:
+    """Run the real worker loop with observable file and buffer seams."""
+
+    from tldw_chatbook.STT.executor_worker import _run_executor_worker
+
+    _run_executor_worker(
+        connection,
+        admission_event,
+        cancellation_event,
+        generation,
+        scratch_path,
+        provider_builder=_protocol_provider_builder,
+        parse_job=_protocol_parse_job,
+    )
+
+
 def _fake_provider_builder(
     _request: Any,
     _model_root: Path | None,

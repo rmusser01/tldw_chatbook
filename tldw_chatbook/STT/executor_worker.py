@@ -10,8 +10,10 @@ from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
 
 from .contracts import (
+    BufferAudioSource,
     DeviceFailureOrigin,
     ExecutionDevice,
+    FileAudioSource,
     TranscriptionFailureCode,
     TranscriptionWarningCode,
 )
@@ -42,6 +44,7 @@ class ProviderRuntime:
 
     runner: TranscriptionRunner
     close: Callable[[], None]
+    buffer_runner: Callable[..., dict[str, Any]] | None = None
 
 
 @dataclass(slots=True)
@@ -702,11 +705,24 @@ def _run_executor_worker(
                         WorkerPhase.TRANSCRIBING,
                     )
                 )
-                payload = parse_job(
-                    request.source_path,
-                    dict(request.options),
-                    transcription_runner=resident.provider.runner,
-                )
+                if type(request.source) is FileAudioSource:
+                    payload = parse_job(
+                        request.source.path,
+                        dict(request.options),
+                        transcription_runner=resident.provider.runner,
+                    )
+                elif (
+                    request.identity.provider_id == "parakeet-onnx"
+                    and resident.provider.buffer_runner is not None
+                ):
+                    payload = resident.provider.buffer_runner(
+                        request.source,
+                        segment_end_frames=request.segment_end_frames,
+                    )
+                else:
+                    raise _ProviderLoadFailure(
+                        TranscriptionFailureCode.UNSUPPORTED_CAPABILITY
+                    )
                 if cancellation_event.is_set():
                     connection.send(_cancelled_failure(request))
                     continue

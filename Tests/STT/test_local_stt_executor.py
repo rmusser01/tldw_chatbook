@@ -14,6 +14,7 @@ from Tests.STT.executor_test_support import (
     device_retry_executor_worker,
     fake_executor_worker,
     private_log_executor_worker,
+    protocol_executor_worker,
     resident_executor_worker,
 )
 from tldw_chatbook.Local_Ingestion.stt_batch_routing import (
@@ -22,8 +23,10 @@ from tldw_chatbook.Local_Ingestion.stt_batch_routing import (
 )
 from tldw_chatbook.Model_Artifacts import ArtifactInUseError, ModelArtifactService
 from tldw_chatbook.STT.contracts import (
+    BufferAudioSource,
     DeviceFailureOrigin,
     ExecutionDevice,
+    FileAudioSource,
     ProducedCapabilities,
     TimestampGranularity,
     TranscriptionFailureCode,
@@ -77,7 +80,7 @@ def _request() -> ExecutorRequest:
         generation=3,
         attempt_id="attempt-1",
         job_id="job-1",
-        source_path=Path("/private/media/interview.wav"),
+        source=FileAudioSource(Path("/private/media/interview.wav")),
         identity=_identity(local_snapshot_token=None),
         options={"transcription_model_dir": "/private/models/parakeet"},
         managed_store_root=Path("/private/models/managed"),
@@ -105,6 +108,92 @@ def test_protocol_objects_are_frozen_slotted_and_picklable() -> None:
     assert all(hasattr(type(value), "__slots__") for value in envelopes)
     with pytest.raises(FrozenInstanceError):
         request.generation = 4  # type: ignore[misc]
+
+
+def test_executor_request_accepts_file_and_buffer_sources_without_a_job_id() -> None:
+    file_request = ExecutorRequest(
+        generation=3,
+        attempt_id="file-attempt",
+        job_id=None,
+        source=FileAudioSource(Path("/private/media/interview.wav")),
+        identity=_identity(),
+        options={},
+    )
+    buffer_request = ExecutorRequest(
+        generation=3,
+        attempt_id="buffer-attempt",
+        job_id=None,
+        source=BufferAudioSource(b"\x00\x00\x01\x00", 16_000),
+        identity=_identity(),
+        options={},
+        segment_end_frames=(2,),
+    )
+
+    assert file_request.job_id is None
+    assert type(file_request.source) is FileAudioSource
+    assert buffer_request.segment_end_frames == (2,)
+
+
+@pytest.mark.parametrize(
+    ("source", "segment_end_frames", "error"),
+    [
+        (Path("speech.wav"), (), TypeError),
+        (FileAudioSource(Path("speech.wav")), (1,), ValueError),
+        (BufferAudioSource(b"\x00\x00\x01\x00", 16_000), (0, 2), ValueError),
+        (BufferAudioSource(b"\x00\x00\x01\x00", 16_000), (2, 2), ValueError),
+        (BufferAudioSource(b"\x00\x00\x01\x00", 16_000), (3,), ValueError),
+        (BufferAudioSource(b"\x00\x00\x01\x00", 16_000), (1,), ValueError),
+    ],
+)
+def test_executor_request_rejects_invalid_source_or_buffer_boundaries(
+    source: object,
+    segment_end_frames: tuple[int, ...],
+    error: type[Exception],
+) -> None:
+    with pytest.raises(error):
+        ExecutorRequest(
+            generation=3,
+            attempt_id="attempt-1",
+            job_id=None,
+            source=source,  # type: ignore[arg-type]
+            identity=_identity(),
+            options={},
+            segment_end_frames=segment_end_frames,
+        )
+
+
+def test_executor_request_source_variants_pickle_without_leaking_private_inputs() -> None:
+    snapshot = LocalSourceSnapshot(
+        token="private-snapshot-token",
+        paths=(Path("/private/models/model.onnx"),),
+        identities=((7, 11, 1024, 123456),),
+    )
+    requests = (
+        ExecutorRequest(
+            generation=3,
+            attempt_id="file-attempt",
+            job_id=None,
+            source=FileAudioSource(Path("/private/media/interview.wav")),
+            identity=_identity(),
+            options={"private": "/private/options"},
+            local_source=snapshot,
+        ),
+        ExecutorRequest(
+            generation=3,
+            attempt_id="buffer-attempt",
+            job_id=None,
+            source=BufferAudioSource(b"private-pcm", 16_000, sample_width=1),
+            identity=_identity(),
+            options={},
+            segment_end_frames=(11,),
+        ),
+    )
+
+    assert all(pickle.loads(pickle.dumps(request)) == request for request in requests)
+    rendered = "".join(repr(request) for request in requests)
+    assert "/private/" not in rendered
+    assert "private-pcm" not in rendered
+    assert "private-snapshot-token" not in rendered
 
 
 def test_model_identity_equality_includes_every_residency_component() -> None:
@@ -149,7 +238,7 @@ def test_managed_artifact_reference_is_validated() -> None:
         "generation": 3,
         "attempt_id": "attempt-1",
         "job_id": "job-1",
-        "source_path": Path("media.wav"),
+        "source": FileAudioSource(Path("media.wav")),
         "identity": _identity(),
         "options": {},
         "managed_store_root": Path("store"),
@@ -182,7 +271,7 @@ def test_protocol_rejects_empty_or_invalid_required_identity(
         "generation": 3,
         "attempt_id": "attempt-1",
         "job_id": "job-1",
-        "source_path": Path("media.wav"),
+        "source": FileAudioSource(Path("media.wav")),
         "identity": _identity(),
         "options": {},
     }
@@ -236,7 +325,7 @@ def test_worker_generated_failures_always_offer_provider_recovery(
         generation=request.generation,
         attempt_id=request.attempt_id,
         job_id=request.job_id,
-        source_path=request.source_path,
+        source=request.source,
         identity=_identity(provider_id=provider_id, local_snapshot_token=None),
         options={},
     )
@@ -299,6 +388,15 @@ def _executor(*, completed_job_limit: int = 20) -> LocalSTTExecutor:
     )
 
 
+def _protocol_executor() -> LocalSTTExecutor:
+    return LocalSTTExecutor(
+        worker_target=protocol_executor_worker,
+        startup_timeout=5.0,
+        graceful_shutdown_timeout=0.2,
+        force_stop_timeout=2.0,
+    )
+
+
 def _submit(
     executor: LocalSTTExecutor,
     callbacks: _Callbacks,
@@ -311,7 +409,7 @@ def _submit(
     return executor.submit(
         attempt_id=attempt_id,
         job_id=f"job-{attempt_id}",
-        source_path=Path("fixture.wav"),
+        source=FileAudioSource(Path("fixture.wav")),
         identity=identity or _identity(root_revision=None, closure_fingerprint=None),
         options={"test_mode": mode},
         on_event=callbacks.on_event,
@@ -330,6 +428,108 @@ def _wait_until(predicate: object, timeout: float = 10.0) -> None:
     while not predicate() and time.monotonic() < deadline:  # type: ignore[operator]
         time.sleep(0.01)
     assert predicate()  # type: ignore[operator]
+
+
+def test_worker_file_source_uses_existing_parser_with_path_options_and_runner() -> None:
+    executor = _protocol_executor()
+    callbacks = _Callbacks()
+    source = FileAudioSource(Path("/private/audio/file.wav"))
+    options = {"transcription_provider": "parakeet-onnx", "timestamps": False}
+    try:
+        executor.submit(
+            attempt_id="file-attempt",
+            job_id="file-job",
+            source=source,
+            identity=_identity(root_revision=None, closure_fingerprint=None),
+            options=options,
+            on_result=callbacks.on_result,
+            on_failure=callbacks.on_failure,
+        )
+        _wait_for_terminal(callbacks)
+    finally:
+        executor.close()
+
+    assert callbacks.failures == []
+    assert callbacks.results[0].payload == {
+        "file_path": "/private/audio/file.wav",
+        "options": options,
+        "runner_payload": {
+            "audio_path": "/private/audio/file.wav",
+            "kwargs": {"provider": "parakeet-onnx"},
+        },
+    }
+
+
+def test_worker_buffer_source_bypasses_file_parser_and_returns_buffer_payload() -> None:
+    executor = _protocol_executor()
+    callbacks = _Callbacks()
+    source = BufferAudioSource(b"\x00\x00\x01\x00", 16_000)
+    try:
+        executor.submit(
+            attempt_id="buffer-attempt",
+            job_id=None,
+            source=source,
+            identity=_identity(root_revision=None, closure_fingerprint=None),
+            options={},
+            segment_end_frames=(2,),
+            on_result=callbacks.on_result,
+            on_failure=callbacks.on_failure,
+        )
+        _wait_for_terminal(callbacks)
+    finally:
+        executor.close()
+
+    assert callbacks.failures == []
+    assert callbacks.results[0].payload == {
+        "audio_bytes": 4,
+        "sample_rate": 16_000,
+        "segment_end_frames": (2,),
+    }
+
+
+@pytest.mark.parametrize(
+    ("identity", "options"),
+    [
+        (
+            _identity(
+                provider_id="transcribe-cpp",
+                model_id="local-gguf:whisper",
+                precision="native",
+                root_revision=None,
+                closure_fingerprint=None,
+            ),
+            {},
+        ),
+        (
+            _identity(root_revision=None, closure_fingerprint=None),
+            {"test_no_buffer_runner": True},
+        ),
+    ],
+)
+def test_worker_rejects_buffer_without_parakeet_buffer_capability(
+    identity: ModelIdentity,
+    options: dict[str, object],
+) -> None:
+    executor = _protocol_executor()
+    callbacks = _Callbacks()
+    try:
+        executor.submit(
+            attempt_id="unsupported-buffer",
+            job_id=None,
+            source=BufferAudioSource(b"\x00\x00", 16_000),
+            identity=identity,
+            options=options,
+            segment_end_frames=(1,),
+            on_result=callbacks.on_result,
+            on_failure=callbacks.on_failure,
+        )
+        _wait_for_terminal(callbacks)
+    finally:
+        executor.close()
+
+    assert callbacks.results == []
+    assert callbacks.failures[0].code is TranscriptionFailureCode.UNSUPPORTED_CAPABILITY
+    assert callbacks.failures[0].recovery_actions == ("retry_faster_whisper",)
 
 
 def test_controller_starts_lazily_and_reuses_same_worker_for_same_identity() -> None:
@@ -643,7 +843,7 @@ def test_cpu_retry_start_failure_delivers_one_terminal_instead_of_stranding(
         executor.submit(
             attempt_id="retry-start-fails",
             job_id="job-retry-start-fails",
-            source_path=Path("fixture.wav"),
+            source=FileAudioSource(Path("fixture.wav")),
             identity=accelerated,
             options={"test_mode": "device_failure"},
             on_event=hold_retry,
@@ -761,7 +961,7 @@ def test_worker_reuses_runtime_and_holds_managed_closure_lease_until_exit(
             executor.submit(
                 attempt_id=attempt_id,
                 job_id=f"job-{attempt_id}",
-                source_path=tmp_path / "fixture.wav",
+                source=FileAudioSource(tmp_path / "fixture.wav"),
                 identity=identity,
                 options={"transcription_provider": "parakeet-onnx"},
                 managed_store_root=tmp_path / "store",
@@ -796,7 +996,7 @@ def test_provider_builder_receives_the_full_verified_managed_handle(
         generation=1,
         attempt_id="managed-handle",
         job_id="job-managed-handle",
-        source_path=tmp_path / "speech.wav",
+        source=FileAudioSource(tmp_path / "speech.wav"),
         identity=identity,
         options={},
         managed_store_root=tmp_path / "store",
@@ -915,7 +1115,7 @@ def test_parakeet_provider_persists_normalized_managed_provenance(
         generation=1,
         attempt_id="attempt-managed",
         job_id="job-managed",
-        source_path=tmp_path / "speech.wav",
+        source=FileAudioSource(tmp_path / "speech.wav"),
         identity=_identity(
             root_revision=root.revision,
             closure_fingerprint="closure",
@@ -929,7 +1129,7 @@ def test_parakeet_provider_persists_normalized_managed_provenance(
     )
 
     provider = _parakeet_provider(request, model_root, handle, lambda: False)
-    payload = provider.runner(str(request.source_path))
+    payload = provider.runner(str(request.source.path))
 
     assert captured["load"]["model_root"] == model_root
     assert captured["load"]["vad_root"] == vad_root
@@ -1002,7 +1202,7 @@ def test_parakeet_failure_survives_media_parse_and_executor_envelope(
         generation=1,
         attempt_id="attempt-parakeet-failure",
         job_id="job-parakeet-failure",
-        source_path=source,
+        source=FileAudioSource(source),
         identity=_identity(
             root_revision=root.revision,
             closure_fingerprint="closure",
@@ -1134,7 +1334,7 @@ def test_parakeet_runtime_failures_preserve_normalized_failed_attempt(
         generation=1,
         attempt_id="attempt-failure",
         job_id="job-failure",
-        source_path=tmp_path / "speech.wav",
+        source=FileAudioSource(tmp_path / "speech.wav"),
         identity=_identity(
             model_id=model_id,
             root_revision=root.revision,
@@ -1150,7 +1350,7 @@ def test_parakeet_runtime_failures_preserve_normalized_failed_attempt(
     try:
         provider = _parakeet_provider(request, model_root, handle, lambda: False)
         provider.runner(
-            str(request.source_path),
+            str(request.source.path),
             attempt_id="attempt-current",
             batch_id="batch-current",
             job_id="job-current",
@@ -1200,7 +1400,7 @@ def test_loaded_residency_is_reported_before_first_parse_failure(
         first_generation = executor.submit(
             attempt_id="first-fails",
             job_id="job-first-fails",
-            source_path=tmp_path / "fixture.wav",
+            source=FileAudioSource(tmp_path / "fixture.wav"),
             identity=original,
             options={
                 "transcription_provider": "parakeet-onnx",
@@ -1216,7 +1416,7 @@ def test_loaded_residency_is_reported_before_first_parse_failure(
         second_generation = executor.submit(
             attempt_id="second-succeeds",
             job_id="job-second-succeeds",
-            source_path=tmp_path / "fixture.wav",
+            source=FileAudioSource(tmp_path / "fixture.wav"),
             identity=changed,
             options={"transcription_provider": "parakeet-onnx"},
             on_result=second.on_result,
@@ -1239,7 +1439,7 @@ def test_worker_crash_releases_managed_closure_lease(tmp_path: Path) -> None:
         executor.submit(
             attempt_id="crash",
             job_id="job-crash",
-            source_path=tmp_path / "fixture.wav",
+            source=FileAudioSource(tmp_path / "fixture.wav"),
             identity=identity,
             options={
                 "transcription_provider": "parakeet-onnx",
@@ -1271,7 +1471,7 @@ def test_force_stop_releases_managed_closure_lease(tmp_path: Path) -> None:
         executor.submit(
             attempt_id="held",
             job_id="job-held",
-            source_path=tmp_path / "fixture.wav",
+            source=FileAudioSource(tmp_path / "fixture.wav"),
             identity=identity,
             options={
                 "transcription_provider": "parakeet-onnx",
@@ -1320,7 +1520,7 @@ def test_worker_revalidates_unmanaged_local_snapshot_before_reuse(
         executor.submit(
             attempt_id="one",
             job_id="job-one",
-            source_path=tmp_path / "fixture.wav",
+            source=FileAudioSource(tmp_path / "fixture.wav"),
             identity=identity,
             options={"transcription_provider": "parakeet-onnx"},
             local_source=snapshot,
@@ -1332,7 +1532,7 @@ def test_worker_revalidates_unmanaged_local_snapshot_before_reuse(
         executor.submit(
             attempt_id="two",
             job_id="job-two",
-            source_path=tmp_path / "fixture.wav",
+            source=FileAudioSource(tmp_path / "fixture.wav"),
             identity=identity,
             options={"transcription_provider": "parakeet-onnx"},
             local_source=snapshot,
