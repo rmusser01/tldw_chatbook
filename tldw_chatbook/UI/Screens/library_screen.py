@@ -15831,7 +15831,7 @@ class LibraryScreen(BaseAppScreen):
     def handle_library_prompt_copy(self, event: Button.Pressed) -> None:
         """Copy the live Prompt/Recipe working copy as canonical Markdown."""
         event.stop()
-        if self._library_prompts_view != "editor" or not self._selected_prompt_id:
+        if self._library_prompts_view != "editor":
             return
         if self._library_prompt_action_artifact_type() is None:
             self._notify_library_prompt_unsupported_artifact_type()
@@ -15891,7 +15891,13 @@ class LibraryScreen(BaseAppScreen):
         """
         editor_state = self._current_library_prompt_editor_state()
         block_state = self._library_prompt_block_state
-        if block_state is not None and editor_state.definition_state == "supported_v2":
+        if block_state is not None and (
+            editor_state.definition_state == "supported_v2"
+            or (
+                block_state.system_origin is None
+                and block_state.user_origin is None
+            )
+        ):
             _draft, artifact_payload, _prepared = prepare_prompt_artifact_save(
                 block_state,
                 artifact_type=block_state.artifact_type,

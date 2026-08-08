@@ -3091,6 +3091,137 @@ async def test_library_prompt_copy_and_delete_fail_closed_for_unknown_future_typ
 
 
 @pytest.mark.asyncio
+async def test_library_prompt_copy_uses_unsaved_legacy_create_working_copy(tmp_path):
+    """A not-yet-saved create copies its live lanes without requiring an ID."""
+    _db, service = _real_prompt_scope_service(tmp_path)
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    host = LibraryHarness(app)
+    copied: list[str] = []
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one(f"#library-row-{LIBRARY_ROW_CREATE_PROMPT}").press()
+        await _wait_for_selector(screen, pilot, "#library-prompt-name")
+        assert screen._selected_prompt_id is None
+
+        screen.query_one("#library-prompt-name", Input).value = "Unsaved create"
+        screen.query_one("#library-prompt-author", Input).value = "Draft author"
+        screen.query_one("#library-prompt-details", Input).value = "Draft details"
+        screen.query_one("#library-prompt-system", TextArea).text = "Draft system"
+        screen.query_one("#library-prompt-user", TextArea).text = "Draft user"
+        screen.query_one("#library-prompt-keywords", Input).value = "draft, live"
+        await pilot.pause()
+
+        screen.app_instance = host
+        host.copy_to_clipboard = copied.append
+        screen.query_one("#library-prompt-copy", Button).press()
+        await pilot.pause()
+
+        assert copied == [
+            render_prompt_markdown(
+                {
+                    "name": "Unsaved create",
+                    "author": "Draft author",
+                    "details": "Draft details",
+                    "system_prompt": "Draft system",
+                    "user_prompt": "Draft user",
+                    "keywords": ["draft", "live"],
+                }
+            )
+        ]
+
+
+@pytest.mark.asyncio
+async def test_library_prompt_copy_uses_unsaved_structured_duplicate_working_copy(
+    tmp_path,
+):
+    """A structured duplicate copies the mounted edited blocks without an ID."""
+    definition = {
+        "kind": "block_prompt",
+        "schema_version": 2,
+        "lanes": [
+            {
+                "id": "system",
+                "blocks": [
+                    {
+                        "id": "role",
+                        "title": "Role",
+                        "syntax": "markdown",
+                        "content": "Original role.",
+                    }
+                ],
+            },
+            {
+                "id": "user",
+                "blocks": [
+                    {
+                        "id": "goal",
+                        "title": "Goal",
+                        "syntax": "markdown",
+                        "content": "Original goal.",
+                    }
+                ],
+            },
+        ],
+    }
+    db, service = _real_prompt_scope_service(tmp_path)
+    prompt_id, _uuid, _msg = db.add_prompt(
+        name="Structured source",
+        author="A",
+        details="d",
+        system_prompt="# Role\n\nOriginal role.",
+        user_prompt="# Goal\n\nOriginal goal.",
+        prompt_format="structured",
+        prompt_schema_version=2,
+        prompt_definition=definition,
+        artifact_type="prompt",
+    )
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    host = LibraryHarness(app)
+    copied: list[str] = []
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_prompt_editor(screen, pilot, prompt_id)
+        screen.query_one("#prompt-block-content-role", TextArea).text = "Edited role."
+        await pilot.pause()
+        screen.query_one("#library-prompt-duplicate", Button).press()
+        await pilot.pause()
+
+        assert screen._selected_prompt_id is None
+        block_state = screen._library_prompt_block_state
+        assert block_state is not None
+        assert block_state.definition.lanes[0].blocks[0].content == "Edited role."
+        _draft, artifact_fields, _prepared = prepare_prompt_artifact_save(
+            block_state,
+            artifact_type=block_state.artifact_type,
+            include_recipe_starter_content=True,
+            request_fields={},
+        )
+        expected = render_prompt_markdown(
+            {
+                "name": "Structured source (copy)",
+                "author": "A",
+                "details": "d",
+                "keywords": [],
+                **artifact_fields,
+            }
+        )
+        screen.app_instance = host
+        host.copy_to_clipboard = copied.append
+        screen.query_one("#library-prompt-copy", Button).press()
+        await pilot.pause()
+
+        assert copied == [expected]
+
+
+@pytest.mark.asyncio
 async def test_library_shell_create_prompt_row_opens_blank_editor(tmp_path):
     """D1: the Create rail's "New prompt" row opens the in-canvas editor on
     a blank, not-yet-saved record -- empty fields, meta line reads "New
