@@ -173,4 +173,6 @@ prompt to the Library. See
   item (task-197).
 
 —
-*Verified against TASK-202 @ 414c91d54 — 2026-08-08*
+*TASK-202 behavior and this guide were reverified after the final review
+corrections on 2026-08-08. Verification is tied to the branch history rather
+than a self-referential documentation SHA.*

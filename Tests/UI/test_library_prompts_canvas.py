@@ -2865,9 +2865,10 @@ async def test_library_prompt_copy_preserves_compatibility_structured_metadata(
     tmp_path, artifact_type, schema_version
 ):
     """Copy must preserve raw structured metadata when no editable block exists."""
+    kind = f"foreign_{artifact_type}"
     definition = {
         "schema_version": schema_version,
-        "kind": "future_artifact",
+        "kind": kind,
         "opaque": {"keep": "this definition"},
     }
     db, service = _real_prompt_scope_service(tmp_path)
@@ -2893,35 +2894,216 @@ async def test_library_prompt_copy_preserves_compatibility_structured_metadata(
         await _wait_for_library_shell(screen, pilot)
         await _open_prompt_editor(screen, pilot, prompt_id)
         assert screen._library_prompt_block_state is None
-        detail = screen._library_prompt_detail
-        assert isinstance(detail, dict)
-        expected = render_prompt_markdown(
-            {
-                "name": screen.query_one("#library-prompt-name", Input).value,
-                "author": screen.query_one("#library-prompt-author", Input).value,
-                "details": screen.query_one("#library-prompt-details", Input).value,
-                "system_prompt": screen.query_one(
-                    "#library-prompt-system", TextArea
-                ).text,
-                "user_prompt": screen.query_one("#library-prompt-user", TextArea).text,
-                "keywords": screen.query_one("#library-prompt-keywords", Input).value,
-                **{
-                    key: detail[key]
-                    for key in (
-                        "artifact_type",
-                        "prompt_format",
-                        "prompt_schema_version",
-                        "prompt_definition",
-                    )
-                },
-            }
-        )
+        assert isinstance(screen._library_prompt_detail, dict)
         screen.app_instance = host
         host.copy_to_clipboard = copied.append
         screen.query_one("#library-prompt-copy", Button).press()
         await pilot.pause()
 
-        assert copied == [expected]
+        assert len(copied) == 1
+        assert "### SYSTEM ###\ncompat system\n" in copied[0]
+        assert "### USER ###\ncompat user\n" in copied[0]
+        assert f"### ARTIFACT_TYPE ###\n{artifact_type}\n" in copied[0]
+        assert "### STRUCTURE ###\n```json\n" in copied[0]
+        assert f'"kind":"{kind}"' in copied[0]
+        assert f'"schema_version":{schema_version}' in copied[0]
+        assert '"keep":"this definition"' in copied[0]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("prompt_format", "outer_schema", "raw_definition"),
+    [
+        ("structured", 2, "{malformed-json"),
+        ("structured", 2, "[]"),
+        (
+            "future_structured",
+            2,
+            json.dumps(
+                {
+                    "kind": "block_prompt",
+                    "schema_version": 2,
+                    "lanes": [],
+                    "private_definition": "DO_NOT_DISCLOSE",
+                }
+            ),
+        ),
+        (
+            "legacy",
+            2,
+            json.dumps(
+                {
+                    "kind": "block_prompt",
+                    "schema_version": 2,
+                    "lanes": [],
+                    "private_definition": "DO_NOT_DISCLOSE",
+                }
+            ),
+        ),
+        (
+            "structured",
+            3,
+            json.dumps(
+                {
+                    "kind": "future_prompt",
+                    "schema_version": 2,
+                    "private_definition": "DO_NOT_DISCLOSE",
+                }
+            ),
+        ),
+        (
+            "structured",
+            2,
+            json.dumps(
+                {
+                    "kind": "block_recipe",
+                    "schema_version": 2,
+                    "lanes": [],
+                    "private_definition": "DO_NOT_DISCLOSE",
+                }
+            ),
+        ),
+    ],
+    ids=[
+        "malformed-json",
+        "non-object-json",
+        "unknown-format",
+        "non-structured-format",
+        "schema-mismatch",
+        "artifact-kind-mismatch",
+    ],
+)
+async def test_library_prompt_copy_and_export_reject_unrepresentable_metadata(
+    tmp_path, prompt_format, outer_schema, raw_definition
+):
+    """Copy/Export cannot flatten modern metadata the Markdown grammar loses."""
+    db, service = _real_prompt_scope_service(tmp_path)
+    prompt_id, _uuid, _msg = db.add_prompt(
+        name="Private metadata",
+        author="A",
+        details="d",
+        system_prompt="SECRET_SYSTEM_BODY",
+        user_prompt="SECRET_USER_BODY",
+        prompt_format="structured",
+        prompt_schema_version=outer_schema,
+        prompt_definition=raw_definition,
+        artifact_type="prompt",
+    )
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    host = LibraryHarness(app)
+    copied: list[str] = []
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_prompt_editor(screen, pilot, prompt_id)
+        if prompt_format != "structured":
+            assert isinstance(screen._library_prompt_detail, dict)
+            screen._library_prompt_detail["prompt_format"] = prompt_format
+            screen._library_prompt_block_state = None
+        screen.app_instance = host
+        host.copy_to_clipboard = copied.append
+
+        host._notifications.clear()
+        screen.query_one("#library-prompt-copy", Button).press()
+        await pilot.pause()
+
+        assert copied == []
+        assert [notice.message for notice in host._notifications] == [
+            "This structured artifact cannot be represented as Markdown "
+            "without losing metadata. Use Convert and save as a new Prompt first."
+        ]
+        assert [notice.severity for notice in host._notifications] == ["warning"]
+        copy_notices = list(host._notifications)
+        assert all(
+            private not in copy_notices[0].message
+            for private in (
+                "SECRET_SYSTEM_BODY",
+                "SECRET_USER_BODY",
+                "DO_NOT_DISCLOSE",
+                "malformed-json",
+                "ValueError",
+            )
+        )
+
+        host._notifications.clear()
+        stack_size = len(host.screen_stack)
+        screen.query_one("#library-prompt-export", Button).press()
+        await pilot.pause()
+
+        assert len(host.screen_stack) == stack_size
+        assert not any(isinstance(item, FileSave) for item in host.screen_stack)
+        assert [notice.message for notice in host._notifications] == [
+            "This structured artifact cannot be represented as Markdown "
+            "without losing metadata. Use Convert and save as a new Prompt first."
+        ]
+        export_notices = list(host._notifications)
+        assert all(
+            private not in export_notices[0].message
+            for private in (
+                "SECRET_SYSTEM_BODY",
+                "SECRET_USER_BODY",
+                "DO_NOT_DISCLOSE",
+                "malformed-json",
+                "ValueError",
+            )
+        )
+
+
+@pytest.mark.asyncio
+async def test_library_prompt_export_preserves_representable_foreign_recipe(tmp_path):
+    """A foreign Recipe with agreeing metadata remains exportable without conversion."""
+    definition = {
+        "kind": "foreign_recipe",
+        "schema_version": 3,
+        "opaque": {"keep": "FOREIGN_RECIPE_DEFINITION"},
+    }
+    db, service = _real_prompt_scope_service(tmp_path)
+    prompt_id, _uuid, _msg = db.add_prompt(
+        name="Foreign Recipe",
+        author="A",
+        details="d",
+        system_prompt="foreign system",
+        user_prompt="foreign user",
+        prompt_format="structured",
+        prompt_schema_version=3,
+        prompt_definition=definition,
+        artifact_type="recipe",
+    )
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    host = LibraryHarness(app)
+    destination = tmp_path / "foreign-recipe.md"
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_prompt_editor(screen, pilot, prompt_id)
+        screen.query_one("#library-prompt-export", Button).press()
+        for _ in range(150):
+            if isinstance(host.screen_stack[-1], FileSave):
+                break
+            await pilot.pause(0.02)
+        dialog = host.screen_stack[-1]
+        assert isinstance(dialog, FileSave)
+
+        dialog.dismiss(destination)
+        for _ in range(150):
+            if destination.exists():
+                break
+            await pilot.pause(0.02)
+
+        assert destination.exists()
+        exported = destination.read_text(encoding="utf-8")
+        assert "### SYSTEM ###\nforeign system\n" in exported
+        assert "### USER ###\nforeign user\n" in exported
+        assert "### ARTIFACT_TYPE ###\nrecipe\n" in exported
+        assert '"kind":"foreign_recipe"' in exported
+        assert '"schema_version":3' in exported
+        assert '"keep":"FOREIGN_RECIPE_DEFINITION"' in exported
 
 
 @pytest.mark.asyncio
@@ -3230,6 +3412,126 @@ async def test_library_prompt_copy_and_delete_fail_closed_for_unknown_future_typ
             "This artifact type is unsupported."
         ]
         assert db.fetch_prompt_details(prompt_id) is not None
+
+
+@pytest.mark.asyncio
+async def test_library_prompt_export_and_duplicate_fail_closed_for_unknown_future_type(
+    tmp_path,
+):
+    """Export/Duplicate share the explicit Prompt/Recipe admission boundary."""
+    db, service = _real_prompt_scope_service(tmp_path)
+    prompt_id, _uuid, _msg = db.add_prompt(
+        name="Future artifact",
+        author="A",
+        details="PRIVATE_DETAILS",
+        system_prompt="PRIVATE_SYSTEM",
+        user_prompt="PRIVATE_USER",
+    )
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_prompt_editor(screen, pilot, prompt_id)
+        assert isinstance(screen._library_prompt_detail, dict)
+        screen._library_prompt_detail["artifact_type"] = "future_prompt"
+        original_detail = dict(screen._library_prompt_detail)
+        original_block_state = screen._library_prompt_block_state
+        screen.app_instance = host
+
+        host._notifications.clear()
+        stack_size = len(host.screen_stack)
+        screen.query_one("#library-prompt-export", Button).press()
+        await pilot.pause()
+
+        assert len(host.screen_stack) == stack_size
+        assert not any(isinstance(item, FileSave) for item in host.screen_stack)
+        assert [notice.message for notice in host._notifications] == [
+            "This artifact type is unsupported."
+        ]
+
+        host._notifications.clear()
+        screen.query_one("#library-prompt-duplicate", Button).press()
+        await pilot.pause()
+
+        assert screen._selected_prompt_id == prompt_id
+        assert screen._library_prompt_detail == original_detail
+        assert screen._library_prompt_block_state is original_block_state
+        assert db.fetch_prompt_details(prompt_id) is not None
+        assert db.fetch_prompt_details("Future artifact (copy)") is None
+        assert [notice.message for notice in host._notifications] == [
+            "This artifact type is unsupported."
+        ]
+        duplicate_notices = list(host._notifications)
+        assert all(
+            private not in duplicate_notices[0].message
+            for private in ("PRIVATE_DETAILS", "PRIVATE_SYSTEM", "PRIVATE_USER")
+        )
+
+
+@pytest.mark.asyncio
+async def test_library_prompt_duplicate_requires_conversion_for_compatibility_artifact(
+    tmp_path,
+):
+    """A compatibility duplicate cannot silently become a legacy Prompt draft."""
+    definition = {
+        "kind": "foreign_recipe",
+        "schema_version": 1,
+        "opaque": {"private": "DO_NOT_DISCLOSE"},
+    }
+    db, service = _real_prompt_scope_service(tmp_path)
+    prompt_id, _uuid, _msg = db.add_prompt(
+        name="Compatibility recipe",
+        author="A",
+        details="PRIVATE_DETAILS",
+        system_prompt="PRIVATE_SYSTEM",
+        user_prompt="PRIVATE_USER",
+        prompt_format="structured",
+        prompt_schema_version=1,
+        prompt_definition=definition,
+        artifact_type="recipe",
+    )
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_prompt_editor(screen, pilot, prompt_id)
+        assert screen._library_prompt_block_state is None
+        assert screen._current_library_prompt_editor_state().definition_state == (
+            "foreign_v1"
+        )
+        original_detail = dict(screen._library_prompt_detail)
+        screen.app_instance = host
+
+        host._notifications.clear()
+        screen.query_one("#library-prompt-duplicate", Button).press()
+        await pilot.pause()
+
+        assert screen._selected_prompt_id == prompt_id
+        assert screen._library_prompt_detail == original_detail
+        assert screen._library_prompt_block_state is None
+        assert db.fetch_prompt_details("Compatibility recipe (copy)") is None
+        assert [notice.message for notice in host._notifications] == [
+            "Convert this compatibility artifact and save it as a new Prompt "
+            "before duplicating."
+        ]
+        duplicate_notices = list(host._notifications)
+        assert all(
+            private not in duplicate_notices[0].message
+            for private in (
+                "PRIVATE_DETAILS",
+                "PRIVATE_SYSTEM",
+                "PRIVATE_USER",
+                "DO_NOT_DISCLOSE",
+            )
+        )
 
 
 @pytest.mark.asyncio

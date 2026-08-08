@@ -175,6 +175,7 @@ from ...Library.library_skills_state import (
     compose_skill_markdown,
 )
 from ...Prompt_Management.prompt_markdown_export import render_prompt_markdown
+from ...Prompt_Management.prompt_artifact_codec import deserialize_definition
 from ...Prompt_Management.prompt_artifact_models import ArtifactType
 from ...Prompt_Management.prompt_source_capabilities import (
     PromptSourceCapabilities,
@@ -15817,21 +15818,18 @@ class LibraryScreen(BaseAppScreen):
         """
         if self._library_prompts_view != "editor" or not self._selected_prompt_id:
             return
+        if self._library_prompt_action_artifact_type() is None:
+            self._notify_library_prompt_unsupported_artifact_type()
+            return
         fields = self._read_library_prompt_editor_fields()
         if fields is None:
             return
         name, author, details, system_prompt, user_prompt, keywords_text = fields
         prompt_id = self._selected_prompt_id
-        try:
-            artifact_fields = self._library_prompt_artifact_fields()
-        except ValueError:
-            notify = getattr(self.app_instance, "notify", None)
-            if callable(notify):
-                notify(
-                    "Fix block validation errors before exporting; "
-                    "the structured artifact was not downgraded.",
-                    severity="warning",
-                )
+        artifact_fields = self._library_prompt_markdown_artifact_fields(
+            action="exporting"
+        )
+        if artifact_fields is None:
             return
         # Same inline sanitize-for-filename technique as
         # ``_export_library_note``'s ``safe_title`` -- alnum/space/-/_ only,
@@ -15887,17 +15885,12 @@ class LibraryScreen(BaseAppScreen):
             "user_prompt": user_prompt,
             "keywords": self._library_note_keywords_from_input(keywords_text) or [],
         }
-        try:
-            detail.update(self._library_prompt_artifact_fields())
-        except ValueError:
-            notify = getattr(self.app_instance, "notify", None)
-            if callable(notify):
-                notify(
-                    "Fix block validation errors before copying; "
-                    "the structured artifact was not downgraded.",
-                    severity="warning",
-                )
+        artifact_fields = self._library_prompt_markdown_artifact_fields(
+            action="copying"
+        )
+        if artifact_fields is None:
             return
+        detail.update(artifact_fields)
 
         notify = getattr(self.app_instance, "notify", None)
         copy_to_clipboard = getattr(self.app_instance, "copy_to_clipboard", None)
@@ -15910,10 +15903,6 @@ class LibraryScreen(BaseAppScreen):
         try:
             copy_to_clipboard(render_prompt_markdown(detail))
         except Exception as exc:
-            logger.warning(
-                "Failed to copy Library prompt {} to clipboard.",
-                self._selected_prompt_id,
-            )
             if callable(notify):
                 notify(f"Error copying prompt: {type(exc).__name__}", severity="error")
             return
@@ -15967,6 +15956,84 @@ class LibraryScreen(BaseAppScreen):
             )
             if key in detail
         }
+
+    def _library_prompt_markdown_artifact_fields(
+        self, *, action: Literal["copying", "exporting"]
+    ) -> dict[str, Any] | None:
+        """Admit only working copies the Markdown grammar can preserve."""
+        detail = self._library_prompt_detail
+        if isinstance(detail, Mapping):
+            has_modern_metadata = (
+                detail.get("prompt_schema_version") is not None
+                or detail.get("prompt_definition") is not None
+            )
+            if has_modern_metadata and detail.get("prompt_format") != "structured":
+                self._notify_library_prompt_unrepresentable_markdown()
+                return None
+        try:
+            artifact_fields = self._library_prompt_artifact_fields()
+        except ValueError:
+            notify = getattr(self.app_instance, "notify", None)
+            if callable(notify):
+                notify(
+                    f"Fix block validation errors before {action}; "
+                    "the structured artifact was not downgraded.",
+                    severity="warning",
+                )
+            return None
+        if not artifact_fields:
+            return {}
+
+        artifact_type = self._library_prompt_action_artifact_type()
+        definition = deserialize_definition(
+            artifact_fields.get("prompt_definition")
+        )
+        outer_schema = artifact_fields.get("prompt_schema_version")
+        definition_schema = (
+            definition.get("schema_version") if definition is not None else None
+        )
+        definition_kind = definition.get("kind") if definition is not None else None
+        definition_kind_owner: ArtifactType | None = None
+        if isinstance(definition_kind, str):
+            if definition_kind.endswith("_prompt"):
+                definition_kind_owner = "prompt"
+            elif definition_kind.endswith("_recipe"):
+                definition_kind_owner = "recipe"
+        if (
+            definition is not None
+            and definition.get("definition_kind") == "single_text_recipe"
+        ):
+            definition_kind_owner = "recipe"
+
+        representable = (
+            artifact_type in {"prompt", "recipe"}
+            and artifact_fields.get("artifact_type") == artifact_type
+            and artifact_fields.get("prompt_format") == "structured"
+            and definition is not None
+            and type(outer_schema) is int
+            and type(definition_schema) is int
+            and outer_schema == definition_schema
+            and (
+                definition_kind_owner is None
+                or definition_kind_owner == artifact_type
+            )
+        )
+        if representable:
+            return artifact_fields
+
+        self._notify_library_prompt_unrepresentable_markdown()
+        return None
+
+    def _notify_library_prompt_unrepresentable_markdown(self) -> None:
+        """Report metadata loss without exposing artifact content or errors."""
+        notify = getattr(self.app_instance, "notify", None)
+        if callable(notify):
+            notify(
+                "This structured artifact cannot be represented as Markdown "
+                "without losing metadata. Use Convert and save as a new Prompt "
+                "first.",
+                severity="warning",
+            )
 
     def _library_prompt_action_artifact_type(self) -> ArtifactType | None:
         """Return a supported explicit type, preserving missing legacy type as Prompt."""
@@ -16060,8 +16127,10 @@ class LibraryScreen(BaseAppScreen):
         try:
             validated_path.write_text(render_prompt_markdown(detail), encoding="utf-8")
         except Exception as exc:
-            logger.opt(exception=True).warning(
-                f"Error exporting Library prompt {prompt_id!r} to '{validated_path}'."
+            logger.warning(
+                "Failed to export Library prompt {} (category={}).",
+                prompt_id,
+                type(exc).__name__,
             )
             if callable(notify):
                 notify(
@@ -16094,12 +16163,27 @@ class LibraryScreen(BaseAppScreen):
         event.stop()
         if self._library_prompts_view != "editor":
             return
+        if self._library_prompt_action_artifact_type() is None:
+            self._notify_library_prompt_unsupported_artifact_type()
+            return
         fields = self._read_library_prompt_editor_fields()
         if fields is None:
             return
         name, author, details, system_prompt, user_prompt, keywords_text = fields
         editor_state = self._current_library_prompt_editor_state()
         block_state = self._library_prompt_block_state
+        if (
+            not self._library_prompt_detached_structured
+            and editor_state.definition_state not in {"legacy", "supported_v2"}
+        ):
+            notify = getattr(self.app_instance, "notify", None)
+            if callable(notify):
+                notify(
+                    "Convert this compatibility artifact and save it as a new "
+                    "Prompt before duplicating.",
+                    severity="warning",
+                )
+            return
         detached_structured = block_state is not None and (
             editor_state.definition_state == "supported_v2"
             or self._library_prompt_detached_structured
