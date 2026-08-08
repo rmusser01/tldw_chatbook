@@ -295,3 +295,88 @@ async def test_list_items_forwards_search_and_since():
         is_flagged=None,
         search="retrieval rubric", since="2026-08-08T00:00:00+00:00",
     )
+
+
+# --- TASK-3604 plan task 3: import assigns folder membership -------------------
+
+
+_FOLDERED_OPML = (
+    '<?xml version="1.0"?><opml version="2.0"><body>'
+    '<outline text="Tech">'
+    '<outline text="AI" type="rss" xmlUrl="http://example.com/ai"/>'
+    '<outline text="ML" type="rss" xmlUrl="http://example.com/ml"/>'
+    '</outline>'
+    '<outline text="Loose" type="rss" xmlUrl="http://example.com/loose"/>'
+    "</body></opml>"
+)
+
+
+@pytest.mark.asyncio
+async def test_import_opml_assigns_folder_membership():
+    """Foldered feeds join the folder's watchlist; top-level feeds stay
+    Unassigned; the summary says what happened."""
+    scope_service, local_service, _ = make_scope_service()
+    local_service.find_source_id_by_url = AsyncMock(return_value=None)
+    local_service.create_source = AsyncMock(
+        side_effect=[
+            {"id": "local:subscription:1", "source_id": 1},
+            {"id": "local:subscription:2", "source_id": 2},
+            {"id": "local:subscription:3", "source_id": 3},
+        ]
+    )
+    local_service.resolve_or_create_watchlist = AsyncMock(
+        return_value=({"id": 9, "name": "Tech"}, True)
+    )
+    local_service.add_source_to_watchlist = AsyncMock()
+
+    result = await scope_service.import_opml(
+        runtime_backend=WatchlistBackend.LOCAL, xml_text=_FOLDERED_OPML
+    )
+
+    local_service.resolve_or_create_watchlist.assert_awaited_once_with("Tech")
+    assigned = {
+        call.kwargs["source_id"]
+        for call in local_service.add_source_to_watchlist.await_args_list
+    }
+    assert assigned == {1, 2}, "the two foldered feeds, and only they"
+    assert all(
+        call.kwargs["watchlist_id"] == 9
+        for call in local_service.add_source_to_watchlist.await_args_list
+    )
+    assert result["created"] == 3
+    assert result["existing"] == 0
+    assert result["watchlists_created"] == ["Tech"]
+    assert result["watchlists_reused"] == []
+    assert result["assignments"] == 2
+
+
+@pytest.mark.asyncio
+async def test_import_opml_reuses_existing_sources_by_url():
+    """A feed URL already in the DB is reused, never duplicated -- the
+    additive-only round-trip no-op (ADR-043 rule 6) depends on it."""
+    scope_service, local_service, _ = make_scope_service()
+    local_service.find_source_id_by_url = AsyncMock(return_value=7)
+    local_service.create_source = AsyncMock(
+        side_effect=AssertionError("must not create for a known URL")
+    )
+    local_service.resolve_or_create_watchlist = AsyncMock(
+        return_value=({"id": 9, "name": "Tech"}, False)
+    )
+    local_service.add_source_to_watchlist = AsyncMock()
+
+    one_feed = (
+        '<?xml version="1.0"?><opml version="2.0"><body>'
+        '<outline text="Tech"><outline text="AI" type="rss" xmlUrl="http://example.com/ai"/>'
+        "</outline></body></opml>"
+    )
+    result = await scope_service.import_opml(
+        runtime_backend=WatchlistBackend.LOCAL, xml_text=one_feed
+    )
+
+    local_service.create_source.assert_not_awaited()
+    local_service.add_source_to_watchlist.assert_awaited_once_with(
+        watchlist_id=9, source_id=7
+    )
+    assert result["created"] == 0
+    assert result["existing"] == 1
+    assert result["watchlists_reused"] == ["Tech"]

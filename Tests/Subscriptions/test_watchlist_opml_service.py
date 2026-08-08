@@ -78,3 +78,88 @@ def test_a_c1_control_byte_from_opml_import_is_stripped_at_the_sources_table_cel
         "the surrounding text must still render -- only the control byte is "
         "removed, not the characters around it"
     )
+
+
+# --- TASK-3604 plan task 2: parse preserves folder structure (ADR-043) ---------
+
+
+def test_parse_groups_feeds_under_their_folder():
+    xml = (
+        '<?xml version="1.0"?><opml version="2.0"><body>'
+        '<outline text="Tech">'
+        '<outline text="AI" type="rss" xmlUrl="http://example.com/ai"/>'
+        '<outline text="ML" type="rss" xmlUrl="http://example.com/ml"/>'
+        '</outline>'
+        '<outline text="Loose" type="rss" xmlUrl="http://example.com/loose"/>'
+        "</body></opml>"
+    )
+    items = WatchlistOpmlService().parse(xml)
+    by_url = {item["url"]: item for item in items}
+    assert by_url["http://example.com/ai"]["folder"] == "Tech"
+    assert by_url["http://example.com/ml"]["folder"] == "Tech"
+    assert by_url["http://example.com/loose"]["folder"] is None
+    assert len(items) == 3, "the folder outline itself is not a feed"
+
+
+def test_parse_flattens_nested_folders_to_the_innermost():
+    """ADR-043 rule 2: the folder directly containing the feed wins."""
+    xml = (
+        '<?xml version="1.0"?><opml version="2.0"><body>'
+        '<outline text="Tech"><outline text="AI">'
+        '<outline text="Paperfeed" type="rss" xmlUrl="http://example.com/p"/>'
+        "</outline></outline>"
+        "</body></opml>"
+    )
+    items = WatchlistOpmlService().parse(xml)
+    assert items[0]["folder"] == "AI"
+
+
+def test_parse_a_feed_with_children_is_a_feed_and_children_inherit_its_context():
+    """ADR-043 rule 3: an outline with a feed URL AND children is a feed;
+    its children are evaluated under its folder context, never under a
+    folder of the feed's own making."""
+    xml = (
+        '<?xml version="1.0"?><opml version="2.0"><body>'
+        '<outline text="Tech">'
+        '<outline text="ParentFeed" type="rss" xmlUrl="http://example.com/parent">'
+        '<outline text="ChildFeed" type="rss" xmlUrl="http://example.com/child"/>'
+        '</outline>'
+        '</outline>'
+        "</body></opml>"
+    )
+    items = WatchlistOpmlService().parse(xml)
+    by_url = {item["url"]: item for item in items}
+    assert by_url["http://example.com/parent"]["folder"] == "Tech"
+    assert by_url["http://example.com/child"]["folder"] == "Tech", (
+        "the child inherits the folder context -- ParentFeed is a feed, "
+        "not a folder"
+    )
+
+
+def test_parse_surfaces_folder_names_faithfully():
+    """Case variants surface RAW (the case-insensitive reuse is the
+    assignment layer's job, task 3), and a hostile folder name is a literal
+    string here -- parse is a structural parser, not a sanitizer (the C1
+    test above established that contract for feed names)."""
+    xml = (
+        '<?xml version="1.0"?><opml version="2.0"><body>'
+        '<outline text="AI"><outline text="a" type="rss" xmlUrl="http://example.com/a"/></outline>'
+        '<outline text="ai"><outline text="b" type="rss" xmlUrl="http://example.com/b"/></outline>'
+        '<outline text="&lt;script&gt;x">'
+        '<outline text="c" type="rss" xmlUrl="http://example.com/c"/></outline>'
+        "</body></opml>"
+    )
+    items = WatchlistOpmlService().parse(xml)
+    by_url = {item["url"]: item for item in items}
+    assert by_url["http://example.com/a"]["folder"] == "AI"
+    assert by_url["http://example.com/b"]["folder"] == "ai"
+    assert by_url["http://example.com/c"]["folder"] == "<script>x"
+
+
+def test_parse_malformed_xml_still_raises():
+    """The error path is unchanged: bad XML raises into the dialog's
+    existing handler, never returns a partial import."""
+    import xml.etree.ElementTree as ET
+
+    with pytest.raises(ET.ParseError):
+        WatchlistOpmlService().parse("<opml><body><outline")
