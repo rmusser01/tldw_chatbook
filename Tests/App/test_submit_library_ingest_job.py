@@ -636,6 +636,7 @@ def test_invalid_audio_request_allows_next_job_to_dispatch(
     app._ingest_heavy_lane_max_workers = lambda: 1  # type: ignore[method-assign]
     app._ingest_parse_pool_generation = 1
     app._ingest_parse_jobs_by_generation = {1: set()}
+    app._ingest_local_stt_jobs = {}
     warning_messages: list[str] = []
     monkeypatch.setattr(
         "tldw_chatbook.app.logger.warning",
