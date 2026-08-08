@@ -1208,3 +1208,33 @@ shape (Edit-based, unique marker strings) and READ the red result before
 trusting the green one. Both of these were caught only because the review
 step re-ran the pre-fix code against the new test; neither red-check had been
 done by the author, and both tests were the SOLE pin for their spec clause.
+
+## A regenerated gate artifact is stale the moment something merges ahead of it
+
+**Incident (task-3750, 2026-08-08).** `Docs/security/production-diagnostic-inventory.json`
+is a checked-in artifact that a test regenerates and byte-compares. Its most recent
+regeneration was commit `f990464ed` — and `f990464ed` was `origin/dev`'s tip, where the
+test **failed**. The commit that regenerated the file left it stale on arrival: the
+author ran `--write` on a branch, and the PRs that merged ahead of theirs moved line
+numbers and added diagnostics. Green on the branch, red on dev, nobody at fault.
+
+Two things follow.
+
+1. **"The gate passed on my branch" is not evidence the gate passes on dev** for any
+   test that compares against a regenerated whole-tree artifact. The only honest check
+   is after the final rebase/merge — `test_screen_size_ratchet.py` already says exactly
+   this in a comment ("a budget derived from a stale base fails the moment it merges"),
+   which is how you know it is a repo-wide pattern and not one script's quirk.
+2. **Design these artifacts so unrelated churn cannot invalidate them.** The inventory
+   hashed each logger call's *line number* alongside its text, so any refactor that
+   shifted lines failed a security gate with the call count unchanged and the sink
+   topology byte-identical. Measured on dev: of 47 drifted entries, 28 were pure line
+   movement. A gate that fires on no-ops trains reviewers to regenerate without reading,
+   which destroys exactly the review it exists to force. Key such artifacts on content,
+   and keep multiplicity (a sorted list, never a set) so deletions still register.
+
+**What to do.** Before blessing a regenerated artifact, classify the drift instead of
+running `--write` and staring at a 1,000-line diff: walk each file's history for the
+revision whose digest reproduces the checked-in value, and diff content-vs-position.
+That is what separated the 28 no-ops from the 19 real changes here, and it is what made
+it cheap to actually read the diagnostics being newly blessed.
