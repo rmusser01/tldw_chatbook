@@ -2,7 +2,7 @@
 
 Status: Accepted
 Date: 2026-08-07
-Related Task: [TASK-3603](../tasks/task-3603%20-%20Add-QwenCloud-dual-API-provider-support.md)
+Related Task: [TASK-3771](../tasks/task-3771%20-%20Add-QwenCloud-dual-API-provider-support.md)
 Related Spec: [QwenCloud Dual-API Provider Design](../../Docs/superpowers/specs/2026-08-02-qwencloud-dual-api-provider-design.md)
 
 ## Decision

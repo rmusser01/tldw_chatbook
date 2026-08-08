@@ -1,5 +1,5 @@
 ---
-id: TASK-3603
+id: TASK-3771
 title: Add QwenCloud dual API provider support
 status: In Progress
 assignee:
@@ -46,6 +46,7 @@ or Chat Completions as its external API mode.
 ## Task Identity Note
 
 This task was renumbered from `TASK-1336` after a full remote-ref and worktree
-sweep found an older SoundDevice/VAD task using the same identifier. `TASK-3603`
-was unclaimed in fetched refs, checked worktrees, and QwenCloud pull-request
-searches on 2026-08-07.
+sweep found an older SoundDevice/VAD task using the same identifier. It moved
+again from `TASK-3603` to `TASK-3771` after the completed Watchlists phase 3
+task merged to `dev` with the same identifier. `TASK-3771` was unclaimed across
+all remote refs and checked worktrees on 2026-08-08.
