@@ -505,3 +505,27 @@ is not.
 `app._notifications` (message text + severity + that it is still alive after the
 expected interval), not on the SVG/PNG capture. Use captures for transcript/row
 content only.
+
+---
+
+## A child return code does not prove `asyncio.Process.wait()` can finish when descendants inherit its pipes (TASK-3604, 2026-08-08)
+
+**What happened.** The managed audio.cpp supervisor's injected-process suite was
+green, but the first real subprocess fixture on macOS exposed a cleanup hang. The
+exact child exited and its `returncode` became available; a test-only descendant
+kept the child's inherited stdout/stderr descriptors open. The supervisor's sole
+`Process.wait()` call nevertheless remained pending, so cleanup could not reach
+the output-drain join or generation retirement. Waiting harder, cancelling drain
+readers, or signaling the descendant would either remain unbounded or violate
+the exact-child ownership contract.
+
+**What to do.** Characterize subprocess ownership with a real executable fixture,
+including a descendant that holds inherited stdout/stderr after the owned child
+exits. Keep exactly one reaper task. Once that task observes the exact child's
+return code, immediately invalidate public endpoint, readiness, health, and
+catalog evidence even if `wait()` and pipe cleanup are still pending. Close only
+the parent's pipe transports so the existing wait can finish; independently
+bound and join/cancel the drain tasks. Assert cleanup finishes while the
+descendant is still alive, then let the test finalizer kill only its captured
+fixture PID. Injected launchers remain useful for races, but they cannot prove
+event-loop child-watcher and pipe-transport behavior on the host platform.
