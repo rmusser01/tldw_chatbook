@@ -132,12 +132,13 @@ prompt to the Library. See
 3. **Use a prompt in Console** — open it, press **Use in Console**; you
    land in Console with its user text added to the composer. (Or, from
    Console, type `/prompt <name>`.)
-4. **Duplicate and tweak** — open a Prompt or Recipe, press **Duplicate prompt**,
-   rename the "<name> (copy)" editor that opens, adjust the blocks, then use the
-   enabled save action — the original is untouched.
-5. **Export a Prompt or Recipe as Markdown** — open it, press **Export…**, pick a
-   location in the "Export Prompt as Markdown" dialog; a notice confirms
-   "Prompt exported successfully to <file>".
+4. **Duplicate and tweak** — open a Prompt or losslessly representable Recipe,
+   press **Duplicate prompt**, rename the "<name> (copy)" editor that opens,
+   adjust the blocks, then use the enabled save action — the original is untouched.
+5. **Export a Prompt or Recipe as Markdown** — open a losslessly representable
+   artifact, press **Export…**, and pick a location; a notice confirms the export.
+   A compatibility artifact or legacy Recipe that fails this check requires
+   **Convert and save as a new Prompt** before Copy, Export, or Duplicate.
 
 ## Keyboard & commands
 
