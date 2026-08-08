@@ -3045,3 +3045,74 @@ async def test_r_names_a_failed_source_and_finishes_the_batch():
         assert "1 new items" in toasts[0], (
             "the delta counts what actually arrived"
         )
+
+
+# --- TASK-3603 plan task 6: the hostile-search end-to-end pin ------------------
+
+
+@pytest.mark.asyncio
+async def test_a_hostile_search_query_renders_inert_and_never_raises():
+    """An FTS5-syntax attack typed into the reader's search box: the corpus
+    query treats it as literal text (task 2's quoting), the rows render
+    inert, and nothing raises into the UI."""
+    from textual.widgets import Input
+
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+        db = app.watchlist_bundle_service._db
+        source_id = db.add_subscription(
+            name="[bold red]Evil Feed[/]", type="rss", source="https://evil.example/f"
+        )
+        _seed_item(db, source_id, '[script]alert("x")[/script] daily')
+        await screen._load_items()
+        pane = screen.query_one("#watchlists-items-pane", ArticleListPane)
+        await _wait_for_items(pilot, pane)
+        assert pane.displayed_items(), "precondition"
+
+        for hostile in ('"unbalanced', "[bold red]", "NEAR/1 AND", '"'):
+            # Each reload recomposes the pane and destroys the Input, and the
+            # recompose lands asynchronously -- settle, re-query, and PROVE
+            # propagation through the screen's mirror before waiting on the
+            # reload, exactly the mechanic the task-3 clearing test pinned.
+            await pilot.pause(0.5)
+            screen.query_one("#items-search-input", Input).value = hostile
+            propagated = False
+            for _ in range(80):
+                await pilot.pause(0.05)
+                if screen._items_search_query == hostile:
+                    propagated = True
+                    break
+            assert propagated, f"{hostile!r} must reach the screen's mirror"
+            for _ in range(100):
+                await pilot.pause(0.05)
+                if screen._loaded_items == []:
+                    break
+            assert screen._loaded_items == [], (
+                f"{hostile!r} matches nothing, and crucially did not raise"
+            )
+
+        # And the hostile SOURCE NAME in the surviving rows renders as
+        # literal characters. Settle, re-query (each reload above recomposed
+        # the pane and destroyed the previous Input), and prove the clear
+        # propagated through the screen's mirror before waiting on the
+        # restore -- the mechanic pinned by the clearing test in task 3.
+        await pilot.pause(0.5)
+        screen.query_one("#items-search-input", Input).value = ""
+        for _ in range(80):
+            await pilot.pause(0.05)
+            if screen._items_search_query == "":
+                break
+        for _ in range(100):
+            await pilot.pause(0.05)
+            if len(screen._loaded_items) == 1:
+                break
+        await pilot.pause(0.5)  # let the restore recompose land
+        from textual.widgets import Static
+
+        row_widget = pane._find_row(str(pane.items[0]["id"]))
+        row_text = str(row_widget.query_one(Static).renderable)
+        assert "[bold red]Evil Feed[/]" in row_text
+        assert "[script]" in row_text
