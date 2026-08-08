@@ -14927,6 +14927,18 @@ class LibraryScreen(BaseAppScreen):
             else {}
         )
         detail.update(artifact_fields)
+        for source_field in (
+            "id",
+            "local_id",
+            "server_id",
+            "uuid",
+            "source_id",
+            "version",
+            "created_at",
+            "last_modified",
+            "last_used_at",
+        ):
+            detail.pop(source_field, None)
         self._library_prompt_detail = detail
         self._library_prompt_block_state = converted
         self._library_prompt_detached_structured = True

@@ -2959,6 +2959,14 @@ async def test_library_prompt_copy_after_compatibility_recipe_conversion_uses_pr
         screen.query_one("#library-prompt-convert", Button).press()
         await pilot.pause()
         assert screen._selected_prompt_id is None
+        detached_state = screen._current_library_prompt_editor_state()
+        assert detached_state.prompt_id is None
+        save = screen.query_one("#library-prompt-save", Button)
+        assert str(save.label) == "Save Prompt"
+        assert save.disabled is False
+        assert str(screen.query_one("#library-prompt-meta", Static).renderable) == (
+            "New prompt · • Unsaved changes"
+        )
         converted_content = screen.query_one(
             "#prompt-block-content-legacy-system-1", TextArea
         )
