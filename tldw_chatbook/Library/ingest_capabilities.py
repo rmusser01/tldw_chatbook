@@ -581,9 +581,17 @@ _TYPE_GROUPS: dict[str, TypeGroupCapabilities] = {
                 type="select",
                 default="int8",
                 options=("int8", "f32"),
+                # (task-3305 meta-rule) every select option carries human
+                # copy; this field landed on dev mid-arc, so it is labeled
+                # here rather than at its introduction.
+                option_labels=(
+                    ("int8", "INT8 (smaller · faster)"),
+                    ("f32", "Float32 (full precision)"),
+                ),
                 depends_on="parakeet_onnx",
                 enabled_when="transcription_provider",
                 enabled_when_values=("parakeet-onnx",),
+                disabled_reason="needs the parakeet-onnx provider",
             ),
             OptionField(
                 name="transcription_model",
