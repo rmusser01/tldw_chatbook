@@ -10303,6 +10303,11 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             return
         if self._refresh_all_in_flight:
             return
+        # Set SYNCHRONOUSLY, before the worker is scheduled (PR #1443
+        # review): setting it inside the worker leaves a window where two
+        # rapid `r` presses both pass the check and the second
+        # `exclusive=True` scheduling would cancel the first batch.
+        self._refresh_all_in_flight = True
         self.run_worker(
             self._refresh_all_worker(), exclusive=True, group="wl-refresh-all"
         )
@@ -10317,10 +10322,11 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         batch -- the same fact the rail counts, per the legend -- not a
         per-run archaeology. One toast names the batch's shape (checks,
         new items, failures); the tree counts refresh once, at the end,
-        through the same loader every other writer uses.
+        through the same loader every other writer uses. The in-flight
+        flag is set by the action before this worker is scheduled; the
+        `finally` here is the one reset.
         """
         notify = getattr(self.app_instance, "notify", None)
-        self._refresh_all_in_flight = True
         try:
             eligible = [
                 source

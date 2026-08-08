@@ -1837,7 +1837,7 @@ class SubscriptionsDB(BaseDB):
                 JOIN subscription_items_fts ON subscription_items_fts.rowid = i.id
                 JOIN subscriptions s ON i.subscription_id = s.id
                 {fts_where}
-                ORDER BY COALESCE(i.published_date, i.created_at) DESC
+                ORDER BY COALESCE(datetime(i.published_date), datetime(i.created_at)) DESC
                 LIMIT ?
                 """,
                 tuple([*params, match, limit]),
@@ -1865,7 +1865,7 @@ class SubscriptionsDB(BaseDB):
             FROM subscription_items i
             JOIN subscriptions s ON i.subscription_id = s.id
             {like_where}
-            ORDER BY COALESCE(i.published_date, i.created_at) DESC
+            ORDER BY COALESCE(datetime(i.published_date), datetime(i.created_at)) DESC
             LIMIT ?
             """,
             tuple([*params, *like_params, limit]),
@@ -1935,20 +1935,23 @@ class SubscriptionsDB(BaseDB):
                 with a LIKE fallback when it does not. `None` or blank passes
                 no predicate at all.
             since: Effective-date floor (TASK-3603 -- the Today feed's page):
-                only rows with `COALESCE(published_date, created_at) >= since`
-                (inclusive). The COALESCE compares stored strings, exact for
-                same-shape ISO -- the caller passes a local-midnight ISO and
-                the stored dates are UTC ISO, which share the shape.
+                only rows at/after `since` (inclusive). Both sides go through
+                SQLite `datetime()` -- the stored columns are mixed-format
+                (CURRENT_TIMESTAMP's space shape and ingest's ISO `T`+offset)
+                and a bare string compare orders ' ' before 'T' (PR #1443
+                review); an unparseable feed-supplied `published_date`
+                normalizes to NULL and the COALESCE falls back to
+                `created_at`.
 
         Returns:
             One dict per item row, joined to its subscription's name and type,
             ordered by EFFECTIVE date descending (`published_date`, falling
-            back to `created_at` when the feed supplied none -- TASK-3072).
-            The COALESCE compares stored strings, which is exact for
-            same-shape ISO and approximate across mixed offsets; the reader
-            re-sorts its displayed page precisely in Python
-            (`Subscriptions/item_dates.py`), so this clause's job is picking
-            the right PAGE, not the final row order.
+            back to `created_at` -- TASK-3072), both sides normalized through
+            `datetime()` so mixed stored formats order correctly (PR #1443
+            review); rows whose dates are both unparseable sink to the end of
+            the page. The reader re-sorts its displayed page precisely in
+            Python (`Subscriptions/item_dates.py`), so this clause's job is
+            picking the right PAGE, not the final row order.
 
         Raises:
             ValueError: If both `status` and `statuses` are passed.
@@ -1989,7 +1992,17 @@ class SubscriptionsDB(BaseDB):
             predicates.append("i.is_flagged = ?")
             params.append(1 if is_flagged else 0)
         if since is not None:
-            predicates.append("COALESCE(i.published_date, i.created_at) >= ?")
+            # PR #1443 review: `created_at` is schema-backed mixed-format
+            # (CURRENT_TIMESTAMP's space-separated naive shape AND ingest's
+            # ISO `T`+offset), and a bare string compare orders ' ' before
+            # 'T' -- a same-instant pair would compare wrong. `datetime()`
+            # normalizes both shapes (and the offset) to one canonical
+            # string; the COALESCE wraps the NORMALIZED values so an
+            # unparseable feed-supplied published_date (datetime() -> NULL)
+            # falls back to created_at instead of poisoning the compare.
+            predicates.append(
+                "COALESCE(datetime(i.published_date), datetime(i.created_at)) >= datetime(?)"
+            )
             params.append(since)
         where_clause = f"WHERE {' AND '.join(predicates)}" if predicates else ""
 
@@ -2007,7 +2020,7 @@ class SubscriptionsDB(BaseDB):
                     FROM subscription_items i
                     JOIN subscriptions s ON i.subscription_id = s.id
                     {where_clause}
-                    ORDER BY COALESCE(i.published_date, i.created_at) DESC
+                    ORDER BY COALESCE(datetime(i.published_date), datetime(i.created_at)) DESC
                     LIMIT ?
                     """,
                     tuple(params),
@@ -2286,7 +2299,7 @@ class SubscriptionsDB(BaseDB):
         with self.transaction() as conn:
             row = conn.execute(
                 "SELECT COUNT(*) FROM subscription_items "
-                "WHERE status = 'new' AND COALESCE(published_date, created_at) >= ?",
+                "WHERE status = 'new' AND COALESCE(datetime(published_date), datetime(created_at)) >= datetime(?)",
                 (since,),
             ).fetchone()
         return int(row[0]) if row else 0

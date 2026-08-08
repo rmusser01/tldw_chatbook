@@ -1066,16 +1066,20 @@ def test_get_new_items_since_floor_uses_effective_date(db):
         _insert_item(db, source_id, url, url, "body")
     with db.transaction() as conn:
         conn.execute(
-            "UPDATE subscription_items SET published_date = '2026-08-01T09:00:00+00:00' WHERE url = 'https://f.example/old-pub'"
+            "UPDATE subscription_items SET published_date = ? WHERE url = ?",
+            ("2026-08-01T09:00:00+00:00", "https://f.example/old-pub"),
         )
         conn.execute(
-            "UPDATE subscription_items SET published_date = NULL, created_at = '2026-08-01T09:00:00+00:00' WHERE url = 'https://f.example/old-created'"
+            "UPDATE subscription_items SET published_date = NULL, created_at = ? WHERE url = ?",
+            ("2026-08-01T09:00:00+00:00", "https://f.example/old-created"),
         )
         conn.execute(
-            "UPDATE subscription_items SET published_date = '2026-08-07T00:00:00+00:00' WHERE url = 'https://f.example/on-floor'"
+            "UPDATE subscription_items SET published_date = ? WHERE url = ?",
+            ("2026-08-07T00:00:00+00:00", "https://f.example/on-floor"),
         )
         conn.execute(
-            "UPDATE subscription_items SET published_date = '2026-08-08T09:00:00+00:00' WHERE url = 'https://f.example/newer'"
+            "UPDATE subscription_items SET published_date = ? WHERE url = ?",
+            ("2026-08-08T09:00:00+00:00", "https://f.example/newer"),
         )
 
     rows = db.get_new_items(status=None, since="2026-08-07T00:00:00+00:00")
@@ -1085,6 +1089,42 @@ def test_get_new_items_since_floor_uses_effective_date(db):
     }, "the floor is inclusive, and falls back to created_at when published is NULL"
 
 
+def test_get_new_items_since_floor_handles_mixed_stored_formats(db):
+    """PR #1443 review: `created_at` defaults to CURRENT_TIMESTAMP's
+    SPACE-separated naive shape while ingest writes ISO `T`+offset, and a
+    bare string compare orders ' ' before 'T` -- a same-day item in the
+    space shape would wrongly fall BELOW an ISO floor. Both shapes must
+    count as today."""
+    from datetime import datetime, timezone
+
+    source_id = db.add_subscription(name="Feed", type="rss", source="https://f.example/f")
+    # `_insert_item` sets no created_at, so every row carries the schema's
+    # CURRENT_TIMESTAMP default -- the space shape, dated right now.
+    _insert_item(db, source_id, "https://f.example/space-shaped", "space", "body")
+    _insert_item(db, source_id, "https://f.example/iso-shaped", "iso", "body")
+    _insert_item(db, source_id, "https://f.example/old", "old", "body")
+    with db.transaction() as conn:
+        # The ISO leg, dated right now.
+        conn.execute(
+            "UPDATE subscription_items SET published_date = ? WHERE url = ?",
+            (datetime.now(timezone.utc).isoformat(), "https://f.example/iso-shaped"),
+        )
+        # Genuinely old, in the ISO shape.
+        conn.execute(
+            "UPDATE subscription_items SET published_date = NULL, created_at = ? WHERE url = ?",
+            ("2026-08-01T09:00:00+00:00", "https://f.example/old"),
+        )
+
+    rows = db.get_new_items(
+        status=None,
+        since=datetime.now(timezone.utc).strftime("%Y-%m-%dT00:00:00+00:00"),
+    )
+    assert {r["url"] for r in rows} == {
+        "https://f.example/space-shaped",
+        "https://f.example/iso-shaped",
+    }, "space-shaped and ISO-shaped same-day rows must BOTH clear the floor"
+
+
 def test_get_new_items_search_and_since_compose_with_the_other_predicates(db):
     source_id = db.add_subscription(name="Feed", type="rss", source="https://f.example/f")
     _insert_item(db, source_id, "https://f.example/hit", "rubric hit", "body")
@@ -1092,11 +1132,13 @@ def test_get_new_items_search_and_since_compose_with_the_other_predicates(db):
     _insert_item(db, source_id, "https://f.example/other", "unrelated", "body")
     with db.transaction() as conn:
         conn.execute(
-            "UPDATE subscription_items SET published_date = '2026-08-01T00:00:00+00:00' WHERE url = 'https://f.example/old'"
+            "UPDATE subscription_items SET published_date = ? WHERE url = ?",
+            ("2026-08-01T00:00:00+00:00", "https://f.example/old"),
         )
     db.set_item_flagged(
         db.conn.execute(
-            "SELECT id FROM subscription_items WHERE url = 'https://f.example/hit'"
+            "SELECT id FROM subscription_items WHERE url = ?",
+            ("https://f.example/hit",),
         ).fetchone()[0],
         True,
     )
@@ -1114,10 +1156,12 @@ def test_get_unread_items_count_since_counts_only_newer_unread(db):
         _insert_item(db, source_id, url, url, "body")
     with db.transaction() as conn:
         conn.execute(
-            "UPDATE subscription_items SET published_date = '2026-08-01T00:00:00+00:00' WHERE url = 'https://f.example/a'"
+            "UPDATE subscription_items SET published_date = ? WHERE url = ?",
+            ("2026-08-01T00:00:00+00:00", "https://f.example/a"),
         )
         conn.execute(
-            "UPDATE subscription_items SET status = 'reviewed' WHERE url = 'https://f.example/c'"
+            "UPDATE subscription_items SET status = ? WHERE url = ?",
+            ("reviewed", "https://f.example/c"),
         )
 
     assert db.get_unread_items_count_since("2026-08-07T00:00:00+00:00") == 1, (
