@@ -34,6 +34,7 @@ class SettingsCategoryId(StrEnum):
     ADVANCED_CONFIG = "advanced-config"
     INTERNAL_PROMPTS = "internal-prompts"
     IMAGE_GENERATION = "image_generation"
+    VIDEO_GENERATION = "video_generation"
 
 
 class SettingsValidationState(StrEnum):

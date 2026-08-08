@@ -188,7 +188,7 @@ def test_settings_category_summaries_cover_every_category_id_exactly_once():
     """
     screen = SettingsScreen(_build_test_app())
     summaries = screen._category_summaries()
-    assert len(summaries) == len(list(SettingsCategoryId)) == 24
+    assert len(summaries) == len(list(SettingsCategoryId)) == 25
     assert {s.category for s in summaries} == set(SettingsCategoryId)
 
 
@@ -800,6 +800,7 @@ def test_settings_domain_category_contracts_are_explicit_about_mutation_scope():
         SettingsCategoryId.MCP_DEFAULTS,
         SettingsCategoryId.ACP_DEFAULTS,
         SettingsCategoryId.IMAGE_GENERATION,
+        SettingsCategoryId.VIDEO_GENERATION,
     }
     # LIBRARY_RAG and IMAGE_GENERATION are the two "Domain Defaults" members
     # with a full self-owned editor (Settings genuinely persists their
@@ -807,6 +808,7 @@ def test_settings_domain_category_contracts_are_explicit_about_mutation_scope():
     mutable_categories = {
         SettingsCategoryId.LIBRARY_RAG,
         SettingsCategoryId.IMAGE_GENERATION,
+        SettingsCategoryId.VIDEO_GENERATION,
     }
 
     assert set(contracts) == expected_categories

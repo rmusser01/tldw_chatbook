@@ -49,27 +49,44 @@ class GenerateVideoArgs:
             when the command should use the configured default.
         prompt: Generation prompt text (stripped). Empty when the user
             supplied no prompt -- the caller refuses to dispatch then.
+        style: Raw text of a leading ``@style`` token (without the ``@``),
+            unresolved against the template catalog (task-3401.12). ``None``
+            when no ``@style`` token was present.
     """
 
     backend: str | None
     prompt: str
+    style: str | None = None
 
 
 def parse_generate_video_args(args: str) -> GenerateVideoArgs:
     """Split the args string of one ``/generate-video`` invocation.
 
-    Consumes at most one leading whitespace-delimited ``:backend`` token
-    (longer than the bare colon); everything after it is the prompt.
+    Consumes leading whitespace-delimited tokens in any order/combination:
+    a token starting with ``:`` (longer than the bare colon) sets the
+    backend override; a token starting with ``@`` (longer than the bare
+    ``@``) sets the raw style token. Consumption stops at the first token
+    that matches neither shape -- that token and everything after it is the
+    prompt. A bare ``:`` or ``@`` stays part of the prompt. (Same grammar
+    shape as ``parse_generate_image_args``.)
     """
     remaining = args.strip()
     backend: str | None = None
-    if remaining:
+    style: str | None = None
+    while remaining:
         parts = remaining.split(None, 1)
         token = parts[0]
+        rest = parts[1] if len(parts) > 1 else ""
         if token.startswith(":") and token != ":":
             backend = token[1:]
-            remaining = parts[1].strip() if len(parts) > 1 else ""
-    return GenerateVideoArgs(backend=backend, prompt=remaining)
+            remaining = rest
+            continue
+        if token.startswith("@") and token != "@":
+            style = token[1:]
+            remaining = rest
+            continue
+        break
+    return GenerateVideoArgs(backend=backend, prompt=remaining.strip(), style=style)
 
 
 def is_paid_backend(backend: str) -> bool:

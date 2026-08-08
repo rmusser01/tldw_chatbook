@@ -15225,6 +15225,29 @@ class ChatScreen(BaseAppScreen):
                 GENERATE_VIDEO_USAGE_TEXT, session_id=session.id
             )
             return
+        # @style resolution (task-3401.12): an unknown style refuses with
+        # the available catalog; a resolved style composes the prompt and
+        # contributes duration/fps/ratio defaults.
+        style_params: dict = {}
+        prompt_text = args.prompt
+        negative_text: str | None = None
+        if args.style is not None:
+            from tldw_chatbook.Video_Generation.video_templates import (
+                apply_video_template,
+                get_all_video_templates,
+                get_video_template,
+            )
+
+            template = get_video_template(args.style)
+            if template is None:
+                available = ", ".join(sorted(get_all_video_templates()))
+                await self._append_native_console_system_message(
+                    f"Unknown video style '@{args.style}' — available: {available}.",
+                    session_id=session.id,
+                )
+                return
+            prompt_text, negative_text = apply_video_template(template, args.prompt)
+            style_params = dict(template.default_params)
         cfg = get_video_generation_config()
         backend = args.backend or cfg.default_backend
         if not backend:
@@ -15255,7 +15278,9 @@ class ChatScreen(BaseAppScreen):
             confirmed = await self.push_screen_wait(
                 CancelConfirmationDialog(
                     title="Generate video?",
-                    message=estimate_video_cost_text(backend, None),
+                    message=estimate_video_cost_text(
+                        backend, style_params.get("duration_seconds")
+                    ),
                     confirm_text="Generate",
                     cancel_text="Cancel",
                 )
@@ -15285,7 +15310,11 @@ class ChatScreen(BaseAppScreen):
             meta, _path = await asyncio.to_thread(
                 run_video_generation,
                 backend=backend,
-                prompt=args.prompt,
+                prompt=prompt_text,
+                negative_prompt=negative_text or None,
+                duration_seconds=style_params.get("duration_seconds"),
+                fps=style_params.get("fps"),
+                ratio=style_params.get("ratio"),
                 message_id=message_id,
                 cancel_event=cancel_event,
                 video_store=self._ensure_console_video_store(),

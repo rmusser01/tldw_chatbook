@@ -13,6 +13,7 @@ orientation tour; the details live on six child pages:
 - [Sessions, tabs & workspaces](console/sessions-tabs-workspaces.md) — tab strip, "Switch Session", conversation browser, workspaces.
 - [Branching & rewind](console/branching-and-rewind.md) — regenerate variants, edit-and-resend forks, `/rewind`.
 - [Attachments, images & voice](console/attachments-images-voice.md) — Attach picker, paste/drop, clipboard images, image generation, dictation.
+- [Video generation, playback & streaming](console/video.md) — `/generate-video`, ephemeral videos & tombstones, in-app playback, `/stream-video`.
 - [Agent runs & tools](console/agent-runs-and-tools.md) — per-tab runs, fleet markers, approvals, skills, MCP tools.
 - [Context & RAG](console/context-and-rag.md) — "Chat Context" viewer, prompts, retrieval scope, staged sources, Library RAG.
 
