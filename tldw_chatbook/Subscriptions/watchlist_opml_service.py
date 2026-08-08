@@ -54,15 +54,50 @@ class WatchlistOpmlService:
         walk(root, None)
         return items
 
-    def export(self, sources: list[dict[str, Any]]) -> str:
-        """Serialize source dicts to OPML 2.0 XML."""
+    def export(
+        self,
+        watchlists: list[dict[str, Any]],
+        unassigned: list[dict[str, Any]],
+    ) -> str:
+        """Serialize watchlist structure to OPML 2.0 XML (ADR-043 rule 5).
+
+        One folder outline per watchlist (ordered case-insensitively by
+        name) with its member feeds nested (same ordering); a source in
+        several watchlists appears under EACH -- membership is many-to-many
+        and the document says so faithfully. Unassigned feeds follow as
+        flat top-level outlines, so a profile with no watchlists exports
+        exactly the flat document the pre-mapping exporter produced.
+        ElementTree escapes every attribute on serialize; parse() surfaces
+        them as literal strings on the way back in.
+
+        Args:
+            watchlists: One dict per watchlist: ``name`` plus ``sources``,
+                a list of feed dicts carrying ``name``/``url``/
+                ``source_type``.
+            unassigned: Feed dicts (same shape) belonging to no watchlist.
+
+        Returns:
+            The OPML document as a string.
+        """
         root = ET.Element("opml", {"version": "2.0"})
         body = ET.SubElement(root, "body")
-        for source in sources:
-            ET.SubElement(body, "outline", {
+
+        def feed(parent: ET.Element, source: dict[str, Any]) -> None:
+            ET.SubElement(parent, "outline", {
                 "text": str(source.get("name") or "Untitled"),
                 "title": str(source.get("name") or "Untitled"),
                 "type": str(source.get("source_type") or "rss"),
                 "xmlUrl": str(source.get("url") or ""),
             })
+
+        def by_name(row: dict[str, Any]) -> str:
+            return str(row.get("name") or "").lower()
+
+        for watchlist in sorted(watchlists, key=by_name):
+            name = str(watchlist.get("name") or "Untitled")
+            folder = ET.SubElement(body, "outline", {"text": name, "title": name})
+            for source in sorted(watchlist.get("sources") or [], key=by_name):
+                feed(folder, source)
+        for source in sorted(unassigned, key=by_name):
+            feed(body, source)
         return ET.tostring(root, encoding="unicode")

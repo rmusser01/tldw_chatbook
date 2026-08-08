@@ -296,12 +296,13 @@ class WatchlistBundleService:
             watchlist_id: The watchlist whose sources to list.
 
         Returns:
-            One dict per source with ``id``, ``name`` and ``type``, in the
+            One dict per source with ``id``, ``name``, ``type`` and ``url``
+            (TASK-3604: the OPML export needs the feed address), in the
             order the sources were added.
         """
         rows = self._db.conn.execute(
             """
-            SELECT s.id, s.name, s.type
+            SELECT s.id, s.name, s.type, s.source
             FROM watchlist_sources ws
             JOIN subscriptions s ON s.id = ws.subscription_id
             WHERE ws.watchlist_id = ?
@@ -309,7 +310,7 @@ class WatchlistBundleService:
             """,
             (watchlist_id,),
         ).fetchall()
-        return [{"id": row[0], "name": row[1], "type": row[2]} for row in rows]
+        return [{"id": row[0], "name": row[1], "type": row[2], "url": row[3]} for row in rows]
 
     def list_all_source_rows(self) -> list[dict[str, Any]]:
         """Every source, in the shape the tree and the scoped summary render.
@@ -335,12 +336,13 @@ class WatchlistBundleService:
         source readout needs its own resolver for this scope.
 
         Returns:
-            One dict per unassigned source with ``id``, ``name`` and
-            ``type``, ordered case-insensitively by name then id.
+            One dict per unassigned source with ``id``, ``name``, ``type``
+            and ``url`` (TASK-3604: the OPML export needs the feed
+            address), ordered case-insensitively by name then id.
         """
         rows = self._db.conn.execute(
             """
-            SELECT s.id, s.name, s.type
+            SELECT s.id, s.name, s.type, s.source
             FROM subscriptions s
             WHERE NOT EXISTS (
                 SELECT 1 FROM watchlist_sources ws WHERE ws.subscription_id = s.id
@@ -348,7 +350,7 @@ class WatchlistBundleService:
             ORDER BY LOWER(s.name), s.id
             """
         ).fetchall()
-        return [{"id": row[0], "name": row[1], "type": row[2]} for row in rows]
+        return [{"id": row[0], "name": row[1], "type": row[2], "url": row[3]} for row in rows]
 
     def get_watchlist_item_counts(self) -> dict[int, dict[str, int]]:
         """Item totals and unread counts for every watchlists tree node.

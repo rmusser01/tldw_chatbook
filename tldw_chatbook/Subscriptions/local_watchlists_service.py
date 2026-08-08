@@ -721,6 +721,38 @@ class LocalWatchlistsService:
         """
         WatchlistBundleService(self._db()).add_source(int(watchlist_id), int(source_id))
 
+    async def list_watchlists(self) -> list[dict[str, Any]]:
+        """Every watchlist, via the bundle service (TASK-3604 export)."""
+        return WatchlistBundleService(self._db()).list_watchlists(limit=10000)
+
+    async def list_watchlist_source_rows(self, *, watchlist_id: Any) -> list[dict[str, Any]]:
+        """One watchlist's member feeds, in the serializer's vocabulary.
+
+        TASK-3604: maps the bundle's tree-row keys (`type`) onto the OPML
+        payload keys (`source_type`) so the serializer's input contract
+        stays in the OPML vocabulary on both sides of the round-trip.
+
+        Args:
+            watchlist_id: The watchlist whose members to list.
+
+        Returns:
+            One dict per member feed with ``name``, ``url`` and
+            ``source_type``.
+        """
+        rows = WatchlistBundleService(self._db()).list_source_rows(int(watchlist_id))
+        return [
+            {"name": row["name"], "url": row["url"], "source_type": row["type"]}
+            for row in rows
+        ]
+
+    async def list_unassigned_source_rows(self) -> list[dict[str, Any]]:
+        """Feeds belonging to no watchlist, same vocabulary as above."""
+        rows = WatchlistBundleService(self._db()).list_unassigned_source_rows()
+        return [
+            {"name": row["name"], "url": row["url"], "source_type": row["type"]}
+            for row in rows
+        ]
+
     async def delete_source(self, source_id: Any) -> dict[str, Any]:
         success = self._db().delete_subscription(int(source_id))
         return {

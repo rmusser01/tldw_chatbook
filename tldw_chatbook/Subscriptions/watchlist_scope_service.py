@@ -995,7 +995,21 @@ class WatchlistScopeService:
         """
         backend = self._normalize_backend(runtime_backend)
         self._enforce_policy(backend, "export")
-        sources = await self.list_watch_items(
-            runtime_backend=backend, limit=WC_EXPORT_OPML_MAX_SOURCES, offset=0
-        )
-        return WatchlistOpmlService().export(sources)
+        if backend == WatchlistBackend.SERVER:
+            # The server backend's source model carries no local watchlist
+            # membership for this seam; keep the pre-ADR-043 flat export
+            # there rather than fail a previously-working path.
+            sources = await self.list_watch_items(
+                runtime_backend=backend, limit=WC_EXPORT_OPML_MAX_SOURCES, offset=0
+            )
+            return WatchlistOpmlService().export([], sources)
+        service = self._service_for_backend(backend)
+        watchlists = await self._maybe_await(service.list_watchlists())
+        structured: list[dict[str, Any]] = []
+        for watchlist in watchlists:
+            rows = await self._maybe_await(
+                service.list_watchlist_source_rows(watchlist_id=watchlist["id"])
+            )
+            structured.append({"name": watchlist.get("name"), "sources": rows})
+        unassigned = await self._maybe_await(service.list_unassigned_source_rows())
+        return WatchlistOpmlService().export(structured, unassigned)

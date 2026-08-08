@@ -2,6 +2,7 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from tldw_chatbook.Subscriptions.watchlist_bundle_service import WatchlistBundleService
+from tldw_chatbook.Subscriptions.watchlist_opml_service import WatchlistOpmlService
 from tldw_chatbook.Subscriptions.watchlist_scope_service import WatchlistBackend, WatchlistScopeService
 
 
@@ -87,16 +88,30 @@ async def test_import_opml_rejects_server():
 
 
 @pytest.mark.asyncio
-async def test_export_opml_lists_sources_and_returns_xml():
+async def test_export_opml_nests_watchlist_structure_for_local():
+    """TASK-3604 plan task 4: the local export assembles watchlists with
+    member rows and unassigned rows, and the serializer nests them."""
     scope_service, local_service, _ = make_scope_service()
-    local_service.list_sources = AsyncMock(return_value=[{"name": "A", "url": "http://a.com", "source_type": "rss"}])
+    local_service.list_watchlists = AsyncMock(
+        return_value=[{"id": 9, "name": "Tech"}]
+    )
+    local_service.list_watchlist_source_rows = AsyncMock(
+        return_value=[{"name": "AI", "url": "http://a.com", "source_type": "rss"}]
+    )
+    local_service.list_unassigned_source_rows = AsyncMock(
+        return_value=[{"name": "Loose", "url": "http://b.com", "source_type": "rss"}]
+    )
 
     result = await scope_service.export_opml(runtime_backend=WatchlistBackend.LOCAL)
 
-    local_service.list_sources.assert_awaited_once_with(limit=10000, offset=0)
+    local_service.list_watchlist_source_rows.assert_awaited_once_with(watchlist_id=9)
     assert "<opml" in result
-    assert "http://a.com" in result
-    assert "A" in result
+    assert "http://a.com" in result and "http://b.com" in result
+    # The member feed is nested UNDER the folder; the loose one is not.
+    items = WatchlistOpmlService().parse(result)
+    by_url = {item["url"]: item for item in items}
+    assert by_url["http://a.com"]["folder"] == "Tech"
+    assert by_url["http://b.com"]["folder"] is None
 
 
 @pytest.mark.asyncio

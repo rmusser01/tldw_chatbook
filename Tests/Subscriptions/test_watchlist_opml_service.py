@@ -13,9 +13,10 @@ def test_parse_opml():
 
 def test_export_opml():
     svc = WatchlistOpmlService()
-    xml = svc.export([
-        {"name": "AI", "url": "http://example.com/ai", "source_type": "rss"}
-    ])
+    xml = svc.export(
+        [],
+        [{"name": "AI", "url": "http://example.com/ai", "source_type": "rss"}],
+    )
     assert "http://example.com/ai" in xml
 
 
@@ -221,3 +222,85 @@ async def test_import_assigns_membership_and_reimport_is_a_structural_noop(tmp_p
     assert len(bundle.list_source_rows(watchlists[0]["id"])) == 2
     total_sources = db.conn.execute("SELECT COUNT(*) FROM subscriptions").fetchone()[0]
     assert total_sources == 3, "no duplicate sources"
+
+
+# --- TASK-3604 plan task 4: export nests watchlists as folders (ADR-043 rule 5) -
+
+
+def test_export_nests_watchlists_as_folders_with_unassigned_top_level():
+    """One folder per watchlist (name-ordered), members nested (name-
+    ordered), a shared source under EACH of its watchlists, unassigned
+    feeds flat at the top level."""
+    import xml.etree.ElementTree as ET
+
+    svc = WatchlistOpmlService()
+    xml = svc.export(
+        [
+            {
+                "name": "Tech",
+                "sources": [
+                    {"name": "Shared", "url": "http://x.com/shared", "source_type": "rss"},
+                    {"name": "AI", "url": "http://x.com/ai", "source_type": "rss"},
+                ],
+            },
+            {
+                "name": "News",
+                "sources": [
+                    {"name": "Shared", "url": "http://x.com/shared", "source_type": "rss"},
+                ],
+            },
+        ],
+        [{"name": "Loose", "url": "http://x.com/loose", "source_type": "rss"}],
+    )
+
+    body = ET.fromstring(xml).find("body")
+    top = list(body)
+    folders = [el for el in top if el.get("xmlUrl") is None]
+    loose = [el for el in top if el.get("xmlUrl") is not None]
+    assert [f.get("text") for f in folders] == ["News", "Tech"], (
+        "folders are name-ordered (case-insensitive)"
+    )
+    assert [el.get("text") for el in loose] == ["Loose"]
+    tech = next(f for f in folders if f.get("text") == "Tech")
+    assert [c.get("text") for c in tech] == ["AI", "Shared"], "members name-ordered"
+    news = next(f for f in folders if f.get("text") == "News")
+    assert [c.get("text") for c in news] == ["Shared"], (
+        "membership is many-to-many: the shared source appears under both"
+    )
+    assert folders[0].get("xmlUrl") is None, "a folder outline carries no feed URL"
+
+
+def test_export_escapes_hostile_watchlist_names():
+    """A markup/quote-bearing watchlist name serializes escaped and
+    re-parses to the literal string (the parse contract, both ends)."""
+    svc = WatchlistOpmlService()
+    hostile = '<script>alert("x")</script>'
+    xml = svc.export(
+        [{"name": hostile, "sources": [
+            {"name": "F", "url": "http://x.com/f", "source_type": "rss"},
+        ]}],
+        [],
+    )
+    assert "<script>" not in xml, "the serializer must not emit raw markup"
+    items = svc.parse(xml)
+    assert items[0]["folder"] == hostile, (
+        "the name round-trips as the literal string"
+    )
+
+
+def test_export_with_no_watchlists_is_flat():
+    """Backward compatibility: a profile with no watchlists exports the
+    same flat document the pre-mapping exporter produced."""
+    import xml.etree.ElementTree as ET
+
+    svc = WatchlistOpmlService()
+    xml = svc.export(
+        [],
+        [
+            {"name": "B", "url": "http://x.com/b", "source_type": "rss"},
+            {"name": "A", "url": "http://x.com/a", "source_type": "rss"},
+        ],
+    )
+    top = list(ET.fromstring(xml).find("body"))
+    assert all(el.get("xmlUrl") is not None for el in top), "no folders at all"
+    assert [el.get("text") for el in top] == ["A", "B"], "flat AND name-ordered"
