@@ -6262,13 +6262,21 @@ async def test_library_open_source_context_uses_dirty_note_flush_and_veto(
         opener = AsyncMock()
         flush = AsyncMock()
 
-        async def flush_note() -> None:
+        async def flush_note() -> NoteFlushOutcome:
             await flush()
-            screen._library_note_dirty = veto
+            return NoteFlushOutcome(
+                NoteFlushOutcomeKind.BLOCKED
+                if veto
+                else NoteFlushOutcomeKind.PERMITTED
+            )
 
         monkeypatch.setattr(screen, "_open_library_item_by_id", opener)
         monkeypatch.setattr(screen, "_flush_library_note_save", flush_note)
-        screen._library_note_dirty = True
+        monkeypatch.setattr(
+            type(screen),
+            "_library_note_dirty",
+            property(lambda _screen: True),
+        )
 
         screen.apply_navigation_context(
             {

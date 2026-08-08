@@ -695,9 +695,11 @@ class LibraryNotesCanvas(Vertical):
         body_input = self.query_one("#library-note-body", TextArea)
         wide_keywords = self.query_one("#library-note-keywords", Input)
         context_keywords = self.query_one("#library-note-context-keywords", Input)
-        if title_input.value != snapshot.title:
+        presented_title = "" if self.title_placeholder_only else snapshot.title
+        if title_input.value != presented_title:
             with title_input.prevent(Input.Changed):
-                title_input.value = snapshot.title
+                title_input.value = presented_title
+        title_input.placeholder = "Untitled" if self.title_placeholder_only else ""
         if body_input.text != snapshot.body:
             with body_input.prevent(TextArea.Changed):
                 body_input.text = snapshot.body

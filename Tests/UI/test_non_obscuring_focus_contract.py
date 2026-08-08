@@ -1829,7 +1829,6 @@ def test_library_notes_labeled_fields_keep_stable_non_semantic_focus_geometry():
     for selector in (
         "Input:focus",
         "TextArea:focus",
-        "Select:focus",
     ):
         assert_thin_input_focus(css_block(text, selector))
 

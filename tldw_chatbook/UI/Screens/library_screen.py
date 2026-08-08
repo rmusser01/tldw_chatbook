@@ -2449,7 +2449,6 @@ class LibraryScreen(BaseAppScreen):
         # both share this single flag/handler set since only one of the
         # two views is ever mounted at a time.
         self._library_skill_trust_confirming_reset: bool = False
-        self._library_note_detail: Mapping[str, Any] | None = None
         self._selected_note_id: str = ""
         note_session_port = _LibraryDatabaseNoteSessionPort(
             run_service_call=self._run_library_service_call,
@@ -3041,6 +3040,10 @@ class LibraryScreen(BaseAppScreen):
             canvas = self.query_one("#library-notes-canvas", LibraryNotesCanvas)
         except (NoMatches, QueryError):
             return
+        canvas.title_placeholder_only = bool(
+            self._library_note_pending_blank_gc_id
+            and self._library_note_pending_blank_gc_id == self._selected_note_id
+        )
         self._library_note_presentation_syncing = True
         try:
             canvas.apply_session_state(self._library_note_presentation_state())
@@ -3956,7 +3959,7 @@ class LibraryScreen(BaseAppScreen):
         if not self._library_notes_workflow_active() or (
             self._library_notes_compact and self._library_notes_stage != "notes"
         ):
-            return self.LIBRARY_SHORTCUTS
+            return self._library_footer_shortcuts_for_current_state()
         snapshot = self._library_note_session.snapshot
         if snapshot is not None and (
             snapshot.in_conflict
@@ -3990,7 +3993,7 @@ class LibraryScreen(BaseAppScreen):
                 if self._library_notes_sync_active_token is not None
                 else (("Enter", "Act · Esc Notes"),)
             )
-        return self.LIBRARY_SHORTCUTS
+        return self._library_footer_shortcuts_for_current_state()
 
     def _apply_library_notes_footer_context(self) -> None:
         """Persist region help and hide only compact Notes ancillary indicators."""
@@ -4327,6 +4330,7 @@ class LibraryScreen(BaseAppScreen):
         settle-window timer is only ever the LAST resort for a
         still-armed, still-idle request.
         """
+        self._mark_library_notes_user_interaction()
         if self._library_pending_list_entry_focus:
             self._disarm_library_list_entry_focus()
         if isinstance(self.focused, (Input, TextArea)):
@@ -9676,6 +9680,7 @@ class LibraryScreen(BaseAppScreen):
         ):
             return
         if self._library_note_session.mutate(title=event.value):
+            self._library_note_pending_blank_gc_id = None
             self._library_note_shortcut_status = ""
             self._schedule_library_note_autosave()
             self._apply_library_note_presentation_state()
@@ -9693,6 +9698,7 @@ class LibraryScreen(BaseAppScreen):
         ):
             return
         if self._library_note_session.mutate(body=event.text_area.text):
+            self._library_note_pending_blank_gc_id = None
             self._library_note_shortcut_status = ""
             self._schedule_library_note_autosave()
             self._apply_library_note_presentation_state()
@@ -9710,6 +9716,7 @@ class LibraryScreen(BaseAppScreen):
         ):
             return
         if self._library_note_session.mutate(keywords_text=event.value):
+            self._library_note_pending_blank_gc_id = None
             self._library_note_shortcut_status = ""
             self._schedule_library_note_autosave()
             self._apply_library_note_presentation_state()
@@ -9932,6 +9939,19 @@ class LibraryScreen(BaseAppScreen):
         if self._library_notes_autosave_timer is not None:
             self._library_notes_autosave_timer.stop()
             self._library_notes_autosave_timer = None
+        if (
+            self._library_note_session_blank_id
+            and self._library_note_session_blank_id == self._selected_note_id
+        ):
+            fields = self._read_library_note_editor_fields()
+            if fields is not None:
+                raw_title, raw_content, raw_keywords_text = fields
+                if not any(
+                    value.strip()
+                    for value in (raw_title, raw_content, raw_keywords_text)
+                ):
+                    await self._gc_pending_blank_note()
+                    return NoteFlushOutcome(NoteFlushOutcomeKind.PERMITTED)
         before = self._library_note_session.snapshot
         before_saved_revision = before.saved_revision if before is not None else None
         outcome = await self._library_note_session.flush()
@@ -10038,7 +10058,6 @@ class LibraryScreen(BaseAppScreen):
         current_version = self._library_note_version or 1
         self._library_note_session_blank_id = None
         self._library_note_pending_blank_gc_id = None
-        self._library_note_dirty = False
         if not note_id:
             return
         service = getattr(self.app_instance, "notes_scope_service", None)
