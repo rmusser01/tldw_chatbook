@@ -47,6 +47,7 @@ from tldw_chatbook.STT.executor import (
 )
 from tldw_chatbook.STT.executor_worker import (
     _ProviderLoadFailure,
+    _default_parse_job,
     _failure_from_exception,
     _failure_from_worker_exception,
     _load_resident,
@@ -945,6 +946,95 @@ def test_parakeet_provider_persists_normalized_managed_provenance(
         }
     ]
     assert provenance["batch_id"] == "batch-managed"
+
+
+@pytest.mark.parametrize("suffix", (".wav", ".mp4"))
+def test_parakeet_failure_survives_media_parse_and_executor_envelope(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    suffix: str,
+) -> None:
+    from tldw_chatbook.Local_Ingestion.local_file_ingestion import (
+        DirectLocalSTTIngestError,
+    )
+    from tldw_chatbook.Local_Ingestion.video_processing import LocalVideoProcessor
+    from tldw_chatbook.Model_Artifacts import ArtifactRef
+    from tldw_chatbook.STT.parakeet_onnx import ParakeetOnnxRuntime
+
+    root = ArtifactRef("parakeet-v2", "root-revision", "int8")
+    dependency = ArtifactRef("silero-vad", "vad-revision", "f32")
+    model_root = tmp_path / "model"
+    vad_root = tmp_path / "vad"
+    model_root.mkdir()
+    vad_root.mkdir()
+    source = tmp_path / f"speech{suffix}"
+    source.write_bytes(b"fixture")
+    handle = SimpleNamespace(
+        root=root,
+        closure=(root, dependency),
+        paths=((root, model_root), (dependency, vad_root)),
+    )
+    runtime = ParakeetOnnxRuntime(
+        model=SimpleNamespace(recognize=lambda _path: "unused"),
+        vad=None,
+        model_id=PARAKEET_V2_MODEL,
+        precision="int8",
+        artifact_root=root.lease_key(),
+        artifact_dependencies=(dependency.lease_key(),),
+        model_load_seconds=0.1,
+        audio_reader=lambda *_args, **_kwargs: None,
+        pad_list=lambda _chunks: None,
+        duration_reader=lambda _path: 40.0,
+    )
+    monkeypatch.setattr(ParakeetOnnxRuntime, "load", lambda **_kwargs: runtime)
+    if suffix == ".mp4":
+        extracted_audio = tmp_path / "extracted.wav"
+        extracted_audio.write_bytes(b"fixture")
+        monkeypatch.setattr(
+            LocalVideoProcessor,
+            "_extract_audio_from_video",
+            lambda self, *_args, **_kwargs: str(extracted_audio),
+        )
+    request = ExecutorRequest(
+        generation=1,
+        attempt_id="attempt-parakeet-failure",
+        job_id="job-parakeet-failure",
+        source_path=source,
+        identity=_identity(
+            root_revision=root.revision,
+            closure_fingerprint="closure",
+            local_snapshot_token=None,
+        ),
+        options={
+            "transcription_provider": "parakeet-onnx",
+            "transcription_model": PARAKEET_V2_MODEL,
+            "transcription_precision": "int8",
+            "language": "en",
+            "timestamps": True,
+            "transcription_context": {
+                "attempt_id": "attempt-parakeet-failure",
+                "batch_id": "batch-parakeet-failure",
+                "job_id": "job-parakeet-failure",
+            },
+        },
+    )
+    provider = _parakeet_provider(request, model_root, handle, lambda: False)
+
+    with pytest.raises(DirectLocalSTTIngestError) as raised:
+        _default_parse_job(
+            source,
+            dict(request.options),
+            transcription_runner=provider.runner,
+        )
+
+    failure = _failure_from_exception(request, raised.value)
+    assert failure.code is TranscriptionFailureCode.ARTIFACT_INCOMPATIBLE
+    assert failure.recovery_actions == ("retry_faster_whisper",)
+    assert failure.failed_attempt is not None
+    assert failure.failed_attempt["attempt_id"] == "attempt-parakeet-failure"
+    assert failure.failed_attempt["batch_id"] == "batch-parakeet-failure"
+    assert failure.failed_attempt["job_id"] == "job-parakeet-failure"
+    assert failure.failed_attempt["provider_id"] == "parakeet-onnx"
 
 
 def test_managed_parakeet_provider_rejects_a_closure_without_vad(

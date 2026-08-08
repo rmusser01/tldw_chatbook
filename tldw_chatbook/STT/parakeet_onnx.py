@@ -29,6 +29,11 @@ from .contracts import (
     TranscriptionTimings,
     TranscriptionWarningCode,
 )
+from .persistence import (
+    FailedTranscriptionAttempt,
+    dump_failed_transcription_attempt,
+    load_failed_transcription_attempt,
+)
 
 
 LONG_FORM_SECONDS = 30.0
@@ -41,11 +46,47 @@ class ParakeetOnnxCancelled(RuntimeError):
 class ParakeetOnnxFailure(RuntimeError):
     """Typed path-private failure consumed by the executor boundary."""
 
-    def __init__(self, code: TranscriptionFailureCode, message: str) -> None:
+    def __init__(
+        self,
+        code: TranscriptionFailureCode,
+        message: str,
+        *,
+        attempt_id: str,
+        batch_id: str | None,
+        job_id: str | None,
+        model_id: str,
+        artifact_root: Any | None,
+        artifact_dependencies: tuple[Any, ...],
+        precision: str,
+        requested_language: str,
+        effective_language: str,
+    ) -> None:
         self.error_detail = {
+            "category": "stt_failure",
             "code": code.value,
+            "message": message,
             "actions": ["retry_faster_whisper"],
         }
+        failed_attempt = FailedTranscriptionAttempt(
+            attempt_id=attempt_id,
+            batch_id=batch_id,
+            job_id=job_id,
+            provider_id="parakeet-onnx",
+            model_id=model_id,
+            artifact_root=artifact_root,
+            artifact_dependencies=artifact_dependencies,
+            precision=precision,
+            requested_device=ExecutionDevice.CPU,
+            effective_device=ExecutionDevice.CPU,
+            requested_language=requested_language,
+            effective_language=effective_language,
+            detected_language=None,
+            task=TranscriptionTask.TRANSCRIBE,
+            error_code=code,
+        )
+        self.stt_failure_provenance = load_failed_transcription_attempt(
+            dump_failed_transcription_attempt(failed_attempt)
+        )
         super().__init__(message)
 
 
@@ -195,6 +236,12 @@ class ParakeetOnnxRuntime:
     ) -> TranscriptionResult:
         """Transcribe one local media file and return the normalized contract."""
         started = time.monotonic()
+        model_load_seconds = self.model_load_seconds
+        self.model_load_seconds = 0.0
+        normalized_language = (language or "en").strip().lower()
+        effective_language = (
+            "auto" if self.model_id == PARAKEET_V3_MODEL else "en"
+        )
         with _prepared_wav(Path(audio_path), ffmpeg_path) as wav_path:
             duration = self._duration_reader(wav_path)
             use_vad = vad or duration > LONG_FORM_SECONDS
@@ -204,6 +251,15 @@ class ParakeetOnnxRuntime:
                         TranscriptionFailureCode.ARTIFACT_INCOMPATIBLE,
                         "Long-form Parakeet requires the managed VAD dependency. "
                         "Retry with faster-whisper.",
+                        attempt_id=attempt_id,
+                        batch_id=batch_id,
+                        job_id=job_id,
+                        model_id=self.model_id,
+                        artifact_root=self.artifact_root,
+                        artifact_dependencies=self.artifact_dependencies,
+                        precision=self.precision,
+                        requested_language=normalized_language,
+                        effective_language=effective_language,
                     )
                 text, raw_segments = self._transcribe_segments(
                     wav_path,
@@ -247,8 +303,8 @@ class ParakeetOnnxRuntime:
             precision=self.precision,
             requested_device=ExecutionDevice.CPU,
             effective_device=ExecutionDevice.CPU,
-            requested_language=language,
-            effective_language="auto" if is_v3 else "en",
+            requested_language=normalized_language,
+            effective_language=effective_language,
             detected_language=None,
             task=TranscriptionTask.TRANSCRIBE,
         )
@@ -266,10 +322,10 @@ class ParakeetOnnxRuntime:
             duration_seconds=duration,
             timings=TranscriptionTimings(
                 preparation_seconds=0.0,
-                model_load_seconds=self.model_load_seconds,
+                model_load_seconds=model_load_seconds,
                 inference_seconds=inference_seconds,
                 postprocess_seconds=0.0,
-                total_seconds=inference_seconds,
+                total_seconds=model_load_seconds + inference_seconds,
             ),
             warnings=warnings,
         )

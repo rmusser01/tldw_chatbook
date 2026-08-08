@@ -1740,6 +1740,89 @@ async def test_executor_failure_uses_stable_job_terminal(
 
 
 @pytest.mark.asyncio
+async def test_parakeet_failed_attempt_reaches_faster_whisper_retry_row(
+    tmp_path: Path,
+) -> None:
+    pool = _FakeIngestParsePool(auto_run=False)
+    executor = _FakeLocalSTTExecutor()
+    app = _IngestRunnerHarness(
+        _make_db(tmp_path),
+        pool_factory=lambda: pool,
+        local_stt_executor=executor,
+        local_stt_dispatch_factory=_fake_local_stt_dispatch,
+    )
+    source = tmp_path / "speech.wav"
+    source.write_bytes(b"fixture")
+
+    async with app.run_test() as pilot:
+        original = app.submit_library_ingest_job(
+            source_path=str(source),
+            ingest_options={
+                "audio_video": {"transcription_provider": "parakeet-onnx"}
+            },
+        )
+        await pilot.pause()
+        attempt_id = executor.calls[0]["attempt_id"]
+        failed_attempt = {
+            "attempt_id": attempt_id,
+            "batch_id": original.batch_id,
+            "job_id": original.job_id,
+            "provider_id": "parakeet-onnx",
+            "model_id": "nemo-parakeet-tdt-0.6b-v2",
+            "artifact_root": {
+                "artifact_id": "parakeet-v2",
+                "revision": "root-revision",
+                "variant": "int8",
+            },
+            "artifact_dependencies": [
+                {
+                    "artifact_id": "silero-vad",
+                    "revision": "vad-revision",
+                    "variant": "f32",
+                }
+            ],
+            "precision": "int8",
+            "requested_device": "cpu",
+            "effective_device": "cpu",
+            "requested_language": "en",
+            "effective_language": "en",
+            "detected_language": None,
+            "task": "transcribe",
+            "error_code": "artifact_incompatible",
+        }
+        executor.trigger_failure(
+            0,
+            ExecutorFailure(
+                1,
+                attempt_id,
+                TranscriptionFailureCode.ARTIFACT_INCOMPATIBLE,
+                recovery_actions=("retry_faster_whisper",),
+                failed_attempt=failed_attempt,
+            ),
+        )
+        failed = await _wait_for_job_state(
+            app,
+            pilot,
+            original.job_id,
+            IngestJobState.FAILED,
+        )
+
+        retry = app.retry_library_ingest_job_with_provider(
+            failed.job_id,
+            "faster-whisper",
+        )
+        await pilot.pause()
+
+        assert retry is not None
+        assert retry.retry_of_job_id == failed.job_id
+        assert retry.retry_source_failure_provenance == failed_attempt
+        assert retry.ingest_options["audio_video"]["transcription_provider"] == (
+            "faster-whisper"
+        )
+        assert len(pool.calls) == 1
+
+
+@pytest.mark.asyncio
 async def test_executor_start_failure_does_not_retire_general_pool(
     tmp_path: Path,
 ) -> None:

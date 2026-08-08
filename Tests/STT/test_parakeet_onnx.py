@@ -171,6 +171,34 @@ def test_short_v2_result_is_normalized_with_exact_artifact_provenance(
     assert result.warnings == ()
 
 
+def test_resident_reuse_reports_model_load_only_for_first_attempt(
+    tmp_path: Path,
+) -> None:
+    runtime, _model, _vad, _root, _dependency = _runtime()
+
+    first = runtime.transcribe(
+        audio_path=tmp_path / "first.wav",
+        attempt_id="attempt-1",
+        language="en",
+        timestamps=False,
+    )
+    second = runtime.transcribe(
+        audio_path=tmp_path / "second.wav",
+        attempt_id="attempt-2",
+        language="en",
+        timestamps=False,
+    )
+
+    assert first.timings.model_load_seconds == 0.25
+    assert first.timings.total_seconds == pytest.approx(
+        0.25 + first.timings.inference_seconds
+    )
+    assert second.timings.model_load_seconds == 0.0
+    assert second.timings.total_seconds == pytest.approx(
+        second.timings.inference_seconds
+    )
+
+
 def test_v3_records_routing_assertion_without_decoder_language_constraint(
     tmp_path: Path,
 ) -> None:
@@ -264,6 +292,36 @@ def test_long_direct_local_model_without_managed_vad_fails_with_retry_action(
         )
 
     assert raised.value.error_detail == {
+        "category": "stt_failure",
         "code": "artifact_incompatible",
+        "message": "Long-form Parakeet requires the managed VAD dependency. "
+        "Retry with faster-whisper.",
         "actions": ["retry_faster_whisper"],
+    }
+    assert raised.value.stt_failure_provenance == {
+        "attempt_id": "attempt-no-vad",
+        "batch_id": None,
+        "job_id": None,
+        "provider_id": "parakeet-onnx",
+        "model_id": PARAKEET_V2_MODEL,
+        "artifact_root": {
+            "artifact_id": "parakeet-v2",
+            "revision": "root-revision",
+            "variant": "int8",
+        },
+        "artifact_dependencies": [
+            {
+                "artifact_id": "silero-vad",
+                "revision": "vad-revision",
+                "variant": "f32",
+            }
+        ],
+        "precision": "int8",
+        "requested_device": "cpu",
+        "effective_device": "cpu",
+        "requested_language": "en",
+        "effective_language": "en",
+        "detected_language": None,
+        "task": "transcribe",
+        "error_code": "artifact_incompatible",
     }

@@ -135,4 +135,3 @@
 5. Check current PR/branch state again, rebase on latest `origin/dev`, rerun only the focused verification affected by the rebase, and request code review.
 6. Update TASK-602 implementation notes and check only acceptance criteria actually evidenced. Keep AC7 and status `In Progress` while Windows/Linux native gates are unavailable; do not claim the task globally complete.
 7. Commit documentation/task hygiene: `docs(stt): record TASK-602 focused evidence`.
-
