@@ -121,9 +121,11 @@ def _redact_assignments(text: str) -> str:
             continue
 
         value_start = match.end()
-        line_end = _line_end(text, value_start)
-        if value_start == line_end:
-            cursor = _after_line_break(text, line_end)
+        if value_start == len(text):
+            cursor = value_start
+            continue
+        if text[value_start] in "\r\n":
+            cursor = _after_line_break(text, value_start)
             continue
 
         if text[value_start] in "\"'":
@@ -134,6 +136,7 @@ def _redact_assignments(text: str) -> str:
             cursor = value_end + 1 if closed else _after_line_break(text, value_end)
             continue
 
+        line_end = _line_end(text, value_start)
         spans.append((value_start, line_end))
         cursor = _after_line_break(text, line_end)
 

@@ -314,8 +314,10 @@ snapshot prune result
   supported input types.
 - Sensitive structured fields fail closed by replacing the complete value,
   regardless of its type.
-- The assignment scanner advances monotonically, builds output once, and is
-  exercised with long input; standalone regexes avoid nested ambiguous
+- The assignment scanner advances monotonically, builds output once, and parses
+  quoted values without first searching the remaining line for a boundary.
+  Long non-matching and dense quoted matched inputs deterministically exercise
+  the intended single-pass bound; standalone regexes avoid nested ambiguous
   quantifiers.
 - Redaction markers contain no original prefix or suffix from the secret.
 - Formatting errors never fall back to interpolating raw arguments.
@@ -356,7 +358,10 @@ Focused tests will prove:
 - log-specific fields not owned by the config predicate;
 - nested dictionaries/lists, non-string keys, new-container identity,
   `deep=False`, non-string fallback, formatting fallback, and idempotence; and
-- bounded behavior on long non-matching input.
+- bounded behavior on long non-matching input; and
+- exact redaction plus deterministic single-pass scan-work accounting on a long
+  line containing many quoted sensitive assignments, without a wall-clock
+  threshold.
 
 Expected config key names come from the shipped configuration sources and the
 canonical predicate, not from sanitizer constants. Tests also retain negative

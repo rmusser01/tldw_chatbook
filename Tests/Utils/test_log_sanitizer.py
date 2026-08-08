@@ -305,6 +305,35 @@ def test_long_non_matching_text_remains_unchanged() -> None:
     assert sanitize_string(raw) == raw
 
 
+def test_dense_quoted_assignments_do_not_repeat_line_end_scans() -> None:
+    """Keep matched quoted input single-pass without a wall-clock assertion."""
+
+    class LineScanAccountingText(str):
+        line_scan_work = 0
+
+        def find(
+            self,
+            substring: str,
+            start: int = 0,
+            end: int | None = None,
+        ) -> int:
+            if substring in {"\r", "\n"}:
+                scan_end = len(self) if end is None else end
+                self.line_scan_work += scan_end - start
+            if end is None:
+                return super().find(substring, start)
+            return super().find(substring, start, end)
+
+    assignment_count = 2_000
+    raw = LineScanAccountingText(
+        ", ".join(f'api_key="PRIVATE_{index}"' for index in range(assignment_count))
+    )
+    expected = ", ".join('api_key="***REDACTED***"' for _ in range(assignment_count))
+
+    assert sanitize_string(raw) == expected
+    assert raw.line_scan_work == 0
+
+
 class TestLogSanitizer:
     """Test the log sanitization utilities."""
 

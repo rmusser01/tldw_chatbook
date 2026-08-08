@@ -392,7 +392,11 @@ Add separate tests proving:
   sanitized final message, for example by collecting calls from
   `safe_log(calls.append, "api_key={}", "PRIVATE_CALLBACK")` and asserting
   `calls == ["api_key=***REDACTED***"]`; and
-- a 100,000-character non-matching string completes and remains unchanged without a wall-clock timing assertion.
+- a 100,000-character non-matching string completes and remains unchanged without a wall-clock timing assertion; and
+- a long line containing many quoted sensitive assignments produces the exact
+  redacted output without repeatedly scanning the remainder of the line. Prove
+  this with deterministic CR/LF search-work accounting on the real scanner,
+  not a wall-clock threshold.
 
 - [ ] **Step 2: Extend the existing installed-wheel probe before implementation**
 
@@ -484,6 +488,12 @@ def _redact_assignments(text: str) -> str:
 6. replace an unterminated quote from after the opening quote to the line boundary;
 7. replace an unquoted sensitive value through the line boundary; and
 8. resume after CR/LF/CRLF and continue until no candidate remains.
+
+After a sensitive prefix, inspect the immediate value character for EOF or a
+CR/LF boundary before any line search. Parse quoted values directly with
+`_find_quoted_end()`; call `_line_end()` only for unquoted values. Dense quoted
+assignments must therefore remain single-pass rather than rescanning the line
+suffix for every value.
 
 Do not use repeated whole-string concatenation in the scan loop. Collect spans and build once.
 
