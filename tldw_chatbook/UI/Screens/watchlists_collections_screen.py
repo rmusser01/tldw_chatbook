@@ -186,6 +186,7 @@ from ..Watchlists_Modules.sources_pane import (
 )
 from ..Watchlists_Modules.watchlist_tree import (
     ALL_SOURCES_BUCKET,
+    STARRED_BUCKET,
     AddSourceToWatchlistRequested,
     CreateWatchlistRequested,
     DeleteWatchlistRequested,
@@ -1126,7 +1127,14 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         try:
             service = self._watchlist_bundle_service()
             self._tree_watchlists = service.list_watchlists()
-            self._tree_counts = service.get_watchlist_item_counts()
+            # Copy before inserting: the service's own mapping is its
+            # return-value contract, and the Starred smart feed's badge
+            # (TASK-3072) is a tree-only bucket -- it rides this mapping so
+            # every existing counts refresh updates it too.
+            counts = dict(service.get_watchlist_item_counts())
+            starred = service.get_flagged_items_count()
+            counts[STARRED_BUCKET] = {"total": starred, "unread": starred}
+            self._tree_counts = counts
             self._tree_source_counts = service.get_source_item_counts()
         except Exception:
             logger.opt(exception=True).debug("Failed to load watchlists tree data.")
@@ -1752,6 +1760,8 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             The scope's display name, unescaped.
         """
         scope = self.tree_scope
+        if scope.kind == "starred":
+            return "Starred"
         if scope.kind == "unassigned":
             return "Unassigned"
         if scope.kind == "watchlist" and scope.watchlist_id is not None:
@@ -5082,7 +5092,10 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             backend listing's own order. Every loaded source when the scope is
             `all`, or when the runtime backend is not `local`.
         """
-        if self.tree_scope.kind == "all" or self.runtime_backend != "local":
+        if self.tree_scope.kind in ("all", "starred") or self.runtime_backend != "local":
+            # `starred` scopes the ITEMS list (a flag predicate), not the
+            # Sources table -- every source can hold a starred item, so the
+            # truthful listing here is the same unscoped one `all` gets.
             return list(self._loaded_sources)
         allowed = {
             str(row.get("id")) for row in self.scoped_source_rows() if row.get("id") is not None
@@ -8450,6 +8463,11 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         regardless of the rail selection.
         """
         scope = self.tree_scope
+        if scope.kind == "starred":
+            # TASK-3072 plan task 6: the Starred smart feed. The flag is
+            # global (same ADR-018 semantics as the briefing queue), so no
+            # membership predicate -- just the flag itself.
+            return {"is_flagged": True}
         if scope.kind == "source" and scope.source_id is not None:
             return {"source_id": scope.source_id}
         if scope.kind == "watchlist" and scope.watchlist_id is not None:

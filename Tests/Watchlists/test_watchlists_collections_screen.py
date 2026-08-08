@@ -451,6 +451,41 @@ async def test_items_reload_scopes_to_source():
 
 
 @pytest.mark.asyncio
+async def test_items_reload_scopes_to_starred():
+    """TASK-3072 plan task 6: the Starred smart feed lists flagged items from
+    every source -- membership is irrelevant, the flag is global (ADR-018
+    semantics, same as the briefing queue)."""
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+        service = app.watchlist_bundle_service
+        db = service._db
+
+        arxiv = db.add_subscription(
+            name="ArXiv", type="rss", source="https://a.example/f"
+        )
+        krebs = db.add_subscription(
+            name="Krebs", type="rss", source="https://b.example/f"
+        )
+        starred_a = _seed_item(db, arxiv, "Starred from ArXiv")
+        starred_b = _seed_item(db, krebs, "Starred from Krebs")
+        _seed_item(db, arxiv, "Plain ArXiv item")
+        db.set_item_flagged(starred_a, True)
+        db.set_item_flagged(starred_b, True)
+
+        screen._apply_tree_scope(TreeScope(kind="starred"))
+        await screen._load_items()
+
+        assert screen._loaded_items, "precondition: two items are starred"
+        assert {item["title"] for item in screen._loaded_items} == {
+            "Starred from ArXiv",
+            "Starred from Krebs",
+        }
+
+
+@pytest.mark.asyncio
 async def test_tree_move_triggers_items_reload_on_read_tab():
     """Moving the tree while on the Read tab re-fetches the items list.
 

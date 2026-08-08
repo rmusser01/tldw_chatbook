@@ -583,3 +583,45 @@ async def test_a_check_that_is_only_queued_does_not_re_read_the_counts():
         await pilot.pause()
         assert reloads == ["x"], "a finished run must refresh the counts"
         screen._load_tree_data = real_load_tree
+
+
+# --- TASK-3072 plan task 6: the Starred root's badge -------------------------
+
+
+@pytest.mark.asyncio
+async def test_starred_root_badge_counts_flagged_items():
+    """The Starred root's badge is `get_flagged_items_count` -- global and
+    status-agnostic, refreshed through the same tree-data load as every
+    other node. Two flagged items on different sources read as one "2".
+    """
+    app = _build_test_app()
+    _watchlist_id, assigned_id, unassigned_id = _seed_two_sources_one_assigned(app)
+    db = app.local_watchlists_service._db()
+    with db.transaction() as conn:
+        for index, source_id in enumerate((assigned_id, unassigned_id, unassigned_id)):
+            persist_subscription_item(
+                conn,
+                source_id,
+                {
+                    "url": f"https://feed.test/post-{index}/",
+                    "title": f"Post {index}",
+                    "content_hash": f"hash-starred-{index}",
+                },
+                run_id=None,
+                now=f"2026-08-04T09:00:0{index}+00:00",
+            )
+    item_ids = [
+        row[0]
+        for row in db.conn.execute("SELECT id FROM subscription_items ORDER BY id")
+    ]
+    db.set_item_flagged(item_ids[0], True)
+    db.set_item_flagged(item_ids[1], True)
+
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = await _mounted(host, pilot)
+        for _ in range(40):
+            await pilot.pause()
+            if _rail_label(screen, "wl-tree-node-starred").endswith("2"):
+                break
+        assert _rail_label(screen, "wl-tree-node-starred") == "★ Starred  2"
