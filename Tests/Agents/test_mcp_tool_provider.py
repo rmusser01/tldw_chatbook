@@ -1413,3 +1413,142 @@ def test_invoke_kill_switch_check_survives_getter_exception(running_loop):
 
     assert result.ok is True
     assert service.execute_calls
+
+
+# ---------------------------------------------------------------------------
+# builtin_raw_name_exclusions (task-1337, plan Task 8)
+# ---------------------------------------------------------------------------
+#
+# The Console shadows 23 built-in raw names (the 18 `library_*` descriptor
+# tools served by its own LibraryToolProvider, plus the five legacy RAG/chat
+# readers whose Console coverage is the bounded RAG/direct tools). The
+# Console-composed provider must drop those names ONLY when they come from
+# `builtin:tldw_chatbook` -- same-named tools on external/local MCP profiles
+# stay eligible and permission-governed, and the local MCP inventory itself
+# is never mutated.
+
+_LEGACY_SHADOWED_NAMES = (
+    "search_rag",
+    "search_notes",
+    "search_conversations",
+    "get_conversation_history",
+    "export_conversation",
+)
+
+
+def _console_exclusion_set() -> frozenset:
+    from tldw_chatbook.Library.library_tool_contract import LIBRARY_TOOL_DESCRIPTORS
+
+    return frozenset(set(LIBRARY_TOOL_DESCRIPTORS) | set(_LEGACY_SHADOWED_NAMES))
+
+
+def _mixed_library_inventory() -> dict:
+    names = sorted(_console_exclusion_set()) + ["chat_with_llm"]
+    return {"tools": [_tool_dict(name, f"{name} description") for name in names]}
+
+
+def test_compose_catalog_without_exclusions_keeps_every_builtin_name():
+    """Default (no exclusions): all non-Console callers preserve current
+    behavior -- even the shadowed names stay in the catalog."""
+    service = FakeMCPService(inventory=_mixed_library_inventory())
+    provider = MCPToolProvider(service=service, main_loop=asyncio.new_event_loop())
+
+    _compose(provider)
+
+    names = {entry.name for entry in provider.list_catalog()}
+    assert "mcp__tldw_chatbook__library_list_media" in names
+    assert "mcp__tldw_chatbook__search_rag" in names
+    assert "mcp__tldw_chatbook__chat_with_llm" in names
+    assert len(names) == 24  # 23 shadowed + the unrelated built-in
+
+
+def test_compose_catalog_builtin_exclusions_scoped_to_builtin_source():
+    """With the Console exclusion set: exactly the 23 built-in raw names
+    disappear; the unrelated built-in and same-named local-profile tools
+    remain, and the inventory mapping is left untouched."""
+    exclusions = _console_exclusion_set()
+    assert len(exclusions) == 23  # 18 descriptors + 5 legacy, no overlap
+    service = FakeMCPService(
+        inventory=_mixed_library_inventory(),
+        catalog_records=[
+            _catalog_record(
+                "docs",
+                [_tool_dict("library_list_media"), _tool_dict("search_rag")],
+            )
+        ],
+    )
+    provider = MCPToolProvider(
+        service=service,
+        main_loop=asyncio.new_event_loop(),
+        builtin_raw_name_exclusions=exclusions,
+    )
+
+    _compose(provider)
+
+    names = {entry.name for entry in provider.list_catalog()}
+    for raw_name in exclusions:
+        assert f"mcp__tldw_chatbook__{raw_name}" not in names
+    assert "mcp__tldw_chatbook__chat_with_llm" in names
+    # Same raw names on a LOCAL profile are a different tool entirely.
+    assert "mcp__docs__library_list_media" in names
+    assert "mcp__docs__search_rag" in names
+    # The provider never rewrites the source inventory.
+    assert [t["name"] for t in service.inventory["tools"]] == [
+        t["name"] for t in _mixed_library_inventory()["tools"]
+    ]
+
+
+def test_compose_catalog_excluded_names_still_gated_when_served_locally():
+    """Governance, not just eligibility: the local twin of an excluded raw
+    name still flows through the permission machinery (ask -> pending row;
+    deny -> dropped)."""
+    exclusions = _console_exclusion_set()
+    service = FakeMCPService(
+        inventory=_mixed_library_inventory(),
+        catalog_records=[
+            _catalog_record(
+                "docs",
+                [_tool_dict("library_list_media"), _tool_dict("search_rag")],
+            )
+        ],
+        states={
+            ("local:docs", "search_rag"): EffectiveToolState(
+                state="deny", origin="tool_override"
+            ),
+        },
+    )
+    provider = MCPToolProvider(
+        service=service,
+        main_loop=asyncio.new_event_loop(),
+        builtin_raw_name_exclusions=exclusions,
+    )
+
+    _compose(provider)
+
+    names = {entry.name for entry in provider.list_catalog()}
+    # Deny-governed local twin dropped by the STATE filter, not the exclusion.
+    assert "mcp__docs__search_rag" not in names
+    assert "mcp__docs__library_list_media" in names
+    # The surviving ask-state twin still resolves a pending gate row.
+    pending = provider.pending_gate_for("mcp__docs__library_list_media", {})
+    assert pending is not None
+    assert pending.server_key == "local:docs"
+    assert pending.tool_name == "library_list_media"
+
+
+def test_compose_catalog_exclusion_set_stored_immutably():
+    """The constructor argument is stored as an immutable frozenset copy --
+    later mutation of the caller's container cannot widen the filter."""
+    mutable = {"library_list_media"}
+    provider = MCPToolProvider(
+        service=FakeMCPService(inventory=_mixed_library_inventory()),
+        main_loop=asyncio.new_event_loop(),
+        builtin_raw_name_exclusions=mutable,
+    )
+    mutable.add("chat_with_llm")
+
+    _compose(provider)
+
+    names = {entry.name for entry in provider.list_catalog()}
+    assert "mcp__tldw_chatbook__library_list_media" not in names
+    assert "mcp__tldw_chatbook__chat_with_llm" in names

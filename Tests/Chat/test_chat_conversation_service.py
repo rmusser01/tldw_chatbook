@@ -1148,3 +1148,127 @@ def test_canonical_reader_never_merges_changed_legacy_records(tmp_path):
     assert messages[0]["citations"] == []
     assert citations["state"] == "diverged"
     assert citations["citations"] == []
+
+
+
+class TestLibraryConversationSeams:
+    """task-1337 (plan Task 4): thin agent-facing delegates over the
+    additive DB library read seams. The service forwards pagination/window
+    arguments untouched and echoes the list/search envelope shape shared by
+    the other Library domains (items/total/offset/limit)."""
+
+    def test_list_delegates_and_echoes_pagination(self):
+        class FakeLibraryDB:
+            def __init__(self):
+                self.calls = []
+
+            def list_library_conversations_page(self, *, limit, offset):
+                self.calls.append(("list", limit, offset))
+                return {"items": [{"id": "conv-1"}], "total": 7}
+
+        db = FakeLibraryDB()
+        service = ChatConversationService(db)
+
+        result = service.list_library_conversations(limit=3, offset=6)
+
+        assert db.calls == [("list", 3, 6)]
+        assert result == {
+            "items": [{"id": "conv-1"}],
+            "total": 7,
+            "offset": 6,
+            "limit": 3,
+        }
+
+    def test_search_delegates_and_echoes_pagination(self):
+        class FakeLibraryDB:
+            def __init__(self):
+                self.calls = []
+
+            def search_library_conversations_page(self, *, query, limit, offset):
+                self.calls.append(("search", query, limit, offset))
+                return {"items": [{"id": "conv-2", "matched_fields": ["title"]}], "total": 1}
+
+        db = FakeLibraryDB()
+        service = ChatConversationService(db)
+
+        result = service.search_library_conversations(query="needle", limit=5, offset=10)
+
+        assert db.calls == [("search", "needle", 5, 10)]
+        assert result == {
+            "items": [{"id": "conv-2", "matched_fields": ["title"]}],
+            "total": 1,
+            "offset": 10,
+            "limit": 5,
+        }
+
+    def test_get_messages_forwards_window_arguments(self):
+        class FakeLibraryDB:
+            def __init__(self):
+                self.captured = None
+
+            def get_library_conversation_messages(self, conversation_id, **kwargs):
+                self.captured = (conversation_id, kwargs)
+                return {"id": conversation_id, "messages": []}
+
+        db = FakeLibraryDB()
+        service = ChatConversationService(db)
+
+        result = service.get_library_conversation_messages(
+            "conv-9",
+            message_offset=4,
+            message_limit=5,
+            max_chars=100,
+            message_id="msg-1",
+            char_start=50,
+        )
+
+        assert db.captured == (
+            "conv-9",
+            {
+                "message_offset": 4,
+                "message_limit": 5,
+                "max_chars": 100,
+                "message_id": "msg-1",
+                "char_start": 50,
+            },
+        )
+        assert result == {"id": "conv-9", "messages": []}
+
+    def test_get_messages_missing_conversation_returns_none(self):
+        class FakeLibraryDB:
+            def get_library_conversation_messages(self, conversation_id, **kwargs):
+                return None
+
+        service = ChatConversationService(FakeLibraryDB())
+
+        assert service.get_library_conversation_messages("missing") is None
+
+    def test_rag_context_sidecar_never_reaches_library_messages(self, tmp_path):
+        """RAG context is a JSON sidecar adjunct keyed by conversation/message;
+        the library message seam must not join or surface it."""
+        db = CharactersRAGDB(tmp_path / "chacha.db", "test-client")
+        try:
+            service = ChatConversationService(
+                db, rag_context_store_path=tmp_path / "rag_ctx.json"
+            )
+            conv_id = db.add_conversation({"title": "ctx"})
+            msg_id = db.add_message(
+                {"conversation_id": conv_id, "sender": "user", "content": "hello"}
+            )
+            service.record_message_rag_context(
+                conv_id,
+                msg_id,
+                rag_context={"pipeline": "websearch"},
+                citations=[{"source": "example"}],
+            )
+
+            detail = service.get_library_conversation_messages(conv_id)
+
+            assert detail["include_rag_context"] is False
+            assert detail["message_total"] == 1
+            assert all(
+                "rag_context" not in message and "citations" not in message
+                for message in detail["messages"]
+            )
+        finally:
+            db.close_connection()

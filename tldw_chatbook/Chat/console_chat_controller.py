@@ -86,6 +86,7 @@ from tldw_chatbook.Agents.mcp_tool_provider import MCPPendingCall, MCPToolProvid
 from tldw_chatbook.Agents.tool_catalog import BuiltinToolProvider
 from tldw_chatbook.config import get_cli_setting
 from tldw_chatbook.Internal_Prompts import get_internal_prompt
+from tldw_chatbook.Library.library_tool_contract import LIBRARY_TOOL_DESCRIPTORS
 from tldw_chatbook.MCP.permission_store import BUILTIN_TOOL_SERVER_KEY
 from tldw_chatbook.Skills_Interop.skill_trust_models import SkillTrustBlockedError
 from tldw_chatbook.Tools.file_operation_tools import path_precheck_failed
@@ -110,6 +111,27 @@ if TYPE_CHECKING:
     from tldw_chatbook.Agents.builtin_tool_gate import BuiltinToolGate
     from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
     from tldw_chatbook.MCP.hub_tool_catalog import HubTool
+
+
+#: task-1337 (plan Task 8): raw built-in tool names the Console-composed
+#: ``MCPToolProvider`` must exclude -- the 18 ``library_*`` descriptor tools
+#: (served to Console agents by the run's own direct/RAG Library provider, in
+#: either retrieval mode) plus the five legacy RAG/chat readers whose Console
+#: coverage those providers replace. The legacy names live HERE, not in the
+#: shared descriptor table: they are not part of the 18-tool contract. The
+#: filter is source-scoped inside the provider (``builtin:tldw_chatbook``
+#: only), so external/local MCP profiles fronting the same raw names stay
+#: eligible and permission-governed.
+CONSOLE_MCP_BUILTIN_RAW_NAME_EXCLUSIONS: frozenset = frozenset(
+    tuple(LIBRARY_TOOL_DESCRIPTORS)
+    + (
+        "search_rag",
+        "search_notes",
+        "search_conversations",
+        "get_conversation_history",
+        "export_conversation",
+    )
+)
 
 
 #: Fallback used when no `mcp_approval_timeout_seconds` seam is injected --
@@ -992,6 +1014,7 @@ class ConsoleChatController:
         world_info_applier: "Callable[[str | None, str, list], str] | None" = None,
         rag_capture_provider: "Callable[[str], Awaitable[Any]] | None" = None,
         default_session_settings: "Callable[[], ConsoleSessionSettings] | None" = None,
+        library_provider_factory: "Callable[[], Any | None] | None" = None,
     ) -> None:
         self.store = store
         self.provider_gateway = provider_gateway
@@ -1034,6 +1057,17 @@ class ConsoleChatController:
         #: settings then, matching every other UI-bridge hook's no-op
         #: default here).
         self._default_session_settings = default_session_settings
+        #: task-1337: screen-owned seam that builds THIS run's Library
+        #: retrieval provider (the descriptor-backed ``LibraryToolProvider``
+        #: when direct Library tools are on, the bounded
+        #: ``LibraryRagToolProvider`` when off, or ``None`` when neither can
+        #: be constructed). Called exactly once per agent run, on the main
+        #: loop, inside ``_run_agent_reply`` -- the bridge worker thread
+        #: never reads Textual config itself, and flipping the setting
+        #: between runs takes effect on the very next run without
+        #: rebuilding this controller or the cached bridge. ``None`` (the
+        #: default) means no Library tools are offered at all.
+        self._library_provider_factory = library_provider_factory
         # Parallel-agents spec §2: run state is a PER-SESSION map, not a
         # single global slot -- two sessions can each have their own
         # in-flight/terminal run without stamping each other. `run_state`/
@@ -3225,6 +3259,11 @@ class ConsoleChatController:
             service=service,
             main_loop=asyncio.get_running_loop(),
             approval_callback=bound_request_approvals,
+            # task-1337 (plan Task 8): the Console always excludes the
+            # shadowed built-in raw names, in BOTH retrieval modes -- the
+            # run's own Library provider (direct or bounded-RAG) is the only
+            # Library retrieval path Console agents get.
+            builtin_raw_name_exclusions=CONSOLE_MCP_BUILTIN_RAW_NAME_EXCLUSIONS,
         )
         try:
             await provider.compose_catalog()
@@ -7329,6 +7368,19 @@ class ConsoleChatController:
                 [review_hook, local_review_hook]
             )
 
+        # task-1337: THIS run's Library retrieval provider (direct tools or
+        # the bounded RAG fallback), resolved ONCE here on the main loop via
+        # the injected factory -- a raising factory degrades to None (no
+        # Library tools this run) rather than breaking the send.
+        library_provider: Any | None = None
+        if self._library_provider_factory is not None:
+            try:
+                library_provider = self._library_provider_factory()
+            except Exception:  # noqa: BLE001 -- never block a send
+                logger.opt(exception=True).warning(
+                    "library_provider_factory failed; running without Library tools"
+                )
+
         # TASK-1971 (Agent Change Review): THIS run's tracked roots -- the
         # same workspace folder bindings the file tools resolve against.
         # Best-effort: an unavailable registry yields no roots and an
@@ -7373,6 +7425,7 @@ class ConsoleChatController:
                 builtin_gate=builtin_gate,
                 review_tool_calls=review_hook,
                 local_provider=local_provider,
+                library_provider=library_provider,
                 change_roots=change_roots,
                 turn_skill_bindings=skill_bindings,
                 turn_bundle_block=skill_bundle_block,

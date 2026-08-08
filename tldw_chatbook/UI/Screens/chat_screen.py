@@ -3810,6 +3810,48 @@ class ChatScreen(BaseAppScreen):
         """Delegate to `ConsolePromptsController` (wave-3 console decomposition, task 3)."""
         return self._prompts._ensure_console_prompt_history()
 
+    def _console_library_provider_factory(self):
+        """Resolve the Library retrieval provider for one Console agent run.
+
+        task-1337 (spec section 8): reads ``[console].direct_library_tools``
+        FRESH on every call, so flipping the Settings toggle applies to the
+        next run without rebuilding the cached controller or bridge. Direct
+        mode assembles ``LocalLibraryToolService`` purely from the app's local
+        service attributes (any missing backend degrades its own tools to
+        ``feature_unavailable``); off mode binds the bounded RAG provider to
+        the app-owned ``library_rag_search_service``.
+        """
+        # Local imports: keeps the Agents/Library import chains off the
+        # ChatScreen module import path (and lets tests patch the config seam
+        # at call time).
+        from tldw_chatbook.UI.Screens.settings_library_rag_defaults import (
+            load_direct_library_tools,
+        )
+
+        app = self.app_instance
+        if not load_direct_library_tools():
+            from tldw_chatbook.Agents.library_rag_tool_provider import (
+                LibraryRagToolProvider,
+            )
+
+            return LibraryRagToolProvider(
+                getattr(app, "library_rag_search_service", None)
+            )
+        from tldw_chatbook.Agents.library_tool_provider import LibraryToolProvider
+        from tldw_chatbook.Library.local_library_tool_service import (
+            LocalLibraryToolService,
+        )
+
+        service = LocalLibraryToolService(
+            media_service=getattr(app, "local_media_reading_service", None),
+            notes_service=getattr(app, "notes_service", None),
+            prompt_service=getattr(app, "local_prompt_service", None),
+            skills_service=getattr(app, "local_skills_service", None),
+            conversation_service=getattr(app, "local_chat_conversation_service", None),
+            collections_service=getattr(app, "local_library_collections_service", None),
+        )
+        return LibraryToolProvider(service)
+
     def _ensure_console_chat_controller(self) -> ConsoleChatController:
         """Return the native Console chat controller with fresh selection state."""
         if self._console_chat_controller is None:
@@ -3843,6 +3885,7 @@ class ChatScreen(BaseAppScreen):
                 world_info_applier=self._console_world_info_applier,
                 rag_capture_provider=self._capture_console_staged_rag,
                 default_session_settings=self._session._default_console_session_settings,
+                library_provider_factory=self._console_library_provider_factory,
             )
         self._console_chat_controller.on_submission_accepted = (
             self._on_console_submission_accepted

@@ -287,6 +287,110 @@ class NotesInteropService:
 
         return result
 
+    # --- Library read seams (task-1337) ---
+
+    def list_library_notes(
+        self, user_id: str, *, limit: int = 20, offset: int = 0
+    ) -> Dict[str, Any]:
+        """Page the active local notes library for agent-facing list tools.
+
+        Args:
+            user_id: User scope used to resolve the local notes database.
+            limit: Maximum number of notes to return.
+            offset: Number of notes to skip.
+
+        Returns:
+            A bounded page containing items, exact total, offset, and limit.
+
+        Raises:
+            CharactersRAGDBError: If the local notes database cannot be read.
+        """
+        start_time = time.time()
+        log_counter("notes_library_list_library_notes_attempt")
+
+        db = self._get_db(user_id)
+        payload = db.list_library_notes_page(limit=limit, offset=offset)
+
+        duration = time.time() - start_time
+        log_histogram("notes_library_list_library_notes_duration", duration)
+        log_counter(
+            "notes_library_list_library_notes_success",
+            labels={"count": str(len(payload["items"]))},
+        )
+        return {
+            "items": payload["items"],
+            "total": payload["total"],
+            "offset": offset,
+            "limit": limit,
+        }
+
+    def search_library_notes(
+        self, user_id: str, *, query: str, limit: int = 20, offset: int = 0
+    ) -> Dict[str, Any]:
+        """Search the active local notes library for agent-facing tools.
+
+        Args:
+            user_id: User scope used to resolve the local notes database.
+            query: Literal case-insensitive search text.
+            limit: Maximum number of notes to return.
+            offset: Number of matching notes to skip.
+
+        Returns:
+            A bounded page with exact total and match evidence.
+
+        Raises:
+            CharactersRAGDBError: If the local notes database cannot be read.
+        """
+        start_time = time.time()
+        log_counter("notes_library_search_library_notes_attempt")
+
+        db = self._get_db(user_id)
+        payload = db.search_library_notes_page(query=query, limit=limit, offset=offset)
+
+        duration = time.time() - start_time
+        log_histogram("notes_library_search_library_notes_duration", duration)
+        log_counter(
+            "notes_library_search_library_notes_success",
+            labels={"count": str(len(payload["items"]))},
+        )
+        return {
+            "items": payload["items"],
+            "total": payload["total"],
+            "offset": offset,
+            "limit": limit,
+        }
+
+    def get_library_note_text(
+        self, user_id: str, note_id: str, *, start: int = 0, max_chars: int = 8000
+    ) -> Optional[Dict[str, Any]]:
+        """Read a windowed text segment for one active note.
+
+        Args:
+            user_id: User scope used to resolve the local notes database.
+            note_id: Stable note identifier.
+            start: Zero-based character offset.
+            max_chars: Maximum characters to return.
+
+        Returns:
+            Bounded note metadata and text, or None when absent.
+
+        Raises:
+            CharactersRAGDBError: If the local notes database cannot be read.
+        """
+        start_time = time.time()
+        log_counter("notes_library_get_library_note_text_attempt")
+
+        db = self._get_db(user_id)
+        detail = db.get_library_note_text(note_id, start=start, max_chars=max_chars)
+
+        duration = time.time() - start_time
+        log_histogram("notes_library_get_library_note_text_duration", duration)
+        log_counter(
+            "notes_library_get_library_note_text_result",
+            labels={"found": str(detail is not None)},
+        )
+        return detail
+
     def update_note(
         self,
         user_id: str,

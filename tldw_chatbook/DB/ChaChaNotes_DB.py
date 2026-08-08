@@ -36,6 +36,7 @@ changes in the `sync_log` and in individual records.
 
 # Imports
 import contextlib
+import hashlib
 import sqlite3
 import json
 import re
@@ -10524,6 +10525,677 @@ UPDATE db_schema_version
         cursor = self.execute_query(query)
         row = cursor.fetchone()
         return int(row["cnt"] if row else 0)
+
+    # ============================= Library read seams (task-1337) =========================================
+    #
+    # Additive, read-only queries backing the local Library agent tools. They
+    # mirror the Media library seams: narrow agent-safe projections (bounded
+    # preview or windowed text, never the full content unless requested
+    # through the windowed reader), exact totals read in the same
+    # transaction, and stable ordering.
+
+    _LIBRARY_NOTE_PREVIEW_CHARS = 241
+    _LIBRARY_NOTE_KEYWORD_CAP = 20
+    _LIBRARY_NOTE_FTS_TOKEN_LIMIT = 20
+
+    @staticmethod
+    def _escape_library_note_like(value: str) -> str:
+        """Escape LIKE metacharacters so user input matches literally."""
+        return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+    @classmethod
+    def _library_note_fts_query(cls, raw_query: str) -> Optional[str]:
+        """Build a safe FTS5 MATCH query from raw user text.
+
+        Tokens are extracted with a word-character regex and each is
+        double-quoted, so FTS operators in the raw input are inert. Returns
+        None when the input contains no usable tokens.
+        """
+        tokens = re.findall(r"\w+", raw_query, flags=re.UNICODE)
+        if not tokens:
+            return None
+        tokens = tokens[: cls._LIBRARY_NOTE_FTS_TOKEN_LIMIT]
+        return " ".join(f'"{token}"' for token in tokens)
+
+    def _library_keywords_for_notes(
+        self, conn: sqlite3.Connection, note_ids: List[str]
+    ) -> Dict[str, List[str]]:
+        """Fetch active keywords for a page of note ids, grouped by note id."""
+        if not note_ids:
+            return {}
+        placeholders = ",".join("?" * len(note_ids))
+        query = f"""
+            SELECT nk.note_id, k.keyword
+            FROM note_keywords nk
+            JOIN keywords k ON nk.keyword_id = k.id
+            WHERE nk.note_id IN ({placeholders}) AND k.deleted = 0
+            ORDER BY k.keyword COLLATE NOCASE
+        """
+        cursor = conn.execute(query, tuple(note_ids))
+        keywords_by_note: Dict[str, List[str]] = {}
+        for row in cursor.fetchall():
+            keywords_by_note.setdefault(row["note_id"], []).append(row["keyword"])
+        return keywords_by_note
+
+    def _library_note_item(
+        self, row: sqlite3.Row, keywords_by_note: Dict[str, List[str]]
+    ) -> Dict[str, Any]:
+        """Project a notes row into the agent-safe library item shape."""
+        all_keywords = keywords_by_note.get(row["id"], [])
+        visible = all_keywords[: self._LIBRARY_NOTE_KEYWORD_CAP]
+        return {
+            "id": row["id"],
+            "title": row["title"],
+            "created_at": row["created_at"],
+            "last_modified": row["last_modified"],
+            "version": row["version"],
+            "preview": row["preview"],
+            "keywords": visible,
+            "keyword_total": len(all_keywords),
+            "keywords_truncated": len(all_keywords) > len(visible),
+        }
+
+    def list_library_notes_page(self, *, limit: int, offset: int) -> Dict[str, Any]:
+        """Return one page of active library notes plus the exact active total.
+
+        Active means ``deleted = 0``. Ordering is stable:
+        ``last_modified DESC, rowid DESC``. The count and the page are read
+        in one transaction.
+
+        Args:
+            limit: Maximum number of items to return.
+            offset: Number of items to skip (SQL OFFSET, not Python slicing).
+
+        Returns:
+            Dict with ``items`` (agent-safe projections) and ``total``.
+
+        Raises:
+            CharactersRAGDBError: If a database error occurs.
+        """
+        try:
+            with self.transaction() as conn:
+                total = conn.execute(
+                    "SELECT COUNT(*) AS count FROM notes WHERE deleted = 0"
+                ).fetchone()["count"]
+                cursor = conn.execute(
+                    """
+                    SELECT id, title, created_at, last_modified, version,
+                           substr(content, 1, ?) AS preview
+                    FROM notes
+                    WHERE deleted = 0
+                    ORDER BY last_modified DESC, rowid DESC
+                    LIMIT ? OFFSET ?
+                    """,
+                    (self._LIBRARY_NOTE_PREVIEW_CHARS, limit, offset),
+                )
+                rows = cursor.fetchall()
+                keywords_by_note = self._library_keywords_for_notes(
+                    conn, [row["id"] for row in rows]
+                )
+            items = [self._library_note_item(row, keywords_by_note) for row in rows]
+            return {"items": items, "total": total}
+        except sqlite3.Error as e:
+            logger.error(
+                f"Error listing library notes page (limit={limit}, offset={offset}): {e}"
+            )
+            raise CharactersRAGDBError(f"Failed to list library notes page: {e}") from e
+
+    def search_library_notes_page(
+        self, *, query: str, limit: int, offset: int
+    ) -> Dict[str, Any]:
+        """Search active library notes, returning one page plus exact total.
+
+        Match branches (OR, deduplicated by notes row): case-insensitive
+        exact title, title substring, content substring, FTS over
+        title/content, and keyword substring via the note_keywords relation.
+        LIKE input is escaped and FTS input is tokenized/quoted, so wildcards
+        and FTS operators in ``query`` match literally. Exact-title hits rank
+        first, then recency, then rowid.
+
+        Args:
+            query: Raw user search text.
+            limit: Maximum number of items to return.
+            offset: Number of items to skip.
+
+        Returns:
+            Dict with ``items`` (library projections plus ``matched_fields``
+            and ``matched_keywords``) and ``total``.
+
+        Raises:
+            CharactersRAGDBError: If a database error occurs.
+        """
+        like_pattern = f"%{self._escape_library_note_like(query)}%"
+        fts_query = self._library_note_fts_query(query)
+        keyword_branch = (
+            "id IN (SELECT nk.note_id FROM note_keywords nk "
+            "JOIN keywords k ON nk.keyword_id = k.id "
+            "WHERE k.deleted = 0 AND k.keyword LIKE ? ESCAPE '\\')"
+        )
+
+        branches = [
+            "LOWER(title) = LOWER(?)",
+            "title LIKE ? ESCAPE '\\'",
+            "content LIKE ? ESCAPE '\\'",
+        ]
+        params: List[Any] = [query, like_pattern, like_pattern]
+        if fts_query is not None:
+            branches.append(
+                "rowid IN (SELECT rowid FROM notes_fts WHERE notes_fts MATCH ?)"
+            )
+            params.append(fts_query)
+        branches.append(keyword_branch)
+        params.append(like_pattern)
+
+        where_clause = " OR ".join(f"({branch})" for branch in branches)
+        hit_selects = ", ".join(
+            f"({branch}) AS hit_{index}" for index, branch in enumerate(branches)
+        )
+        hit_params = list(params)
+
+        try:
+            with self.transaction() as conn:
+                total = conn.execute(
+                    f"SELECT COUNT(*) AS count FROM notes "
+                    f"WHERE deleted = 0 AND ({where_clause})",
+                    tuple(params),
+                ).fetchone()["count"]
+                cursor = conn.execute(
+                    f"""
+                    SELECT id, title, created_at, last_modified, version,
+                           substr(content, 1, ?) AS preview,
+                           {hit_selects}
+                    FROM notes
+                    WHERE deleted = 0 AND ({where_clause})
+                    ORDER BY (LOWER(title) = LOWER(?)) DESC,
+                             last_modified DESC, rowid DESC
+                    LIMIT ? OFFSET ?
+                    """,
+                    tuple(
+                        [self._LIBRARY_NOTE_PREVIEW_CHARS]
+                        + hit_params
+                        + params
+                        + [query, limit, offset]
+                    ),
+                )
+                rows = cursor.fetchall()
+                keywords_by_note = self._library_keywords_for_notes(
+                    conn, [row["id"] for row in rows]
+                )
+            lowered_query = query.lower()
+            items = []
+            for row in rows:
+                item = self._library_note_item(row, keywords_by_note)
+                matched_fields = set()
+                if row["hit_0"] or row["hit_1"]:
+                    matched_fields.add("title")
+                content_hit_indexes = [2] + ([3] if fts_query is not None else [])
+                keyword_hit_index = 4 if fts_query is not None else 3
+                if any(row[f"hit_{index}"] for index in content_hit_indexes):
+                    matched_fields.add("content")
+                if row[f"hit_{keyword_hit_index}"]:
+                    matched_fields.add("keywords")
+                item["matched_fields"] = sorted(matched_fields)
+                item["matched_keywords"] = [
+                    keyword
+                    for keyword in keywords_by_note.get(row["id"], [])
+                    if lowered_query in keyword.lower()
+                ][: self._LIBRARY_NOTE_KEYWORD_CAP]
+                items.append(item)
+            return {"items": items, "total": total}
+        except sqlite3.Error as e:
+            logger.error(
+                "Error searching library notes "
+                f"(query_chars={len(query)}, limit={limit}, offset={offset}): {e}"
+            )
+            raise CharactersRAGDBError(f"Failed to search library notes: {e}") from e
+
+    def get_library_note_text(
+        self, note_id: str, *, start: int, max_chars: int
+    ) -> Optional[Dict[str, Any]]:
+        """Return a windowed text segment for one active note.
+
+        Reads only ``substr(content, start + 1, max_chars)`` and
+        ``length(content)`` — the full content is never selected.
+
+        Args:
+            note_id: The note UUID to read.
+            start: Zero-based character offset into the content.
+            max_chars: Maximum number of characters to return.
+
+        Returns:
+            Dict with metadata, ``total_chars``, ``start``,
+            ``returned_chars``, ``has_more``, and the ``text`` segment; or
+            None when no active note matches the id.
+
+        Raises:
+            CharactersRAGDBError: If a database error occurs.
+        """
+        try:
+            with self.transaction() as conn:
+                row = conn.execute(
+                    """
+                    SELECT id, title, created_at, last_modified, version,
+                           length(content) AS total_chars,
+                           substr(content, ?, ?) AS text
+                    FROM notes
+                    WHERE id = ? AND deleted = 0
+                    """,
+                    (start + 1, max_chars, note_id),
+                ).fetchone()
+            if row is None:
+                return None
+            text = row["text"] or ""
+            total_chars = row["total_chars"] or 0
+            return {
+                "id": row["id"],
+                "title": row["title"],
+                "created_at": row["created_at"],
+                "last_modified": row["last_modified"],
+                "version": row["version"],
+                "total_chars": total_chars,
+                "start": start,
+                "returned_chars": len(text),
+                "has_more": start + len(text) < total_chars,
+                "text": text,
+            }
+        except sqlite3.Error as e:
+            logger.error(
+                "Error reading library note text "
+                f"(note_id={note_id!r}, start={start}, max_chars={max_chars}): {e}"
+            )
+            raise CharactersRAGDBError(f"Failed to read library note text: {e}") from e
+
+    # ---- Conversation library seams (task-1337, plan Task 4) ----
+    #
+    # Text-only, agent-safe projections over conversations/messages. RAG
+    # context is a JSON sidecar adjunct store owned by
+    # ChatConversationService -- never message rows -- so these seams do not
+    # join it and always report ``include_rag_context: False``. Image BLOBs
+    # and full message bodies are never selected; readers project only
+    # ``length(content)`` plus a bounded ``substr`` window.
+
+    _LIBRARY_CONVERSATION_KEYWORD_CAP = 20
+    _LIBRARY_CONVERSATION_FTS_TOKEN_LIMIT = 20
+
+    @staticmethod
+    def _escape_library_conversation_like(value: str) -> str:
+        """Escape LIKE metacharacters so user input matches literally."""
+        return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+    @classmethod
+    def _library_conversation_fts_query(cls, raw_query: str) -> Optional[str]:
+        """Build a safe FTS5 MATCH query from raw user text.
+
+        Tokens are extracted with a word-character regex and each is
+        double-quoted, so FTS operators in the raw input are inert. Returns
+        None when the input contains no usable tokens.
+        """
+        tokens = re.findall(r"\w+", raw_query, flags=re.UNICODE)
+        if not tokens:
+            return None
+        tokens = tokens[: cls._LIBRARY_CONVERSATION_FTS_TOKEN_LIMIT]
+        return " ".join(f'"{token}"' for token in tokens)
+
+    def _library_keywords_for_conversations(
+        self, conn: sqlite3.Connection, conversation_ids: List[str]
+    ) -> Dict[str, List[str]]:
+        """Fetch active keywords for a page of conversation ids, grouped by id."""
+        if not conversation_ids:
+            return {}
+        placeholders = ",".join("?" * len(conversation_ids))
+        query = f"""
+            SELECT ck.conversation_id, k.keyword
+            FROM conversation_keywords ck
+            JOIN keywords k ON ck.keyword_id = k.id
+            WHERE ck.conversation_id IN ({placeholders}) AND k.deleted = 0
+            ORDER BY k.keyword COLLATE NOCASE
+        """
+        cursor = conn.execute(query, tuple(conversation_ids))
+        keywords_by_conversation: Dict[str, List[str]] = {}
+        for row in cursor.fetchall():
+            keywords_by_conversation.setdefault(row["conversation_id"], []).append(
+                row["keyword"]
+            )
+        return keywords_by_conversation
+
+    def _library_conversation_item(
+        self, row: sqlite3.Row, keywords_by_conversation: Dict[str, List[str]]
+    ) -> Dict[str, Any]:
+        """Project a conversations row into the agent-safe library item shape."""
+        all_keywords = keywords_by_conversation.get(row["id"], [])
+        visible = all_keywords[: self._LIBRARY_CONVERSATION_KEYWORD_CAP]
+        return {
+            "id": row["id"],
+            "title": row["title"],
+            "created_at": row["created_at"],
+            "last_modified": row["last_modified"],
+            "version": row["version"],
+            "keywords": visible,
+            "keyword_total": len(all_keywords),
+            "keywords_truncated": len(all_keywords) > len(visible),
+        }
+
+    def list_library_conversations_page(
+        self, *, limit: int, offset: int
+    ) -> Dict[str, Any]:
+        """Return one page of active conversations plus the exact active total.
+
+        Active means ``deleted = 0``. Ordering is stable:
+        ``last_modified DESC, rowid DESC``. The count and the page are read
+        in one transaction.
+
+        Args:
+            limit: Maximum number of items to return.
+            offset: Number of items to skip (SQL OFFSET, not Python slicing).
+
+        Returns:
+            Dict with ``items`` (agent-safe projections) and ``total``.
+
+        Raises:
+            CharactersRAGDBError: If a database error occurs.
+        """
+        try:
+            with self.transaction() as conn:
+                total = conn.execute(
+                    "SELECT COUNT(*) AS count FROM conversations WHERE deleted = 0"
+                ).fetchone()["count"]
+                cursor = conn.execute(
+                    """
+                    SELECT id, title, created_at, last_modified, version
+                    FROM conversations
+                    WHERE deleted = 0
+                    ORDER BY last_modified DESC, rowid DESC
+                    LIMIT ? OFFSET ?
+                    """,
+                    (limit, offset),
+                )
+                rows = cursor.fetchall()
+                keywords_by_conversation = self._library_keywords_for_conversations(
+                    conn, [row["id"] for row in rows]
+                )
+            items = [
+                self._library_conversation_item(row, keywords_by_conversation)
+                for row in rows
+            ]
+            return {"items": items, "total": total}
+        except sqlite3.Error as e:
+            logger.error(
+                "Error listing library conversations page "
+                f"(limit={limit}, offset={offset}): {e}"
+            )
+            raise CharactersRAGDBError(
+                f"Failed to list library conversations page: {e}"
+            ) from e
+
+    def search_library_conversations_page(
+        self, *, query: str, limit: int, offset: int
+    ) -> Dict[str, Any]:
+        """Search active conversations, returning one page plus exact total.
+
+        Match branches (OR, deduplicated by conversations row):
+        case-insensitive exact title, title substring, message-content
+        substring, safe FTS over conversation titles and message bodies, and
+        keyword substring via the conversation_keywords relation. LIKE input
+        is escaped and FTS input is tokenized/quoted, so wildcards and FTS
+        operators in ``query`` match literally. Exact-title hits rank first,
+        then recency, then rowid. A conversation with several matching
+        messages is counted once.
+
+        Args:
+            query: Raw user search text.
+            limit: Maximum number of items to return.
+            offset: Number of items to skip.
+
+        Returns:
+            Dict with ``items`` (library projections plus ``matched_fields``
+            drawn from {title, message, keywords} and ``matched_keywords``)
+            and ``total``.
+
+        Raises:
+            CharactersRAGDBError: If a database error occurs.
+        """
+        like_pattern = f"%{self._escape_library_conversation_like(query)}%"
+        fts_query = self._library_conversation_fts_query(query)
+
+        branches = [
+            "LOWER(title) = LOWER(?)",
+            "title LIKE ? ESCAPE '\\'",
+            "EXISTS (SELECT 1 FROM messages m "
+            "WHERE m.conversation_id = conversations.id AND m.deleted = 0 "
+            "AND m.content LIKE ? ESCAPE '\\')",
+        ]
+        params: List[Any] = [query, like_pattern, like_pattern]
+        title_hit_indexes = [0, 1]
+        message_hit_indexes = [2]
+        if fts_query is not None:
+            title_hit_indexes.append(len(branches))
+            branches.append(
+                "rowid IN (SELECT rowid FROM conversations_fts "
+                "WHERE conversations_fts MATCH ?)"
+            )
+            params.append(fts_query)
+            message_hit_indexes.append(len(branches))
+            branches.append(
+                "id IN (SELECT m.conversation_id FROM messages m "
+                "WHERE m.deleted = 0 AND m.rowid IN "
+                "(SELECT rowid FROM messages_fts WHERE messages_fts MATCH ?))"
+            )
+            params.append(fts_query)
+        keyword_hit_index = len(branches)
+        branches.append(
+            "id IN (SELECT ck.conversation_id FROM conversation_keywords ck "
+            "JOIN keywords k ON ck.keyword_id = k.id "
+            "WHERE k.deleted = 0 AND k.keyword LIKE ? ESCAPE '\\')"
+        )
+        params.append(like_pattern)
+
+        where_clause = " OR ".join(f"({branch})" for branch in branches)
+        hit_selects = ", ".join(
+            f"({branch}) AS hit_{index}" for index, branch in enumerate(branches)
+        )
+
+        try:
+            with self.transaction() as conn:
+                total = conn.execute(
+                    f"SELECT COUNT(*) AS count FROM conversations "
+                    f"WHERE deleted = 0 AND ({where_clause})",
+                    tuple(params),
+                ).fetchone()["count"]
+                cursor = conn.execute(
+                    f"""
+                    SELECT id, title, created_at, last_modified, version,
+                           {hit_selects}
+                    FROM conversations
+                    WHERE deleted = 0 AND ({where_clause})
+                    ORDER BY (LOWER(title) = LOWER(?)) DESC,
+                             last_modified DESC, rowid DESC
+                    LIMIT ? OFFSET ?
+                    """,
+                    tuple(params + params + [query, limit, offset]),
+                )
+                rows = cursor.fetchall()
+                keywords_by_conversation = self._library_keywords_for_conversations(
+                    conn, [row["id"] for row in rows]
+                )
+            lowered_query = query.lower()
+            items = []
+            for row in rows:
+                item = self._library_conversation_item(row, keywords_by_conversation)
+                matched_fields = set()
+                if any(row[f"hit_{index}"] for index in title_hit_indexes):
+                    matched_fields.add("title")
+                if any(row[f"hit_{index}"] for index in message_hit_indexes):
+                    matched_fields.add("message")
+                if row[f"hit_{keyword_hit_index}"]:
+                    matched_fields.add("keywords")
+                item["matched_fields"] = sorted(matched_fields)
+                item["matched_keywords"] = [
+                    keyword
+                    for keyword in keywords_by_conversation.get(row["id"], [])
+                    if lowered_query in keyword.lower()
+                ][: self._LIBRARY_CONVERSATION_KEYWORD_CAP]
+                items.append(item)
+            return {"items": items, "total": total}
+        except sqlite3.Error as e:
+            logger.error(
+                "Error searching library conversations "
+                f"(query_chars={len(query)}, limit={limit}, offset={offset}): {e}"
+            )
+            raise CharactersRAGDBError(
+                f"Failed to search library conversations: {e}"
+            ) from e
+
+    @staticmethod
+    def _library_message_revision(version: int, total_chars: int) -> str:
+        """Deterministic, content-bound revision token for one message.
+
+        ``update_message`` increments ``version`` on every write, so the
+        stored version changes whenever content changes; ``total_chars``
+        additionally binds length. The pair is hashed so agents treat the
+        token as opaque and detect stale continuations without the full
+        message body ever leaving the store.
+        """
+        digest = hashlib.sha256(f"{version}:{total_chars}".encode("utf-8"))
+        return digest.hexdigest()[:16]
+
+    def _library_message_item(
+        self, row: sqlite3.Row, *, char_start: int
+    ) -> Dict[str, Any]:
+        """Project one message row into the text-only windowed shape."""
+        text = row["text"] or ""
+        total_chars = row["total_chars"] or 0
+        return {
+            "id": row["id"],
+            "sender": row["sender"],
+            "timestamp": row["timestamp"],
+            "revision": self._library_message_revision(row["version"], total_chars),
+            "total_chars": total_chars,
+            "char_start": char_start,
+            "returned_chars": len(text),
+            "has_more": char_start + len(text) < total_chars,
+            "text": text,
+        }
+
+    def get_library_conversation_messages(
+        self,
+        conversation_id: str,
+        *,
+        message_offset: int = 0,
+        message_limit: int = 20,
+        max_chars: int = 8000,
+        message_id: Optional[str] = None,
+        char_start: int = 0,
+    ) -> Optional[Dict[str, Any]]:
+        """Return a text-only, windowed message page for one active conversation.
+
+        Two modes:
+
+        - Page mode (``message_id=None``): up to ``message_limit`` active
+          messages ordered ``timestamp ASC, rowid ASC``, each windowed to
+          ``max_chars`` starting at ``char_start``.
+        - Continuation mode (``message_id`` given): that single active
+          message windowed at ``char_start``/``max_chars``, so a long
+          message body is read in bounded slices that pick up exactly where
+          the previous slice ended.
+
+        The SQL projection selects explicit text/metadata columns plus
+        ``length(content)`` and ``substr(content, ...)`` -- never
+        ``SELECT *``, never ``image_data``, never the full body of a long
+        message. ``message_total`` is exact, read in the same transaction.
+
+        Args:
+            conversation_id: The conversation UUID to read.
+            message_offset: Number of messages to skip in page mode.
+            message_limit: Maximum number of messages to return in page mode.
+            max_chars: Per-message text window size.
+            message_id: When given, read only this message (continuation).
+            char_start: Zero-based character offset into each message body.
+
+        Returns:
+            Dict with conversation metadata, exact ``message_total``, page
+            bookkeeping, ``include_rag_context: False``, and the windowed
+            ``messages`` list; or None when no active conversation matches.
+
+        Raises:
+            CharactersRAGDBError: If a database error occurs.
+        """
+        try:
+            with self.transaction() as conn:
+                conversation = conn.execute(
+                    "SELECT id, title, version FROM conversations "
+                    "WHERE id = ? AND deleted = 0",
+                    (conversation_id,),
+                ).fetchone()
+                if conversation is None:
+                    return None
+                message_total = conn.execute(
+                    "SELECT COUNT(*) AS count FROM messages "
+                    "WHERE conversation_id = ? AND deleted = 0",
+                    (conversation_id,),
+                ).fetchone()["count"]
+                if message_id is not None:
+                    cursor = conn.execute(
+                        """
+                        SELECT id, sender, timestamp, version,
+                               length(content) AS total_chars,
+                               substr(content, ?, ?) AS text
+                        FROM messages
+                        WHERE id = ? AND conversation_id = ? AND deleted = 0
+                        """,
+                        (char_start + 1, max_chars, message_id, conversation_id),
+                    )
+                else:
+                    cursor = conn.execute(
+                        """
+                        SELECT id, sender, timestamp, version,
+                               length(content) AS total_chars,
+                               substr(content, ?, ?) AS text
+                        FROM messages
+                        WHERE conversation_id = ? AND deleted = 0
+                        ORDER BY timestamp ASC, rowid ASC
+                        LIMIT ? OFFSET ?
+                        """,
+                        (
+                            char_start + 1,
+                            max_chars,
+                            conversation_id,
+                            message_limit,
+                            message_offset,
+                        ),
+                    )
+                rows = cursor.fetchall()
+
+            messages = [
+                self._library_message_item(row, char_start=char_start)
+                for row in rows
+            ]
+            has_more_pages = (
+                message_id is None and message_offset + len(messages) < message_total
+            )
+            return {
+                "id": conversation["id"],
+                "title": conversation["title"],
+                "version": conversation["version"],
+                "message_total": message_total,
+                "message_offset": 0 if message_id is not None else message_offset,
+                "returned_message_count": len(messages),
+                "has_more": has_more_pages,
+                "next_message_offset": (
+                    message_offset + len(messages) if has_more_pages else None
+                ),
+                "include_rag_context": False,
+                "messages": messages,
+            }
+        except sqlite3.Error as e:
+            logger.error(
+                "Error reading library conversation messages "
+                f"(conversation_id={conversation_id!r}, message_offset={message_offset}, "
+                f"message_limit={message_limit}, max_chars={max_chars}, "
+                f"message_id={message_id!r}, char_start={char_start}): {e}"
+            )
+            raise CharactersRAGDBError(
+                f"Failed to read library conversation messages: {e}"
+            ) from e
 
     def get_all_note_ids(self) -> List[str]:
         """Return every non-deleted note id (no page cap).

@@ -118,6 +118,27 @@ def test_builtin_tools_never_carry_risk_tags_even_when_offered_them():
 
     assert tools[0].tags == ()
 
+def test_builtin_tools_defensively_copy_input_schema():
+    """task-1337 (plan Task 8): an inventory-supplied non-empty `inputSchema`
+    is COPIED into the `HubTool`, not aliased -- mutating the source mapping
+    after derivation must not rewrite the tool's schema. (No schema is
+    synthesized for legacy entries lacking one -- see the None test above.)
+    """
+    schema = {"type": "object", "properties": {"q": {"type": "string"}}}
+    inventory = {
+        "tools": [
+            {"name": "chat_with_llm", "description": "Chat.", "inputSchema": schema}
+        ]
+    }
+
+    tools = builtin_tools_from_inventory(inventory)
+
+    assert tools[0].input_schema == schema
+    schema["properties"]["q"]["type"] = "number"
+    schema["properties"]["injected"] = {"type": "integer"}
+    assert tools[0].input_schema["properties"]["q"]["type"] == "string"
+    assert "injected" not in tools[0].input_schema["properties"]
+
 
 def test_server_tools_read_extras_defensively():
     payload = {

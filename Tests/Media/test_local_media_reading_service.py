@@ -2302,3 +2302,250 @@ def test_local_service_dispatches_cancelled_ingest_job_notifications(memory_db_f
             },
         }
     ]
+
+
+
+# ---------------------------------------------------------------------------
+# Library query seams (task-1337 plan Task 2)
+# ---------------------------------------------------------------------------
+
+
+def _set_media_timestamps(db, media_id, last_modified):
+    # Media sync triggers require version to increment by exactly 1 per UPDATE.
+    db.execute_query(
+        "UPDATE Media SET last_modified = ?, version = version + 1 WHERE id = ?",
+        (last_modified, media_id),
+    )
+
+
+def _seed_active_media(
+    db,
+    *,
+    title,
+    content=None,
+    keywords=None,
+    media_type="article",
+    author="author",
+    last_modified="2026-01-01 00:00:00",
+):
+    # add_media_with_keywords dedups on identical content, so default to a
+    # title-derived body to keep every seeded row distinct.
+    media_id, media_uuid, _ = db.add_media_with_keywords(
+        title=title,
+        media_type=media_type,
+        content=content if content is not None else f"body for {title}",
+        keywords=keywords or [],
+        author=author,
+    )
+    assert media_id is not None, f"seed for {title!r} collided with existing media"
+    _set_media_timestamps(db, media_id, last_modified)
+    return media_id, media_uuid
+
+
+def _walk_values(node):
+    if isinstance(node, dict):
+        for value in node.values():
+            yield from _walk_values(value)
+    elif isinstance(node, (list, tuple)):
+        for value in node:
+            yield from _walk_values(value)
+    else:
+        yield node
+
+
+def test_library_media_page_lists_active_only_with_stable_order(memory_db_factory):
+    db = memory_db_factory()
+    first_id, _ = _seed_active_media(
+        db, title="First", last_modified="2026-01-01 00:00:00"
+    )
+    second_id, _ = _seed_active_media(
+        db, title="Second", last_modified="2026-01-03 00:00:00"
+    )
+    third_id, _ = _seed_active_media(
+        db, title="Third", last_modified="2026-01-02 00:00:00"
+    )
+    deleted_id, _ = _seed_active_media(
+        db, title="Deleted", last_modified="2026-01-04 00:00:00"
+    )
+    trashed_id, _ = _seed_active_media(
+        db, title="Trashed", last_modified="2026-01-05 00:00:00"
+    )
+    db.soft_delete_media(deleted_id)
+    db.mark_as_trash(trashed_id)
+
+    service = LocalMediaReadingService(db)
+    page_one = service.list_library_media(limit=2, offset=0)
+
+    assert page_one["total"] == 3
+    assert page_one["limit"] == 2
+    assert page_one["offset"] == 0
+    assert [item["id"] for item in page_one["items"]] == [second_id, third_id]
+
+    page_two = service.list_library_media(limit=2, offset=2)
+    assert page_two["total"] == 3
+    assert [item["id"] for item in page_two["items"]] == [first_id]
+
+    beyond = service.list_library_media(limit=10, offset=50)
+    assert beyond["total"] == 3
+    assert beyond["items"] == []
+
+
+def test_library_media_page_projection_is_safe_and_bounded(memory_db_factory):
+    db = memory_db_factory()
+    media_id, media_uuid = _seed_active_media(
+        db,
+        title="Projected",
+        content="secret body " * 100,
+        keywords=["alpha", "beta"],
+    )
+    db.execute_query(
+        "UPDATE Media SET vector_embedding = ?, version = version + 1 WHERE id = ?",
+        (b"\x00\x01\x02\x03" * 256, media_id),
+    )
+
+    service = LocalMediaReadingService(db)
+    payload = service.list_library_media(limit=10, offset=0)
+    item = payload["items"][0]
+
+    assert item["uuid"] == media_uuid
+    assert item["title"] == "Projected"
+    assert len(item["preview"]) <= 241
+    assert item["keywords"] == ["alpha", "beta"]
+    assert item["keyword_total"] == 2
+    assert item["keywords_truncated"] is False
+    for forbidden in ("content", "vector_embedding", "url", "path", "file_path"):
+        assert forbidden not in item
+    assert all(not isinstance(value, (bytes, bytearray)) for value in _walk_values(payload))
+
+
+def test_library_media_page_keywords_capped_with_exact_total(memory_db_factory):
+    db = memory_db_factory()
+    keywords = [f"kw{index:02d}" for index in range(25)]
+    _seed_active_media(db, title="Keyword heavy", keywords=keywords)
+
+    service = LocalMediaReadingService(db)
+    item = service.list_library_media(limit=10, offset=0)["items"][0]
+
+    assert len(item["keywords"]) == 20
+    assert item["keyword_total"] == 25
+    assert item["keywords_truncated"] is True
+
+
+def test_library_media_search_exact_title_first_and_distinct_total(memory_db_factory):
+    db = memory_db_factory()
+    exact_id, _ = _seed_active_media(
+        db,
+        title="Quarterly",
+        content="nothing relevant here",
+        keywords=["quarterly", "quarterly-finance"],
+        last_modified="2026-01-01 00:00:00",
+    )
+    content_id, _ = _seed_active_media(
+        db,
+        title="Other",
+        content="a quarterly deep dive",
+        last_modified="2026-02-01 00:00:00",
+    )
+
+    service = LocalMediaReadingService(db)
+    payload = service.search_library_media(query="quarterly", limit=10, offset=0)
+
+    # The exact-title item has two keyword hits but must be counted once.
+    assert payload["total"] == 2
+    assert [item["id"] for item in payload["items"]] == [exact_id, content_id]
+    exact_item, content_item = payload["items"]
+    assert "title" in exact_item["matched_fields"]
+    assert "keywords" in exact_item["matched_fields"]
+    assert "quarterly" in exact_item["matched_keywords"]
+    assert "quarterly-finance" in exact_item["matched_keywords"]
+    assert "content" in content_item["matched_fields"]
+
+
+def test_library_media_search_treats_wildcards_and_operators_literally(memory_db_factory):
+    db = memory_db_factory()
+    target_id, _ = _seed_active_media(db, title="100% ready_now", content="plain")
+    _seed_active_media(db, title="readyXnow decoy", content="plain decoy body")
+
+    service = LocalMediaReadingService(db)
+    percent = service.search_library_media(query="100%", limit=10, offset=0)
+    assert [item["id"] for item in percent["items"]] == [target_id]
+
+    underscore = service.search_library_media(query="ready_now", limit=10, offset=0)
+    assert [item["id"] for item in underscore["items"]] == [target_id]
+
+    # FTS operator syntax in the raw query must never raise or change semantics.
+    for hostile in ('"unclosed', "ready OR", "AND )(", "ready*", "NEAR/1"):
+        result = service.search_library_media(query=hostile, limit=10, offset=0)
+        assert isinstance(result["total"], int)
+        assert isinstance(result["items"], list)
+
+
+def test_library_media_search_matches_quotes_in_content(memory_db_factory):
+    db = memory_db_factory()
+    media_id, _ = _seed_active_media(
+        db, title="Quotes", content="it's a test body"
+    )
+
+    service = LocalMediaReadingService(db)
+    payload = service.search_library_media(query="it's", limit=10, offset=0)
+    assert payload["total"] == 1
+    assert payload["items"][0]["id"] == media_id
+
+
+def test_library_media_detail_windows_text_and_hides_blobs(memory_db_factory):
+    db = memory_db_factory()
+    content = "abcdef" * 900  # 5400 chars
+    media_id, media_uuid = _seed_active_media(
+        db, title="Long read", content=content, media_type="document"
+    )
+    db.execute_query(
+        "UPDATE Media SET vector_embedding = ?, version = version + 1 WHERE id = ?",
+        (b"\xff" * 1024, media_id),
+    )
+
+    service = LocalMediaReadingService(db)
+    detail = service.get_library_media_text(media_uuid, start=1200, max_chars=2000)
+
+    assert detail is not None
+    assert detail["uuid"] == media_uuid
+    assert detail["title"] == "Long read"
+    assert detail["media_type"] == "document"
+    assert detail["total_chars"] == len(content)
+    assert detail["start"] == 1200
+    assert detail["returned_chars"] == 2000
+    assert detail["has_more"] is True
+    assert detail["text"] == content[1200:3200]
+    for forbidden in ("content", "vector_embedding", "url", "path", "file_path"):
+        assert forbidden not in detail
+    assert all(not isinstance(value, (bytes, bytearray)) for value in _walk_values(detail))
+
+    tail = service.get_library_media_text(media_uuid, start=5000, max_chars=2000)
+    assert tail["text"] == content[5000:]
+    assert tail["returned_chars"] == len(content) - 5000
+    assert tail["has_more"] is False
+
+
+def test_library_media_detail_returns_none_for_missing_uuid(memory_db_factory):
+    db = memory_db_factory()
+    service = LocalMediaReadingService(db)
+    assert service.get_library_media_text("no-such-uuid", start=0, max_chars=100) is None
+
+
+def test_library_media_detail_read_runs_inside_transaction(memory_db_factory):
+    db = memory_db_factory()
+    _, media_uuid = _seed_active_media(db, title="Transactional", content="body")
+    conn = db.get_connection()
+    conn.commit()
+    observed: list[bool] = []
+
+    def record_transaction_state(sql: str) -> None:
+        if "FROM Media" in sql and "AS total_chars" in sql:
+            observed.append(conn.in_transaction)
+
+    conn.set_trace_callback(record_transaction_state)
+    try:
+        assert db.get_library_media_text(media_uuid, start=0, max_chars=20) is not None
+    finally:
+        conn.set_trace_callback(None)
+
+    assert observed == [True]

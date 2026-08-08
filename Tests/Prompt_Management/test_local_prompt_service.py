@@ -138,3 +138,103 @@ async def test_local_prompt_service_rejects_missing_prompt_version_snapshot():
 
     with pytest.raises(ValueError, match="Local prompt version 99 was not found"):
         await service.restore_prompt_version("prompt-uuid", 99)
+
+
+# ---------------------------------------------------------------------------
+# Library read seams (task-1337 plan Task 3)
+# ---------------------------------------------------------------------------
+
+
+class FakeLibraryPromptInterop:
+    def __init__(self):
+        self.calls = []
+        self.page_payload = {"items": [{"id": 1, "uuid": "u-1", "name": "One"}], "total": 7}
+        self.search_payload = {
+            "items": [
+                {
+                    "id": 2,
+                    "uuid": "u-2",
+                    "name": "Two",
+                    "matched_fields": ["name"],
+                    "matched_keywords": [],
+                }
+            ],
+            "total": 3,
+        }
+        self.overview_payload = {
+            "uuid": "u-1",
+            "name": "One",
+            "version": 4,
+            "sections": {"system_prompt": {"total_chars": 42, "preview": "sys"}},
+        }
+        self.section_payload = {
+            "uuid": "u-1",
+            "section": "system_prompt",
+            "version": 4,
+            "total_chars": 42,
+            "start": 10,
+            "returned_chars": 20,
+            "has_more": True,
+            "text": "segment",
+        }
+
+    def list_library_prompts_page(self, *, limit, offset):
+        self.calls.append(("list", limit, offset))
+        return dict(self.page_payload)
+
+    def search_library_prompts_page(self, *, query, limit, offset):
+        self.calls.append(("search", query, limit, offset))
+        return dict(self.search_payload)
+
+    def get_library_prompt_overview(self, prompt_uuid):
+        self.calls.append(("overview", prompt_uuid))
+        return dict(self.overview_payload)
+
+    def get_library_prompt_section(self, prompt_uuid, *, section, start, max_chars):
+        self.calls.append(("section", prompt_uuid, section, start, max_chars))
+        return dict(self.section_payload)
+
+
+@pytest.mark.asyncio
+async def test_local_prompt_service_lists_library_page_and_echoes_pagination():
+    interop = FakeLibraryPromptInterop()
+    service = LocalPromptService(interop_module=interop)
+
+    payload = await service.list_library_prompts(limit=5, offset=10)
+
+    assert interop.calls == [("list", 5, 10)]
+    assert payload["total"] == 7
+    assert payload["offset"] == 10
+    assert payload["limit"] == 5
+    assert payload["items"] == interop.page_payload["items"]
+
+
+@pytest.mark.asyncio
+async def test_local_prompt_service_forwards_search_totals_and_match_fields():
+    interop = FakeLibraryPromptInterop()
+    service = LocalPromptService(interop_module=interop)
+
+    payload = await service.search_library_prompts("quarterly", limit=3, offset=6)
+
+    assert interop.calls == [("search", "quarterly", 3, 6)]
+    assert payload["total"] == 3
+    assert payload["offset"] == 6
+    assert payload["items"][0]["matched_fields"] == ["name"]
+    assert "matched_keywords" in payload["items"][0]
+
+
+@pytest.mark.asyncio
+async def test_local_prompt_service_forwards_overview_and_section_window():
+    interop = FakeLibraryPromptInterop()
+    service = LocalPromptService(interop_module=interop)
+
+    overview = await service.get_library_prompt_overview("u-1")
+    section = await service.get_library_prompt_section(
+        "u-1", "system_prompt", start=10, max_chars=20
+    )
+
+    assert ("overview", "u-1") in interop.calls
+    assert ("section", "u-1", "system_prompt", 10, 20) in interop.calls
+    assert overview["sections"]["system_prompt"]["total_chars"] == 42
+    assert section["text"] == "segment"
+    assert section["has_more"] is True

@@ -517,3 +517,73 @@ def test_gate_tool_test_by_key_does_not_emit_audit_record(tmp_path):
     service.gate_tool_test_by_key("local:demo", "search")
 
     assert _permission_log_records(store) == []
+
+
+# -- task-2838: local agent tools resolve through the SAME shared store -------
+
+
+def test_local_agent_tool_allow_round_trips_between_console_and_hub(tmp_path):
+    """A Console "Always allow" write resolves identically hub-side.
+
+    Both surfaces talk to the same UnifiedMCPControlPlaneService methods
+    (console_chat_controller._compose_local_provider and the Hub workbench
+    permission cycle) against the same derived mcp_permissions.json, so a
+    grant made on either side must be honored by the other's resolution.
+    """
+    from tldw_chatbook.Agents.local_tool_provider import LocalToolProvider
+
+    service, _store = _service(tmp_path)
+    provider = LocalToolProvider(workspace_root=tmp_path)
+    hub = provider.hub_tool_for("fs_read")
+
+    # The Console-side write shape (its _persist_approval always_allow path).
+    service.set_tool_state(hub.server_key, hub.name, "allow", tool=hub)
+
+    # The Hub-side batch resolution (Tools State column / Permissions matrix).
+    result = service.effective_tool_states([hub])
+    assert result[(hub.server_key, hub.name)].state == "allow"
+    assert result[(hub.server_key, hub.name)].origin == "tool_override"
+
+    # Persisted under the synthetic local server key WITH the rug-pull hash.
+    payload = service.permission_store.load()
+    entry = payload["profiles"]["default"]["servers"]["local:__local__"]["tools"][
+        "fs_read"
+    ]
+    assert entry["state"] == "allow"
+    assert entry["definition_hash"] == definition_hash(
+        hub.description, hub.input_schema
+    )
+
+
+def test_local_agent_server_default_allow_is_risk_floored_for_mutates_tools(
+    tmp_path,
+):
+    """Spec §3.2: an INHERITED allow floors to ask for `mutates`-tagged tools.
+
+    Setting the `local:__local__` server default to "allow" must NOT wave
+    fs_write/fs_edit/fs_patch through -- only an explicit tool-level
+    "Always allow" escapes the floor.
+    """
+    from tldw_chatbook.Agents.local_tool_provider import LocalToolProvider
+
+    service, _store = _service(tmp_path)
+    provider = LocalToolProvider(workspace_root=tmp_path)
+    write_hub = provider.hub_tool_for("fs_write")
+    read_hub = provider.hub_tool_for("fs_read")
+
+    service.set_server_default("local:__local__", "allow")
+
+    result = service.effective_tool_states([write_hub, read_hub])
+    floored = result[("local:__local__", "fs_write")]
+    assert floored.state == "ask"
+    assert floored.risk_floored is True
+    assert result[("local:__local__", "fs_read")].state == "allow"
+
+    # An explicit tool-level allow is never floored (spec §3.2).
+    service.set_tool_state(
+        write_hub.server_key, write_hub.name, "allow", tool=write_hub
+    )
+    result = service.effective_tool_states([write_hub])
+    explicit = result[("local:__local__", "fs_write")]
+    assert explicit.state == "allow"
+    assert explicit.risk_floored is False

@@ -207,6 +207,7 @@ FULL_AUDITED_CAPABILITY_IDS = frozenset(
         "collections_reading_list",
         "collections_feed_subscriptions",
         "collections_outputs_templates_artifacts",
+        "library_collections",
         "watchlists",
         "writing_suite",
         "research_sessions_runs",
@@ -618,6 +619,20 @@ AUDITED_CAPABILITY_SEEDS = (
             _resource("outputs.templates", actions=CRUD_ACTIONS),
             _resource("outputs.artifacts", actions=CRUD_ACTIONS),
             _resource("outputs.render_jobs", actions=(LIST, DETAIL, LAUNCH, OBSERVE)),
+        ),
+    ),
+    # task-1337 (plan Task 9): policy home for the local Library Collections
+    # agent tools (`library_list/search/get_collection`). Dedicated local-only
+    # list/detail resource -- deliberately NOT mapped onto
+    # `collections.reading_list.*`, whose CRUD surface models the read-it-later
+    # feature, not read-only agent retrieval over Library collections.
+    _capability(
+        "library_collections",
+        "Library Collections (local agent reads)",
+        "library_collections",
+        sources=LOCAL_ONLY_SOURCES,
+        resources=(
+            _resource("library.collections", actions=(LIST, DETAIL)),
         ),
     ),
     _capability(

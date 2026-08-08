@@ -43,6 +43,7 @@ from .settings_library_rag_defaults import (
     SettingsLibraryRagDefaults,
     _strict_float,
     _strict_int,
+    load_direct_library_tools,
 )
 
 
@@ -57,9 +58,15 @@ def _active_profile() -> Optional[ProfileConfig]:
 def load_rag_defaults_from_active_profile() -> SettingsLibraryRagDefaults:
     """Current active profile's search settings as the category dataclass."""
     profile = _active_profile()
-    if profile is None:
-        return SettingsLibraryRagDefaults()
-    return _defaults_from_profile(profile)
+    defaults = (
+        SettingsLibraryRagDefaults() if profile is None else _defaults_from_profile(profile)
+    )
+    # task-1337: the direct-Library-tools toggle is global [console] config,
+    # not profile data -- overlay the live value so the editor never shows a
+    # stale or profile-derived one.
+    return dataclasses.replace(
+        defaults, direct_library_tools=load_direct_library_tools()
+    )
 
 
 def get_profile_defaults(profile_id: str) -> Optional[SettingsLibraryRagDefaults]:
@@ -83,7 +90,12 @@ def get_profile_defaults(profile_id: str) -> Optional[SettingsLibraryRagDefaults
     profile = _manager().get_profile(profile_id)
     if profile is None:
         return None
-    return _defaults_from_profile(profile)
+    # Same global-toggle overlay as load_rag_defaults_from_active_profile:
+    # a previewed profile must show the live [console] value too.
+    return dataclasses.replace(
+        _defaults_from_profile(profile),
+        direct_library_tools=load_direct_library_tools(),
+    )
 
 
 def _defaults_from_profile(profile: ProfileConfig) -> SettingsLibraryRagDefaults:

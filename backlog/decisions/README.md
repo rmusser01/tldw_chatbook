@@ -43,6 +43,7 @@ ADRs explain why significant architectural decisions were made. Backlog tasks, S
 | [ADR-039](039-global-and-studio-tts-settings-ownership.md) | Accepted | Keep application-wide TTS configuration in Settings, separately persist sparse Studio preferences, preserve character profile authority, and keep runtime operations in Lab. |
 | [ADR-040](040-versioned-prompt-artifacts-and-safe-improvement-transactions.md) | Accepted | Store Console block Prompts and Recipes as schema-v2 artifacts with a first-class discriminator, compiled compatibility text, sensitive provider calls, and segment-safe composer transactions. |
 | [ADR-043](043-console-rail-compact-collapse-yields-to-explicit-toggle.md) | Accepted | Console rail compact-collapse rules are the responsive default rendering, not a hard block: explicit rail toggles are honored at any width with the main-column min-width waived, so manual toggles never silently no-op. |
+| [ADR-045](045-qwencloud-dual-api-provider-boundary.md) | Accepted | Treat QwenCloud Responses and Chat Completions as two wire modes of one first-class provider while reusing the shared Console, native-tool, readiness, and model-catalog boundaries. |
 
 ## Historical Decision Material
 

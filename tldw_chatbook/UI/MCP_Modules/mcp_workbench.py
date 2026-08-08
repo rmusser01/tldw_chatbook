@@ -8,6 +8,7 @@ import json
 import os
 import time
 from collections.abc import Mapping, Sequence
+from dataclasses import replace
 from functools import partial
 from pathlib import Path
 from typing import Any
@@ -22,7 +23,12 @@ from textual.widgets import ContentSwitcher
 from textual.worker import Worker
 
 from tldw_chatbook.Agents.builtin_tool_gate import builtin_permission_rows
-from tldw_chatbook.config import get_cli_setting, save_setting_to_cli_config
+from tldw_chatbook.Agents.local_tool_provider import LocalToolProvider
+from tldw_chatbook.config import (
+    coerce_bool_setting,
+    get_cli_setting,
+    save_setting_to_cli_config,
+)
 from tldw_chatbook.MCP.hub_tool_catalog import (
     HubTool,
     builtin_tools_from_inventory,
@@ -32,6 +38,7 @@ from tldw_chatbook.MCP.hub_tool_catalog import (
 )
 from tldw_chatbook.MCP.local_control_service import MCPGovernanceDenied
 from tldw_chatbook.MCP.local_runtime_delegate import PERMISSION_STATE_UNRESOLVED_CLAUSE
+from tldw_chatbook.MCP.local_server_tools import resolve_server_workspace_root
 from tldw_chatbook.MCP.mcp_import import ImportCandidate
 from tldw_chatbook.MCP.permission_store import (
     BUILTIN_DEFAULT_STATE,
@@ -1610,9 +1617,11 @@ class MCPWorkbench(Container):
 
         Local source: every local profile's discovered tools
         (`self._catalog_records`, populated by `_collect_snapshots()` --
-        reused here, not re-fetched) plus the built-in server's inventory
+        reused here, not re-fetched), the built-in server's inventory
         (`service.local_service.get_inventory()`, guarded by getattr since
-        test fakes and a still-initializing service may not expose it).
+        test fakes and a still-initializing service may not expose it),
+        and the workspace-local agent tool set (`_local_agent_hub_tools()`,
+        task-2838 -- keyed `local:__local__`, non-executable hub-side).
 
         Server source: each external-server record's own embedded `tools`
         list (when the backend includes one -- `ReadinessSnapshot.detail
@@ -1641,6 +1650,11 @@ class MCPWorkbench(Container):
                     inventory = None
                 if isinstance(inventory, Mapping):
                     tools.extend(builtin_tools_from_inventory(inventory))
+            # task-2838: the workspace-local agent tool set (fs_*/git_*/web_*)
+            # is a first-class Hub catalog source too -- same shared
+            # permission store the Console gates on, resolved by the same
+            # `effective_tool_states()` pass as every other row.
+            tools.extend(self._local_agent_hub_tools())
         else:
             for snap in self._snapshots:
                 if snap.source != "server" or not self._is_external_record_key(snap.server_key):
@@ -1652,6 +1666,53 @@ class MCPWorkbench(Container):
                         server_tools_from_inventory(raw, target_id=remainder, target_label=snap.label)
                     )
         return tools
+
+    def _local_agent_hub_tools(self) -> list[HubTool]:
+        """The workspace-local agent tool set (fs_*/git_*/web_*) as HubTools.
+
+        task-2838: the Hub catalog's fourth source. The provider is built
+        catalog-view only -- no ``todo_store`` (``todo_write`` is Console-
+        session-scoped, so it stays unregistered and absent here) and no
+        approval callbacks: state resolution happens hub-side, via the same
+        `_sync_children()` `effective_tool_states()` pass against the same
+        `mcp_permissions.json` store the Console agent gates on
+        (`local:__local__` server key, `Agents/local_tool_provider.py`).
+
+        `executable` is downgraded to False at THIS layer (the provider's
+        own view stays invocation-capable): the Hub has no execution path
+        for these tools yet -- Test Tool routing through a fail-closed
+        provider is the deliberate follow-up -- and
+        `mcp_inspector._test_gate_state()` renders the honest
+        "not_executable" state from this flag.
+
+        Fail-soft (mirrors the built-in-inventory read above): ANY failure
+        -- workspace-root resolution, provider construction, a spec that
+        breaks `hub_tool_for` -- degrades to "no Local workspace group"
+        with a warning log; the profile/built-in catalog must never be
+        broken or emptied by the local tool view.
+
+        Master switch: the group lists only when
+        ``[console] local_tools_enabled`` is on -- the SAME opt-in the
+        Console composition (`_compose_local_provider()`) and the external
+        MCP exposure (`[mcp] expose_local_tools`) already apply to this
+        workspace-writing tool set. When the feature is off everywhere, the
+        management surface does not advertise it either. Coerced at read
+        time: a quoted ``"false"`` in the TOML must not fail this OPEN.
+        """
+        if not coerce_bool_setting(
+            get_cli_setting("console", "local_tools_enabled", False), False
+        ):
+            return []
+        try:
+            provider = LocalToolProvider(
+                workspace_root=resolve_server_workspace_root()
+            )
+            return [
+                replace(hub, executable=False) for hub in provider.hub_tools()
+            ]
+        except Exception as exc:  # noqa: BLE001 -- catalog view must never break the hub
+            logger.warning(f"MCP local agent tool catalog unavailable: {exc}")
+            return []
 
     def _empty_tools_diagnosis(self) -> tuple[str, str]:
         """Diagnose why the Tools mode catalog is currently empty.

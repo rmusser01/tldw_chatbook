@@ -31,6 +31,7 @@
 import hashlib
 import json
 import logging
+import re
 import sqlite3
 import threading
 import time
@@ -7352,6 +7353,296 @@ class MediaDatabase:
         except Exception as e:
             logger.error(f"Failed to vacuum database: {e}")
             raise DatabaseError(f"Vacuum failed: {e}") from e
+
+    # ============================= Library read seams (task-1337) =========================================
+    #
+    # Additive, read-only queries backing the local Library agent tools. These
+    # methods deliberately project a narrow, agent-safe column set: no full
+    # `content` (only a bounded preview or a windowed text segment), never
+    # `vector_embedding`, and never filesystem paths or source URLs. Counts
+    # and pages are read inside a single transaction so pagination stays
+    # consistent under concurrent writes.
+
+    _LIBRARY_PREVIEW_CHARS = 241
+    _LIBRARY_KEYWORD_CAP = 20
+    _LIBRARY_FTS_TOKEN_LIMIT = 20
+
+    @staticmethod
+    def _escape_library_like(value: str) -> str:
+        """Escape LIKE metacharacters so user input matches literally."""
+        return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+    @classmethod
+    def _library_fts_query(cls, raw_query: str) -> Optional[str]:
+        """Build a safe FTS5 MATCH query from raw user text.
+
+        Tokens are extracted with a word-character regex and each is
+        double-quoted, so FTS operators in the raw input are inert. Returns
+        None when the input contains no usable tokens.
+        """
+        tokens = re.findall(r"\w+", raw_query, flags=re.UNICODE)
+        if not tokens:
+            return None
+        tokens = tokens[: cls._LIBRARY_FTS_TOKEN_LIMIT]
+        return " ".join(f'"{token}"' for token in tokens)
+
+    def _library_keywords_for_media(
+        self, conn: sqlite3.Connection, media_ids: List[int]
+    ) -> Dict[int, List[str]]:
+        """Fetch active keywords for a page of media ids, grouped by media id."""
+        if not media_ids:
+            return {}
+        placeholders = ",".join("?" * len(media_ids))
+        query = f"""
+            SELECT mk.media_id, k.keyword
+            FROM MediaKeywords mk
+            JOIN Keywords k ON mk.keyword_id = k.id
+            WHERE mk.media_id IN ({placeholders}) AND k.deleted = 0
+            ORDER BY k.keyword COLLATE NOCASE
+        """
+        cursor = conn.execute(query, tuple(media_ids))
+        keywords_by_media: Dict[int, List[str]] = {}
+        for row in cursor.fetchall():
+            keywords_by_media.setdefault(row["media_id"], []).append(row["keyword"])
+        return keywords_by_media
+
+    def _library_media_item(
+        self, row: sqlite3.Row, keywords_by_media: Dict[int, List[str]]
+    ) -> Dict[str, Any]:
+        """Project a Media row into the agent-safe library item shape."""
+        all_keywords = keywords_by_media.get(row["id"], [])
+        visible = all_keywords[: self._LIBRARY_KEYWORD_CAP]
+        return {
+            "id": row["id"],
+            "uuid": row["uuid"],
+            "title": row["title"],
+            "media_type": row["type"],
+            "author": row["author"],
+            "ingestion_date": row["ingestion_date"],
+            "last_modified": row["last_modified"],
+            "version": row["version"],
+            "preview": row["preview"],
+            "keywords": visible,
+            "keyword_total": len(all_keywords),
+            "keywords_truncated": len(all_keywords) > len(visible),
+        }
+
+    def list_library_media_page(self, *, limit: int, offset: int) -> Dict[str, Any]:
+        """Return one page of active library media plus the exact active total.
+
+        Active means ``deleted = 0 AND is_trash = 0``. Ordering is stable:
+        ``last_modified DESC, id DESC``. The count and the page are read in
+        one transaction.
+
+        Args:
+            limit: Maximum number of items to return.
+            offset: Number of items to skip (SQL OFFSET, not Python slicing).
+
+        Returns:
+            Dict with ``items`` (agent-safe projections) and ``total``.
+
+        Raises:
+            DatabaseError: If a database error occurs.
+        """
+        try:
+            with self.transaction() as conn:
+                total = conn.execute(
+                    "SELECT COUNT(*) AS count FROM Media "
+                    "WHERE deleted = 0 AND is_trash = 0"
+                ).fetchone()["count"]
+                cursor = conn.execute(
+                    """
+                    SELECT id, uuid, title, type, author, ingestion_date,
+                           last_modified, version,
+                           substr(content, 1, ?) AS preview
+                    FROM Media
+                    WHERE deleted = 0 AND is_trash = 0
+                    ORDER BY last_modified DESC, id DESC
+                    LIMIT ? OFFSET ?
+                    """,
+                    (self._LIBRARY_PREVIEW_CHARS, limit, offset),
+                )
+                rows = cursor.fetchall()
+                keywords_by_media = self._library_keywords_for_media(
+                    conn, [row["id"] for row in rows]
+                )
+            items = [self._library_media_item(row, keywords_by_media) for row in rows]
+            return {"items": items, "total": total}
+        except sqlite3.Error as e:
+            logger.opt(exception=True).error(
+                f"Error listing library media page (limit={limit}, offset={offset}): {e}"
+            )
+            raise DatabaseError(f"Failed to list library media page: {e}") from e
+
+    def search_library_media_page(
+        self, *, query: str, limit: int, offset: int
+    ) -> Dict[str, Any]:
+        """Search active library media, returning one page plus exact total.
+
+        Match branches (OR, deduplicated by Media row): case-insensitive exact
+        title, title substring, content substring, FTS over title/content, and
+        keyword substring via the MediaKeywords relation. LIKE input is escaped
+        and FTS input is tokenized/quoted, so wildcards and FTS operators in
+        ``query`` match literally. Exact-title hits rank first, then recency,
+        then id.
+
+        Args:
+            query: Raw user search text.
+            limit: Maximum number of items to return.
+            offset: Number of items to skip.
+
+        Returns:
+            Dict with ``items`` (library projections plus ``matched_fields``
+            and ``matched_keywords``) and ``total``.
+
+        Raises:
+            DatabaseError: If a database error occurs.
+        """
+        like_pattern = f"%{self._escape_library_like(query)}%"
+        fts_query = self._library_fts_query(query)
+        keyword_branch = (
+            "id IN (SELECT mk.media_id FROM MediaKeywords mk "
+            "JOIN Keywords k ON mk.keyword_id = k.id "
+            "WHERE k.deleted = 0 AND k.keyword LIKE ? ESCAPE '\\')"
+        )
+
+        branches = [
+            "LOWER(title) = LOWER(?)",
+            "title LIKE ? ESCAPE '\\'",
+            "content LIKE ? ESCAPE '\\'",
+        ]
+        params: List[Any] = [query, like_pattern, like_pattern]
+        if fts_query is not None:
+            branches.append(
+                "id IN (SELECT rowid FROM media_fts WHERE media_fts MATCH ?)"
+            )
+            params.append(fts_query)
+        branches.append(keyword_branch)
+        params.append(like_pattern)
+
+        where_clause = " OR ".join(f"({branch})" for branch in branches)
+        # Re-evaluate branch hits per row so matched_fields is evidence-based.
+        hit_selects = ", ".join(
+            f"({branch}) AS hit_{index}" for index, branch in enumerate(branches)
+        )
+        hit_params = list(params)
+
+        try:
+            with self.transaction() as conn:
+                total = conn.execute(
+                    f"SELECT COUNT(*) AS count FROM Media "
+                    f"WHERE deleted = 0 AND is_trash = 0 AND ({where_clause})",
+                    tuple(params),
+                ).fetchone()["count"]
+                cursor = conn.execute(
+                    f"""
+                    SELECT id, uuid, title, type, author, ingestion_date,
+                           last_modified, version,
+                           substr(content, 1, ?) AS preview,
+                           {hit_selects}
+                    FROM Media
+                    WHERE deleted = 0 AND is_trash = 0 AND ({where_clause})
+                    ORDER BY (LOWER(title) = LOWER(?)) DESC,
+                             last_modified DESC, id DESC
+                    LIMIT ? OFFSET ?
+                    """,
+                    tuple(
+                        [self._LIBRARY_PREVIEW_CHARS]
+                        + hit_params
+                        + params
+                        + [query, limit, offset]
+                    ),
+                )
+                rows = cursor.fetchall()
+                keywords_by_media = self._library_keywords_for_media(
+                    conn, [row["id"] for row in rows]
+                )
+            lowered_query = query.lower()
+            items = []
+            for row in rows:
+                item = self._library_media_item(row, keywords_by_media)
+                matched_fields = set()
+                if row["hit_0"] or row["hit_1"]:
+                    matched_fields.add("title")
+                content_hit_indexes = [2] + ([3] if fts_query is not None else [])
+                keyword_hit_index = 4 if fts_query is not None else 3
+                if any(row[f"hit_{index}"] for index in content_hit_indexes):
+                    matched_fields.add("content")
+                if row[f"hit_{keyword_hit_index}"]:
+                    matched_fields.add("keywords")
+                item["matched_fields"] = sorted(matched_fields)
+                item["matched_keywords"] = [
+                    keyword
+                    for keyword in keywords_by_media.get(row["id"], [])
+                    if lowered_query in keyword.lower()
+                ][: self._LIBRARY_KEYWORD_CAP]
+                items.append(item)
+            return {"items": items, "total": total}
+        except sqlite3.Error as e:
+            logger.opt(exception=True).error(
+                "Error searching library media "
+                f"(query_chars={len(query)}, limit={limit}, offset={offset}): {e}"
+            )
+            raise DatabaseError(f"Failed to search library media: {e}") from e
+
+    def get_library_media_text(
+        self, media_uuid: str, *, start: int, max_chars: int
+    ) -> Optional[Dict[str, Any]]:
+        """Return a windowed text segment for one active media item.
+
+        Reads only ``substr(content, start + 1, max_chars)`` and
+        ``length(content)`` — the full content and ``vector_embedding`` are
+        never selected.
+
+        Args:
+            media_uuid: The media UUID to read.
+            start: Zero-based character offset into the content.
+            max_chars: Maximum number of characters to return.
+
+        Returns:
+            Dict with metadata, ``total_chars``, ``start``,
+            ``returned_chars``, ``has_more``, and the ``text`` segment; or
+            None when no active item matches the UUID.
+
+        Raises:
+            DatabaseError: If a database error occurs.
+        """
+        try:
+            with self.transaction() as conn:
+                row = conn.execute(
+                    """
+                    SELECT uuid, title, type, author, ingestion_date, last_modified,
+                           version, length(content) AS total_chars,
+                           substr(content, ?, ?) AS text
+                    FROM Media
+                    WHERE uuid = ? AND deleted = 0 AND is_trash = 0
+                    """,
+                    (start + 1, max_chars, media_uuid),
+                ).fetchone()
+            if row is None:
+                return None
+            text = row["text"] or ""
+            total_chars = row["total_chars"] or 0
+            return {
+                "uuid": row["uuid"],
+                "title": row["title"],
+                "media_type": row["type"],
+                "author": row["author"],
+                "ingestion_date": row["ingestion_date"],
+                "last_modified": row["last_modified"],
+                "version": row["version"],
+                "total_chars": total_chars,
+                "start": start,
+                "returned_chars": len(text),
+                "has_more": start + len(text) < total_chars,
+                "text": text,
+            }
+        except sqlite3.Error as e:
+            logger.opt(exception=True).error(
+                "Error reading library media text "
+                f"(media_uuid={media_uuid!r}, start={start}, max_chars={max_chars}): {e}"
+            )
+            raise DatabaseError(f"Failed to read library media text: {e}") from e
 
 
 # =========================================================================

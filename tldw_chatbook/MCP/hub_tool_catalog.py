@@ -10,6 +10,7 @@ inspector (T6) can render and filter uniformly.
 
 from __future__ import annotations
 
+import copy
 from dataclasses import dataclass
 from typing import Any, Mapping
 
@@ -53,7 +54,12 @@ class HubTool:
 
 def _normalized_schema(raw: Any) -> dict | None:
     if isinstance(raw, dict) and raw:
-        return raw
+        # task-1337 (plan Task 8): defensively COPY a non-empty schema --
+        # aliasing the source mapping would let a later mutation of the
+        # inventory/record rewrite an already-derived HubTool's schema.
+        # Empty/non-dict values still normalize to None; no schema is ever
+        # synthesized for entries lacking one.
+        return copy.deepcopy(raw)
     return None
 
 

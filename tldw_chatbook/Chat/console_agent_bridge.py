@@ -944,6 +944,7 @@ def _non_colliding_skill_entries(
     builtin_names: tuple[str, ...],
     *,
     local_names: tuple[str, ...] = (),
+    library_names: tuple[str, ...] = (),
 ) -> list[Mapping[str, Any]]:
     """Eligible skill entries, excluding any name that collides with a
     builtin, a local tool, OR one of the loop's own in-loop runtime tool
@@ -975,15 +976,21 @@ def _non_colliding_skill_entries(
     what would happen at invocation time anyway.
 
     The same dispatch-layer reasoning applies to ``local_names`` (Task 6
-    review): ``AgentService.invoke_tool`` checks
-    ``skill_runner.is_skill_tool(name)`` BEFORE registry dispatch, so the
-    registry's first-registrant-wins order cannot protect a local tool --
-    a skill literally named e.g. ``fs_list`` would be routed to the skill
-    runner and shadow the local tool. Excluding local-name collisions here
-    keeps both call sites (``_compose_run_registry_and_allowed`` and
-    ``run_reply``'s skill-runner name set) in agreement with dispatch.
+    review) and ``library_names`` (task-1337): ``AgentService.invoke_tool``
+    checks ``skill_runner.is_skill_tool(name)`` BEFORE registry dispatch, so
+    the registry's first-registrant-wins order cannot protect a local or
+    Library tool -- a skill literally named e.g. ``fs_list`` or
+    ``library_list_notes`` would be routed to the skill runner and shadow
+    the real tool. Excluding those collisions here keeps both call sites
+    (``_compose_run_registry_and_allowed`` and ``run_reply``'s skill-runner
+    name set) in agreement with dispatch.
     """
-    collision_names = set(builtin_names) | set(local_names) | RUNTIME_TOOL_NAMES
+    collision_names = (
+        set(builtin_names)
+        | set(local_names)
+        | set(library_names)
+        | RUNTIME_TOOL_NAMES
+    )
     return [
         item
         for item in _eligible_skill_entries(context)
@@ -1206,6 +1213,7 @@ def _compose_run_registry_and_allowed(
     ephemeral: bool = False,
     diff_sink: Callable[[tuple[str, str, str, str]], None] | None = None,
     local_provider: Any | None = None,
+    library_provider: Any | None = None,
 ) -> tuple[ToolCatalogRegistry, tuple[str, ...], tuple[str, ...], tuple[str, ...]]:
     """Build a fresh per-run tool registry + allow-list from a skills snapshot.
 
@@ -1268,6 +1276,17 @@ def _compose_run_registry_and_allowed(
         local_provider: This run's already-composed local tool provider
             (``LocalToolProvider``), or ``None`` when local tools are
             disabled this run.
+        library_provider: task-1337 -- this run's already-composed Library
+            retrieval provider: the descriptor-backed ``LibraryToolProvider``
+            when direct Library tools are enabled, or the bounded
+            ``LibraryRagToolProvider`` (exactly ``search_library_rag``) when
+            they are not. Composed by the caller on the main loop (the
+            controller's ``library_provider_factory`` seam); registered
+            after the builtin and local providers and before skills/MCP, and
+            its names join BOTH collision filters, so a skill or MCP tool
+            can never shadow a ``library_*`` / ``search_library_rag`` name
+            at any layer. ``None`` (the default) leaves pre-task-1337
+            composition byte-identical.
 
     Returns:
         ``(registry, allowed_tools, builtin_names, local_names)`` -- the
@@ -1294,8 +1313,17 @@ def _compose_run_registry_and_allowed(
     if local_provider is not None:
         registry.register_provider(local_provider)
         local_names = tuple(e.name for e in local_provider.list_catalog())
+    # task-1337: Library retrieval (direct tools OR the bounded RAG fallback)
+    # registers after builtins/local and before skills/MCP; its names join
+    # every collision filter below so a skill or MCP tool can never shadow
+    # them -- but they never join the skill-runner narrowing set (the
+    # returned builtin/local names below stay Library-free).
+    library_names: tuple[str, ...] = ()
+    if library_provider is not None:
+        registry.register_provider(library_provider)
+        library_names = tuple(e.name for e in library_provider.list_catalog())
     eligible = _non_colliding_skill_entries(
-        context, builtin_names, local_names=local_names
+        context, builtin_names, local_names=local_names, library_names=library_names
     )
     # Defense in depth, NOT the guarantee: a temporary session refuses every
     # skill and MCP call at `ToolCatalogRegistry.invoke_by_name` regardless
@@ -1306,10 +1334,14 @@ def _compose_run_registry_and_allowed(
     if eligible and not ephemeral:
         registry.register_provider(SkillToolProvider(eligible))
     skill_names = () if ephemeral else tuple(str(item["name"]) for item in eligible)
-    allowed_tools = tuple(builtin_names) + local_names + skill_names
+    allowed_tools = tuple(builtin_names) + local_names + library_names + skill_names
     if mcp_provider is not None and not ephemeral:
         collision_names = (
-            set(builtin_names) | set(local_names) | set(skill_names) | RUNTIME_TOOL_NAMES
+            set(builtin_names)
+            | set(local_names)
+            | set(library_names)
+            | set(skill_names)
+            | RUNTIME_TOOL_NAMES
         )
         # Single partition call (finding 8, substrate review): the two
         # public wrappers (`_non_colliding_mcp_names`, `shadowed_mcp_names`)
@@ -1496,6 +1528,7 @@ class ConsoleAgentBridge:
         request_skill_install_confirm: Callable[[str], bool] | None = None,
         request_skill_script_confirm: Callable[[dict], dict] | None = None,
         local_provider: Any | None = None,
+        library_provider: Any | None = None,
     ) -> tuple[str, RunOutcome]:
         # Per-run tool registry + allow-list (Task 12, extended by P5-T6 for
         # MCP, by task-545/T6 for a per-run builtin_gate, and extended again
@@ -1564,6 +1597,7 @@ class ConsoleAgentBridge:
             or mcp_provider is not None
             or builtin_gate is not None
             or local_provider is not None
+            or library_provider is not None
         ):
             context: Mapping[str, Any] = {}
             if self._skills_service is not None:
@@ -1600,13 +1634,25 @@ class ConsoleAgentBridge:
                     ephemeral=run_is_ephemeral,
                     diff_sink=pending_diffs.append,
                     local_provider=local_provider,
+                    library_provider=library_provider,
                 )
             )
+            # task-1337: keep the skill-runner's own name set in agreement
+            # with the registry built above -- a skill fronting a Library
+            # tool name is excluded at BOTH layers.
+            library_names: tuple[str, ...] = ()
+            if library_provider is not None:
+                library_names = tuple(
+                    entry.name for entry in library_provider.list_catalog()
+                )
             if self._skills_service is not None:
                 skill_names = frozenset(
                     str(item["name"])
                     for item in _non_colliding_skill_entries(
-                        context, builtin_names, local_names=local_names
+                        context,
+                        builtin_names,
+                        local_names=local_names,
+                        library_names=library_names,
                     )
                 )
                 skill_file_bindings = SkillFileBindings(

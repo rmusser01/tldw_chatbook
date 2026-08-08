@@ -294,6 +294,23 @@ class LocalToolProvider:
 
         return deep_search_outer_timeout_s()
 
+    def hub_tools(self) -> list[HubTool]:
+        """All registered tools as ``HubTool`` views, in registration order.
+
+        Catalog-view companion to :meth:`hub_tool_for` — one entry per
+        spec, each carrying the synthetic ``local:__local__`` server key,
+        description, input schema, and risk tags. ``executable`` is left
+        True (the provider CAN invoke these); consumers that render a
+        catalog without an execution path (e.g. the MCP Hub workbench,
+        task-2838) downgrade the flag at their own layer.
+
+        Returns:
+            One ``HubTool`` per registered spec. When no ``todo_store``
+            was injected, ``todo_write`` is not registered and therefore
+            not listed.
+        """
+        return [self.hub_tool_for(name) for name in self._specs]
+
     # -- approval stamps (mirror MCPToolProvider) ----------------------
 
     def apply_batch_decisions(self, decisions: dict[str, str]) -> None:
