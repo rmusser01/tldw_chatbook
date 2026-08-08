@@ -1,6 +1,6 @@
 # Library Prompt Enhancement Series Design
 
-**Date:** 2026-08-02  
+**Date:** 2026-08-02
 **Status:** Approved decisions; three review passes completed and final findings addressed
 **Scope:** `tldw_chatbook` TASK-202, TASK-196, TASK-198, TASK-199,
 TASK-197, and TASK-203 as six sequential, merge-gated pull requests
