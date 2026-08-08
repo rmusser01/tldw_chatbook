@@ -2923,6 +2923,138 @@ async def test_library_prompt_copy_preserves_compatibility_structured_metadata(
 
 
 @pytest.mark.asyncio
+async def test_library_prompt_copy_after_compatibility_recipe_conversion_uses_prompt(
+    tmp_path,
+):
+    """Convert detaches canonical Prompt metadata from the source Recipe."""
+    source_definition = {
+        "schema_version": 3,
+        "kind": "future_recipe",
+        "opaque": {"source": "must not survive conversion"},
+    }
+    db, service = _real_prompt_scope_service(tmp_path)
+    prompt_id, _uuid, _msg = db.add_prompt(
+        name="Compatibility recipe",
+        author="A",
+        details="d",
+        system_prompt="compat system",
+        user_prompt="compat user",
+        prompt_format="structured",
+        prompt_schema_version=3,
+        prompt_definition=source_definition,
+        artifact_type="recipe",
+    )
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    host = LibraryHarness(app)
+    copied: list[str] = []
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_prompt_editor(screen, pilot, prompt_id)
+        assert screen._library_prompt_block_state is None
+
+        screen.query_one("#library-prompt-convert", Button).press()
+        await pilot.pause()
+        assert screen._selected_prompt_id is None
+        converted_content = screen.query_one(
+            "#prompt-block-content-legacy-system-1", TextArea
+        )
+        converted_content.text = "Converted system"
+        await pilot.pause()
+
+        block_state = screen._library_prompt_block_state
+        assert block_state is not None
+        assert block_state.artifact_type == "prompt"
+        _draft, artifact_fields, _prepared = prepare_prompt_artifact_save(
+            block_state,
+            artifact_type="prompt",
+            include_recipe_starter_content=True,
+            request_fields={},
+        )
+        expected = render_prompt_markdown(
+            {
+                "name": screen.query_one("#library-prompt-name", Input).value,
+                "author": screen.query_one("#library-prompt-author", Input).value,
+                "details": screen.query_one("#library-prompt-details", Input).value,
+                "keywords": [],
+                **artifact_fields,
+            }
+        )
+        screen.app_instance = host
+        host.copy_to_clipboard = copied.append
+        screen.query_one("#library-prompt-copy", Button).press()
+        await pilot.pause()
+
+        assert copied == [expected]
+        assert "### ARTIFACT_TYPE ###\nprompt\n" in copied[0]
+        assert '"kind":"block_prompt"' in copied[0]
+        assert '"schema_version":3' not in copied[0]
+        assert "future_recipe" not in copied[0]
+
+
+@pytest.mark.asyncio
+async def test_library_prompt_copy_keeps_both_edited_legacy_lanes_plain(tmp_path):
+    """Editing both real legacy blocks cannot implicitly change Copy format."""
+    db, service = _real_prompt_scope_service(tmp_path)
+    prompt_id, _uuid, _msg = db.add_prompt(
+        name="Legacy lanes",
+        author="A",
+        details="d",
+        system_prompt="Original system",
+        user_prompt="Original user",
+        artifact_type="prompt",
+    )
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    host = LibraryHarness(app)
+    copied: list[str] = []
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_prompt_editor(screen, pilot, prompt_id)
+        assert screen._current_library_prompt_editor_state().definition_state == (
+            "legacy"
+        )
+
+        screen.query_one(
+            "#prompt-block-content-legacy-system-1", TextArea
+        ).text = "Edited system"
+        await pilot.pause()
+        screen.query_one(
+            "#prompt-block-content-legacy-user-1", TextArea
+        ).text = "Edited user"
+        await pilot.pause()
+        block_state = screen._library_prompt_block_state
+        assert block_state is not None
+        assert block_state.system_origin is None
+        assert block_state.user_origin is None
+
+        expected = render_prompt_markdown(
+            {
+                "name": "Legacy lanes",
+                "author": "A",
+                "details": "d",
+                "system_prompt": "Edited system",
+                "user_prompt": "Edited user",
+                "keywords": [],
+            }
+        )
+        screen.app_instance = host
+        host.copy_to_clipboard = copied.append
+        screen.query_one("#library-prompt-copy", Button).press()
+        await pilot.pause()
+
+        assert copied == [expected]
+        assert "### ARTIFACT_TYPE ###" not in copied[0]
+        assert "### STRUCTURE ###" not in copied[0]
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("schema_version", "definition_state"),
     [(1, "foreign_v1"), (2, "malformed")],

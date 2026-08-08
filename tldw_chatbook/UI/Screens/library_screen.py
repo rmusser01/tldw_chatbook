@@ -2352,6 +2352,10 @@ class LibraryScreen(BaseAppScreen):
         self._library_prompt_status: str = ""
         self._library_prompt_conflict_snapshot: PromptEditorState | None = None
         self._library_prompt_block_state: PromptBlockEditorState | None = None
+        # Explicit provenance for an unsaved canonical structured copy.
+        # Legacy block edits can clear both lane origins, so origins cannot
+        # truthfully distinguish conversion/duplication from ordinary edits.
+        self._library_prompt_detached_structured: bool = False
         self._library_prompt_capabilities: PromptSourceCapabilities = (
             local_prompt_capabilities()
         )
@@ -14731,6 +14735,7 @@ class LibraryScreen(BaseAppScreen):
             capabilities=self._library_prompt_capabilities,
         )
         self._library_prompt_block_state = editor_state.block_editor_state
+        self._library_prompt_detached_structured = False
         self._library_prompt_original_name = editor_state.name
         self._library_prompt_version = editor_state.version
         self._library_prompt_dirty = False
@@ -14775,6 +14780,7 @@ class LibraryScreen(BaseAppScreen):
             capabilities=self._library_prompt_capabilities,
         )
         self._library_prompt_block_state = editor_state.block_editor_state
+        self._library_prompt_detached_structured = False
         self._library_prompt_original_name = ""
         self._library_prompt_version = None
         self._library_prompt_dirty = False
@@ -14798,6 +14804,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_prompt_status = ""
         self._library_prompt_conflict_snapshot = None
         self._library_prompt_block_state = None
+        self._library_prompt_detached_structured = False
         self._library_prompt_include_starter_content = False
         self._library_prompt_delete_pending_fingerprint = None
         self._library_prompt_editor_armed = False
@@ -14908,7 +14915,21 @@ class LibraryScreen(BaseAppScreen):
         ).block_editor_state
         if converted is None:
             return
+        _draft, artifact_fields, converted = prepare_prompt_artifact_save(
+            converted,
+            artifact_type="prompt",
+            include_recipe_starter_content=True,
+            request_fields={},
+        )
+        detail = (
+            dict(self._library_prompt_detail)
+            if isinstance(self._library_prompt_detail, Mapping)
+            else {}
+        )
+        detail.update(artifact_fields)
+        self._library_prompt_detail = detail
         self._library_prompt_block_state = converted
+        self._library_prompt_detached_structured = True
         self._selected_prompt_id = None
         self._library_prompt_original_name = ""
         self._library_prompt_version = None
@@ -15446,6 +15467,7 @@ class LibraryScreen(BaseAppScreen):
         elif keywords is not None:
             patched_detail["keywords"] = keywords
         self._library_prompt_detail = patched_detail
+        self._library_prompt_detached_structured = False
         self._library_prompt_original_name = name
         self._library_prompt_dirty = False
         if is_create:
@@ -15558,7 +15580,14 @@ class LibraryScreen(BaseAppScreen):
         notify = getattr(self.app_instance, "notify", None)
         if state.artifact_type == "recipe":
             prompt_state = set_artifact_type(state, "prompt")
+            _draft, artifact_fields, prompt_state = prepare_prompt_artifact_save(
+                prompt_state,
+                artifact_type="prompt",
+                include_recipe_starter_content=True,
+                request_fields={},
+            )
             self._library_prompt_block_state = prompt_state
+            self._library_prompt_detached_structured = True
             self._selected_prompt_id = None
             self._library_prompt_original_name = ""
             self._library_prompt_version = None
@@ -15570,9 +15599,7 @@ class LibraryScreen(BaseAppScreen):
             )
             if isinstance(self._library_prompt_detail, Mapping):
                 detail = dict(self._library_prompt_detail)
-                detail["artifact_type"] = "prompt"
-                detail["system_prompt"] = prompt_state.compiled_system
-                detail["user_prompt"] = prompt_state.compiled_user
+                detail.update(artifact_fields)
                 detail.pop("id", None)
                 detail.pop("local_id", None)
                 detail.pop("uuid", None)
@@ -15884,19 +15911,16 @@ class LibraryScreen(BaseAppScreen):
     def _library_prompt_artifact_fields(self) -> dict[str, Any]:
         """Return export/copy metadata for the live Prompt working copy.
 
-        Supported v2 block state is prepared canonically. Read-only structured
-        compatibility records retain their raw metadata rather than being
-        silently flattened to their compiled lanes. Legacy lane records stay
-        in the established plain-Markdown form.
+        Supported stored v2 and explicitly detached structured block state is
+        prepared canonically. Read-only compatibility records retain their raw
+        metadata rather than being silently flattened to their compiled lanes.
+        Legacy lane records stay in the established plain-Markdown form.
         """
         editor_state = self._current_library_prompt_editor_state()
         block_state = self._library_prompt_block_state
         if block_state is not None and (
             editor_state.definition_state == "supported_v2"
-            or (
-                block_state.system_origin is None
-                and block_state.user_origin is None
-            )
+            or self._library_prompt_detached_structured
         ):
             _draft, artifact_payload, _prepared = prepare_prompt_artifact_save(
                 block_state,
@@ -15934,6 +15958,14 @@ class LibraryScreen(BaseAppScreen):
 
     def _library_prompt_action_artifact_type(self) -> ArtifactType | None:
         """Return a supported explicit type, preserving missing legacy type as Prompt."""
+        if self._library_prompt_detached_structured:
+            block_state = self._library_prompt_block_state
+            if block_state is None or block_state.artifact_type not in {
+                "prompt",
+                "recipe",
+            }:
+                return None
+            return block_state.artifact_type
         detail = self._library_prompt_detail
         if isinstance(detail, Mapping) and "artifact_type" in detail:
             raw_type = detail["artifact_type"]
@@ -16054,6 +16086,25 @@ class LibraryScreen(BaseAppScreen):
         if fields is None:
             return
         name, author, details, system_prompt, user_prompt, keywords_text = fields
+        editor_state = self._current_library_prompt_editor_state()
+        block_state = self._library_prompt_block_state
+        detached_structured = block_state is not None and (
+            editor_state.definition_state == "supported_v2"
+            or self._library_prompt_detached_structured
+        )
+        artifact_fields: dict[str, Any] = {}
+        if detached_structured and block_state is not None:
+            try:
+                _draft, artifact_fields, block_state = prepare_prompt_artifact_save(
+                    block_state,
+                    artifact_type=block_state.artifact_type,
+                    include_recipe_starter_content=True,
+                    request_fields={},
+                )
+            except ValueError:
+                # Keep the invalid live block state so the duplicate remains
+                # editable; Copy/Save will surface its existing validation.
+                artifact_fields = {"artifact_type": block_state.artifact_type}
         self._selected_prompt_id = None
         self._library_prompt_detail = {
             "name": f"{name} (copy)",
@@ -16067,7 +16118,10 @@ class LibraryScreen(BaseAppScreen):
             # Keywords field's exact text rather than round-tripping it
             # through a list.
             "keywords": keywords_text,
+            **artifact_fields,
         }
+        self._library_prompt_block_state = block_state
+        self._library_prompt_detached_structured = detached_structured
         self._library_prompt_original_name = ""
         self._library_prompt_version = None
         self._library_prompt_status = ""
@@ -16396,6 +16450,7 @@ class LibraryScreen(BaseAppScreen):
                 capabilities=self._library_prompt_capabilities,
             )
             self._library_prompt_block_state = editor_state.block_editor_state
+            self._library_prompt_detached_structured = False
             self._library_prompt_original_name = editor_state.name
             self._library_prompt_version = editor_state.version
             self._library_prompt_conflict_snapshot = None
@@ -16469,6 +16524,7 @@ class LibraryScreen(BaseAppScreen):
         elif keywords is not None:
             patched_detail["keywords"] = keywords
         self._library_prompt_detail = patched_detail
+        self._library_prompt_detached_structured = False
         self._library_prompt_original_name = name
         self._library_prompt_conflict_snapshot = None
         self._library_prompt_dirty = False
@@ -16649,6 +16705,10 @@ class LibraryScreen(BaseAppScreen):
             "user_prompt": snapshot.user_prompt,
             "keywords": snapshot.keywords_csv,
         }
+        self._library_prompt_detached_structured = (
+            snapshot.block_editor_state is not None
+            and snapshot.definition_state == "supported_v2"
+        )
         self._library_prompt_original_name = ""
         self._library_prompt_version = None
         self._library_prompt_conflict_snapshot = None
@@ -16696,6 +16756,10 @@ class LibraryScreen(BaseAppScreen):
             "artifact_type": artifact_type,
         }
         self._library_prompt_block_state = block_state
+        self._library_prompt_detached_structured = (
+            snapshot.definition_state == "supported_v2"
+            or self._library_prompt_detached_structured
+        )
         self._selected_prompt_id = None
         self._library_prompt_original_name = ""
         self._library_prompt_version = None
