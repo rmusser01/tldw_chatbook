@@ -171,6 +171,13 @@ _BLANKLINES_RE = re.compile(r"\n{3,}")
 # later full-cap call. Bounded because web_crawl bulk-loads it (spec §1).
 _fetch_cache: dict[tuple[str, int], tuple[float, str]] = {}
 _domain_last_fetch: dict[str, float] = {}
+# task-3770: tool calls each run on their own worker thread (same race
+# Qodo's PR #1444 found for _search_cache below), so the eviction scan
+# (min() ITERATES the dict) can race a concurrent put/pop into "dictionary
+# changed size during iteration". One lock PER cache -- a robots fetch must
+# never wait on a page-cache scan -- covering only the short cache ops
+# (never a network call): see _cache_put and web_fetch's cache-hit branch.
+_fetch_cache_lock = threading.Lock()
 
 # robots.txt cache (task-2833 design doc §Mechanism), keyed by
 # scheme://netloc -- host-level, not per-UA: only the can_fetch() *query*
@@ -182,6 +189,11 @@ ROBOTS_CACHE_TTL_SECONDS = 1800.0
 ROBOTS_CACHE_MAX_ENTRIES = 128
 
 _robots_cache: dict[str, tuple[float, "RobotFileParser | None"]] = {}
+# task-3770: separate from _fetch_cache_lock (see its comment above) -- a
+# robots-cache op never blocks on a page-cache scan and vice versa. Covers
+# only _robots_cache_put's body and _robots_allows' cache read/expiry
+# check; the cache-miss robots.txt FETCH runs outside it (see _robots_allows).
+_robots_cache_lock = threading.Lock()
 
 # Test seam: tests set this to an httpx.MockTransport.
 _transport: "httpx.BaseTransport | None" = None
@@ -196,19 +208,30 @@ def _reset_state_for_tests() -> None:
 
 
 def _cache_put(key: tuple[str, int], text: str) -> None:
-    """Insert into cache, evicting earliest-expiry entry if at capacity."""
-    if key not in _fetch_cache and len(_fetch_cache) >= FETCH_CACHE_MAX_ENTRIES:
-        oldest = min(_fetch_cache, key=lambda k: _fetch_cache[k][0])
-        _fetch_cache.pop(oldest)
-    _fetch_cache[key] = (time.monotonic() + FETCH_CACHE_TTL_SECONDS, text)
+    """Insert into cache, evicting earliest-expiry entry if at capacity.
+
+    Locked (task-3770): the eviction scan (min() ITERATES the dict) and the
+    insert are the whole critical section -- no network/extraction call is
+    ever made under this lock.
+    """
+    with _fetch_cache_lock:
+        if key not in _fetch_cache and len(_fetch_cache) >= FETCH_CACHE_MAX_ENTRIES:
+            oldest = min(_fetch_cache, key=lambda k: _fetch_cache[k][0])
+            _fetch_cache.pop(oldest)
+        _fetch_cache[key] = (time.monotonic() + FETCH_CACHE_TTL_SECONDS, text)
 
 
 def _robots_cache_put(key: str, parser: "RobotFileParser | None") -> None:
-    """Insert into the robots cache, evicting earliest-expiry entry at capacity."""
-    if key not in _robots_cache and len(_robots_cache) >= ROBOTS_CACHE_MAX_ENTRIES:
-        oldest = min(_robots_cache, key=lambda k: _robots_cache[k][0])
-        _robots_cache.pop(oldest)
-    _robots_cache[key] = (time.monotonic() + ROBOTS_CACHE_TTL_SECONDS, parser)
+    """Insert into the robots cache, evicting earliest-expiry entry at capacity.
+
+    Locked (task-3770), same shape as _cache_put: eviction scan + insert
+    only, never a network call.
+    """
+    with _robots_cache_lock:
+        if key not in _robots_cache and len(_robots_cache) >= ROBOTS_CACHE_MAX_ENTRIES:
+            oldest = min(_robots_cache, key=lambda k: _robots_cache[k][0])
+            _robots_cache.pop(oldest)
+        _robots_cache[key] = (time.monotonic() + ROBOTS_CACHE_TTL_SECONDS, parser)
 
 
 def _validate_hop(url: str) -> None:
@@ -816,9 +839,13 @@ def _robots_allows(client: httpx.Client, url: str, user_agent: str) -> bool:
     directly, no DNS) and that ``_robots_allows`` must therefore support
     too.
 
-    Synchronous, no locks -- matches the module's existing idiom (single
-    call per tool invocation; a cross-call stampede costs at most one
-    duplicate robots.txt fetch, accepted).
+    Cache bookkeeping locked, fetch not (task-3770): the cache read/expiry
+    check below runs under ``_robots_cache_lock`` (matching the module's
+    ``_search_cache_lock`` idiom -- see its comment), but ``can_fetch()``
+    and a cache-miss's ``_fetch_robots_parser`` FETCH both run outside any
+    lock, single call per tool invocation; a cross-call stampede still
+    costs at most one duplicate robots.txt fetch, accepted, unchanged from
+    before this task.
     """
     parts = urlsplit(url)
     host = (parts.hostname or "").lower()
@@ -826,11 +853,12 @@ def _robots_allows(client: httpx.Client, url: str, user_agent: str) -> bool:
         host = f"[{host}]"
     port = f":{parts.port}" if parts.port else ""
     cache_key = f"{parts.scheme.lower()}://{host}{port}"
-    cached = _robots_cache.get(cache_key)
-    now = time.monotonic()
-    if cached is not None and now < cached[0]:
-        parser = cached[1]
-    else:
+    with _robots_cache_lock:
+        cached = _robots_cache.get(cache_key)
+        now = time.monotonic()
+        cache_hit = cached is not None and now < cached[0]
+        parser = cached[1] if cache_hit else None
+    if not cache_hit:
         parser = _fetch_robots_parser(client, cache_key)
         _robots_cache_put(cache_key, parser)
     if parser is None:
@@ -932,24 +960,36 @@ def web_fetch(url: str, *, max_bytes: int = FETCH_MAX_BYTES) -> str:
     # needed (a robots.txt consult on a cache hit, or the real fetch below).
     client: "httpx.Client | None" = None
     try:
-        cached = _fetch_cache.get((url, max_bytes))
-        if cached is not None:
-            expires_at, text = cached
-            if time.monotonic() < expires_at:
-                _validate_hop(url)  # re-check policy on cache hits (cheap, no body)
-                # Robots re-checked exactly like _validate_hop above: rules
-                # may have changed since the body was cached (design doc
-                # ruling 3). Known hole shared with the _validate_hop check
-                # right above (fix round 1, Minor 3): this judges the
-                # REQUESTED url only -- a cached body that was actually
-                # fetched via a redirect is keyed and re-checked here under
-                # the ORIGINAL start url, not the final redirect target.
-                if respect_robots:
-                    client = _new_web_fetch_client()
-                    if not _robots_allows(client, url, _USER_AGENT):
-                        raise LocalToolError(_robots_disallowed_message(url))
-                return text
-            _fetch_cache.pop((url, max_bytes), None)
+        # Lock scope carved precisely (task-3770): only the dict .get(),
+        # expiry comparison, and .pop() run under _fetch_cache_lock --
+        # _validate_hop (live DNS), the robots re-check (_robots_allows can
+        # trigger a full robots fetch + client construction), and the
+        # `return cache_hit_text` below all run AFTER release. Never hold
+        # this lock across a network call.
+        cache_hit_text: "str | None" = None
+        with _fetch_cache_lock:
+            cached = _fetch_cache.get((url, max_bytes))
+            if cached is not None:
+                expires_at, text = cached
+                if time.monotonic() < expires_at:
+                    cache_hit_text = text
+                else:
+                    _fetch_cache.pop((url, max_bytes), None)
+
+        if cache_hit_text is not None:
+            _validate_hop(url)  # re-check policy on cache hits (cheap, no body)
+            # Robots re-checked exactly like _validate_hop above: rules
+            # may have changed since the body was cached (design doc
+            # ruling 3). Known hole shared with the _validate_hop check
+            # right above (fix round 1, Minor 3): this judges the
+            # REQUESTED url only -- a cached body that was actually
+            # fetched via a redirect is keyed and re-checked here under
+            # the ORIGINAL start url, not the final redirect target.
+            if respect_robots:
+                client = _new_web_fetch_client()
+                if not _robots_allows(client, url, _USER_AGENT):
+                    raise LocalToolError(_robots_disallowed_message(url))
+            return cache_hit_text
 
         client = _new_web_fetch_client()
         # Probed ONCE per call, not per redirect hop: a mid-call sys.modules

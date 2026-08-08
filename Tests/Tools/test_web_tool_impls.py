@@ -1,5 +1,6 @@
 import socket
 import sys
+import threading
 import zipfile
 from io import BytesIO
 from types import SimpleNamespace
@@ -1552,3 +1553,74 @@ def test_fetch_cache_ttl_expiry_refetches(fetch_env):
     fetch_env.clock.now += web_tool_impls.FETCH_CACHE_TTL_SECONDS + 1
     web_fetch("http://example.com/page")
     assert fetch_env.calls.count("http://example.com/page") == 2  # stale -> refetch
+
+
+# ---------------------------------------------------------------------------
+# task-3770: _fetch_cache / _robots_cache locking (barrier-based, deterministic)
+# ---------------------------------------------------------------------------
+#
+# A genuine race REPRODUCTION (concurrent threads actually corrupting a dict
+# mid-iteration) is inherently flaky -- out of scope per the design doc. This
+# instead proves each lock is genuinely HELD across its cache op: a worker
+# thread is parked *inside* the critical section (via a fake clock whose
+# .monotonic() blocks on an Event, standing in for the real work done under
+# the lock), and the test asserts a non-blocking acquire from this thread
+# fails while the worker is parked there, then succeeds again once released.
+
+
+class _BlockingOnceClock:
+    """`time` stand-in: the FIRST `.monotonic()` call signals `entered` and
+    blocks on `release` before returning -- holds whatever critical section
+    called it open for exactly as long as the test needs. Subsequent calls
+    (a caller that reads the clock more than once) return immediately."""
+
+    def __init__(self, entered: threading.Event, release: threading.Event) -> None:
+        self._entered = entered
+        self._release = release
+        self._first = True
+
+    def monotonic(self) -> float:
+        if self._first:
+            self._first = False
+            self._entered.set()
+            self._release.wait(timeout=5)
+        return 0.0
+
+
+@pytest.mark.parametrize(
+    "lock_attr, put_fn_name, put_args",
+    [
+        ("_fetch_cache_lock", "_cache_put", (("http://lock-test.example/", 100), "cached text")),
+        ("_robots_cache_lock", "_robots_cache_put", ("http://lock-test.example", None)),
+    ],
+    ids=["fetch_cache", "robots_cache"],
+)
+def test_cache_put_holds_its_lock_across_the_critical_section(
+    monkeypatch, lock_attr, put_fn_name, put_args
+):
+    web_tool_impls._reset_state_for_tests()
+    entered = threading.Event()
+    release = threading.Event()
+    monkeypatch.setattr(web_tool_impls, "time", _BlockingOnceClock(entered, release))
+
+    put_fn = getattr(web_tool_impls, put_fn_name)
+    lock = getattr(web_tool_impls, lock_attr)
+
+    worker = threading.Thread(target=lambda: put_fn(*put_args))
+    worker.start()
+    try:
+        assert entered.wait(timeout=5), "worker never entered the critical section"
+        # The lock must be HELD while the worker is parked inside the
+        # critical section -- a non-blocking acquire from this thread must
+        # fail. This is the actual discriminator: an unlocked _cache_put
+        # (the pre-task-3770 shape) would let this acquire succeed.
+        assert lock.acquire(blocking=False) is False, (
+            f"{lock_attr} was not held while {put_fn_name} was inside its critical section"
+        )
+    finally:
+        release.set()
+        worker.join(timeout=5)
+    assert not worker.is_alive(), f"{put_fn_name} worker did not finish"
+    # Lock is free again once the critical section exits.
+    assert lock.acquire(blocking=False) is True
+    lock.release()
