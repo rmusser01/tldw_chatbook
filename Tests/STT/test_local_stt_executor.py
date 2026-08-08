@@ -42,9 +42,9 @@ from tldw_chatbook.STT.executor import (
     ExecutorRequest,
     ExecutorResult,
     ExecutorUnavailableError,
-    LocalSTTExecutor,
     LocalSourceChangedError,
     LocalSourceSnapshot,
+    LocalSTTExecutor,
     ModelIdentity,
     WorkerPhase,
     _AttemptTerminalGuard,
@@ -52,12 +52,14 @@ from tldw_chatbook.STT.executor import (
     validate_local_source_snapshot,
 )
 from tldw_chatbook.STT.executor_worker import (
-    _ProviderLoadFailure,
+    ProviderRuntime,
     _default_parse_job,
     _failure_from_exception,
     _failure_from_worker_exception,
     _load_resident,
     _parakeet_provider,
+    _ProviderLoadFailure,
+    _run_executor_worker,
 )
 
 
@@ -530,6 +532,336 @@ def test_worker_rejects_buffer_without_parakeet_buffer_capability(
     assert callbacks.results == []
     assert callbacks.failures[0].code is TranscriptionFailureCode.UNSUPPORTED_CAPABILITY
     assert callbacks.failures[0].recovery_actions == ("retry_faster_whisper",)
+
+
+def test_worker_passes_each_buffer_requests_current_provenance_metadata(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    requests = (
+        ExecutorRequest(
+            generation=1,
+            attempt_id="attempt-one",
+            job_id="job-one",
+            source=BufferAudioSource(b"\x00\x00", 16_000),
+            identity=_identity(root_revision=None, closure_fingerprint=None),
+            options={
+                "language": "en",
+                "transcription_context": {"batch_id": "batch-one"},
+            },
+            segment_end_frames=(1,),
+        ),
+        ExecutorRequest(
+            generation=1,
+            attempt_id="attempt-two",
+            job_id=None,
+            source=BufferAudioSource(b"\x01\x00", 16_000),
+            identity=_identity(root_revision=None, closure_fingerprint=None),
+            options={
+                "language": "fr",
+                "transcription_context": {"batch_id": "batch-two"},
+            },
+            segment_end_frames=(1,),
+        ),
+    )
+    received: list[dict[str, object]] = []
+
+    def provider_builder(*_args, **_kwargs) -> ProviderRuntime:
+        def buffer_runner(source, **kwargs):
+            received.append({"audio": source.audio, **kwargs})
+            return {
+                "attempt_id": kwargs["attempt_id"],
+                "job_id": kwargs["job_id"],
+                "language": kwargs["language"],
+            }
+
+        return ProviderRuntime(
+            runner=lambda *_args, **_kwargs: {},
+            buffer_runner=buffer_runner,
+            close=lambda: None,
+        )
+
+    class _Connection:
+        def __init__(self) -> None:
+            self.commands = iter((*requests, ("close", 1)))
+            self.sent: list[object] = []
+
+        def send(self, value: object) -> None:
+            self.sent.append(value)
+
+        def recv(self) -> object:
+            return next(self.commands)
+
+        def close(self) -> None:
+            return None
+
+    class _Event:
+        def wait(self, _timeout: float) -> bool:
+            return True
+
+        def is_set(self) -> bool:
+            return False
+
+    connection = _Connection()
+    monkeypatch.setattr(
+        "tldw_chatbook.STT.executor_worker.enter_worker_containment",
+        lambda: SimpleNamespace(pid=1),
+    )
+
+    _run_executor_worker(
+        connection,  # type: ignore[arg-type]
+        _Event(),
+        _Event(),
+        1,
+        str(tmp_path),
+        provider_builder=provider_builder,
+        parse_job=lambda *_args, **_kwargs: {},
+    )
+
+    assert received == [
+        {
+            "audio": b"\x00\x00",
+            "segment_end_frames": (1,),
+            "attempt_id": "attempt-one",
+            "job_id": "job-one",
+            "language": "en",
+            "transcription_context": {"batch_id": "batch-one"},
+        },
+        {
+            "audio": b"\x01\x00",
+            "segment_end_frames": (1,),
+            "attempt_id": "attempt-two",
+            "job_id": None,
+            "language": "fr",
+            "transcription_context": {"batch_id": "batch-two"},
+        },
+    ]
+    results = [item for item in connection.sent if type(item) is ExecutorResult]
+    assert [item.payload for item in results] == [
+        {"attempt_id": "attempt-one", "job_id": "job-one", "language": "en"},
+        {"attempt_id": "attempt-two", "job_id": None, "language": "fr"},
+    ]
+
+
+def test_parakeet_buffer_runner_serializes_normalized_result_without_synthetic_job(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tldw_chatbook.STT.parakeet_onnx import (
+        ParakeetBufferResult,
+        ParakeetOnnxRuntime,
+    )
+
+    captured: dict[str, object] = {}
+
+    class _Runtime:
+        def transcribe_buffer(self, **kwargs):
+            captured.update(kwargs)
+            normalized = TranscriptionResult(
+                text="ordinary text console stop",
+                segments=(),
+                provenance=TranscriptionProvenance(
+                    schema_version=1,
+                    attempt_id=kwargs["attempt_id"],
+                    batch_id=None,
+                    job_id=kwargs["job_id"],
+                    retry_of_attempt_id=None,
+                    retry_of_job_id=None,
+                    provider_id="parakeet-onnx",
+                    model_id=PARAKEET_V2_MODEL,
+                    artifact_root=None,
+                    artifact_dependencies=(),
+                    precision="int8",
+                    requested_device=ExecutionDevice.CPU,
+                    effective_device=ExecutionDevice.CPU,
+                    requested_language=kwargs["language"],
+                    effective_language="en",
+                    detected_language=None,
+                    task=TranscriptionTask.TRANSCRIBE,
+                ),
+                produced_capabilities=ProducedCapabilities(
+                    timestamps=TimestampGranularity.NONE,
+                    punctuation=True,
+                    capitalization=True,
+                    vad=False,
+                    diarization=False,
+                ),
+                duration_seconds=0.5,
+                timings=TranscriptionTimings(total_seconds=0.1),
+            )
+            return ParakeetBufferResult(
+                normalized=normalized,
+                logical_segments=("ordinary text", "console stop"),
+            )
+
+        def close(self) -> None:
+            return None
+
+    monkeypatch.setattr(ParakeetOnnxRuntime, "load", lambda **_kwargs: _Runtime())
+    request = ExecutorRequest(
+        generation=1,
+        attempt_id="first-load-attempt",
+        job_id="first-load-job",
+        source=BufferAudioSource(b"\x00\x00\x01\x00", 16_000),
+        identity=_identity(
+            root_revision=None,
+            closure_fingerprint=None,
+            local_snapshot_token=None,
+        ),
+        options={"language": "en"},
+        segment_end_frames=(2,),
+    )
+    provider = _parakeet_provider(request, tmp_path, None, lambda: False)
+
+    payload = provider.buffer_runner(
+        request.source,
+        segment_end_frames=(1, 2),
+        attempt_id="current-attempt",
+        job_id=None,
+        language="fr",
+        transcription_context={"batch_id": "current-batch"},
+    )
+
+    assert payload == {
+        "text": "ordinary text console stop",
+        "logical_segments": ("ordinary text", "console stop"),
+        "duration": 0.5,
+        "transcription_model": PARAKEET_V2_MODEL,
+        "transcription_provenance": {
+            "schema_version": 1,
+            "attempt_id": "current-attempt",
+            "batch_id": None,
+            "job_id": None,
+            "retry_of_attempt_id": None,
+            "retry_of_job_id": None,
+            "provider_id": "parakeet-onnx",
+            "model_id": PARAKEET_V2_MODEL,
+            "artifact_root": None,
+            "artifact_dependencies": [],
+            "precision": "int8",
+            "requested_device": "cpu",
+            "effective_device": "cpu",
+            "requested_language": "fr",
+            "effective_language": "en",
+            "detected_language": None,
+            "task": "transcribe",
+            "produced_capabilities": {
+                "timestamps": "none",
+                "punctuation": True,
+                "capitalization": True,
+                "vad": False,
+                "diarization": False,
+            },
+            "warnings": [],
+            "failed_attempt": None,
+        },
+    }
+    assert captured["attempt_id"] == "current-attempt"
+    assert captured["job_id"] is None
+    assert captured["language"] == "fr"
+
+
+def test_parakeet_buffer_runner_rejects_non_int16_pcm_as_unsupported_capability(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tldw_chatbook.STT.parakeet_onnx import ParakeetOnnxRuntime
+
+    class _Runtime:
+        def transcribe_buffer(self, **_kwargs):
+            raise AssertionError("unsupported PCM must not reach native inference")
+
+        def close(self) -> None:
+            return None
+
+    monkeypatch.setattr(ParakeetOnnxRuntime, "load", lambda **_kwargs: _Runtime())
+    request = ExecutorRequest(
+        generation=1,
+        attempt_id="unsupported-width",
+        job_id=None,
+        source=BufferAudioSource(b"\x00", 16_000, sample_width=1),
+        identity=_identity(
+            root_revision=None,
+            closure_fingerprint=None,
+            local_snapshot_token=None,
+        ),
+        options={"language": "en"},
+        segment_end_frames=(1,),
+    )
+    provider = _parakeet_provider(request, tmp_path, None, lambda: False)
+
+    with pytest.raises(_ProviderLoadFailure) as raised:
+        provider.buffer_runner(
+            request.source,
+            segment_end_frames=(1,),
+            attempt_id=request.attempt_id,
+            job_id=None,
+            language="en",
+            transcription_context={},
+        )
+
+    assert raised.value.code is TranscriptionFailureCode.UNSUPPORTED_CAPABILITY
+
+
+def test_parakeet_buffer_failure_uses_current_request_metadata_without_leakage(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tldw_chatbook.STT.parakeet_onnx import (
+        ParakeetOnnxFailure,
+        ParakeetOnnxRuntime,
+    )
+
+    class _Runtime:
+        def transcribe_buffer(self, **_kwargs):
+            raise RuntimeError("private native inference detail")
+
+        def close(self) -> None:
+            return None
+
+    monkeypatch.setattr(ParakeetOnnxRuntime, "load", lambda **_kwargs: _Runtime())
+    request = ExecutorRequest(
+        generation=1,
+        attempt_id="first-attempt",
+        job_id="first-job",
+        source=BufferAudioSource(b"\x00\x00", 16_000),
+        identity=_identity(
+            model_id=PARAKEET_V3_MODEL,
+            root_revision=None,
+            closure_fingerprint=None,
+            local_snapshot_token=None,
+        ),
+        options={
+            "language": "en",
+            "transcription_context": {"batch_id": "first-batch"},
+        },
+        segment_end_frames=(1,),
+    )
+    provider = _parakeet_provider(request, tmp_path, None, lambda: False)
+
+    try:
+        provider.buffer_runner(
+            request.source,
+            segment_end_frames=(1,),
+            attempt_id="current-attempt",
+            job_id=None,
+            language="fr",
+            transcription_context={},
+        )
+    except ParakeetOnnxFailure as error:
+        failure = _failure_from_exception(request, error)
+    else:
+        raise AssertionError("buffer inference failure was not raised")
+
+    assert failure.code is TranscriptionFailureCode.INFERENCE_FAILED
+    assert failure.recovery_actions == ("retry_faster_whisper",)
+    assert failure.failed_attempt is not None
+    assert failure.failed_attempt["attempt_id"] == "current-attempt"
+    assert failure.failed_attempt["batch_id"] is None
+    assert failure.failed_attempt["job_id"] is None
+    assert failure.failed_attempt["requested_language"] == "fr"
+    assert failure.failed_attempt["effective_language"] == "auto"
+    assert "private" not in str(failure)
 
 
 def test_controller_starts_lazily_and_reuses_same_worker_for_same_identity() -> None:
