@@ -389,6 +389,26 @@ class ParakeetOnnxRuntime:
             mono[start:end] for start, end in zip(starts, ends)
         )
         duration = len(mono) / source.sample_rate
+        if (
+            duration > LONG_FORM_SECONDS
+            and self._vad is None
+            and self.model_id != PARAKEET_V2_MODEL
+        ):
+            normalized_language = (language or "en").strip().lower()
+            raise ParakeetOnnxFailure(
+                TranscriptionFailureCode.ARTIFACT_INCOMPATIBLE,
+                "Long-form Parakeet v3 requires the managed VAD dependency. "
+                "Retry with faster-whisper.",
+                attempt_id=attempt_id,
+                batch_id=None,
+                job_id=job_id,
+                model_id=self.model_id,
+                artifact_root=self.artifact_root,
+                artifact_dependencies=self.artifact_dependencies,
+                precision=self.precision,
+                requested_language=normalized_language,
+                effective_language="auto",
+            )
         use_vad = duration > LONG_FORM_SECONDS and self._vad is not None
         if use_vad:
             logical_segments = self._transcribe_buffer_segments(

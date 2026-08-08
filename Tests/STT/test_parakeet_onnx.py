@@ -510,6 +510,38 @@ def test_verified_legacy_long_buffer_without_vad_recognizes_directly() -> None:
     assert len(model.short_calls) == 1
 
 
+def test_v3_long_buffer_without_managed_vad_fails_before_native_inference() -> None:
+    from tldw_chatbook.STT.parakeet_onnx import ParakeetOnnxFailure
+
+    runtime, model, _vad, _root, _dependency = _runtime(
+        model_id=PARAKEET_V3_MODEL,
+        short_text="must-not-run",
+    )
+    runtime._vad = None
+    source = BufferAudioSource(bytes(310 * 2), sample_rate=10)
+
+    with pytest.raises(ParakeetOnnxFailure) as raised:
+        runtime.transcribe_buffer(
+            source=source,
+            segment_end_frames=(),
+            attempt_id="v3-long-no-vad",
+            language="fr",
+        )
+
+    assert raised.value.error_detail == {
+        "category": "stt_failure",
+        "code": "artifact_incompatible",
+        "message": "Long-form Parakeet v3 requires the managed VAD dependency. "
+        "Retry with faster-whisper.",
+        "actions": ["retry_faster_whisper"],
+    }
+    assert raised.value.stt_failure_provenance["attempt_id"] == "v3-long-no-vad"
+    assert raised.value.stt_failure_provenance["job_id"] is None
+    assert raised.value.stt_failure_provenance["requested_language"] == "fr"
+    assert raised.value.stt_failure_provenance["effective_language"] == "auto"
+    assert model.short_calls == []
+
+
 def test_buffer_cancellation_before_second_logical_segment_prevents_native_call() -> None:
     from tldw_chatbook.STT.parakeet_onnx import ParakeetOnnxCancelled
 

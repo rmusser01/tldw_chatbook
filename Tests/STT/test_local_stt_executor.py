@@ -708,7 +708,10 @@ def test_parakeet_buffer_runner_serializes_normalized_result_without_synthetic_j
             closure_fingerprint=None,
             local_snapshot_token=None,
         ),
-        options={"language": "en"},
+        options={
+            "language": "en",
+            "transcription_context": {"batch_id": "first-load-batch"},
+        },
         segment_end_frames=(2,),
     )
     provider = _parakeet_provider(request, tmp_path, None, lambda: False)
@@ -730,7 +733,7 @@ def test_parakeet_buffer_runner_serializes_normalized_result_without_synthetic_j
         "transcription_provenance": {
             "schema_version": 1,
             "attempt_id": "current-attempt",
-            "batch_id": None,
+            "batch_id": "current-batch",
             "job_id": None,
             "retry_of_attempt_id": None,
             "retry_of_job_id": None,

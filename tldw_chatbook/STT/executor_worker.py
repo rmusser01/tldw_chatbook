@@ -641,17 +641,24 @@ def _parakeet_provider(
             raise
         except Exception:
             raise buffer_failure() from None
-        provenance = build_transcription_provenance_document(
+        normalized = replace(
             result.normalized,
+            provenance=replace(
+                result.normalized.provenance,
+                batch_id=current_context.get("batch_id"),
+            ),
+        )
+        provenance = build_transcription_provenance_document(
+            normalized,
             failed_attempt=current_context.get(
                 "retry_source_failure_provenance"
             ),
         )
         return {
-            "text": result.normalized.text,
+            "text": normalized.text,
             "logical_segments": result.logical_segments,
-            "duration": result.normalized.duration_seconds,
-            "transcription_model": result.normalized.provenance.model_id,
+            "duration": normalized.duration_seconds,
+            "transcription_model": normalized.provenance.model_id,
             "transcription_provenance": provenance,
         }
 
