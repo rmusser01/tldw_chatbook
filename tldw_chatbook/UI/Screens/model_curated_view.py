@@ -21,6 +21,7 @@ from tldw_chatbook.Model_Artifacts.curated_registry import (
 from tldw_chatbook.Model_Artifacts.service import (
     ArtifactDescriptor,
     ArtifactRef,
+    ArtifactRole,
     ModelArtifactService,
 )
 from tldw_chatbook.Model_Artifacts.store import managed_service
@@ -256,6 +257,7 @@ class CuratedView(Widget):
             rows = tuple(
                 CuratedRow(descriptor, descriptor.reference in installed_refs)
                 for descriptor in registry.list()
+                if descriptor.role is ArtifactRole.ROOT
             )
         except Exception:
             self.app.call_from_thread(

@@ -74,3 +74,26 @@ def test_default_registry_contains_parakeet_v2() -> None:
     assert parakeet_v2_reference() in {
         descriptor.reference for descriptor in curated_registry().list()
     }
+
+
+def test_default_registry_contains_four_parakeet_roots_and_the_vad_dependency() -> None:
+    """The internal VAD is resolvable without becoming a fifth model choice."""
+    from tldw_chatbook.Local_Ingestion.parakeet_v2_artifact import (
+        parakeet_reference,
+        parakeet_vad_reference,
+    )
+    from tldw_chatbook.Model_Artifacts.curated_registry import curated_registry
+    from tldw_chatbook.Model_Artifacts.service import ArtifactRole
+
+    descriptors = curated_registry().list()
+    references = {descriptor.reference for descriptor in descriptors}
+
+    assert references == {
+        parakeet_reference("nemo-parakeet-tdt-0.6b-v2", "int8"),
+        parakeet_reference("nemo-parakeet-tdt-0.6b-v2", "f32"),
+        parakeet_reference("nemo-parakeet-tdt-0.6b-v3", "int8"),
+        parakeet_reference("nemo-parakeet-tdt-0.6b-v3", "f32"),
+        parakeet_vad_reference(),
+    }
+    assert sum(item.role is ArtifactRole.ROOT for item in descriptors) == 4
+    assert sum(item.role is ArtifactRole.DEPENDENCY for item in descriptors) == 1
