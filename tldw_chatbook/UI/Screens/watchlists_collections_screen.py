@@ -2129,6 +2129,12 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         pane = ContentPane(id="watchlists-content-pane")
         pane.item = self._selected_content_item
         pane.expanded = self.region_layout.solo_region == Region.CONTENT
+        # TASK-3072 plan task 9: re-seed the footer the same way `item` is
+        # re-seeded just above, so a region rebuild re-renders the same
+        # position. Guarded inside `_reader_position_text` for the build
+        # order where the items pane is not mounted yet ("" then; the first
+        # selection pushes the real value).
+        pane.position = self._reader_position_text()
         return pane
 
     def _watchlists_are_empty(self) -> bool:
@@ -8593,10 +8599,37 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         # `selected_entity` — see that seeding note above.
         self._selected_content_item = event.item
         try:
-            self.query_one("#watchlists-content-pane", ContentPane).item = event.item
+            content = self.query_one("#watchlists-content-pane", ContentPane)
+            content.item = event.item
+            content.position = self._reader_position_text()
         except NoMatches:
             pass
         self._mark_item_read_on_open(event.item)
+
+    def _reader_position_text(self) -> str:
+        """The reader footer's "N of M" (TASK-3072 plan task 9).
+
+        M is the article list's `displayed_items()` -- the list the user is
+        actually looking at, filter applied -- and N the open item's 1-based
+        place in it, so `j` and the footer walk the same sequence. The pane
+        holds no list state, which is why this is computed here and pushed
+        into its `position` reactive (the `_selected_content_item` re-seed
+        pattern). Empty when nothing is open (the footer is absent then,
+        never "0 of 0") or when the open item is not in the displayed list.
+        """
+        item = self._selected_content_item
+        if item is None:
+            return ""
+        try:
+            pane = self.query_one("#watchlists-items-pane", ArticleListPane)
+        except NoMatches:
+            return ""
+        items = pane.displayed_items()
+        open_id = str(item.get("id") or "")
+        for index, candidate in enumerate(items):
+            if str(candidate.get("id")) == open_id:
+                return f"{index + 1} of {len(items)}"
+        return ""
 
     def _mark_item_read_on_open(self, item: dict[str, Any] | None) -> None:
         """Opening an item in the reader marks it read (Task 5).

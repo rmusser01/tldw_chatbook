@@ -2831,3 +2831,85 @@ async def test_the_reader_action_row_buttons_post_their_messages():
             "Queue on an unqueued item must request the flip TO queued, "
             "carrying the raw item id exactly as the Inspector does"
         )
+
+
+# --- TASK-3072 plan task 9: the reader's position footer -----------------------
+
+
+@pytest.mark.asyncio
+async def test_the_position_footer_renders_and_updates_in_place():
+    """The footer shows the screen-pushed `position` string; updating the
+    reactive re-renders the one Static in place -- never a reader recompose."""
+    from textual.app import App
+    from textual.widgets import Static
+
+    from tldw_chatbook.UI.Watchlists_Modules.content_pane import ContentPane
+
+    class _PaneHost(App):
+        def compose(self):
+            pane = ContentPane()
+            pane.item = {"title": "x", "content": "y", "content_kind": "article"}
+            pane.position = "2 of 9"
+            yield pane
+
+    app = _PaneHost()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        position = app.query_one("#content-position", Static)
+        assert str(position.renderable) == "2 of 9"
+
+        app.query_one(ContentPane).position = "3 of 9"
+        await pilot.pause()
+        assert str(position.renderable) == "3 of 9", (
+            "the same Static must update in place (a recompose would replace it)"
+        )
+
+
+@pytest.mark.asyncio
+async def test_the_next_unread_footer_button_posts_the_panes_message():
+    """The footer's Next Unread control posts the pane's existing
+    `NextUnreadRequested` -- the same message `space` already raises, so one
+    screen handler serves both."""
+    from textual.app import App
+    from textual.widgets import Button
+
+    from tldw_chatbook.UI.Watchlists_Modules.content_pane import ContentPane
+    from tldw_chatbook.UI.Watchlists_Modules.items_pane import NextUnreadRequested
+
+    class _PaneHost(App):
+        def __init__(self) -> None:
+            super().__init__()
+            self.captured: list[NextUnreadRequested] = []
+
+        def compose(self):
+            pane = ContentPane()
+            pane.item = {"title": "x", "content": "y", "content_kind": "article"}
+            yield pane
+
+        def on_next_unread_requested(self, message: NextUnreadRequested) -> None:
+            self.captured.append(message)
+
+    app = _PaneHost()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.query_one("#content-next-unread-button", Button).press()
+        await pilot.pause()
+        assert len(app.captured) == 1
+
+
+@pytest.mark.asyncio
+async def test_the_empty_reader_has_no_position_footer():
+    """With nothing open the footer is absent entirely -- not "0 of 0"."""
+    from textual.app import App
+
+    from tldw_chatbook.UI.Watchlists_Modules.content_pane import ContentPane
+
+    class _PaneHost(App):
+        def compose(self):
+            yield ContentPane()
+
+    app = _PaneHost()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        assert not app.query("#content-position")
+        assert not app.query("#content-next-unread-button")

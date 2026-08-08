@@ -12,6 +12,7 @@ from rich.console import Group, RenderableType
 from rich.markdown import Markdown
 from rich.text import Text
 from textual.containers import Horizontal, Vertical
+from textual.css.query import NoMatches
 from textual.message import Message
 from textual.reactive import reactive
 from textual.widgets import Button, Static
@@ -21,6 +22,7 @@ from ...Subscriptions.item_persist import CONTENT_KIND_CHANGE
 from ...Widgets.recompose_capture_guard import RecomposeCaptureGuard
 from .humane_time import humane_timestamp
 from .inspector_pane import IngestRequested, ToggleBriefingQueueRequested
+from .items_pane import NextUnreadRequested
 
 # Every item persisted before Phase A carries `content = NULL`, and it cannot
 # be recovered without re-fetching the source. Say so rather than rendering an
@@ -347,6 +349,26 @@ class ContentPane(RecomposeCaptureGuard, Vertical):
     #: second recompose would be pure churn.
     expanded: reactive[bool] = reactive(False)
 
+    #: The reader footer's "N of M" (TASK-3072 plan task 9).
+    #:
+    #: Screen-pushed, exactly like `expanded` above and for the same reason:
+    #: this pane holds no list state, so it cannot number the open item
+    #: itself -- the screen computes the position from the article list's
+    #: `displayed_items()` on every selection and pushes the string here
+    #: (and re-seeds it in `_build_content_pane`, so a region rebuild
+    #: re-renders the same footer). A plain reactive, not `recompose=True`:
+    #: `watch_position` updates the one Static in place.
+    position: reactive[str] = reactive("")
+
+    def watch_position(self, position: str) -> None:
+        """Re-render the footer Static in place -- never a reader recompose."""
+        try:
+            self.query_one("#content-position", Static).update(position)
+        except NoMatches:
+            # Pre-mount seeding (`_build_content_pane`) or the empty state,
+            # which has no footer at all; compose reads the reactive itself.
+            pass
+
     def compose(self):
         """Build the reader for `item`, or the empty-state placeholder.
 
@@ -463,6 +485,20 @@ class ContentPane(RecomposeCaptureGuard, Vertical):
                     tooltip="Open the page as it was before this change.",
                 )
         yield Static(render_for(self.item), id="content-body")
+        # TASK-3072 plan task 9: the position footer. "N of M" is seeded and
+        # pushed by the screen (`position` above -- the pane holds no list
+        # state); Next Unread posts the pane's existing message, so the one
+        # screen handler that serves `space` serves this button too. Only
+        # rendered with an item open -- with nothing open the footer is
+        # absent entirely, never "0 of 0".
+        with Horizontal(id="content-footer", classes="destination-filter-strip"):
+            yield Static(self.position, id="content-position")
+            yield Button(
+                "Next unread",
+                id="content-next-unread-button",
+                compact=True,
+                tooltip="Open the next unread item (keyboard: space).",
+            )
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "content-mark-unread-button":
@@ -497,6 +533,9 @@ class ContentPane(RecomposeCaptureGuard, Vertical):
                         item_id, not bool(item.get("queued_for_briefing"))
                     )
                 )
+        elif event.button.id == "content-next-unread-button":
+            event.stop()
+            self.post_message(NextUnreadRequested())
         elif event.button.id == "content-full-page-button":
             event.stop()
             self.post_message(ViewSnapshotRequested(self.item, "full_page"))

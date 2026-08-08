@@ -865,6 +865,104 @@ async def test_open_in_browser_requested_takes_the_same_path(monkeypatch):
         assert opened == ["https://example.com/via-button"]
 
 
+# --- TASK-3072 plan task 9: the reader's position footer ----------------------
+
+
+@pytest.mark.asyncio
+async def test_the_reader_footer_numbers_the_open_item():
+    """"N of M": M is the displayed list, N the open item's 1-based place in
+    it; `j` advances the reader and the footer together."""
+    from textual.widgets import Static
+
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+        db = app.watchlist_bundle_service._db
+        source_id = db.add_subscription(
+            name="ArXiv", type="rss", source="https://a.example/f"
+        )
+        # Newest-first display: [c (09:02), b (09:01), a (09:00)].
+        _seed_item(db, source_id, "a", created_at="2026-08-06 09:00:00")
+        _seed_item(db, source_id, "b", created_at="2026-08-06 09:01:00")
+        _seed_item(db, source_id, "c", created_at="2026-08-06 09:02:00")
+        await screen._load_items()
+        pane = screen.query_one("#watchlists-items-pane", ArticleListPane)
+        await _wait_for_items(pilot, pane)
+        assert len(pane.displayed_items()) == 3, "precondition: all three listed"
+
+        pane.select_item_by_id(str(pane.displayed_items()[1]["id"]))
+        for _ in range(40):
+            await pilot.pause()
+            if screen._selected_content_item is not None:
+                break
+        assert screen._selected_content_item["title"] == "b", "precondition"
+        assert str(screen.query_one("#content-position", Static).renderable) == "2 of 3"
+
+        await pilot.press("j")
+        for _ in range(40):
+            await pilot.pause()
+            if screen._selected_content_item.get("title") == "a":
+                break
+        assert screen._selected_content_item["title"] == "a", "precondition: j moved"
+        assert str(screen.query_one("#content-position", Static).renderable) == "3 of 3", (
+            "the footer must walk with the reader"
+        )
+
+
+@pytest.mark.asyncio
+async def test_the_reader_footer_is_empty_with_nothing_open():
+    """Nothing open: no footer at all, and definitely not "0 of 0"."""
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+        assert screen._selected_content_item is None, "precondition"
+        assert not screen.query("#content-position")
+
+
+@pytest.mark.asyncio
+async def test_the_next_unread_footer_button_opens_the_next_unread():
+    """The footer's Next Unread control drives the same handler `space` does."""
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+        db = app.watchlist_bundle_service._db
+        source_id = db.add_subscription(
+            name="ArXiv", type="rss", source="https://a.example/f"
+        )
+        _seed_item(db, source_id, "a", created_at="2026-08-06 09:00:00")
+        b_id = _seed_item(db, source_id, "b", created_at="2026-08-06 09:01:00")
+        _seed_item(db, source_id, "c", created_at="2026-08-06 09:02:00")
+        db.mark_item_status(b_id, "reviewed")
+        # Nothing open yet, so no footer exists -- open any item first.
+        await screen._load_items()
+        pane = screen.query_one("#watchlists-items-pane", ArticleListPane)
+        await _wait_for_items(pilot, pane)
+        pane.select_item_by_id(str(pane.displayed_items()[1]["id"]))
+        for _ in range(40):
+            await pilot.pause()
+            if screen._selected_content_item is not None:
+                break
+        assert screen._selected_content_item["title"] == "b", "precondition"
+
+        from textual.widgets import Button
+
+        screen.query_one("#content-next-unread-button", Button).press()
+        for _ in range(40):
+            await pilot.pause()
+            if screen._selected_content_item.get("title") == "a":
+                break
+        assert screen._selected_content_item["title"] == "a", (
+            "from b, next unread walks the displayed sequence forward, "
+            "past nothing, to a -- the only unread item after it"
+        )
+
+
 @pytest.mark.asyncio
 async def test_space_opens_next_unread():
     """`space` walks to the next UNREAD item, skipping reviewed rows."""
