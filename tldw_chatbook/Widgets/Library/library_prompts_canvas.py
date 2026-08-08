@@ -311,10 +311,9 @@ class LibraryPromptsListCanvas(Vertical):
                             "System apply is unavailable in Library; use the Console "
                             "prompt workbench to apply it to the session."
                         ),
+                        embedded=True,
                         id="library-prompt-block-editor",
                     )
-                    block_editor.styles.height = "1fr"
-                    block_editor.styles.min_height = 12
                     yield block_editor
                     yield Checkbox(
                         "Include current text as starter content",

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 from textual.app import App, ComposeResult
+from textual.containers import Vertical, VerticalScroll
 from textual.widgets import Button, Checkbox, Collapsible, Input, Static, TextArea
 
 from tldw_chatbook.Prompt_Management.prompt_artifact_models import (
@@ -86,16 +87,19 @@ class BlockEditorHarness(App[None]):
         state: PromptBlockEditorState,
         *,
         can_update_original: bool = False,
+        embedded: bool = False,
     ) -> None:
         super().__init__()
         self.state = state
         self.can_update_original = can_update_original
+        self.embedded = embedded
         self.messages: list[object] = []
 
     def compose(self) -> ComposeResult:
         yield PromptBlockEditor(
             self.state,
             can_update_original=self.can_update_original,
+            embedded=self.embedded,
             id="editor",
         )
 
@@ -204,6 +208,20 @@ async def test_genuinely_wide_editor_keeps_readable_single_row_footer() -> None:
         await pilot.pause()
         assert footer.has_class("two-row") is False
         assert lane_options.region.y == actions.region.y
+
+
+@pytest.mark.asyncio
+async def test_embedded_editor_uses_a_plain_naturally_sized_body() -> None:
+    """An embedding scroll owner must not receive a nested block-editor scroll."""
+    app = BlockEditorHarness(_state(), embedded=True)
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        editor = app.query_one("#editor", PromptBlockEditor)
+
+        assert editor.has_class("embedded")
+        assert isinstance(editor.query_one("#prompt-editor-body"), Vertical)
+        assert list(editor.query(VerticalScroll)) == []
 
 
 @pytest.mark.asyncio

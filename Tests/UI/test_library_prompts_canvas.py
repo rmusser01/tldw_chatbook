@@ -28,6 +28,7 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 from textual.app import App
+from textual.containers import VerticalScroll
 from textual.widgets import Button, Checkbox, Input, Static, TextArea
 
 from tldw_chatbook.DB.Prompts_DB import ConflictError, PromptsDatabase
@@ -2450,6 +2451,7 @@ async def test_library_prompt_editor_geometry_keeps_actions_visible_without_cove
         assert actions.region.height > 0
         assert content.max_scroll_y > 0
         assert actions.max_scroll_y == 0
+        assert list(content.query(VerticalScroll)) == []
 
         content.scroll_end(animate=False)
         await pilot.pause()
@@ -2899,8 +2901,8 @@ async def test_library_prompt_duplicate_button_between_copy_and_delete(tmp_path)
         await _wait_for_library_shell(screen, pilot)
         await _open_prompt_editor(screen, pilot, prompt_id)
 
-        toolbar = screen.query_one("#library-prompt-copy", Button).parent
-        ids = [child.id for child in toolbar.children]
+        actions = screen.query_one("#library-prompt-editor-actions")
+        ids = [button.id for button in actions.query(Button)]
         assert (
             ids.index("library-prompt-copy")
             < ids.index("library-prompt-duplicate")
