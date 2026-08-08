@@ -715,6 +715,7 @@ def test_settings_ownership_records_cover_categories_and_runtime_boundaries():
     assert records_by_category[
         SettingsCategoryId.CONSOLE_BEHAVIOR
     ].owns_config_sections == (
+        "console.stack_collapsed_rail_labels",
         "console.collapse_large_pastes",
         "console.paste_collapse_threshold",
         "console.max_parallel_runs",
