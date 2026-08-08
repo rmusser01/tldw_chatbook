@@ -1238,3 +1238,31 @@ running `--write` and staring at a 1,000-line diff: walk each file's history for
 revision whose digest reproduces the checked-in value, and diff content-vs-position.
 That is what separated the 28 no-ops from the 19 real changes here, and it is what made
 it cheap to actually read the diagnostics being newly blessed.
+---
+
+## A mounted widget with healthy data can still paint nothing — assert the painted region
+
+**Incident.** TASK-3401, 2026-08-08. The Console rail's character avatar was
+invisible (even the no-character placeholder was gone) and Roleplay thumbnails
+painted black stripes — while every existing avatar test passed, because they
+asserted the widget mounted, the DB bytes decoded, PIL produced an image, and
+the mosaic content was non-empty. Two layout root causes, both invisible to
+composition assertions: (1) the default-width avatar `Static` inside the
+auto/auto `ClickableAvatarBox` (task-1661) resolved to 0x0 under Textual
+8.2.8 — mounted, composed, painted nothing; a headless repro against the
+owner's real DB image showed `region 0x0`. (2) The three thumb containers
+reserved `max-width 24` *plus* `padding: 0 1`, so every 24-cell mosaic line
+folded at 22 content columns; the continuation rows painted black (stripes)
+and the folded 17-row stack exceeded `max-height 10` (bottom clipped) —
+`region 22x17` where 24x10 was expected.
+
+**What to do.** For image/avatar/rendering surfaces, pin the *painted region*
+(`widget.region`, `render_line(n).text`, or an SVG/text capture) in addition
+to mount state and data health — a green mount test says nothing about paint.
+Two layout traps to budget for: a default-width child of an auto/auto
+container collapses to 0x0 under Textual 8 (size it explicitly from the
+renderable grid, as `explicit_cell_size()` now does for mosaics), and padding
+inside a max-width container folds full-width lines into black continuation
+rows on dark themes (content width = max-width − padding; drop the padding or
+shrink the build width). The regression shape that caught both: mount the
+real holder and assert region non-zero with height == mosaic rows.
