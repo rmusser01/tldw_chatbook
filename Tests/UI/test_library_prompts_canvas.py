@@ -20,7 +20,9 @@ path end to end.
 
 from __future__ import annotations
 
+import asyncio
 import json
+import threading
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -2850,6 +2852,196 @@ async def test_library_prompt_copy_reports_clipboard_error_without_success_notic
             "copied to clipboard" not in notification.message.lower()
             for notification in notifications
         )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("artifact_type", "schema_version"),
+    [("prompt", 1), ("recipe", 3)],
+)
+async def test_library_prompt_copy_preserves_compatibility_structured_metadata(
+    tmp_path, artifact_type, schema_version
+):
+    """Copy must preserve raw structured metadata when no editable block exists."""
+    definition = {
+        "schema_version": schema_version,
+        "kind": "future_artifact",
+        "opaque": {"keep": "this definition"},
+    }
+    db, service = _real_prompt_scope_service(tmp_path)
+    prompt_id, _uuid, _msg = db.add_prompt(
+        name=f"Compatibility {artifact_type}",
+        author="A",
+        details="d",
+        system_prompt="compat system",
+        user_prompt="compat user",
+        prompt_format="structured",
+        prompt_schema_version=schema_version,
+        prompt_definition=definition,
+        artifact_type=artifact_type,
+    )
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    host = LibraryHarness(app)
+    copied: list[str] = []
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_prompt_editor(screen, pilot, prompt_id)
+        assert screen._library_prompt_block_state is None
+        detail = screen._library_prompt_detail
+        assert isinstance(detail, dict)
+        expected = render_prompt_markdown(
+            {
+                "name": screen.query_one("#library-prompt-name", Input).value,
+                "author": screen.query_one("#library-prompt-author", Input).value,
+                "details": screen.query_one("#library-prompt-details", Input).value,
+                "system_prompt": screen.query_one(
+                    "#library-prompt-system", TextArea
+                ).text,
+                "user_prompt": screen.query_one("#library-prompt-user", TextArea).text,
+                "keywords": screen.query_one("#library-prompt-keywords", Input).value,
+                **{
+                    key: detail[key]
+                    for key in (
+                        "artifact_type",
+                        "prompt_format",
+                        "prompt_schema_version",
+                        "prompt_definition",
+                    )
+                },
+            }
+        )
+        screen.app_instance = host
+        host.copy_to_clipboard = copied.append
+        screen.query_one("#library-prompt-copy", Button).press()
+        await pilot.pause()
+
+        assert copied == [expected]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("schema_version", "definition_state"),
+    [(1, "foreign_v1"), (2, "malformed")],
+)
+async def test_library_prompt_delete_uses_compatibility_recipe_type(
+    tmp_path, schema_version, definition_state
+):
+    """Read-only/foreign Recipes must still be named correctly in Delete."""
+    db, service = _real_prompt_scope_service(tmp_path)
+    prompt_id, _uuid, _msg = db.add_prompt(
+        name="Compatibility recipe",
+        author="A",
+        details="d",
+        user_prompt="compat user",
+        prompt_format="structured",
+        prompt_schema_version=schema_version,
+        prompt_definition={"schema_version": schema_version, "kind": "future"},
+        artifact_type="recipe",
+    )
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_prompt_editor(screen, pilot, prompt_id)
+        assert screen._library_prompt_block_state is None
+        assert screen._current_library_prompt_editor_state().definition_state == (
+            definition_state
+        )
+
+        screen.query_one("#library-prompt-delete", Button).press()
+        await pilot.pause()
+        modal = host.screen
+        assert isinstance(modal, PromptDeleteConfirmationModal)
+        assert modal.request.items[0].artifact_type == "recipe"
+        assert modal.request.fingerprint is not None
+        assert modal.request.fingerprint.endswith(":recipe")
+
+
+@pytest.mark.asyncio
+async def test_library_prompt_delete_allows_only_one_in_flight_service_call(tmp_path):
+    """A second confirmation during a slow delete cannot start a second worker."""
+    db, service = _real_prompt_scope_service(tmp_path)
+    prompt_id, _uuid, _msg = db.add_prompt(
+        name="Slow delete", author="A", details="d", user_prompt="x"
+    )
+    started = threading.Event()
+    release = threading.Event()
+    calls: list[int] = []
+
+    async def delayed_delete(*, mode, prompt_identifier):
+        calls.append(prompt_identifier)
+        started.set()
+        await asyncio.to_thread(release.wait)
+        return True
+
+    service.delete_prompt = delayed_delete
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_prompt_editor(screen, pilot, prompt_id)
+
+        screen.query_one("#library-prompt-delete", Button).press()
+        await pilot.pause()
+        host.screen.query_one("#prompt-delete-confirm", Button).press()
+        for _ in range(100):
+            if started.is_set():
+                break
+            await pilot.pause(0.02)
+        assert started.is_set()
+
+        screen.query_one("#library-prompt-delete", Button).press()
+        await pilot.pause()
+        assert host.screen is screen
+        assert calls == [prompt_id]
+        release.set()
+        for _ in range(100):
+            if screen._library_prompts_view == "list":
+                break
+            await pilot.pause(0.02)
+        assert screen._library_prompts_view == "list"
+
+
+@pytest.mark.asyncio
+async def test_library_prompt_delete_reset_rejects_a_late_modal_dismissal(tmp_path):
+    """Leaving an editor clears its pending confirmation before late settlement."""
+    db, service = _real_prompt_scope_service(tmp_path)
+    prompt_id, _uuid, _msg = db.add_prompt(
+        name="Late result", author="A", details="d", user_prompt="x"
+    )
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_prompt_editor(screen, pilot, prompt_id)
+        screen.query_one("#library-prompt-delete", Button).press()
+        await pilot.pause()
+        modal = host.screen
+        assert isinstance(modal, PromptDeleteConfirmationModal)
+
+        screen._reset_library_prompt_editor_state()
+        assert screen._library_prompt_delete_pending_fingerprint is None
+        modal.dismiss(PromptDeleteDecision(True, modal.request.fingerprint))
+        await pilot.pause()
+
+        assert host.screen is screen
+        assert db.fetch_prompt_details(prompt_id) is not None
 
 
 @pytest.mark.asyncio
