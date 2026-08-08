@@ -1,9 +1,11 @@
 ---
 id: TASK-602
 title: Integrate Parakeet ONNX batch routing
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@codex'
 created_date: '2026-07-24 01:04'
+updated_date: '2026-08-08 15:59'
 labels:
   - stt
   - onnx
@@ -37,3 +39,9 @@ Make managed Parakeet v2 and v3 ONNX the gated batch STT paths while retaining f
 - [ ] #6 Audio and video batch ingestion use the app-owned executor and normalized provenance, never download in a worker, and offer an explicit Retry with faster-whisper action on eligible clear failures.
 - [ ] #7 Every required wheel platform passes package resolution, probe, INT8 v2 and v3 CPU smoke, long-form, cancellation, batch reuse, and retry tests.
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+Complete the remaining parent gaps in seven focused slices: (1) pin CPU-only Parakeet package profiles; (2) add exact v2/v3 INT8/F32 root descriptors with a managed Silero VAD dependency; (3) carry explicit precision through batch routing; (4) implement one executor-native offline Parakeet runtime with batch-size-one VAD cancellation; (5) wire managed closure paths and normalized provenance through LocalSTTExecutor and the existing parent writer/retry flow; (6) make the first-run speech step install and configure the exact selected model/precision; and (7) run only focused tests plus native macOS smoke, preserving unavailable Windows/Linux gates. ADR required: no. ADR path: backlog/decisions/025-shared-stt-artifacts-and-runtime-routing.md. Reason: ADR-025 already governs the affected artifact, runtime, routing, provenance, package, and retry boundaries. Detailed plan: Docs/superpowers/plans/2026-08-08-task-602-parakeet-onnx-batch-routing.md
+<!-- SECTION:PLAN:END -->
