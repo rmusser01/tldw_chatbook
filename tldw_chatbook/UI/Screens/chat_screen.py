@@ -1453,37 +1453,6 @@ def _run_dictionary_summary_off_thread(
     )
 
 
-#: Modifier prefixes that make a key a CHORD rather than text input, even
-#: when it carries a printable ``character``. Textual's terminal parser
-#: renames the key (``alt+m``) but passes the bare letter through as the
-#: character (``_xterm_parser.py``), so ``is_printable`` is True for every
-#: ``alt+<letter>``. Without this check ``ChatScreen.on_key``'s
-#: printable-capture branch swallowed the chord as typing -- pressing Alt+M
-#: inserted a literal "m" into the draft and the screen's own
-#: ``Binding("alt+m", ...)`` never ran (TASK-1800).
-#:
-#: ``ctrl+``/``super+``/``meta+`` are listed for completeness, not because
-#: they leak today: their characters are C0 control bytes, which are not
-#: printable, so they never reached that branch. ``alt`` is the one that
-#: does. Listing all four keeps the rule "a modified key is not text" true
-#: by construction rather than by accident of the control-byte encoding.
-_CHORD_MODIFIER_PREFIXES = ("alt+", "ctrl+", "super+", "meta+")
-
-
-def _is_modified_chord(key: str) -> bool:
-    """Return whether ``key`` names a modifier chord rather than plain text.
-
-    Args:
-        key: Textual key name, e.g. ``"m"``, ``"alt+m"``, ``"shift+alt+m"``.
-
-    Returns:
-        True when any modifier prefix appears in the name. ``shift+`` alone
-        is deliberately NOT a chord -- ``shift+a`` is how a capital letter
-        arrives, and treating it as a chord would break typing.
-    """
-    return any(prefix in key for prefix in _CHORD_MODIFIER_PREFIXES)
-
-
 class ChatScreen(BaseAppScreen):
     """
     Chat screen with comprehensive state management.
@@ -17417,9 +17386,14 @@ class ChatScreen(BaseAppScreen):
         # operation (select-all and caret movement, including Up/Down's
         # history-recall-first shape, which still falls through UNCONSUMED
         # on a boundary row where nothing moved) now live on the composer
-        # itself. Everything below stays because it reaches past the
-        # composer -- Workbench/guidance resync, the clipboard, undo/redo's
-        # store persistence, send, transcript paging.
+        # itself. TASK-3749 added the draft-EDITING keys to that set -- they
+        # post `ConsoleComposerBar.DraftChanged`, which
+        # `_handle_console_composer_draft_edit` below turns back into the
+        # Workbench/guidance resync this method used to do inline. That
+        # includes the printable fallthrough, so this delegation is now also
+        # where ordinary typing lands. Everything below stays because it
+        # reaches past the composer -- the clipboard, undo/redo's store
+        # persistence, send, transcript paging.
         if composer.handle_console_key(event):
             return
         if (
@@ -17429,34 +17403,6 @@ class ChatScreen(BaseAppScreen):
             copy_to_clipboard = getattr(self.app_instance, "copy_to_clipboard", None)
             if callable(copy_to_clipboard):
                 copy_to_clipboard(composer.draft_text())
-            event.stop()
-            event.prevent_default()
-            return
-        if event.key in {"backspace", "ctrl+h"}:
-            composer.delete_left()
-            self._sync_console_workbench_actions_from_draft()
-            event.stop()
-            event.prevent_default()
-            return
-        if event.key == "delete":
-            composer.delete_right()
-            self._sync_console_workbench_actions_from_draft()
-            event.stop()
-            event.prevent_default()
-            return
-        if event.key == "ctrl+w":
-            composer.delete_word_left()
-            self._sync_console_workbench_actions_from_draft()
-            event.stop()
-            event.prevent_default()
-            return
-        # TASK-381: Shift+Enter is the natural newline chord, but terminals
-        # deliver it as a plain CR (which sends), so also accept Ctrl+J -- a
-        # control code that survives every terminal -- as a portable newline.
-        if event.key in ("shift+enter", "ctrl+j"):
-            composer.insert_text("\n")
-            self._sync_console_workbench_actions_from_draft()
-            self._dismiss_console_guidance()
             event.stop()
             event.prevent_default()
             return
@@ -17565,14 +17511,6 @@ class ChatScreen(BaseAppScreen):
             event.stop()
             event.prevent_default()
             return
-        if event.key == "ctrl+u":
-            # TASK-1281: this is the one call site that opts into undo --
-            # an accidental full clear is exactly what undo exists for.
-            composer.clear_draft(record_history=True)
-            self._sync_console_workbench_actions_from_draft()
-            event.stop()
-            event.prevent_default()
-            return
         if event.key == "ctrl+z":
             self._console_composer_undo()
             event.stop()
@@ -17607,16 +17545,46 @@ class ChatScreen(BaseAppScreen):
             event.stop()
             event.prevent_default()
             return
-        if (
-            event.is_printable
-            and event.character is not None
-            and not _is_modified_chord(event.key)
-        ):
-            composer.insert_text(event.character)
-            self._sync_console_workbench_actions_from_draft()
+
+    @on(ConsoleComposerBar.DraftChanged)
+    def _handle_console_composer_draft_edit(
+        self, event: ConsoleComposerBar.DraftChanged
+    ) -> None:
+        """React to a draft edit the composer made handling a Console key.
+
+        TASK-3749, the inverse of what `on_key` used to do inline: instead
+        of the screen editing the draft through the composer and then
+        calling itself back, the composer announces the edit and the screen
+        does the two screen-owned follow-ups here -- re-derive Workbench
+        command readiness (which is also what opens/closes the
+        slash-command popup), and, for a text-ADDING edit only, retire the
+        first-run guidance. Deletions deliberately do not dismiss it: "the
+        user has started composing" is a claim only an insertion makes, and
+        that is precisely the split those keys had before the message
+        existed.
+
+        NOT to be confused with the sibling `_on_console_composer_draft_
+        changed` (`Input.Changed` on the composer's hidden compatibility
+        input), which fires on EVERY draft mutation from any source --
+        `load_draft`, paste, dictation, a session restore -- and disarms
+        the unknown-command escape. That signal is deliberately not reused
+        here: syncing the Workbench and dismissing guidance off it would
+        fire those on mutation paths that do neither today. (The two also
+        must not share a method NAME: the second definition would silently
+        replace the first in the class body, which is exactly how the
+        first draft of this handler killed the disarm subscription.)
+
+        `event.stop()` because this is a Console-composer-internal
+        notification: nothing above the screen subscribes, so letting it
+        bubble on would only cost a dispatch.
+
+        Args:
+            event: The composer's draft-change notification.
+        """
+        event.stop()
+        self._sync_console_workbench_actions_from_draft()
+        if event.is_insertion:
             self._dismiss_console_guidance()
-            event.stop()
-            event.prevent_default()
 
     def _recover_stuck_console_send_stash(
         self, stash: "ConsoleDraftStash | None"
