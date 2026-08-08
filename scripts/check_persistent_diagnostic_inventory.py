@@ -112,11 +112,24 @@ def _scope_names(tree: ast.Module) -> dict[int, str]:
     """Map every node to the dotted name of its enclosing def/class scope.
 
     Used to give persistent-sink entries a human navigation handle that, unlike
-    a line number, survives unrelated edits elsewhere in the file.
+    a line number, survives unrelated edits elsewhere in the file. Iterative
+    (explicit worklist) rather than recursive, so a pathologically nested
+    expression cannot raise ``RecursionError`` and crash the gate itself --
+    the gate failing for a reason unrelated to diagnostics would train people
+    to bypass it.
+
+    Args:
+        tree: Parsed module to walk.
+
+    Returns:
+        dict[int, str]: ``id(node)`` -> dotted scope name (`""` at module
+            scope). Keyed by identity because AST nodes are unhashable by
+            value and identity is stable for the lifetime of ``tree``.
     """
     names: dict[int, str] = {}
-
-    def visit(node: ast.AST, prefix: str) -> None:
+    stack: list[tuple[ast.AST, str]] = [(tree, "")]
+    while stack:
+        node, prefix = stack.pop()
         for child in ast.iter_child_nodes(node):
             if isinstance(
                 child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
@@ -125,9 +138,7 @@ def _scope_names(tree: ast.Module) -> dict[int, str]:
             else:
                 child_prefix = prefix
             names[id(child)] = child_prefix
-            visit(child, child_prefix)
-
-    visit(tree, "")
+            stack.append((child, child_prefix))
     return names
 
 
@@ -164,6 +175,14 @@ def diagnostic_digest(diagnostics: list[dict[str, Any]]) -> str:
 
     The projection is a sorted LIST, never a set, so multiplicity is part of
     the digest: deleting one of two identical logger calls still changes it.
+
+    Args:
+        diagnostics: Entries from `scan_source` for one file; only `method`
+            and the per-call source `digest` participate -- deliberately not
+            `line`, which is the whole point of task-3750.
+
+    Returns:
+        str: 20-hex-char content digest for the file's diagnostics.
     """
     content = sorted(
         (entry["method"], entry["digest"]) for entry in diagnostics
