@@ -1,11 +1,11 @@
 ---
 id: TASK-1359
 title: Support binary file fetching in web_fetch
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-08-05 06:04'
-updated_date: '2026-08-07 22:27'
+updated_date: '2026-08-08 21:17'
 labels:
   - web-tools
 dependencies:
