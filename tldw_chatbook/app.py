@@ -1741,6 +1741,14 @@ def _library_ingest_done_progress(
     if skip_reason:
         progress["message"] += f" — analysis skipped: {skip_reason}"
         progress["analysis_skipped"] = skip_reason
+    # (task-3301 xhigh review round, F4) An analysis that RAN and failed
+    # (provider exception or an in-band "Error: ..." result) annotates the
+    # done row the same way a skipped one does -- the import succeeded,
+    # the analysis did not, and the user must be able to see which.
+    failed_reason = str(payload.get("analysis_failed_reason") or "").strip()
+    if failed_reason:
+        progress["message"] += f" — analysis failed: {failed_reason}"
+        progress["analysis_failed"] = failed_reason
     return progress
 
 
@@ -2382,10 +2390,17 @@ class LibraryIngestQueueMixin:
           tail: words).
         * When analysis is requested, the configured analysis provider
           (``[analysis_defaults] provider``) is resolved through the shared
-          readiness seam: ready adds ``api_name``/``api_key`` (the key may
-          legitimately be ``None`` for keyless local providers); not ready
-          adds ``analysis_skipped_reason`` so the job records WHY analysis
-          is absent instead of silently dropping it.
+          readiness seam, then constrained to a chat-dispatchable name
+          (task-3301 xhigh review round): ready adds ``api_name`` (the
+          normalized ``API_CALL_HANDLERS`` key), ``api_key`` (``None`` for
+          keyless local providers, paired with the explicit
+          ``analysis_keyless_ok`` opt-in the processors' credential gates
+          require), and ``analysis_call`` (model/temperature/top_p/min_p/
+          max_tokens from ``[analysis_defaults]``, viewer-parity defaults)
+          plus ``system_prompt`` when the section configures one; not ready
+          (including readiness-ready providers with no chat handler) adds
+          ``analysis_skipped_reason`` so the job records WHY analysis is
+          absent instead of silently dropping it.
 
         The Library queue never sets ``custom_prompt``/``system_prompt``/
         ``metadata``, so they're simply absent (``None`` inside the worker's
@@ -2436,8 +2451,29 @@ class LibraryIngestQueueMixin:
                 getattr(self, "app_config", None)
             )
             if resolution.ready:
-                options["api_name"] = resolution.provider
+                # (task-3301 xhigh review round) The NORMALIZED dispatch
+                # name (an `API_CALL_HANDLERS` key) travels, not the
+                # display spelling -- it is what `chat_api_call` and the
+                # summarizer's alias map accept (F5).
+                options["api_name"] = resolution.dispatch_name
                 options["api_key"] = resolution.api_key
+                if resolution.keyless:
+                    # (F8) Explicit keyless opt-in: the processors' analysis
+                    # gates only dispatch without a credential when the
+                    # readiness seam vouched for keyless operation.
+                    options["analysis_keyless_ok"] = True
+                # (F10) The full [analysis_defaults] call shape, so an
+                # ingest analysis runs with the same model/sampling the
+                # Media viewer's analysis panel would use.
+                options["analysis_call"] = {
+                    "model": resolution.model,
+                    "temperature": resolution.temperature,
+                    "top_p": resolution.top_p,
+                    "min_p": resolution.min_p,
+                    "max_tokens": resolution.max_tokens,
+                }
+                if resolution.system_prompt and not options.get("system_prompt"):
+                    options["system_prompt"] = resolution.system_prompt
             else:
                 options["analysis_skipped_reason"] = resolution.short_reason
 

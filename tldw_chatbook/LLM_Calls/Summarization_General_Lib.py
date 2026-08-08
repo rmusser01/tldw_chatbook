@@ -272,6 +272,30 @@ def extract_text_from_input(input_data: Any) -> str:
 
 
 # --- Internal API Dispatcher ---
+# (task-3301 xhigh review round) Spellings used by `Chat/Chat_Functions.py`'s
+# `API_CALL_HANDLERS` dispatch table mapped onto this module's own provider
+# names. The Library ingest seam normalizes `[analysis_defaults] provider`
+# to the chat dispatcher's names; the pdf/ebook/audio processors then hand
+# that same name to `analyze()`, which previously rejected e.g.
+# "koboldcpp"/"oobabooga"/"mistralai" with "Error: Invalid API Name" even
+# though an implementation exists here under another spelling.
+_CHAT_DISPATCH_NAME_ALIASES = {
+    "koboldcpp": "kobold",
+    "oobabooga": "ooba",
+    "mistralai": "mistral",
+    "llama_cpp": "llama.cpp",
+    "local_llamacpp": "llama.cpp",
+    "local_llamafile": "llama.cpp",
+    "local_ollama": "ollama",
+    "local_vllm": "vllm",
+    "local_llm": "local-llm",
+}
+# NOT aliased (no summarize_with_* implementation here): aphrodite,
+# mlx_lm/local_mlx_lm, moonshot, zai. Callers see the in-band
+# "Error: Invalid API Name" for those, which the ingest payload boundary
+# now converts into a visible "analysis failed" warning.
+
+
 def _dispatch_to_api(
     text_to_summarize: str,
     custom_prompt_arg: Optional[str],
@@ -287,6 +311,9 @@ def _dispatch_to_api(
     """
     try:
         api_name_lower = api_name.lower()
+        api_name_lower = _CHAT_DISPATCH_NAME_ALIASES.get(
+            api_name_lower, api_name_lower
+        )
         logging.debug(f"Dispatching to API: {api_name_lower}")
 
         # Ensure required args for specific functions are handled if needed
@@ -570,7 +597,26 @@ def analyze(
             chunk_options if isinstance(chunk_options, dict) else default_chunk_opts
         )
 
-        if CHUNKER_AVAILABLE:
+        # (task-3301 xhigh review round, F1) The direct-dispatch path below
+        # used to be the ``else`` of ``if CHUNKER_AVAILABLE:`` -- so with the
+        # chunk lib importable (every normal install) and NO chunking
+        # strategy requested, ``final_result`` was never assigned and this
+        # function returned 'Error: Summarization failed unexpectedly.'
+        # WITHOUT making any API call. Chunking strategies now gate on
+        # BOTH the request flag and chunker availability; everything else
+        # dispatches directly.
+        if recursive_summarization and not CHUNKER_AVAILABLE:
+            logging.warning(
+                "Recursive summarization requested but the chunk lib is "
+                "unavailable; falling back to direct summarization."
+            )
+        if chunked_summarization and not CHUNKER_AVAILABLE:
+            logging.warning(
+                "Chunked summarization requested but the chunk lib is "
+                "unavailable; falling back to direct summarization."
+            )
+
+        if CHUNKER_AVAILABLE and (recursive_summarization or chunked_summarization):
             if recursive_summarization:
                 logging.info("Performing recursive summarization.")
                 chunks_data = improved_chunking_process(

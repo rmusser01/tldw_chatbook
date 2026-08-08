@@ -120,6 +120,7 @@ def process_ebook(
     perform_analysis: bool = False,
     api_name: Optional[str] = None,
     api_key: Optional[str] = None,
+    keyless_ok: bool = False,
     summarize_recursively: bool = False,
     extraction_method: str = 'filtered',
     method: Optional[str] = None,  # Per-type option alias for ``extraction_method``.
@@ -175,6 +176,7 @@ def process_ebook(
             perform_analysis=perform_analysis,
             api_name=api_name,
             api_key=api_key,
+            keyless_ok=keyless_ok,
             summarize_recursively=summarize_recursively,
             extraction_method=extraction_method,
             include_toc=include_toc,
@@ -193,6 +195,7 @@ def process_ebook(
             perform_analysis=perform_analysis,
             api_name=api_name,
             api_key=api_key,
+            keyless_ok=keyless_ok,
             summarize_recursively=summarize_recursively,
         )
         if unsupported_options:
@@ -217,6 +220,7 @@ def process_ebook(
             perform_analysis=perform_analysis,
             api_name=api_name,
             api_key=api_key,
+            keyless_ok=keyless_ok,
             summarize_recursively=summarize_recursively,
         )
         if unsupported_options:
@@ -792,6 +796,7 @@ def process_epub(
     perform_analysis: bool = False,
     api_name: Optional[str] = None,
     api_key: Optional[str] = None,
+    keyless_ok: bool = False,
     summarize_recursively: bool = False,
     extraction_method: str = 'filtered',  # 'markdown', 'filtered', 'basic'
     include_toc: bool = True,
@@ -834,6 +839,11 @@ def process_epub(
             Defaults to None.
         api_key (Optional[str], optional): API key for the summarization service.
             Required if `perform_analysis` is True. Defaults to None.
+        keyless_ok (bool, optional): Explicit opt-in allowing analysis
+            WITHOUT an ``api_key`` (keyless local providers). Set only by
+            the Library ingest seam after provider readiness confirmed
+            keyless-ready; direct callers keep the historical
+            no-key => silent-skip contract. Defaults to False.
         summarize_recursively (bool, optional): If True, `perform_analysis` is True,
             and multiple chunks are generated and summarized, their individual summaries
             are combined and then summarized again to create a final overall summary.
@@ -1134,11 +1144,21 @@ def process_epub(
 
         # 3. Summarization / Analysis
         final_analysis = None  # Renamed for consistency
-        # (task-3301) No ``api_key`` in the gate: keyless local providers
-        # analyze without a credential and ``analyze()`` loads a key from
-        # config when handed ``None`` -- the same lenient gate the audio
-        # and document processors already use.
-        if perform_analysis and api_name and processed_chunks:
+        # (task-3301, amended by the xhigh review round / F8) Keyless local
+        # providers analyze without a credential ONLY behind the explicit
+        # ``keyless_ok`` opt-in the Library ingest seam sets after
+        # readiness said keyless-ready. Direct callers passing ``api_name``
+        # without a key keep the historical silent skip -- the fully
+        # key-free gate let ``analyze()`` fall back to config credentials:
+        # unrequested spend.
+        from .analysis_gate import analysis_credentials_ok
+
+        if (
+            perform_analysis
+            and api_name
+            and analysis_credentials_ok(api_key, keyless_ok)
+            and processed_chunks
+        ):
             from ..LLM_Calls.Summarization_General_Lib import analyze
 
             logger.info(
@@ -1265,7 +1285,7 @@ def process_epub(
 
         elif not perform_analysis:
             logger.info(f"Summarization disabled for EPUB '{final_title}'.")
-        elif not api_name or not api_key:
+        elif not api_name or not analysis_credentials_ok(api_key, keyless_ok):
             logger.warning(
                 f"Summarization skipped for EPUB '{final_title}': API name or key not provided."
             )
@@ -1538,6 +1558,7 @@ def _process_markup_or_plain_text(
     perform_analysis: bool = False,
     api_name: Optional[str] = None,
     api_key: Optional[str] = None,
+    keyless_ok: bool = False,
     custom_prompt: Optional[str] = None,
     system_prompt: Optional[str] = None,
     summarize_recursively: bool = False,
@@ -1809,8 +1830,14 @@ def _process_markup_or_plain_text(
         # 3. Summarization / Analysis
         final_analysis = None
         # `processed_chunks` is guaranteed to be non-empty list here if markdown_content was valid.
-        # (task-3301) No ``api_key`` in the gate -- see the epub path's note.
-        if perform_analysis and api_name:
+        # (task-3301, amended by the xhigh review round / F8) A credential
+        # or the Library seam's explicit keyless opt-in -- see the epub
+        # path's note.
+        from .analysis_gate import analysis_credentials_ok
+
+        if perform_analysis and api_name and analysis_credentials_ok(
+            api_key, keyless_ok
+        ):
             from ..LLM_Calls.Summarization_General_Lib import analyze
 
             logger.info(
@@ -1915,7 +1942,9 @@ def _process_markup_or_plain_text(
         # Log summarization skipped reasons
         elif not perform_analysis:
             logger.info("Summarization disabled.")
-        elif not api_name or not api_key:  # This implies perform_analysis was true
+        elif not api_name or not analysis_credentials_ok(
+            api_key, keyless_ok
+        ):  # This implies perform_analysis was true
             logger.warning("Summarization skipped: API name or key not provided.")
         # The case for `not processed_chunks` is unreachable here if content was extracted.
         # If `processed_chunks` was empty for some reason, summarization loop above handles it gracefully.
@@ -2130,6 +2159,7 @@ def process_mobi(
     perform_analysis: bool = False,
     api_name: Optional[str] = None,
     api_key: Optional[str] = None,
+    keyless_ok: bool = False,
     summarize_recursively: bool = False,
 ) -> Dict[str, Any]:
     """
@@ -2259,8 +2289,17 @@ def process_mobi(
                 result["chunks"] = processed_chunks
 
             # Perform analysis if requested
-            # (task-3301) No ``api_key`` in the gate -- see the epub path's note.
-            if perform_analysis and api_name and processed_chunks:
+            # (task-3301, amended by the xhigh review round / F8) A
+            # credential or the Library seam's explicit keyless opt-in --
+            # see the epub path's note.
+            from .analysis_gate import analysis_credentials_ok
+
+            if (
+                perform_analysis
+                and api_name
+                and analysis_credentials_ok(api_key, keyless_ok)
+                and processed_chunks
+            ):
                 # Similar analysis logic as in process_epub
                 # Simplified for brevity
                 result["analysis"] = "Analysis not implemented for MOBI yet"
@@ -2287,6 +2326,7 @@ def process_fb2(
     perform_analysis: bool = False,
     api_name: Optional[str] = None,
     api_key: Optional[str] = None,
+    keyless_ok: bool = False,
     summarize_recursively: bool = False,
 ) -> Dict[str, Any]:
     """
@@ -2438,8 +2478,17 @@ def process_fb2(
             result["chunks"] = processed_chunks
 
         # Perform analysis if requested
-        # (task-3301) No ``api_key`` in the gate -- see the epub path's note.
-        if perform_analysis and api_name and processed_chunks:
+        # (task-3301, amended by the xhigh review round / F8) A credential
+        # or the Library seam's explicit keyless opt-in -- see the epub
+        # path's note.
+        from .analysis_gate import analysis_credentials_ok
+
+        if (
+            perform_analysis
+            and api_name
+            and analysis_credentials_ok(api_key, keyless_ok)
+            and processed_chunks
+        ):
             # Similar analysis logic as in process_epub
             # Simplified for brevity
             result["analysis"] = "Analysis not implemented for FB2 yet"

@@ -98,7 +98,7 @@ the rest of the session.
 | "Translate to English" | Transcribes audio/video into English regardless of the spoken language. Runs via faster-whisper — the toggle is inert under parakeet-onnx and transcribe-cpp, which cannot translate. |
 | E-book "Chunking method" | "chapters" (the default) stores one retrieval chunk per chapter; sentences / words / paragraphs chunk by that unit using the Chunk size/overlap values. |
 | Web "What to fetch" on a local import | The multi-page methods (sitemap / url_level / recursive_scraping) run only on the server. Selecting one while importing on this machine shows "Multi-page fetch runs on the server — this local import fetches one page." right under the control. |
-| "Analyze after import" | Runs an LLM summary of each imported item, stored alongside it (visible from the media viewer's analysis panel). The provider comes from `[analysis_defaults] provider` in `config.toml` — the same default the Media analysis panel uses — and its key from `[api_settings.<provider>]` or the provider's usual environment variable. When the option is on but no provider is callable, a line above Start says so ("Analyze after import is on, but … Imports will run without analysis.") and finished rows read "Imported name — analysis skipped: <reason>" instead of silently skipping. |
+| "Analyze after import" | Runs an LLM summary of each imported item, stored alongside it (visible from the media viewer's analysis panel). The whole `[analysis_defaults]` section travels — provider, model, temperature, top_p, min_p, max_tokens, system_prompt — so the stored analysis matches what the Media analysis panel would produce under the same config; the key comes from `[api_settings.<provider>]` or the provider's usual environment variable. When the option is on but no provider is callable — including a configured provider the analysis pipeline cannot dispatch ("provider 'X' is not supported for ingest analysis") — a line above Start says so ("Analyze after import is on, but … Imports will run without analysis.") and finished rows read "Imported name — analysis skipped: <reason>". If the analysis call itself fails (provider error), the import still succeeds and the row reads "Imported name — analysis failed: <reason>" instead of silently storing nothing (or worse, the error text). |
 | "Chunk content" | Governs every type: off means no retrieval chunks are stored at all; on chunks plain text / documents / HTML too (not just PDF/e-book/audio), using "Chunk size" and "Chunk overlap" — both measured in words. |
 | "Encoding" | How plain text and HTML files are decoded: "Auto-detect (UTF-8 first)" (strict UTF-8, then detection) or an explicit UTF-8 / UTF-16 / "Latin-1 (ISO-8859-1)" / "Windows-1252 (Western)". A wrong explicit choice shows up as replacement characters rather than failing the import. |
 | "Install verified Parakeet v2 INT8 (630.6 MiB)…" | In the Audio & video fold, enabled when the provider is parakeet-onnx (under any other provider the button is inert and its label ends "— needs the parakeet-onnx provider"). Opens a consent dialog listing Source, Revision, License, Download size, and Destination, ending "All four files are checked against pinned sizes and SHA-256 digests before the bundle becomes usable." Buttons: "Cancel" / "Install". |
@@ -291,3 +291,13 @@ field shows an example path instead of repeating its label; a failed row
 no longer repeats its own filename inside the reason; and the "N will
 import" commit line hides while the fix-your-options gate is blocking
 Start)*
+
+*Verified against feat/media-ingest-ux-parity — 2026-08-08 (task-3301
+xhigh review round: "Analyze after import" now actually reaches a
+provider — the ingest analysis dispatches through the same `chat_api_call`
+path the Media analysis panel uses, carrying the full `[analysis_defaults]`
+call shape (model/temperature/top_p/min_p/max_tokens/system_prompt);
+provider spellings like "MistralAI"/"KoboldCpp" resolve to dispatchable
+names or the pre-Start hint says "provider 'X' is not supported for ingest
+analysis"; an in-band "Error: …" result is never stored as an analysis —
+done rows read "Imported name — analysis failed: <reason>" instead)*

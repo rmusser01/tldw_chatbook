@@ -29,6 +29,8 @@ process boundary -- workers never touch the media DB):
         "perform_analysis": bool,
         "api_name": str | None,
         "api_key": str | None,
+        "analysis_keyless_ok": bool,
+        "analysis_call": dict | None,
         "chunk_options": dict | None,
         "metadata": dict | None,
         "encoding": str | None,
@@ -49,7 +51,17 @@ the live option values the schema above carries:
   the configured ``[analysis_defaults]`` provider resolves as ready
   (``Library/ingest_analysis.py``); otherwise
   ``analysis_skipped_reason`` says why analysis will not run, and the
-  writer surfaces it on the done row.
+  writer surfaces it on the done row. (task-3301 xhigh review round)
+  ``api_name`` is the NORMALIZED chat dispatch name (an
+  ``API_CALL_HANDLERS`` key); ``analysis_keyless_ok`` is the explicit
+  opt-in that lets a keyless-READY provider analyze without a
+  credential (direct callers that never set it keep the historical
+  no-key => silent-skip contract); ``analysis_call`` carries the full
+  ``[analysis_defaults]`` call shape
+  (model/temperature/top_p/min_p/max_tokens) for viewer-parity
+  analysis. A failed analysis travels back as the payload's
+  ``analysis_failed_reason`` (plus a warning) and annotates the done
+  row as "analysis failed: ...".
 
 (``custom_prompt``/``system_prompt``/``metadata`` have no
 ``LibraryIngestJob`` counterpart -- the Library queue never sets them, so

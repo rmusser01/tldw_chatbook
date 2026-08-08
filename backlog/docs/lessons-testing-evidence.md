@@ -1287,4 +1287,3 @@ and still be a no-op because of unit or key-name mismatches downstream
 (`size` vs `max_size` was ALSO live here — `improved_chunking_process` reads
 only the latter). The kwargs-arrival test and the governance test catch
 disjoint bug classes; you need both.
->>>>>>> e28d31d76 (feat(library): wire Analyze, Chunk toggle, and Encoding for real; unify chunk defaults (task-3301))

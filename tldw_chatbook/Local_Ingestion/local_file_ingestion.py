@@ -479,6 +479,151 @@ def _chunk_text_for_ingest(
     return chunks, warnings
 
 
+#: Default analysis instruction when the caller supplies no custom prompt.
+_DEFAULT_ANALYSIS_PROMPT = (
+    "Please provide a comprehensive summary of this document."
+)
+
+
+def _analysis_failure_reason(analysis: Any) -> Optional[str]:
+    """Detect an in-band analysis failure string.
+
+    (task-3301 xhigh review round, F4) ``analyze()``'s documented failure
+    mode is RETURNING a string that starts with ``"Error:"`` -- the old
+    ``isinstance(str) and strip()`` success check treated exactly that as
+    success and persisted it as analysis content.
+
+    Args:
+        analysis: A candidate analysis value.
+
+    Returns:
+        The failure description (first line, capped) when ``analysis`` is
+        an error string; ``None`` when it is not (including when it is
+        simply empty -- absence is not failure).
+    """
+    if not isinstance(analysis, str):
+        return None
+    stripped = analysis.strip()
+    if not stripped.lower().startswith("error:"):
+        return None
+    first_line = stripped.splitlines()[0].strip()
+    reason = first_line[len("error:"):].strip() or first_line
+    return reason[:200]
+
+
+def _extract_chat_response_text(response: Any) -> str:
+    """Extract the assistant text from a ``chat_api_call`` response.
+
+    Mirrors the Media viewer's extraction (``UI/MediaWindow_v2.py``):
+    plain strings pass through; OpenAI-shaped dicts yield
+    ``choices[0].message.content`` (or ``choices[0].text``); bare
+    ``{"content": ...}`` dicts yield their content.
+
+    Args:
+        response: Whatever the provider handler returned (streaming is
+            never requested here, so generators are not expected).
+
+    Returns:
+        The extracted text, or ``""`` when no text could be extracted.
+    """
+    if isinstance(response, str):
+        return response
+    if isinstance(response, dict):
+        choices = response.get("choices")
+        if isinstance(choices, list) and choices:
+            choice = choices[0]
+            if isinstance(choice, dict):
+                message = choice.get("message")
+                if isinstance(message, dict) and isinstance(
+                    message.get("content"), str
+                ):
+                    return message["content"]
+                if isinstance(choice.get("text"), str):
+                    return choice["text"]
+        if isinstance(response.get("content"), str):
+            return response["content"]
+    return ""
+
+
+def _run_chat_analysis(
+    *,
+    api_name: str,
+    api_key: Optional[str],
+    content: str,
+    custom_prompt: Optional[str],
+    system_prompt: Optional[str],
+    analysis_call: Optional[Dict[str, Any]],
+) -> tuple[str, Optional[str]]:
+    """Run one analysis call over the full content via the chat dispatcher.
+
+    (task-3301 xhigh review round, F1+F10) This is the same call shape the
+    Media viewer's analysis panel spends through (``app.chat_wrapper`` ->
+    ``chat`` -> ``chat_api_call``): the unified dispatcher whose
+    ``API_CALL_HANDLERS`` table the ingest seam's provider resolution is
+    constrained to, carrying the full ``[analysis_defaults]`` settings
+    (model/temperature/top_p/min_p/max_tokens/system prompt). The previous
+    tail called ``Summarization_General_Lib.analyze``, whose direct
+    dispatch sat in a dead ``else`` branch -- it returned
+    ``'Error: Summarization failed unexpectedly.'`` without any API call
+    on every normal install -- and it could carry neither model nor token
+    settings.
+
+    Args:
+        api_name: A chat-dispatchable provider name (an
+            ``API_CALL_HANDLERS`` key -- the job-option builder resolves
+            display spellings before they get here).
+        api_key: Credential, or ``None`` for sanctioned keyless dispatch.
+        content: The extracted document text.
+        custom_prompt: Analysis instruction; defaults to the shared
+            summary prompt.
+        system_prompt: System prompt for the call (the builder seeds it
+            from ``[analysis_defaults] system_prompt``).
+        analysis_call: Optional dict with ``model``/``temperature``/
+            ``top_p``/``min_p``/``max_tokens`` from the resolution seam.
+
+    Returns:
+        ``(analysis_text, failure_reason)`` -- exactly one of the two is
+        non-empty.
+    """
+    from tldw_chatbook.Library.ingest_analysis import (
+        ANALYSIS_DEFAULT_MAX_TOKENS,
+        ANALYSIS_DEFAULT_MIN_P,
+        ANALYSIS_DEFAULT_TEMPERATURE,
+        ANALYSIS_DEFAULT_TOP_P,
+    )
+
+    settings = analysis_call if isinstance(analysis_call, dict) else {}
+    prompt = custom_prompt or _DEFAULT_ANALYSIS_PROMPT
+    user_prompt = f"{prompt}\n\n---\n\nContent to analyze:\n\n{content}"
+
+    try:
+        from ..Chat.Chat_Functions import chat_api_call
+
+        response = chat_api_call(
+            api_endpoint=api_name,
+            messages_payload=[{"role": "user", "content": user_prompt}],
+            api_key=api_key,
+            temp=settings.get("temperature", ANALYSIS_DEFAULT_TEMPERATURE),
+            system_message=system_prompt,
+            streaming=False,
+            model=settings.get("model"),
+            topp=settings.get("top_p", ANALYSIS_DEFAULT_TOP_P),
+            minp=settings.get("min_p", ANALYSIS_DEFAULT_MIN_P),
+            max_tokens=settings.get("max_tokens", ANALYSIS_DEFAULT_MAX_TOKENS),
+        )
+    except Exception as call_err:  # noqa: BLE001 - a failed analysis must
+        # never fail the import itself; the reason travels as a warning.
+        return "", str(call_err)[:200] or call_err.__class__.__name__
+
+    text = _extract_chat_response_text(response)
+    failure = _analysis_failure_reason(text)
+    if failure:
+        return "", failure
+    if not text or not text.strip():
+        return "", "provider returned an empty analysis"
+    return text, None
+
+
 def parse_local_file_for_ingest(
     file_path: Union[str, Path],
     options: Dict[str, Any],
@@ -524,9 +669,13 @@ def parse_local_file_for_ingest(
             module docstring for the full schema. Recognized keys (all
             optional): ``title``, ``author``, ``keywords``,
             ``custom_prompt``, ``system_prompt``, ``perform_analysis``,
-            ``api_name``, ``api_key``, ``chunk_options``, ``metadata`` --
-            mirroring ``ingest_local_file``'s keyword arguments of the
-            same names.
+            ``api_name``, ``api_key``, ``analysis_keyless_ok`` (explicit
+            opt-in for keyless analysis dispatch -- set only by the
+            Library seam after readiness confirmed keyless-ready),
+            ``analysis_call`` (model/temperature/top_p/min_p/max_tokens
+            for the analysis call), ``chunk_options``, ``metadata`` --
+            the first group mirroring ``ingest_local_file``'s keyword
+            arguments of the same names.
 
     Returns:
         A payload dict consumed by ``persist_parsed_media``:
@@ -543,6 +692,9 @@ def parse_local_file_for_ingest(
             - url: The ``file://`` URL passed to ``add_media_with_keywords``.
             - analysis_content: Analysis/summary text (empty string if
               ``perform_analysis`` was ``False`` or produced nothing).
+              Never an in-band ``"Error: ..."`` string -- those become a
+              payload warning plus ``analysis_failed_reason`` instead
+              (task-3301 xhigh review round, F4).
             - chunks: Pre-computed chunks (``list[dict]``), or ``None`` when
               none were produced (chunking is then left to the DB layer).
             - chunk_options: The (possibly defaulted) chunking options
@@ -592,6 +744,14 @@ def parse_local_file_for_ingest(
     perform_analysis = options.get("perform_analysis", False)
     api_name = options.get("api_name")
     api_key = options.get("api_key")
+    # (task-3301 xhigh review round, F8) Explicit keyless opt-in: only the
+    # Library job-option builder sets this, strictly after the readiness
+    # seam said the provider is keyless-ready. Direct callers that pass
+    # ``api_name`` without a key keep the historical silent skip.
+    keyless_ok = bool(options.get("analysis_keyless_ok"))
+    # (task-3301 xhigh review round, F10) Full [analysis_defaults] call
+    # shape (model/temperature/top_p/min_p/max_tokens) for the text tail.
+    analysis_call = options.get("analysis_call")
     chunk_options = options.get("chunk_options")
     metadata = options.get("metadata")
     encoding = options.get("encoding")
@@ -688,6 +848,7 @@ def parse_local_file_for_ingest(
                 perform_analysis=perform_analysis,
                 api_name=api_name,
                 api_key=api_key,
+                keyless_ok=keyless_ok,
                 custom_prompt=custom_prompt,
                 system_prompt=system_prompt,
             )
@@ -728,6 +889,7 @@ def parse_local_file_for_ingest(
                 perform_analysis=perform_analysis,
                 api_name=api_name,
                 api_key=api_key,
+                keyless_ok=keyless_ok,
             )
 
         elif file_type == "audio":
@@ -1011,6 +1173,18 @@ def parse_local_file_for_ingest(
         if not analysis and isinstance(result.get('summary'), str):
             analysis = result['summary']
 
+        # (task-3301 xhigh review round, F4) A processor "analysis" that is
+        # an in-band error string (``analyze()`` RETURNS its failures as
+        # strings starting with 'Error:') must never persist as analysis
+        # content -- it becomes a visible warning + done-row annotation,
+        # and the import itself stays successful.
+        analysis_failed_reason = _analysis_failure_reason(analysis)
+        if analysis_failed_reason:
+            warnings = list(warnings) + [
+                f"Analysis failed: {analysis_failed_reason}"
+            ]
+            analysis = ""
+
         if not perform_chunking:
             # (task-3301) Chunk OFF means no chunk rows. Several processors
             # return a single full-text "chunk" as an internal convenience
@@ -1045,33 +1219,35 @@ def parse_local_file_for_ingest(
         if (
             perform_analysis
             and api_name
+            and (api_key or keyless_ok)
             and not analysis
+            and not analysis_failed_reason
             and content
             and file_type in _TEXT_ANALYSIS_TYPES
         ):
-            # (task-3301) Analyze-after-import for the text types that
-            # hardcoded ``analysis: ""``. One call over the full content
-            # (the ``process_document`` pattern); a failure is a warning on
-            # the payload, never a failed job.
-            try:
-                from ..LLM_Calls.Summarization_General_Lib import analyze
-
-                analysis_text = analyze(
-                    api_name=api_name,
-                    input_data=content,
-                    custom_prompt_arg=custom_prompt
-                    or "Please provide a comprehensive summary of this document.",
-                    api_key=api_key,
-                    system_message=system_prompt,
-                    temp=0.7,
+            # (task-3301, reworked by the xhigh review round) Analyze-after-
+            # import for the text types that hardcoded ``analysis: ""``.
+            # One call over the full content through ``chat_api_call`` --
+            # the Media viewer's own dispatch path -- with the full
+            # ``[analysis_defaults]`` call shape (F1+F10); the credential
+            # gate mirrors the processors' (F8). A failure is a warning on
+            # the payload plus a done-row annotation, never a failed job.
+            analysis_text, tail_failure = _run_chat_analysis(
+                api_name=api_name,
+                api_key=api_key,
+                content=content,
+                custom_prompt=custom_prompt,
+                system_prompt=system_prompt,
+                analysis_call=analysis_call,
+            )
+            if tail_failure:
+                logger.warning(
+                    f"Analysis failed for {file_path}: {tail_failure}"
                 )
-                if isinstance(analysis_text, str) and analysis_text.strip():
-                    analysis = analysis_text
-            except Exception as analysis_err:
-                logger.opt(exception=True).warning(
-                    f"Analysis failed for {file_path}: {analysis_err}"
-                )
-                warnings = list(warnings) + [f"Analysis failed: {analysis_err}"]
+                warnings = list(warnings) + [f"Analysis failed: {tail_failure}"]
+                analysis_failed_reason = tail_failure
+            else:
+                analysis = analysis_text
 
         # Combine keywords
         all_keywords = list(set(keywords + extracted_keywords))
@@ -1121,6 +1297,12 @@ def parse_local_file_for_ingest(
         skip_reason = str(options.get("analysis_skipped_reason") or "").strip()
         if perform_analysis and skip_reason:
             payload["analysis_skipped_reason"] = skip_reason
+        # (task-3301 xhigh review round, F4) Analysis RAN and failed
+        # (in-band error string or provider exception): carry the reason
+        # so the done row can say "analysis failed: ..." -- same
+        # annotation mechanism as the skip reason.
+        if analysis_failed_reason:
+            payload["analysis_failed_reason"] = analysis_failed_reason
         return payload
 
     except DirectLocalSTTIngestError:

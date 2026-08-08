@@ -776,7 +776,10 @@ class TestIngestJobOptionsWiring:
         options = app._ingest_job_options(job)
 
         assert options["perform_analysis"] is True
-        assert options["api_name"] == "OpenAI"
+        # (task-3301 xhigh review round) The NORMALIZED dispatch name
+        # travels -- it is what `chat_api_call` (and the summarizer's
+        # alias map) accept; the display spelling only ever fed logs.
+        assert options["api_name"] == "openai"
         assert options["api_key"] == "sk-test-configured"
         assert "analysis_skipped_reason" not in options
 
@@ -793,7 +796,7 @@ class TestIngestJobOptionsWiring:
 
         options = app._ingest_job_options(job)
 
-        assert options["api_name"] == "OpenAI"
+        assert options["api_name"] == "openai"
         assert options["api_key"] == "sk-test-env"
 
     def test_unready_analysis_records_skip_reason(
@@ -844,6 +847,87 @@ class TestIngestJobOptionsWiring:
         assert "api_key" not in options
         assert "analysis_skipped_reason" not in options
 
+    def test_analysis_call_settings_travel(self) -> None:
+        """(task-3301 xhigh review round, F10) The full [analysis_defaults]
+        call shape travels to the worker, not just the provider name."""
+        app = _minimal_app()
+        app.app_config = {
+            "analysis_defaults": {
+                "provider": "OpenAI",
+                "model": "gpt-4o-mini",
+                "temperature": 0.2,
+                "top_p": 0.9,
+                "min_p": 0.01,
+                "max_tokens": 512,
+                "system_prompt": "Analyze thoroughly.",
+            },
+            "api_settings": {"openai": {"api_key": "sk-test-configured"}},
+        }
+        job = _make_job(
+            source_path="/tmp/test.txt",
+            ingest_options={"generic": {"analyze": True}},
+        )
+
+        options = app._ingest_job_options(job)
+
+        assert options["analysis_call"] == {
+            "model": "gpt-4o-mini",
+            "temperature": 0.2,
+            "top_p": 0.9,
+            "min_p": 0.01,
+            "max_tokens": 512,
+        }
+        assert options["system_prompt"] == "Analyze thoroughly."
+
+    def test_keyless_provider_sets_explicit_opt_in(self) -> None:
+        """(task-3301 xhigh review round, F8) Keyless-ready providers get
+        the explicit opt-in flag; keyed providers never do."""
+        app = _minimal_app()
+        app.app_config = {"analysis_defaults": {"provider": "Ollama"}}
+        job = _make_job(
+            source_path="/tmp/test.txt",
+            ingest_options={"generic": {"analyze": True}},
+        )
+
+        options = app._ingest_job_options(job)
+
+        assert options["api_name"] == "ollama"
+        assert options.get("api_key") is None
+        assert options["analysis_keyless_ok"] is True
+
+    def test_keyed_provider_does_not_set_keyless_opt_in(self) -> None:
+        app = _minimal_app()
+        app.app_config = {
+            "analysis_defaults": {"provider": "OpenAI"},
+            "api_settings": {"openai": {"api_key": "sk-test-configured"}},
+        }
+        job = _make_job(
+            source_path="/tmp/test.txt",
+            ingest_options={"generic": {"analyze": True}},
+        )
+
+        options = app._ingest_job_options(job)
+
+        assert "analysis_keyless_ok" not in options
+
+    def test_undispatchable_provider_records_skip_reason(self) -> None:
+        """(task-3301 xhigh review round, F5) A readiness-ready provider
+        with no chat dispatch handler must skip with a reason, not error
+        at analysis time."""
+        app = _minimal_app()
+        app.app_config = {"analysis_defaults": {"provider": "custom"}}
+        job = _make_job(
+            source_path="/tmp/test.txt",
+            ingest_options={"generic": {"analyze": True}},
+        )
+
+        options = app._ingest_job_options(job)
+
+        assert "api_name" not in options
+        assert "not supported for ingest analysis" in (
+            options["analysis_skipped_reason"]
+        )
+
 
 class TestIngestDoneProgress:
     """task-3301: the done row records analysis skipped-with-reason."""
@@ -871,6 +955,20 @@ class TestIngestDoneProgress:
             progress["analysis_skipped"]
             == "OpenAI is not ready (Missing API key)"
         )
+
+    def test_analysis_failed_reason_appended(self) -> None:
+        """(task-3301 xhigh review round, F4) A failed analysis annotates
+        the done row the same way a skipped one does -- never silence."""
+        progress = app_module._library_ingest_done_progress(
+            "/tmp/notes.txt",
+            was_duplicate=False,
+            payload={"analysis_failed_reason": "Invalid API Name 'custom'"},
+        )
+        assert (
+            progress["message"]
+            == "Imported notes.txt — analysis failed: Invalid API Name 'custom'"
+        )
+        assert progress["analysis_failed"] == "Invalid API Name 'custom'"
 
     def test_duplicate_message_keeps_matched_prefix(self) -> None:
         from tldw_chatbook.Library.library_ingest_jobs import (

@@ -189,3 +189,92 @@ they are import/find_spec probes of packages absent from the venv):
   them active. The failure is a `#library-note-meta` NoMatches after a
   polled canvas switch (rendering-timing race in the Notes canvas). Left
   as-is; same family as the task-3025 finding.
+
+**xhigh review round (2026-08-08):** an adversarial review proved the
+Analyze-after-import pipeline shipped above still did not work; five
+CONFIRMED findings, all fixed with RED-first tests + Edit-based mutation
+checks (6 mutations, each confirmed RED then restored):
+
+- **F1 (never dispatched):** the text tail called
+  `Summarization_General_Lib.analyze`, whose no-chunking direct dispatch
+  sat in the dead `else` of `if CHUNKER_AVAILABLE:` — with the chunk lib
+  importable (every normal install) it returned
+  `'Error: Summarization failed unexpectedly.'` WITHOUT any API call.
+  Fixed twice over: `analyze()`'s branch structure now gates chunking
+  strategies on `CHUNKER_AVAILABLE and (recursive or chunked)` and
+  dispatches directly otherwise (this also repairs `process_pdf`'s
+  per-chunk pass and `process_document`'s `auto_summarize`), AND the
+  ingest text tail no longer uses `analyze()` at all — it dispatches
+  through `chat_api_call` (`_run_chat_analysis` in
+  `local_file_ingestion.py`), the exact seam the Media viewer's analysis
+  panel spends through (`UI/MediaWindow_v2.py::handle_analysis_request`
+  -> `app.chat_wrapper` -> `chat` -> `chat_api_call`).
+- **F4 (error strings persisted as analysis):** the tail's
+  `isinstance(str) and strip()` success check stored `analyze()`'s
+  documented in-band `'Error: ...'` failures as analysis_content. Now
+  `_analysis_failure_reason` treats falsy-or-Error:-prefixed
+  (case-insensitive, stripped) results as FAILURE at the payload
+  boundary — covering the tail, processor-returned `analysis`, and
+  `process_document`'s `summary` — producing a payload warning +
+  `analysis_failed_reason`, surfaced on the queue done row as
+  "Imported name — analysis failed: <reason>" (same annotation mechanism
+  as `analysis_skipped_reason`; the surface YES/NO decisions above are
+  unchanged — done row yes, details/batch header/recent-imports no). The
+  import itself stays successful.
+- **F5 (ready-but-undispatchable providers):** `get_provider_readiness`
+  marks names ready (Oobabooga, KoboldCpp, MistralAI, MLX-LM, custom,
+  local_*, or ANY name with a configured credential) that the analysis
+  call path cannot dispatch. `resolve_ingest_analysis_provider` is now
+  constrained to `chat_api_call`'s `API_CALL_HANDLERS` via
+  `chat_dispatch_name()` (direct lowercase, then
+  `provider_config_key`-normalized match): ready resolutions carry the
+  normalized `dispatch_name` (which is what travels as `api_name`);
+  undispatchable ones return not-ready with "provider 'X' is not
+  supported for ingest analysis" (pre-Start hint + skip reason). A
+  pinning test enumerates BOTH universes from code
+  (`KNOWN_PROVIDER_KEYS` + an arbitrary configured name vs
+  `API_CALL_HANDLERS`). `_dispatch_to_api` additionally aliases the chat
+  spellings it has implementations for (koboldcpp→kobold, oobabooga→ooba,
+  mistralai→mistral, llama_cpp/local_llamacpp/local_llamafile→llama.cpp,
+  local_ollama→ollama, local_vllm→vllm, local_llm→local-llm) so the
+  pdf/ebook/audio processors' `analyze()` calls dispatch with the
+  normalized names too. Residue: aphrodite/mlx_lm/moonshot/zai have no
+  summarizer implementation — text-tail analysis works for them (chat
+  path), pdf/ebook/audio analysis fails VISIBLY via the F4 boundary.
+- **F10 (settings didn't travel):** only `[analysis_defaults] provider`
+  was consumed; model/temperature/max_tokens/system_prompt (and
+  top_p/min_p) never traveled — the tail hardcoded temp=0.7,
+  system_message=None. The resolution now carries the full call shape
+  with viewer-parity defaults (shared `ANALYSIS_DEFAULT_*` constants,
+  which `media_viewer_panel.populate_providers` now also consumes);
+  `_ingest_job_options` forwards it as `analysis_call` +
+  `system_prompt`, and `_run_chat_analysis` passes it to
+  `chat_api_call`.
+- **F8 (no-credential invariant):** the gate relaxation shipped above
+  ("No api_key in the gate") meant direct callers passing `api_name`
+  without a key triggered real spend with config-loaded credentials.
+  Restored via `Local_Ingestion/analysis_gate.analysis_credentials_ok`
+  (api_key OR explicit keyless opt-in): the five relaxed gates
+  (process_pdf, process_epub, _process_markup_or_plain_text,
+  process_mobi, process_fb2) plus the new text tail all require it, each
+  processor grew a `keyless_ok: bool = False` kwarg, and ONLY
+  `_ingest_job_options` sets the `analysis_keyless_ok` option — strictly
+  when readiness said the provider is keyless-READY. Direct callers get
+  the historical silent skip back. (audio/document processors keep their
+  pre-3301 lenient gates — that leniency predates this task.)
+
+Files: `LLM_Calls/Summarization_General_Lib.py`,
+`Local_Ingestion/local_file_ingestion.py`,
+`Local_Ingestion/analysis_gate.py` (new),
+`Local_Ingestion/PDF_Processing_Lib.py`,
+`Local_Ingestion/Book_Ingestion_Lib.py`,
+`Local_Ingestion/ingest_parse_worker.py` (schema doc),
+`Library/ingest_analysis.py`, `app.py`,
+`Widgets/Media/media_viewer_panel.py` (shared default constants),
+`Docs/User_Guide/library/import-and-export.md`. Tests: new
+`Tests/LLM_Calls/test_summarization_analyze.py` (13); reworked/extended
+`Tests/Local_Ingestion/test_ingest_option_wiring.py` (the critical
+dispatch test stubs at the `chat_api_call` boundary, signature-checked,
+with `analyze()` set to explode — it can never pass via the summarizer
+path), `Tests/Library/test_ingest_analysis.py`,
+`Tests/App/test_submit_library_ingest_job.py`.

@@ -71,6 +71,12 @@ def _real_analyze():
     return analyze
 
 
+def _real_chat_api_call():
+    from tldw_chatbook.Chat.Chat_Functions import chat_api_call
+
+    return chat_api_call
+
+
 @pytest.fixture()
 def media_db(tmp_path: Path) -> MediaDatabase:
     db = MediaDatabase(tmp_path / "media.db", client_id="test-ingest-wiring")
@@ -507,23 +513,58 @@ class TestTextTypeChunkingEndToEnd:
 
 
 class TestTextTypeAnalysis:
-    def test_plaintext_analysis_runs_and_persists(
+    """The text tail must land on a provably-dispatching call path.
+
+    (task-3301 xhigh review round) The original tail called
+    ``Summarization_General_Lib.analyze``, whose no-chunking direct dispatch
+    sits in the dead ``else`` of ``if CHUNKER_AVAILABLE:`` -- with the chunk
+    lib importable (every normal install) it returned
+    ``'Error: Summarization failed unexpectedly.'`` WITHOUT any API call,
+    and the tail's ``str-and-strip`` success check then persisted that
+    in-band error string as the analysis. These tests therefore stub at the
+    ``chat_api_call`` boundary -- the same unified dispatcher the Media
+    viewer's analysis panel spends through -- and NEVER mock the tail's own
+    helper: a stub that records a dispatch proves a dispatch.
+    """
+
+    def _install_chat_stub(self, monkeypatch, response: Any = "DISPATCHED ANALYSIS."):
+        real = _real_chat_api_call()
+        calls: list[Dict[str, Any]] = []
+
+        def fake_chat_api_call(**kwargs):
+            _assert_kwargs_accepted(real, kwargs)
+            calls.append(kwargs)
+            if isinstance(response, Exception):
+                raise response
+            return response
+
+        monkeypatch.setattr(
+            "tldw_chatbook.Chat.Chat_Functions.chat_api_call",
+            fake_chat_api_call,
+        )
+        return calls
+
+    def _forbid_summarizer_path(self, monkeypatch):
+        """The legacy analyze() path must not be what produces the result."""
+
+        def exploding_analyze(*args, **kwargs):
+            raise AssertionError(
+                "text tail called Summarization analyze(); it must dispatch "
+                "through chat_api_call"
+            )
+
+        monkeypatch.setattr(
+            "tldw_chatbook.LLM_Calls.Summarization_General_Lib.analyze",
+            exploding_analyze,
+        )
+
+    def test_plaintext_analysis_dispatches_and_persists(
         self, tmp_path: Path, monkeypatch, media_db: MediaDatabase
     ):
         source = tmp_path / "notes.txt"
         source.write_text("Some meaningful notes to analyze.", encoding="utf-8")
-        real_analyze = _real_analyze()
-        calls: list[Dict[str, Any]] = []
-
-        def fake_analyze(**kwargs):
-            _assert_kwargs_accepted(real_analyze, kwargs)
-            calls.append(kwargs)
-            return "STUB ANALYSIS."
-
-        monkeypatch.setattr(
-            "tldw_chatbook.LLM_Calls.Summarization_General_Lib.analyze",
-            fake_analyze,
-        )
+        calls = self._install_chat_stub(monkeypatch)
+        self._forbid_summarizer_path(monkeypatch)
 
         payload = parse_local_file_for_ingest(
             str(source),
@@ -534,9 +575,15 @@ class TestTextTypeAnalysis:
             },
         )
 
-        assert payload["analysis_content"] == "STUB ANALYSIS."
-        assert calls[0]["api_name"] == "openai"
+        assert payload["analysis_content"] == "DISPATCHED ANALYSIS."
+        assert calls, "no dispatch reached the chat_api_call boundary"
+        assert calls[0]["api_endpoint"] == "openai"
         assert calls[0]["api_key"] == "sk-test-not-real"
+        assert calls[0]["streaming"] is False
+        # The document content must actually travel in the payload.
+        assert "Some meaningful notes to analyze." in (
+            calls[0]["messages_payload"][0]["content"]
+        )
 
         media_id, _uuid, _msg = persist_parsed_media(payload, media_db)
         cursor = media_db.execute_query(
@@ -544,24 +591,51 @@ class TestTextTypeAnalysis:
             (media_id,),
         )
         stored = [row["analysis_content"] for row in cursor.fetchall()]
-        assert "STUB ANALYSIS." in stored
+        assert "DISPATCHED ANALYSIS." in stored
 
-    def test_html_analysis_runs(self, tmp_path: Path, monkeypatch):
+    def test_analysis_call_settings_travel_to_the_dispatch(
+        self, tmp_path: Path, monkeypatch
+    ):
+        """(F10) model/temperature/max_tokens/top_p/min_p + system prompt
+        must reach the provider call, not be silently replaced."""
+        source = tmp_path / "notes.txt"
+        source.write_text("Configured analysis fidelity.", encoding="utf-8")
+        calls = self._install_chat_stub(monkeypatch)
+
+        payload = parse_local_file_for_ingest(
+            str(source),
+            {
+                "perform_analysis": True,
+                "api_name": "openai",
+                "api_key": "sk-test-not-real",
+                "system_prompt": "Analyze like the viewer would.",
+                "analysis_call": {
+                    "model": "gpt-4o-mini",
+                    "temperature": 0.2,
+                    "top_p": 0.9,
+                    "min_p": 0.01,
+                    "max_tokens": 512,
+                },
+            },
+        )
+
+        assert payload["analysis_content"] == "DISPATCHED ANALYSIS."
+        call = calls[0]
+        assert call["model"] == "gpt-4o-mini"
+        assert call["temp"] == 0.2
+        assert call["topp"] == 0.9
+        assert call["minp"] == 0.01
+        assert call["max_tokens"] == 512
+        assert call["system_message"] == "Analyze like the viewer would."
+
+    def test_html_analysis_dispatches(self, tmp_path: Path, monkeypatch):
         source = tmp_path / "page.html"
         source.write_text(
             "<html><body><p>Body text worth analyzing.</p></body></html>",
             encoding="utf-8",
         )
-        real_analyze = _real_analyze()
-
-        def fake_analyze(**kwargs):
-            _assert_kwargs_accepted(real_analyze, kwargs)
-            return "HTML ANALYSIS."
-
-        monkeypatch.setattr(
-            "tldw_chatbook.LLM_Calls.Summarization_General_Lib.analyze",
-            fake_analyze,
-        )
+        self._install_chat_stub(monkeypatch, response="HTML ANALYSIS.")
+        self._forbid_summarizer_path(monkeypatch)
 
         payload = parse_local_file_for_ingest(
             str(source),
@@ -570,37 +644,102 @@ class TestTextTypeAnalysis:
 
         assert payload["analysis_content"] == "HTML ANALYSIS."
 
+    def test_openai_shaped_dict_response_is_extracted(
+        self, tmp_path: Path, monkeypatch
+    ):
+        source = tmp_path / "notes.txt"
+        source.write_text("Dict-shaped provider response.", encoding="utf-8")
+        self._install_chat_stub(
+            monkeypatch,
+            response={"choices": [{"message": {"content": "DICT ANALYSIS."}}]},
+        )
+
+        payload = parse_local_file_for_ingest(
+            str(source),
+            {"perform_analysis": True, "api_name": "openai", "api_key": "sk-x"},
+        )
+
+        assert payload["analysis_content"] == "DICT ANALYSIS."
+
     def test_plaintext_analysis_skipped_without_provider(
         self, tmp_path: Path, monkeypatch
     ):
         source = tmp_path / "notes.txt"
         source.write_text("Content.", encoding="utf-8")
-        called = []
-
-        monkeypatch.setattr(
-            "tldw_chatbook.LLM_Calls.Summarization_General_Lib.analyze",
-            lambda **kwargs: called.append(kwargs) or "NEVER",
-        )
+        calls = self._install_chat_stub(monkeypatch)
 
         payload = parse_local_file_for_ingest(
             str(source), {"perform_analysis": True}
         )
 
         assert payload["analysis_content"] == ""
-        assert called == []
+        assert calls == []
+
+    def test_api_name_without_key_skips_instead_of_spending(
+        self, tmp_path: Path, monkeypatch
+    ):
+        """(F8) Direct callers passing ``api_name`` with no credential get
+        the historical silent skip -- never a call that would fall back to
+        whatever key sits in config."""
+        source = tmp_path / "notes.txt"
+        source.write_text("Content.", encoding="utf-8")
+        calls = self._install_chat_stub(monkeypatch)
+
+        payload = parse_local_file_for_ingest(
+            str(source), {"perform_analysis": True, "api_name": "openai"}
+        )
+
+        assert payload["analysis_content"] == ""
+        assert calls == []
+
+    def test_keyless_opt_in_allows_dispatch_without_key(
+        self, tmp_path: Path, monkeypatch
+    ):
+        """(F8) The Library seam's explicit keyless opt-in -- set only after
+        readiness said the provider is keyless-ready -- re-enables the call."""
+        source = tmp_path / "notes.txt"
+        source.write_text("Content.", encoding="utf-8")
+        calls = self._install_chat_stub(monkeypatch, response="LOCAL ANALYSIS.")
+
+        payload = parse_local_file_for_ingest(
+            str(source),
+            {
+                "perform_analysis": True,
+                "api_name": "ollama",
+                "analysis_keyless_ok": True,
+            },
+        )
+
+        assert payload["analysis_content"] == "LOCAL ANALYSIS."
+        assert calls[0]["api_endpoint"] == "ollama"
+        assert calls[0].get("api_key") is None
+
+    def test_error_prefixed_response_is_failure_not_analysis(
+        self, tmp_path: Path, monkeypatch
+    ):
+        """(F4) analyze()-style in-band error strings must never persist."""
+        source = tmp_path / "notes.txt"
+        source.write_text("Content.", encoding="utf-8")
+        self._install_chat_stub(
+            monkeypatch, response="Error: Invalid API Name 'openai'"
+        )
+
+        payload = parse_local_file_for_ingest(
+            str(source),
+            {"perform_analysis": True, "api_name": "openai", "api_key": "sk-x"},
+        )
+
+        assert payload["analysis_content"] == ""
+        assert any("Analysis failed" in w for w in payload["warnings"])
+        assert "Invalid API Name" in payload["analysis_failed_reason"]
 
     def test_plaintext_analysis_failure_is_warning_not_job_failure(
         self, tmp_path: Path, monkeypatch
     ):
         source = tmp_path / "notes.txt"
         source.write_text("Content that resists analysis.", encoding="utf-8")
-
-        def exploding_analyze(**kwargs):
-            raise RuntimeError("provider exploded")
-
-        monkeypatch.setattr(
-            "tldw_chatbook.LLM_Calls.Summarization_General_Lib.analyze",
-            exploding_analyze,
+        self._install_chat_stub(
+            monkeypatch, response=RuntimeError("provider exploded")
         )
 
         payload = parse_local_file_for_ingest(
@@ -610,6 +749,7 @@ class TestTextTypeAnalysis:
 
         assert payload["analysis_content"] == ""
         assert any("nalysis" in w for w in payload["warnings"])
+        assert "provider exploded" in payload["analysis_failed_reason"]
 
     def test_analysis_skipped_reason_travels_to_payload(self, tmp_path: Path):
         source = tmp_path / "notes.txt"
@@ -635,6 +775,227 @@ class TestTextTypeAnalysis:
         payload = parse_local_file_for_ingest(str(source), {})
 
         assert not payload.get("analysis_skipped_reason")
+
+
+# ---------------------------------------------------------------------------
+# (task-3301 xhigh review round, F4) Processor-returned analysis/summary
+# values that are in-band error strings must never persist as analysis.
+# ---------------------------------------------------------------------------
+
+
+class TestProcessorAnalysisErrorStrings:
+    def _pdf_stub_result(self, analysis: str) -> Dict[str, Any]:
+        return {
+            "content": "PDF text",
+            "title": "t",
+            "author": "a",
+            "keywords": [],
+            "chunks": [{"text": "PDF text", "metadata": {"chunk_num": 0}}],
+            "analysis": analysis,
+            "metadata": {},
+            "error": None,
+            "warnings": [],
+        }
+
+    def test_error_string_processor_analysis_is_not_persisted(
+        self, tmp_path: Path, monkeypatch
+    ):
+        source = tmp_path / "doc.pdf"
+        source.write_bytes(b"%PDF-1.4 stub")
+        real = _real_process_pdf()
+
+        def fake_process_pdf(**kwargs):
+            _assert_kwargs_accepted(real, kwargs)
+            return self._pdf_stub_result(
+                "Error: Summarization failed unexpectedly."
+            )
+
+        monkeypatch.setattr(
+            "tldw_chatbook.Local_Ingestion.local_file_ingestion.process_pdf",
+            fake_process_pdf,
+        )
+
+        payload = parse_local_file_for_ingest(
+            str(source),
+            {"perform_analysis": True, "api_name": "openai", "api_key": "sk-x"},
+        )
+
+        assert payload["analysis_content"] == ""
+        assert any("Analysis failed" in w for w in payload["warnings"])
+        assert "Summarization failed" in payload["analysis_failed_reason"]
+
+    def test_error_string_document_summary_is_not_persisted(
+        self, tmp_path: Path, monkeypatch
+    ):
+        source = tmp_path / "report.docx"
+        source.write_bytes(b"PK\x03\x04" + b"\x00" * 32)
+        real = _real_process_document()
+
+        def fake_process_document(**kwargs):
+            _assert_kwargs_accepted(real, kwargs)
+            result = _document_stub_result()
+            result["summary"] = "Error: Invalid API Name 'koboldcpp'"
+            return result
+
+        monkeypatch.setattr(
+            "tldw_chatbook.Local_Ingestion.local_file_ingestion.process_document",
+            fake_process_document,
+        )
+
+        payload = parse_local_file_for_ingest(
+            str(source),
+            {"perform_analysis": True, "api_name": "koboldcpp", "api_key": "k"},
+        )
+
+        assert payload["analysis_content"] == ""
+        assert any("Analysis failed" in w for w in payload["warnings"])
+        assert "Invalid API Name" in payload["analysis_failed_reason"]
+
+    def test_real_document_summary_still_surfaces(
+        self, tmp_path: Path, monkeypatch
+    ):
+        source = tmp_path / "report.docx"
+        source.write_bytes(b"PK\x03\x04" + b"\x00" * 32)
+        real = _real_process_document()
+
+        def fake_process_document(**kwargs):
+            _assert_kwargs_accepted(real, kwargs)
+            result = _document_stub_result()
+            result["summary"] = "A genuine document analysis."
+            return result
+
+        monkeypatch.setattr(
+            "tldw_chatbook.Local_Ingestion.local_file_ingestion.process_document",
+            fake_process_document,
+        )
+
+        payload = parse_local_file_for_ingest(
+            str(source),
+            {"perform_analysis": True, "api_name": "openai", "api_key": "sk-x"},
+        )
+
+        assert payload["analysis_content"] == "A genuine document analysis."
+        assert not payload.get("analysis_failed_reason")
+
+
+# ---------------------------------------------------------------------------
+# (task-3301 xhigh review round, F8) The pdf/ebook analysis gates require a
+# credential OR the Library seam's explicit keyless opt-in. pymupdf/ebooklib
+# are absent from this venv, so the gates themselves cannot be executed here;
+# the shared predicate is unit-tested, its use is pinned in each gate's
+# source, and the option's travel is checked at signature-checked stub
+# boundaries.
+# ---------------------------------------------------------------------------
+
+
+class TestProcessorAnalysisCredentialGates:
+    def test_credential_predicate_truth_table(self):
+        from tldw_chatbook.Local_Ingestion.analysis_gate import (
+            analysis_credentials_ok,
+        )
+
+        assert analysis_credentials_ok("sk-x") is True
+        assert analysis_credentials_ok("sk-x", keyless_ok=True) is True
+        assert analysis_credentials_ok(None, keyless_ok=True) is True
+        assert analysis_credentials_ok(None) is False
+        assert analysis_credentials_ok("") is False
+        assert analysis_credentials_ok("", keyless_ok=False) is False
+
+    @pytest.mark.parametrize(
+        "module_name, func_name",
+        [
+            ("PDF_Processing_Lib", "process_pdf"),
+            ("Book_Ingestion_Lib", "process_epub"),
+            ("Book_Ingestion_Lib", "_process_markup_or_plain_text"),
+            ("Book_Ingestion_Lib", "process_mobi"),
+            ("Book_Ingestion_Lib", "process_fb2"),
+        ],
+    )
+    def test_gates_accept_keyless_ok_and_use_the_predicate(
+        self, module_name: str, func_name: str
+    ):
+        import importlib
+
+        module = importlib.import_module(
+            f"tldw_chatbook.Local_Ingestion.{module_name}"
+        )
+        func = getattr(module, func_name)
+        assert "keyless_ok" in inspect.signature(func).parameters
+        # The gate must consult the shared predicate -- a re-relaxed gate
+        # (perform_analysis and api_name only) turns this RED.
+        assert "analysis_credentials_ok(" in inspect.getsource(func)
+
+    def test_keyless_ok_travels_to_process_pdf(self, tmp_path: Path, monkeypatch):
+        source = tmp_path / "doc.pdf"
+        source.write_bytes(b"%PDF-1.4 stub")
+        real = _real_process_pdf()
+        calls: list[Dict[str, Any]] = []
+
+        def fake_process_pdf(**kwargs):
+            _assert_kwargs_accepted(real, kwargs)
+            calls.append(kwargs)
+            return {
+                "content": "PDF text",
+                "title": "t",
+                "author": "a",
+                "keywords": [],
+                "chunks": [],
+                "analysis": "",
+                "metadata": {},
+                "error": None,
+                "warnings": [],
+            }
+
+        monkeypatch.setattr(
+            "tldw_chatbook.Local_Ingestion.local_file_ingestion.process_pdf",
+            fake_process_pdf,
+        )
+
+        parse_local_file_for_ingest(
+            str(source),
+            {
+                "perform_analysis": True,
+                "api_name": "ollama",
+                "analysis_keyless_ok": True,
+            },
+        )
+
+        assert calls[0]["keyless_ok"] is True
+
+    def test_keyless_ok_defaults_false_for_process_ebook(
+        self, tmp_path: Path, monkeypatch
+    ):
+        source = tmp_path / "book.epub"
+        source.write_bytes(b"PK\x03\x04" + b"\x00" * 32)
+        real = _real_process_ebook()
+        calls: list[Dict[str, Any]] = []
+
+        def fake_process_ebook(**kwargs):
+            _assert_kwargs_accepted(real, kwargs)
+            calls.append(kwargs)
+            return {
+                "content": "Ebook text",
+                "title": "t",
+                "author": "a",
+                "keywords": [],
+                "chunks": [],
+                "analysis": "",
+                "metadata": {},
+                "error": None,
+                "warnings": [],
+            }
+
+        monkeypatch.setattr(
+            "tldw_chatbook.Local_Ingestion.local_file_ingestion.process_ebook",
+            fake_process_ebook,
+        )
+
+        parse_local_file_for_ingest(
+            str(source),
+            {"perform_analysis": True, "api_name": "openai", "api_key": "sk-x"},
+        )
+
+        assert calls[0]["keyless_ok"] is False
 
 
 # ---------------------------------------------------------------------------

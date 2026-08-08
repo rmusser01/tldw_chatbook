@@ -317,7 +317,13 @@ def _strip_basename_echo(detail: str, basename: str) -> str:
     """
     if not basename or not detail.startswith(basename):
         return detail
-    trimmed = detail[len(basename):].lstrip().lstrip(":-·—").lstrip()
+    rest = detail[len(basename):]
+    # Only a WORD-BOUNDARY echo counts: "report.txt is empty" stutters,
+    # but "report.txt.orig could not be read" names a sibling artifact and
+    # must pass through whole (xhigh review of task-3305).
+    if rest and not rest[0].isspace() and rest[0] not in ":-·—,":
+        return detail
+    trimmed = rest.lstrip().lstrip(":-·—,").lstrip()
     return trimmed if trimmed else detail
 
 
