@@ -1859,16 +1859,16 @@ class LibraryIngestQueueMixin:
     job or blocks the writer.
 
     Shutdown (quit path) order, in ``_shutdown_ingest_parse_pool`` (called
-    from ``TldwCli.on_unmount``): (1) ``_ingest_shutdown = True`` + pool
-    reference detached, synchronously -- pool callbacks short-circuit on
-    the result-handler thread before ever marshaling; (2)
-    ``pool.terminate()`` + ``pool.join()`` on a detached daemon thread,
+    from ``TldwCli.on_unmount``): (1) ``_ingest_shutdown = True`` + executor
+    and pool references detached, synchronously -- callbacks short-circuit
+    before ever marshaling; (2) executor close followed by
+    ``pool.terminate()`` + ``pool.join()`` on one detached daemon thread,
     never the event-loop thread (deadlock rationale in that method's
     docstring); (3) the writer thread is swept afterward by ``on_unmount``'s
     generic worker cancellation, its in-flight DB write completing as
-    before. Steps 2 and 3 run concurrently -- safe because the two stages
-    share no resources (parse workers never touch ``media_db``; the writer
-    never touches the pool).
+    before. Steps 2 and 3 run concurrently -- safe because the stages share
+    no resources (parse workers never touch ``media_db``; the writer never
+    touches either heavy worker).
     """
 
     def _restore_ingest_jobs(self) -> None:
@@ -2488,7 +2488,14 @@ class LibraryIngestQueueMixin:
                 )
 
             if selected_dir:
-                model_root = Path(selected_dir)
+                from tldw_chatbook.Utils.path_validation import (
+                    validate_path_simple,
+                )
+
+                model_root = validate_path_simple(
+                    selected_dir,
+                    require_exists=True,
+                )
                 required = tuple(
                     model_root / filename
                     for filename in (
@@ -2657,7 +2664,15 @@ class LibraryIngestQueueMixin:
             self.call_from_thread(callback, *args)
         except RuntimeError:
             if not self._ingest_shutdown:
-                logger.error("Library local STT callback could not be marshaled.")
+                callback_name = getattr(
+                    callback,
+                    "__name__",
+                    type(callback).__name__,
+                )
+                logger.error(
+                    "Library local STT callback could not be marshaled (callback={}).",
+                    callback_name,
+                )
 
     def _on_ingest_local_stt_submitted(
         self,
@@ -3284,24 +3299,24 @@ class LibraryIngestQueueMixin:
         pool callbacks -- ``_ingest_pool_callback``/
         ``_ingest_pool_error_callback``, running on the pool's
         result-handler thread -- short-circuit before marshaling from this
-        point on) and drops the ``_ingest_parse_pool`` reference (nothing
-        can submit to it anymore). The actual ``pool.terminate()`` +
-        ``pool.join()`` then run on a detached daemon thread, NEVER on the
-        caller's (loop) thread: CPython's ``Pool._terminate_pool`` does an
-        unbounded ``result_handler.join()``, and if that result-handler
-        thread is at that moment parked inside a ``call_from_thread`` it
-        entered just before the flag went up, joining it from the loop
-        thread would deadlock (the loop can't drain the marshaled call it
-        is itself waiting behind). Off-loop, the loop stays free: the
-        in-flight marshaled call runs, no-ops via the flag, the
-        result-handler thread unblocks, and the join completes. The daemon
-        thread is deliberately not joined by the caller -- worst case it
-        outlives the app briefly and dies with the process.
+        point on) and drops both worker references (nothing can submit to
+        either anymore). Executor close and parse-pool terminate/join then
+        run sequentially on one detached daemon thread, NEVER on the caller's
+        (loop) thread: CPython's ``Pool._terminate_pool`` does an unbounded
+        ``result_handler.join()``, and if that result-handler thread is at
+        that moment parked inside a ``call_from_thread`` it entered just
+        before the flag went up, joining it from the loop thread would
+        deadlock (the loop can't drain the marshaled call it is itself waiting
+        behind). Off-loop, the loop stays free: the in-flight marshaled call
+        runs, no-ops via the flag, the result-handler thread unblocks, and the
+        join completes. The daemon thread is deliberately not joined by the
+        caller -- worst case it outlives the app briefly and dies with the
+        process.
 
         Returns:
-            The teardown thread (so tests can bound-join it and assert
-            thread identity), or ``None`` when no pool was ever created --
-            the shutdown flag is still set in that case.
+            The one teardown thread that owns every detached ingest resource,
+            or ``None`` when neither worker was ever created. The shutdown
+            flag is still set in that case.
         """
         self._ingest_shutdown = True
         with self._local_stt_executor_lock:
@@ -3312,28 +3327,43 @@ class LibraryIngestQueueMixin:
             self._ingest_local_stt_jobs = {}
         else:
             local_jobs.clear()
-        executor_thread = (
-            self._close_local_stt_executor_off_thread(executor)
-            if executor is not None
-            else None
-        )
         pool = getattr(self, "_ingest_parse_pool", None)
         stop_event = getattr(self, "_ingest_parse_pool_stop_event", None)
         if stop_event is not None:
             stop_event.set()
         self._ingest_parse_pool_stop_event = None
         self._ingest_parse_pool = None
-        if pool is None:
-            return executor_thread
-        return self._terminate_ingest_parse_pool_off_thread(pool)
+        if executor is None and pool is None:
+            return None
+        return self._shutdown_ingest_workers_off_thread(executor, pool)
 
     @staticmethod
-    def _close_local_stt_executor_off_thread(executor: Any) -> threading.Thread:
-        """Close a detached heavy executor without blocking the UI thread."""
+    def _shutdown_ingest_workers_off_thread(
+        executor: Any | None,
+        pool: Any | None,
+    ) -> threading.Thread:
+        """Close detached ingest workers without blocking the UI thread."""
+
+        def _shutdown_workers() -> None:
+            if executor is not None:
+                try:
+                    executor.close()
+                except Exception:
+                    logger.opt(exception=True).error(
+                        "Error closing the Library local STT executor."
+                    )
+            if pool is not None:
+                try:
+                    pool.terminate()
+                    pool.join()
+                except Exception:
+                    logger.opt(exception=True).error(
+                        "Error terminating the Library ingest parse pool."
+                    )
 
         thread = threading.Thread(
-            target=executor.close,
-            name="library-local-stt-executor-close",
+            target=_shutdown_workers,
+            name="library-ingest-workers-shutdown",
             daemon=True,
         )
         thread.start()
@@ -9129,19 +9159,17 @@ class TldwCli(
         self._ui_ready = False
         self._stop_ui_responsiveness_monitor()
 
-        # F3: shut down the Library ingest parse pool. Final shutdown
-        # order, explicit (Task 4 review):
-        #   1. `_ingest_shutdown = True` + pool reference detached
-        #      (synchronous, inside `_shutdown_ingest_parse_pool`) -- pool
-        #      callbacks short-circuit on their own thread before
-        #      marshaling from this point on.
-        #   2. `pool.terminate()` + `pool.join()` on a detached daemon
-        #      thread, NEVER this (loop) thread -- terminating inline here
-        #      could deadlock against a result-handler thread parked inside
-        #      `call_from_thread` (see `_shutdown_ingest_parse_pool`'s
-        #      docstring). `terminate()` kills every in-flight parse worker
-        #      process immediately -- no waiting on a possibly-long
-        #      transcription/OCR job.
+        # F3/TASK-601: shut down both Library ingest worker boundaries. Final
+        # shutdown order, explicit:
+        #   1. `_ingest_shutdown = True` + executor/pool references detached
+        #      (synchronous, inside `_shutdown_ingest_parse_pool`) -- their
+        #      callbacks short-circuit before marshaling from this point on.
+        #   2. Executor close, then `pool.terminate()` + `pool.join()`, on one
+        #      detached daemon thread, NEVER this (loop) thread -- terminating
+        #      inline here could deadlock against a result-handler thread
+        #      parked inside `call_from_thread` (see that method's docstring).
+        #      `terminate()` kills every in-flight light parse worker process
+        #      immediately -- no waiting on a possibly-long OCR job.
         #   3. The writer (the exclusive `library_ingest_queue` thread
         #      worker) is swept up by the generic worker cancellation
         #      below, same as every other worker.

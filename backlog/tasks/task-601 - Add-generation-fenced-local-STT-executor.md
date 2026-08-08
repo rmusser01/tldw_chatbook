@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-07-24 01:04'
-updated_date: '2026-08-02 23:52'
+updated_date: '2026-08-08 08:23'
 labels:
   - stt
   - processes
@@ -57,6 +57,8 @@ The transcribe.cpp path now reuses one loaded GGUF runtime, recognizes only the 
 Verification stayed scoped to TASK-601. The focused implementation gate recorded 325 passing tests before final review remediation; the final changed-path gate passed 11/11 tests plus Ruff and `git diff --check`. Native macOS containment/process evidence passed 10/10 checks and a process-table check found no surviving local-STT/decoder workers. Final code review found no Critical or Important issues. Windows and Linux hosts were unavailable, so acceptance criterion #6 remains open and this task intentionally remains In Progress.
 
 After rebasing onto current `dev`, the TASK-601-focused STT, Library, ingestion, Parakeet, and UI gate passed 943 tests. An isolated current-`dev` control run reproduced one transcription-facade dependency failure and three under-initialized Library test-helper failures exactly, so those upstream baseline failures were excluded rather than changing unrelated production code. The rebase also replaced an in-process `importlib.reload()` import-boundary test with a subprocess check after the reload split IPC dataclass identity and caused spawned worker bootstrap rejection.
+
+PR review remediation centralized explicit Parakeet directory validation, hardened managed GGUF paths against Windows/UNC and symlink escapes, completed the public snapshot docstrings and import grouping, added callback context to marshal failures, and coordinated parse-pool plus STT-executor shutdown through one background thread. The final focused gate passed 951 tests. A recycle test that intermittently failed during that gate exposed concurrent attempts by the reader and controller to reap one spawned process; generation ownership now decides the sole reaper before `join()`. The deterministic ownership regression and crash paths passed together, followed by 20 consecutive bounded-lifetime recycle passes.
 
 ADR required: no. ADR path: `backlog/decisions/025-shared-stt-artifacts-and-runtime-routing.md` and `backlog/decisions/041-direct-local-gguf-before-managed-acquisition.md`. Those accepted decisions already govern the runtime boundary, lease ownership, retry policy, and direct-local GGUF behavior.
 <!-- SECTION:NOTES:END -->

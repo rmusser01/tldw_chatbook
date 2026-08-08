@@ -1304,6 +1304,49 @@ async def test_explicit_parakeet_directory_is_snapshotted_before_dispatch(
 
 
 @pytest.mark.asyncio
+async def test_explicit_parakeet_directory_uses_central_validated_path(
+    tmp_path: Path,
+) -> None:
+    executor = _FakeLocalSTTExecutor()
+    app = _IngestRunnerHarness(
+        _make_db(tmp_path),
+        local_stt_executor=executor,
+    )
+    source = tmp_path / "speech.wav"
+    source.write_bytes(b"fixture")
+    validated_dir = tmp_path / "validated-parakeet"
+    validated_dir.mkdir()
+    for filename in (
+        "config.json",
+        "vocab.txt",
+        "encoder-model.int8.onnx",
+        "decoder_joint-model.int8.onnx",
+    ):
+        (validated_dir / filename).write_bytes(filename.encode("utf-8"))
+
+    with patch(
+        "tldw_chatbook.Utils.path_validation.validate_path_simple",
+        return_value=validated_dir,
+    ):
+        async with app.run_test() as pilot:
+            app.submit_library_ingest_job(
+                source_path=str(source),
+                ingest_options={
+                    "audio_video": {
+                        "transcription_provider": "parakeet-onnx",
+                        "transcription_model_dir": str(
+                            tmp_path / "unvalidated-parakeet"
+                        ),
+                    }
+                },
+            )
+            await pilot.pause()
+
+    assert len(executor.calls) == 1
+    assert executor.calls[0]["options"]["transcription_model_dir"] == str(validated_dir)
+
+
+@pytest.mark.asyncio
 async def test_faster_whisper_stays_in_general_pool(tmp_path: Path) -> None:
     pool = _FakeIngestParsePool(auto_run=False)
     executor = _FakeLocalSTTExecutor()
@@ -1657,6 +1700,59 @@ def test_shutdown_closes_local_executor_off_caller_thread(tmp_path: Path) -> Non
     assert app._local_stt_executor is None
     assert executor.close_thread_ident is not None
     assert executor.close_thread_ident != caller_thread
+
+
+def test_shutdown_thread_waits_for_executor_and_parse_pool(tmp_path: Path) -> None:
+    class _BlockingExecutor(_FakeLocalSTTExecutor):
+        def __init__(self) -> None:
+            super().__init__()
+            self.close_started = threading.Event()
+            self.close_release = threading.Event()
+
+        def close(self) -> None:
+            self.close_started.set()
+            assert self.close_release.wait(5.0)
+            super().close()
+
+    executor = _BlockingExecutor()
+    pool = _FakeIngestParsePool(auto_run=False)
+    app = _IngestRunnerHarness(
+        _make_db(tmp_path),
+        pool_factory=lambda: pool,
+        local_stt_executor=executor,
+    )
+    app._ingest_parse_pool = pool
+
+    teardown = app._shutdown_ingest_parse_pool()
+    assert teardown is not None
+    assert executor.close_started.wait(1.0)
+    teardown.join(timeout=0.05)
+    assert teardown.is_alive()
+
+    executor.close_release.set()
+    teardown.join(timeout=_FAKE_POOL_JOIN_TIMEOUT)
+
+    assert not teardown.is_alive()
+    assert executor.close_thread_ident is not None
+    assert pool.terminated is True
+
+
+def test_local_stt_marshal_failure_logs_callback_context(tmp_path: Path) -> None:
+    app = _IngestRunnerHarness(_make_db(tmp_path))
+
+    def safe_callback() -> None:
+        return None
+
+    with (
+        patch.object(app, "call_from_thread", side_effect=RuntimeError("closed")),
+        patch("tldw_chatbook.app.logger") as logger,
+    ):
+        app._marshal_local_stt_call(safe_callback)
+
+    logger.error.assert_called_once_with(
+        "Library local STT callback could not be marshaled (callback={}).",
+        "safe_callback",
+    )
 
 
 @pytest.mark.asyncio

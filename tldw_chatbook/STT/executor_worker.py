@@ -6,7 +6,7 @@ import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from multiprocessing.connection import Connection
-from pathlib import Path, PurePosixPath
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
 
 from .contracts import (
@@ -294,13 +294,31 @@ def _transcribe_cpp_provider(
                 TranscriptionFailureCode.ARTIFACT_INCOMPATIBLE,
                 ("choose_another_gguf", "retry_faster_whisper"),
             )
+        relative_value = relative_value.strip()
         relative = PurePosixPath(relative_value)
-        if relative.is_absolute() or ".." in relative.parts:
+        windows_relative = PureWindowsPath(relative_value)
+        if (
+            not relative.parts
+            or relative.is_absolute()
+            or windows_relative.is_absolute()
+            or bool(windows_relative.drive)
+            or bool(windows_relative.root)
+            or "\\" in relative_value
+            or ".." in relative.parts
+            or ".." in windows_relative.parts
+        ):
             raise _ProviderLoadFailure(
                 TranscriptionFailureCode.ARTIFACT_INCOMPATIBLE,
                 ("choose_another_gguf", "retry_faster_whisper"),
             )
-        model_path = model_path.joinpath(*relative.parts)
+        root = model_path.resolve()
+        candidate = root.joinpath(*relative.parts).resolve()
+        if not candidate.is_relative_to(root):
+            raise _ProviderLoadFailure(
+                TranscriptionFailureCode.ARTIFACT_INCOMPATIBLE,
+                ("choose_another_gguf", "retry_faster_whisper"),
+            )
+        model_path = candidate
     context = request.options.get("transcription_context") or {}
     if not isinstance(context, dict):
         context = {}

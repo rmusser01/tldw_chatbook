@@ -13,10 +13,12 @@ import pytest
 from tldw_chatbook.STT.contracts import (
     DeviceFailureOrigin,
     ExecutionDevice,
+    TranscriptionFailureCode,
     TranscriptionWarningCode,
 )
 from tldw_chatbook.STT.executor import ExecutorRequest, ModelIdentity
 from tldw_chatbook.STT.executor_worker import (
+    _ProviderLoadFailure,
     _failure_from_exception,
     _transcribe_cpp_provider,
 )
@@ -348,6 +350,90 @@ def test_successful_cpu_retry_records_warning_and_original_requested_device(
     assert provenance["warnings"] == [
         TranscriptionWarningCode.DEVICE_FALLBACK_TO_CPU.value
     ]
+
+
+@pytest.mark.parametrize(
+    "relative_value",
+    (
+        r"C:\private\evil.gguf",
+        r"\\server\share\evil.gguf",
+        r"nested\..\evil.gguf",
+    ),
+)
+def test_managed_gguf_rejects_windows_path_escape_syntax(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    relative_value: str,
+) -> None:
+    model_root = tmp_path / "managed"
+    model_root.mkdir()
+    request = ExecutorRequest(
+        generation=1,
+        attempt_id="attempt-managed-path",
+        job_id="job-managed-path",
+        source_path=tmp_path / "audio.wav",
+        identity=ModelIdentity(
+            provider_id="transcribe-cpp",
+            model_id="managed-gguf",
+            root_revision="revision-a",
+            closure_fingerprint="closure-a",
+            precision="native",
+            device=ExecutionDevice.CPU,
+        ),
+        options={"managed_model_relative_path": relative_value},
+    )
+    module = importlib.import_module("tldw_chatbook.STT.transcribe_cpp")
+    monkeypatch.setattr(
+        module.TranscribeCppRuntime,
+        "load",
+        lambda **_kwargs: SimpleNamespace(close=lambda: None),
+    )
+
+    with pytest.raises(_ProviderLoadFailure) as raised:
+        _transcribe_cpp_provider(request, model_root)
+
+    assert raised.value.code is TranscriptionFailureCode.ARTIFACT_INCOMPATIBLE
+
+
+def test_managed_gguf_rejects_symlink_escape(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model_root = tmp_path / "managed"
+    model_root.mkdir()
+    outside = tmp_path / "outside.gguf"
+    outside.write_bytes(b"fixture")
+    link = model_root / "model.gguf"
+    try:
+        link.symlink_to(outside)
+    except OSError:
+        pytest.skip("symlink creation is unavailable")
+    request = ExecutorRequest(
+        generation=1,
+        attempt_id="attempt-managed-link",
+        job_id="job-managed-link",
+        source_path=tmp_path / "audio.wav",
+        identity=ModelIdentity(
+            provider_id="transcribe-cpp",
+            model_id="managed-gguf",
+            root_revision="revision-a",
+            closure_fingerprint="closure-a",
+            precision="native",
+            device=ExecutionDevice.CPU,
+        ),
+        options={"managed_model_relative_path": "model.gguf"},
+    )
+    module = importlib.import_module("tldw_chatbook.STT.transcribe_cpp")
+    monkeypatch.setattr(
+        module.TranscribeCppRuntime,
+        "load",
+        lambda **_kwargs: SimpleNamespace(close=lambda: None),
+    )
+
+    with pytest.raises(_ProviderLoadFailure) as raised:
+        _transcribe_cpp_provider(request, model_root)
+
+    assert raised.value.code is TranscriptionFailureCode.ARTIFACT_INCOMPATIBLE
 
 
 def test_reusable_runtime_loads_once_transcribes_twice_and_closes_once(

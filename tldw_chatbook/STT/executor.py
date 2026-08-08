@@ -110,7 +110,19 @@ def _local_file_identity(path: Path) -> tuple[int, int, int, int]:
 
 
 def snapshot_local_source(paths: tuple[Path, ...]) -> LocalSourceSnapshot:
-    """Capture a path-private metadata identity for required local model files."""
+    """Capture a path-private metadata identity for local model files.
+
+    Args:
+        paths: Required regular model files to snapshot.
+
+    Returns:
+        A path-private snapshot containing file identities and a digest token.
+
+    Raises:
+        ValueError: If ``paths`` is not a non-empty tuple.
+        LocalSourceChangedError: If a path is missing, not a regular file, or
+            cannot be inspected safely.
+    """
 
     if type(paths) is not tuple or not paths:
         raise ValueError("paths must be a non-empty tuple")
@@ -127,7 +139,19 @@ def snapshot_local_source(paths: tuple[Path, ...]) -> LocalSourceSnapshot:
 
 
 def validate_local_source_snapshot(snapshot: LocalSourceSnapshot) -> None:
-    """Fail path-privately unless every required local model file is unchanged."""
+    """Verify that every required local model file is unchanged.
+
+    Args:
+        snapshot: Previously captured path-private local source snapshot.
+
+    Returns:
+        None.
+
+    Raises:
+        TypeError: If ``snapshot`` is not a ``LocalSourceSnapshot``.
+        LocalSourceChangedError: If any snapshotted file changed or cannot be
+            inspected safely.
+    """
 
     if type(snapshot) is not LocalSourceSnapshot:
         raise TypeError("snapshot must be a LocalSourceSnapshot")
@@ -861,12 +885,12 @@ class LocalSTTExecutor:
         )
 
     def _handle_worker_exit(self, generation: int, process: Any) -> None:
-        process.join(0.1)
         callback: Callable[[ExecutorFailure], None] | None = None
         failure: ExecutorFailure | None = None
         with self._lock:
             if generation != self._worker_generation or process is not self._process:
                 return
+            process.join(0.1)
             request = self._active_request
             callbacks = self._active_callbacks
             guard = self._terminal_guard

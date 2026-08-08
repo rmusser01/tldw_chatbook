@@ -177,6 +177,24 @@ importers keep the previous class identity even though the module name is unchan
 
 ---
 
+## One thread must own reaping each spawned process
+
+**TASK-601, 2026-08-08.** The local STT reader handled pipe EOF by calling
+`Process.join()` before checking whether the controller had already detached that
+generation. During graceful recycle, the controller also joined the same
+`multiprocessing.Process`. On POSIX, the competing `waitpid()` calls occasionally left
+the controller observing an unknown exit code and reporting a live worker even though
+the child had exited. Removing the reader join entirely then exposed the other half of
+the contract on macOS: an unreaped crashed group leader made `killpg()` return
+`EPERM`.
+
+**What to do.** Decide process ownership under the lifecycle lock before joining. A
+reader may reap an unexpectedly exited generation only while it is still current; once
+the controller detaches that generation, only the controller may reap it. Cover both
+branches: a deterministic stale-reader test and a repeated real-spawn recycle test.
+
+---
+
 ## A text scan for "is this method called?" passes vacuously
 
 **What happened.** TASK-895 needed a guard proving every `WatchlistBundleService`

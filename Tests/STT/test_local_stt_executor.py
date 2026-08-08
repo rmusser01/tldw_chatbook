@@ -385,6 +385,22 @@ def test_controller_recycles_after_completed_job_bound() -> None:
         executor.close()
 
 
+def test_reader_does_not_reap_worker_after_controller_detaches_it() -> None:
+    executor = _executor()
+
+    class JoinProbe:
+        joined = False
+
+        def join(self, timeout: float | None = None) -> None:
+            self.joined = True
+
+    stale_process = JoinProbe()
+
+    executor._handle_worker_exit(1, stale_process)
+
+    assert stale_process.joined is False
+
+
 def test_controller_has_one_active_request_and_cooperative_cancel_is_attempt_scoped() -> (
     None
 ):
