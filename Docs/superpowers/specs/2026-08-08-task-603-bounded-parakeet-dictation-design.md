@@ -2,7 +2,7 @@
 
 **Date:** 2026-08-08
 
-**Status:** Approved direction; written-spec review pending
+**Status:** Approved direction; failure-oriented review corrections incorporated
 
 **Task:** TASK-603 — Restore bounded Parakeet ONNX dictation buffers
 
@@ -88,10 +88,22 @@ constructs it around the same lazily constructed `LocalSTTExecutor`. Individual
 `TranscriptionService` instances receive an explicit buffer-dispatch callable;
 they cannot create a private executor or reach the app through a module global.
 
+Parakeet model identity and artifact admission are not reimplemented in the
+coordinator. The existing Library-only identity construction is split so one
+provider-neutral Parakeet dispatch builder resolves the selected model,
+precision, configured/local/managed artifact source, snapshot, closure
+fingerprint, and lease reference. Library file requests and dictation buffer
+requests both call that builder. `transcribe-cpp` keeps its existing path.
+
 ### 2. Use the existing file-or-buffer source contract
 
 `ExecutorRequest` changes from a mandatory `source_path` to one mandatory
 `source: FileAudioSource | BufferAudioSource`.
+
+`job_id` becomes optional. Library requests continue supplying their persisted
+job ID; dictation requests supply `None` and use their capture generation plus
+attempt ID for ownership. A synthetic Library job ID must not appear in
+dictation provenance.
 
 - Library callers wrap their current path in `FileAudioSource`; their parse and
   persistence path remains unchanged.
@@ -103,6 +115,13 @@ they cannot create a private executor or reach the app through a module global.
   provider/source combinations fail with the existing typed
   `UNSUPPORTED_CAPABILITY` contract.
 
+An executor buffer request may also carry an optional, validated tuple of
+strictly increasing segment-end frame offsets. It is valid only for a
+`BufferAudioSource`; its final offset must equal the buffer's total frame
+count. No offsets means the whole buffer is one segment. This preserves the
+Console's silence-delimited logical segments while still sending one bounded
+executor request.
+
 The worker branches only at the source boundary:
 
 - file source: run the existing `parse_local_file_for_ingest` flow;
@@ -110,9 +129,20 @@ The worker branches only at the source boundary:
   the normalized transcription payload without invoking the Library parser.
 
 `ParakeetOnnxRuntime.transcribe_buffer()` converts validated interleaved PCM to
-mono float32 in memory, calls the resident model, computes duration from frame
-count, and returns the same `TranscriptionResult`/provenance shape as file
-transcription. No temporary file or second model load is permitted.
+mono float32 in memory, slices it at validated logical segment boundaries,
+recognizes those segments in order with the resident model, computes duration
+from frame count, and returns the same normalized result/provenance shape as
+file transcription. A one-shot public buffer call is one segment. A coalesced
+Console request returns ordered segment text so whole-segment voice-command
+classification remains correct. No temporary file or second model load is
+permitted.
+
+For buffers longer than 30 seconds, the runtime uses the resident managed VAD
+in memory when the artifact closure supplies it. A configured or verified
+legacy v2 bundle without VAD remains compatible for the Console's bounded
+60-second input and uses direct recognition, matching the existing public
+buffer behavior rather than turning an optional managed dependency into a new
+dictation requirement. Produced capabilities report whether VAD actually ran.
 
 The executor worker converts that normalized result into the existing bounded
 executor payload. The compatibility facade maps it to the historical public
@@ -120,10 +150,21 @@ dictionary keys while preserving normalized provenance.
 
 ### 3. One bounded dictation mailbox
 
-The coordinator exposes a dictation-specific blocking adapter to the existing
-dictation processing thread. Blocking is intentional: it happens off the
-Textual event loop and preserves the current `transcribe_buffer()` call
-contract.
+The coordinator exposes two views of the same admission path:
+
+- the public one-shot `transcribe_buffer()` compatibility call submits one
+  buffer and blocks its non-UI caller for the terminal result; and
+- live Console dictation submits through an asynchronous completion handle, so
+  its audio processing thread never sits blocked behind a long active batch.
+
+The second distinction is load-bearing. The existing live service gives its
+processing thread only 30 seconds to join on stop; blocking that thread behind
+a longer batch would trigger its documented incomplete-transcription path and
+drop audio. The processing thread instead drains captured audio into the
+mailbox and exits promptly. The Console's existing off-event-loop stop worker
+waits for the capture's ordered completion handles, with cancellation and
+force-stop available through the coordinator. The Textual event loop never
+blocks.
 
 The mailbox rules are:
 
@@ -134,21 +175,26 @@ The mailbox rules are:
    item and gates dispatch of later heavy Library jobs.
 4. Microphone frames that arrive while that item is waiting continue to
    coalesce in the dictation session's single pending PCM buffer; they do not
-   become one queued inference per frame or segment. The buffer is snapshotted
-   only when it is handed to the executor.
-5. Once a dictation inference is active, later frames coalesce into the one
-   next pending buffer. The coordinator never admits a second pending buffer.
+   become one queued inference per frame or segment. Silence finalization adds
+   a frame offset, not another request. The buffer and its ordered boundaries
+   are snapshotted only when handed to the executor.
+5. Once a dictation request is active, later frames and finalized segments
+   coalesce into the one next pending request. The coordinator never admits a
+   second pending request. Segment offsets preserve the boundary between
+   ordinary dictated text and whole-segment voice commands.
 6. Coalescing is allowed only for the same capture generation, model identity,
    sample rate, channel count, and sample width. A different capture receives a
    visible busy failure rather than having two users' audio combined.
 7. Pending PCM is memory-only and is released after success, failure,
    cancellation, or shutdown.
 
-The existing Console capture ceiling remains 60 seconds. The mailbox also
-checks explicit duration and byte ceilings so it remains bounded even when a
-caller bypasses the Console timer. Appending a frame-aligned chunk either
-retains the accepted portion or returns a typed overrun signal; it never drops
-audio without notifying the controller.
+There is one canonical Console capture ceiling: 60 seconds. Its byte ceiling is
+derived from sample rate, channel count, and sample width rather than restated
+as an independent magic number in the recorder, Console controller, and
+mailbox. The mailbox checks the duration and derived byte ceiling so it remains
+bounded even when a caller bypasses the Console timer. Appending a frame-aligned
+chunk either retains the accepted portion or returns a typed overrun signal; it
+never drops audio without notifying the controller.
 
 On overrun, the recorder is stopped, the retained PCM is sealed for
 transcription, and the Console enters its existing transcribing state with the
@@ -189,6 +235,12 @@ reservation immediately so it cannot stall later batch work.
 - A Parakeet ONNX call without an app-owned dispatcher fails clearly; it does
   not silently instantiate a model in the caller process.
 
+The optional dispatcher is an explicit constructor dependency. Direct callers
+that want Parakeet ONNX outside `TldwCli` may supply a dispatcher backed by
+their own `LocalSTTExecutor`; production app code always supplies the one
+app-owned instance. Absence is a typed unavailable error, never an implicit
+global singleton or hidden model load.
+
 `create_streaming_transcriber(provider="parakeet-onnx")` returns `None` through
 the existing fallback contract. The existing `LazyLiveDictationService` then
 uses bounded whole-segment buffer transcription, exactly as it does for every
@@ -200,6 +252,15 @@ factory. It does not replace the Mic button or fork another dictation UI.
 Existing partial/final events, voice-command classification, hands-free state,
 caret insertion, draft preservation, and no-auto-send behavior remain owned by
 their current controllers.
+
+On a retryable Parakeet failure, the Console retains the exact bounded PCM and
+segment-boundary metadata long enough to offer one confirmation:
+**Parakeet failed. Retry this audio with faster-whisper?** Acceptance replays
+the preserved segments through the retained faster-whisper buffer path and
+then follows the normal insertion/voice-command flow. Declining, cancelling,
+closing the Console, completing the retry, or app shutdown clears the retained
+audio. The retry never starts automatically and is not offered when
+faster-whisper is unavailable. Native exception text is not shown.
 
 ### 6. Cancellation, shutdown, and stale results
 
@@ -213,6 +274,11 @@ their current controllers.
 - Dictation attempts carry a capture generation as well as the executor
   generation/attempt ID. A result from a discarded capture cannot insert text
   into a later capture or keep the batch gate set.
+- Live completion handles carry monotonically increasing segment sequence
+  numbers. Results are delivered in capture order even if cancellation and
+  terminal callbacks arrive on different threads.
+- Retryable PCM retained for the faster-whisper offer is bounded by the same
+  capture limit and is cleared on every resolution and teardown path.
 - Every terminal path clears the pending buffer and reservation exactly once.
 
 ## Error and status behavior
@@ -223,8 +289,8 @@ The UI receives bounded categories, not native exception text:
 - capture bound: **Limit reached — press Mic to continue.**
 - unsupported streaming: internal `None` fallback, no false streaming claim;
 - missing/corrupt model, unavailable runtime, inference failure, or engine
-  crash: existing normalized STT failure copy plus **Retry with
-  faster-whisper** where the current action surface supports it;
+  crash: existing normalized STT failure copy followed by the explicit
+  **Retry this audio with faster-whisper?** confirmation when available;
 - cancelled capture: existing cancellation behavior, with no draft mutation.
 
 Failures leave the draft unchanged unless a prior, independently successful
@@ -237,9 +303,11 @@ Only tests covering modified functionality are in scope.
 ### Contract and worker tests
 
 - executor accepts file and bounded buffer sources and rejects invalid unions;
+- dictation requests preserve `job_id=None` in normalized provenance;
 - Library file requests retain their existing parse call shape;
 - Parakeet buffer requests stay in memory, reuse the resident model, and return
   normalized text, duration, provenance, and warnings;
+- ordered segment boundaries are validated and returned in order;
 - unsupported provider/buffer combinations fail with a typed code;
 - no facade or dictation session creates another executor/process.
 
@@ -250,6 +318,8 @@ Only tests covering modified functionality are in scope.
 - pending dictation is selected before the next heavy batch item;
 - light Library work remains dispatchable;
 - same-capture audio coalesces within byte/duration limits;
+- silence-delimited segments coalesce into one request without losing their
+  boundaries;
 - a second pending inference is never admitted;
 - overrun stops capture visibly and retains the accepted PCM;
 - cancelling before dispatch, cancelling active inference, worker failure,
@@ -257,16 +327,26 @@ Only tests covering modified functionality are in scope.
 - a stale callback cannot complete a newer capture.
 
 Latency fakes must include a real controllable delay; zero-latency fakes cannot
-prove the backpressure path.
+prove the backpressure path. One focused test sets a short join bound and holds
+an active batch behind a real event-controlled delay longer than that bound,
+proving the same failure shape without a 30-second test sleep: stop neither
+blocks the UI thread nor drops the pending audio.
 
 ### Console and compatibility tests
 
 - the mounted Console shows busy and limit states and returns to idle;
 - a successful transcript still inserts at the caret without sending;
 - pressing Mic again is required after a limit stop;
+- a coalesced whole-segment voice command is still classified as a command;
 - Parakeet streaming factory returns `None` and the buffer fallback is used;
 - public Parakeet buffer calls use the injected shared coordinator;
+- retryable Parakeet failure offers an explicit faster-whisper replay and
+  clears retained PCM after every answer/teardown path;
 - retained-provider calls remain unchanged pending TASK-605.
+
+Runtime-focused tests cover 30–60-second buffers with and without a managed VAD
+and assert that no disk staging occurs and produced capabilities report the
+actual VAD behavior.
 
 A macOS live smoke should use an isolated profile, the repository virtual
 environment's absolute Python path, a real installed Parakeet v2 INT8 bundle,
