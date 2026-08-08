@@ -364,6 +364,8 @@ class LocalWatchlistsService:
         unassigned_only: bool = False,
         statuses: list[str] | None = None,
         is_flagged: bool | None = None,
+        search: str | None = None,
+        since: str | None = None,
     ) -> list[dict[str, Any]]:
         """List watchlist items from the local subscriptions database.
 
@@ -408,6 +410,12 @@ class LocalWatchlistsService:
             is_flagged: Restrict to starred rows (`True`) or unstarred rows
                 (`False`), or `None` -- the default -- to not filter by the
                 flag at all (TASK-3072).
+            search: Full-text terms over title/content/author (TASK-3603 --
+                the reader's `/`), or `None`/blank for no search predicate.
+                Forwarded verbatim to `get_new_items`, which owns the
+                FTS5-or-LIKE mechanics.
+            since: Effective-date floor (TASK-3603 -- the Today feed), or
+                `None` for no floor.
 
         Returns:
             Normalized item dicts for the requested window.
@@ -425,6 +433,8 @@ class LocalWatchlistsService:
             unassigned_only=bool(unassigned_only),
             statuses=list(statuses) if statuses is not None else None,
             is_flagged=is_flagged,
+            search=search,
+            since=since,
         )
         normalized = [normalize_watchlist_item("local", row) for row in rows]
         return normalized[int(offset) : int(offset) + int(limit)]

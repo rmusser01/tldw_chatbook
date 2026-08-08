@@ -1790,6 +1790,87 @@ class SubscriptionsDB(BaseDB):
 
     # --- Item Management ---
 
+    @staticmethod
+    def _quote_fts5_term(term: str) -> str:
+        """Return `term` as a literal FTS5 string (embedded quotes doubled).
+
+        The same rule `Library/library_fts_query.py`'s `_quote_fts_term`
+        pins for the Library's RAG search: once every user term is a
+        double-quoted literal, no input can introduce FTS5 operators
+        (``OR``/``NEAR``/``NOT``, column filters, parentheses) -- the only
+        bare syntax in the emitted query is the AND-join below. The
+        Library's plural/singular widening is deliberately NOT copied: a
+        reader scanning for a feed's own words wants exactly those words.
+        """
+        return '"' + term.replace('"', '""') + '"'
+
+    def _search_items_rows(
+        self,
+        conn: Any,
+        where_clause: str,
+        params: List[Any],
+        search_terms: List[str],
+        limit: int,
+    ) -> List[Any]:
+        """The `search` half of `get_new_items`: FTS5 MATCH, LIKE fallback.
+
+        The happy path JOINs `subscription_items_fts` (external-content over
+        title/content/author) and MATCHes the AND-of-quoted-terms query. The
+        fallback fires on `sqlite3.OperationalError` -- the table missing on
+        a pre-migration database, or fts5 compiled out of the bundled SQLite
+        -- and answers the same question with AND-of-terms,
+        OR-across-columns LIKEs whose wildcards are escaped (``%``/``_``/
+        ``\\`` stay literal). Either way the caller gets rows; the search
+        box must never raise into the reader.
+        """
+        match = " AND ".join(self._quote_fts5_term(term) for term in search_terms)
+        fts_where = (
+            f"{where_clause} AND subscription_items_fts MATCH ?"
+            if where_clause
+            else "WHERE subscription_items_fts MATCH ?"
+        )
+        try:
+            return conn.execute(
+                f"""
+                SELECT i.*, s.name as subscription_name, s.type as subscription_type
+                FROM subscription_items i
+                JOIN subscription_items_fts ON subscription_items_fts.rowid = i.id
+                JOIN subscriptions s ON i.subscription_id = s.id
+                {fts_where}
+                ORDER BY COALESCE(i.published_date, i.created_at) DESC
+                LIMIT ?
+                """,
+                tuple([*params, match, limit]),
+            ).fetchall()
+        except sqlite3.OperationalError:
+            logger.debug("subscription_items_fts unavailable; falling back to LIKE search.")
+        like_clauses: List[str] = []
+        like_params: List[Any] = []
+        for term in search_terms:
+            escaped = (
+                term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            )
+            like_clauses.append(
+                "(i.title LIKE ? ESCAPE '\\' OR i.content LIKE ? ESCAPE '\\' "
+                "OR i.author LIKE ? ESCAPE '\\')"
+            )
+            like_params.extend([f"%{escaped}%"] * 3)
+        like_predicates = " AND ".join(like_clauses)
+        like_where = (
+            f"{where_clause} AND {like_predicates}" if where_clause else f"WHERE {like_predicates}"
+        )
+        return conn.execute(
+            f"""
+            SELECT i.*, s.name as subscription_name, s.type as subscription_type
+            FROM subscription_items i
+            JOIN subscriptions s ON i.subscription_id = s.id
+            {like_where}
+            ORDER BY COALESCE(i.published_date, i.created_at) DESC
+            LIMIT ?
+            """,
+            tuple([*params, *like_params, limit]),
+        ).fetchall()
+
     def get_new_items(
         self,
         subscription_id: Optional[int] = None,
@@ -1800,6 +1881,8 @@ class SubscriptionsDB(BaseDB):
         unassigned_only: bool = False,
         statuses: Optional[List[str]] = None,
         is_flagged: Optional[bool] = None,
+        search: Optional[str] = None,
+        since: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """Items for a subscription (or all of them), newest first.
 
@@ -1845,6 +1928,17 @@ class SubscriptionsDB(BaseDB):
                 (`False`), or `None` to not filter by the flag at all
                 (TASK-3072 -- the Starred feed's page). Composes with every
                 other predicate, the same as the membership scopes.
+            search: Full-text terms over title/content/author (TASK-3603 --
+                the reader's `/`). Whitespace-separated terms are ANDed, each
+                matched literally (FTS5 operator syntax in the input is
+                neutralized by quoting); the FTS table is used when it reads,
+                with a LIKE fallback when it does not. `None` or blank passes
+                no predicate at all.
+            since: Effective-date floor (TASK-3603 -- the Today feed's page):
+                only rows with `COALESCE(published_date, created_at) >= since`
+                (inclusive). The COALESCE compares stored strings, exact for
+                same-shape ISO -- the caller passes a local-midnight ISO and
+                the stored dates are UTC ISO, which share the shape.
 
         Returns:
             One dict per item row, joined to its subscription's name and type,
@@ -1894,21 +1988,30 @@ class SubscriptionsDB(BaseDB):
         if is_flagged is not None:
             predicates.append("i.is_flagged = ?")
             params.append(1 if is_flagged else 0)
+        if since is not None:
+            predicates.append("COALESCE(i.published_date, i.created_at) >= ?")
+            params.append(since)
         where_clause = f"WHERE {' AND '.join(predicates)}" if predicates else ""
-        params.append(limit)
 
+        search_terms = search.split() if search and search.strip() else []
         with self.transaction() as conn:
-            rows = conn.execute(
-                f"""
-                SELECT i.*, s.name as subscription_name, s.type as subscription_type
-                FROM subscription_items i
-                JOIN subscriptions s ON i.subscription_id = s.id
-                {where_clause}
-                ORDER BY COALESCE(i.published_date, i.created_at) DESC
-                LIMIT ?
-                """,
-                tuple(params),
-            ).fetchall()
+            if search_terms:
+                rows = self._search_items_rows(
+                    conn, where_clause, params, search_terms, limit
+                )
+            else:
+                params.append(limit)
+                rows = conn.execute(
+                    f"""
+                    SELECT i.*, s.name as subscription_name, s.type as subscription_type
+                    FROM subscription_items i
+                    JOIN subscriptions s ON i.subscription_id = s.id
+                    {where_clause}
+                    ORDER BY COALESCE(i.published_date, i.created_at) DESC
+                    LIMIT ?
+                    """,
+                    tuple(params),
+                ).fetchall()
         return [dict(row) for row in rows]
 
     def get_item_status(self, item_id: int) -> str:
@@ -2163,6 +2266,28 @@ class SubscriptionsDB(BaseDB):
         with self.transaction() as conn:
             row = conn.execute(
                 "SELECT COUNT(*) FROM subscription_items WHERE is_flagged = 1"
+            ).fetchone()
+        return int(row[0]) if row else 0
+
+    def get_unread_items_count_since(self, since: str) -> int:
+        """How many unread items fall at/after `since` -- the Today badge.
+
+        TASK-3603. The floor compares the EFFECTIVE date (``published_date``,
+        falling back to ``created_at``), the same COALESCE `get_new_items`
+        orders by and its `since` predicate filters on, so the badge and the
+        node's page answer the same question.
+
+        Args:
+            since: Inclusive ISO floor (the screen passes local midnight).
+
+        Returns:
+            The count of ``status = 'new'`` rows at or after the floor.
+        """
+        with self.transaction() as conn:
+            row = conn.execute(
+                "SELECT COUNT(*) FROM subscription_items "
+                "WHERE status = 'new' AND COALESCE(published_date, created_at) >= ?",
+                (since,),
             ).fetchone()
         return int(row[0]) if row else 0
 

@@ -107,7 +107,7 @@ async def test_list_items_delegates_to_local_service():
     local_service.list_items.assert_awaited_once_with(
         source_id=None, status="new", limit=100, offset=0, run_id=None,
         watchlist_id=None, unassigned_only=False, statuses=None,
-        is_flagged=None,
+        is_flagged=None, search=None, since=None,
     )
     assert len(result) == 1
 
@@ -126,7 +126,7 @@ async def test_list_items_forwards_watchlist_scope():
     local_service.list_items.assert_awaited_once_with(
         source_id=None, status=None, limit=100, offset=0, run_id=None,
         watchlist_id=3, unassigned_only=False, statuses=["new", "reviewed"],
-        is_flagged=None,
+        is_flagged=None, search=None, since=None,
     )
 
 
@@ -274,3 +274,24 @@ async def test_set_item_flagged_server_backend_rejected():
             runtime_backend=WatchlistBackend.SERVER, item_id=7, flagged=True
         )
     local_service.set_item_flagged.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_list_items_forwards_search_and_since():
+    """TASK-3603 plan task 2: the reader's search/since terms reach the local
+    service untouched, the same contract as every other list_items kwarg."""
+    scope_service, local_service, _ = make_scope_service()
+    local_service.list_items = AsyncMock(return_value=[])
+
+    await scope_service.list_items(
+        runtime_backend=WatchlistBackend.LOCAL,
+        search="retrieval rubric",
+        since="2026-08-08T00:00:00+00:00",
+    )
+
+    local_service.list_items.assert_awaited_once_with(
+        source_id=None, status=None, limit=100, offset=0, run_id=None,
+        watchlist_id=None, unassigned_only=False, statuses=None,
+        is_flagged=None,
+        search="retrieval rubric", since="2026-08-08T00:00:00+00:00",
+    )

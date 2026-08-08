@@ -225,6 +225,8 @@ class WatchlistScopeService:
         unassigned_only: bool = False,
         statuses: list[str] | None = None,
         is_flagged: bool | None = None,
+        search: str | None = None,
+        since: str | None = None,
     ) -> list[dict[str, Any]]:
         """List content items for watchlist sources.
 
@@ -247,6 +249,10 @@ class WatchlistScopeService:
             is_flagged: Restrict to starred rows (``True``) or unstarred
                 rows (``False``), or ``None`` to not filter by the flag
                 (TASK-3072 -- the Starred feed's scope).
+            search: Full-text terms over title/content/author (TASK-3603 --
+                the reader's `/`), or ``None`` for no search predicate.
+            since: Effective-date floor (TASK-3603 -- the Today feed's
+                scope), or ``None`` for no floor.
 
         Returns:
             List of normalized watchlist item dicts.
@@ -271,6 +277,8 @@ class WatchlistScopeService:
                 unassigned_only=unassigned_only,
                 statuses=statuses,
                 is_flagged=is_flagged,
+                search=search,
+                since=since,
             )
         )
 
