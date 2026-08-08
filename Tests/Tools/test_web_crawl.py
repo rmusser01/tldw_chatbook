@@ -813,7 +813,7 @@ def test_crawl_html_only_aborts_sniffed_pdf_despite_declared_html(crawl_env):
     up to the 1 MiB page cap instead of aborting once the type is known
     from the sniff."""
     def guarded_chunks():
-        yield b"%PDF-"  # >= 5 bytes: resolves the sniff to is_pdf=True this chunk
+        yield b"%PDF-"  # 5 bytes: under the 12-byte sniff window, resolves NEXT chunk
         for i in range(3):
             yield f"filler chunk {i}".encode()
         raise AssertionError(
@@ -827,6 +827,29 @@ def test_crawl_html_only_aborts_sniffed_pdf_despite_declared_html(crawl_env):
     )
     out = web_crawl("http://example.com/")
     assert "[application/pdf]" in out
+
+
+def test_crawl_mislabeled_binary_declared_html_reads_full_body(crawl_env):
+    """Review fix round 1 (Important 2): a binary served AS text/html
+    during a crawl keeps today's full-read behavior (the binary design
+    doc's stated non-goal) — the html_only early-abort must key on
+    kind == "pdf" plus the DECLARED type, never a sniffed image/zip/audio
+    kind, which would cut the body at the 12-byte sniff window while
+    misreporting truncated=False. The ASCII tail marker survives the
+    UTF-8-replace decode, so its presence in the excerpt proves the body
+    was drained past the sniff window. CHUNKED delivery is load-bearing
+    (re-review): a single-chunk body is fully captured before the abort
+    check runs, so only a multi-chunk response lets the buggy predicate
+    actually cut the tail — verified red against the pre-fix code."""
+    def chunked():
+        yield b"\x89PNG\r\n\x1a\n" + b"\x00" * 8  # 16 bytes: sniff resolves kind=image here
+        yield b"TAILMARKER after the sniff window"
+    _site(crawl_env, {"http://example.com/": ("root", ["/masq"])})
+    crawl_env.routes["http://example.com/masq"] = httpx.Response(
+        200, content=chunked(), headers={"content-type": "text/html"}
+    )
+    out = web_crawl("http://example.com/")
+    assert "TAILMARKER" in out
 
 
 def test_crawl_nonpdf_nonhtml_marker_uses_declared_type(crawl_env):

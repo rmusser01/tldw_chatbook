@@ -371,9 +371,24 @@ def _fetch_once(
             if not resolved and downloaded >= _SNIFF_PREFIX_LEN:
                 kind = _sniff_kind(b"".join(chunks)[:_SNIFF_PREFIX_LEN])
                 resolved = True
-            if html_only and resolved and (kind or (declared and declared not in _HTML_TYPES)):
+            # Review fix (Important 2): the abort predicate keys on
+            # kind == "pdf" plus the DECLARED type only -- never on a
+            # sniffed image/zip/audio kind -- so a binary served as
+            # text/html during a crawl keeps today's full-read behavior
+            # (the design doc's stated non-goal) instead of being cut at
+            # the sniff window with truncated=False.
+            if html_only and resolved and (kind == "pdf" or (declared and declared not in _HTML_TYPES)):
                 break  # crawl only needs the type; don't drain the body
-            cap = _binary_read_cap(kind, max_bytes, pdf_max_bytes, binary_max_bytes)
+            # Review fix (Minor 3): while the kind is UNRESOLVED the loop
+            # must not break before the sniff window fills -- a caller
+            # max_bytes under _SNIFF_PREFIX_LEN could otherwise hand the
+            # post-loop sniff a partial prefix that still resolves (e.g.
+            # 5 of 12 bytes matching %PDF-), mis-computing truncated
+            # against the raised ceiling.
+            if resolved:
+                cap = _binary_read_cap(kind, max_bytes, pdf_max_bytes, binary_max_bytes)
+            else:
+                cap = max(max_bytes, _SNIFF_PREFIX_LEN)
             if downloaded > cap:
                 break  # overshoot by at most one chunk; sliced below
         if not resolved:  # body shorter than the sniff prefix
@@ -425,11 +440,18 @@ def _member_display_name(name: str) -> str:
     flag-and-show, not reject -- this module never extracts, so the only
     duty is to list a hostile name SAFELY (repr-escaped, not printed
     verbatim). Mirrors ``chatbook_importer._validated_archive_parts``'s
-    checks (absolute path, ``..``/``.``/empty segments, a drive-letter-
-    looking first segment) plus a NUL/backslash screen up front, since
-    ``PurePosixPath`` itself doesn't treat backslash as a separator.
+    checks (absolute path, ``..`` segments, a drive-letter-looking first
+    segment -- ``PurePosixPath`` collapses ``""``/``"."`` segments before
+    ``.parts``, so only ``..`` is live in that membership check) plus a
+    screen up front for NUL, backslash (``PurePosixPath`` doesn't treat it
+    as a separator), and ANY non-printable character: a member name is
+    attacker-controlled text embedded in a structured listing, and a
+    newline/ESC/RTL-override in it could forge listing rows or smuggle
+    terminal control bytes into the model-facing transcript.
+    ``str.isprintable()`` is False for all of those and True for ordinary
+    Unicode names, so legitimate non-ASCII filenames list plainly.
     """
-    if not name or "\x00" in name or "\\" in name:
+    if not name or not name.isprintable() or "\x00" in name or "\\" in name:
         return f"[suspicious name] {name!r}"
     posix = PurePosixPath(name)
     parts = posix.parts
@@ -444,8 +466,10 @@ def _member_display_name(name: str) -> str:
 
 
 def _describe_image(body: bytes) -> str:
-    """In-memory Pillow probe: format/size/mode metadata only, never pixel
-    data (design doc ruling 2). ``Image.MAX_IMAGE_PIXELS`` stays at its
+    """In-memory Pillow probe: format/size metadata only, never pixel
+    data (design doc ruling 2; ``mode`` is deliberately not emitted --
+    the spec's output format carries format/dimensions/bytes and nothing
+    else). ``Image.MAX_IMAGE_PIXELS`` stays at its
     default -- this path never decodes pixel data, only headers, so
     declared-dimension abuse costs nothing beyond an honest metadata line.
 
@@ -456,11 +480,15 @@ def _describe_image(body: bytes) -> str:
     seeking, since ``verify()`` leaves the file object unusable for
     anything further.
     """
-    from PIL import Image  # local import: keep module import cheap
+    from PIL import Image, UnidentifiedImageError  # local import: keep module import cheap
 
     try:
         with Image.open(BytesIO(body)) as probe:
             probe.verify()
+    except UnidentifiedImageError as exc:
+        # Fixed message: Pillow's own text interpolates the BytesIO repr
+        # (a heap address) -- noise the model can't use.
+        raise LocalToolError("[image-error] could not identify image format") from exc
     except Exception as exc:
         raise LocalToolError(f"[image-error] could not read image: {exc}") from exc
     try:
