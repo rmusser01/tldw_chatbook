@@ -7,6 +7,7 @@ import pytest
 from tldw_chatbook.config import CONFIG_TOML_CONTENT, DEFAULT_APP_TTS_CONFIG
 from tldw_chatbook.Utils.log_sanitizer import (
     create_safe_log_message,
+    safe_log,
     sanitize_dict,
     sanitize_list,
     sanitize_log_params,
@@ -117,6 +118,189 @@ def test_sensitive_container_value_is_redacted_before_recursion(value) -> None:
     assert sanitize_dict({"api_key": value}) == {"api_key": "***REDACTED***"}
 
 
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        (
+            'api_key="PRIVATE_QUOTED", safe="visible"',
+            'api_key="***REDACTED***", safe="visible"',
+        ),
+        ("password=correct horse battery staple", "password=***REDACTED***"),
+        (
+            "max_tokens=42 api_key=PRIVATE_LATER",
+            "max_tokens=42 api_key=***REDACTED***",
+        ),
+        ("api_key=PRIVATE_QUERY&safe=visible", "api_key=***REDACTED***"),
+        (
+            "api_key=\nrefresh_token=PRIVATE_NEXT",
+            "api_key=\nrefresh_token=***REDACTED***",
+        ),
+    ],
+)
+def test_assignment_scanner_contract(raw: str, expected: str) -> None:
+    """Redact classified assignments without consuming later candidates."""
+    assert sanitize_string(raw) == expected
+
+
+def test_assignment_scanner_redacts_two_quoted_secrets_on_one_line() -> None:
+    """Keep syntax and safe fields while finding each quoted sensitive value."""
+    raw = 'api_key="PRIVATE_FIRST", safe="visible", password="PRIVATE_SECOND"'
+
+    assert sanitize_string(raw) == (
+        'api_key="***REDACTED***", safe="visible", password="***REDACTED***"'
+    )
+
+
+def test_assignment_scanner_ignores_escaped_quotes_inside_secret() -> None:
+    """Treat an escaped quote as part of the quoted secret value."""
+    assert sanitize_string('api_key="PRIVATE\\"QUOTED", safe=visible') == (
+        'api_key="***REDACTED***", safe=visible'
+    )
+
+
+def test_assignment_scanner_resumes_after_unterminated_quoted_value() -> None:
+    """Redact an unterminated line then continue at the next assignment line."""
+    raw = 'api_key="PRIVATE_UNTERMINATED\nrefresh_token=PRIVATE_NEXT'
+
+    assert sanitize_string(raw) == (
+        'api_key="***REDACTED***\nrefresh_token=***REDACTED***'
+    )
+
+
+@pytest.mark.parametrize("label", ["OPENAI_API_KEY", "ANTHROPIC_API_KEY"])
+def test_explicit_provider_labels_redact_quoted_and_unquoted_values(label: str) -> None:
+    """Classify explicit provider labels before consuming either value syntax."""
+    assert sanitize_string(f'{label}="PRIVATE_QUOTED"') == f'{label}="***REDACTED***"'
+    assert sanitize_string(f"{label}=PRIVATE_UNQUOTED") == f"{label}=***REDACTED***"
+
+
+def test_all_config_derived_sensitive_labels_redact_quoted_and_unquoted_values() -> None:
+    """Keep string logging aligned with the shared sensitive-key policy."""
+    default_config = tomllib.loads(CONFIG_TOML_CONTENT)
+    labels = {
+        str(key)
+        for key in _iter_leaf_key_names(default_config)
+        if is_sensitive_config_key(key)
+    }
+    labels.update(
+        key for key in DEFAULT_APP_TTS_CONFIG if is_sensitive_config_key(key)
+    )
+
+    for index, label in enumerate(sorted(labels)):
+        quoted = f'{label}="PRIVATE_QUOTED_{index}"'
+        unquoted = f"{label}=PRIVATE_UNQUOTED_{index}"
+
+        assert sanitize_string(quoted) == f'{label}="***REDACTED***"'
+        assert sanitize_string(unquoted) == f"{label}=***REDACTED***"
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "api_key_env_var",
+        "max_tokens",
+        "claude-opus-4-20250514",
+        "Basic model configuration",
+        "NotBearer token",
+        "not-bearer token",
+    ],
+)
+def test_false_positive_shapes_remain_unchanged(raw: str) -> None:
+    """Avoid treating model names and near-schemes as credentials."""
+    assert sanitize_string(raw) == raw
+
+
+def test_standalone_bearer_credential_preserves_scheme_only() -> None:
+    """Remove a full bearer credential without rewriting its scheme."""
+    assert sanitize_string("Bearer PRIVATE_BEARER") == "Bearer ***REDACTED***"
+
+
+def test_url_userinfo_removes_both_username_and_password() -> None:
+    """Redact URL credentials as one neutral marker."""
+    result = sanitize_string("https://user:PRIVATE_PASSWORD@example.test/private")
+
+    assert result == "https://***REDACTED***@example.test/private"
+    assert "user" not in result
+    assert "PRIVATE_PASSWORD" not in result
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "sk-proj-abcdefghijklmnopqrst",
+        "sk-ant-api03-abcdefghijklmnopqrst",
+        "sk-abcdefghijklmnopqrst",
+        "AIza" + "a" * 35,
+    ],
+)
+def test_standalone_credential_shapes_are_replaced_wholly(raw: str) -> None:
+    """Replace every recognized standalone key shape with exactly one marker."""
+    assert sanitize_string(raw) == "***REDACTED***"
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "SK-PROJ-ABCDEFGHIJKLMNOPQRST",
+        "SK-ANT-API03-ABCDEFGHIJKLMNOPQRST",
+        "SK-ABCDEFGHIJKLMNOPQRST",
+        "AIZA" + "A" * 35,
+    ],
+)
+def test_uppercase_standalone_credential_shapes_are_not_recognized(raw: str) -> None:
+    """Keep standalone credential family recognition intentionally case-sensitive."""
+    assert sanitize_string(raw) == raw
+
+
+def test_labeled_standalone_shaped_value_has_one_idempotent_marker() -> None:
+    """Assignment redaction consumes a key-shaped quoted secret only once."""
+    raw = 'api_key="sk-proj-abcdefghijklmnopqrst"'
+    sanitized = sanitize_string(raw)
+
+    assert sanitized == 'api_key="***REDACTED***"'
+    assert sanitize_string(sanitized) == sanitized
+
+
+def test_sanitization_is_idempotent_for_strings_and_containers() -> None:
+    """Repeated sanitization must not further alter redacted data."""
+    already_redacted = 'api_key="***REDACTED***" Bearer ***REDACTED***'
+    dictionary = {"api_key": "PRIVATE", "nested": {"password": "PRIVATE"}}
+    values = ["token=PRIVATE", {"api_key": "PRIVATE"}]
+
+    assert sanitize_string(sanitize_string(already_redacted)) == already_redacted
+    assert sanitize_dict(sanitize_dict(dictionary)) == sanitize_dict(dictionary)
+    assert sanitize_list(sanitize_list(values)) == sanitize_list(values)
+
+
+def test_sanitize_string_keeps_non_string_str_fallback() -> None:
+    """Preserve the established permissive fallback for non-string values."""
+    assert sanitize_string(1234) == "1234"
+
+
+def test_formatting_failure_sanitizes_template_without_interpolating_raw_arguments() -> None:
+    """Do not leak raw arguments when formatting falls back to its template."""
+    result = create_safe_log_message("api_key={missing}", "PRIVATE_ARGUMENT")
+
+    assert result == "api_key=***REDACTED***"
+    assert "PRIVATE_ARGUMENT" not in result
+
+
+def test_safe_log_calls_callback_once_with_sanitized_final_message() -> None:
+    """Send one fully sanitized message to the provided logging callback."""
+    calls: list[str] = []
+
+    safe_log(calls.append, "api_key={}", "PRIVATE_CALLBACK")
+
+    assert calls == ["api_key=***REDACTED***"]
+
+
+def test_long_non_matching_text_remains_unchanged() -> None:
+    """Exercise the scanner's linear no-match path without timing assertions."""
+    raw = "x" * 100_000
+
+    assert sanitize_string(raw) == raw
+
+
 class TestLogSanitizer:
     """Test the log sanitization utilities."""
 
@@ -126,12 +310,12 @@ class TestLogSanitizer:
             ("api_key=sk-1234567890abcdef", "api_key=***REDACTED***"),
             (
                 "Bearer sk-abcdefghijklmnopqrstuvwxyz123456789012345678",
-                "Bearer ***OPENAI_KEY***",
+                "Bearer ***REDACTED***",
             ),
             ("OPENAI_API_KEY=sk-test123", "OPENAI_API_KEY=***REDACTED***"),
             ('{"api_key": "secret123"}', '{"api_key": "***REDACTED***"}'),
-            ("password: mypassword123", "password=***REDACTED***"),
-            ("https://user:pass@example.com", "https://***:***@example.com"),
+            ("password: mypassword123", "password: ***REDACTED***"),
+            ("https://user:pass@example.com", "https://***REDACTED***@example.com"),
         ]
 
         for input_str, expected in test_cases:
@@ -181,7 +365,7 @@ class TestLogSanitizer:
             "john",
             "sk-abcdefghijklmnopqrstuvwxyz123456",
         )
-        assert msg == "User john logged in with key ***OPENAI_KEY***"
+        assert msg == "User john logged in with key ***REDACTED***"
 
         # Test with keyword args
         msg = create_safe_log_message("Config: {config}", config={"api_key": "secret"})
