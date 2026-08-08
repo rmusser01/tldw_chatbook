@@ -1,6 +1,6 @@
 # audio.cpp Managed Lifecycle — Product Requirements and Design
 
-Status: Approved design; independent specification review passed; pending user artifact approval
+Status: Approved by the user on 2026-08-02 after independent specification review
 
 Date: 2026-08-02
 

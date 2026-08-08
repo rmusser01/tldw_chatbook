@@ -41,7 +41,7 @@ The product will establish four explicit owners:
 
 | Owner | Owns | Does not own |
 | --- | --- | --- |
-| **Settings → Speech & TTS** | Application-wide defaults, credentials, endpoints, local initialization resources, external audio.cpp configuration, and provider safety limits | Live network checks, catalog refresh, generation, playback, character assignment |
+| **Settings → Speech & TTS** | Application-wide defaults, credentials, endpoints, local initialization resources, audio.cpp External/Managed configuration, and provider safety limits | Live network checks, catalog refresh, generation, playback, process lifecycle operations, runtime diagnostics, character assignment |
 | **Lab → Speech → Studio TTS Preferences** | Persisted, provider-scoped Studio overrides and the current Studio generation draft | Global defaults, credentials, runtime-global initialization, implicit character assignment |
 | **Character TTS profiles** | Exact character-specific provider/model/voice/tuning selections and assignment | Global or Studio mutation |
 | **TTS runtime / Lab operations** | Readiness checks, catalog and voice discovery, refresh, synthesis progress, playback, and runtime diagnostics | Durable configuration ownership |
