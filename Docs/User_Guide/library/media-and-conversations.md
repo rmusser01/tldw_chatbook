@@ -121,7 +121,7 @@ of type 'pdf'."
 | "Use in Console" | Stages this item as context for your next Console message. |
 | "Read it later" ↔ "Remove from read-it-later" | Toggles the item on your read-it-later list. |
 | "Open in Library ▸ Media" | Returns to Library's own Media surface (the separate Media screen was retired). |
-| "Delete" | Two-step: shows "Delete this media? This moves it to trash." with "Delete" / "Cancel". |
+| "Delete" | Two-step: shows "Delete this media? This moves it to trash." with "Delete" / "Cancel". Confirming trashes the item, returns to the list, and drops the rail's "Media N" count by one immediately, the same as the list's own "Delete selected". |
 
 ### Conversations
 
@@ -254,3 +254,10 @@ chatbook"; "Analyze after ingest" is now "Analyze after import").*
 Conversations canvas now opens with a "Conversations (N)" title header
 matching Media's, and its filter box renders above the empty-state text
 instead of below it).*
+
+*Verified against dev @ 023a04a48 — 2026-08-07 (task-3020: the media
+viewer's single-item "Delete" now drops the rail's "Media N" count
+immediately too, matching "Delete selected"; Library-wide Escape/keyboard
+behavior for the bulk-delete confirmation is covered in the
+[Library overview](../library.md#keyboard--commands), not duplicated
+here).*

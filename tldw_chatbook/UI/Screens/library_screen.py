@@ -1435,6 +1435,18 @@ class LibraryScreen(BaseAppScreen):
         # to the hub landing; the persisted ingest form survives (the
         # task-2043 persistence rule), so Esc is never destructive.
         ("escape", "library_ingest_back", "Back to Library hub"),
+        # task-3020 AC2: an ARMED bulk-delete confirmation on the Media
+        # list is still ``_library_media_view == "list"`` (the toolbar is
+        # swapped in place, not a distinct sub-view), so without this the
+        # broader "focus rail" binding below would have already claimed
+        # Escape here -- both gates independently check_action-True on
+        # this exact state, and Textual resolves same-key bindings in
+        # DECLARATION ORDER, so this one must come first (see
+        # ``test_library_media_bulk_delete_cancel_binding_precedes_focus_
+        # rail``). Mirrors the single-item viewer confirm's own Escape-
+        # cancels behavior (``action_library_media_viewer_back``'s
+        # ``_library_media_confirming_delete`` branch).
+        ("escape", "library_media_bulk_delete_cancel", "Cancel delete confirmation"),
         ("escape", "library_list_focus_rail", "Focus rail"),
         # Task 12/RAG-36: keyboard traversal of Library Search/RAG evidence
         # cards. Both actions gate on the currently FOCUSED widget being one
@@ -1537,6 +1549,34 @@ class LibraryScreen(BaseAppScreen):
         ("/", "focus search"),
         ("F6", "next pane"),
         ("esc", "back a step"),
+    )
+
+    #: task-3020 AC4: the skill editor's own working keys -- Ctrl+S saves,
+    #: Escape returns to the skills list (``action_library_skill_save``/
+    #: ``action_library_skill_back``, both gated to
+    #: ``_library_skill_editor_active()``). Previously unadvertised: with
+    #: no branch for this state, ``_library_footer_shortcuts_for_current_
+    #: state`` fell through to ``_library_list_canvas_showing_list()``,
+    #: which is False here (the skills view is "editor", not "list"), and
+    #: landed on the bare ``LIBRARY_GENERAL_SHORTCUTS`` -- an asymmetry
+    #: beside the note/prompt editors, which already advertise their own
+    #: "esc" hint via ``LIBRARY_DETAIL_BACK_SHORTCUTS``.
+    LIBRARY_SKILL_EDITOR_SHORTCUTS = (
+        ("/", "focus search"),
+        ("F6", "next pane"),
+        ("ctrl+s", "save skill"),
+        ("esc", "back to skills list"),
+    )
+
+    #: task-3020 AC2: an ARMED bulk-delete confirmation on the Media list --
+    #: Escape cancels it (``action_library_media_bulk_delete_cancel``)
+    #: rather than moving focus to the rail; the plain list's "focus rail"
+    #: hint would otherwise still show here since the list is genuinely
+    #: still showing, just with its toolbar swapped for the confirm row.
+    LIBRARY_MEDIA_BULK_DELETE_CONFIRM_SHORTCUTS = (
+        ("/", "focus search"),
+        ("F6", "next pane"),
+        ("esc", "cancel delete"),
     )
 
     #: task-2856 AC2: a list canvas (Media/Notes/Prompts/Skills) showing its
@@ -2422,6 +2462,18 @@ class LibraryScreen(BaseAppScreen):
         # "Delete N selected items?" confirmation should render in place of
         # the normal Select all/Clear/Export selected/Delete selected row.
         self._library_media_confirming_bulk_delete: bool = False
+        # task-3020 AC1: set synchronously (before the worker is even
+        # scheduled) the instant the confirm row's "Delete" is pressed, and
+        # cleared only once ``_delete_library_media_selection`` finishes --
+        # a fast double-press on that same button, which stays visible and
+        # enabled until the async worker's own completion recompose swaps
+        # it away, would otherwise launch a SECOND worker over the same
+        # frozen id tuple; ``mark_as_trash`` is idempotent so the delete
+        # itself is harmless, but the rail-count decrement is not -- the
+        # second worker would decrement it again for ids already gone from
+        # ``_local_source_records``. Checked at the very top of the confirm
+        # button handler, before it even reads the selection.
+        self._library_media_bulk_delete_in_flight: bool = False
         self._library_media_view: str = "list"
         self._library_media_detail: Mapping[str, Any] | None = None
         self._library_media_editing: bool = False
@@ -2889,7 +2941,13 @@ class LibraryScreen(BaseAppScreen):
         # back one level (see ``action_library_media_viewer_back``), not to
         # the list, so it gets its own honest hint instead of inheriting
         # the plain viewer's "back to list" (see
-        # ``_library_media_viewer_substate_active``).
+        # ``_library_media_viewer_substate_active``). task-3020: two more
+        # contexts -- the skill editor advertises its own "ctrl+s"/"esc"
+        # (AC4, previously fell through to the bare general set since its
+        # view is "editor", not "list"); an ARMED bulk-delete confirmation
+        # on the Media list advertises "esc cancel delete" instead of the
+        # plain list's "esc focus rail" (AC2 parity/honesty -- the list is
+        # still genuinely showing, just with its toolbar swapped out).
         """
         if self._library_selected_row_id == LIBRARY_ROW_BROWSE_SEARCH:
             return self.LIBRARY_SHORTCUTS
@@ -2913,6 +2971,10 @@ class LibraryScreen(BaseAppScreen):
             or self._library_prompt_editor_active()
         ):
             return self.LIBRARY_DETAIL_BACK_SHORTCUTS
+        if self._library_skill_editor_active():
+            return self.LIBRARY_SKILL_EDITOR_SHORTCUTS
+        if self._library_media_confirming_bulk_delete:
+            return self.LIBRARY_MEDIA_BULK_DELETE_CONFIRM_SHORTCUTS
         if self._library_list_canvas_showing_list():
             return self.LIBRARY_LIST_SHORTCUTS
         return self.LIBRARY_GENERAL_SHORTCUTS
@@ -5081,14 +5143,40 @@ class LibraryScreen(BaseAppScreen):
         A no-op when the canvas isn't one of the four list canvases
         (nothing to focus), the list is empty, or the query can't resolve
         (e.g. a recompose still in flight).
+
+        task-3020 AC3: while the Media canvas is in Select mode with a
+        non-empty selection (a partial, or total, bulk-delete failure
+        leaves the failed id(s) still checked, waiting for a retry), the
+        first STILL-CHECKED row is preferred over the literal first row --
+        landing keyboard focus on a row the user never selected would be
+        a worse regression than the original "nothing focused" bug this
+        method exists to fix. Every other caller is unaffected: the
+        preference requires BOTH the Media row class and a non-empty
+        selection, so notes/prompts/skills (no row_selection concept
+        here) and Media outside an active selection (e.g. the bulk
+        delete's own full-success path, which clears the selection before
+        arming this) fall straight through to the plain first-row
+        behavior, unchanged from before.
         """
         row_class = _LIBRARY_LIST_ROW_CLASS_BY_ROW_ID.get(self._library_selected_row_id)
         if row_class is None:
             return
         try:
-            first_row = self.query(f".{row_class}").first()
+            rows = self.query(f".{row_class}")
+            first_row = rows.first()
         except NoMatches:
             return
+        if (
+            row_class == "library-media-row"
+            and self._library_media_select_mode
+            and self._library_media_row_selection.count
+        ):
+            for row in rows:
+                if self._library_media_row_selection.is_selected(
+                    getattr(row, "media_id", "")
+                ):
+                    row.focus()
+                    return
         first_row.focus()
 
     async def _flush_active_file_notes(self) -> bool:
@@ -11603,6 +11691,32 @@ class LibraryScreen(BaseAppScreen):
             return
         self._library_media_confirming_bulk_delete = True
         _sync_library_canvas(self, "media")
+        # task-3020 AC2: arming/cancelling the confirmation flips which
+        # footer set ``_library_footer_shortcuts_for_current_state``
+        # selects, but ``_sync_library_canvas`` is a CANVAS-scoped update
+        # that deliberately skips the footer widget (see its own
+        # docstring) -- unlike the single-item viewer's own confirm
+        # (``handle_library_media_delete``), which always does a full
+        # ``self.refresh(recompose=True)`` and gets this for free via
+        # ``compose_content``. Without this explicit call the footer would
+        # keep showing the plain list's stale "esc focus rail" hint while
+        # the confirmation is armed (live-verified before this line was
+        # added).
+        self._register_footer_shortcuts()
+
+    def _cancel_library_media_bulk_delete(self) -> None:
+        """Dismiss the pending bulk-delete confirmation without deleting anything.
+
+        Shared by the confirm row's own "Cancel" button
+        (``handle_library_media_bulk_delete_cancel``) and Escape
+        (``action_library_media_bulk_delete_cancel``, task-3020 AC2) --
+        one seam, not two paths that could drift.
+        """
+        self._library_media_confirming_bulk_delete = False
+        _sync_library_canvas(self, "media")
+        # See the matching comment in ``handle_library_media_delete_
+        # selected`` -- the footer must be explicitly refreshed here too.
+        self._register_footer_shortcuts()
 
     @on(Button.Pressed, "#library-media-bulk-delete-cancel")
     def handle_library_media_bulk_delete_cancel(self, event: Button.Pressed) -> None:
@@ -11612,8 +11726,7 @@ class LibraryScreen(BaseAppScreen):
             event: Button press event emitted by the confirm row's "Cancel".
         """
         event.stop()
-        self._library_media_confirming_bulk_delete = False
-        _sync_library_canvas(self, "media")
+        self._cancel_library_media_bulk_delete()
 
     @on(Button.Pressed, "#library-media-bulk-delete-confirm")
     def handle_library_media_bulk_delete_confirm(self, event: Button.Pressed) -> None:
@@ -11625,16 +11738,48 @@ class LibraryScreen(BaseAppScreen):
         ``handle_library_media_delete_confirm`` reads ``_selected_media_id``
         synchronously for the single-item case.
 
+        task-3020 AC1: guarded by ``_library_media_bulk_delete_in_flight``,
+        checked and set BEFORE the worker is scheduled -- the confirm
+        button stays visible and enabled until the worker's own
+        completion recompose swaps it away, so a fast double-press would
+        otherwise read the same frozen selection twice and hand off two
+        workers over the same ids (harmless for ``mark_as_trash``, which
+        is idempotent, but the second worker's own rail-count decrement
+        would double-count). ``exclusive=True``/``group=`` is added too as
+        a second line of defense, matching this screen's other single-
+        flight workers (e.g. ``library_note_save``).
+
         Args:
             event: Button press event emitted by the confirm row's "Delete".
         """
         event.stop()
+        if self._library_media_bulk_delete_in_flight:
+            return
         media_ids = tuple(sorted(self._library_media_row_selection.ids))
         if not media_ids:
             self._library_media_confirming_bulk_delete = False
             _sync_library_canvas(self, "media")
             return
-        self.run_worker(self._delete_library_media_selection(media_ids))
+        self._library_media_bulk_delete_in_flight = True
+        self.run_worker(
+            self._delete_library_media_selection(media_ids),
+            exclusive=True,
+            group="library_media_bulk_delete",
+        )
+
+    def action_library_media_bulk_delete_cancel(self) -> None:
+        """Escape: cancel an ARMED bulk-delete confirmation (task-3020 AC2).
+
+        ``check_action`` gates this to
+        ``_library_media_confirming_bulk_delete``, so it only ever fires
+        while the confirm row is showing -- parity with the single-item
+        viewer confirm's own Escape-cancels behavior
+        (``action_library_media_viewer_back``'s ``_library_media_
+        confirming_delete`` branch), which already mirrors ITS Cancel
+        button the same way. Reuses ``_cancel_library_media_bulk_delete``
+        rather than duplicating the Cancel button's body.
+        """
+        self._cancel_library_media_bulk_delete()
 
     async def _delete_library_media_selection(self, media_ids: tuple[str, ...]) -> None:
         """Soft-delete every selected Library media item (task-2853 AC3).
@@ -11661,90 +11806,107 @@ class LibraryScreen(BaseAppScreen):
         naming the failure count, mirroring
         ``_notify_library_media_delete_warning``'s single-item wording.
 
+        task-3020 AC1: ``_library_media_bulk_delete_in_flight`` (set
+        synchronously by the caller before this coroutine was even
+        scheduled) is cleared in a ``finally`` so a legitimate NEXT bulk
+        delete is never left permanently blocked by this run, whether it
+        succeeds, partially fails, or raises.
+
         Args:
             media_ids: The exact ids to delete, read by the caller BEFORE
                 any recompose could change the live selection.
         """
-        service = getattr(self.app_instance, "media_reading_scope_service", None)
-        delete_media_item = getattr(service, "delete_media_item", None)
-        succeeded: list[str] = []
-        failed: list[str] = []
-        if callable(delete_media_item):
-            for media_id in media_ids:
-                try:
-                    await self._run_library_service_call(
-                        delete_media_item,
-                        mode="local",
-                        media_id=media_id,
-                        isolate_in_worker=True,
-                    )
-                    succeeded.append(media_id)
-                except Exception:
-                    logger.opt(exception=True).warning(
-                        f"Failed to delete Library media item {media_id!r} "
-                        "in bulk delete."
-                    )
-                    failed.append(media_id)
-        else:
-            failed = list(media_ids)
+        try:
+            service = getattr(self.app_instance, "media_reading_scope_service", None)
+            delete_media_item = getattr(service, "delete_media_item", None)
+            succeeded: list[str] = []
+            failed: list[str] = []
+            if callable(delete_media_item):
+                for media_id in media_ids:
+                    try:
+                        await self._run_library_service_call(
+                            delete_media_item,
+                            mode="local",
+                            media_id=media_id,
+                            isolate_in_worker=True,
+                        )
+                        succeeded.append(media_id)
+                    except Exception:
+                        logger.opt(exception=True).warning(
+                            f"Failed to delete Library media item {media_id!r} "
+                            "in bulk delete."
+                        )
+                        failed.append(media_id)
+            else:
+                failed = list(media_ids)
 
-        if succeeded:
-            succeeded_ids = set(succeeded)
-            self._local_source_records["media"] = tuple(
-                record
-                for record in self._local_source_records.get("media", ())
-                if self._source_record_id(record) not in succeeded_ids
-            )
-            self._local_source_counts["media"] = max(
-                0, self._local_source_counts.get("media", 0) - len(succeeded)
-            )
-            self._library_media_row_selection.reconcile(
-                self._source_record_id(record) or ""
-                for record in self._local_source_records["media"]
-            )
+            if succeeded:
+                succeeded_ids = set(succeeded)
+                self._local_source_records["media"] = tuple(
+                    record
+                    for record in self._local_source_records.get("media", ())
+                    if self._source_record_id(record) not in succeeded_ids
+                )
+                self._local_source_counts["media"] = max(
+                    0, self._local_source_counts.get("media", 0) - len(succeeded)
+                )
+                self._library_media_row_selection.reconcile(
+                    self._source_record_id(record) or ""
+                    for record in self._local_source_records["media"]
+                )
 
-        self._library_media_confirming_bulk_delete = False
-        # Only a FULL success exits Select mode -- see below for why only
-        # that path re-arms entry focus (review round 2).
-        exited_select_mode = False
-        if failed:
-            self._notify_library_media_delete_warning(
-                f"Could not delete {len(failed)} of {len(media_ids)} "
-                "selected media item(s)."
-            )
-        else:
-            self._library_media_select_mode = False
-            self._library_media_row_selection.clear()
-            exited_select_mode = True
+            self._library_media_confirming_bulk_delete = False
+            # Only a FULL success exits Select mode.
+            exited_select_mode = False
+            if failed:
+                # task-3020 AC6: pluralize off the denominator (``media_
+                # ids``, the whole confirmed batch) rather than a bare
+                # "item(s)" -- a batch of exactly one failed item reads
+                # "1 of 1 selected media item.", never "...item(s)."
+                item_word = "item" if len(media_ids) == 1 else "items"
+                self._notify_library_media_delete_warning(
+                    f"Could not delete {len(failed)} of {len(media_ids)} "
+                    f"selected media {item_word}."
+                )
+            else:
+                self._library_media_select_mode = False
+                self._library_media_row_selection.clear()
+                exited_select_mode = True
 
-        if self.is_mounted:
-            # A full screen recompose, not the canvas-scoped
-            # ``_sync_library_canvas`` every other select-mode handler
-            # above uses -- deliberately: AC3 requires the rail's "Media N"
-            # count (built from ``_local_source_counts`` in
-            # ``_build_library_shell_input``, just updated above) to update
-            # in place too, and the canvas-scoped sync explicitly skips the
-            # rail (see its own docstring). Mirrors
-            # ``_delete_library_media_item``'s own tail for the same
-            # reason; this is the one-shot completion of a rare, already
-            # doubly-confirmed action, not a hot path the hot-path
-            # recompose guidance is aimed at.
-            self.refresh(recompose=True)
-            if exited_select_mode:
+            if self.is_mounted:
+                # A full screen recompose, not the canvas-scoped
+                # ``_sync_library_canvas`` every other select-mode handler
+                # above uses -- deliberately: AC3 requires the rail's "Media N"
+                # count (built from ``_local_source_counts`` in
+                # ``_build_library_shell_input``, just updated above) to update
+                # in place too, and the canvas-scoped sync explicitly skips the
+                # rail (see its own docstring). Mirrors
+                # ``_delete_library_media_item``'s own tail for the same
+                # reason; this is the one-shot completion of a rare, already
+                # doubly-confirmed action, not a hot path the hot-path
+                # recompose guidance is aimed at.
+                self.refresh(recompose=True)
                 # task-2856 AC1's convention (``_exit_library_media_
                 # viewer``'s own tail): every "return to a list canvas"
                 # exit re-focuses the list's first row so Up/Down/Enter
                 # work immediately for a keyboard-only user -- the
                 # confirm row's "Delete" button that had focus is gone
                 # from the DOM after this recompose, so without this a
-                # successful bulk delete would leave nothing focused at
-                # all (review round 2). Only on the full-success path
-                # that actually LEAVES Select mode: a partial failure
-                # keeps Select mode active, showing the same checkbox
-                # list with the failed id still checked for the user to
-                # retry -- not a "return to a list" transition the way
-                # exiting Select mode entirely is, so it does not re-arm.
+                # bulk delete would leave nothing focused at all (review
+                # round 2). task-3020 AC3: now armed on EVERY completion
+                # path, not just full success -- a partial (or total)
+                # failure keeps Select mode active with only the failed
+                # id(s) still checked, and ``_focus_library_list_entry``'s
+                # task-3020 extension prefers the first STILL-CHECKED row
+                # over the literal first row whenever Select mode holds a
+                # non-empty selection, so this naturally lands on the row
+                # the user needs to retry instead of a row they never
+                # selected. On the full-success path the selection was
+                # already cleared just above, so that extension is a
+                # no-op there and behavior is unchanged from before.
                 self._arm_library_list_entry_focus()
+        finally:
+            self._library_media_bulk_delete_in_flight = False
 
     @on(Button.Pressed, "#library-media-open-viewer")
     def handle_library_media_open_viewer(self, event: Button.Pressed) -> None:
@@ -13371,11 +13533,12 @@ class LibraryScreen(BaseAppScreen):
 
         Returning ``False`` deactivates the binding entirely, so Escape /
         Ctrl+S behave as if unbound anywhere else on the Library screen.
-        All seven "escape" ``BINDINGS`` entries share the same key --
+        All eight "escape" ``BINDINGS`` entries share the same key --
         Textual tries them in order and stops at the first whose
         ``check_action`` passes, so each one returning ``False`` outside
         its own context is what lets the next fall through untouched
-        (task-3302 added the Ingest-canvas gate to the original six).
+        (task-3302 added the Ingest-canvas gate and task-3020 added the
+        bulk-delete-confirm cancel to the original six).
 
         task-2858 AC#2 (LIB-09): the three Search/RAG evidence-card
         actions (``u``/``enter``/``o``) had NO gate here before this task
@@ -13430,6 +13593,16 @@ class LibraryScreen(BaseAppScreen):
             return self._library_prompt_editor_active()
         if action == "library_ingest_back":
             return self._library_selected_row_id == LIBRARY_ROW_INGEST_MEDIA
+        if action == "library_media_bulk_delete_cancel":
+            # task-3020 AC2: only while the bulk-delete confirmation is
+            # genuinely armed -- mirrors the single-item viewer confirm's
+            # own Escape-cancels gate (``library_media_viewer_back``'s
+            # ``_library_media_confirming_delete`` branch above). Declared
+            # BEFORE ``library_list_focus_rail`` in BINDINGS: that gate is
+            # ALSO True on this exact state (the list is still genuinely
+            # showing), so declaration order is what keeps this one
+            # exclusive, not this predicate.
+            return self._library_media_confirming_bulk_delete
         if action == "library_list_focus_rail":
             return self._library_list_canvas_showing_list()
         if action == "library_rag_use_in_console":
@@ -20858,7 +21031,13 @@ class LibraryScreen(BaseAppScreen):
         ``_source_record_id``, the same id-key precedence ``_study_source_items``
         uses) so the list view reflects the trash immediately, without
         waiting on a full snapshot re-fetch, and the canvas returns to its
-        list view.
+        list view. task-3020 AC5: ``_local_source_counts["media"]`` is
+        also decremented in place here, exactly like
+        ``_delete_library_media_selection``'s bulk path already does --
+        this single-item path never had that update, so the rail's
+        "Media N" count stayed stale after a single-item delete even
+        though the exact same recompose repaints it correctly after a
+        bulk one.
 
         Args:
             media_id: The Library media item id to delete.
@@ -20891,6 +21070,9 @@ class LibraryScreen(BaseAppScreen):
                 record
                 for record in self._local_source_records.get("media", ())
                 if self._source_record_id(record) != media_id
+            )
+            self._local_source_counts["media"] = max(
+                0, self._local_source_counts.get("media", 0) - 1
             )
             self._library_media_view = "list"
             self._library_media_detail = None

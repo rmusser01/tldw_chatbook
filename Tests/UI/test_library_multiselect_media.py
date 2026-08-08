@@ -21,12 +21,18 @@ from tldw_chatbook.Library.library_media_state import (
 from tldw_chatbook.Widgets.Library.library_media_canvas import LibraryMediaCanvas
 
 
-def _media_fake(select_mode, *, confirming_bulk_delete=False):
+def _media_fake(
+    select_mode, *, confirming_bulk_delete=False, bulk_delete_in_flight=False
+):
     notified = []
     fake = SimpleNamespace(
         _library_media_select_mode=select_mode,
         _library_media_row_selection=RowSelection("media"),
         _library_media_confirming_bulk_delete=confirming_bulk_delete,
+        # task-3020 AC1: default False -- most tests exercise a single
+        # press, never a double one, and the guard would otherwise reject
+        # every scripted confirm press unconditionally.
+        _library_media_bulk_delete_in_flight=bulk_delete_in_flight,
         app_instance=SimpleNamespace(
             notify=lambda msg, **k: notified.append((msg, k))
         ),
@@ -34,8 +40,17 @@ def _media_fake(select_mode, *, confirming_bulk_delete=False):
         _opened=[],
         _refreshed=0,
         _viewer_opened=[],
+        _footer_registrations=0,
     )
-    # These two are real LibraryScreen instance methods (not module-level
+    # task-3020 AC2: arming/cancelling the bulk-delete confirmation now
+    # explicitly re-registers the footer (the canvas-scoped sync these
+    # handlers otherwise use deliberately skips the footer widget) -- a
+    # bare counting stub is enough here; the actual shortcut-set content
+    # is covered by the real-screen tests in test_screen_navigation.py.
+    fake._register_footer_shortcuts = lambda: setattr(
+        fake, "_footer_registrations", fake._footer_registrations + 1
+    )
+    # These are real LibraryScreen instance methods (not module-level
     # helpers like ``_apply_library_row_toggle``), so handlers that call
     # ``self._exit_library_media_select_mode(...)`` need them actually
     # bound to this fake -- ``types.MethodType`` reuses the REAL
@@ -45,6 +60,9 @@ def _media_fake(select_mode, *, confirming_bulk_delete=False):
     )
     fake._notify_library_media_selection_discarded = types.MethodType(
         LibraryScreen._notify_library_media_selection_discarded, fake
+    )
+    fake._cancel_library_media_bulk_delete = types.MethodType(
+        LibraryScreen._cancel_library_media_bulk_delete, fake
     )
     return fake
 
@@ -404,6 +422,10 @@ def test_delete_selected_arms_confirmation():
     LibraryScreen.handle_library_media_delete_selected(fake, event)
     assert fake._library_media_confirming_bulk_delete is True
     assert fake._refreshed == 1  # canvas sync fallback (fake has no widgets)
+    # task-3020 AC2: the footer must be explicitly re-registered here --
+    # live-verification caught that the canvas-scoped sync above leaves it
+    # showing the plain list's stale "esc focus rail" hint otherwise.
+    assert fake._footer_registrations == 1
 
 
 def test_delete_selected_noop_when_nothing_selected():
@@ -421,6 +443,7 @@ def test_bulk_delete_cancel_clears_confirming_flag():
     event = SimpleNamespace(stop=lambda: None)
     LibraryScreen.handle_library_media_bulk_delete_cancel(fake, event)
     assert fake._library_media_confirming_bulk_delete is False
+    assert fake._footer_registrations == 1
     assert fake._refreshed == 1
 
 
@@ -440,6 +463,91 @@ def test_bulk_delete_confirm_reads_selection_and_kicks_worker():
     assert len(worker_calls) == 1
     asyncio.run(worker_calls[0])
     assert delete_calls == [("1", "3")]  # sorted, read synchronously
+
+
+async def _noop_delete(ids):
+    """Stand-in for ``_delete_library_media_selection`` in tests that only
+    care about the confirm handler's own guard/dispatch behavior, never
+    the actual delete -- mirrors ``test_bulk_delete_confirm_reads_
+    selection_and_kicks_worker``'s ``_delete`` stub but returns a fresh
+    coroutine per call so multiple presses can each be inspected/closed
+    independently."""
+    return None
+
+
+def test_bulk_delete_confirm_second_press_while_in_flight_is_noop():
+    """task-3020 AC1: a fast double-press on the confirm button must not
+    launch a second delete worker over the same selection -- the confirm
+    row stays visible/enabled until the FIRST worker's own completion
+    recompose swaps it away, so without a synchronous guard a second
+    press before that would hand off a second worker over the identical
+    frozen id tuple (harmless for the idempotent delete itself, but its
+    OWN rail-count decrement would double-count)."""
+    fake = _media_fake(select_mode=True, confirming_bulk_delete=True)
+    fake._library_media_row_selection.select_all(["1", "2"])
+    fake._delete_library_media_selection = _noop_delete
+    worker_calls = []
+    fake.run_worker = lambda coro, **k: worker_calls.append((coro, k))
+    event = SimpleNamespace(stop=lambda: None)
+
+    LibraryScreen.handle_library_media_bulk_delete_confirm(fake, event)
+    assert len(worker_calls) == 1
+    assert fake._library_media_bulk_delete_in_flight is True
+
+    # Second press before the first worker has had any chance to run
+    # (and clear the flag in its own ``finally``) -- must be a complete
+    # no-op: no second worker, no second coroutine even constructed.
+    LibraryScreen.handle_library_media_bulk_delete_confirm(fake, event)
+    assert len(worker_calls) == 1
+
+    worker_calls[0][0].close()  # avoid a "coroutine never awaited" warning
+
+
+def test_bulk_delete_confirm_uses_exclusive_worker_group():
+    """task-3020 AC1: belt-and-suspenders -- the worker is scheduled
+    ``exclusive=True`` in its own named group, matching this screen's
+    other single-flight workers (e.g. ``library_note_save``)."""
+    fake = _media_fake(select_mode=True, confirming_bulk_delete=True)
+    fake._library_media_row_selection.select_all(["1"])
+    fake._delete_library_media_selection = _noop_delete
+    worker_calls = []
+    fake.run_worker = lambda coro, **k: worker_calls.append((coro, k))
+    event = SimpleNamespace(stop=lambda: None)
+
+    LibraryScreen.handle_library_media_bulk_delete_confirm(fake, event)
+
+    assert len(worker_calls) == 1
+    _coro, kwargs = worker_calls[0]
+    assert kwargs.get("exclusive") is True
+    assert kwargs.get("group") == "library_media_bulk_delete"
+    worker_calls[0][0].close()
+
+
+def test_bulk_delete_confirm_allowed_again_after_in_flight_flag_clears():
+    """Regression guard: the guard must not be a one-shot lockout -- once
+    a prior delete's own worker completes (clearing the flag in its
+    ``finally``, see ``test_delete_selection_soft_deletes_via_real_db_
+    and_updates_records_and_counts``), a legitimate follow-up bulk delete
+    dispatches normally."""
+    fake = _media_fake(select_mode=True, confirming_bulk_delete=True)
+    fake._library_media_row_selection.select_all(["1"])
+    fake._delete_library_media_selection = _noop_delete
+    worker_calls = []
+    fake.run_worker = lambda coro, **k: worker_calls.append((coro, k))
+    event = SimpleNamespace(stop=lambda: None)
+
+    LibraryScreen.handle_library_media_bulk_delete_confirm(fake, event)
+    assert len(worker_calls) == 1
+    worker_calls[0][0].close()
+
+    # Simulate the first worker's own completion clearing the guard.
+    fake._library_media_bulk_delete_in_flight = False
+    fake._library_media_confirming_bulk_delete = True
+    fake._library_media_row_selection.select_all(["2"])
+
+    LibraryScreen.handle_library_media_bulk_delete_confirm(fake, event)
+    assert len(worker_calls) == 2
+    worker_calls[1][0].close()
 
 
 def test_bulk_delete_confirm_empty_selection_is_noop():
@@ -539,6 +647,12 @@ def _bulk_delete_fake(*, db, records, counts, selected_ids):
         _library_media_row_selection=selection,
         _library_media_select_mode=True,
         _library_media_confirming_bulk_delete=True,
+        # task-3020 AC1: a real caller (``handle_library_media_bulk_
+        # delete_confirm``) always sets this True BEFORE scheduling the
+        # worker this coroutine's caller is standing in for -- start it
+        # True here too, so the tests below can assert the ``finally``
+        # actually clears it on every completion path.
+        _library_media_bulk_delete_in_flight=True,
         is_mounted=True,
         refresh=lambda **k: refresh_calls.append(k),
         # review round 2: pin that a full-success bulk delete re-arms
@@ -624,6 +738,10 @@ async def test_delete_selection_soft_deletes_via_real_db_and_updates_records_and
     # with nothing focused once the confirm row's "Delete" button (which
     # had focus) is gone from the DOM after the recompose above.
     assert fake._entry_focus_arm_calls == [True]
+    # task-3020 AC1: the in-flight guard is cleared once the worker
+    # actually completes, so a legitimate follow-up bulk delete is never
+    # left permanently blocked.
+    assert fake._library_media_bulk_delete_in_flight is False
 
     db.close_connection()
 
@@ -674,11 +792,15 @@ async def test_delete_selection_partial_failure_keeps_select_mode_and_warns(
     # A partial failure still touched the list/rail counts (one item DID
     # get deleted) -- the rail must still repaint, same as full success.
     assert fake._refresh_calls == [{"recompose": True}]
-    # review round 2: a partial failure keeps Select mode ACTIVE (the
-    # failed id is still checked, waiting for a retry) -- that is not a
-    # "return to a list" transition the way exiting Select mode entirely
-    # is, so entry focus must NOT be re-armed here.
-    assert fake._entry_focus_arm_calls == []
+    # task-3020 AC3 (review round 2 superseded): a partial failure keeps
+    # Select mode ACTIVE (the failed id is still checked, waiting for a
+    # retry) -- it is not a "return to a list" transition the way exiting
+    # Select mode entirely is, but entry focus IS now armed here too, so
+    # it lands on that still-checked row instead of leaving nothing
+    # focused once the confirm row's "Delete" button (which had focus) is
+    # gone from the DOM after the recompose above.
+    assert fake._entry_focus_arm_calls == [True]
+    assert fake._library_media_bulk_delete_in_flight is False
 
     db.close_connection()
 
@@ -689,6 +811,7 @@ async def test_delete_selection_service_unavailable_keeps_selection_and_warns():
     ``delete_media_item`` seam) must fail closed: nothing is removed from
     the list, the whole batch is reported as failed, and select mode is
     left active."""
+    entry_focus_arm_calls = []
     fake = SimpleNamespace(
         app_instance=SimpleNamespace(
             media_reading_scope_service=None,
@@ -700,10 +823,13 @@ async def test_delete_selection_service_unavailable_keeps_selection_and_warns():
         _library_media_row_selection=RowSelection("media"),
         _library_media_select_mode=True,
         _library_media_confirming_bulk_delete=True,
+        _library_media_bulk_delete_in_flight=True,
         is_mounted=True,
         refresh=lambda **k: None,
         _run_library_service_call=LibraryScreen._run_library_service_call,
         _source_record_id=LibraryScreen._source_record_id,
+        _entry_focus_arm_calls=entry_focus_arm_calls,
+        _arm_library_list_entry_focus=lambda: entry_focus_arm_calls.append(True),
     )
     fake._library_media_row_selection.select_all(["1"])
     fake._notify_library_media_delete_warning = types.MethodType(
@@ -719,6 +845,10 @@ async def test_delete_selection_service_unavailable_keeps_selection_and_warns():
     assert fake._library_media_row_selection.ids == frozenset({"1"})
     assert len(fake._notified) == 1
     assert fake._notified[0][1].get("severity") == "warning"
+    # task-3020 AC1/AC3: even a total failure clears the in-flight guard
+    # and arms entry focus onto the still-checked (failed) row.
+    assert fake._library_media_bulk_delete_in_flight is False
+    assert fake._entry_focus_arm_calls == [True]
 
 
 @pytest.mark.asyncio
@@ -742,6 +872,9 @@ async def test_single_item_delete_also_arms_entry_focus_on_success(tmp_path):
     fake = SimpleNamespace(
         app_instance=SimpleNamespace(media_reading_scope_service=scope_service),
         _local_source_records={"media": ({"id": str(media_id), "title": "Solo"},)},
+        # task-3020 AC5: the single-item viewer delete now decrements the
+        # rail count in place too, mirroring the bulk path.
+        _local_source_counts={"media": 1},
         _library_media_view="viewer",
         _library_media_detail={"id": str(media_id)},
         _library_media_highlights=[{"id": "h1"}],
@@ -766,5 +899,7 @@ async def test_single_item_delete_also_arms_entry_focus_on_success(tmp_path):
     assert db.get_media_by_id(media_id, include_trash=True)["is_trash"] in {1, True}
     assert fake._library_media_view == "list"
     assert fake._entry_focus_arm_calls == [True]
+    # task-3020 AC5: rail count decremented in place, like the bulk path.
+    assert fake._local_source_counts["media"] == 0
 
     db.close_connection()

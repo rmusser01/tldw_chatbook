@@ -223,6 +223,14 @@ you're on:
 - **On the plain list** — Escape moves focus to the rail's **Search
   Library…** box (the same target `/` and F6 use); it never leaves the
   canvas or changes what's shown.
+- **A pending bulk-delete confirmation on the Media list** (Select mode's
+  "Delete selected", which swaps the list's toolbar for "Delete N
+  selected items? This moves them to trash.") — Escape cancels it in
+  place, exactly like its own **Cancel** button, instead of moving focus
+  to the rail; the footer's hint reads "cancel delete" while it's armed.
+  Confirming with **Delete** when only some items can be removed leaves
+  the failed one(s) checked and focuses the first of them, rather than
+  leaving nothing focused or landing on an item you never selected.
 - **In an item's viewer or editor** (the media viewer; the Notes,
   Prompts, or Skills editor) — Escape returns to that list, re-focusing
   its first row, exactly like pressing **‹ Back to list**. A dirty note
@@ -320,3 +328,8 @@ reads "This queue: N done" instead of the self-contradicting "N done — in
 queue"; DB sizes in the Details disclosure include their `-wal`/`-shm`
 sidecars, and the number/unit pair ("144.0KB") no longer wraps across two
 lines at the rail's narrow width).*
+*Verified against dev @ 023a04a48 — 2026-08-07 (task-3020: Escape now
+cancels an armed Media bulk-delete confirmation instead of moving focus to
+the rail with it still showing, matching the media viewer's own confirm;
+a partial bulk-delete failure now focuses the first still-checked row
+instead of leaving nothing focused).*

@@ -1803,6 +1803,74 @@ def test_register_footer_shortcuts_distinguishes_plain_viewer_from_a_media_sub_s
     assert dict(analysis_shortcuts)["esc"] != "back to list"
 
 
+def test_register_footer_shortcuts_advertises_skill_editor_working_keys():
+    """task-3020 AC4: the skill editor's footer must advertise its own
+    working ``ctrl+s``/``esc`` -- before this task,
+    ``_library_footer_shortcuts_for_current_state`` had no skill-editor
+    branch, so it fell through to ``_library_list_canvas_showing_list()``
+    (False here -- the skills view is "editor", not "list") and landed on
+    the bare ``LIBRARY_GENERAL_SHORTCUTS`` (just "/" and "F6"), an
+    asymmetry beside the note/prompt editors, which already advertise
+    their own "esc" hint."""
+    from tldw_chatbook.Library.library_shell_state import LIBRARY_ROW_BROWSE_SKILLS
+    from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+
+    app = _build_test_app()
+    screen = LibraryScreen(app)
+    screen._library_selected_row_id = LIBRARY_ROW_BROWSE_SKILLS
+    screen._library_skills_view = "editor"
+
+    screen._register_footer_shortcuts()
+    _source, shortcuts = screen._footer_shortcut_registration
+    shortcut_dict = dict(shortcuts)
+    assert shortcut_dict["esc"] == "back to skills list"
+    assert shortcut_dict["ctrl+s"] == "save skill"
+
+    # The plain skills LIST is unaffected -- it still advertises "focus
+    # rail", never the editor's keys.
+    screen._library_skills_view = "list"
+    screen._register_footer_shortcuts()
+    _source, list_shortcuts = screen._footer_shortcut_registration
+    assert "ctrl+s" not in dict(list_shortcuts)
+    assert dict(list_shortcuts)["esc"] == "focus rail"
+
+
+def test_action_show_workbench_help_includes_skill_editor_keys(monkeypatch):
+    """task-3020 AC4: F1 inherits the fix automatically via the shared
+    ``_library_footer_shortcuts_for_current_state`` helper both the
+    footer and F1 read -- pinned directly rather than just trusted."""
+    from tldw_chatbook.Library.library_shell_state import LIBRARY_ROW_BROWSE_SKILLS
+    from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+    from tldw_chatbook.UI.Workbench.help import WorkbenchHelpPanel
+
+    app = _build_test_app()
+    screen = LibraryScreen(app)
+    screen._library_selected_row_id = LIBRARY_ROW_BROWSE_SKILLS
+    screen._library_skills_view = "editor"
+
+    pushed = []
+
+    class _FakeApp:
+        def push_screen(self, panel):
+            pushed.append(panel)
+
+    # An un-mounted Screen's ``.app`` raises NoActiveAppError -- mirrors
+    # ``test_action_show_workbench_help_filters_bindings_by_check_action``'s
+    # own fake-app override.
+    monkeypatch.setattr(
+        LibraryScreen, "app", property(lambda self: _FakeApp()), raising=False
+    )
+
+    screen.action_show_workbench_help()
+
+    assert len(pushed) == 1
+    panel = pushed[0]
+    assert isinstance(panel, WorkbenchHelpPanel)
+    shortcut_keys = {key for key, _description in panel.state.shortcuts}
+    assert "ctrl+s" in shortcut_keys
+    assert "esc" in shortcut_keys
+
+
 def test_check_action_gates_note_editor_back_to_active_editor():
     """task-2856 AC2: the note editor's Escape binding only fires for the
     DATABASE note editor -- Files mode (its own dedicated Escape gate) and
@@ -1907,6 +1975,123 @@ def test_check_action_gates_list_focus_rail_to_showing_list():
     # A canvas outside the four list canvases (Search/RAG) -- inactive.
     screen._library_selected_row_id = LIBRARY_ROW_BROWSE_SEARCH
     assert screen.check_action("library_list_focus_rail", ()) is False
+
+
+def test_check_action_gates_media_bulk_delete_cancel_to_armed_confirm():
+    """task-3020 AC2: Escape cancels an ARMED bulk-delete confirmation --
+    parity with the single-item viewer confirm's own Escape-cancels
+    behavior -- gated so it never fires outside that exact state."""
+    from tldw_chatbook.Library.library_shell_state import LIBRARY_ROW_BROWSE_MEDIA
+    from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+
+    app = _build_test_app()
+    screen = LibraryScreen(app)
+
+    # Landing -- inactive.
+    assert screen.check_action("library_media_bulk_delete_cancel", ()) is False
+
+    # Media list, Select mode active, but no confirmation armed -- inactive.
+    screen._library_selected_row_id = LIBRARY_ROW_BROWSE_MEDIA
+    screen._library_media_view = "list"
+    screen._library_media_select_mode = True
+    assert screen.check_action("library_media_bulk_delete_cancel", ()) is False
+
+    # The confirmation is armed -- active. Note ``library_list_focus_rail``
+    # is ALSO True on this exact state (the list is still genuinely
+    # showing) -- see ``test_library_media_bulk_delete_cancel_binding_
+    # precedes_focus_rail`` for the ordering guarantee that keeps only
+    # ONE of the two from ever actually firing.
+    screen._library_media_confirming_bulk_delete = True
+    assert screen.check_action("library_media_bulk_delete_cancel", ()) is True
+    assert screen.check_action("library_list_focus_rail", ()) is True
+
+    # Cancelling (or completing) the confirmation drops it again.
+    screen._library_media_confirming_bulk_delete = False
+    assert screen.check_action("library_media_bulk_delete_cancel", ()) is False
+
+    # Unrelated actions are untouched by the new gate.
+    assert screen.check_action("some_nonexistent_action", ()) is True
+
+
+def test_library_media_bulk_delete_cancel_binding_precedes_focus_rail():
+    """task-3020 AC2: both ``library_media_bulk_delete_cancel`` and
+    ``library_list_focus_rail`` can be simultaneously check_action-True
+    while a bulk-delete confirmation is armed on the plain Media list
+    (``_library_list_canvas_showing_list()`` stays True -- the toolbar is
+    swapped in place, not a distinct sub-view). Textual resolves same-key
+    ``Binding``s in DECLARATION ORDER, trying each until one's
+    ``check_action`` passes, so the more specific cancel action MUST be
+    declared before the broader focus-rail action, or Escape would still
+    reproduce the original defect (moving focus to the rail and stranding
+    the armed confirm row behind it)."""
+    from textual.binding import Binding
+
+    from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+
+    escape_actions = []
+    for entry in LibraryScreen.BINDINGS:
+        if isinstance(entry, Binding):
+            key, action = entry.key, entry.action
+        elif isinstance(entry, (tuple, list)) and entry:
+            key = str(entry[0])
+            action = str(entry[1]) if len(entry) > 1 else ""
+        else:
+            continue
+        if key == "escape":
+            escape_actions.append(action)
+
+    assert "library_media_bulk_delete_cancel" in escape_actions
+    assert "library_list_focus_rail" in escape_actions
+    assert escape_actions.index(
+        "library_media_bulk_delete_cancel"
+    ) < escape_actions.index("library_list_focus_rail")
+
+
+def test_action_library_media_bulk_delete_cancel_dismisses_confirmation():
+    """task-3020 AC2: the Escape action reuses the exact same cancel path
+    as the confirm row's own "Cancel" button -- one seam, not a
+    duplicated one that could drift."""
+    from tldw_chatbook.Library.library_shell_state import LIBRARY_ROW_BROWSE_MEDIA
+    from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+
+    app = _build_test_app()
+    screen = LibraryScreen(app)
+    screen._library_selected_row_id = LIBRARY_ROW_BROWSE_MEDIA
+    screen._library_media_view = "list"
+    screen._library_media_select_mode = True
+    screen._library_media_confirming_bulk_delete = True
+
+    refresh_calls = []
+    screen.refresh = lambda recompose=False: refresh_calls.append(recompose)
+
+    screen.action_library_media_bulk_delete_cancel()
+
+    assert screen._library_media_confirming_bulk_delete is False
+    # ``_sync_library_canvas`` fails closed to a full recompose here (no
+    # ``#library-media-canvas`` mounted on this bare screen) -- the same
+    # fallback the button handler's own test relies on.
+    assert refresh_calls == [True]
+
+
+def test_register_footer_shortcuts_advertises_cancel_while_bulk_delete_confirm_armed():
+    """task-3020 AC2 footer honesty: while a bulk-delete confirmation is
+    armed, the footer must advertise "esc cancel delete", not the plain
+    list's "esc focus rail" -- the list canvas is still genuinely showing
+    (``_library_list_canvas_showing_list()`` is True), so without a
+    dedicated branch the footer would keep the OLD, now-inaccurate hint."""
+    from tldw_chatbook.Library.library_shell_state import LIBRARY_ROW_BROWSE_MEDIA
+    from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+
+    app = _build_test_app()
+    screen = LibraryScreen(app)
+    screen._library_selected_row_id = LIBRARY_ROW_BROWSE_MEDIA
+    screen._library_media_view = "list"
+    screen._library_media_select_mode = True
+    screen._library_media_confirming_bulk_delete = True
+
+    screen._register_footer_shortcuts()
+    _source, shortcuts = screen._footer_shortcut_registration
+    assert dict(shortcuts)["esc"] == "cancel delete"
 
 
 def test_check_action_gates_rag_use_in_console_to_search_row():
@@ -2493,6 +2678,119 @@ def test_arm_library_list_entry_focus_twice_cancels_the_stale_timer_handle():
     assert screen._library_pending_list_entry_focus is False
     assert second_timer.stop_calls == 1
     assert screen._library_list_entry_focus_timer is None
+
+
+class _FakeMediaRowQuery(list):
+    """Stands in for the ``DOMQuery`` ``self.query(...)`` returns: a
+    ``NoMatches``-raising ``.first()`` plus plain iteration, both of which
+    ``_focus_library_list_entry`` relies on."""
+
+    def first(self):
+        from textual.css.query import NoMatches
+
+        if not self:
+            raise NoMatches("no rows")
+        return self[0]
+
+
+class _FakeMediaRowButton:
+    def __init__(self, media_id: str):
+        self.media_id = media_id
+        self.focused = False
+
+    def focus(self) -> None:
+        self.focused = True
+
+
+def test_focus_library_list_entry_prefers_still_checked_row_in_select_mode():
+    """task-3020 AC3: after a partial (or total) bulk-delete failure,
+    keyboard focus must land on a STILL-CHECKED row (the failed id(s),
+    retained for retry) rather than the literal first row in the list --
+    landing on a row the user never selected would be a worse regression
+    than the original "nothing focused" bug this method exists to fix."""
+    from tldw_chatbook.Library.library_shell_state import LIBRARY_ROW_BROWSE_MEDIA
+    from tldw_chatbook.Library.row_selection import RowSelection
+    from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+
+    row_a = _FakeMediaRowButton("1")
+    row_b = _FakeMediaRowButton("2")
+    row_c = _FakeMediaRowButton("3")
+    selection = RowSelection("media")
+    selection.select_all(["2"])  # only the second row is still checked
+
+    app = _build_test_app()
+    screen = LibraryScreen(app)
+    screen._library_selected_row_id = LIBRARY_ROW_BROWSE_MEDIA
+    screen._library_media_select_mode = True
+    screen._library_media_row_selection = selection
+    screen.query = lambda selector: _FakeMediaRowQuery([row_a, row_b, row_c])
+
+    screen._focus_library_list_entry()
+
+    assert row_a.focused is False
+    assert row_b.focused is True
+    assert row_c.focused is False
+
+
+def test_focus_library_list_entry_falls_back_to_first_row_outside_active_selection():
+    """Regression guard: the AC3 preference must not change the existing
+    "focus the first row" behavior when Select mode isn't active, or
+    nothing is checked (e.g. the bulk delete's own full-success path,
+    which clears the selection before arming entry focus)."""
+    from tldw_chatbook.Library.library_shell_state import LIBRARY_ROW_BROWSE_MEDIA
+    from tldw_chatbook.Library.row_selection import RowSelection
+    from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+
+    app = _build_test_app()
+    screen = LibraryScreen(app)
+    screen._library_selected_row_id = LIBRARY_ROW_BROWSE_MEDIA
+
+    # Outside Select mode entirely.
+    row_a = _FakeMediaRowButton("1")
+    row_b = _FakeMediaRowButton("2")
+    screen._library_media_select_mode = False
+    screen._library_media_row_selection = RowSelection("media")
+    screen.query = lambda selector: _FakeMediaRowQuery([row_a, row_b])
+    screen._focus_library_list_entry()
+    assert row_a.focused is True
+    assert row_b.focused is False
+
+    # Select mode active but nothing checked (e.g. a full-success bulk
+    # delete already cleared the selection before arming this).
+    row_c = _FakeMediaRowButton("3")
+    row_d = _FakeMediaRowButton("4")
+    screen._library_media_select_mode = True
+    screen._library_media_row_selection = RowSelection("media")
+    screen.query = lambda selector: _FakeMediaRowQuery([row_c, row_d])
+    screen._focus_library_list_entry()
+    assert row_c.focused is True
+    assert row_d.focused is False
+
+
+def test_focus_library_list_entry_checked_row_preference_is_media_only():
+    """The AC3 preference must not leak into the other three list
+    canvases (Notes/Prompts/Skills) -- none of them have a bulk Select-
+    mode row_selection concept the way Media does, so the guard requires
+    the Media row class specifically."""
+    from tldw_chatbook.Library.library_shell_state import LIBRARY_ROW_BROWSE_NOTES
+    from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+
+    app = _build_test_app()
+    screen = LibraryScreen(app)
+    screen._library_selected_row_id = LIBRARY_ROW_BROWSE_NOTES
+    screen._library_notes_source = "database"
+    screen._library_notes_view = "list"
+    # Deliberately True/non-empty -- MUST be ignored for a non-Media list.
+    screen._library_media_select_mode = True
+
+    row_a = _FakeMediaRowButton("n1")
+    row_b = _FakeMediaRowButton("n2")
+    screen.query = lambda selector: _FakeMediaRowQuery([row_a, row_b])
+
+    screen._focus_library_list_entry()
+
+    assert row_a.focused is True
+    assert row_b.focused is False
 
 
 def test_on_key_disarms_a_pending_list_entry_focus_on_any_key():
