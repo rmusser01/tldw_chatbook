@@ -335,6 +335,10 @@ def _minimal_library_screen() -> LibraryScreen:
     screen._library_ingest_preflight_generation = 0
     screen._notify_library_ingest_warning = MagicMock()
     screen.refresh = MagicMock()
+    # Submit schedules the scroll-receipt-into-view callback (task-3304);
+    # the real method posts a message, which this unmounted shortcut
+    # cannot do (stale-helper repair, same family as the generation seed).
+    screen.call_after_refresh = MagicMock()
     screen.app_instance = MagicMock()
     return screen
 

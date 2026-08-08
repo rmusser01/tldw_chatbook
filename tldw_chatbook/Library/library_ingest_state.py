@@ -439,6 +439,30 @@ def build_warning_lines(warnings: list[dict[str, Any]]) -> list[str]:
     return lines
 
 
+def preflight_install_commands(warnings: list[dict[str, Any]]) -> tuple[str, ...]:
+    """The distinct install commands behind a pre-flight's warnings, in order.
+
+    (task-3304, MI-17) Feeds the summary's copy affordance: the composed
+    warning prose embeds the command mid-sentence, which is unreadable at
+    a canvas edge and uncopyable everywhere -- the guardrail modal used to
+    be the only place with a copy button. Several features can resolve to
+    the same extra (e.g. soundfile + scipy -> ``.[audio]``), so commands
+    are de-duplicated while keeping first-seen order.
+
+    Args:
+        warnings: Pre-flight warning dicts (``PreflightResult.warnings``).
+
+    Returns:
+        Unique, non-empty ``command`` strings in first-appearance order.
+    """
+    commands: dict[str, None] = {}
+    for warning in warnings:
+        command = str(warning.get("command") or "").strip()
+        if command:
+            commands.setdefault(command, None)
+    return tuple(commands)
+
+
 @dataclass
 class LibraryIngestFormState:
     """Mutable form echo for the ingest canvas.
@@ -702,6 +726,11 @@ class LibraryIngestCanvasState:
     #: resolution stamps the job's "analysis skipped" reason, so the
     #: promise made here and the record left on the done row agree.
     analysis_hint_line: str = ""
+    #: (task-3304, MI-17) The distinct install commands behind
+    #: ``warning_lines``, in first-appearance order -- the summary renders
+    #: one compact "Copy install command" button per entry so the command
+    #: is recoverable AT the warning, not only inside the guardrail modal.
+    warning_commands: tuple[str, ...] = ()
 
 
 def _basename(source_path: str) -> str:
@@ -1432,6 +1461,7 @@ def build_library_ingest_state(
                 active_preflight.truncated,
             )
         warning_lines = build_warning_lines(active_preflight.warnings)
+        warning_commands = preflight_install_commands(active_preflight.warnings)
         already = getattr(active_preflight, "already_in_library", 0) or 0
         already_capped = bool(
             getattr(active_preflight, "already_in_library_capped", False)
@@ -1467,6 +1497,7 @@ def build_library_ingest_state(
         estimate_line = ""
         duplicate_line = ""
         warning_lines = []
+        warning_commands = ()
         type_groups_list = []
 
     # Always expose the generic panel so global options (analyze, chunk) are
@@ -1718,6 +1749,7 @@ def build_library_ingest_state(
         # gates it on the toggle so an OFF form never nags about a
         # provider it isn't going to use.
         analysis_hint_line=(analysis_unready_hint if form.analyze else ""),
+        warning_commands=tuple(warning_commands),
     )
 
 

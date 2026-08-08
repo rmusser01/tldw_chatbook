@@ -114,18 +114,32 @@ class DirectoryEntry(Option):
     def _size(location: Path) -> str:
         """Get a formatted size for the given location.
 
+        (task-3304, MI-15) Humanized -- the raw ``st_size`` integer rendered
+        with no unit, so "512" read as a mystery number (and, on directory
+        rows, as a fake size). Directories return no size at all: their
+        ``st_size`` is filesystem bookkeeping, not content.
+
         Args:
             location: The location to get the size for.
 
         Returns:
-            The formatted size.
+            The formatted size (``"512 B"``, ``"2.4 MB"``), or ``""`` for a
+            directory.
         """
+        if is_dir(location):
+            return ""
         try:
             entry_size = location.stat().st_size
         except FileNotFoundError:
             entry_size = 0
-        # TODO: format well for a file browser.
-        return str(entry_size)
+        if entry_size < 1024:
+            return f"{entry_size} B"
+        value = float(entry_size)
+        for unit in ("KB", "MB", "GB", "TB"):
+            value /= 1024
+            if value < 1024:
+                return f"{value:.1f} {unit}"
+        return f"{value / 1024:.1f} PB"
 
     def _style(self, base: Style, location: Path) -> Style:
         """Decide the best style to use.

@@ -512,18 +512,22 @@ def test_is_installed_still_false_when_package_absent(monkeypatch) -> None:
 
 
 def test_installed_feature_produces_no_tooling_warning(monkeypatch) -> None:
-    """An installed feature must not be advertised as missing tooling."""
-    from types import SimpleNamespace
+    """An installed feature must not be advertised as missing tooling.
 
+    ``pdf_processing`` has a curated ``_FEATURE_REQUIRED_PACKAGES`` entry, so
+    that is the branch the probe takes in production -- patching only
+    ``OPTIONAL_FEATURES`` would leave the outcome hostage to whether pymupdf
+    happens to be installed in the running venv.
+    """
     monkeypatch.setitem(
         tldw_chatbook.Library.ingest_capabilities.DEPENDENCIES_AVAILABLE,
         "pdf_processing",
         False,
     )
     monkeypatch.setitem(
-        tldw_chatbook.Library.ingest_capabilities.OPTIONAL_FEATURES,
+        tldw_chatbook.Library.ingest_capabilities._FEATURE_REQUIRED_PACKAGES,
         "pdf_processing",
-        SimpleNamespace(package_dependencies=["loguru"]),
+        ("loguru",),
     )
     tldw_chatbook.Library.ingest_capabilities.reset_installed_probe_cache()
 
@@ -689,4 +693,101 @@ def test_a_value_gated_field_names_values_its_gate_can_actually_take() -> None:
             assert not unreachable, (
                 f"{caps.group}.{field.name} is gated on values {sorted(unreachable)} "
                 f"that {gate.name!r} can never hold"
+            )
+
+
+# --- task-3304 (MI-07): disabled state carries a reason ----------------------
+
+
+def _field(group: str, name: str):
+    caps = _TYPE_GROUPS[group]
+    return caps, {f.name: f for f in caps.fields}[name]
+
+
+def test_field_disabled_state_reports_curated_reason_for_closed_value_gate() -> None:
+    """A value-gated field under a non-enabling gate value is disabled WITH
+    its curated reason -- the annotation the canvas renders at the control."""
+    from tldw_chatbook.Library.ingest_capabilities import field_disabled_state
+
+    caps, field = _field("audio_video", "transcription_model_dir")
+    disabled, reason = field_disabled_state(
+        field,
+        caps,
+        {"transcription_provider": "default"},
+        is_installed=lambda _f: True,
+    )
+    assert disabled is True
+    assert reason == "needs the parakeet-onnx provider"
+
+
+def test_field_disabled_state_is_clear_when_the_gate_opens() -> None:
+    from tldw_chatbook.Library.ingest_capabilities import field_disabled_state
+
+    caps, field = _field("audio_video", "transcription_model_dir")
+    disabled, reason = field_disabled_state(
+        field,
+        caps,
+        {"transcription_provider": "parakeet-onnx"},
+        is_installed=lambda _f: True,
+    )
+    assert disabled is False
+    assert reason == ""
+
+
+def test_field_disabled_state_truthy_gate_reason() -> None:
+    """Checkbox-gated fields (chunk size under Chunk content) state the
+    toggle to flip."""
+    from tldw_chatbook.Library.ingest_capabilities import field_disabled_state
+
+    caps, field = _field("generic", "chunk_size")
+    disabled, reason = field_disabled_state(
+        field, caps, {"chunk": False}, is_installed=lambda _f: True
+    )
+    assert disabled is True
+    assert reason == "needs Chunk content on"
+
+
+def test_field_disabled_state_missing_dependency_reason() -> None:
+    """A packaging gate (depends_on) names the missing feature."""
+    from tldw_chatbook.Library.ingest_capabilities import field_disabled_state
+
+    caps, field = _field("audio_video", "diarization")
+    disabled, reason = field_disabled_state(
+        field, caps, {}, is_installed=lambda _f: False
+    )
+    assert disabled is True
+    assert reason == "needs Speaker diarization installed"
+
+
+def test_field_disabled_state_suppresses_reason_when_hint_names_the_gate() -> None:
+    """task-3303 baked static gate hints into some labels ("docling or
+    docext engines only") -- those fields must not get a second, dynamic
+    annotation on top (the incumbents' no-double-annotation rule)."""
+    from tldw_chatbook.Library.ingest_capabilities import field_disabled_state
+
+    caps, field = _field("pdf", "ocr")
+    disabled, reason = field_disabled_state(
+        field,
+        caps,
+        {"pdf_engine": "pymupdf4llm"},
+        is_installed=lambda _f: True,
+    )
+    assert disabled is True
+    assert reason == ""
+
+
+def test_every_value_gated_field_carries_a_disabled_reason() -> None:
+    """Meta-guard: a select gate is invisible from inside the field, so a
+    value-gated field without curated disabled copy would silently ship
+    the MI-07 no-reason state again for the next field added."""
+    for caps in _TYPE_GROUPS.values():
+        for field in caps.fields:
+            if not field.enabled_when_values:
+                continue
+            if field.hint:
+                # A static gate hint in the label already carries the why.
+                continue
+            assert field.disabled_reason, (
+                f"{caps.group}.{field.name} is value-gated with no hint and "
+                "no disabled_reason -- its inert state would be unexplained"
             )

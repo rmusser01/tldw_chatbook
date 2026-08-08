@@ -2445,3 +2445,64 @@ def test_analysis_hint_does_not_block_start() -> None:
         analysis_unready_hint="Analyze after import is on, but X is not ready.",
     )
     assert state.start_enabled is True
+
+
+# --- task-3304 (MI-17): install commands recoverable at the warning ----------
+
+
+def _preflight_with_warnings(warnings):
+    return PreflightResult(
+        type_groups={"audio_video": ["/tmp/talk.mp3"]},
+        warnings=warnings,
+        errors=[],
+        total_size=0,
+        truncated=False,
+        total_files=1,
+    )
+
+
+def test_state_exposes_deduped_warning_commands_in_order() -> None:
+    """The summary's copy affordance needs the commands themselves, not
+    just the composed warning prose; duplicates (several features sharing
+    one extra) collapse to one button."""
+    form = LibraryIngestFormState(path="/tmp/talk.mp3")
+    state = build_library_ingest_state(
+        (),
+        form=form,
+        preflight=_preflight_with_warnings(
+            [
+                {
+                    "feature": "faster_whisper",
+                    "label": "Faster Whisper",
+                    "hint": "audio transcription",
+                    "command": 'pip install -e ".[transcription_faster_whisper]"',
+                },
+                {
+                    "feature": "audio_processing",
+                    "label": "Audio processing",
+                    "hint": "audio ingestion",
+                    "command": 'pip install -e ".[audio]"',
+                },
+                {
+                    "feature": "scipy",
+                    "label": "SciPy",
+                    "hint": "audio ingestion",
+                    "command": 'pip install -e ".[audio]"',
+                },
+                {
+                    "feature": "commandless",
+                    "label": "No command",
+                    "hint": "whatever",
+                },
+            ]
+        ),
+    )
+    assert state.warning_commands == (
+        'pip install -e ".[transcription_faster_whisper]"',
+        'pip install -e ".[audio]"',
+    )
+
+
+def test_warning_commands_empty_without_preflight() -> None:
+    state = build_library_ingest_state((), form=LibraryIngestFormState())
+    assert state.warning_commands == ()

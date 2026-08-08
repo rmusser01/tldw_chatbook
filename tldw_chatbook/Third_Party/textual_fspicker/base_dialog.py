@@ -16,6 +16,11 @@ except ImportError:
     from typing_extensions import TypeAlias
 
 ##############################################################################
+# Rich imports.
+from rich.console import RenderableType
+from rich.table import Table
+
+##############################################################################
 # Textual imports.
 from textual import on
 from textual.app import ComposeResult
@@ -23,11 +28,36 @@ from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.reactive import reactive
 from textual.screen import ModalScreen
-from textual.widgets import Button, Label, Input, ListView, ListItem
+from textual.widgets import Button, Label, Input, ListView, ListItem, Static
 
 ##############################################################################
 # Local imports.
 from .parts import DirectoryNavigation, DriveNavigation
+
+
+##############################################################################
+def _listing_column_headers() -> RenderableType:
+    """Build the Name / Size / Modified header row for the listing.
+
+    (task-3304, MI-15) The directory listing renders three data columns
+    with nothing naming them -- a bare right-aligned number next to a
+    timestamp read as noise. The grid mirrors ``DirectoryEntry
+    ._as_renderable``'s exact column recipe (pad 1 / icon 3 / name 1fr /
+    size 10 / time 20 / pad 1) so the headers land over their columns.
+    Known drift: when the list overflows, the OptionList's vertical
+    scrollbar shifts the data columns left by its width relative to this
+    header; and on Windows the DriveNavigation pane sits left of the
+    listing. Both offsets are cosmetic and accepted.
+    """
+    headers = Table.grid(expand=True)
+    headers.add_column(no_wrap=True, width=1)
+    headers.add_column(no_wrap=True, justify="left", width=3)
+    headers.add_column(no_wrap=True, justify="left", ratio=1)
+    headers.add_column(no_wrap=True, justify="right", width=10)
+    headers.add_column(no_wrap=True, justify="right", width=20)
+    headers.add_column(no_wrap=True, width=1)
+    headers.add_row("", "", "Name", "Size", "Modified", "")
+    return headers
 
 
 ##############################################################################
@@ -133,6 +163,15 @@ class FileSystemPickerScreen(ModalScreen[Union[Path, None]]):
         
         #search-input {
             width: 1fr;
+        }
+
+        /* task-3304 (MI-15): the padding matches DirectoryNavigation's
+           `border: blank` one-cell inset so the header cells sit over
+           their data columns. */
+        #file-dialog-column-headers {
+            height: 1;
+            padding: 0 1;
+            color: $text-muted;
         }
 
         DirectoryNavigation {
@@ -250,6 +289,11 @@ class FileSystemPickerScreen(ModalScreen[Union[Path, None]]):
             with Horizontal(id="search-container"):
                 yield Input(placeholder="Search files...", id="search-input")
                 yield Button("Clear", id="clear-search", variant="default")
+
+            # Column headers for the listing below (task-3304, MI-15).
+            yield Static(
+                _listing_column_headers(), id="file-dialog-column-headers"
+            )
 
             # Main directory navigation
             with Horizontal():

@@ -9425,6 +9425,39 @@ class LibraryScreen(BaseAppScreen):
             return
         analysis_hint.update(new_state.analysis_hint_line)
         analysis_hint.display = bool(new_state.analysis_hint_line)
+        # (task-3304, MI-08) Gate-line/hint changes move the fold; re-derive
+        # the indicator once the new heights have actually laid out.
+        self.call_after_refresh(self._update_library_ingest_fold_hint)
+
+    def _update_library_ingest_fold_hint(self) -> None:
+        """Re-derive the canvas fold indicator after an in-place update.
+
+        (task-3304, MI-08) The hint is canvas-owned, always-mounted,
+        display-managed chrome (never conditionally composed); this hook
+        exists because queue/summary recomposes change content height
+        WITHOUT resizing the canvas, so the canvas's own ``on_resize``
+        never fires for them.
+        """
+        try:
+            canvas = self.query_one(LibraryIngestCanvas)
+        except (NoMatches, QueryError):
+            return
+        canvas.sync_fold_hint()
+
+    def _scroll_library_ingest_queue_into_view(self) -> None:
+        """Bring the queue heading into view after a submit (MI-08).
+
+        Every submit used to land its outcome rows below the fold: the
+        acknowledgement existed but was invisible. ``top=True`` parks the
+        heading at the top of the viewport so the freshly queued rows
+        below it are what the user sees.
+        """
+        try:
+            canvas = self.query_one(LibraryIngestCanvas)
+            heading = canvas.query_one("#library-ingest-queue-heading", Static)
+        except (NoMatches, QueryError):
+            return
+        canvas.scroll_to_widget(heading, animate=False, top=True)
 
     def _update_library_ingest_dynamic_regions(self) -> None:
         """Refresh ONLY the pre-flight summary + queue children (task-2042).
@@ -18501,6 +18534,10 @@ class LibraryScreen(BaseAppScreen):
         # late result out (task-2011).
         self._invalidate_library_ingest_preflight()
         self.refresh(recompose=True)
+        # (task-3304, MI-08) The receipt must be seen, not just exist: the
+        # queue's outcome area sat below the fold on every submit. After
+        # the recompose settles, bring the queue heading into view.
+        self.call_after_refresh(self._scroll_library_ingest_queue_into_view)
 
     def _load_library_ingest_options_from_config(self) -> None:
         """Load persisted per-type ingest options into the form echo.

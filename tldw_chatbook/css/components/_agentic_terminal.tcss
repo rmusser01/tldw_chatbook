@@ -7032,6 +7032,52 @@ LibraryIngestCanvas Button:disabled {
     background: $surface-darken-1;
 }
 
+/* task-3304 (MI-07): schema-disabled option FIELDS (Parakeet model folder /
+   transcription model under provider "default", web page/depth limits under
+   "individual", chunk size/overlap with chunking off) rendered near-
+   identically to enabled ones -- their only treatment was Textual's
+   app-default `*:disabled:can-focus { opacity: 0.7 }` whole-widget fade,
+   the same compounding-dimmer family the Legible Disabled rule
+   (TASK-1801/DESIGN.md) exists for. Same recipe as the Button rule above:
+   neutralise the fade, state a colour that stays >= 3:1 on its own
+   background, and let the darkened surface carry "inert" -- the WHY is a
+   text annotation on the field's label (the canvas derives it from the
+   schema's gate metadata). App tier on purpose: widget DEFAULT_CSS cannot
+   override Textual's own disabled styling (same-tier, widget wins). */
+LibraryIngestCanvas Input:disabled,
+LibraryIngestCanvas Select:disabled,
+LibraryIngestCanvas Checkbox:disabled {
+    opacity: 100%;
+    text-opacity: 100%;
+    color: $text-muted;
+    background: $surface-darken-1;
+}
+/* SelectCurrent paints its own opaque $surface and colours the value via
+   its inner `Static#label` -- without these two the Select override above
+   never reaches the screen (the "set but painted over by a child" defect
+   family from the Watchlists focus round). */
+LibraryIngestCanvas Select:disabled SelectCurrent {
+    background: $surface-darken-1;
+    color: $text-muted;
+}
+LibraryIngestCanvas Select:disabled SelectCurrent Static#label {
+    color: $text-muted;
+}
+
+/* task-3304 (MI-08): fold indicator, task-1623 convention. Docked chrome
+   inside the VerticalScroll canvas -- a docked child never scrolls with
+   the content -- shown by the canvas's own sync only while content
+   overflows. Opaque background so the row reads as chrome, not as a
+   content line. */
+#library-ingest-fold-hint {
+    dock: bottom;
+    width: 100%;
+    height: 1;
+    color: $text-muted;
+    background: $ds-surface-raised;
+    padding: 0 1;
+}
+
 /* task-2130: completion toasts overdrew both canvas bottom-border rows
    (round-4, exact rows pinned by the evidence agent). Same lever as
    task-1562's inspector clearance: the rack's built-in align resists

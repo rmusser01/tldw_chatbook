@@ -63,6 +63,11 @@ In server mode the **Export** rail row is disabled, with the tooltip
   exist ("1 parsing · 2 queued · 1 done"), one line per job with action
   buttons underneath, "Clear finished", and a collapsed "Recent imports"
   fold listing the last finished jobs. Empty state: "No import jobs yet."
+  Pressing "Start import" scrolls the Queue heading into view, so the
+  freshly queued rows are the first thing you see after a submit.
+- **Fold indicator** — while the form is taller than the pane, a pinned
+  "▼ more — scroll for the rest" row holds the bottom edge; it disappears
+  once everything fits.
 
 **Export bundle (.zip)** is a single form: the "Export bundle (.zip)"
 header, a scope line ("Everything: 128 media · 542 conversations · 87
@@ -81,18 +86,19 @@ the rest of the session.
 
 | Import control | What it does |
 |---|---|
-| "Browse…" | Opens the "Import Media" file picker (remembers your last folder). Folders and URLs are typed or pasted into the path field instead. |
-| Pre-check warnings ("⚠ …") | Name a missing optional package, what it's needed for, and the install command that fixes it. |
+| "Browse…" | Opens the "Import media" file picker (remembers your last folder). The listing shows Name / Size / Modified column headers, human-readable sizes ("512 B", "2.4 MB", never a bare byte count), no size on folder rows (including ".."), and a labeled "File name:" input at the bottom. Folders and URLs are typed or pasted into the path field instead. |
+| Pre-check warnings ("⚠ …") | Name a missing optional package, what it's needed for, and the install command that fixes it. A compact "Copy install command" button sits right under the warnings — you no longer have to open the guardrail dialog to copy it (with several distinct commands, each button names its extra, e.g. "Copy install command (.[audio])"). |
 | "Choose a file…" / "Retry" | Offered under pre-check errors — pick a different path, or re-run the check after a network hiccup. |
 | Per-type options | PDF documents: "PDF engine" (pymupdf / pymupdf4llm / docling / docext), "Enable OCR (docling or docext engines only)", "OCR language", "OCR backend" (auto / docext / tesseract / easyocr / paddleocr / docling — docext engine only). Word/Office documents: "Processing method" (auto / docling / native), "Enable OCR (docling method only)", "OCR language". Audio & video: "Transcription provider" (default / parakeet-onnx / faster-whisper / transcribe-cpp), "Local Parakeet model folder", "Transcription model" (tiny–large), "Language", "Translate to English (via faster-whisper)", "Include timestamps", "Speaker diarization", "Voice activity detection (VAD) filter". E-books: "Extraction method" (filtered / markdown / basic), "Chunking method" (chapters / sentences / words / paragraphs), "Include table of contents". Plain text & HTML: "Analyze after import", "Chunk content", "Chunk size", "Chunk overlap", "Encoding". Web pages (URLs): "What to fetch", "Maximum pages", "Maximum depth". |
 | PDF / document OCR | The OCR checkbox is inert under engines that cannot OCR — the label names the capable ones. "OCR language" rides the OCR toggle; the PDF "OCR backend" applies to the docext engine only. |
+| Inert (grayed) options | Any option whose precondition isn't met renders dimmed on a darker field AND says why at its label — "Local Parakeet model folder — needs the parakeet-onnx provider", "Maximum pages — single-page fetch selected", "Chunk size — needs Chunk content on", "OCR language — needs Enable OCR on"; a missing optional package reads "— needs <package> installed". Flip the named gate and the field wakes up. |
 | "Translate to English" | Transcribes audio/video into English regardless of the spoken language. Runs via faster-whisper — the toggle is inert under parakeet-onnx and transcribe-cpp, which cannot translate. |
 | E-book "Chunking method" | "chapters" (the default) stores one retrieval chunk per chapter; sentences / words / paragraphs chunk by that unit using the Chunk size/overlap values. |
 | Web "What to fetch" on a local import | The multi-page methods (sitemap / url_level / recursive_scraping) run only on the server. Selecting one while importing on this machine shows "Multi-page fetch runs on the server — this local import fetches one page." right under the control. |
 | "Analyze after import" | Runs an LLM summary of each imported item, stored alongside it (visible from the media viewer's analysis panel). The provider comes from `[analysis_defaults] provider` in `config.toml` — the same default the Media analysis panel uses — and its key from `[api_settings.<provider>]` or the provider's usual environment variable. When the option is on but no provider is callable, a line above Start says so ("Analyze after import is on, but … Imports will run without analysis.") and finished rows read "Imported name — analysis skipped: <reason>" instead of silently skipping. |
 | "Chunk content" | Governs every type: off means no retrieval chunks are stored at all; on chunks plain text / documents / HTML too (not just PDF/e-book/audio), using "Chunk size" and "Chunk overlap" — both measured in words. |
 | "Encoding" | How plain text and HTML files are decoded: auto (utf-8, then detection) or an explicit utf-8 / utf-16 / latin-1 / cp1252. A wrong explicit choice shows up as replacement characters rather than failing the import. |
-| "Install verified Parakeet v2 INT8 (630.6 MiB)…" | In the Audio & video fold, enabled when the provider is parakeet-onnx. Opens a consent dialog listing Source, Revision, License, Download size, and Destination, ending "All four files are checked against pinned sizes and SHA-256 digests before the bundle becomes usable." Buttons: "Cancel" / "Install". |
+| "Install verified Parakeet v2 INT8 (630.6 MiB)…" | In the Audio & video fold, enabled when the provider is parakeet-onnx (under any other provider the button is inert and its label ends "— needs the parakeet-onnx provider"). Opens a consent dialog listing Source, Revision, License, Download size, and Destination, ending "All four files are checked against pinned sizes and SHA-256 digests before the bundle becomes usable." Buttons: "Cancel" / "Install". |
 | "Start import" | Queues everything the pre-check found. If warnings are outstanding, the "Some files may fail to import:" dialog appears first (see below). |
 | Queue rows | "● queued / parsing / writing · name" while working, "✓ done · name · 4s" on success, "✗ failed · name · reason" (plus " · retry 1" after a retry) on failure, "⊘ cancelled · name" when stopped on purpose. Server jobs carry an " · on server" suffix. |
 | Row actions | "Open in Library" (done, local) jumps to the new media item; "View on server" (done, server); "Show details" shows the full error; "Retry" re-queues a failed job; "Cancel" stops an in-flight server job; "Dismiss" removes a failed row. |
@@ -127,11 +133,12 @@ installing.
    a video site imports as audio/video; a PDF link as a PDF; other pages
    under "Web pages", where "What to fetch" / "Maximum pages" / "Maximum
    depth" control how much gets scraped. Press "Start import".
-4. **Fix a "may fail to import" warning** — Press "Start import", and in
-   the "Some files may fail to import:" dialog press "Copy install
-   command", then "Cancel". Quit the app, run the copied command in the
-   environment the app is installed in, relaunch, and start the import
-   again — the warning is gone.
+4. **Fix a "may fail to import" warning** — Press "Copy install command"
+   right under the "⚠" warning in the pre-check summary (the same button
+   also appears in the "Some files may fail to import:" dialog after
+   Start). Quit the app, run the copied command in the environment the app
+   is installed in, relaunch, and start the import again — the warning is
+   gone.
 5. **Export your notes as a bundle** — In the rail click Browse ▸ Notes,
    press "Export…" above the list. On the "Export bundle (.zip)" form
    confirm the scope line says "Notes · N items", adjust the name, press
@@ -254,3 +261,14 @@ select whose "chapters" default reaches the processor; Audio & video gain
 local import with a multi-page "What to fetch" selection now says
 "Multi-page fetch runs on the server — this local import fetches one
 page." under the control — previously it silently imported one page)*
+
+*Verified against feat/media-ingest-ux-parity @ 4839d7ce2 — 2026-08-07
+(task-3304: schema-disabled options now read as inert AND say why at the
+control ("— needs the parakeet-onnx provider", "— single-page fetch
+selected", "— needs Chunk content on"), with app-tier Legible Disabled
+styling instead of the invisible 0.7 fade; Start scrolls the Queue heading
+into view and a pinned "▼ more — scroll for the rest" row marks overflow;
+the Browse picker gained Name/Size/Modified headers, humanized sizes, no
+size on folder rows, and a "File name:" label; "Copy install command" now
+also sits under the pre-check "⚠" warnings, not only in the guardrail
+dialog)*

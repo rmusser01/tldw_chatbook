@@ -48,6 +48,16 @@ class OptionField:
             non-empty choice is truthy, so a select-gated field would always
             read as editable. Naming the values that actually enable it keeps
             the form from offering an input the run will ignore.
+        disabled_reason: (task-3304, MI-07) Curated copy for the field's
+            DISABLED state -- rendered at the control while its
+            ``enabled_when`` gate is closed (e.g. "needs the parakeet-onnx
+            provider"), per the design system's Inert-actions rule: a
+            disabled control carries a text annotation for *why*, never
+            dimming alone. Empty falls back to a generic derivation from
+            the gate metadata (see :func:`field_disabled_state`); fields
+            whose static ``hint`` already names the gate (task-3303's
+            "docling or docext engines only" style) deliberately leave both
+            empty so the label is never double-annotated.
     """
 
     name: str
@@ -59,6 +69,7 @@ class OptionField:
     enabled_when: str | None = None
     hint: str = ""
     enabled_when_values: tuple[Any, ...] = ()
+    disabled_reason: str = ""
 
 
 @dataclass(frozen=True)
@@ -149,6 +160,10 @@ _GROUP_EXTRAS: dict[str, tuple[str, ...]] = {
 _FEATURE_LABELS: dict[str, str] = {
     "audio_processing": "Audio processing",
     "beautifulsoup4": "BeautifulSoup",
+    # (task-3304) Named for the disabled-state annotation on the diarization
+    # checkbox -- without it the label falls through to the audio group's
+    # extra ("Audio ingestion and transcription"), which is not the gate.
+    "diarization": "Speaker diarization",
     "docling": "Docling",
     "docext": "Docext",
     "ebook_processing": "E-book processing",
@@ -360,6 +375,7 @@ _TYPE_GROUPS: dict[str, TypeGroupCapabilities] = {
                 depends_on="pdf_processing",
                 enabled_when="ocr",
                 hint="e.g. en, de, fr",
+                disabled_reason="needs Enable OCR on",
             ),
             OptionField(
                 name="ocr_backend",
@@ -379,6 +395,7 @@ _TYPE_GROUPS: dict[str, TypeGroupCapabilities] = {
                 ),
                 enabled_when="pdf_engine",
                 enabled_when_values=("docext",),
+                disabled_reason="needs the docext engine",
             ),
         ),
     ),
@@ -430,6 +447,7 @@ _TYPE_GROUPS: dict[str, TypeGroupCapabilities] = {
                 depends_on="docling",
                 enabled_when="ocr",
                 hint="e.g. en, de, fr",
+                disabled_reason="needs Enable OCR on",
             ),
         ),
     ),
@@ -467,6 +485,7 @@ _TYPE_GROUPS: dict[str, TypeGroupCapabilities] = {
                 depends_on="parakeet_onnx",
                 enabled_when="transcription_provider",
                 enabled_when_values=("parakeet-onnx",),
+                disabled_reason="needs the parakeet-onnx provider",
             ),
             OptionField(
                 name="transcription_precision",
@@ -487,6 +506,7 @@ _TYPE_GROUPS: dict[str, TypeGroupCapabilities] = {
                 depends_on="faster_whisper",
                 enabled_when="transcription_provider",
                 enabled_when_values=("faster-whisper",),
+                disabled_reason="needs the faster-whisper provider",
             ),
             OptionField(
                 name="language",
@@ -614,6 +634,7 @@ _TYPE_GROUPS: dict[str, TypeGroupCapabilities] = {
                 # old "characters" hint described a pipeline that never
                 # chunked at all.
                 hint="words · 100–5000",
+                disabled_reason="needs Chunk content on",
             ),
             OptionField(
                 name="chunk_overlap",
@@ -622,6 +643,7 @@ _TYPE_GROUPS: dict[str, TypeGroupCapabilities] = {
                 default=100,
                 enabled_when="chunk",
                 hint="words · at least 0",
+                disabled_reason="needs Chunk content on",
             ),
             OptionField(
                 name="encoding",
@@ -662,6 +684,9 @@ _TYPE_GROUPS: dict[str, TypeGroupCapabilities] = {
                 # Only meaningful once more than one page is being fetched.
                 enabled_when="scrape_method",
                 enabled_when_values=tuple(sorted(MULTI_PAGE_SCRAPE_METHODS)),
+                # Accurate because "individual" is the ONLY non-multi-page
+                # choice -- if that ever changes, reword to name the gate.
+                disabled_reason="single-page fetch selected",
             ),
             OptionField(
                 name="max_depth",
@@ -670,6 +695,7 @@ _TYPE_GROUPS: dict[str, TypeGroupCapabilities] = {
                 default=3,
                 enabled_when="scrape_method",
                 enabled_when_values=tuple(sorted(MULTI_PAGE_SCRAPE_METHODS)),
+                disabled_reason="single-page fetch selected",
             ),
         ),
     ),
@@ -779,6 +805,74 @@ def generic_option_default(name: str, fallback: Any = None) -> Any:
         if field_spec.name == name:
             return field_spec.default
     return fallback
+
+
+def field_disabled_state(
+    field: OptionField,
+    cap: TypeGroupCapabilities,
+    values: dict[str, Any],
+    *,
+    is_installed: Any = None,
+) -> tuple[bool, str]:
+    """Whether ``field`` is currently uneditable, and the reason to render.
+
+    (task-3304, MI-07) The single source for the canvas's disabled
+    computation AND the reason annotation shown at the control, so the two
+    can never disagree. Two independent gates, checked in the canvas's
+    established order:
+
+    1. ``depends_on`` -- a packaging gate. The reason names the missing
+       feature ("needs Docling installed").
+    2. ``enabled_when`` (optionally with ``enabled_when_values``) -- a
+       within-form gate. The reason is the field's curated
+       ``disabled_reason`` when present; otherwise a generic derivation
+       from the gate metadata. Fields whose static ``hint`` already names
+       the gate (task-3303's "docling or docext engines only" labels)
+       return an EMPTY reason so the label is never double-annotated --
+       the disabled state still shows, the why is already in the label.
+
+    Args:
+        field: The option field under evaluation.
+        cap: The field's owning group schema (supplies gate siblings).
+        values: Current per-group option values (missing keys fall back to
+            each gate field's schema default).
+        is_installed: Feature-availability probe; defaults to this
+            module's :func:`_is_installed`. The canvas passes its own
+            module-level reference so tests patching
+            ``library_ingest_canvas._is_installed`` keep working.
+
+    Returns:
+        ``(disabled, reason)``. ``reason`` is ``""`` whenever the field is
+        editable, and may also be ``""`` for a disabled field whose label
+        already carries the gate (see above).
+    """
+    probe = _is_installed if is_installed is None else is_installed
+    if field.depends_on is not None and not probe(field.depends_on):
+        return True, f"needs {_feature_label(field.depends_on, cap.group)} installed"
+    if field.enabled_when is None:
+        return False, ""
+    gate = next((f for f in cap.fields if f.name == field.enabled_when), None)
+    gate_value = values.get(
+        field.enabled_when, gate.default if gate is not None else False
+    )
+    if field.enabled_when_values:
+        # A select gate: every non-empty choice is truthy, so the field
+        # names the choices that actually enable it.
+        if gate_value in field.enabled_when_values:
+            return False, ""
+    elif bool(gate_value):
+        return False, ""
+    if field.disabled_reason:
+        return True, field.disabled_reason
+    if field.hint:
+        # The static hint already carries the gate at the control
+        # (task-3303's convention); a second annotation would stutter.
+        return True, ""
+    gate_label = gate.label if gate is not None else field.enabled_when
+    if field.enabled_when_values:
+        wanted = ", ".join(str(value) for value in field.enabled_when_values)
+        return True, f"needs {gate_label}: {wanted}"
+    return True, f"needs {gate_label} on"
 
 
 def get_capabilities(group: str) -> TypeGroupCapabilities:

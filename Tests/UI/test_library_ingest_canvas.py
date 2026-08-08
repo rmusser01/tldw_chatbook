@@ -1469,7 +1469,15 @@ async def test_select_fields_carry_visible_labels():
         ]
         assert select_labels, "pdf group unexpectedly has no selects"
         for label in select_labels:
-            assert label in labels, f"select {label!r} has no visible label"
+            # (task-3304) A schema-disabled select's label carries a
+            # " — <reason>" annotation, and whether one applies here
+            # depends on which optional packages THIS environment has --
+            # so accept the label with or without the suffix, pinned to
+            # the exact separator so a missing label still fails.
+            assert any(
+                text == label or text.startswith(f"{label} — ")
+                for text in labels
+            ), f"select {label!r} has no visible label; rendered: {labels!r}"
 
 
 @pytest.mark.asyncio

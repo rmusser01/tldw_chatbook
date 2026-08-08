@@ -64,6 +64,9 @@ def _minimal_ingest_screen() -> LibraryScreen:
     screen._library_ingest_clear_finished_armed_at = 0.0
     screen._library_ingest_expanded_details = set()
     screen._library_ingest_recent_ledger = []
+    # Submit schedules the scroll-receipt-into-view callback (task-3304);
+    # the real method posts a message this unmounted shortcut cannot.
+    screen.call_after_refresh = lambda *_args, **_kwargs: None
     return screen
 
 
