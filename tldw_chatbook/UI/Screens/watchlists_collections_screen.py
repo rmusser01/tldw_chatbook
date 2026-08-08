@@ -9873,9 +9873,14 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
 
     def action_show_help(self) -> None:
         """Show a notification with available keyboard shortcuts."""
+        # TASK-3072 plan task 10: the reading-loop verbs join the help line.
+        # Decision 031: advertise only implemented actions -- every verb
+        # named here is bound above and covered by tests.
         self.app_instance.notify(
             "1=Read 2=Sources 3=Runs 4=Rules 5=Notifications 6=Artifacts "
-            "7=Overview | n=new d=delete/ignore c=check p=preview ?=help",
+            "7=Overview | n=new d=delete/ignore c=check p=preview ?=help | "
+            "j/k=move space=next-unread m=read/unread s=star o=open "
+            "a=mark-all-read u=undo",
             severity="information",
             timeout=8,
         )

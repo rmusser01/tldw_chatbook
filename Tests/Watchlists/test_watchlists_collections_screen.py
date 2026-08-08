@@ -963,6 +963,107 @@ async def test_the_next_unread_footer_button_opens_the_next_unread():
         )
 
 
+# --- TASK-3072 plan task 10: the hostile-HTML end-to-end pin ------------------
+
+
+@pytest.mark.asyncio
+async def test_a_hostile_item_stars_queues_and_still_renders_inert():
+    """The phase-2 DoD, end to end: an item whose title and body carry
+    `<script>`, `[bold red]` and control bytes renders as INERT TEXT in the
+    row and the reader body while the star and queue verbs work on it --
+    and both flags survive a re-persist (Task 3's pin, at the surface)."""
+    from textual.widgets import Static
+
+    from tldw_chatbook.Subscriptions.item_persist import persist_subscription_item
+
+    hostile_title = "[bold red]x[/]<script>alert('TITLE_LITERAL')</script>\x1b[31m"
+    hostile_body = "<script>alert('BODY_PAYLOAD')</script> [bold red]injected[/]\x00\x07"
+
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+        db = app.watchlist_bundle_service._db
+        source_id = db.add_subscription(
+            name="Evil Feed", type="rss", source="https://evil.example/f"
+        )
+        with db.transaction() as conn:
+            item_id = persist_subscription_item(
+                conn,
+                source_id,
+                {
+                    "url": "https://evil.example/post",
+                    "title": hostile_title,
+                    "content": hostile_body,
+                    "content_hash": "hash-hostile",
+                },
+                run_id=None,
+                now="2026-08-06T09:00:00+00:00",
+            )
+        await screen._load_items()
+        pane = screen.query_one("#watchlists-items-pane", ArticleListPane)
+        await _wait_for_items(pilot, pane)
+
+        pane.select_item_by_id(str(pane.items[0]["id"]))
+        await pilot.pause(0.3)
+        assert screen._selected_content_item is not None, "precondition: item open"
+
+        # The verbs work on the hostile item exactly as on any other.
+        await pilot.press("s")
+        for _ in range(60):
+            await pilot.pause()
+            if _flagged_value(db, item_id) == 1:
+                break
+        assert _flagged_value(db, item_id) == 1, "the star write must land"
+        db.set_item_briefing_queued(item_id, True)
+
+        # The row renders the attacks as literal characters, control-stripped.
+        row_widget = pane._find_row(str(pane.items[0]["id"]))
+        row_text = str(row_widget.query_one(Static).renderable)
+        assert "[bold red]x[/]" in row_text, "markup-shaped text stays literal"
+        assert "\x1b" not in row_text, "no escape sequence survives into a row"
+
+        # The reader defends each field at its own layer. The TITLE is
+        # documented plain text (render_article appends, never parses), so
+        # its script-shaped characters render literally and inertly. The
+        # BODY goes through `readable_body_text`, which drops script tags
+        # AND their payloads. Bracket text stays literal; control bytes die.
+        body = screen.query_one("#content-body", Static).renderable
+        body_plain = getattr(body, "plain", str(body))
+        assert "[bold red]injected[/]" in body_plain
+        assert "TITLE_LITERAL" in body_plain, (
+            "the title renders -- as inert literal characters"
+        )
+        assert "BODY_PAYLOAD" not in body_plain, (
+            "the body's script payload is dropped, not shown"
+        )
+        assert "\x00" not in body_plain and "\x07" not in body_plain
+        assert "\x1b" not in body_plain
+
+        # Re-persist the same item (same url + content_hash, the re-fetch
+        # shape): neither flag is touched by the upsert.
+        with db.transaction() as conn:
+            persist_subscription_item(
+                conn,
+                source_id,
+                {
+                    "url": "https://evil.example/post",
+                    "title": hostile_title,
+                    "content": hostile_body,
+                    "content_hash": "hash-hostile",
+                },
+                run_id=None,
+                now="2026-08-06T09:05:00+00:00",
+            )
+        assert _flagged_value(db, item_id) == 1, "the star survives a re-persist"
+        queued = db.conn.execute(
+            "SELECT queued_for_briefing FROM subscription_items WHERE id = ?",
+            (item_id,),
+        ).fetchone()
+        assert int(queued[0]) == 1, "the queue flag survives a re-persist"
+
+
 @pytest.mark.asyncio
 async def test_space_opens_next_unread():
     """`space` walks to the next UNREAD item, skipping reviewed rows."""
