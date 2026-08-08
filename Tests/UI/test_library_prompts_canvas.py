@@ -3045,6 +3045,52 @@ async def test_library_prompt_delete_reset_rejects_a_late_modal_dismissal(tmp_pa
 
 
 @pytest.mark.asyncio
+async def test_library_prompt_copy_and_delete_fail_closed_for_unknown_future_type(tmp_path):
+    """An explicit future artifact type cannot copy flattened data or delete."""
+    db, service = _real_prompt_scope_service(tmp_path)
+    prompt_id, _uuid, _msg = db.add_prompt(
+        name="Future artifact", author="A", details="d", user_prompt="x"
+    )
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    host = LibraryHarness(app)
+    copied: list[str] = []
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_prompt_editor(screen, pilot, prompt_id)
+        assert isinstance(screen._library_prompt_detail, dict)
+        screen._library_prompt_detail["artifact_type"] = "future_prompt"
+        screen.app_instance = host
+        host.copy_to_clipboard = copied.append
+
+        host._notifications.clear()
+        screen.query_one("#library-prompt-copy", Button).press()
+        await pilot.pause()
+
+        assert copied == []
+        assert [notice.message for notice in host._notifications] == [
+            "This artifact type is unsupported."
+        ]
+        assert all(
+            "copied to clipboard" not in notice.message.lower()
+            for notice in host._notifications
+        )
+
+        host._notifications.clear()
+        screen.query_one("#library-prompt-delete", Button).press()
+        await pilot.pause()
+
+        assert host.screen is screen
+        assert [notice.message for notice in host._notifications] == [
+            "This artifact type is unsupported."
+        ]
+        assert db.fetch_prompt_details(prompt_id) is not None
+
+
+@pytest.mark.asyncio
 async def test_library_shell_create_prompt_row_opens_blank_editor(tmp_path):
     """D1: the Create rail's "New prompt" row opens the in-canvas editor on
     a blank, not-yet-saved record -- empty fields, meta line reads "New

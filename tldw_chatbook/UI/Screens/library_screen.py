@@ -15833,6 +15833,9 @@ class LibraryScreen(BaseAppScreen):
         event.stop()
         if self._library_prompts_view != "editor" or not self._selected_prompt_id:
             return
+        if self._library_prompt_action_artifact_type() is None:
+            self._notify_library_prompt_unsupported_artifact_type()
+            return
         fields = self._read_library_prompt_editor_fields()
         if fields is None:
             return
@@ -15922,6 +15925,27 @@ class LibraryScreen(BaseAppScreen):
             )
             if key in detail
         }
+
+    def _library_prompt_action_artifact_type(self) -> ArtifactType | None:
+        """Return a supported explicit type, preserving missing legacy type as Prompt."""
+        detail = self._library_prompt_detail
+        if isinstance(detail, Mapping) and "artifact_type" in detail:
+            raw_type = detail["artifact_type"]
+            if raw_type == "prompt":
+                return "prompt"
+            if raw_type == "recipe":
+                return "recipe"
+            return None
+        artifact_type = self._current_library_prompt_editor_state().artifact_type
+        if artifact_type not in {"prompt", "recipe"}:
+            return None
+        return artifact_type
+
+    def _notify_library_prompt_unsupported_artifact_type(self) -> None:
+        """Report an unsupported artifact without exposing its contents."""
+        notify = getattr(self.app_instance, "notify", None)
+        if callable(notify):
+            notify("This artifact type is unsupported.", severity="warning")
 
     def _write_library_prompt_export_file(
         self,
@@ -16057,9 +16081,11 @@ class LibraryScreen(BaseAppScreen):
         if getattr(self, "_library_prompt_delete_inflight_fingerprint", None):
             return
         fields = self._read_library_prompt_editor_fields()
-        artifact_type = self._library_prompt_delete_artifact_type()
+        artifact_type = self._library_prompt_action_artifact_type()
         fingerprint = self._library_prompt_delete_fingerprint()
         if fields is None or artifact_type is None or fingerprint is None:
+            if artifact_type is None:
+                self._notify_library_prompt_unsupported_artifact_type()
             return
         self._library_prompt_delete_pending_fingerprint = fingerprint
         self.app.push_screen(
@@ -16078,19 +16104,12 @@ class LibraryScreen(BaseAppScreen):
         prompt_id = self._selected_prompt_id
         if self._library_prompts_view != "editor" or not isinstance(prompt_id, int):
             return None
-        artifact_type = self._library_prompt_delete_artifact_type()
+        artifact_type = self._library_prompt_action_artifact_type()
         if artifact_type is None:
             return None
         version = self._library_prompt_version
         version_token = str(version) if isinstance(version, int) else "none"
         return f"library-prompt:{prompt_id}:{version_token}:{artifact_type}"
-
-    def _library_prompt_delete_artifact_type(self) -> ArtifactType | None:
-        """Return the validated type retained by the normalized editor state."""
-        artifact_type = self._current_library_prompt_editor_state().artifact_type
-        if artifact_type not in {"prompt", "recipe"}:
-            return None
-        return artifact_type
 
     def _settle_library_prompt_delete(self, decision: PromptDeleteDecision) -> None:
         """Delete only a once-settled confirmation for the same live editor."""
