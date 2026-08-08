@@ -15806,7 +15806,7 @@ class ChatScreen(BaseAppScreen):
         if tools_ok:
             from tldw_chatbook.UI.Screens.video_player_screen import VideoPlayerScreen
 
-            self.push_screen(VideoPlayerScreen(str(path), title=meta.name))
+            self.app_instance.push_screen(VideoPlayerScreen(str(path), title=meta.name))
             return
         self.app_instance.notify(guidance, severity="information")
         try:
@@ -15987,7 +15987,7 @@ class ChatScreen(BaseAppScreen):
             return
         from tldw_chatbook.UI.Screens.video_player_screen import VideoPlayerScreen
 
-        self.push_screen(
+        self.app_instance.push_screen(
             VideoPlayerScreen(
                 resolution.final_url,
                 title="stream",
