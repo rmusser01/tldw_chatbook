@@ -439,6 +439,18 @@ The current boundary has `467/1151/6859/6`, monitoring digest
 The Task 3 head retains that fingerprint and changes only the monitoring digest
 to `3826b76482fd484ff194`.
 
+After closeout, the branch rebased once more onto
+`b030b0b73f217b955b298a45fce3a0256403447c`. The upstream Console rail
+changes left every TASK-856 file and diagnostic call multiset unchanged but
+moved calls in `chat_screen.py`, `settings_screen.py`, and `config.py`, plus the
+existing private append sink line in `config.py`. A third reviewed inventory
+reconciliation is placed immediately before the Task 3 consumer commit. Counts
+remain `467/1151/6859/6`; the current non-monitoring fingerprint on both sides
+of the TASK-856 monitoring change is
+`5ce06a13eb48f8007eddfa92a0616b41e5122b89e6b2b7d494d4c81fb48723ac`.
+Monitoring still changes only from `f9ccee6989b39da1333b` at that boundary to
+`911bf9d65817bf259923` at the head.
+
 ## Architecture decision record
 
 ADR required: yes

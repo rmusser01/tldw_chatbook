@@ -850,6 +850,30 @@ Task 3 then changes only the monitoring digest to
 final checker must report 467 owners, 1,151 TASK-492 calls, 6,859 TASK-494
 calls, and six sink files.
 
+#### Final-dev rebase amendment
+
+After verified closeout, `origin/dev` advanced again and the branch rebased
+cleanly onto `b030b0b73f217b955b298a45fce3a0256403447c`. The upstream Console
+rail work did not modify any TASK-856 production/test file and did not add or
+remove any diagnostic call. It moved existing calls in three owners, so the
+generated counts remain `467/1151/6859/6` while these line-sensitive entries
+change:
+
+| Path suffix | Calls | Generated digest |
+| --- | ---: | --- |
+| `UI/Screens/chat_screen.py` | 142 | `35ccde87405a6c405f14` |
+| `UI/Screens/settings_screen.py` | 29 | `0c5906f0cf31d049ca2b` |
+| `config.py` | 103 | `97bc4277a86ca26bb903` |
+
+AST call-multiset comparison is identical for all three files. Persistent-sink
+shapes/digests are unchanged; only the `config.py` private append sink moves
+from line 4352 to 4357. Reconcile exactly those entries in a third baseline
+commit placed immediately before the Task 3 consumer commit. At that boundary
+the monitoring digest remains `f9ccee6989b39da1333b`; TASK-856's head changes
+only that digest to `911bf9d65817bf259923`. Both sides share the current
+non-monitoring fingerprint
+`5ce06a13eb48f8007eddfa92a0616b41e5122b89e6b2b7d494d4c81fb48723ac`.
+
 - [ ] **Step 1: Run the complete focused sanitizer/security suite**
 
 ```bash
