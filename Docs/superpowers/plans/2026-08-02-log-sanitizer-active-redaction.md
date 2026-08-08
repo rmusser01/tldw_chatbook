@@ -100,46 +100,54 @@ Run the checker before editing the manifest:
 ../../.venv/bin/python scripts/check_persistent_diagnostic_inventory.py
 ```
 
-At latest-dev commit `c4599b8b1`, expected: exit 1 because the Prompt Workbench
-and Change Review merges changed production diagnostics without committing the
-generated inventory. Compare committed and generated inventories in memory;
-do not run `--write`. The reviewed drift is exactly:
+At latest-dev commit `ceede62fe46d7aa090df4a36307077e097d8c044`, expected:
+exit 1 because subsequent production changes updated diagnostic owners without
+committing the generated inventory. Compare committed and generated inventories
+in memory; do not run `--write`. The reviewed drift is exactly:
 
-- summary `442/1089/6769/5` becomes `444/1102/6774/5` for
+- summary `466/1144/6851/6` becomes `467/1151/6854/6` for
   owner files/TASK-492 calls/TASK-494 calls/sink files;
-- add `Prompt_Management/prompt_improvement_service.py` with one TASK-494 call;
-- add `Workspaces/change_revert.py` with two TASK-494 calls;
-- update the owner entries for `Chat_Functions.py`,
-  `console_provider_gateway.py`, `Prompts_DB.py`, `LLM_API_Calls.py`,
-  `LLM_API_Calls_Local.py`, `local_llm_provider_catalog_service.py`,
-  `Prompts_Interop.py`, `chat_screen.py`, and `library_screen.py`; and
+- add `UI/Screens/provider_model_resolution.py` with one TASK-494 call;
+- update the twenty existing owner entries listed below; and
 - leave persistent-sink topology and `monitoring_engine.py` unchanged.
 
 At that pinned commit the exact generated owner values are:
 
 | Path suffix | Calls | Digest |
 | --- | ---: | --- |
-| `Chat/Chat_Functions.py` | 107 | `f017eaf38022f2d4017f` |
-| `Chat/console_provider_gateway.py` | 1 | `8c26198aaec0ad29e749` |
-| `DB/Prompts_DB.py` | 120 | `15e26a5f1df0fd8482ef` |
-| `LLM_Calls/LLM_API_Calls.py` | 171 | `e5991075a75d934a7e42` |
-| `LLM_Calls/LLM_API_Calls_Local.py` | 41 | `bc790fe8d2f3544203bf` |
-| `LLM_Provider_Catalog/local_llm_provider_catalog_service.py` | 5 | `211e68ecc8c6e816b301` |
-| `Prompt_Management/Prompts_Interop.py` | 93 | `d7ca19fa44acdf1e5289` |
-| `Prompt_Management/prompt_improvement_service.py` | 1 | `f7a441595550015f240a` |
-| `UI/Screens/chat_screen.py` | 148 | `569dd419f351b767b1d4` |
-| `UI/Screens/library_screen.py` | 77 | `35bdc0279c8ae277f42d` |
-| `Workspaces/change_revert.py` | 2 | `2c290c7704b2a652f70b` |
+| `Chat/console_chat_controller.py` | 26 | `9c82b5bacfb585cb2344` |
+| `Chat/rag_scope.py` | 4 | `c8311dec8573efc15c1a` |
+| `DB/Subscriptions_DB.py` | 4 | `aeadec9e82211a3c903c` |
+| `Event_Handlers/Chat_Events/chat_rag_events.py` | 50 | `52dfbbbb9df89723c853` |
+| `Subscriptions/local_watchlists_service.py` | 3 | `db76c859421cc0197208` |
+| `Subscriptions/watchlist_scope_service.py` | 2 | `8dc49325dd2b17b0a7f5` |
+| `Tools/web_tool_impls.py` | 9 | `5130bcf118362c078f60` |
+| `UI/Console_Modules/dictation.py` | 10 | `44188d4d417a8174a0a` |
+| `UI/Console_Modules/message.py` | 13 | `ee1a310018bae09826e6` |
+| `UI/Navigation/main_navigation.py` | 1 | `5041017946de31086ddb` |
+| `UI/Screens/chat_screen.py` | 142 | `3547979b9158631d0066` |
+| `UI/Screens/provider_model_resolution.py` | 1 | `e5ceaaaff067fd372196` |
+| `UI/Screens/settings_screen.py` | 29 | `877b708b259829710f8a` |
+| `UI/Screens/watchlists_collections_screen.py` | 77 | `79ef1df299f4a6131333` |
+| `UI/Watchlists_Modules/watchlists_backend_controller.py` | 1 | `f137bb3f8055907a77b7` |
+| `UI/Wizards/FirstRunSetupWizard.py` | 21 | `79833587abfc0d80e29b` |
+| `Widgets/Console/console_context_modal.py` | 3 | `f20db7c68f2499dcc7a2` |
+| `Widgets/Console/console_transcript.py` | 7 | `c54d9ebc99f1d6f1baec` |
+| `Widgets/splash_screen.py` | 19 | `08e9790faf88858630ea` |
+| `app.py` | 293 | `8cee8c672b033ec6b723` |
+| `config.py` | 103 | `5026476db34a50876706` |
 
 Review the semantic diagnostic-call delta, not only digests. The accepted delta
-must still be: metadata-safe LLM helpers instead of payload/error previews;
-prompt-improvement request/provider/model/count metadata without prompt text;
-two constant-message change-revert warnings with exception context that remain
-ordinary, non-admitted records; the Prompts DB v2-to-v3 migration pair; and
+must still be: seven metadata-only `Tools/web_tool_impls.py` debug calls for
+robots.txt redirect and parsing failures; one provider/model-only catalog debug
+call in `provider_model_resolution.py`; one constant-message watchlist-star
+debug call with exception context; one reduced-motion card-name info call; and
 otherwise only line movement/formatting. Persistent-sink topology is unchanged,
-and the existing admission tests remain the proof that ordinary records do not
-reach disk. If latest `dev` differs, stop and reconcile the new delta before
-patching anything.
+and the existing admission tests remain the proof that these ordinary records
+do not reach disk. The `app.py` sink line numbers move from 6063/6091/6148 to
+6064/6092/6149, and the `config.py` private append sink moves from line 4339 to
+4352, without semantic sink changes. If latest `dev` differs, stop and
+reconcile the new delta before patching anything.
 
 Use `apply_patch` to change exactly the reviewed summary and owner entries.
 Then run:
@@ -151,8 +159,8 @@ Then run:
   -q
 ```
 
-Expected: checker exit 0 with 444 owners, 1,102 TASK-492 calls, 6,774
-TASK-494 calls, and five sink files; all three architecture tests pass.
+Expected: checker exit 0 with 467 owners, 1,151 TASK-492 calls, 6,854
+TASK-494 calls, and six sink files; all three architecture tests pass.
 
 Commit this prerequisite separately before any sanitizer production edit and
 record the commit ID as the TASK-856 inventory reconciliation boundary:
@@ -173,13 +181,14 @@ Run this read-only command before production edits:
 Expected monitoring entry on the currently approved base:
 
 ```json
-{"call_count": 16, "diagnostic_digest": "5bd6f2dfc3a7c56e9aea", "owner": "TASK-494", "path": "tldw_chatbook/Subscriptions/monitoring_engine.py", "reason": "remaining Chatbook production diagnostic owner"}
+{"call_count": 16, "diagnostic_digest": "f9ccee6989b39da1333b", "owner": "TASK-494", "path": "tldw_chatbook/Subscriptions/monitoring_engine.py", "reason": "remaining Chatbook production diagnostic owner"}
 ```
 
-Expected non-monitoring SHA-256 after the reviewed `c4599b8b1` reconciliation:
+Expected non-monitoring SHA-256 after the reviewed
+`ceede62fe46d7aa090df4a36307077e097d8c044` reconciliation:
 
 ```text
-854ea4cb694d8849b3f38ae473ca42df5bacbdc61ab5478eebea2b88294f2b6f
+8fbd4266f14a51b9645626ba6f5ea624b00db65ac0baae0e4b98de1eaabc0fab
 ```
 
 Record the actual output in the plan execution notes. If latest `dev` changes

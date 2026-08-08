@@ -42,12 +42,12 @@ credential would corrupt ordinary identifiers. URL-bearing diagnostics must
 omit private URL components instead of treating regex redaction as permission
 to log them.
 
-The latest `dev` baseline also contains reviewed diagnostic changes from the
-Prompt Workbench and Change Review merges whose generated inventory was not
-committed. TASK-856 must reconcile those exact pre-existing owner entries in a
-separate baseline commit before changing sanitizer production code. Its own
-inventory proof is then measured from that reconciled commit, so upstream drift
-cannot be mistaken for or hidden inside the subscription diagnostic change.
+The latest `dev` baseline also contains reviewed diagnostic changes whose
+generated inventory was not committed. TASK-856 must reconcile those exact
+pre-existing owner entries in a separate baseline commit before changing
+sanitizer production code. Its own inventory proof is then measured from that
+reconciled commit, so upstream drift cannot be mistaken for or hidden inside
+the subscription diagnostic change.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria

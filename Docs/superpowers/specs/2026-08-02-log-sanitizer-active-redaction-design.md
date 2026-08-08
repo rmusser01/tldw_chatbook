@@ -398,28 +398,26 @@ The subscription diagnostic change necessarily changes the reviewed
 `monitoring_engine.py` digest in
 `Docs/security/production-diagnostic-inventory.json`.
 
-The inventory was green at `f5ca03d42`, but latest `dev` was rechecked again at
-`c4599b8b1` after the Prompt Workbench and Change Review merges. Those merges
-did not update the checked inventory: generated state has 444 owner files,
-1,102 TASK-492 calls, 6,774 TASK-494 calls, and five sink files, while the
-committed manifest still records 442/1,089/6,769/5. The drift consists of two
-new owner files and nine changed existing owner entries; sink topology is
-unchanged. Semantic call review confirms that the LLM changes replace unsafe
-payload/error diagnostics with the accepted metadata-safe helpers, prompt
-improvement emits request/provider/model/count metadata without prompt text,
-change-revert adds two constant-message warnings with exception context that
-remain outside persistent admission, the prompts DB adds its v2-to-v3 migration
-diagnostics, and the remaining digest changes are caused by moved or reformatted
-calls. Persistent-sink topology is unchanged, and the existing admission tests
-remain the proof that ordinary diagnostic records do not reach disk.
+Latest `dev` was rechecked at
+`ceede62fe46d7aa090df4a36307077e097d8c044`. Its production changes did not
+update the checked inventory: generated state has 467 owner files, 1,151
+TASK-492 calls, 6,854 TASK-494 calls, and six sink files, while the committed
+manifest records 466/1,144/6,851/6. The drift consists of one new owner file and
+twenty changed existing owner entries; sink topology is unchanged. Semantic
+call review confirms seven metadata-only robots.txt failure diagnostics, one
+provider/model-only catalog diagnostic, one constant-message watchlist-star
+diagnostic with exception context, and one reduced-motion card-name diagnostic.
+The remaining owner digest changes are caused by moved or reformatted calls.
+Persistent-sink topology is unchanged, and the existing admission tests remain
+the proof that ordinary diagnostic records do not reach disk.
 
 Implementation first patches only those reviewed pre-existing owner and
 summary entries and commits that reconciliation separately, without running
 the checker's blanket `--write` mode. The expected reconciled generated state
 has non-monitoring SHA-256
-`854ea4cb694d8849b3f38ae473ca42df5bacbdc61ab5478eebea2b88294f2b6f`.
+`8fbd4266f14a51b9645626ba6f5ea624b00db65ac0baae0e4b98de1eaabc0fab`.
 The checked and generated `monitoring_engine.py` entry remains TASK-494, 16
-calls, digest `5bd6f2dfc3a7c56e9aea` at that boundary.
+calls, digest `f9ccee6989b39da1333b` at that boundary.
 
 TASK-856 then captures the reconciliation commit and generated base inventory,
 and proves that every entry except `monitoring_engine.py` is identical at its
