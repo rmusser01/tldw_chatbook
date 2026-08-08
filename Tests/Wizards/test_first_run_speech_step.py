@@ -19,6 +19,8 @@ from textual.app import App, ComposeResult
 from textual.widgets import Button, RadioButton, Static
 
 from tldw_chatbook.Local_Ingestion.parakeet_v2_artifact import (
+    parakeet_descriptor,
+    parakeet_reference,
     parakeet_v2_descriptor,
     parakeet_v2_reference,
 )
@@ -29,7 +31,7 @@ from tldw_chatbook.Model_Artifacts.acquisition import (
 )
 from tldw_chatbook.Model_Artifacts.service import InstalledArtifact
 from tldw_chatbook.UI.Wizards.BaseWizard import WizardStepConfig
-from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import SpeechSetupStep
+from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import SpeechSetupStep, SummaryStep
 from tldw_chatbook.Widgets.ModelArtifacts import (
     InstallProgressed,
     ModelActivationControls,
@@ -65,18 +67,24 @@ class _FakeService:
         self.delete_calls.append(reference)
 
 
-def _report(*, destination: Path) -> PreflightReport:
-    ref = parakeet_v2_reference()
+def _report(
+    *,
+    destination: Path,
+    model: str = "nemo-parakeet-tdt-0.6b-v2",
+    precision: str = "int8",
+) -> PreflightReport:
+    descriptor = parakeet_descriptor(model, precision)
+    ref = descriptor.reference
     entry = ArtifactPreflightEntry(
         ref=ref,
-        source_url="https://huggingface.co/istupakov/parakeet-tdt-0.6b-v2-onnx/resolve/x/config.json",
-        repository="istupakov/parakeet-tdt-0.6b-v2-onnx",
+        source_url=descriptor.source_url,
+        repository=descriptor.upstream_repository,
         revision=ref.revision,
-        license_id="CC-BY-4.0",
-        license_url="https://creativecommons.org/licenses/by/4.0/",
-        precision="int8",
-        total_bytes=661_191_781,
-        file_count=4,
+        license_id=descriptor.license_id,
+        license_url=descriptor.license_url,
+        precision=precision,
+        total_bytes=descriptor.expected_installed_bytes,
+        file_count=len(descriptor.files),
         already_installed=False,
         provenance=(ProvenanceClass.CHATBOOK_CURATED,),
     )
@@ -84,7 +92,7 @@ def _report(*, destination: Path) -> PreflightReport:
         root=ref,
         closure_fingerprint="f" * 64,
         entries=(entry,),
-        download_bytes=661_191_781,
+        download_bytes=descriptor.expected_installed_bytes,
         already_staged_bytes=0,
         staging_overhead_bytes=0,
         retained_bytes=0,
@@ -118,6 +126,10 @@ def _step(*, installed=(), wizard=None, runtime_installed=None) -> SpeechSetupSt
     )
 
 
+def _active_lookup(result):
+    return lambda model, precision, *, service: result
+
+
 class _StepHost(App):
     def __init__(self, step):
         super().__init__()
@@ -144,7 +156,7 @@ def _patch_app(monkeypatch) -> MagicMock:
 
 
 @pytest.mark.asyncio
-async def test_compose_shows_recommended_defaults_and_disables_unavailable_options():
+async def test_compose_shows_all_curated_parakeet_options():
     step = _step(installed=())
     app = _StepHost(step)
     async with app.run_test(size=(120, 40)) as pilot:
@@ -153,16 +165,71 @@ async def test_compose_shows_recommended_defaults_and_disables_unavailable_optio
         assert "English" in text
         assert "recommended" in text.lower()
         assert "INT8" in text
-        # A v3-only language and F32 are declared by the catalog (so the UI
-        # is honest about what the policy defines) but neither has a curated
-        # descriptor to download yet -- they must render disabled.
         radio_buttons = list(step.query(RadioButton))
-        disabled = [b for b in radio_buttons if b.disabled]
         enabled = [b for b in radio_buttons if not b.disabled]
-        assert disabled, "unavailable languages/precisions must still be listed, disabled"
-        assert enabled, "English/INT8 must be selectable"
-        assert not any("English" in str(b.label) for b in disabled)
-        assert not any(str(b.label).upper().startswith("INT8") for b in disabled)
+        assert len(enabled) == len(radio_buttons)
+        assert any("English" in str(b.label) for b in enabled)
+        assert any(str(b.label).upper().startswith("F32") for b in enabled)
+
+
+@pytest.mark.asyncio
+async def test_non_english_f32_selection_changes_the_exact_managed_target():
+    from tldw_chatbook.UI.Wizards import first_run_speech_step_state as speech_state
+
+    policy = speech_state.routing_policy()
+    language = sorted(policy.validated_v3_languages)[0]
+    step = _step()
+    app = _StepHost(step)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        await pilot.click(f"#setup-speech-language-{language}")
+        await pilot.pause()
+        step.query_one("#setup-speech-precision-f32", RadioButton).value = True
+        await pilot.pause()
+
+        assert step._reference == parakeet_reference(policy.parakeet_v3_model_id, "f32")
+        assert "Parakeet v3" in step._model_label()
+        assert "F32" in step._model_label()
+
+
+@pytest.mark.asyncio
+async def test_summary_checks_the_configured_exact_artifact(tmp_path, monkeypatch):
+    import tldw_chatbook.UI.Wizards.FirstRunSetupWizard as wizard_module
+    from tldw_chatbook.UI.Wizards import first_run_speech_step_state as speech_state
+
+    policy = speech_state.routing_policy()
+    language = sorted(policy.validated_v3_languages)[0]
+    calls = []
+
+    def exact_active(model, precision):
+        calls.append((model, precision))
+        return tmp_path
+
+    monkeypatch.setattr(wizard_module, "managed_model_artifact_root", lambda: tmp_path)
+    monkeypatch.setattr(wizard_module, "active_managed_parakeet_dir", exact_active)
+    wizard = _wizard(wizard_data={"welcome": {"track": "quick"}})
+    step = SummaryStep(
+        wizard=wizard,
+        config=WizardStepConfig(id="summary", title="Summary", step_number=9),
+        load_config=lambda: {
+            "transcription": {
+                "default_provider": policy.parakeet_provider_id,
+                "default_model": policy.parakeet_v3_model_id,
+                "default_language": language,
+                "default_precision": "f32",
+            }
+        },
+        rag_deps_installed=lambda: False,
+        speech_runtime_installed=lambda: True,
+    )
+    app = _StepHost(step)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.2)
+
+    assert calls
+    assert set(calls) == {(policy.parakeet_v3_model_id, "f32")}
 
 
 @pytest.mark.asyncio
@@ -334,7 +401,7 @@ async def test_use_as_default_offered_when_active_and_configured_elsewhere():
         await pilot.pause(0.2)
         button = step.query_one(_USE_AS_DEFAULT_ID, Button)
         assert not button.disabled
-        assert "Use Parakeet v2 as my default" in str(button.label)
+        assert "Use Parakeet v2 (English, INT8) as my default" in str(button.label)
         text = "\n".join(str(s.render()) for s in step.query(Static))
         assert "installing or activating" not in text
 
@@ -453,7 +520,7 @@ async def test_commit_persists_after_use_as_default_without_reinstalling(monkeyp
 
     active_dir = Path("/fake/active")
     monkeypatch.setattr(
-        wizard_module, "active_managed_parakeet_v2_dir", lambda service: active_dir
+        wizard_module, "active_managed_parakeet_dir", _active_lookup(active_dir)
     )
     wizard = _elsewhere_wizard()
     step = _step(
@@ -476,6 +543,7 @@ async def test_commit_persists_after_use_as_default_without_reinstalling(monkeyp
             "default_provider": "parakeet-onnx",
             "default_model": "nemo-parakeet-tdt-0.6b-v2",
             "default_language": "en",
+            "default_precision": "int8",
         }
     }
 
@@ -792,7 +860,7 @@ async def test_commit_is_skip_safe_when_never_verified_active(monkeypatch):
     import tldw_chatbook.UI.Wizards.FirstRunSetupWizard as wizard_module
 
     monkeypatch.setattr(
-        wizard_module, "active_managed_parakeet_v2_dir", lambda service: None
+        wizard_module, "active_managed_parakeet_dir", _active_lookup(None)
     )
     wizard = _wizard()
     step = _step(wizard=wizard)
@@ -801,6 +869,24 @@ async def test_commit_is_skip_safe_when_never_verified_active(monkeypatch):
     ok, error = await step.commit()
 
     assert ok, error
+    wizard.commit_config.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_commit_does_not_verify_or_persist_an_unavailable_selection(monkeypatch):
+    import tldw_chatbook.UI.Wizards.FirstRunSetupWizard as wizard_module
+
+    active_lookup = MagicMock(return_value=Path("/should-not-be-used"))
+    monkeypatch.setattr(wizard_module, "active_managed_parakeet_dir", active_lookup)
+    wizard = _wizard()
+    step = _step(wizard=wizard)
+    step._curated_selections = lambda: frozenset()
+    step._acted_this_run = True
+
+    ok, error = await step.commit()
+
+    assert ok, error
+    active_lookup.assert_not_called()
     wizard.commit_config.assert_not_awaited()
 
 
@@ -819,7 +905,7 @@ async def test_commit_does_not_persist_when_active_but_user_did_not_act_this_run
 
     active_dir = tmp_path / "installed"
     monkeypatch.setattr(
-        wizard_module, "active_managed_parakeet_v2_dir", lambda service: active_dir
+        wizard_module, "active_managed_parakeet_dir", _active_lookup(active_dir)
     )
     wizard = _wizard()
     step = _step(wizard=wizard)
@@ -839,7 +925,7 @@ async def test_commit_persists_the_recommended_selection_once_verified_active(
 
     active_dir = tmp_path / "installed"
     monkeypatch.setattr(
-        wizard_module, "active_managed_parakeet_v2_dir", lambda service: active_dir
+        wizard_module, "active_managed_parakeet_dir", _active_lookup(active_dir)
     )
     wizard = _wizard()
     step = _step(wizard=wizard)
@@ -854,6 +940,7 @@ async def test_commit_persists_the_recommended_selection_once_verified_active(
             "default_provider": "parakeet-onnx",
             "default_model": "nemo-parakeet-tdt-0.6b-v2",
             "default_language": "en",
+            "default_precision": "int8",
         }
     }
 
@@ -874,7 +961,7 @@ async def test_commit_persists_the_live_pressed_default_selection(
 
     active_dir = tmp_path / "installed"
     monkeypatch.setattr(
-        wizard_module, "active_managed_parakeet_v2_dir", lambda service: active_dir
+        wizard_module, "active_managed_parakeet_dir", _active_lookup(active_dir)
     )
     wizard = _wizard()
     step = _step(wizard=wizard)
@@ -895,6 +982,7 @@ async def test_commit_persists_the_live_pressed_default_selection(
             "default_provider": "parakeet-onnx",
             "default_model": "nemo-parakeet-tdt-0.6b-v2",
             "default_language": "en",
+            "default_precision": "int8",
         }
     }
 
@@ -916,14 +1004,10 @@ async def test_commit_follows_a_hypothetical_second_selectable_language(
 
     active_dir = tmp_path / "installed"
     monkeypatch.setattr(
-        wizard_module, "active_managed_parakeet_v2_dir", lambda service: active_dir
+        wizard_module, "active_managed_parakeet_dir", _active_lookup(active_dir)
     )
     wizard = _wizard()
     step = _step(wizard=wizard)
-    step._curated_model_ids = lambda: frozenset(
-        {policy.parakeet_v2_model_id, policy.parakeet_v3_model_id}
-    )
-    step._curated_precisions = lambda: frozenset({"int8"})
     step._acted_this_run = True
     app = _StepHost(step)
     async with app.run_test(size=(120, 40)) as pilot:
@@ -941,6 +1025,50 @@ async def test_commit_follows_a_hypothetical_second_selectable_language(
             "default_provider": "parakeet-onnx",
             "default_model": policy.parakeet_v3_model_id,
             "default_language": v3_language,
+            "default_precision": "int8",
+        }
+    }
+
+
+@pytest.mark.asyncio
+async def test_commit_requires_and_persists_the_exact_v3_f32_artifact(
+    tmp_path, monkeypatch
+):
+    import tldw_chatbook.UI.Wizards.FirstRunSetupWizard as wizard_module
+    from tldw_chatbook.UI.Wizards import first_run_speech_step_state as speech_state
+
+    policy = speech_state.routing_policy()
+    language = sorted(policy.validated_v3_languages)[0]
+    active_calls = []
+
+    def exact_active(model, precision, *, service):
+        active_calls.append((model, precision))
+        return tmp_path / "installed" if (model, precision) == (
+            policy.parakeet_v3_model_id,
+            "f32",
+        ) else None
+
+    monkeypatch.setattr(wizard_module, "active_managed_parakeet_dir", exact_active)
+    wizard = _wizard()
+    step = _step(wizard=wizard)
+    step._acted_this_run = True
+    app = _StepHost(step)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        await pilot.click(f"#setup-speech-language-{language}")
+        await pilot.pause()
+        step.query_one("#setup-speech-precision-f32", RadioButton).value = True
+        await pilot.pause()
+        ok, error = await step.commit()
+
+    assert ok, error
+    assert active_calls == [(policy.parakeet_v3_model_id, "f32")]
+    assert wizard.commit_config.call_args.args[0] == {
+        "transcription": {
+            "default_provider": policy.parakeet_provider_id,
+            "default_model": policy.parakeet_v3_model_id,
+            "default_language": language,
+            "default_precision": "f32",
         }
     }
 
@@ -951,8 +1079,8 @@ async def test_commit_reports_failure_when_persistence_write_fails(monkeypatch):
 
     monkeypatch.setattr(
         wizard_module,
-        "active_managed_parakeet_v2_dir",
-        lambda service: Path("/fake/active"),
+        "active_managed_parakeet_dir",
+        _active_lookup(Path("/fake/active")),
     )
     wizard = _wizard(commit_config=AsyncMock(return_value=False))
     step = _step(wizard=wizard)
@@ -975,8 +1103,8 @@ async def test_commit_never_persists_when_the_runtime_extra_is_missing(monkeypat
 
     monkeypatch.setattr(
         wizard_module,
-        "active_managed_parakeet_v2_dir",
-        lambda service: Path("/fake/active"),
+        "active_managed_parakeet_dir",
+        _active_lookup(Path("/fake/active")),
     )
     wizard = _wizard()
     step = _step(wizard=wizard, runtime_installed=lambda: False)
@@ -1196,38 +1324,47 @@ def test_end_to_end_install_flow_calls_the_real_wrapped_functions(
     test_install_worker_passes_a_progress_callback, the same technique for
     Library's own Parakeet v2 install worker)."""
     import tldw_chatbook.UI.Wizards.FirstRunSetupWizard as wizard_module
+    from tldw_chatbook.UI.Wizards import first_run_speech_step_state as speech_state
 
-    report = _report(destination=tmp_path / "d")
-    preflight_calls: list[None] = []
-    provision_calls: list[PreflightReport] = []
+    policy = speech_state.routing_policy()
+    language = sorted(policy.validated_v3_languages)[0]
+    report = _report(
+        destination=tmp_path / "d",
+        model=policy.parakeet_v3_model_id,
+        precision="f32",
+    )
+    preflight_calls: list[tuple[str, str]] = []
+    provision_calls: list[tuple[str, str, PreflightReport]] = []
 
-    async def fake_preflight():
-        preflight_calls.append(None)
+    async def fake_preflight(model, precision):
+        preflight_calls.append((model, precision))
         return report
 
-    async def fake_provision(passed_report, *, progress=None):
-        provision_calls.append(passed_report)
+    async def fake_provision(model, precision, passed_report, *, progress=None):
+        provision_calls.append((model, precision, passed_report))
         return tmp_path / "installed"
 
-    monkeypatch.setattr(wizard_module, "run_parakeet_v2_preflight", fake_preflight)
-    monkeypatch.setattr(wizard_module, "run_parakeet_v2_provision", fake_provision)
+    monkeypatch.setattr(wizard_module, "run_parakeet_preflight", fake_preflight)
+    monkeypatch.setattr(wizard_module, "run_parakeet_provision", fake_provision)
     fake_app = _patch_app(monkeypatch)
     fake_app.call_from_thread.side_effect = lambda fn, *a, **kw: fn(*a, **kw)
 
     step = _step()
+    step._selected_language = language
+    step._selected_precision = "f32"
     step.notify = MagicMock()
     step._ensure_loaded = MagicMock()
     step.refresh = MagicMock()
 
     SpeechSetupStep._preflight_install.__wrapped__(step)
 
-    assert preflight_calls == [None]
+    assert preflight_calls == [(policy.parakeet_v3_model_id, "f32")]
     assert step._pending_report is report
     fake_app.push_screen.assert_called_once()
 
     SpeechSetupStep._provision_install.__wrapped__(step)
 
-    assert provision_calls == [report]
+    assert provision_calls == [(policy.parakeet_v3_model_id, "f32", report)]
     step.notify.assert_called_once()
     assert step.notify.call_args.kwargs.get("severity") == "information"
     step._ensure_loaded.assert_called_once_with(force=True)

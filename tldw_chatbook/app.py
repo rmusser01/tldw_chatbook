@@ -2369,6 +2369,7 @@ class LibraryIngestQueueMixin:
                 provider=provider,
                 language=flat_opts.get("language"),
                 target_language=target_language,
+                precision=flat_opts.get("transcription_precision"),
             )
             options["transcription_provider"] = route.provider
             selected_model_dir = (
@@ -2396,25 +2397,25 @@ class LibraryIngestQueueMixin:
             options["timestamps"] = flat_opts.get("timestamps", True)
             options["diarization"] = flat_opts.get("diarization", False)
             failed_attempt = job.retry_source_failure_provenance
+            options["transcription_context"] = {
+                "attempt_id": f"{job.job_id}-attempt-{job.retry_count + 1}",
+                "batch_id": job.batch_id,
+                "job_id": job.job_id,
+                "retry_of_attempt_id": failed_attempt.get("attempt_id")
+                if failed_attempt
+                else None,
+                "retry_of_job_id": job.retry_of_job_id,
+                "retry_source_failure_provenance": failed_attempt,
+            }
             if route.provider == "transcribe-cpp":
                 configured_path = get_cli_setting(
                     "transcription.transcribe_cpp.model_path"
                 )
-                options["transcription_context"] = {
-                    "model_path": configured_path
+                options["transcription_context"]["model_path"] = (
+                    configured_path
                     if isinstance(configured_path, str) and configured_path
-                    else None,
-                    "attempt_id": f"{job.job_id}-attempt-{job.retry_count + 1}",
-                    "batch_id": failed_attempt.get("batch_id")
-                    if failed_attempt
-                    else None,
-                    "job_id": job.job_id,
-                    "retry_of_attempt_id": failed_attempt.get("attempt_id")
-                    if failed_attempt
-                    else None,
-                    "retry_of_job_id": job.retry_of_job_id,
-                    "retry_source_failure_provenance": failed_attempt,
-                }
+                    else None
+                )
         elif group == "ebook":
             options["extraction_method"] = (
                 flat_opts.get("extraction_method")
@@ -2476,8 +2477,13 @@ class LibraryIngestQueueMixin:
             device = ExecutionDevice.AUTO
         else:
             model_id = options.get("transcription_model") or PARAKEET_V2_MODEL
+            precision = options.get("transcription_precision") or "int8"
             selected_dir = options.get("transcription_model_dir")
-            if not selected_dir:
+            if (
+                not selected_dir
+                and model_id == PARAKEET_V2_MODEL
+                and precision == "int8"
+            ):
                 configured_dir = get_cli_setting(
                     "transcription.parakeet_onnx_model_dir"
                 )
@@ -2496,22 +2502,30 @@ class LibraryIngestQueueMixin:
                     selected_dir,
                     require_exists=True,
                 )
-                required = tuple(
-                    model_root / filename
-                    for filename in (
+                filenames = (
+                    (
                         "config.json",
                         "vocab.txt",
                         "encoder-model.int8.onnx",
                         "decoder_joint-model.int8.onnx",
                     )
+                    if precision == "int8"
+                    else (
+                        "config.json",
+                        "vocab.txt",
+                        "encoder-model.onnx",
+                        "encoder-model.onnx.data",
+                        "decoder_joint-model.onnx",
+                    )
                 )
+                required = tuple(model_root / filename for filename in filenames)
                 local_source = snapshot_local_source(required)
                 options["transcription_model_dir"] = str(model_root)
-            elif model_id == PARAKEET_V2_MODEL:
+            else:
                 from tldw_chatbook.Local_Ingestion.parakeet_v2_artifact import (
-                    active_managed_parakeet_v2_dir,
+                    active_managed_parakeet_dir,
+                    parakeet_reference,
                     parakeet_v2_managed_service,
-                    parakeet_v2_reference,
                 )
                 from tldw_chatbook.Local_Ingestion.parakeet_v2_installer import (
                     PARAKEET_V2_FILES,
@@ -2523,8 +2537,15 @@ class LibraryIngestQueueMixin:
                 )
 
                 service = parakeet_v2_managed_service()
-                reference = parakeet_v2_reference()
-                if active_managed_parakeet_v2_dir(service) is not None:
+                reference = parakeet_reference(model_id, precision)
+                if (
+                    active_managed_parakeet_dir(
+                        model_id,
+                        precision,
+                        service=service,
+                    )
+                    is not None
+                ):
                     leased = service.acquire(reference)
                     try:
                         root_revision = leased.handle.root.revision
@@ -2537,7 +2558,7 @@ class LibraryIngestQueueMixin:
                         reference.revision,
                         reference.variant,
                     )
-                else:
+                elif model_id == PARAKEET_V2_MODEL and precision == "int8":
                     legacy_root = parakeet_v2_install_dir()
                     legacy_paths = (
                         legacy_root / VERIFICATION_RECEIPT,

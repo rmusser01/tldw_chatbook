@@ -526,6 +526,49 @@ def test_audio_processor_uses_injected_transcription_runner_without_service(
     assert callable(calls[0][1]["progress_callback"])
 
 
+def test_faster_whisper_batch_provenance_records_translation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tldw_chatbook.Local_Ingestion.audio_processing import LocalAudioProcessor
+    from tldw_chatbook.Local_Ingestion.transcription_service import (
+        TranscriptionService,
+    )
+
+    monkeypatch.setattr(
+        TranscriptionService,
+        "transcribe",
+        lambda self, audio_path, **kwargs: {
+            "text": "Translated transcript.",
+            "segments": [
+                {"start": 0.0, "end": 1.0, "text": "Translated transcript."}
+            ],
+            "language": "fr",
+            "duration": 1.0,
+            "provider": "faster-whisper",
+            "model": "base",
+            "diarization_performed": False,
+        },
+    )
+
+    result = LocalAudioProcessor(None)._transcribe_audio(
+        "/private/media.wav",
+        provider="faster-whisper",
+        model="base",
+        language="fr",
+        target_lang="en",
+        diarize=True,
+        attempt_id="attempt-translation",
+        job_id="job-translation",
+        timestamps=True,
+    )
+
+    assert result["transcription_provenance"]["task"] == "translate"
+    assert result["transcription_provenance"]["requested_language"] == "fr"
+    assert not result["transcription_provenance"]["produced_capabilities"][
+        "diarization"
+    ]
+
+
 def test_video_processor_forwards_injected_transcription_runner() -> None:
     from tldw_chatbook.Local_Ingestion.video_processing import LocalVideoProcessor
 

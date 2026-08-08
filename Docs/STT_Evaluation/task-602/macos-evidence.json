@@ -1,0 +1,195 @@
+{
+  "schema_version": 1,
+  "evidence_label": "native_macos_focused_smoke",
+  "generated_at": "2026-08-08T17:20:03Z",
+  "tested_commit": "1b4ca642c942cdc4b833c8e42f65df1408429bd0",
+  "host": {
+    "system": "Darwin",
+    "release": "24.6.0",
+    "mac_version": "15.6",
+    "machine": "arm64",
+    "python": {
+      "implementation": "CPython",
+      "version": "3.12.11"
+    },
+    "packages": {
+      "onnx-asr": "0.12.0",
+      "onnxruntime": "1.27.0",
+      "faster-whisper": "1.2.1",
+      "ctranslate2": "4.8.1"
+    },
+    "execution_provider": "CPUExecutionProvider"
+  },
+  "artifact_acquisition": {
+    "store_kind": "temporary_uncommitted",
+    "store_root": "/private/tmp/tldw-task602-macos-models",
+    "method": "ModelArtifactService plus run_parakeet_preflight/run_parakeet_provision",
+    "network_used_only_for_acquisition": true,
+    "runtime_network_used": false,
+    "closures": [
+      {
+        "model_id": "nemo-parakeet-tdt-0.6b-v2",
+        "precision": "int8",
+        "artifact_id": "parakeet-v2",
+        "revision": "0bbb45a3365852604aef28b538a8f066f4ccaa85-vad-b3e3ee3cce4c",
+        "download_bytes": 663519305,
+        "closure_fingerprint": "d52f16e6505c8efc3e5a9178f597e2414814ae44e677ea0cd75b317a240effc0",
+        "preflight_gating_errors": []
+      },
+      {
+        "model_id": "nemo-parakeet-tdt-0.6b-v3",
+        "precision": "int8",
+        "artifact_id": "parakeet-v3",
+        "revision": "8f23f0c03c8761650bdb5b40aaf3e40d2c15f1ce-vad-b3e3ee3cce4c",
+        "download_bytes": 670480039,
+        "closure_fingerprint": "9ec622539e4e11990aef699c7c43f4e9f05c0d5c0e8235abec04f0ced8bbb1e8",
+        "preflight_gating_errors": []
+      },
+      {
+        "model_id": "nemo-parakeet-tdt-0.6b-v2",
+        "precision": "f32",
+        "artifact_id": "parakeet-v2",
+        "revision": "0bbb45a3365852604aef28b538a8f066f4ccaa85-vad-b3e3ee3cce4c",
+        "download_bytes": 2512992566,
+        "closure_fingerprint": "bf6c1d685e443f7f7527a290597c90700e93e2057eb9f80c6ce84db8971c8408",
+        "preflight_gating_errors": []
+      }
+    ],
+    "vad": {
+      "artifact_id": "silero-vad",
+      "revision": "b3e3ee3cce4c11ceb63b1a0b229d916069c1ddf6",
+      "variant": "f32",
+      "size_bytes": 2327524,
+      "sha256": "1a153a22f4509e292a94e67d6f9b85e8deb25b4988682b7e174c65279d8788e3",
+      "reused_after_first_closure": true
+    },
+    "verification": "Provision returned only after pinned sizes and SHA-256 values were verified, immutable manifests were promoted, and the root readiness record was written last."
+  },
+  "audio_fixtures": [
+    {
+      "id": "synthetic-en",
+      "generator": "macOS say voice Samantha, converted by ffmpeg to mono 16 kHz PCM WAV",
+      "text": "The local transcription stack is working on this Mac and does not need a network connection.",
+      "size_bytes": 150558,
+      "sha256": "8025642b1da904543a336b0239ceb51f241e8c7d0610060993f13dbea81d9f07"
+    },
+    {
+      "id": "synthetic-fr",
+      "generator": "macOS say voice Thomas, converted by ffmpeg to mono 16 kHz PCM WAV",
+      "text": "La transcription locale fonctionne correctement sur cet ordinateur sans connexion au réseau.",
+      "size_bytes": 165320,
+      "sha256": "b124f26eefedb66c0a28b5dac003b940825b9c4ac6daf2690536debee7d87c55"
+    },
+    {
+      "id": "synthetic-long-en",
+      "generator": "synthetic-en looped with ffmpeg to 40 seconds",
+      "duration_seconds": 40.0,
+      "size_bytes": 1280078,
+      "sha256": "a3bc6caef791f682c558b4aa352981f037f68df841472fd9a692edc46c54a327"
+    }
+  ],
+  "runtime_smoke": {
+    "v2_int8": {
+      "status": "passed",
+      "text": "The local transcription stack is working on this Mac and does not need a network connection.",
+      "segments": 1,
+      "model_load_seconds": 1.7758584159892052,
+      "inference_seconds": 0.1422139168716967,
+      "total_seconds": 1.918072332860902,
+      "effective_language": "en",
+      "precision": "int8",
+      "device": "cpu"
+    },
+    "v3_int8": {
+      "status": "passed",
+      "text": "La transcription locale fonctionne correctement sur cet ordinateur sans connexion au réseau.",
+      "segments": 1,
+      "model_load_seconds": 1.4946535839699209,
+      "inference_seconds": 0.15747549990192056,
+      "requested_language": "fr",
+      "effective_language": "auto",
+      "detected_language": null,
+      "warnings": [
+        "requested_language_not_enforced"
+      ],
+      "precision": "int8",
+      "device": "cpu"
+    },
+    "v2_f32": {
+      "status": "passed",
+      "text": "The local transcription stack is working on this Mac and does not need a network connection.",
+      "model_load_seconds": 7.909066166030243,
+      "inference_seconds": 2.2369216659571975,
+      "effective_language": "en",
+      "precision": "f32",
+      "device": "cpu"
+    },
+    "long_form": {
+      "status": "passed",
+      "duration_seconds": 40.0,
+      "segments": 2,
+      "inference_seconds": 0.9123845000285655,
+      "vad_used": true,
+      "asr_batch_size": 1
+    },
+    "cancellation": {
+      "status": "passed",
+      "cancellation_checks": 2,
+      "cancelled_before_second_segment_batch": true
+    },
+    "resident_reuse": {
+      "status": "passed",
+      "same_runtime_instance_processed_two_followup_jobs": true,
+      "followup_model_load_seconds": 0.0
+    },
+    "retry_action": {
+      "status": "passed",
+      "trigger": "long-form request with no managed VAD path",
+      "failure": {
+        "category": "stt_failure",
+        "code": "artifact_incompatible",
+        "actions": [
+          "retry_faster_whisper"
+        ],
+        "failed_attempt_recorded": true
+      }
+    }
+  },
+  "focused_verification": {
+    "pytest": {
+      "status": "passed",
+      "passed": 454,
+      "deselected": 2,
+      "duration_seconds": 50.57,
+      "deselections": [
+        "test_run_parakeet_v2_preflight_and_provision_against_localhost_fixture: rerun separately outside sandbox and passed",
+        "test_optional_feature_metadata_covers_pyproject_extras: unrelated pre-existing frontmatter metadata mismatch"
+      ]
+    },
+    "localhost_artifact_test": {
+      "status": "passed",
+      "passed": 1
+    },
+    "app_fixture_regression": {
+      "status": "passed",
+      "passed": 7
+    },
+    "static_verification": {
+      "ruff": "passed on every changed Python file except Tests/Library/test_library_ingest_runner.py, whose two unrelated pre-existing findings remain at lines 2925 and 3162",
+      "compileall": "passed on all changed package modules",
+      "toml_parse": "passed",
+      "json_parse": "passed",
+      "git_diff_check": "passed"
+    }
+  },
+  "open_platform_gates": [
+    "linux native wheel/install/runtime matrix",
+    "windows native wheel/install/runtime matrix"
+  ],
+  "limitations": [
+    "This is one native Apple-silicon macOS host, not cross-platform evidence.",
+    "Synthetic speech is a wiring/runtime smoke, not a quality benchmark.",
+    "The temporary models and audio are uncommitted and may be removed after review.",
+    "The semantic-default promotion gate remains closed until TASK-605."
+  ]
+}

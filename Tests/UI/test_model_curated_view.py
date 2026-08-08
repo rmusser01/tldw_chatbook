@@ -174,6 +174,32 @@ async def test_ensure_loaded_triggers_the_catalog_load_and_marks_installed_rows(
 
 
 @pytest.mark.asyncio
+async def test_dependency_descriptors_do_not_render_as_standalone_models(
+    tmp_path: Path,
+) -> None:
+    root = _descriptor(ArtifactRef("model-root", "a" * 40, "int8"))
+    dependency = ArtifactDescriptor(
+        **{
+            **_descriptor(ArtifactRef("model-vad", "b" * 40, "f32")).__dict__,
+            "role": ArtifactRole.DEPENDENCY,
+        }
+    )
+    registry = _registry_with(root, dependency)
+    view = CuratedView(
+        service_factory=lambda: ModelArtifactService(tmp_path / "store"),
+        registry_factory=lambda: registry,
+    )
+    app = _ViewApp(view)
+
+    async with app.run_test() as pilot:
+        view.ensure_loaded()
+        assert await _wait_until(lambda: view._loaded, pilot=pilot)
+        assert "example/model-root" in _all_text(app)
+        assert "example/model-vad" not in _all_text(app)
+        assert len(_install_buttons(app)) == 1
+
+
+@pytest.mark.asyncio
 async def test_ensure_loaded_without_force_does_not_rerun_the_expensive_reads(
     tmp_path: Path, monkeypatch
 ) -> None:

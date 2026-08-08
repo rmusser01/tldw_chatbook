@@ -493,9 +493,9 @@ OPTIONAL_FEATURES: dict[str, OptionalFeatureInfo] = {
     ),
     "transcription_parakeet": _feature(
         "transcription_parakeet",
-        "Parakeet MLX transcription",
+        "Parakeet ONNX transcription",
         AREA_MEDIA,
-        ("parakeet-mlx",),
+        ("onnx-asr[cpu]",),
         "Library > Import/Export",
         "Parakeet transcription",
         OWNER_LIBRARY_MEDIA,

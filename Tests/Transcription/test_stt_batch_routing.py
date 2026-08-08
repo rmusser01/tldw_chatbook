@@ -65,6 +65,38 @@ def test_exact_parakeet_routes_supported_non_english_to_v3(language: str) -> Non
     assert route.requested_language == language
 
 
+@pytest.mark.parametrize("language", ["en", "de"])
+def test_exact_parakeet_accepts_explicit_f32(language: str) -> None:
+    route = resolve_batch_stt_route(
+        provider="parakeet-onnx",
+        language=language,
+        precision="F32",
+    )
+
+    assert route.precision == "f32"
+
+
+@pytest.mark.parametrize("precision", ["fp16", "q4", 32])
+def test_exact_parakeet_rejects_unknown_precision(precision: object) -> None:
+    with pytest.raises(BatchSTTRoutingError, match="precision"):
+        resolve_batch_stt_route(
+            provider="parakeet-onnx",
+            language="en",
+            precision=precision,
+        )
+
+
+def test_stale_parakeet_precision_does_not_change_faster_whisper_route() -> None:
+    route = resolve_batch_stt_route(
+        provider="default",
+        language="en",
+        precision="f32",
+    )
+
+    assert route.provider == "faster-whisper"
+    assert route.precision == "int8"
+
+
 @pytest.mark.parametrize(
     ("language", "target_language"),
     [("auto", None), ("ja", None)],

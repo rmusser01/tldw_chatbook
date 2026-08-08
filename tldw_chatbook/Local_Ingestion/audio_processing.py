@@ -545,7 +545,7 @@ class LocalAudioProcessor:
             try:
                 logger.info("[AUDIO] Calling _transcribe_audio()")
                 context = kwargs.get("transcription_context") or {}
-                direct_local_kwargs = (
+                provenance_kwargs = (
                     {
                         "model_path": context.get("model_path"),
                         "attempt_id": context.get("attempt_id"),
@@ -558,7 +558,8 @@ class LocalAudioProcessor:
                         ),
                         "timestamps": kwargs.get("timestamp_option", True),
                     }
-                    if provider == "transcribe-cpp"
+                    if provider
+                    in {"faster-whisper", "parakeet-onnx", "transcribe-cpp"}
                     else {}
                 )
                 transcription_result = self._transcribe_audio(
@@ -578,7 +579,7 @@ class LocalAudioProcessor:
                     vad_filter=kwargs.get("vad_use", False),
                     diarize=kwargs.get("diarize", False),
                     progress_callback=transcription_progress_callback,
-                    **direct_local_kwargs,
+                    **provenance_kwargs,
                 )
                 logger.info("[AUDIO] _transcribe_audio() returned successfully")
             except Exception as e:
@@ -824,6 +825,110 @@ class LocalAudioProcessor:
                 )
             else:
                 logger.error("[AUDIO] Transcription service returned None")
+
+            if (
+                result
+                and kwargs.get("provider") == "faster-whisper"
+                and isinstance(kwargs.get("attempt_id"), str)
+            ):
+                from tldw_chatbook.STT.contracts import (
+                    ExecutionDevice,
+                    ProducedCapabilities,
+                    TimestampGranularity,
+                    TranscriptionProvenance,
+                    TranscriptionResult,
+                    TranscriptionSegment,
+                    TranscriptionTask,
+                    TranscriptionTimings,
+                )
+                from tldw_chatbook.STT.persistence import (
+                    build_transcription_provenance_document,
+                )
+
+                requested_language = str(kwargs.get("language") or "en").lower()
+                observed_language = str(result.get("language") or "").lower() or None
+                detected_language = (
+                    observed_language if requested_language == "auto" else None
+                )
+                effective_language = (
+                    detected_language or "auto"
+                    if requested_language == "auto"
+                    else requested_language
+                )
+                configured_device = str(service.config.get("device") or "auto").lower()
+                try:
+                    effective_device = ExecutionDevice(configured_device)
+                except ValueError:
+                    effective_device = ExecutionDevice.AUTO
+                is_translation = result.get("task") == "translation" or (
+                    str(kwargs.get("target_lang") or "").lower() == "en"
+                    and requested_language != "en"
+                )
+                timestamps_requested = bool(kwargs.get("timestamps", True))
+                normalized_segments = (
+                    tuple(
+                        TranscriptionSegment(
+                            float(segment.get("start") or 0.0),
+                            float(segment.get("end") or 0.0),
+                            str(segment.get("text") or ""),
+                            speaker=segment.get("speaker"),
+                        )
+                        for segment in result.get("segments") or []
+                    )
+                    if timestamps_requested
+                    else ()
+                )
+                normalized = TranscriptionResult(
+                    text=str(result.get("text") or ""),
+                    segments=normalized_segments,
+                    provenance=TranscriptionProvenance(
+                        schema_version=1,
+                        attempt_id=kwargs["attempt_id"],
+                        batch_id=kwargs.get("batch_id"),
+                        job_id=kwargs.get("job_id"),
+                        retry_of_attempt_id=kwargs.get("retry_of_attempt_id"),
+                        retry_of_job_id=kwargs.get("retry_of_job_id"),
+                        provider_id="faster-whisper",
+                        model_id=str(result.get("model") or kwargs.get("model") or "base"),
+                        artifact_root=None,
+                        artifact_dependencies=(),
+                        precision=str(
+                            kwargs.get("compute_type")
+                            or service.config.get("compute_type")
+                            or "int8"
+                        ),
+                        requested_device=effective_device,
+                        effective_device=effective_device,
+                        requested_language=requested_language,
+                        effective_language=effective_language,
+                        detected_language=detected_language,
+                        task=(
+                            TranscriptionTask.TRANSLATE
+                            if is_translation
+                            else TranscriptionTask.TRANSCRIBE
+                        ),
+                    ),
+                    produced_capabilities=ProducedCapabilities(
+                        timestamps=(
+                            TimestampGranularity.SEGMENT
+                            if normalized_segments
+                            else TimestampGranularity.NONE
+                        ),
+                        punctuation=True,
+                        capitalization=True,
+                        vad=bool(kwargs.get("vad_filter", False)),
+                        diarization=bool(result.get("diarization_performed", False)),
+                    ),
+                    duration_seconds=float(result.get("duration") or 0.0),
+                    timings=TranscriptionTimings(),
+                )
+                result["transcription_model"] = normalized.provenance.model_id
+                result["transcription_provenance"] = (
+                    build_transcription_provenance_document(
+                        normalized,
+                        failed_attempt=kwargs.get("retry_source_failure_provenance"),
+                    )
+                )
 
             return result
         except ImportError as e:

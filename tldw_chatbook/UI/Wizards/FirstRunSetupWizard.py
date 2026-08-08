@@ -17,17 +17,18 @@ from textual import on, work
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.compose import compose as _drain_compose_result
-from textual.containers import Container, Horizontal, Vertical
+from textual.containers import Horizontal, Vertical
 from textual.css.query import NoMatches
 from textual.widget import Widget
 from textual.widgets import Button, Input, Label, RadioButton, RadioSet, Static, Switch
 
 from tldw_chatbook.Local_Ingestion.parakeet_v2_artifact import (
-    active_managed_parakeet_v2_dir,
+    active_managed_parakeet_dir,
+    parakeet_descriptor,
     parakeet_v2_managed_service,
-    parakeet_v2_reference,
-    run_parakeet_v2_preflight,
-    run_parakeet_v2_provision,
+    parakeet_reference,
+    run_parakeet_preflight,
+    run_parakeet_provision,
 )
 from tldw_chatbook.Model_Artifacts.store import managed_model_artifact_root
 from tldw_chatbook.STT.transcribe_cpp_config import (
@@ -38,6 +39,15 @@ from tldw_chatbook.Third_Party.textual_fspicker import FileOpen, Filters
 from tldw_chatbook.UI.Screens.model_browser_state import install_failure_message
 from tldw_chatbook.UI.Screens.model_installed_view import lifecycle_failure_message
 from tldw_chatbook.UI.Wizards import first_run_speech_step_state as speech_state
+from tldw_chatbook.UI.Wizards import first_run_setup_state as wizard_state
+from tldw_chatbook.UI.Wizards.BaseWizard import (
+    WizardContainer,
+    WizardNavigation,
+    WizardProgress,
+    WizardScreen,
+    WizardStep,
+    WizardStepConfig,
+)
 from tldw_chatbook.Widgets.ModelArtifacts import (
     ActivationRequested,
     DeletionRequested,
@@ -48,6 +58,7 @@ from tldw_chatbook.Widgets.ModelArtifacts import (
     make_progress_callback,
 )
 from tldw_chatbook.Widgets.delete_confirmation_dialog import DeleteConfirmationDialog
+from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
 
 
 class SetupRadioButton(RadioButton):
@@ -73,18 +84,6 @@ class SetupRadioButton(RadioButton):
         # instead of silently regressing to color-only state.
         self.BUTTON_INNER = "●" if self.value else "○"
         return super()._button
-
-from tldw_chatbook.UI.Wizards.BaseWizard import (
-    WizardContainer,
-    WizardNavigation,
-    WizardProgress,
-    WizardScreen,
-    WizardStep,
-    WizardStepConfig,
-)
-from tldw_chatbook.UI.Wizards import first_run_setup_state as wizard_state
-from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
-
 
 class SetupStep(WizardStep):
     """Base step: adds an awaitable commit hook and an inline error line.
@@ -1105,25 +1104,25 @@ class RagStep(SetupStep):
 
 
 class SpeechSetupStep(SetupStep):
-    """Optional Speech transcription setup: install/activate Parakeet v2.
+    """Optional speech setup for exact managed Parakeet ONNX artifacts.
 
     TASK-1301: reuses the TASK-596 shared model-artifact controls
     (ModelInstallModal, ModelInstallProgress, ModelActivationControls) and
     the TASK-595 ModelArtifactService via the SAME
     Local_Ingestion.parakeet_v2_artifact convenience wrappers LibraryScreen's
-    own Parakeet v2 install surface already uses -- no duplicate artifact or
+    own Parakeet install surface already uses -- no duplicate artifact or
     network logic (AC#4). Language/precision options are enumerated from the
     canonical STT policy/catalog (first_run_speech_step_state, backed by
     tldw_chatbook.STT.routing) and gated to what a curated descriptor can
-    actually download today (AC#2).
+    download for the exact selected model and precision (AC#2).
 
     Runtime gate (review Important 4): the `onnx-asr` extra is optional --
-    missing it means a downloaded Parakeet v2 could never actually run.
+    missing it means a downloaded Parakeet artifact could never actually run.
     Gated exactly like RagStep gates on ``embeddings_rag_deps_installed()``:
     when the extra is absent, no install is ever offered.
 
     Persistence gate (AC#5 / review Important 3): commit() re-verifies --
-    off the event loop -- that the managed Parakeet v2 artifact is active,
+    off the event loop -- that the exact selected artifact is active,
     AND requires that the user actually engaged this step THIS run
     (installed or activated it here) before writing anything to
     [transcription]. An artifact that merely happens to be active from an
@@ -1158,7 +1157,9 @@ class SpeechSetupStep(SetupStep):
 
             runtime_installed = parakeet_onnx_deps_installed
         self._runtime_installed = runtime_installed
-        self._reference = parakeet_v2_reference()
+        recommended = speech_state.recommended_speech_selection()
+        self._selected_language = recommended.language
+        self._selected_precision = recommended.precision
         self._service: Any = None
         self._loading = False
         self._loaded = False
@@ -1178,6 +1179,16 @@ class SpeechSetupStep(SetupStep):
             if isinstance(app_config, Mapping)
             else {}
         )
+        prefill = speech_state.read_speech_prefill(app_config)
+        if prefill.provider_id == speech_state.routing_policy().parakeet_provider_id:
+            selected = speech_state.resolve_speech_selection(
+                selected_language=prefill.language,
+                selected_precision=prefill.precision or "int8",
+                curated_selections=self._curated_selections(),
+            )
+            if selected is not None and selected.model_id == prefill.model_id:
+                self._selected_language = selected.language
+                self._selected_precision = selected.precision
         direct_config = (
             transcription.get("transcribe_cpp", {})
             if isinstance(transcription, Mapping)
@@ -1214,7 +1225,7 @@ class SpeechSetupStep(SetupStep):
         with Vertical(classes="setup-speech"):
             yield Static("Speech transcription (optional)", classes="setup-title")
             yield Static(
-                "Recommended: Parakeet v2 (English, INT8) — on-device speech-to-text. "
+                f"Selected: {self._model_label()} — on-device speech-to-text. "
                 "Skip and set this up later from Lab ▸ Models.",
                 classes="setup-subtitle",
             )
@@ -1248,7 +1259,7 @@ class SpeechSetupStep(SetupStep):
                 # real action -- offer the affordance the prefill sentence
                 # actually promises instead of leaving it undeliverable.
                 yield Button(
-                    "Use Parakeet v2 as my default",
+                    f"Use {self._model_label()} as my default",
                     id="setup-speech-use-as-default",
                     variant="primary",
                 )
@@ -1274,24 +1285,29 @@ class SpeechSetupStep(SetupStep):
                 ):
                     label = option.display_name + (
                         " (recommended)"
-                        if option.selectable
+                        if option.code == "en"
                         else " — not yet available for managed install"
+                        if not option.selectable
+                        else ""
                     )
                     yield SetupRadioButton(
                         label,
                         id=f"setup-speech-language-{option.code}",
-                        value=option.selectable and option.code == "en",
-                        disabled=not option.selectable,
+                        value=option.selectable and option.code == self._selected_language,
+                        disabled=not option.selectable or self._lifecycle_pending,
                     )
             yield Label("Precision", classes="setup-field-label")
             with RadioSet(id="setup-speech-precision-choice", classes="setup-choice-list"):
                 for option in speech_state.speech_precision_options(
-                    curated_precisions=self._curated_precisions()
+                    model_id=self._selection().model_id,
+                    curated_selections=self._curated_selections(),
                 ):
                     label = option.display_name + (
                         " (recommended)"
-                        if option.selectable
+                        if option.value == "int8"
                         else " — not yet available for managed install"
+                        if not option.selectable
+                        else ""
                     )
                     # Minor 8: pre-press ONLY the one recommended option --
                     # "selectable" alone would pre-press every selectable
@@ -1299,8 +1315,11 @@ class SpeechSetupStep(SetupStep):
                     yield SetupRadioButton(
                         label,
                         id=f"setup-speech-precision-{option.value}",
-                        value=option.selectable and option.value == "int8",
-                        disabled=not option.selectable,
+                        value=(
+                            option.selectable
+                            and option.value == self._selected_precision
+                        ),
+                        disabled=not option.selectable or self._lifecycle_pending,
                     )
 
     # -- pure, I/O-free helpers (curated_registry() only builds descriptors
@@ -1312,19 +1331,82 @@ class SpeechSetupStep(SetupStep):
         return frozenset(descriptor.model_id for descriptor in curated_registry().list())
 
     @staticmethod
-    def _curated_precisions() -> frozenset[str]:
+    def _curated_selections() -> frozenset[tuple[str, str]]:
         from tldw_chatbook.Model_Artifacts.curated_registry import curated_registry
 
         policy = speech_state.routing_policy()
         return frozenset(
-            descriptor.precision
+            (descriptor.model_id, descriptor.precision)
             for descriptor in curated_registry().list()
-            if descriptor.model_id == policy.parakeet_v2_model_id
+            if descriptor.model_id
+            in {policy.parakeet_v2_model_id, policy.parakeet_v3_model_id}
         )
+
+    def _selection(self) -> speech_state.SpeechSelection:
+        selection = speech_state.resolve_speech_selection(
+            selected_language=self._selected_language,
+            selected_precision=self._selected_precision,
+            curated_selections=self._curated_selections(),
+        )
+        # The stored selection is initialized from, and only changed through,
+        # selectable radios. This guard keeps a later registry change skip-safe.
+        return selection or speech_state.recommended_speech_selection()
+
+    @property
+    def _reference(self) -> Any:
+        selection = self._selection()
+        return parakeet_reference(selection.model_id, selection.precision)
+
+    def _model_label(self) -> str:
+        selection = self._selection()
+        descriptor = parakeet_descriptor(selection.model_id, selection.precision)
+        policy = speech_state.routing_policy()
+        version = "v2" if descriptor.model_id == policy.parakeet_v2_model_id else "v3"
+        language = speech_state.LANGUAGE_DISPLAY_NAMES.get(
+            selection.language, selection.language
+        )
+        return f"Parakeet {version} ({language}, {descriptor.precision.upper()})"
 
     # -- review finding 2: read the PRESSED radio, never a hardcoded default --
     _LANGUAGE_RADIO_ID_PREFIX = "setup-speech-language-"
     _PRECISION_RADIO_ID_PREFIX = "setup-speech-precision-"
+
+    @on(RadioSet.Changed, "#setup-speech-language-choice")
+    def _on_speech_language_changed(self, event: RadioSet.Changed) -> None:
+        if self._lifecycle_pending or event.pressed is None:
+            return
+        button_id = event.pressed.id or ""
+        language = button_id.removeprefix(self._LANGUAGE_RADIO_ID_PREFIX)
+        self._set_exact_selection(language, self._selected_precision)
+
+    @on(RadioSet.Changed, "#setup-speech-precision-choice")
+    def _on_speech_precision_changed(self, event: RadioSet.Changed) -> None:
+        if self._lifecycle_pending or event.pressed is None:
+            return
+        button_id = event.pressed.id or ""
+        precision = button_id.removeprefix(self._PRECISION_RADIO_ID_PREFIX)
+        self._set_exact_selection(self._selected_language, precision)
+
+    def _set_exact_selection(self, language: str, precision: str) -> None:
+        selection = speech_state.resolve_speech_selection(
+            selected_language=language,
+            selected_precision=precision,
+            curated_selections=self._curated_selections(),
+        )
+        if selection is None:
+            return
+        if (
+            selection.language == self._selected_language
+            and selection.precision == self._selected_precision
+        ):
+            return
+        self._selected_language = selection.language
+        self._selected_precision = selection.precision
+        self._installed_item = None
+        self._loaded = False
+        self._load_error = None
+        self._pending_report = None
+        self._ensure_loaded(force=True)
 
     def _effective_language(self) -> str:
         """The code of the currently pressed language radio, or "" for none.
@@ -1339,13 +1421,13 @@ class SpeechSetupStep(SetupStep):
         """
         return self._pressed_radio_code(
             "#setup-speech-language-choice", self._LANGUAGE_RADIO_ID_PREFIX
-        )
+        ) or self._selected_language
 
     def _effective_precision(self) -> str:
         """The value of the currently pressed precision radio, or "" for none."""
         return self._pressed_radio_code(
             "#setup-speech-precision-choice", self._PRECISION_RADIO_ID_PREFIX
-        )
+        ) or self._selected_precision
 
     def _pressed_radio_code(self, selector: str, id_prefix: str) -> str:
         try:
@@ -1383,6 +1465,7 @@ class SpeechSetupStep(SetupStep):
             installed_active=self._installed_active(),
             acted_this_run=self._acted_this_run,
             runtime_installed=self._runtime_installed(),
+            selected_label=self._model_label(),
         )
 
     def _use_as_default_offer(self) -> bool:
@@ -1462,12 +1545,12 @@ class SpeechSetupStep(SetupStep):
 
     # -- lazy installed-state load ----------------------------------------
     def on_show(self) -> None:
-        """Trigger the step's one lazy I/O read: is Parakeet v2 installed?
+        """Trigger the lazy installed-state read for the selected artifact.
 
         ``compose_step`` renders synchronously from in-memory state only;
         this is where the step first asks the artifact service (via
         ``_ensure_loaded`` -> ``_load_installed_state``, an exclusive
-        background worker) whether a managed Parakeet v2 artifact already
+        background worker) whether the selected managed artifact already
         exists, so the status line can move past "Checking installed
         models…". Idempotent: a step already re-shown (rerun navigation)
         does not re-trigger a redundant load (see ``_ensure_loaded``).
@@ -1560,7 +1643,7 @@ class SpeechSetupStep(SetupStep):
             return
         self._acted_this_run = True
         self.notify(
-            "Parakeet v2 will become your default when you continue.",
+            f"{self._model_label()} will become your default when you continue.",
             severity="information",
         )
         self.refresh(recompose=True)
@@ -1622,14 +1705,17 @@ class SpeechSetupStep(SetupStep):
     def _preflight_install(self) -> None:
         import asyncio
 
+        selection = self._selection()
         try:
-            report = asyncio.run(run_parakeet_v2_preflight())  # policy-exception: worker-thread loop
+            report = asyncio.run(  # policy-exception: worker-thread loop
+                run_parakeet_preflight(selection.model_id, selection.precision)
+            )
         except Exception as exc:
             logger.opt(exception=True).error("Speech transcription preflight failed")
             self.app.call_from_thread(
                 self._apply_preflight_result,
                 None,
-                install_failure_message(exc, model_label="Parakeet v2"),
+                install_failure_message(exc, model_label=self._model_label()),
             )
             return
         self.app.call_from_thread(self._apply_preflight_result, report, None)
@@ -1644,7 +1730,7 @@ class SpeechSetupStep(SetupStep):
         self.app.push_screen(
             ModelInstallModal(
                 report,
-                model_label="Parakeet v2 (English, INT8)",
+                model_label=self._model_label(),
                 container_id="setup-speech-install-modal",
                 confirm_id="setup-speech-install-confirm",
                 cancel_id="setup-speech-install-cancel",
@@ -1672,16 +1758,20 @@ class SpeechSetupStep(SetupStep):
             )
             return
         try:
+            selection = self._selection()
             asyncio.run(  # policy-exception: worker-thread loop
-                run_parakeet_v2_provision(
-                    report, progress=make_progress_callback(self.post_message)
+                run_parakeet_provision(
+                    selection.model_id,
+                    selection.precision,
+                    report,
+                    progress=make_progress_callback(self.post_message),
                 )
             )
         except Exception as exc:
             logger.opt(exception=True).error("Speech model installation failed")
             self.app.call_from_thread(
                 self._apply_provision_result,
-                install_failure_message(exc, model_label="Parakeet v2"),
+                install_failure_message(exc, model_label=self._model_label()),
             )
             return
         self.app.call_from_thread(self._apply_provision_result, None)
@@ -1748,7 +1838,7 @@ class SpeechSetupStep(SetupStep):
         self.app.push_screen(
             DeleteConfirmationDialog(
                 item_type="Model",
-                item_name="Parakeet v2 (English, INT8)",
+                item_name=self._model_label(),
                 additional_warning=(
                     "The managed model files will be removed from this device."
                 ),
@@ -1804,7 +1894,7 @@ class SpeechSetupStep(SetupStep):
         * the ``onnx-asr`` runtime extra is importable (Important 4) --
           persisting a provider the runtime cannot execute is worse than no
           config change at all;
-        * a managed Parakeet v2 artifact is verified ACTIVE right now
+        * the exact selected Parakeet artifact is verified ACTIVE right now
           (``_check_active``, run off the event loop in an executor, never
           the possibly-stale ``self._installed_item``);
         * the user engaged this step THIS wizard run -- installed,
@@ -1819,7 +1909,7 @@ class SpeechSetupStep(SetupStep):
         ...) just because the user pressed Next through a re-run without
         touching this step.
 
-        When it does write, the persisted provider/model/language come
+        When it does write, provider/model/language/precision come
         from ``first_run_speech_step_state.resolve_speech_selection`` --
         the PRESSED language/precision radios (read via
         ``_effective_language``/``_effective_precision``), never a
@@ -1839,8 +1929,15 @@ class SpeechSetupStep(SetupStep):
         # mirrors RagStep's own commit() re-check of deps_installed()).
         if not self._runtime_installed():
             return True, ""
+        selection = speech_state.resolve_speech_selection(
+            selected_language=self._effective_language(),
+            selected_precision=self._effective_precision(),
+            curated_selections=self._curated_selections(),
+        )
+        if selection is None:
+            return True, ""
         active_dir = await asyncio.get_running_loop().run_in_executor(
-            None, self._check_active
+            None, self._check_active, selection
         )
         if not speech_state.should_persist_speech_config(
             active=active_dir is not None, acted_this_run=self._acted_this_run
@@ -1849,24 +1946,23 @@ class SpeechSetupStep(SetupStep):
             # this step this run -- either way, leave [transcription] byte-
             # identical to whatever is already persisted (review Important 3).
             return True, ""
-        # Review finding 2: persist what the user actually pressed, not a
-        # hardcoded constant -- see resolve_speech_selection's docstring.
-        provider_id, model_id, language = speech_state.resolve_speech_selection(
-            selected_language=self._effective_language(),
-            selected_precision=self._effective_precision(),
-            curated_model_ids=self._curated_model_ids(),
-            curated_precisions=self._curated_precisions(),
-        )
         ok = await self.wizard.commit_config(
             speech_state.build_speech_transcription_commit(
-                provider_id=provider_id, model_id=model_id, language=language,
+                provider_id=selection.provider_id,
+                model_id=selection.model_id,
+                language=selection.language,
+                precision=selection.precision,
             )
         )
         return (True, "") if ok else (False, "Saving the speech transcription choice failed.")
 
-    def _check_active(self) -> Any:
+    def _check_active(self, selection: speech_state.SpeechSelection) -> Any:
         try:
-            return active_managed_parakeet_v2_dir(self._service_for_worker())
+            return active_managed_parakeet_dir(
+                selection.model_id,
+                selection.precision,
+                service=self._service_for_worker(),
+            )
         except Exception:
             logger.opt(exception=True).error("Speech setup active-check failed")
             return None
@@ -2404,8 +2500,8 @@ class SummaryStep(SetupStep):
         self._load_config = load_config
         self._rag_deps_installed = rag_deps_installed
         # TASK-1301 AC#6: same injectable-callable shape as rag_deps_installed
-        # -- defaults to a real, off-loop-safe check of the managed Parakeet
-        # v2 artifact's installed/active state.
+        # -- defaults to a real, off-loop-safe check of the configured exact
+        # managed Parakeet artifact's installed/active state.
         self._speech_installed = speech_installed
         # Review Important 4 residual: same shape again -- defaults to the
         # real onnx-asr runtime probe so Summary agrees with the Speech
@@ -2463,6 +2559,8 @@ class SummaryStep(SetupStep):
             def load():
                 return load_cli_config_and_ensure_existence(force_reload=True)
 
+        config = await asyncio.get_running_loop().run_in_executor(None, load)
+
         deps = self._rag_deps_installed
         if deps is None:
             from tldw_chatbook.Utils.optional_deps import embeddings_rag_deps_installed
@@ -2470,20 +2568,36 @@ class SummaryStep(SetupStep):
             deps = embeddings_rag_deps_installed
         speech_installed_check = self._speech_installed
         if speech_installed_check is None:
+            prefill = speech_state.read_speech_prefill(config)
+            selection = speech_state.recommended_speech_selection()
+            if prefill.provider_id == speech_state.routing_policy().parakeet_provider_id:
+                resolved = speech_state.resolve_speech_selection(
+                    selected_language=prefill.language,
+                    selected_precision=prefill.precision or "int8",
+                    curated_selections=SpeechSetupStep._curated_selections(),
+                )
+                if resolved is not None and resolved.model_id == prefill.model_id:
+                    selection = resolved
 
             def speech_installed_check() -> bool:
                 # Minor 12: a Quick-track user (who never saw the Speech
                 # step) reaching Summary must not cause the managed
                 # artifact store's directories to be created on disk --
                 # constructing a real ModelArtifactService (what
-                # active_managed_parakeet_v2_dir() does internally) mkdirs
+                # active_managed_parakeet_dir() does internally) mkdirs
                 # unconditionally. A read-only existence check first means
                 # "nothing was ever installed by anyone" costs zero
                 # filesystem writes; only go on to the real check once
                 # something has legitimately created the root already.
                 if not managed_model_artifact_root().exists():
                     return False
-                return active_managed_parakeet_v2_dir() is not None
+                return (
+                    active_managed_parakeet_dir(
+                        selection.model_id,
+                        selection.precision,
+                    )
+                    is not None
+                )
 
         speech_runtime_check = self._speech_runtime_installed
         if speech_runtime_check is None:
@@ -2491,7 +2605,6 @@ class SummaryStep(SetupStep):
 
             speech_runtime_check = parakeet_onnx_deps_installed
 
-        config = await asyncio.get_running_loop().run_in_executor(None, load)
         speech_installed = await asyncio.get_running_loop().run_in_executor(
             None, speech_installed_check
         )

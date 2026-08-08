@@ -28,6 +28,7 @@ import subprocess
 import sys
 import textwrap
 import threading
+from types import SimpleNamespace
 from pathlib import Path
 from typing import Any, Callable, Optional
 from unittest.mock import patch
@@ -1346,6 +1347,146 @@ async def test_explicit_parakeet_directory_uses_central_validated_path(
     assert executor.calls[0]["options"]["transcription_model_dir"] == str(validated_dir)
 
 
+def test_managed_parakeet_dispatch_selects_exact_model_and_precision(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tldw_chatbook.Local_Ingestion import parakeet_v2_artifact as artifacts
+    from tldw_chatbook.Local_Ingestion.stt_batch_routing import PARAKEET_V3_MODEL
+    from tldw_chatbook.Model_Artifacts import store as artifact_store
+
+    reference = artifacts.parakeet_reference(PARAKEET_V3_MODEL, "f32")
+    handle = SimpleNamespace(
+        root=reference,
+        closure_fingerprint="exact-closure-fingerprint",
+    )
+
+    class _Lease:
+        def __init__(self) -> None:
+            self.handle = handle
+            self.closed = False
+
+        def close(self) -> None:
+            self.closed = True
+
+    lease = _Lease()
+    service = SimpleNamespace(acquire=lambda selected: lease)
+    monkeypatch.setattr(
+        artifacts,
+        "active_managed_parakeet_dir",
+        lambda model, precision, service=None: tmp_path / "managed-root",
+    )
+    monkeypatch.setattr(artifacts, "parakeet_v2_managed_service", lambda: service)
+    monkeypatch.setattr(
+        artifact_store,
+        "managed_model_artifact_root",
+        lambda: tmp_path / "managed",
+    )
+
+    app = _IngestRunnerHarness(None)
+    job = LibraryIngestJob(job_id="job-v3-f32", source_path="speech.wav")
+    dispatch = app._build_local_stt_dispatch(
+        job,
+        {
+            "transcription_provider": "parakeet-onnx",
+            "transcription_model": PARAKEET_V3_MODEL,
+            "transcription_precision": "f32",
+        },
+    )
+
+    assert dispatch["identity"].model_id == PARAKEET_V3_MODEL
+    assert dispatch["identity"].precision == "f32"
+    assert dispatch["identity"].root_revision == reference.revision
+    assert dispatch["identity"].closure_fingerprint == "exact-closure-fingerprint"
+    assert dispatch["managed_artifact_ref"] == (
+        reference.artifact_id,
+        reference.revision,
+        reference.variant,
+    )
+    assert lease.closed is True
+
+
+def test_explicit_f32_folder_snapshots_the_f32_payload_files(tmp_path: Path) -> None:
+    from tldw_chatbook.Local_Ingestion.stt_batch_routing import PARAKEET_V2_MODEL
+
+    model_root = tmp_path / "parakeet-f32"
+    model_root.mkdir()
+    required = (
+        "config.json",
+        "vocab.txt",
+        "encoder-model.onnx",
+        "encoder-model.onnx.data",
+        "decoder_joint-model.onnx",
+    )
+    for filename in required:
+        (model_root / filename).write_bytes(filename.encode())
+    app = _IngestRunnerHarness(None)
+    job = LibraryIngestJob(job_id="job-v2-f32", source_path="speech.wav")
+
+    dispatch = app._build_local_stt_dispatch(
+        job,
+        {
+            "transcription_provider": "parakeet-onnx",
+            "transcription_model": PARAKEET_V2_MODEL,
+            "transcription_precision": "f32",
+            "transcription_model_dir": str(model_root),
+        },
+    )
+
+    assert dispatch["local_source"].paths == tuple(model_root / item for item in required)
+
+
+def test_unqualified_legacy_v2_folder_cannot_satisfy_a_v3_dispatch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tldw_chatbook.Local_Ingestion import parakeet_v2_artifact as artifacts
+    from tldw_chatbook.Local_Ingestion.stt_batch_routing import PARAKEET_V3_MODEL
+
+    legacy_v2 = tmp_path / "legacy-v2-int8"
+    legacy_v2.mkdir()
+    for filename in (
+        "config.json",
+        "vocab.txt",
+        "encoder-model.int8.onnx",
+        "decoder_joint-model.int8.onnx",
+    ):
+        (legacy_v2 / filename).write_bytes(filename.encode())
+    monkeypatch.setattr(
+        _app_module,
+        "get_cli_setting",
+        lambda key, *args: str(legacy_v2)
+        if key == "transcription.parakeet_onnx_model_dir"
+        else args[0]
+        if args
+        else None,
+    )
+    monkeypatch.setattr(
+        artifacts,
+        "active_managed_parakeet_dir",
+        lambda model, precision, service=None: None,
+    )
+    monkeypatch.setattr(
+        artifacts,
+        "parakeet_v2_managed_service",
+        lambda: SimpleNamespace(),
+    )
+    app = _IngestRunnerHarness(None)
+
+    dispatch = app._build_local_stt_dispatch(
+        LibraryIngestJob(job_id="job-v3", source_path="speech.wav"),
+        {
+            "transcription_provider": "parakeet-onnx",
+            "transcription_model": PARAKEET_V3_MODEL,
+            "transcription_precision": "int8",
+        },
+    )
+
+    assert dispatch["identity"].model_id == PARAKEET_V3_MODEL
+    assert dispatch["local_source"] is None
+    assert dispatch["managed_artifact_ref"] is None
+
+
 @pytest.mark.asyncio
 async def test_faster_whisper_stays_in_general_pool(tmp_path: Path) -> None:
     pool = _FakeIngestParsePool(auto_run=False)
@@ -1647,6 +1788,134 @@ async def test_executor_failure_uses_stable_job_terminal(
                 "message": terminal.error,
                 "actions": ["retry_faster_whisper"],
             }
+
+
+@pytest.mark.asyncio
+async def test_parakeet_failed_attempt_reaches_faster_whisper_retry_row(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tldw_chatbook.Local_Ingestion.transcription_service import (
+        TranscriptionService,
+    )
+    from tldw_chatbook.STT.persistence import (
+        load_transcription_provenance_document,
+    )
+
+    monkeypatch.setattr(
+        TranscriptionService,
+        "transcribe",
+        lambda self, audio_path, **kwargs: {
+            "text": "Recovered with faster whisper.",
+            "segments": [
+                {
+                    "start": 0.0,
+                    "end": 1.5,
+                    "text": "Recovered with faster whisper.",
+                }
+            ],
+            "language": "en",
+            "language_probability": 0.99,
+            "duration": 1.5,
+            "provider": "faster-whisper",
+            "model": kwargs.get("model") or "base",
+        },
+    )
+    pool = _FakeIngestParsePool()
+    executor = _FakeLocalSTTExecutor()
+    db = _make_db(tmp_path)
+    app = _IngestRunnerHarness(
+        db,
+        pool_factory=lambda: pool,
+        local_stt_executor=executor,
+        local_stt_dispatch_factory=_fake_local_stt_dispatch,
+    )
+    source = tmp_path / "speech.wav"
+    source.write_bytes(b"fixture")
+
+    async with app.run_test() as pilot:
+        original = app.submit_library_ingest_job(
+            source_path=str(source),
+            ingest_options={
+                "audio_video": {"transcription_provider": "parakeet-onnx"}
+            },
+        )
+        await pilot.pause()
+        attempt_id = executor.calls[0]["attempt_id"]
+        failed_attempt = {
+            "attempt_id": attempt_id,
+            "batch_id": original.batch_id,
+            "job_id": original.job_id,
+            "provider_id": "parakeet-onnx",
+            "model_id": "nemo-parakeet-tdt-0.6b-v2",
+            "artifact_root": {
+                "artifact_id": "parakeet-v2",
+                "revision": "root-revision",
+                "variant": "int8",
+            },
+            "artifact_dependencies": [
+                {
+                    "artifact_id": "silero-vad",
+                    "revision": "vad-revision",
+                    "variant": "f32",
+                }
+            ],
+            "precision": "int8",
+            "requested_device": "cpu",
+            "effective_device": "cpu",
+            "requested_language": "en",
+            "effective_language": "en",
+            "detected_language": None,
+            "task": "transcribe",
+            "error_code": "artifact_incompatible",
+        }
+        executor.trigger_failure(
+            0,
+            ExecutorFailure(
+                1,
+                attempt_id,
+                TranscriptionFailureCode.ARTIFACT_INCOMPATIBLE,
+                recovery_actions=("retry_faster_whisper",),
+                failed_attempt=failed_attempt,
+            ),
+        )
+        failed = await _wait_for_job_state(
+            app,
+            pilot,
+            original.job_id,
+            IngestJobState.FAILED,
+        )
+
+        retry = app.retry_library_ingest_job_with_provider(
+            failed.job_id,
+            "faster-whisper",
+        )
+        await pilot.pause()
+
+        assert retry is not None
+        assert retry.retry_of_job_id == failed.job_id
+        assert retry.retry_source_failure_provenance == failed_attempt
+        assert retry.ingest_options["audio_video"]["transcription_provider"] == (
+            "faster-whisper"
+        )
+        done = await _wait_for_job_state(
+            app,
+            pilot,
+            retry.job_id,
+            IngestJobState.DONE,
+        )
+        assert done.media_id is not None
+        row = db.get_media_by_id(done.media_id)
+        assert row is not None
+        provenance = load_transcription_provenance_document(
+            row["transcription_provenance_json"]
+        )
+        assert provenance["provider_id"] == "faster-whisper"
+        assert provenance["model_id"] == "base"
+        assert provenance["job_id"] == retry.job_id
+        assert provenance["retry_of_attempt_id"] == failed_attempt["attempt_id"]
+        assert provenance["retry_of_job_id"] == failed.job_id
+        assert provenance["failed_attempt"] == failed_attempt
 
 
 @pytest.mark.asyncio

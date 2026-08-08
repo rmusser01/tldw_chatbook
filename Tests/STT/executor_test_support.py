@@ -31,12 +31,19 @@ class _FakeResidentRuntime:
         return
 
 
-def _fake_provider_builder(_request: Any, _model_root: Path | None) -> Any:
+def _fake_provider_builder(
+    _request: Any,
+    _model_root: Path | None,
+    managed_handle: Any | None,
+    _is_cancelled: Any,
+) -> Any:
     global _resident_runtime_loads
     from tldw_chatbook.STT.executor_worker import ProviderRuntime
 
     _resident_runtime_loads += 1
     runtime = _FakeResidentRuntime(_resident_runtime_loads)
+    if managed_handle is not None:
+        assert all(path.is_dir() for _reference, path in managed_handle.paths)
     return ProviderRuntime(runner=runtime.transcribe, close=runtime.close)
 
 
@@ -89,7 +96,12 @@ def resident_executor_worker(
     )
 
 
-def _device_retry_provider_builder(request: Any, _model_root: Path | None) -> Any:
+def _device_retry_provider_builder(
+    request: Any,
+    _model_root: Path | None,
+    _managed_handle: Any | None,
+    _is_cancelled: Any,
+) -> Any:
     from tldw_chatbook.STT.contracts import (
         DeviceFailureOrigin,
         ExecutionDevice,
@@ -129,7 +141,12 @@ def device_retry_executor_worker(
     )
 
 
-def _private_log_provider_builder(_request: Any, _model_root: Path | None) -> Any:
+def _private_log_provider_builder(
+    _request: Any,
+    _model_root: Path | None,
+    _managed_handle: Any | None,
+    _is_cancelled: Any,
+) -> Any:
     from loguru import logger
 
     logger.error("private worker path: /private/models/secret.onnx")

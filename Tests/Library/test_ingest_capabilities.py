@@ -141,6 +141,7 @@ def test_get_capabilities_audio_video() -> None:
     assert caps.field_names == (
         "transcription_provider",
         "transcription_model_dir",
+        "transcription_precision",
         "transcription_model",
         "language",
         "timestamps",
@@ -163,6 +164,14 @@ def test_get_capabilities_audio_video() -> None:
     assert model_dir_field.enabled_when == "transcription_provider"
     assert model_dir_field.enabled_when_values == ("parakeet-onnx",)
 
+    precision_field = next(
+        f for f in caps.fields if f.name == "transcription_precision"
+    )
+    assert precision_field.options == ("int8", "f32")
+    assert precision_field.default == "int8"
+    assert precision_field.enabled_when == "transcription_provider"
+    assert precision_field.enabled_when_values == ("parakeet-onnx",)
+
     model_field = next(f for f in caps.fields if f.name == "transcription_model")
     assert model_field.options == ("tiny", "base", "small", "medium", "large")
     assert model_field.default == "base"
@@ -180,6 +189,29 @@ def test_parakeet_onnx_feature_probes_onnx_asr(monkeypatch) -> None:
 
     assert _is_installed("parakeet_onnx") is True
     assert probed == ["onnx_asr"]
+
+
+def test_canonical_parakeet_extra_probes_onnx_asr(monkeypatch) -> None:
+    """The historical extra name now represents the cross-platform ONNX path."""
+    probed = []
+    monkeypatch.setattr(
+        tldw_chatbook.Library.ingest_capabilities.importlib.util,
+        "find_spec",
+        lambda name: probed.append(name) or object(),
+    )
+
+    assert _is_installed("transcription_parakeet") is True
+    assert probed == ["onnx_asr"]
+
+
+def test_parakeet_recovery_uses_onnx_profile_and_preserves_legacy_mlx_alias() -> None:
+    """Recovery copy installs ONNX without making the legacy MLX alias lie."""
+    assert _install_hint("parakeet_onnx")["command"] == (
+        'pip install -e ".[transcription_parakeet]"'
+    )
+    assert _install_hint("parakeet_mlx")["command"] == (
+        'pip install -e ".[mlx_whisper]"'
+    )
 
 
 def test_get_capabilities_ebook() -> None:

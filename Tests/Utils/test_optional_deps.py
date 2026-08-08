@@ -90,6 +90,19 @@ def test_optional_feature_metadata_groups_release_capabilities_without_core_inst
     assert "web" in groups["Web access"]
 
 
+@pytest.mark.parametrize(
+    "extra", ("transcription_parakeet", "transcription_parakeet_onnx")
+)
+def test_parakeet_extras_describe_the_onnx_cpu_runtime(extra: str) -> None:
+    """The canonical and compatibility extras recover to the ONNX runtime."""
+    from tldw_chatbook.Utils.optional_deps import get_optional_feature_info
+
+    info = get_optional_feature_info(extra)
+
+    assert info.label == "Parakeet ONNX transcription"
+    assert info.package_dependencies == ("onnx-asr[cpu]",)
+
+
 def test_subscriptions_deps_require_beautifulsoup_for_route_import(monkeypatch):
     """The subscriptions route guard blocks imports when BeautifulSoup is absent."""
     from tldw_chatbook.Utils import optional_deps

@@ -29,7 +29,10 @@ from .executor import (
 from .executor_process_tree import enter_worker_containment
 
 TranscriptionRunner = Callable[..., dict[str, Any]]
-ProviderBuilder = Callable[[ExecutorRequest, Path | None], "ProviderRuntime"]
+ProviderBuilder = Callable[
+    [ExecutorRequest, Path | None, Any | None, Callable[[], bool]],
+    "ProviderRuntime",
+]
 ParseJob = Callable[..., dict[str, Any]]
 
 
@@ -186,7 +189,19 @@ def _failure_from_exception(
     )
 
 
-def _acquire_managed_model(request: ExecutorRequest) -> tuple[Any, Path] | None:
+def _failure_from_worker_exception(
+    request: ExecutorRequest,
+    error: BaseException,
+    *,
+    cancelled: bool,
+) -> ExecutorFailure:
+    """Prefer a cancellation terminal when the shared event is already set."""
+    if cancelled:
+        return _cancelled_failure(request)
+    return _failure_from_exception(request, error)
+
+
+def _acquire_managed_model(request: ExecutorRequest) -> tuple[Any, Any] | None:
     if request.managed_artifact_ref is None:
         return None
     assert request.managed_store_root is not None
@@ -203,7 +218,7 @@ def _acquire_managed_model(request: ExecutorRequest) -> tuple[Any, Path] | None:
         ):
             leased.close()
             raise _ProviderLoadFailure(TranscriptionFailureCode.ARTIFACT_INCOMPATIBLE)
-        return leased, dict(handle.paths)[handle.root]
+        return leased, handle
     except _ProviderLoadFailure:
         raise
     except Exception:
@@ -232,14 +247,17 @@ def _direct_local_model_root(request: ExecutorRequest) -> Path | None:
 def _load_resident(
     request: ExecutorRequest,
     provider_builder: ProviderBuilder,
+    is_cancelled: Callable[[], bool],
 ) -> _ResidentRuntime:
     model_root = _direct_local_model_root(request)
     acquired = _acquire_managed_model(request)
     lease = None
+    handle = None
     if acquired is not None:
-        lease, model_root = acquired
+        lease, handle = acquired
+        model_root = dict(handle.paths)[handle.root]
     try:
-        provider = provider_builder(request, model_root)
+        provider = provider_builder(request, model_root, handle, is_cancelled)
     except Exception:
         if lease is not None:
             lease.close()
@@ -282,6 +300,8 @@ def _validate_reuse(request: ExecutorRequest, resident: _ResidentRuntime) -> Non
 def _transcribe_cpp_provider(
     request: ExecutorRequest,
     model_root: Path | None,
+    _managed_handle: Any | None,
+    _is_cancelled: Callable[[], bool],
 ) -> ProviderRuntime:
     from .persistence import build_transcription_provenance_document
     from .transcribe_cpp import TranscribeCppRuntime
@@ -393,40 +413,201 @@ def _transcribe_cpp_provider(
 def _parakeet_provider(
     request: ExecutorRequest,
     model_root: Path | None,
+    managed_handle: Any | None,
+    is_cancelled: Callable[[], bool],
 ) -> ProviderRuntime:
+    from .parakeet_onnx import (
+        ParakeetOnnxCancelled,
+        ParakeetOnnxFailure,
+        ParakeetOnnxRuntime,
+    )
+
+    context = request.options.get("transcription_context") or {}
+    if not isinstance(context, dict):
+        context = {}
+    requested_language = request.options.get("language") or "en"
+    effective_language = (
+        "auto"
+        if request.identity.model_id == "nemo-parakeet-tdt-0.6b-v3"
+        else "en"
+    )
+    artifact_root = None
+    artifact_dependencies: tuple[Any, ...] = ()
+
+    def failure(
+        code: TranscriptionFailureCode,
+        message: str,
+        *,
+        effective_device: ExecutionDevice | None = None,
+        attempt_id: str | None = None,
+        batch_id: str | None = None,
+        job_id: str | None = None,
+        language: str | None = None,
+    ) -> ParakeetOnnxFailure:
+        return ParakeetOnnxFailure(
+            code,
+            message,
+            attempt_id=attempt_id or request.attempt_id,
+            batch_id=batch_id if batch_id is not None else context.get("batch_id"),
+            job_id=job_id or request.job_id,
+            model_id=request.identity.model_id,
+            artifact_root=artifact_root,
+            artifact_dependencies=artifact_dependencies,
+            precision=request.identity.precision,
+            requested_language=language or requested_language,
+            effective_language=effective_language,
+            effective_device=effective_device,
+        )
+
     if request.options.get("_verify_legacy_parakeet_v2"):
         from tldw_chatbook.Local_Ingestion.parakeet_v2_installer import (
             verify_parakeet_v2_bundle,
         )
 
         if model_root is None or not verify_parakeet_v2_bundle(model_root):
-            raise _ProviderLoadFailure(
+            raise failure(
                 TranscriptionFailureCode.ARTIFACT_CORRUPT,
-                ("retry_faster_whisper",),
+                "The selected Parakeet ONNX model is corrupt.",
             )
 
-    from tldw_chatbook.Local_Ingestion.transcription_service import (
-        TranscriptionService,
-    )
+    if model_root is None:
+        raise failure(
+            TranscriptionFailureCode.MODEL_NOT_INSTALLED,
+            "The selected Parakeet ONNX model is not installed.",
+        )
 
-    service = TranscriptionService()
+    vad_root = None
+    if managed_handle is not None:
+        paths = dict(managed_handle.paths)
+        artifact_root = managed_handle.root.lease_key()
+        dependency_refs = tuple(
+            reference
+            for reference in managed_handle.closure
+            if reference != managed_handle.root
+        )
+        artifact_dependencies = tuple(
+            reference.lease_key() for reference in dependency_refs
+        )
+        vad_ref = next(
+            (
+                reference
+                for reference in dependency_refs
+                if reference.artifact_id == "silero-vad"
+            ),
+            None,
+        )
+        if vad_ref is None or vad_ref not in paths:
+            raise failure(
+                TranscriptionFailureCode.ARTIFACT_INCOMPATIBLE,
+                "The managed Parakeet artifact closure is incomplete.",
+            )
+        vad_root = paths[vad_ref]
+
+    from .persistence import build_transcription_provenance_document
+
+    try:
+        runtime = ParakeetOnnxRuntime.load(
+            model_root=model_root,
+            vad_root=vad_root,
+            model_id=request.identity.model_id,
+            precision=request.identity.precision,
+            artifact_root=artifact_root,
+            artifact_dependencies=artifact_dependencies,
+        )
+    except ModuleNotFoundError:
+        raise failure(
+            TranscriptionFailureCode.PROVIDER_UNAVAILABLE,
+            "The Parakeet ONNX runtime is unavailable.",
+        ) from None
+    except ParakeetOnnxFailure:
+        raise
+    except Exception:
+        raise failure(
+            TranscriptionFailureCode.ARTIFACT_INCOMPATIBLE,
+            "The selected Parakeet ONNX model cannot be loaded.",
+        ) from None
 
     def runner(audio_path: str, **kwargs: Any) -> dict[str, Any]:
-        if model_root is not None:
-            kwargs["model_dir"] = str(model_root)
-        return service.transcribe(audio_path, **kwargs)
+        attempt_id = kwargs.get("attempt_id") or request.attempt_id
+        batch_id = kwargs.get("batch_id") or context.get("batch_id")
+        job_id = kwargs.get("job_id") or request.job_id
+        language = (
+            kwargs.get("language") or request.options.get("language") or "en"
+        )
+        try:
+            normalized = runtime.transcribe(
+                audio_path=Path(audio_path),
+                attempt_id=attempt_id,
+                batch_id=batch_id,
+                job_id=job_id,
+                retry_of_attempt_id=kwargs.get("retry_of_attempt_id")
+                or context.get("retry_of_attempt_id"),
+                retry_of_job_id=kwargs.get("retry_of_job_id")
+                or context.get("retry_of_job_id"),
+                language=language,
+                timestamps=bool(
+                    kwargs.get("timestamps", request.options.get("timestamps", True))
+                ),
+                vad=bool(
+                    kwargs.get("vad_filter", request.options.get("vad_use", False))
+                ),
+                is_cancelled=is_cancelled,
+                ffmpeg_path=request.options.get("ffmpeg_path"),
+            )
+        except (ParakeetOnnxCancelled, ParakeetOnnxFailure):
+            raise
+        except Exception:
+            raise failure(
+                TranscriptionFailureCode.INFERENCE_FAILED,
+                "Parakeet ONNX could not complete this transcription.",
+                effective_device=ExecutionDevice.CPU,
+                attempt_id=attempt_id,
+                batch_id=batch_id,
+                job_id=job_id,
+                language=language,
+            ) from None
+        provenance = build_transcription_provenance_document(
+            normalized,
+            failed_attempt=kwargs.get("retry_source_failure_provenance")
+            or context.get("retry_source_failure_provenance"),
+        )
+        return {
+            "text": normalized.text,
+            "segments": [
+                {
+                    "start": segment.start_seconds,
+                    "end": segment.end_seconds,
+                    "text": segment.text,
+                }
+                for segment in normalized.segments
+            ],
+            "transcription_model": normalized.provenance.model_id,
+            "transcription_provenance": provenance,
+        }
 
-    return ProviderRuntime(runner=runner, close=service.cleanup)
+    return ProviderRuntime(runner=runner, close=runtime.close)
 
 
 def _default_provider_builder(
     request: ExecutorRequest,
     model_root: Path | None,
+    managed_handle: Any | None,
+    is_cancelled: Callable[[], bool],
 ) -> ProviderRuntime:
     if request.identity.provider_id == "transcribe-cpp":
-        return _transcribe_cpp_provider(request, model_root)
+        return _transcribe_cpp_provider(
+            request,
+            model_root,
+            managed_handle,
+            is_cancelled,
+        )
     if request.identity.provider_id == "parakeet-onnx":
-        return _parakeet_provider(request, model_root)
+        return _parakeet_provider(
+            request,
+            model_root,
+            managed_handle,
+            is_cancelled,
+        )
     raise _ProviderLoadFailure(TranscriptionFailureCode.PROVIDER_UNAVAILABLE)
 
 
@@ -495,7 +676,11 @@ def _run_executor_worker(
                             WorkerPhase.LOADING,
                         )
                     )
-                    resident = _load_resident(request, provider_builder)
+                    resident = _load_resident(
+                        request,
+                        provider_builder,
+                        cancellation_event.is_set,
+                    )
                 else:
                     _validate_reuse(request, resident)
                 if not resident.reported:
@@ -534,7 +719,13 @@ def _run_executor_worker(
                 )
                 connection.send(ExecutorResult(generation, request.attempt_id, payload))
             except Exception as error:
-                connection.send(_failure_from_exception(request, error))
+                connection.send(
+                    _failure_from_worker_exception(
+                        request,
+                        error,
+                        cancelled=cancellation_event.is_set(),
+                    )
+                )
                 if isinstance(error, LocalSourceChangedError):
                     return
     except (EOFError, OSError):

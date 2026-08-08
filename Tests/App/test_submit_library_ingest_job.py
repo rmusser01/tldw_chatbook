@@ -204,6 +204,24 @@ class TestIngestJobOptions:
         assert options["transcription_local_files_only"] is True
         assert options["transcription_batch_route_resolved"] is True
 
+    def test_explicit_parakeet_f32_is_preserved_in_worker_options(self) -> None:
+        app = _minimal_app()
+        job = _make_job(
+            source_path="/tmp/test.mp4",
+            ingest_options={
+                "audio_video": {
+                    "transcription_provider": "parakeet-onnx",
+                    "transcription_precision": "F32",
+                    "language": "de",
+                },
+            },
+        )
+
+        options = app._ingest_job_options(job)
+
+        assert options["transcription_model"] == "nemo-parakeet-tdt-0.6b-v3"
+        assert options["transcription_precision"] == "f32"
+
     def test_parakeet_onnx_defaults_language_to_english(self) -> None:
         app = _minimal_app()
         job = _make_job(
@@ -618,6 +636,7 @@ def test_invalid_audio_request_allows_next_job_to_dispatch(
     app._ingest_heavy_lane_max_workers = lambda: 1  # type: ignore[method-assign]
     app._ingest_parse_pool_generation = 1
     app._ingest_parse_jobs_by_generation = {1: set()}
+    app._ingest_local_stt_jobs = {}
     warning_messages: list[str] = []
     monkeypatch.setattr(
         "tldw_chatbook.app.logger.warning",

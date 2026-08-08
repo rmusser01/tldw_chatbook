@@ -1002,7 +1002,9 @@ class LibraryIngestJobRegistry:
         ``detected_type`` classification -- a pure function of
         ``source_path`` (task 160): the dispatcher no longer re-derives the
         type at dispatch, so carrying it forward is what keeps a retried
-        audio/video job bound by the heavy-lane cap. Runtime fields
+        audio/video job bound by the heavy-lane cap. The original ``batch_id``
+        is also retained so retry provenance and queue grouping stay in the
+        same batch. Runtime fields
         (``media_id``/``error``/``started_at``/``finished_at``/...) reset --
         so the canvas queue shows exactly ONE row per retried file, not two.
 
@@ -1049,6 +1051,7 @@ class LibraryIngestJobRegistry:
             state=IngestJobState.QUEUED,
             submitted_at=time.monotonic(),
             retry_count=source.retry_count + 1,
+            batch_id=source.batch_id,
             retry_of_job_id=source.job_id,
             retry_source_failure_provenance=deepcopy(
                 source.stt_failure_provenance
