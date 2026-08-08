@@ -161,11 +161,44 @@ line — by default "Sources: Notes, Media, Conversations (Prompts off)" —
 and is editable: the **Library search** chip (or **Search Library** with
 nothing typed) opens the **Library search** settings modal, which carries
 the query box plus a toggle per source kind (**✓ Notes**, **○ Media**,
-**✓ Conversations**, **○ Prompts**). Running keeps the edited selection
-(it also survives leaving and returning to Console); **Cancel** discards
-it. Run stays disabled until there is both a query and at least one
-source kind. Note this is a different setting from **RAG scope** above:
-"Sources" picks the source *kinds*, "Scope" picks the *items*.
+**✓ Conversations**, **○ Prompts**) and the **Auto-retrieve on send**
+switch described below. Running keeps the edited query/source-kind
+selection (it also survives leaving and returning to Console); **Cancel**
+discards it. Run stays disabled until there is both a query and at least
+one source kind. Note this is a different setting from **RAG scope**
+above: "Sources" picks the source *kinds*, "Scope" picks the *items*.
+
+Both a manual **Search Library** run and auto-retrieve (below) search to
+the depth your **active RAG profile** specifies (`Settings ▸ RAG`'s
+**Default results** field) rather than a fixed count, so manual and
+automatic retrieval can't disagree about how many results come back.
+
+### Auto-retrieve on send
+
+The **Library search** settings modal also carries an **Auto-retrieve on
+send** switch, default **OFF**. Turn it on and every plain text send —
+never a slash command, a `$skill` invocation, a tool approval, or a
+regenerate — first runs a Library search using your draft as the
+query and stages whatever it finds into the staged-evidence strip before
+the send goes out: the same visible, consume-on-send pipeline a manual
+**Search Library** run produces, never invisible prompt injection. It's
+skipped automatically when evidence is already staged (a manual run or a
+Library "Use in Console" handoff), so a send can't double-retrieve.
+
+The switch persists the instant you flip it, unlike the query and
+source-kind edits in the same modal — closing with **Escape** or a
+backdrop click still keeps the change. If your resolved RAG scope comes
+back **empty**, auto-retrieve short-circuits with the same shared notice
+the manual path shows, rather than searching everything.
+
+While a send is retrieving, the staged-evidence strip briefly shows a
+"Retrieving…" state; the search is capped at a **5-second timeout**, and
+a send is never blocked on it. If retrieval times out, fails, or the RAG
+service is still starting up (a first-use embedding-model load can take a
+while), the send goes out without evidence and a quiet notice names which
+of the two happened — "still initializing" vs. "failed" — rather than
+staying silent. A zero-result outcome currently clears the in-flight
+placeholder with no further notice.
 
 The Inspector tray is not the only place staged evidence shows up: a
 **staged-evidence strip** sits on the main surface itself, between the
@@ -246,6 +279,10 @@ Inspector shows what's in play:
    click the two items, press **Save**. The strip shows **Scope: 2**.
 5. **Open a citation's source in Library** — click **Sources (N)** under
    the reply, select an `[S1]` row, press **Open in Library**.
+6. **Have every send ground itself automatically** — click the **RAG**
+   chip (or **Run Library RAG**) to open **Library RAG** settings, turn on
+   **Auto-retrieve on send**, close the modal. It stays on across sends
+   until you flip it off; it's off by default.
 
 ## Keyboard & commands
 
@@ -265,7 +302,13 @@ Enter again to send as text."
 
 - `config.toml` `[rag]` (and legacy `[rag_search]`) — retrieval and
   processing settings; covered in
-  [Library ▸ Search & RAG](../library/search-and-rag.md).
+  [Library ▸ Search & RAG](../library/search-and-rag.md), including how
+  the active RAG profile now drives retrieval mode.
+- `config.toml` `[chat_defaults] rag_auto_retrieve_on_send` — the
+  persisted **Auto-retrieve on send** value (default `false`); the modal
+  is the supported way to change it.
+- [Settings ▸ RAG](../settings/rag.md) — the profile that both auto- and
+  manual Library RAG retrieval read for search mode and result depth.
 - [Library ▸ Prompts](../library/prompts.md) — where saved prompts are
   created and managed.
 - [Console orientation](../console.md) — layout tour, rails, and chips.
@@ -284,6 +327,15 @@ Enter again to send as text."
   state warns before you send into it — **Clear** or **Edit** the scope.
 - **The viewer's token count is a draft-derived estimate** — a guide, not
   a billing meter.
+- **Auto-retrieve fires on every plain-text send while it's on**,
+  including repeated sends in the same conversation — there's no
+  once-per-conversation memory yet, so an empty resolved scope re-shows
+  its notice on each send until you clear or edit the scope.
+- **Reranking-enabled profiles cost more per search.** If your active RAG
+  profile has reranking on, both auto- and manual Library RAG retrieval
+  spend one LLM provider call per candidate result (up to the profile's
+  **Rerank results** count) — see
+  [Settings ▸ RAG](../settings/rag.md#the-editing-card).
 
 —
 *Verified against c2cbb8081 — 2026-08-04 (PR-T1 live check S1-S6: staged
@@ -295,4 +347,15 @@ profile by an unrelated Library workspace-eligibility gate, so that part
 is verified at the code level, not live). Verified against e2c706303 —
 2026-08-06 (PR-T2, docs pass against shipped code/tests, live check
 pending Task 9): staged evidence now counts toward the context estimate
-and the cost chip (as an estimated `~` row) instead of reporting zero.*
+and the cost chip (as an estimated `~` row) instead of reporting zero.
+Verified against d6b6a738f — 2026-08-07 (RAG-port P0 live walkthrough, real
+Anthropic provider): flipping **Auto-retrieve on send** in the RAG chip
+modal writes `[chat_defaults] rag_auto_retrieve_on_send = true` at
+toggle time — before Esc, and Esc leaves it set. A plain-text send then
+showed "Auto-retrieving Library evidence for this message." with the chip
+reading `RAG: on · Sources: 1 staged` about a second in, then "Evidence
+sent with this message · 15 sources", and the model's own reply named the
+injected block back ("the evidence sections [S1] through [S15] …") — the
+end-to-end proof that retrieved evidence reaches the provider. A send
+beginning with a slash command fired no retrieval at all: no placeholder,
+no chip flip, no evidence line.*

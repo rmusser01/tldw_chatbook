@@ -725,7 +725,11 @@ def library_rag_result_row_children(
         evidence.
     """
     selected = row.result_id == selected_result_id
-    score = library_rag_score_suffix(row.score)
+    score = library_rag_score_suffix(
+        row.score,
+        score_kind=row.score_kind,
+        vector_score=row.vector_score,
+    )
     card_children: list[Widget] = [
         Static(
             f"{index + 1}. {row.title}{score}",
@@ -815,13 +819,17 @@ def library_rag_results_body_children(state: LibraryRagPanelState) -> list[Widge
         The widgets to mount directly below the Evidence heading.
     """
     # Task 8: the coverage note, when there is one, is the very first thing
-    # under the heading -- ahead of the row list. `state.coverage_note` is
-    # only ever non-empty alongside `state.results` (see
-    # `library_rag_coverage_note`'s empty-rows guard), so prepending it
-    # unconditionally here is a no-op in every other branch below rather
-    # than needing its own conditional per branch.
+    # under the heading -- ahead of the row list. It is prepended to EVERY
+    # branch: `state.coverage_note` used to be non-empty only alongside
+    # `state.results`, but a routing disclosure (RAG-port P0: "this profile
+    # ran keyword-only", "scope forced semantic") survives the zero-row
+    # outcome, and zero rows is exactly when it is most diagnostic -- the
+    # quiet no-match line otherwise reads as a verdict on an index the
+    # search never queried. Branches whose state has nothing to disclose
+    # prepend an empty list, i.e. are unchanged.
+    note_children: list[Widget] = list(library_rag_coverage_note_children(state))
     if state.results:
-        children: list[Widget] = list(library_rag_coverage_note_children(state))
+        children: list[Widget] = list(note_children)
         for index, result in enumerate(state.results):
             children.extend(
                 library_rag_result_row_children(result, index, state.selected_result_id)
@@ -841,7 +849,7 @@ def library_rag_results_body_children(state: LibraryRagPanelState) -> list[Widge
                 )
         return children
     if state.retrieval_status == "searching":
-        return [
+        return note_children + [
             Static(
                 searching_status_line(state.scope.selected_source_types),
                 id="library-rag-searching-line",
@@ -849,7 +857,7 @@ def library_rag_results_body_children(state: LibraryRagPanelState) -> list[Widge
         ]
     if state.recovery_copy and state.recovery_selector:
         if state.retrieval_status == "empty":
-            return [
+            return note_children + [
                 Static(
                     # `state.searched_query`, NOT `state.query_state.query`
                     # (task-15 finding I3): the latter is live, not-yet-
@@ -865,15 +873,17 @@ def library_rag_results_body_children(state: LibraryRagPanelState) -> list[Widge
                     classes="library-rag-quiet-line",
                 )
             ]
-        return [Static(state.recovery_copy, id=state.recovery_selector)]
+        return note_children + [
+            Static(state.recovery_copy, id=state.recovery_selector)
+        ]
     if not state.scope.has_available_sources:
         # No Library sources at all: the scope region's single quiet gate
         # line + "Open Import media" action are the entire guidance for
         # this state -- repeating "No evidence yet"/"Add or import
         # sources…" here would re-stack the layered dump the quiet-gate
         # principle retired (2026-07 UAT).
-        return []
-    return [
+        return note_children
+    return note_children + [
         Static(
             "No evidence yet. Run Search/RAG to populate results.",
             id="library-rag-results-empty",

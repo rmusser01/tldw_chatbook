@@ -71,7 +71,9 @@ statement, not a confirmation gate; nothing blocks Run because of it.
 
 - **Search** — keyword matching over your sources; works with nothing extra
   installed.
-- **RAG Answer** — semantic retrieval. If embeddings support isn't
+- **RAG Answer** — retrieval driven by your active RAG profile (see
+  [Retrieval mode follows your RAG profile](#retrieval-mode-follows-your-rag-profile)
+  below), then a generated answer. If embeddings support isn't
   installed, the run blocks as "RAG unavailable" with the next step
   `Install RAG support: pip install "tldw_chatbook[embeddings_rag]", then
   restart, or switch mode to Search.` and the recovery pointer
@@ -79,6 +81,39 @@ statement, not a confirmation gate; nothing blocks Run because of it.
   "Index empty" — "The semantic index has no content yet" — with the
   recovery "Ingest content to index it automatically, run a semantic index
   backfill, or switch mode to Search".
+
+### Retrieval mode follows your RAG profile
+
+RAG Answer's retrieval step is no longer fixed to "always semantic" — it
+follows whichever **search mode** your active RAG profile
+([Settings ▸ RAG](../settings/rag.md)) is set to:
+
+- **Plain keyword** profiles (e.g. the built-in "BM25 Only") route the
+  query through the same keyword search Search mode uses, honestly
+  labeled — no vector index required, and no `match: strong`-style
+  similarity band on the resulting rows (they read `| keyword match`
+  instead — see [Evidence rows](#evidence-rows) below).
+- **Semantic** profiles run vector retrieval, same as before.
+- **Hybrid** profiles blend keyword and vector retrieval when the query
+  is unscoped and Media is a selected source. A query narrowed by a RAG
+  scope, or one with Media toggled off, falls back to semantic-only
+  retrieval for now — scope-aware and multi-source hybrid retrieval are
+  later work — and that fallback is disclosed rather than silent.
+
+A quiet one-line disclosure can appear above the evidence rows,
+alongside the "No strong semantic matches" / "Semantic search found
+nothing from…" lines described below, when the route taken is worth
+naming: `Profile 'BM25 Only': keyword search (no vectors).`,
+`Scope active — semantic only until scope-aware hybrid lands.`,
+`Media excluded — semantic only.`, or `Semantic leg empty — keyword-only
+results.` (shown when a hybrid profile's vector leg came back empty but
+its keyword leg still found rows — the "Index empty" recovery state is
+withheld in that case, since the index genuinely isn't empty).
+
+RAG Answer mode still needs embeddings support installed regardless of
+which mode the active profile resolves to, and generating the answer
+itself still calls your configured LLM provider either way — only the
+*retrieval* step's behavior depends on the profile.
 
 ### Sources scope
 
@@ -181,10 +216,30 @@ Console](#sending-evidence-to-console) below.
 Each hit is one block:
 
 - **Title** — numbered, e.g. "1. g2_demo_article", with a match band
-  appended when the row carries a score: `| match: strong` (≥ 0.5),
-  `| match: moderate` (≥ 0.2), or `| match: weak (0.09)` — the weak band
-  keeps the raw number so you can see how weak. Keyword ("Search") mode
-  rows carry no score, so nothing is appended.
+  appended when the row carries a similarity score: `| match: strong`
+  (≥ 0.5), `| match: moderate` (≥ 0.2), or `| match: weak (0.09)` — the
+  weak band keeps the raw number so you can see how weak. Keyword
+  ("Search") mode rows carry no score, so nothing is appended.
+
+  The band is a statement about *semantic similarity*, so rows scored
+  another way say what they are instead of borrowing a band they don't
+  fit:
+
+  - Hybrid profiles (Hybrid Basic / Hybrid Full) blend the keyword and
+    vector rankings into a fused score that maxes out near 0.016 — far
+    below the weak boundary. Those rows are banded on the vector leg's own
+    similarity, so a strong hybrid hit reads `| match: strong`, exactly as
+    the same hit would in a semantic profile.
+  - A hybrid row that only the keyword leg found has no similarity at all
+    and reads `| keyword match`.
+  - A reranked row reads `| reranked`: reranker scores are on the
+    reranking model's own scale, not a 0-1 similarity, so the band is
+    withheld rather than guessed.
+
+  The "No strong semantic matches — results below are weak." line above
+  the list follows the same rule: only rows carrying a real similarity can
+  trigger it, so keyword-match and reranked rows neither cause it nor
+  suppress it.
 - **Badge line** — the source type first (e.g. "Media"), then a workspace
   name when it isn't "all workspaces", a citation count ("2 citations")
   when the hit carries citations, and "excluded from context" when the row
@@ -309,8 +364,14 @@ indexes — if RAG Answer mode reports an empty index, go there to backfill.
 
 - **"top 5" is fixed here.** The tunable top-k in Settings ▸ RAG does not
   change this canvas. "Per source" only appears in Search mode — RAG
-  Answer mode runs one merged semantic query across sources, not one per
-  source, so the heading doesn't claim it.
+  Answer mode runs one merged query across sources (semantic, keyword, or
+  hybrid depending on the active profile — see [Retrieval mode follows
+  your RAG profile](#retrieval-mode-follows-your-rag-profile)), not one
+  per source, so the heading doesn't claim it.
+- **Which retrieval mode RAG Answer actually uses depends on your active
+  profile**, not a fixed "always semantic" assumption — see [Retrieval
+  mode follows your RAG profile](#retrieval-mode-follows-your-rag-profile)
+  above.
 - **The scope summary line tracks the toggles.** Deselecting a source (e.g.
   turning Media off) updates "Scope: …" to name what's still in scope and
   what's off — it's a live summary of the ✓/○ toggles below it, not a fixed
@@ -357,4 +418,18 @@ check uses — not just an endpoint name. Verified against 42b28089f —
 2026-08-06 (task-2852: live check on a fresh profile — "Use in Console"
 on a locked Console now warns before navigating and stages a visible
 receipt on the "Get started" card; a configured Console still lands on
-the unchanged staged-evidence strip).*
+the unchanged staged-evidence strip). Verified against d6b6a738f —
+2026-08-07 (RAG-port P0 live walkthrough on a scratch profile holding a
+copy of the real Library DBs, real provider): under the default Hybrid
+Basic profile a RAG Answer run returned rows banded on real similarity —
+"match: moderate" for the two best and "match: weak (0.18)" / "weak
+(0.17)" below them — not the old wall of "weak (0.02)" that banding a
+rank-fused score produced. Under BM25 Only the same panel disclosed
+"Profile 'BM25 Only': keyword search (no vectors)." and returned both a
+note and a **media** row, the keyword leg that previously could not
+return a row at all. Under Hybrid Full with no matching index the run
+disclosed "Semantic search found nothing from: Notes, Conversations.
+Semantic leg empty — keyword-only results." and rendered its FTS-leg row
+as "keyword match" rather than inventing a similarity. Turning Media off
+routed the run to semantic and said so: "Media excluded — semantic
+only." Every one of those route notes rendered on zero-row outcomes too.*

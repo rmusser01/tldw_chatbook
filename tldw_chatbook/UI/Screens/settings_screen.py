@@ -11174,7 +11174,7 @@ class SettingsScreen(BaseAppScreen):
             id="settings-library-rag-search-group",
         ):
             yield Static(
-                "Used by future Library-native Search/RAG and Console evidence handoff defaults.",
+                "Drives Library Search/RAG retrieval and Console evidence handoff defaults.",
                 classes="settings-detail-row",
             )
             with Horizontal(classes="settings-input-row settings-select-row"):

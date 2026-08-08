@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Mapping, Sequence
+from dataclasses import replace
 from typing import Any, Optional
 
 from loguru import logger
@@ -25,6 +26,7 @@ from tldw_chatbook.Library.library_rag_service import LibraryRagSearchOutcome
 from tldw_chatbook.Library.library_rag_state import (
     LIBRARY_RAG_EMPTY_STATE_SELECTOR,
     LIBRARY_RAG_QUERY_MAX_LENGTH,
+    LIBRARY_RAG_ROUTE_NOTES_KEY,
     LIBRARY_RAG_SERVICE_ERROR_SELECTOR,
 )
 
@@ -38,7 +40,18 @@ from tldw_chatbook.RAG_Search.pipeline_functions_simple import SCOPE_DIAGNOSTICS
 # (task-247): resolving through it guarantees Library RAG Answer queries read
 # the exact vector store / collection / embedding model that ingestion-time
 # indexing writes to.
-from tldw_chatbook.RAG_Search.ingestion_indexing import get_shared_rag_service
+from tldw_chatbook.RAG_Search.ingestion_indexing import (
+    get_shared_rag_service,
+    shared_rag_service_generation,
+)
+
+# One staleness rule for the `app._rag_service` cache, shared with the chat/
+# Search resolver (`resolve_semantic_rag_service`): a profile switch resets
+# the shared singleton, and both app-level caches must notice.
+from tldw_chatbook.RAG_Search.semantic_availability import (
+    cache_app_rag_service,
+    current_app_rag_service,
+)
 from tldw_chatbook.UI.destination_recovery import DestinationRecoveryState
 from tldw_chatbook.Utils.input_validation import sanitize_string, validate_text_input
 from tldw_chatbook.Utils.optional_deps import embeddings_rag_deps_installed
@@ -47,7 +60,26 @@ logger = logger.bind(module="LibraryLocalRagSearchService")
 
 _SEARCH_RUNTIME_BACKEND = "local-fts"
 _RAG_RUNTIME_BACKEND = "rag-semantic"
+# Mode-truthful backend label for the engine's RRF-fused hybrid path (spec
+# Workstream A item 3): a hybrid search must never report itself as
+# "rag-semantic", since the two produce different score kinds.
+_RAG_HYBRID_RUNTIME_BACKEND = "rag-hybrid"
 _KNOWN_KEYWORD_SOURCE_TYPES = ("notes", "media", "conversations", "prompts")
+# The active RAG profile's `default_search_mode` vocabulary
+# (`RAG_Search/simplified/config.py::SearchConfig`). Anything else -- a
+# hand-edited TOML, a future mode this build does not know -- resolves to
+# "semantic", the historical behavior.
+_PROFILE_SEARCH_MODES = ("plain", "semantic", "hybrid")
+# Routing disclosures (spec Workstream A: "each handled by disclosure
+# rather than silence"). Lowercase fragments; `library_rag_state`'s
+# `_route_note_sentence` renders them as sentences on the Evidence
+# region's one quiet coverage line.
+ROUTE_NOTE_PLAIN_PROFILE_TEMPLATE = "{profile}: keyword search (no vectors)"
+ROUTE_NOTE_HYBRID_SCOPED = (
+    "scope active — semantic only until scope-aware hybrid lands"
+)
+ROUTE_NOTE_HYBRID_MEDIA_EXCLUDED = "media excluded — semantic only"
+ROUTE_NOTE_SEMANTIC_LEG_EMPTY = "semantic leg empty — keyword-only results"
 # Mirrors `library_rag_state`'s `_OPEN_SOURCE_TYPE_MAP` canonicalization:
 # raw provenance `source_type` values -> the scope-toggle identifiers used
 # by `LibraryRagScopeState`/the Search canvas's per-source toggles.
@@ -114,7 +146,8 @@ class LibraryLocalRagSearchService:
     app's `_rag_service`, lazily initializing it from the process-wide
     shared RAG service on first use when the embeddings deps are installed
     (task-249), and degrades to a blocked outcome with setup routing when
-    the runtime is unavailable.
+    the runtime is unavailable. Which retrieval `rag` mode actually runs is
+    the ACTIVE profile's decision, not a constant -- see `_search_rag`.
     """
 
     def __init__(self, app_instance: Any) -> None:
@@ -137,7 +170,9 @@ class LibraryLocalRagSearchService:
                 `notes`, `media`, `conversations`). Unknown types are
                 ignored quietly.
             mode: Retrieval mode: `search` (keyword, local FTS seams) or
-                `rag` (delegates to the app's optional `_rag_service`).
+                `rag` (routed by the active RAG profile's
+                `default_search_mode` -- keyword seams, semantic, or the
+                engine's fused hybrid; see `_search_rag`).
             scope: Optional resolved RAG retrieval scope (rag-scope
                 narrowing, task-6). Caller-passed only -- this service never
                 resolves scope itself, so a Library-screen call site that
@@ -176,10 +211,106 @@ class LibraryLocalRagSearchService:
                 "calling (there is nothing left to retrieve from)."
             )
         if mode == "rag":
-            return await self._search_semantic(
+            return await self._search_rag(
                 query, source_types, top_k, kwargs, scope=scope
             )
         return await self._search_keyword(query, source_types, top_k, scope=scope)
+
+    async def _search_rag(
+        self,
+        query: str,
+        source_types: tuple[str, ...],
+        top_k: int,
+        kwargs: Mapping[str, Any],
+        *,
+        scope: Optional[EffectiveScope] = None,
+    ) -> Any:
+        """Route a `rag`-mode request per the ACTIVE profile's search mode.
+
+        Before this existed the live path hardcoded `search_type="semantic"`:
+        a user who selected "BM25 Only" or "Hybrid Basic" in Settings > RAG
+        got vector-only retrieval anyway, with nothing on screen saying so
+        (spec Workstream A). Routing, with every divergence disclosed
+        through the coverage-note channel rather than silently applied:
+
+        - `plain` -> the Library's own four-seam, scope-aware keyword path
+          (`_search_keyword`), NOT the engine's media-only keyword leg: a
+          BM25 profile must not get a strictly worse search in `rag` mode
+          than `search` mode already gives it.
+        - `hybrid`, unscoped, media selected -> the engine's fused hybrid.
+        - `hybrid`, scoped -> semantic. `RAGService.search` RAISES for a
+          non-empty `metadata_allowlist` with any non-semantic search type
+          (allowlist pushdown is semantic-only), so this is a hard engine
+          constraint, not a preference. Extending allowlists to the FTS leg
+          is P2.
+        - `hybrid`, media deselected -> semantic. The engine's FTS leg
+          covers media only in P0, so its rows could only be dropped by the
+          source-type post-filter -- running it would spend a query to
+          produce nothing.
+        - `semantic` (and any unknown mode) -> today's exact behavior.
+
+        Args:
+            query: Already-validated user query.
+            source_types: Selected Library source type identifiers.
+            top_k: Result cap.
+            kwargs: Backend options (`include_citations`).
+            scope: Optional resolved retrieval scope; `state == "scoped"`
+                is what forces the semantic path under a hybrid profile.
+
+        Returns:
+            The chosen path's own return shape (mapping or
+            `LibraryRagSearchOutcome`), with any routing disclosure attached
+            under `diagnostics[LIBRARY_RAG_ROUTE_NOTES_KEY]`.
+        """
+        rag_service = await self._resolve_rag_runtime()
+        if rag_service is None:
+            return LibraryRagSearchOutcome(
+                status="blocked",
+                recovery_state=_rag_mode_unavailable_recovery_state(),
+            )
+        profile_mode = _resolve_profile_search_mode(rag_service)
+
+        if profile_mode == "plain":
+            result = await self._search_keyword(
+                query, source_types, top_k, scope=scope
+            )
+            return _with_route_notes(
+                result,
+                (
+                    ROUTE_NOTE_PLAIN_PROFILE_TEMPLATE.format(
+                        profile=_profile_disclosure_label(rag_service)
+                    ),
+                ),
+            )
+
+        if profile_mode == "hybrid":
+            if scope is not None and scope.state == "scoped":
+                return await self._search_semantic(
+                    query,
+                    source_types,
+                    top_k,
+                    kwargs,
+                    scope=scope,
+                    rag_service=rag_service,
+                    route_notes=(ROUTE_NOTE_HYBRID_SCOPED,),
+                )
+            if "media" not in source_types:
+                return await self._search_semantic(
+                    query,
+                    source_types,
+                    top_k,
+                    kwargs,
+                    scope=scope,
+                    rag_service=rag_service,
+                    route_notes=(ROUTE_NOTE_HYBRID_MEDIA_EXCLUDED,),
+                )
+            return await self._search_hybrid(
+                query, source_types, top_k, kwargs, rag_service=rag_service
+            )
+
+        return await self._search_semantic(
+            query, source_types, top_k, kwargs, scope=scope, rag_service=rag_service
+        )
 
     async def _search_keyword(
         self,
@@ -419,6 +550,8 @@ class LibraryLocalRagSearchService:
         kwargs: Mapping[str, Any],
         *,
         scope: Optional[EffectiveScope] = None,
+        rag_service: Any = None,
+        route_notes: Sequence[str] = (),
     ) -> Any:
         """Query the RAG runtime, initializing it lazily on first use (task-249).
 
@@ -452,8 +585,16 @@ class LibraryLocalRagSearchService:
                 and merges the per-type results by score, descending,
                 before trimming to `top_k` (mirrors
                 `pipeline_functions_simple.search_semantic`'s merge).
+            rag_service: Already-resolved runtime, passed by `_search_rag`
+                so profile resolution and the search share one instance.
+                `None` resolves it here, keeping this method self-contained.
+            route_notes: Routing disclosures to attach to whatever this
+                returns (e.g. "a hybrid profile ran semantic because a
+                scope is active"). Empty for a search that ran exactly as
+                the profile configured it.
         """
-        rag_service = await self._resolve_rag_runtime()
+        if rag_service is None:
+            rag_service = await self._resolve_rag_runtime()
         if rag_service is None:
             return LibraryRagSearchOutcome(
                 status="blocked",
@@ -484,51 +625,106 @@ class LibraryLocalRagSearchService:
             per_type_results.sort(key=_raw_semantic_score, reverse=True)
             raw_results = per_type_results[:top_k]
 
-        rows = [_semantic_row(item) for item in raw_results or ()]
-        if source_types:
-            rows = [
-                row for row in rows if _semantic_row_matches_scope(row, source_types)
-            ]
+        rows = _filtered_semantic_rows(raw_results, source_types)
+        if not raw_results and await self._semantic_index_is_empty(rag_service):
+            return _with_route_notes(
+                LibraryRagSearchOutcome(
+                    status="empty",
+                    recovery_state=_rag_index_empty_recovery_state(),
+                    runtime_backend=_RAG_RUNTIME_BACKEND,
+                ),
+                route_notes,
+            )
+        if scope is not None and scope.state == "scoped" and not rows:
+            item_count = _scope_item_count(scope, source_types)
+            return _with_route_notes(
+                LibraryRagSearchOutcome(
+                    status="empty",
+                    recovery_state=_scope_zero_results_recovery_state(item_count),
+                    runtime_backend=_RAG_RUNTIME_BACKEND,
+                ),
+                route_notes,
+            )
+        return _with_route_notes(
+            _retrieval_payload(rows, source_types, _RAG_RUNTIME_BACKEND), route_notes
+        )
+
+    async def _search_hybrid(
+        self,
+        query: str,
+        source_types: tuple[str, ...],
+        top_k: int,
+        kwargs: Mapping[str, Any],
+        *,
+        rag_service: Any,
+    ) -> Any:
+        """Run the engine's RRF-fused hybrid search (unscoped, media selected).
+
+        Only `_search_rag` calls this, and only once it has established the
+        two conditions the engine imposes: no scope allowlist (the pushdown
+        is semantic-only) and `media` among the selected source types (the
+        FTS leg is media-only in P0, so its rows would otherwise all be
+        dropped by the source-type post-filter).
+
+        Zero-results honesty (spec Workstream A item 5): "Index empty" is a
+        claim about the whole runtime, so it may only be made when the
+        engine returned nothing at all. When the FTS leg DID return rows
+        over an empty vector store, the user has evidence on screen and the
+        honest statement is the narrower one -- the semantic leg is empty,
+        these are keyword-only results.
+
+        Args:
+            query: Already-validated user query.
+            source_types: Selected Library source type identifiers.
+            top_k: Result cap (the fused cap; each leg is over-fetched by
+                the engine).
+            kwargs: Backend options (`include_citations`).
+            rag_service: The resolved runtime.
+
+        Returns:
+            A mapping with `results`/`runtime_backend` (`rag-hybrid`) plus
+            diagnostics, or the "Index empty" recovery outcome.
+        """
+        raw_results = await rag_service.search(
+            query=query,
+            top_k=top_k,
+            search_type="hybrid",
+            include_citations=bool(kwargs.get("include_citations", True)),
+        )
+        rows = _filtered_semantic_rows(raw_results, source_types)
         if not raw_results and await self._semantic_index_is_empty(rag_service):
             return LibraryRagSearchOutcome(
                 status="empty",
                 recovery_state=_rag_index_empty_recovery_state(),
-                runtime_backend=_RAG_RUNTIME_BACKEND,
+                runtime_backend=_RAG_HYBRID_RUNTIME_BACKEND,
             )
-        if scope is not None and scope.state == "scoped" and not rows:
-            item_count = _scope_item_count(scope, source_types)
-            return LibraryRagSearchOutcome(
-                status="empty",
-                recovery_state=_scope_zero_results_recovery_state(item_count),
-                runtime_backend=_RAG_RUNTIME_BACKEND,
-            )
-        result: dict[str, Any] = {
-            "results": rows,
-            "runtime_backend": _RAG_RUNTIME_BACKEND,
-        }
-        if rows and source_types:
-            # Task 8: report which requested source types the semantic leg
-            # actually touched. Deliberately omitted (not an empty dict)
-            # when `rows` is empty -- the zero-rows path is the empty/
-            # no-match state (Task 11's territory), not a coverage claim,
-            # and omitting the key keeps the pre-existing bare
-            # `{"results": [], "runtime_backend": ...}` contract for that
-            # path byte-identical (see the two callers above and
-            # `test_rag_mode_zero_results_with_populated_index_stays_generic`).
-            result["diagnostics"] = {
-                "semantic_scope_coverage": _semantic_scope_coverage(
-                    source_types, rows
-                )
-            }
-        return result
+        route_notes: list[str] = []
+        if _rows_are_keyword_only(rows) and await self._semantic_index_is_empty(
+            rag_service
+        ):
+            # Both halves matter: rows with no vector leg alone would also
+            # describe a populated index whose vectors simply lost the
+            # ranking, and "semantic leg empty" would then be a false claim.
+            route_notes.append(ROUTE_NOTE_SEMANTIC_LEG_EMPTY)
+        return _with_route_notes(
+            _retrieval_payload(rows, source_types, _RAG_HYBRID_RUNTIME_BACKEND),
+            route_notes,
+        )
 
     async def _resolve_rag_runtime(self) -> Any:
         """Return a usable RAG runtime, lazily creating the shared one.
 
         Resolution order:
 
-        1. An existing ``app._rag_service`` with a callable ``search`` always
-           wins (already initialized by any surface, or injected by tests).
+        1. An existing ``app._rag_service`` with a callable ``search`` wins
+           (already initialized by any surface, or injected by tests) --
+           UNLESS a profile switch superseded it since it was cached
+           (``current_app_rag_service``, the one staleness rule shared with
+           ``semantic_availability``'s resolver). Without that check, a
+           Settings profile change would leave this path retrieving under
+           the OLD profile for the rest of the session, and `_search_rag`
+           would attribute its disclosure to a profile that is no longer
+           active -- a false claim about the very thing being disclosed.
         2. The ``embeddings_rag`` deps gate (cheap ``find_spec`` probe, no
            imports) short-circuits BEFORE any heavy work, so missing-deps
            installs keep the existing recovery routing at zero cost (AC #3).
@@ -548,11 +744,13 @@ class LibraryLocalRagSearchService:
             The RAG runtime, or None when it is unavailable (missing deps or
             failed construction) -- the caller renders the recovery state.
         """
-        rag_service = getattr(self._app, "_rag_service", None)
-        if rag_service is not None and callable(getattr(rag_service, "search", None)):
-            return rag_service
+        cached = current_app_rag_service(self._app)
+        if cached is not None:
+            return cached
         if not embeddings_rag_deps_installed():
             return None
+        # Captured BEFORE the build -- see `cache_app_rag_service`.
+        generation = shared_rag_service_generation()
         try:
             service = await asyncio.to_thread(get_shared_rag_service)
         except Exception:
@@ -563,14 +761,10 @@ class LibraryLocalRagSearchService:
             return None
         if service is None or not callable(getattr(service, "search", None)):
             return None
-        try:
-            # Cache on the app so every RAG surface (chat sidebar readiness,
-            # repeat Library queries) sees the initialized runtime.
-            self._app._rag_service = service
-        except Exception:
-            logger.opt(exception=True).debug(
-                "Could not cache the shared RAG service on the app instance."
-            )
+        # Cache on the app so every RAG surface (chat sidebar readiness,
+        # repeat Library queries) sees the initialized runtime, stamped so a
+        # later profile switch invalidates it.
+        cache_app_rag_service(self._app, service, generation)
         return service
 
     async def _semantic_index_is_empty(self, rag_service: Any) -> bool:
@@ -600,6 +794,154 @@ class LibraryLocalRagSearchService:
             return int(stats.get("count")) == 0
         except (TypeError, ValueError):
             return False
+
+
+def _resolve_profile_search_mode(rag_service: Any) -> str:
+    """Map the active profile's default_search_mode to an execution route.
+
+    "plain" deliberately routes to the four-seam scope-aware keyword path,
+    NOT the engine's media-only keyword leg (spec: plain-profile routing).
+    Unknown values -- and any runtime without a profile config at all, which
+    includes every pre-profile test fake -- fall back to "semantic", the
+    behavior this path had before profiles were honored.
+
+    Args:
+        rag_service: The resolved RAG runtime.
+
+    Returns:
+        One of `_PROFILE_SEARCH_MODES`.
+    """
+    mode = getattr(
+        getattr(getattr(rag_service, "config", None), "search", None),
+        "default_search_mode",
+        "semantic",
+    )
+    return mode if mode in _PROFILE_SEARCH_MODES else "semantic"
+
+
+def _profile_disclosure_label(rag_service: Any) -> str:
+    """Name the active profile for a routing disclosure.
+
+    `EnhancedRAGServiceV2` carries the selected `ProfileConfig` on
+    `.profile`; a bare `RAGService` (or a custom config) has none, in which
+    case the disclosure still has to be makeable -- it just cannot name a
+    profile.
+
+    Args:
+        rag_service: The resolved RAG runtime.
+
+    Returns:
+        `"Profile '<name>'"`, or `"Active RAG profile"` when the runtime
+        exposes no usable profile name.
+    """
+    name = getattr(getattr(rag_service, "profile", None), "name", None)
+    if isinstance(name, str) and name.strip():
+        return f"Profile '{name.strip()}'"
+    return "Active RAG profile"
+
+
+def _with_route_notes(result: Any, notes: Sequence[str]) -> Any:
+    """Attach routing disclosures to a retrieval result, without clobbering.
+
+    Works on both shapes this service returns (a raw mapping and a
+    `LibraryRagSearchOutcome`) so a disclosure survives whichever path the
+    query took, including the empty/blocked outcomes. Appends to any notes
+    already present rather than replacing them.
+
+    Args:
+        result: A retrieval payload mapping or `LibraryRagSearchOutcome`.
+        notes: Disclosure fragments to attach. Empty leaves `result`
+            untouched and identical -- callers on the no-divergence path
+            keep their pre-existing byte-for-byte payload (no empty
+            `diagnostics` key materializes).
+
+    Returns:
+        `result` when `notes` is empty, else a copy carrying the notes under
+        `diagnostics[LIBRARY_RAG_ROUTE_NOTES_KEY]`.
+    """
+    if not notes:
+        return result
+    if isinstance(result, LibraryRagSearchOutcome):
+        diagnostics = dict(result.diagnostics or {})
+        diagnostics[LIBRARY_RAG_ROUTE_NOTES_KEY] = [
+            *(diagnostics.get(LIBRARY_RAG_ROUTE_NOTES_KEY) or ()),
+            *notes,
+        ]
+        return replace(result, diagnostics=diagnostics)
+    if isinstance(result, Mapping):
+        existing = result.get("diagnostics")
+        diagnostics = dict(existing) if isinstance(existing, Mapping) else {}
+        diagnostics[LIBRARY_RAG_ROUTE_NOTES_KEY] = [
+            *(diagnostics.get(LIBRARY_RAG_ROUTE_NOTES_KEY) or ()),
+            *notes,
+        ]
+        return {**result, "diagnostics": diagnostics}
+    return result
+
+
+def _filtered_semantic_rows(
+    raw_results: Any, source_types: tuple[str, ...]
+) -> list[dict[str, Any]]:
+    """Normalize engine results and apply the source-type post-filter.
+
+    Shared by the semantic and hybrid arms: hybrid's FTS-leg rows are
+    stamped with a `media` provenance `source_type` upstream precisely so
+    they survive this same canonicalizing filter instead of vanishing.
+    """
+    rows = [_semantic_row(item) for item in raw_results or ()]
+    if not source_types:
+        return rows
+    return [row for row in rows if _semantic_row_matches_scope(row, source_types)]
+
+
+def _rows_are_keyword_only(rows: Sequence[Mapping[str, Any]]) -> bool:
+    """True when every row came from hybrid's FTS leg with no vector leg.
+
+    Reads the fusion block's `vector_score` (preserved by
+    `_fuse_hybrid_results`): `None` means the chunk was never returned by
+    the vector leg. A row with no fusion block at all cannot be judged, so
+    it makes the whole set non-keyword-only rather than being assumed.
+    """
+    if not rows:
+        return False
+    for row in rows:
+        provenance = row.get("provenance")
+        fusion = (
+            provenance.get("hybrid_fusion") if isinstance(provenance, Mapping) else None
+        )
+        if not isinstance(fusion, Mapping) or fusion.get("vector_score") is not None:
+            return False
+    return True
+
+
+def _retrieval_payload(
+    rows: list[dict[str, Any]],
+    source_types: tuple[str, ...],
+    runtime_backend: str,
+) -> dict[str, Any]:
+    """Build the `rag`-mode result mapping plus its coverage diagnostics.
+
+    Task 8: report which requested source types the semantic leg actually
+    touched. Deliberately omitted (not an empty dict) when `rows` is empty
+    -- the zero-rows path is the empty/no-match state (Task 11's
+    territory), not a coverage claim, and omitting the key keeps the
+    pre-existing bare `{"results": [], "runtime_backend": ...}` contract for
+    that path byte-identical (see
+    `test_rag_mode_zero_results_with_populated_index_stays_generic`).
+
+    The hybrid arm shares this: only `uncovered` is ever rendered, and in
+    P0 the FTS leg is media-only, so any non-media type reported uncovered
+    is still a true statement about the semantic leg. Revisit when the
+    keyword leg goes four-seam (P2) -- at that point a type could be
+    "covered" by FTS alone and the note's "Semantic search found nothing
+    from" wording would need a hybrid-aware variant.
+    """
+    result: dict[str, Any] = {"results": rows, "runtime_backend": runtime_backend}
+    if rows and source_types:
+        result["diagnostics"] = {
+            "semantic_scope_coverage": _semantic_scope_coverage(source_types, rows)
+        }
+    return result
 
 
 def _note_row(item: Mapping[str, Any]) -> dict[str, Any]:

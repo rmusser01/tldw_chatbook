@@ -1112,3 +1112,72 @@ evidence. Re-run the feature's complete focused suite after rebasing, and verify
 claimed conflict adaptations in the committed files themselves. Newly created
 tests are especially likely to preserve assumptions that the new base has
 intentionally invalidated without producing a textual conflict.
+
+---
+
+## A clear/cleanup assertion cannot pin the thing it cleans up — observe transient state DURING the window
+
+**TASK-3170 Task 8, 2026-08-07 (Console auto-retrieve send-path injection).** The
+in-flight "Retrieving…" placeholder staging call
+(`self._stage_console_library_rag_launch(placeholder)` inside
+`_maybe_auto_retrieve_for_send`, `chat_screen.py`) was pinned by **no test**.
+Replacing the stage call with a bare `pass` left all 22 existing tests in
+`Tests/UI/test_console_auto_rag_on_send.py` green. The reason: every existing
+assertion about the placeholder was a **clear** assertion —
+`assert screen._pending_console_launch_context is None` after a timeout, a
+failure, or a zero-result outcome — and all three stay true whether the
+placeholder was staged and then cleared, or never staged at all. The
+assertions were only *transitively* meaningful; delete the stage call and they
+go vacuous while continuing to pass. A future refactor could therefore remove
+the only in-flight signal the user gets during the retrieval window and the
+suite would say nothing.
+
+**Fix:** a new test whose fake retrieval service observes
+`screen._pending_console_launch_context` and `screen._has_staged_console_evidence()`
+**from inside** the `search()` call — the only moment the claim ("a placeholder
+is staged while retrieval runs") is actually true — then asserts the settled
+launch afterwards is a *different* object with `status == "staged"`. Written
+RED-first: the stage call was stubbed to `pass` before the test existed,
+confirmed exactly 1 failure (the new test) against 22 unaffected; reverted via
+Edit, production source byte-identical to the pre-fix commit.
+
+**What to do.** Transient state — an in-flight marker, a spinner, a lock held
+across an `await`, a placeholder later replaced or cleared — must be observed
+**during** the window it exists, from inside the awaited call or an equivalent
+hook, or it is not tested at all. `assert x is None` taken after the fact
+passes identically whether `x` was set-then-cleared or never set: it is a
+clear/cleanup assertion, not a presence assertion, and clear assertions cannot
+pin the thing they clean up.
+
+---
+
+## A config default that also ships in the config template cannot be mutation-tested through config
+
+**TASK-3170 Task 8, 2026-08-07, same task as above.** Mutating the read
+site's fallback for `rag_auto_retrieve_on_send` — `get_cli_setting("chat_defaults",
+"rag_auto_retrieve_on_send", False)` → `..., True)` — failed **zero** of the
+20 tests then covering the feature. The cause: Task 7 had already added
+`[chat_defaults] rag_auto_retrieve_on_send = false` to `config.py`'s DEFAULT
+CONFIG TEMPLATE, so every freshly-bootstrapped test config carries the key
+explicitly. The lookup therefore always resolves the template's stored value
+and never falls through to the Python-level default argument — the literal
+`False` in the `get_cli_setting(...)` call is dead code for every test, and
+for every real user with a current config. The mutation is only reachable for
+a user whose `config.toml` **predates** the key, a state no test that boots a
+fresh config can ever produce.
+
+**Fix:** `test_toggle_default_is_off_at_the_read_site` monkeypatches
+`get_cli_setting` with a recording stub and asserts the literal default
+argument handed to it is `False`, independent of whatever the template
+supplies.
+
+**What to do.** Before trusting a "defaults to off" (or any) test for a
+config-backed value, check whether that same default also ships in the app's
+default config template or any fixture/bootstrap path the test uses. If it
+does, every test config already carries the key, and the code-level fallback
+can drift to the wrong value with **zero** test failures — a mutation of the
+fallback argument is invisible through the normal read-and-assert path
+because that path is testing the template, not the code. The read site's own
+literal default needs a separate, direct assertion (stub the accessor, assert
+the literal argument passed to it), not an inference from observed runtime
+behavior.

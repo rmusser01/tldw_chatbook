@@ -43,6 +43,7 @@ from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.Library import library_local_rag_search_service
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 from tldw_chatbook.UI.Navigation.pending_handoff_store import HandoffChannel
+from tldw_chatbook.UI.Screens import chat_screen as chat_screen_module
 from tldw_chatbook.UI.Screens.chat_screen import (
     CONSOLE_PROVIDER_CONFIGURE_API_KEY_LABEL,
     CONSOLE_WORKBENCH_SHORTCUT_GROUPS,
@@ -3866,7 +3867,9 @@ async def test_console_run_inspector_mcp_row_shows_blocked_when_stale_server_has
 
 
 @pytest.mark.asyncio
-async def test_console_rag_action_requests_library_retrieval_and_stages_result():
+async def test_console_rag_action_requests_library_retrieval_and_stages_result(
+    monkeypatch,
+):
     app = _build_test_app()
     service = StaticConsoleLibraryRagSearchService(
         {
@@ -3887,6 +3890,13 @@ async def test_console_rag_action_requests_library_retrieval_and_stages_result()
     app.library_rag_search_service = service
     host = ConsoleHarness(app)
     query = "Why did the incident happen?"
+
+    # This test is about scope/evidence staging, not top_k resolution --
+    # pin the shared helper (TASK-3170 task 9) so it stays decoupled from
+    # whatever the real default profile's default_top_k happens to be.
+    monkeypatch.setattr(
+        chat_screen_module, "_console_library_rag_profile_top_k", lambda: 5
+    )
 
     async with host.run_test(size=(196, 48)) as pilot:
         console = host.screen_stack[-1]
@@ -3926,6 +3936,139 @@ async def test_console_rag_action_requests_library_retrieval_and_stages_result()
         assert "source_id: note-42" in text
         assert "chunk_id: chunk-7" in text
         assert "Review citations before sending." in text
+
+
+@pytest.mark.asyncio
+async def test_console_rag_action_inherits_active_profile_top_k(monkeypatch):
+    """TASK-3170 task 9: the chip's manual run must not hardcode top_k=5.
+
+    Task 8 gave auto-retrieve a shared helper,
+    ``_console_library_rag_profile_top_k``, that reads the active RAG
+    profile's ``search.default_top_k`` (fallback 5 when unavailable). The
+    manual chip run built its own request with a literal ``top_k=5`` and
+    ignored the profile entirely -- a profile tuned for more (or fewer)
+    results silently lost that setting the moment a user pressed Run
+    instead of relying on auto-retrieve. This pins the chip run onto the
+    SAME helper so both call sites can never drift again.
+    """
+    app = _build_test_app()
+    service = StaticConsoleLibraryRagSearchService(
+        {
+            "results": [
+                {
+                    "document_title": "Incident Review",
+                    "snippet": "Expired credential caused the incident.",
+                    "score": 0.93,
+                    "source_id": "note-42",
+                    "chunk_id": "chunk-7",
+                    "runtime_backend": "local-fts",
+                    "citations": [{"label": "Incident Review p.2"}],
+                }
+            ],
+            "runtime_backend": "local-fts",
+        }
+    )
+    app.library_rag_search_service = service
+    host = ConsoleHarness(app)
+    query = "Why did the incident happen?"
+
+    monkeypatch.setattr(
+        chat_screen_module, "_console_library_rag_profile_top_k", lambda: 12
+    )
+
+    async with host.run_test(size=(196, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _open_console_inspector(console, pilot)
+        await _wait_for_selector(console, pilot, "#console-run-library-rag")
+
+        query_input = console.query_one("#console-library-rag-query-input", Input)
+        query_input.value = query
+        await pilot.pause(0.1)
+
+        run_button = console.query_one("#console-run-library-rag", Button)
+        assert run_button.disabled is False
+        run_button.press()
+        await _wait_for_selector(console, pilot, "#console-live-work-payload-source-id")
+
+        assert service.calls == [
+            {
+                "query": query,
+                "scope": ("notes", "media", "conversations"),
+                "mode": "rag",
+                "top_k": 12,
+                "include_citations": True,
+            }
+        ]
+
+
+@pytest.mark.asyncio
+async def test_console_rag_action_falls_back_to_default_top_k_when_profile_unavailable(
+    monkeypatch,
+):
+    """TASK-3170 task 9: the chip run's OTHER branch -- profile unresolvable.
+
+    ``_console_library_rag_profile_top_k`` degrades to
+    ``CONSOLE_LIBRARY_RAG_FALLBACK_TOP_K`` when the active RAG profile can't
+    be read (broken/absent profile), so a manual chip run must never raise
+    inside a send just because profile resolution failed. Patches
+    ``resolve_active_rag_config`` itself (what the helper actually reads,
+    imported lazily inside it) rather than the helper, so this exercises the
+    real try/except fallback path end to end -- not a mock standing in for
+    it.
+    """
+    from tldw_chatbook.RAG_Search.simplified import active_config
+
+    def _raise_profile_unavailable():
+        raise RuntimeError("simulated: active RAG profile unresolvable")
+
+    monkeypatch.setattr(
+        active_config, "resolve_active_rag_config", _raise_profile_unavailable
+    )
+
+    app = _build_test_app()
+    service = StaticConsoleLibraryRagSearchService(
+        {
+            "results": [
+                {
+                    "document_title": "Incident Review",
+                    "snippet": "Expired credential caused the incident.",
+                    "score": 0.93,
+                    "source_id": "note-42",
+                    "chunk_id": "chunk-7",
+                    "runtime_backend": "local-fts",
+                    "citations": [{"label": "Incident Review p.2"}],
+                }
+            ],
+            "runtime_backend": "local-fts",
+        }
+    )
+    app.library_rag_search_service = service
+    host = ConsoleHarness(app)
+    query = "Why did the incident happen?"
+
+    async with host.run_test(size=(196, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _open_console_inspector(console, pilot)
+        await _wait_for_selector(console, pilot, "#console-run-library-rag")
+
+        query_input = console.query_one("#console-library-rag-query-input", Input)
+        query_input.value = query
+        await pilot.pause(0.1)
+
+        run_button = console.query_one("#console-run-library-rag", Button)
+        assert run_button.disabled is False
+        run_button.press()
+        await _wait_for_selector(console, pilot, "#console-live-work-payload-source-id")
+
+        assert service.calls == [
+            {
+                "query": query,
+                "scope": ("notes", "media", "conversations"),
+                "mode": "rag",
+                "top_k": chat_screen_module.CONSOLE_LIBRARY_RAG_FALLBACK_TOP_K,
+                "include_citations": True,
+            }
+        ]
 
 
 def test_console_evidence_display_state_sanitizes_markup_fields():
@@ -4286,7 +4429,9 @@ async def test_console_control_bar_run_library_rag_guards_a_path_shaped_draft():
 
 
 @pytest.mark.asyncio
-async def test_console_rag_modal_source_toggle_narrows_the_retrieval_request():
+async def test_console_rag_modal_source_toggle_narrows_the_retrieval_request(
+    monkeypatch,
+):
     """RAG-44 end to end: the settings modal's source toggles decide what
     retrieval actually reads. Switching Media off and running must send a
     request WITHOUT media to the search service (and leave the Inspector's
@@ -4296,6 +4441,13 @@ async def test_console_rag_modal_source_toggle_narrows_the_retrieval_request():
     service = StaticConsoleLibraryRagSearchService({"results": []})
     app.library_rag_search_service = service
     host = ConsoleHarness(app)
+
+    # This test is about source-scope narrowing, not top_k resolution --
+    # pin the shared helper (TASK-3170 task 9) so it stays decoupled from
+    # whatever the real default profile's default_top_k happens to be.
+    monkeypatch.setattr(
+        chat_screen_module, "_console_library_rag_profile_top_k", lambda: 5
+    )
 
     async with host.run_test(size=(196, 48)) as pilot:
         console = host.screen_stack[-1]
