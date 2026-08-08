@@ -19,7 +19,7 @@ def _labels(result):
     return [s.label for s in result]
 
 
-COMMANDS = ["/prompt", "/system", "/skills", "/prefill", "/generate-image", "/generate-video", "/rewind"]
+COMMANDS = ["/prompt", "/system", "/skills", "/prefill", "/generate-image", "/generate-video", "/stream-video", "/rewind"]
 
 
 def test_bare_slash_lists_commands_then_skills():

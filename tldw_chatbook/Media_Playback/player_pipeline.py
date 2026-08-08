@@ -76,6 +76,12 @@ def probe_file(source: str | Path) -> PlayerProbe:
     cmd = [
         "ffprobe",
         "-v", "error",
+    ]
+    if str(source).startswith(("http://", "https://")):
+        # task-3401.11: streams get the same reconnect/timeout input options
+        # as the playback pipeline so probing a slow host cannot hang.
+        cmd += ["-reconnect", "1", "-rw_timeout", "15000000"]
+    cmd += [
         "-print_format", "json",
         "-show_streams",
         "-show_format",
@@ -200,8 +206,20 @@ class PlayerPipeline:
         self._paused_total = 0.0
         audio_r, audio_w = os.pipe()
         seek_args = ["-ss", f"{self._offset_seconds:.3f}"] if self._offset_seconds else []
+        http_args: list[str] = []
+        if self._source.startswith(("http://", "https://")):
+            # task-3401.11 (AC3): TermTube's reconnect flags for streams, so
+            # a throttled/dropped connection resumes inside ffmpeg instead
+            # of killing playback, plus a socket timeout to surface stalls.
+            http_args = [
+                "-reconnect", "1",
+                "-reconnect_streamed", "1",
+                "-reconnect_delay_max", "5",
+                "-rw_timeout", "15000000",
+            ]
         ffmpeg_cmd = [
             "ffmpeg", "-hide_banner", "-loglevel", "error",
+            *http_args,
             *seek_args,
             "-re",  # pace input at native frame rate (silent sources especially)
             "-i", self._source,

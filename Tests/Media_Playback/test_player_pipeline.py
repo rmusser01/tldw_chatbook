@@ -217,3 +217,29 @@ def test_stop_is_idempotent():
     pipeline.start()
     pipeline.stop()
     pipeline.stop()  # no-op, not an error
+
+
+# -- streaming (task-3401.11) -----------------------------------------------------
+
+
+def test_http_source_injects_reconnect_flags():
+    spawn = _SpawnRecorder()
+    pipeline = pp.PlayerPipeline(
+        "https://cdn.example.net/v.mp4", _probe(), spawn=spawn
+    )
+    pipeline.start()
+    joined = " ".join(spawn.calls[0].cmd)
+    assert "-reconnect 1" in joined
+    assert "-reconnect_streamed 1" in joined
+    assert "-reconnect_delay_max 5" in joined
+    assert "-rw_timeout 15000000" in joined
+    pipeline.stop()
+
+
+def test_file_source_has_no_reconnect_flags():
+    spawn = _SpawnRecorder()
+    pipeline = pp.PlayerPipeline("clip.mp4", _probe(), spawn=spawn)
+    pipeline.start()
+    joined = " ".join(spawn.calls[0].cmd)
+    assert "-reconnect" not in joined
+    pipeline.stop()
