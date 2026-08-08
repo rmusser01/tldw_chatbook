@@ -36,6 +36,7 @@ from tldw_chatbook.Library.library_prompts_state import (
     PromptListRow,
     PromptsListState,
     build_prompt_editor_state,
+    prepare_prompt_artifact_save,
 )
 from tldw_chatbook.Library.library_shell_state import (
     LIBRARY_ROW_BROWSE_PROMPTS,
@@ -2369,8 +2370,11 @@ async def test_prompts_canvas_editor_copy_and_duplicate_relabeled():
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(80, 24), (100, 30), (140, 40), (200, 50)])
+@pytest.mark.parametrize("conflict", [False, True])
 async def test_library_prompt_editor_geometry_keeps_actions_visible_without_covering_author(
     size: tuple[int, int],
+    conflict: bool,
+    tmp_path,
 ):
     """Catches the planned ``_compose_editor`` shell/content/action split.
 
@@ -2378,19 +2382,70 @@ async def test_library_prompt_editor_geometry_keeps_actions_visible_without_cove
     content owner plus a visible, non-scrolling action area. A flat trailing
     toolbar leaves the actions below the viewport at these real terminal sizes.
     """
-    app = _StyledCanvasHost(
-        None,
-        mode="editor",
-        editor_state=_structured_editor_state(),
+    db, service = _real_prompt_scope_service(tmp_path)
+    prompt_id, _uuid, _msg = db.add_prompt(
+        name="Geometry prompt",
+        author="A",
+        details="d",
+        system_prompt="# Role\n\nBe exact.",
+        user_prompt="Ship it.",
+        prompt_format="structured",
+        prompt_schema_version=2,
+        prompt_definition={
+            "kind": "block_prompt",
+            "schema_version": 2,
+            "lanes": [
+                {
+                    "id": "system",
+                    "blocks": [
+                        {
+                            "id": "role",
+                            "title": "Role",
+                            "syntax": "markdown",
+                            "content": "Be exact.",
+                        }
+                    ],
+                },
+                {
+                    "id": "user",
+                    "blocks": [
+                        {
+                            "id": "goal",
+                            "title": "Goal",
+                            "syntax": "markdown",
+                            "content": "Ship it.",
+                        }
+                    ],
+                },
+            ],
+        },
+        artifact_type="prompt",
     )
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    host = LibraryHarness(app)
 
-    async with app.run_test(size=size) as pilot:
-        canvas = pilot.app.query_one("#library-prompts-canvas")
-        content = pilot.app.query_one("#library-prompt-editor-content")
-        actions = pilot.app.query_one("#library-prompt-editor-actions")
-        author = pilot.app.query_one("#library-prompt-author", Input)
+    async with host.run_test(size=size) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_prompt_editor(screen, pilot, prompt_id)
+        if conflict:
+            screen._library_prompt_conflict_snapshot = (
+                screen._current_library_prompt_editor_state()
+            )
+            screen._library_prompt_dirty = True
+            screen.refresh(recompose=True)
+            await pilot.pause()
 
-        assert canvas.region.contains_region(actions.region)
+        canvas = screen.query_one("#library-prompts-canvas")
+        shell = screen.query_one("#library-prompt-editor-shell")
+        content = screen.query_one("#library-prompt-editor-content")
+        actions = screen.query_one("#library-prompt-editor-actions")
+        author = screen.query_one("#library-prompt-author", Input)
+
+        assert canvas.region.contains_region(shell.region)
+        assert shell.region.contains_region(actions.region)
         assert actions.region.width > 0
         assert actions.region.height > 0
         assert content.max_scroll_y > 0
@@ -2399,17 +2454,26 @@ async def test_library_prompt_editor_geometry_keeps_actions_visible_without_cove
         content.scroll_end(animate=False)
         await pilot.pause()
         assert not actions.region.overlaps(author.region)
-        for action_id in (
-            "library-prompt-save",
-            "library-prompt-insert-console",
-            "library-prompt-export",
-            "library-prompt-copy",
-            "library-prompt-duplicate",
-            "library-prompt-delete",
-        ):
-            assert pilot.app.screen.region.contains_region(
-                pilot.app.query_one(f"#{action_id}", Button).region
+        action_ids = (
+            (
+                "library-prompt-conflict-save-new",
+                "library-prompt-conflict-reload",
             )
+            if conflict
+            else (
+                "library-prompt-save",
+                "library-prompt-insert-console",
+                "library-prompt-export",
+                "library-prompt-copy",
+                "library-prompt-duplicate",
+                "library-prompt-delete",
+            )
+        )
+        for action_id in action_ids:
+            action = screen.query_one(f"#{action_id}", Button)
+            assert action.region.width > 0
+            assert action.region.height > 0
+            assert screen.region.contains_region(action.region)
 
 
 @pytest.mark.asyncio
@@ -2479,8 +2543,8 @@ async def test_library_prompt_action_groups_preserve_conflict_action_order():
 
 
 @pytest.mark.asyncio
-async def test_library_prompt_copy_uses_live_unsaved_system_and_user_markdown(tmp_path):
-    """Catches the missing ``handle_library_prompt_copy`` production handler."""
+async def test_library_prompt_copy_uses_live_unsaved_legacy_lane_markdown(tmp_path):
+    """Catches the missing legacy-lane ``handle_library_prompt_copy`` path."""
     _db, service = _real_prompt_scope_service(tmp_path)
     prompt_id, _uuid, _msg = _db.add_prompt(
         name="Copy source",
@@ -2522,6 +2586,96 @@ async def test_library_prompt_copy_uses_live_unsaved_system_and_user_markdown(tm
                 }
             )
         ]
+        assert [notification.message for notification in host._notifications] == [
+            "Prompt copied to clipboard as markdown!"
+        ]
+
+
+@pytest.mark.asyncio
+async def test_library_prompt_copy_uses_current_structured_block_working_copy(tmp_path):
+    """Catches a copy handler that serializes preview text but drops structure."""
+    definition = {
+        "kind": "block_prompt",
+        "schema_version": 2,
+        "lanes": [
+            {
+                "id": "system",
+                "blocks": [
+                    {
+                        "id": "role",
+                        "title": "Role",
+                        "syntax": "markdown",
+                        "content": "Original role.",
+                    }
+                ],
+            },
+            {
+                "id": "user",
+                "blocks": [
+                    {
+                        "id": "goal",
+                        "title": "Goal",
+                        "syntax": "markdown",
+                        "content": "Original goal.",
+                    }
+                ],
+            },
+        ],
+    }
+    db, service = _real_prompt_scope_service(tmp_path)
+    prompt_id, _uuid, _msg = db.add_prompt(
+        name="Structured copy source",
+        author="Original author",
+        details="Original details",
+        system_prompt="# Role\n\nOriginal role.",
+        user_prompt="# Goal\n\nOriginal goal.",
+        keywords=["alpha", "beta"],
+        prompt_format="structured",
+        prompt_schema_version=2,
+        prompt_definition=definition,
+        artifact_type="prompt",
+    )
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    host = LibraryHarness(app)
+    copied: list[str] = []
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_prompt_editor(screen, pilot, prompt_id)
+        screen.query_one("#prompt-block-content-role", TextArea).text = "Edited role."
+        await pilot.pause()
+
+        block_state = screen._library_prompt_block_state
+        assert block_state is not None
+        assert block_state.definition.lanes[0].blocks[0].content == "Edited role."
+        _draft, artifact_fields, _prepared = prepare_prompt_artifact_save(
+            block_state,
+            artifact_type=block_state.artifact_type,
+            include_recipe_starter_content=True,
+            request_fields={},
+        )
+        expected_markdown = render_prompt_markdown(
+            {
+                "name": screen.query_one("#library-prompt-name", Input).value,
+                "author": screen.query_one("#library-prompt-author", Input).value,
+                "details": screen.query_one("#library-prompt-details", Input).value,
+                "keywords": screen.query_one("#library-prompt-keywords", Input).value,
+                **artifact_fields,
+            }
+        )
+        assert "### ARTIFACT_TYPE ###\nprompt\n" in expected_markdown
+        assert "### STRUCTURE ###\n```json\n" in expected_markdown
+
+        screen.app_instance = host
+        host.copy_to_clipboard = copied.append
+        host._notifications.clear()
+        screen.query_one("#library-prompt-copy", Button).press()
+        await pilot.pause()
+
+        assert copied == [expected_markdown]
         assert [notification.message for notification in host._notifications] == [
             "Prompt copied to clipboard as markdown!"
         ]
