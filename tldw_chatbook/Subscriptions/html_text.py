@@ -368,3 +368,36 @@ def readable_body_text(value: Any) -> str:
     if looks_like_html(value):
         return html_to_display_text(value)
     return strip_control_characters(value)
+
+
+def body_snippet(value: Any, *, max_chars: int = 160) -> str:
+    """The one-line preview an article-list row shows under its title.
+
+    task-3072. Built ON `readable_body_text`, so the whole hostile-input
+    discipline of this module comes along for free: tags and script/style
+    bodies are stripped, control characters removed, plain-text feeds pass
+    through. What remains is collapsed to a single line (a row has no room
+    for the block structure `html_to_display_text` preserves) and truncated
+    on a word boundary with an ellipsis.
+
+    Args:
+        value: The stored item body; may be None.
+        max_chars: Budget for the whole snippet, ellipsis included.
+
+    Returns:
+        At most `max_chars` of inert plain text ("" for empty input). The
+        output is TEXT, not markup: if the row renders it through a
+        markup-parsing widget, escaping is that boundary's job, the same
+        rule `content_pane.render_article` states for the reader body.
+    """
+    text = " ".join(readable_body_text(value).split())
+    if not text or len(text) <= max_chars:
+        return text
+    if max_chars <= 1:
+        return "…"[:max_chars]
+    # Cut at the last space inside the budget so the ellipsis never lands
+    # mid-word; a text with no space in range is cut hard instead.
+    cut = text.rfind(" ", 0, max_chars)
+    if cut <= 0:
+        cut = max_chars - 1
+    return text[:cut] + "…"

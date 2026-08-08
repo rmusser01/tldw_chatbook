@@ -374,3 +374,16 @@ class WatchlistBundleService:
             sources with no items are absent.
         """
         return self._db.get_source_item_counts()
+
+    def get_flagged_items_count(self) -> int:
+        """Global starred-item count, for the Starred root's badge (TASK-3072).
+
+        Thin delegation, same contract as `get_watchlist_item_counts` above:
+        the tree's loader reaches every one of its inputs through this
+        service rather than holding a second accessor onto
+        ``SubscriptionsDB`` directly.
+
+        Returns:
+            How many items are starred, across every source and status.
+        """
+        return self._db.get_flagged_items_count()

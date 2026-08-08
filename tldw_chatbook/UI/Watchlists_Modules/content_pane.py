@@ -12,6 +12,7 @@ from rich.console import Group, RenderableType
 from rich.markdown import Markdown
 from rich.text import Text
 from textual.containers import Horizontal, Vertical
+from textual.css.query import NoMatches
 from textual.message import Message
 from textual.reactive import reactive
 from textual.widgets import Button, Static
@@ -20,6 +21,8 @@ from ...Subscriptions.html_text import readable_body_text, strip_control_charact
 from ...Subscriptions.item_persist import CONTENT_KIND_CHANGE
 from ...Widgets.recompose_capture_guard import RecomposeCaptureGuard
 from .humane_time import humane_timestamp
+from .inspector_pane import IngestRequested, ToggleBriefingQueueRequested
+from .items_pane import NextUnreadRequested
 
 # Every item persisted before Phase A carries `content = NULL`, and it cannot
 # be recovered without re-fetching the source. Say so rather than rendering an
@@ -37,6 +40,14 @@ _NO_BODY = "no body captured for this item — re-check this source to fetch it"
 _GLOBAL_STATUS_NOTE = (
     "Read status is shared: marking this item read (or unread) changes it "
     "everywhere it appears, in every watchlist that includes its source."
+)
+
+# The star is the same shape of fact as the read status (TASK-3072): one
+# global flag on the `subscription_items` row, not a per-watchlist copy, so
+# the tooltip says its scope the same way `_GLOBAL_STATUS_NOTE` does.
+_GLOBAL_STAR_NOTE = (
+    "Starring is shared: the star shows on this item everywhere it appears, "
+    "and feeds the Starred smart feed in the rail."
 )
 
 # Remote markdown bodies must not produce real terminal hyperlinks (PR #1091
@@ -272,6 +283,31 @@ class ViewSnapshotRequested(Message):
         super().__init__()
 
 
+class StarToggleRequested(Message):
+    """Posted when the reader's Star button is pressed (TASK-3072 plan task 7).
+
+    Carries the full item dict (not just an id), same as
+    `UnreadToggleRequested`, so the screen's one star handler serves both
+    this button and the `s` key without a second lookup.
+    """
+
+    def __init__(self, item: dict[str, Any] | None) -> None:
+        self.item = item
+        super().__init__()
+
+class OpenInBrowserRequested(Message):
+    """Posted when the reader's Open button is pressed (TASK-3072 plan task 8).
+
+    Carries the full item dict, same as `StarToggleRequested`: the screen's
+    one open-in-browser handler serves both this button and the `o` key,
+    and the URL scheme check lives screen-side (this pane holds no handle
+    on any OS primitive -- see `ContentPane`'s own docstring).
+    """
+
+    def __init__(self, item: dict[str, Any] | None) -> None:
+        self.item = item
+        super().__init__()
+
 class ExpandReaderRequested(Message):
     """Posted when the reader asks for (or gives back) the whole centre stack.
 
@@ -312,6 +348,31 @@ class ContentPane(RecomposeCaptureGuard, Vertical):
     #: (and therefore this pane) through the region factories anyway, so a
     #: second recompose would be pure churn.
     expanded: reactive[bool] = reactive(False)
+
+    #: The reader footer's "N of M" (TASK-3072 plan task 9).
+    #:
+    #: Screen-pushed, exactly like `expanded` above and for the same reason:
+    #: this pane holds no list state, so it cannot number the open item
+    #: itself -- the screen computes the position from the article list's
+    #: `displayed_items()` on every selection and pushes the string here
+    #: (and re-seeds it in `_build_content_pane`, so a region rebuild
+    #: re-renders the same footer). A plain reactive, not `recompose=True`:
+    #: `watch_position` updates the one Static in place.
+    position: reactive[str] = reactive("")
+
+    def watch_position(self, position: str) -> None:
+        """Re-render the footer Static in place -- never a reader recompose.
+
+        Args:
+            position: The screen-computed "N of M" string ("" clears the
+                footer); pushed by the screen on every selection change.
+        """
+        try:
+            self.query_one("#content-position", Static).update(position)
+        except NoMatches:
+            # Pre-mount seeding (`_build_content_pane`) or the empty state,
+            # which has no footer at all; compose reads the reactive itself.
+            pass
 
     def compose(self):
         """Build the reader for `item`, or the empty-state placeholder.
@@ -354,6 +415,47 @@ class ContentPane(RecomposeCaptureGuard, Vertical):
                 tooltip=_GLOBAL_STATUS_NOTE,
                 compact=True,
             )
+            # TASK-3072 plan task 7: the same star the `s` key toggles, as a
+            # button. The label reflects the open item's state on compose and
+            # flips on the screen's SUCCESS path (see `on_button_pressed` --
+            # no optimistic flip, so it can never lie after a failed write).
+            yield Button(
+                "★ Starred" if self.item.get("is_flagged") else "☆ Star",
+                id="content-star-button",
+                tooltip=_GLOBAL_STAR_NOTE,
+                compact=True,
+            )
+            # TASK-3072 plan task 8: the rest of the reader's verbs. Open is
+            # the `o` key's button half; Ingest and Queue/Unqueue post the
+            # Inspector's OWN message classes, so one screen handler serves
+            # both surfaces (the queue label states the CURRENT value, the
+            # Inspector's own `_queue_briefing_button` rule). Buttons only --
+            # the spec assigns no keys to these two.
+            yield Button(
+                "Open",
+                id="content-open-button",
+                tooltip="Open this item in your browser (keyboard: o).",
+                compact=True,
+            )
+            yield Button(
+                "Ingest",
+                id="content-ingest-button",
+                tooltip=(
+                    "File this item into the library. Ingesting is shared: "
+                    "it shows as ingested everywhere it appears."
+                ),
+                compact=True,
+            )
+            yield Button(
+                "Unqueue" if self.item.get("queued_for_briefing") else "Queue",
+                id="content-queue-button",
+                tooltip=(
+                    "Remove this item from the pool the next briefing draws from."
+                    if self.item.get("queued_for_briefing")
+                    else "Add this item to the pool the next briefing draws from."
+                ),
+                compact=True,
+            )
             # AC#2. `Z` does the same thing from the keyboard, and the tooltip
             # says so -- but only once the user knows the region has to be
             # focused first, which is exactly the knowledge F27 says nothing
@@ -387,11 +489,53 @@ class ContentPane(RecomposeCaptureGuard, Vertical):
                     tooltip="Open the page as it was before this change.",
                 )
         yield Static(render_for(self.item), id="content-body")
+        # TASK-3072 plan task 9: the position footer. "N of M" is seeded and
+        # pushed by the screen (`position` above -- the pane holds no list
+        # state); Next Unread posts the pane's existing message, so the one
+        # screen handler that serves `space` serves this button too. Only
+        # rendered with an item open -- with nothing open the footer is
+        # absent entirely, never "0 of 0".
+        with Horizontal(id="content-footer", classes="destination-filter-strip"):
+            yield Static(self.position, id="content-position")
+            yield Button(
+                "Next unread",
+                id="content-next-unread-button",
+                compact=True,
+                tooltip="Open the next unread item (keyboard: space).",
+            )
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "content-mark-unread-button":
             event.stop()
             self.post_message(UnreadToggleRequested(self.item))
+        elif event.button.id == "content-star-button":
+            event.stop()
+            # No optimistic label flip (PR #1430 review): the write is async
+            # and can fail, and a label flipped on hope would then lie until
+            # the next open. The screen flips the label on the SUCCESS path
+            # (`_toggle_star_worker`), after the shared item dict is patched.
+            self.post_message(StarToggleRequested(self.item))
+        elif event.button.id == "content-open-button":
+            event.stop()
+            self.post_message(OpenInBrowserRequested(self.item))
+        elif event.button.id == "content-ingest-button":
+            event.stop()
+            self.post_message(IngestRequested(self.item))
+        elif event.button.id == "content-queue-button":
+            event.stop()
+            # The Inspector's own press-site shape: the raw row id, and the
+            # value to set the flag TO (the flip of the current one).
+            item = self.item or {}
+            item_id = item.get("item_id")
+            if item_id is not None:
+                self.post_message(
+                    ToggleBriefingQueueRequested(
+                        item_id, not bool(item.get("queued_for_briefing"))
+                    )
+                )
+        elif event.button.id == "content-next-unread-button":
+            event.stop()
+            self.post_message(NextUnreadRequested())
         elif event.button.id == "content-full-page-button":
             event.stop()
             self.post_message(ViewSnapshotRequested(self.item, "full_page"))

@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import re
 import threading
+import webbrowser
 from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
@@ -75,11 +76,12 @@ from ...Subscriptions.feed_server import (
     configured_bind_and_port,
     is_loopback_bind,
 )
+from ...Subscriptions.html_text import strip_control_characters
 from ...Subscriptions.watchlist_bundle_service import WatchlistBundleService
 from ...Subscriptions.watchlist_normalizers import normalize_watchlist_item
 from ...Third_Party.textual_fspicker import FileSave, SelectDirectory
 from ...TTS.audio_player import play_audio_file
-from ...Utils.input_validation import sanitize_string, validate_text_input
+from ...Utils.input_validation import sanitize_string, validate_text_input, validate_url
 from ...Utils.path_validation import validate_path_simple
 from ...Widgets.confirmation_dialog import ConfirmationDialog
 from ...Widgets.prune_safe_select import PruneSafeSelect
@@ -131,13 +133,15 @@ from ..Watchlists_Modules.briefing_preset_modal import BriefingPresetModal
 from ..Watchlists_Modules.content_pane import (
     ContentPane,
     ExpandReaderRequested,
+    OpenInBrowserRequested,
+    StarToggleRequested,
     UnreadToggleRequested,
     ViewSnapshotRequested,
 )
+from ..Watchlists_Modules.article_list import ArticleListPane
 from ..Watchlists_Modules.items_pane import (
     ItemSelected,
     ItemsFilterChanged,
-    ItemsPane,
     NextUnreadRequested,
     RefreshItemsRequested,
 )
@@ -186,6 +190,7 @@ from ..Watchlists_Modules.sources_pane import (
 )
 from ..Watchlists_Modules.watchlist_tree import (
     ALL_SOURCES_BUCKET,
+    STARRED_BUCKET,
     AddSourceToWatchlistRequested,
     CreateWatchlistRequested,
     DeleteWatchlistRequested,
@@ -273,6 +278,26 @@ _ITEM_STATUS_DRAIN_GROUP_PREFIX = "wl-item-status-drain:"
 #: A frozenset, since `_blocking_status_for` now asks the backend for the
 #: item's one status and only has to decide whether it is in this set.
 _NON_READ_STATE_STATUSES: frozenset[str] = frozenset({"ingested", "ignored", "error"})
+
+#: Statuses the reader's "All" filter actually queries (TASK-3072). "All" in
+#: a reader means "everything I might still want to read", not "every row in
+#: the table": `ignored` items were explicitly triaged away and `error` rows
+#: are a Runs-tab concern, so neither belongs in the article list.
+_READER_ALL_STATUSES: tuple[str, ...] = ("new", "reviewed", "ingested")
+
+
+def _normalize_items_status_filter(value: Any) -> str:
+    """Map any stored items-filter value onto the reader's Unread/All pair.
+
+    TASK-3072. `ArticleListPane`'s Select only offers `unread`/`all`, but the
+    screen mirrors the filter across workbench rebuilds and the pre-reader
+    `ItemsPane` used per-status values (`new`, `reviewed`, `ignored`, ...).
+    Seeding one of those into the two-option Select would raise, so every
+    read of the mirrored value goes through here: legacy `new` is exactly
+    the reader's `unread`; everything else falls back to `all`.
+    """
+    text = str(value or "").strip().lower()
+    return "unread" if text in {"unread", "new"} else "all"
 
 
 @dataclass(frozen=True)
@@ -415,6 +440,14 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         # deliberately NOT here — it is bound on ItemsPane so it cannot fire
         # from the rail (see `NextUnreadRequested`).
         ("m", "toggle_read_selected", "Read/Unread"),
+        # TASK-3072 plan task 7: NNW's one-key star. Same resolution and
+        # gating as `m` (`_reader_verb_blocked`, the open item), one shared
+        # handler with the reader's Star button.
+        ("s", "toggle_star_selected", "Star"),
+        # TASK-3072 plan task 8: open the item in the system browser,
+        # http/https only (the URL is a remote-derived string reaching an OS
+        # primitive, so the scheme check lives in the handler, not here).
+        ("o", "open_in_browser", "Open in browser"),
         ("a", "mark_all_read", "Mark all read"),
         ("u", "undo_mark_all_read", "Undo mark-all-read"),
         ("z", "toggle_region", "Collapse"),
@@ -1106,7 +1139,14 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         try:
             service = self._watchlist_bundle_service()
             self._tree_watchlists = service.list_watchlists()
-            self._tree_counts = service.get_watchlist_item_counts()
+            # Copy before inserting: the service's own mapping is its
+            # return-value contract, and the Starred smart feed's badge
+            # (TASK-3072) is a tree-only bucket -- it rides this mapping so
+            # every existing counts refresh updates it too.
+            counts = dict(service.get_watchlist_item_counts())
+            starred = service.get_flagged_items_count()
+            counts[STARRED_BUCKET] = {"total": starred, "unread": starred}
+            self._tree_counts = counts
             self._tree_source_counts = service.get_source_item_counts()
         except Exception:
             logger.opt(exception=True).debug("Failed to load watchlists tree data.")
@@ -1732,6 +1772,8 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             The scope's display name, unescaped.
         """
         scope = self.tree_scope
+        if scope.kind == "starred":
+            return "Starred"
         if scope.kind == "unassigned":
             return "Unassigned"
         if scope.kind == "watchlist" and scope.watchlist_id is not None:
@@ -1982,15 +2024,20 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         elif self.active_section == "items":
             # Seed the last-loaded rows (Finding 2, fix round 2) — see the
             # note on `sources_pane.sources` above; same rebuild, same gap.
-            items_pane = ItemsPane(id="watchlists-items-pane")
+            items_pane = ArticleListPane(id="watchlists-items-pane")
             items_pane.items = self._loaded_items
             # Seed the filter, the search box and the selection too
             # (whole-branch review, Important) -- the sibling Sources/Runs/
             # Notifications panes above and below already re-seed their
             # selection, and this one seeded only `.items`, so every rebuild
             # silently reset the user's filtered view to "all items, nothing
-            # selected". See `_items_status_filter` in `__init__`.
-            items_pane.status_filter = self._items_status_filter
+            # selected". See `_items_status_filter` in `__init__`. The value
+            # goes through `_normalize_items_status_filter` (TASK-3072): the
+            # mirror can still hold a pre-reader per-status value, which the
+            # two-option Select would reject.
+            items_pane.status_filter = _normalize_items_status_filter(
+                self._items_status_filter
+            )
             items_pane.search_query = self._items_search_query
             items_pane.selected_item = self._selected_content_item
             children.append(items_pane)
@@ -2082,6 +2129,12 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         pane = ContentPane(id="watchlists-content-pane")
         pane.item = self._selected_content_item
         pane.expanded = self.region_layout.solo_region == Region.CONTENT
+        # TASK-3072 plan task 9: re-seed the footer the same way `item` is
+        # re-seeded just above, so a region rebuild re-renders the same
+        # position. Guarded inside `_reader_position_text` for the build
+        # order where the items pane is not mounted yet ("" then; the first
+        # selection pushes the real value).
+        pane.position = self._reader_position_text()
         return pane
 
     def _watchlists_are_empty(self) -> bool:
@@ -5057,7 +5110,10 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             backend listing's own order. Every loaded source when the scope is
             `all`, or when the runtime backend is not `local`.
         """
-        if self.tree_scope.kind == "all" or self.runtime_backend != "local":
+        if self.tree_scope.kind in ("all", "starred") or self.runtime_backend != "local":
+            # `starred` scopes the ITEMS list (a flag predicate), not the
+            # Sources table -- every source can hold a starred item, so the
+            # truthful listing here is the same unscoped one `all` gets.
             return list(self._loaded_sources)
         allowed = {
             str(row.get("id")) for row in self.scoped_source_rows() if row.get("id") is not None
@@ -6175,7 +6231,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             if not self.is_mounted:
                 return
             try:
-                items_pane = self.query_one("#watchlists-items-pane", ItemsPane)
+                items_pane = self.query_one("#watchlists-items-pane", ArticleListPane)
             except NoMatches:
                 return
             items_pane.select_and_reveal(item)
@@ -8383,8 +8439,8 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
 
         stop_audio_playback_if_current(Path(str(file_path)))
 
-    def _items_status_query(self) -> str | None:
-        """The status the item PAGE should be fetched for, or `None` for all.
+    def _items_status_kwargs(self) -> dict[str, Any]:
+        """The status predicate the item PAGE should be fetched with.
 
         Review wave, I2. TASK-2301 made `_load_items` ask for every status,
         which fixed "triaged items are unreachable" and quietly broke a
@@ -8398,16 +8454,22 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         which is the defect class this batch exists to remove.
 
         Pushing the active filter into the query makes a page 100 rows OF THE
-        FILTERED STATUS, so "New" can reach unread items however deep they sit.
-        "All statuses" is unchanged: it genuinely wants a mixed page.
+        FILTERED STATUS, so "Unread" can reach unread items however deep they
+        sit. TASK-3072 renames the filter vocabulary to the reader's
+        Unread/All pair (`_normalize_items_status_filter`): "unread" queries
+        `status="new"`; "all" queries `_READER_ALL_STATUSES` -- every status
+        a reader can still act on, excluding `ignored` (triaged away on
+        purpose) and `error` (a Runs-tab concern), which the pre-reader
+        pane's literal "all statuses" mixed in.
 
         The pane keeps its own in-memory filter as well. That is not redundant
         -- it is what pins the currently-open item into a view its status no
         longer matches (see `_filtered_items`), and it is what makes the list
         correct in the window between a filter change and its reload landing.
         """
-        status = str(self._items_status_filter or "all")
-        return None if status == "all" else status
+        if _normalize_items_status_filter(self._items_status_filter) == "unread":
+            return {"status": "new"}
+        return {"statuses": list(_READER_ALL_STATUSES)}
 
     def _items_scope_query(self) -> dict[str, Any]:
         """The tree scope as `list_items` kwargs.
@@ -8419,6 +8481,11 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         regardless of the rail selection.
         """
         scope = self.tree_scope
+        if scope.kind == "starred":
+            # TASK-3072 plan task 6: the Starred smart feed. The flag is
+            # global (same ADR-018 semantics as the briefing queue), so no
+            # membership predicate -- just the flag itself.
+            return {"is_flagged": True}
         if scope.kind == "source" and scope.source_id is not None:
             return {"source_id": scope.source_id}
         if scope.kind == "watchlist" and scope.watchlist_id is not None:
@@ -8460,16 +8527,24 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         this sequence, and an item teleporting to the top of the list when its
         status changed would be its own small lie.
 
+        TASK-3072 removed the old "All statuses covers everything" skip: the
+        reader's "all" is itself a restricted query (`_READER_ALL_STATUSES`),
+        so BOTH filters can now return a page without the open item, and the
+        pin applies unconditionally. Under "all" the common case still
+        short-circuits on the open item being present; the pin only fires
+        when the item genuinely fell out of the query -- e.g. it was ignored
+        while open, which is exactly the "the article I'm reading vanished"
+        moment this method exists to prevent.
+
         Args:
             page: The rows the backend returned for the current filter.
 
         Returns:
-            `page` unchanged when no item is open, when the filter is "All
-            statuses" (the page already covers every status), or when the open
-            item is in it already; otherwise `page` plus that one item.
+            `page` unchanged when no item is open or when the open item is
+            in it already; otherwise `page` plus that one item.
         """
         open_item = self._selected_content_item
-        if open_item is None or self._items_status_query() is None:
+        if open_item is None:
             return page
         open_id = str(open_item.get("id") or "")
         if not open_id or any(str(row.get("id")) == open_id for row in page):
@@ -8486,9 +8561,9 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         try:
             items = await self._controller.list_items(
                 runtime_backend=self.runtime_backend,
-                status=self._items_status_query(),
                 limit=100,
                 offset=0,
+                **self._items_status_kwargs(),
                 **self._items_scope_query(),
             )
             # Mirror to screen state (Finding 2, fix round 2) — see the note
@@ -8499,7 +8574,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             )
             if self._dom_is_live:
                 try:
-                    items_pane = self.query_one("#watchlists-items-pane", ItemsPane)
+                    items_pane = self.query_one("#watchlists-items-pane", ArticleListPane)
                     items_pane.items = self._loaded_items
                 except Exception:
                     pass
@@ -8524,10 +8599,37 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         # `selected_entity` — see that seeding note above.
         self._selected_content_item = event.item
         try:
-            self.query_one("#watchlists-content-pane", ContentPane).item = event.item
+            content = self.query_one("#watchlists-content-pane", ContentPane)
+            content.item = event.item
+            content.position = self._reader_position_text()
         except NoMatches:
             pass
         self._mark_item_read_on_open(event.item)
+
+    def _reader_position_text(self) -> str:
+        """The reader footer's "N of M" (TASK-3072 plan task 9).
+
+        M is the article list's `displayed_items()` -- the list the user is
+        actually looking at, filter applied -- and N the open item's 1-based
+        place in it, so `j` and the footer walk the same sequence. The pane
+        holds no list state, which is why this is computed here and pushed
+        into its `position` reactive (the `_selected_content_item` re-seed
+        pattern). Empty when nothing is open (the footer is absent then,
+        never "0 of 0") or when the open item is not in the displayed list.
+        """
+        item = self._selected_content_item
+        if item is None:
+            return ""
+        try:
+            pane = self.query_one("#watchlists-items-pane", ArticleListPane)
+        except NoMatches:
+            return ""
+        items = pane.displayed_items()
+        open_id = str(item.get("id") or "")
+        for index, candidate in enumerate(items):
+            if str(candidate.get("id")) == open_id:
+                return f"{index + 1} of {len(items)}"
+        return ""
 
     def _mark_item_read_on_open(self, item: dict[str, Any] | None) -> None:
         """Opening an item in the reader marks it read (Task 5).
@@ -9013,18 +9115,24 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         """Mirror the Items filter/search, and re-page when the STATUS moves.
 
         Review wave, I2. The status is now part of the query
-        (`_items_status_query`), so changing it has to re-fetch or the pane is
+        (`_items_status_kwargs`), so changing it has to re-fetch or the pane is
         left filtering the previous status's page in memory -- which is exactly
         the "the filter can only narrow what was already fetched" defect this
         fix removes.
 
         Gated on the status ACTUALLY changing. This message also fires on every
         keystroke in the search box, which is a purely in-memory filter and
-        must not cost a query per character.
+        must not cost a query per character. Both sides are compared through
+        `_normalize_items_status_filter` (TASK-3072): a pre-reader `new`
+        still sitting in the mirror IS the reader's `unread`, and must not
+        trigger a spurious reload when the pane first posts it.
         """
         event.stop()
-        status_changed = event.status_filter != self._items_status_filter
-        self._items_status_filter = event.status_filter
+        incoming = _normalize_items_status_filter(event.status_filter)
+        status_changed = incoming != _normalize_items_status_filter(
+            self._items_status_filter
+        )
+        self._items_status_filter = incoming
         self._items_search_query = event.search_query
         if status_changed:
             # Own group, as in `watch_tree_scope`: an exclusive reload in
@@ -9384,7 +9492,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                     row_key = entity.get("id")
         if row_key is not None:
             try:
-                pane = self.query_one("#watchlists-items-pane", ItemsPane)
+                pane = self.query_one("#watchlists-items-pane", ArticleListPane)
                 pane.update_item_queued_cell(row_key, queued)
             except NoMatches:
                 pass
@@ -9601,7 +9709,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     def _repaint_item_status_cell(self, item_id: Any, status: str) -> None:
         """Push a patched status into the mounted Items table's Status cell."""
         try:
-            pane = self.query_one("#watchlists-items-pane", ItemsPane)
+            pane = self.query_one("#watchlists-items-pane", ArticleListPane)
         except NoMatches:
             return
         pane.update_item_status_cell(item_id, status)
@@ -9765,9 +9873,14 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
 
     def action_show_help(self) -> None:
         """Show a notification with available keyboard shortcuts."""
+        # TASK-3072 plan task 10: the reading-loop verbs join the help line.
+        # Decision 031: advertise only implemented actions -- every verb
+        # named here is bound above and covered by tests.
         self.app_instance.notify(
             "1=Read 2=Sources 3=Runs 4=Rules 5=Notifications 6=Artifacts "
-            "7=Overview | n=new d=delete/ignore c=check p=preview ?=help",
+            "7=Overview | n=new d=delete/ignore c=check p=preview ?=help | "
+            "j/k=move space=next-unread m=read/unread s=star o=open "
+            "a=mark-all-read u=undo",
             severity="information",
             timeout=8,
         )
@@ -9913,7 +10026,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         if self.active_section != "items":
             return
         try:
-            pane = self.query_one("#watchlists-items-pane", ItemsPane)
+            pane = self.query_one("#watchlists-items-pane", ArticleListPane)
         except NoMatches:
             return
         items = pane.displayed_items()
@@ -9997,6 +10110,125 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         )
         self._request_tree_counts_refresh()
 
+    def action_toggle_star_selected(self) -> None:
+        """`s`: star or unstar the open item (TASK-3072 plan task 7).
+
+        Resolves the item and gates exactly like `action_toggle_read_selected`
+        (typing in an Input is typing, and the verb is scoped to the Read
+        tab), then shares `_toggle_item_star` with the reader's Star button.
+        """
+        if self._reader_verb_blocked():
+            return
+        item = self._selected_content_item
+        if item is None:
+            return
+        self._toggle_item_star(item)
+
+    @on(StarToggleRequested)
+    def handle_star_toggle_requested(self, event: StarToggleRequested) -> None:
+        """The reader's Star button takes the same path as `s`."""
+        event.stop()
+        item = event.item or self._selected_content_item
+        if item is None:
+            return
+        self._toggle_item_star(item)
+
+    def _toggle_item_star(self, item: dict[str, Any]) -> None:
+        """Flip one item's star: write, patch, repaint, badge refresh.
+
+        The target reads from the live dict, which the worker patches after
+        a successful write -- so a second toggle unstars instead of
+        re-deriving from a stale flag (`patch_item`'s contract on the
+        read/unread side, restated for a flag there is no gate on: starring
+        is orthogonal to status, so an ingested item can be starred).
+        """
+        item_id = item.get("id")
+        if item_id is None:
+            return
+        target = not bool(item.get("is_flagged"))
+        self.run_worker(
+            self._toggle_star_worker(item_id, item, target),
+            exclusive=True,
+            group="wl-star-toggle",
+        )
+
+    async def _toggle_star_worker(
+        self, item_id: Any, item: dict[str, Any], target: bool
+    ) -> None:
+        """The write half of a star toggle, mirroring every other write
+        handler on this screen (a worker, never a render-path query)."""
+        notify = getattr(self.app_instance, "notify", None)
+        try:
+            await self._controller.set_item_flagged(
+                runtime_backend=self.runtime_backend, item_id=item_id, flagged=target
+            )
+        except Exception:
+            logger.opt(exception=True).debug("Failed to toggle an item's star.")
+            if callable(notify):
+                notify("Could not update the star.", severity="error")
+            return
+        item["is_flagged"] = target
+        try:
+            pane = self.query_one("#watchlists-items-pane", ArticleListPane)
+        except NoMatches:
+            pane = None
+        if pane is not None:
+            pane.update_item_starred_cell(item_id, target)
+        # The reader's Star button flips HERE, on the success path only --
+        # never optimistically in the pane (PR #1430 review): after a failed
+        # write there is no patch and no flip, so the label can never show
+        # the opposite of `item["is_flagged"]` until the next open.
+        try:
+            star_button = self.query_one("#content-star-button", Button)
+        except NoMatches:
+            star_button = None
+        if star_button is not None:
+            star_button.label = "★ Starred" if target else "☆ Star"
+        self._request_tree_counts_refresh()
+
+    def action_open_in_browser(self) -> None:
+        """`o`: open the open item's URL in the system browser (TASK-3072 plan
+        task 8). Gated and resolved exactly like `m`/`s`."""
+        if self._reader_verb_blocked():
+            return
+        item = self._selected_content_item
+        if item is None:
+            return
+        self._open_item_in_browser(item)
+
+    @on(OpenInBrowserRequested)
+    def handle_open_in_browser_requested(self, event: OpenInBrowserRequested) -> None:
+        """The reader's Open button takes the same path as `o`."""
+        event.stop()
+        item = event.item or self._selected_content_item
+        if item is None:
+            return
+        self._open_item_in_browser(item)
+
+    def _open_item_in_browser(self, item: dict[str, Any]) -> None:
+        """`webbrowser.open`, gated by the shared URL validator.
+
+        A feed item's `url` is a REMOTE-derived string and `webbrowser.open`
+        hands it to the OS, so validation runs at this boundary through
+        `input_validation.validate_url` -- the centralized validator: only
+        well-formed http/https URLs with a valid host pass, and
+        whitespace/backslash/credential/malformed-host shapes are refused
+        with a notification, never passed on.
+        """
+        notify = getattr(self.app_instance, "notify", None)
+        # Control characters first (a feed URL is remote-derived text, and
+        # the OS open is a shell-shaped sink on some platforms), then the
+        # centralized validator decides what is openable.
+        url = strip_control_characters(str(item.get("url") or "")).strip()
+        if not url or not validate_url(url):
+            if callable(notify):
+                notify(
+                    "This item has no web URL to open (http/https only).",
+                    severity="warning",
+                )
+            return
+        webbrowser.open(url)
+
     @on(NextUnreadRequested)
     def handle_next_unread_requested(self, event: NextUnreadRequested) -> None:
         """`space` (the ItemsPane binding): open the next unread item.
@@ -10016,7 +10248,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         if self.active_section != "items":
             return
         try:
-            pane = self.query_one("#watchlists-items-pane", ItemsPane)
+            pane = self.query_one("#watchlists-items-pane", ArticleListPane)
         except NoMatches:
             return
         items = pane.displayed_items()
@@ -10126,7 +10358,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         currently rendered are skipped inside `update_item_status_cell`.
         """
         try:
-            pane = self.query_one("#watchlists-items-pane", ItemsPane)
+            pane = self.query_one("#watchlists-items-pane", ArticleListPane)
         except NoMatches:
             return
         for item in pane.displayed_items():

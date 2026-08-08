@@ -11,8 +11,6 @@ from tldw_chatbook.Notifications import (
     NotificationDispatchService,
 )
 from tldw_chatbook.Subscriptions import LocalWatchlistsService
-from tldw_chatbook.Subscriptions.watchlist_content_alert_service import WatchlistContentAlertService
-from tldw_chatbook.Subscriptions.watchlist_filter_service import WatchlistFilterService
 from tldw_chatbook.Subscriptions.watchlist_bundle_service import WatchlistBundleService
 
 
@@ -1535,3 +1533,36 @@ async def test_a_queued_run_has_no_duration_yet(tmp_path):
     assert launched["status"] == "queued"
     assert launched["duration"] is None
     assert launched["source_title"] == "Feed"
+
+
+@pytest.mark.asyncio
+async def test_list_items_filters_by_is_flagged(tmp_path):
+    """task-3072: the Starred feed's item page.
+
+    Falsey (`None`, the default) means NO flag filter -- the same convention
+    the TASK-2513 scope kwargs established; `True` narrows to starred rows,
+    and the normalized dicts carry the flag as a real bool.
+    """
+    db = SubscriptionsDB(tmp_path / "subscriptions.db", "test")
+    service = LocalWatchlistsService(db_factory=lambda: db)
+    source = await service.create_source(
+        {"name": "Feed", "url": "https://example.com/feed.xml", "source_type": "rss"}
+    )
+    with db.transaction() as conn:
+        for index in range(3):
+            conn.execute(
+                "INSERT INTO subscription_items (subscription_id, url, title) "
+                "VALUES (?, ?, ?)",
+                (source["source_id"], f"https://example.com/{index}", f"Item {index}"),
+            )
+    starred_id = db.conn.execute(
+        "SELECT id FROM subscription_items WHERE url = ?", ("https://example.com/1",)
+    ).fetchone()[0]
+    db.set_item_flagged(starred_id, True)
+
+    starred = await service.list_items(status=None, is_flagged=True)
+    everything = await service.list_items(status=None)
+
+    assert [item["item_id"] for item in starred] == [starred_id]
+    assert starred[0]["is_flagged"] is True
+    assert len(everything) == 3, "falsey is_flagged must not filter at all"

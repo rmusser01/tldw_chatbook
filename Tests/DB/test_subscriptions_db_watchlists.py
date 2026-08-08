@@ -1,6 +1,7 @@
 import pytest
 
 from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
+from tldw_chatbook.Subscriptions.item_persist import persist_subscription_item
 
 
 @pytest.fixture
@@ -823,3 +824,156 @@ def test_restore_items_new_chunks_batches_bigger_than_the_host_parameter_limit(d
 
     assert restored == len(ids)
     assert all(db.get_item_status(item_id) == "new" for item_id in ids)
+
+
+# --- TASK-3072: is_flagged (star) plumbing ------------------------------------
+
+
+def test_set_item_flagged_roundtrip(db_with_memberships):
+    db, _watchlist_id, _in_watchlist, _unassigned = db_with_memberships
+    item_id = _item_id(db, "https://in.example/0")
+
+    db.set_item_flagged(item_id, True)
+
+    rows = db.get_new_items(status=None, is_flagged=True)
+    assert [r["id"] for r in rows] == [item_id]
+
+    db.set_item_flagged(item_id, False)
+    assert db.get_new_items(status=None, is_flagged=True) == []
+
+
+def test_get_new_items_is_flagged_filter_combines_with_scope(db_with_memberships):
+    # The flag is one more independent predicate fragment: it must compose
+    # with the watchlist membership scope, not replace it.
+    db, watchlist_id, in_watchlist, _unassigned = db_with_memberships
+    in_item = _item_id(db, "https://in.example/0")
+    loose_item = _item_id(db, "https://loose.example/0")
+    db.set_item_flagged(in_item, True)
+    db.set_item_flagged(loose_item, True)
+
+    rows = db.get_new_items(status=None, is_flagged=True, watchlist_id=watchlist_id)
+
+    assert [r["id"] for r in rows] == [in_item]
+    assert all(r["subscription_id"] == in_watchlist for r in rows)
+
+
+def test_flag_is_global_not_per_watchlist(db_with_memberships):
+    # ADR-018's note on `queued_for_briefing` applies verbatim: one row, one
+    # flag -- an item starred through any scope reads starred in all of them.
+    db, watchlist_id, _in_watchlist, _unassigned = db_with_memberships
+    item_id = _item_id(db, "https://in.example/0")
+    db.set_item_flagged(item_id, True)
+
+    scoped = db.get_new_items(status=None, watchlist_id=watchlist_id)
+    flagged_row = next(r for r in scoped if r["id"] == item_id)
+    assert flagged_row["is_flagged"] == 1
+
+
+def test_flags_persist_across_re_fetch(db_with_memberships):
+    """The spec's load-bearing claim, pinned end to end.
+
+    `persist_subscription_item`'s upsert never writes `is_flagged` -- the
+    column is absent from both the INSERT list and the ON CONFLICT update --
+    so a re-fetch of the same item (same subscription+url+content_hash, the
+    conflict key) updates the content and leaves the user's star alone.
+    """
+    db, _watchlist_id, in_watchlist, _unassigned = db_with_memberships
+    with db.transaction() as conn:
+        item_id = persist_subscription_item(
+            conn,
+            in_watchlist,
+            {
+                "url": "https://in.example/refetch",
+                "title": "v1",
+                "content": "body v1",
+                "content_kind": "article",
+                "content_format": "text",
+                "content_hash": "hash-1",
+            },
+            run_id=None,
+            now="2026-08-07T10:00:00+00:00",
+        )
+    db.set_item_flagged(item_id, True)
+
+    with db.transaction() as conn:
+        persist_subscription_item(
+            conn,
+            in_watchlist,
+            {
+                "url": "https://in.example/refetch",
+                "title": "v2",
+                "content": "body v2",
+                "content_kind": "article",
+                "content_format": "text",
+                "content_hash": "hash-1",
+            },
+            run_id=None,
+            now="2026-08-07T12:00:00+00:00",
+        )
+
+    rows = db.get_new_items(status=None, is_flagged=True)
+    assert [r["id"] for r in rows] == [item_id]
+    assert rows[0]["title"] == "v2", "precondition: the upsert's UPDATE path fired"
+
+
+def test_get_flagged_items_count_is_status_agnostic(db_with_memberships):
+    # A starred item stays starred when read: the Starred feed's badge
+    # counts across statuses.
+    db, _watchlist_id, _in_watchlist, _unassigned = db_with_memberships
+    db.set_item_flagged(_item_id(db, "https://in.example/0"), True)  # new
+    db.set_item_flagged(_item_id(db, "https://in.example/2"), True)  # reviewed
+
+    assert db.get_flagged_items_count() == 2
+
+
+# --- TASK-3072: effective-date ordering ---------------------------------------
+
+
+def test_get_new_items_orders_by_published_date_desc(db):
+    source_id = db.add_subscription(name="Feed", type="rss", source="https://f.example/f")
+    # Fetched together (created_at ~identical), published in a different
+    # order: the list must follow PUBLISHED order, not fetch order.
+    for url, published in (
+        ("https://f.example/old", "2026-08-01T09:00:00+00:00"),
+        ("https://f.example/newest", "2026-08-07T09:00:00+00:00"),
+        ("https://f.example/middle", "2026-08-05T09:00:00+00:00"),
+    ):
+        _insert_item(db, source_id, url, url, "body")
+        with db.transaction() as conn:
+            conn.execute(
+                "UPDATE subscription_items SET published_date = ? WHERE url = ?",
+                (published, url),
+            )
+
+    rows = db.get_new_items(status=None)
+
+    assert [r["url"] for r in rows] == [
+        "https://f.example/newest",
+        "https://f.example/middle",
+        "https://f.example/old",
+    ]
+
+
+def test_get_new_items_falls_back_to_created_at_when_unpublished(db):
+    source_id = db.add_subscription(name="Feed", type="rss", source="https://f.example/f")
+    _insert_item(db, source_id, "https://f.example/dated", "dated", "body")
+    _insert_item(db, source_id, "https://f.example/undated", "undated", "body")
+    with db.transaction() as conn:
+        # The dated item was fetched BEFORE the undated one (older
+        # created_at), but published long ago: effective-date order puts the
+        # freshly fetched undated item first, not last.
+        conn.execute(
+            "UPDATE subscription_items SET published_date = ?, created_at = ? WHERE url = ?",
+            ("2026-08-01T09:00:00+00:00", "2026-08-06T09:00:00+00:00", "https://f.example/dated"),
+        )
+        conn.execute(
+            "UPDATE subscription_items SET created_at = ? WHERE url = ?",
+            ("2026-08-07T09:00:00+00:00", "https://f.example/undated"),
+        )
+
+    rows = db.get_new_items(status=None)
+
+    assert [r["url"] for r in rows] == [
+        "https://f.example/undated",
+        "https://f.example/dated",
+    ]

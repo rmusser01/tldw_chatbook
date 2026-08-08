@@ -38,7 +38,7 @@ from tldw_chatbook.Subscriptions.watchlist_normalizers import (
     normalize_watchlist_run,
 )
 from tldw_chatbook.UI.Watchlists_Modules.inspector_pane import InspectorPane
-from tldw_chatbook.UI.Watchlists_Modules.items_pane import ItemsPane
+from tldw_chatbook.UI.Watchlists_Modules.article_list import ArticleListPane
 
 # Whole-branch review (Important): without this, CI's `pytest -m unit` run
 # DESELECTS this entire module, so every assertion here -- including the ones
@@ -79,7 +79,7 @@ async def test_selected_item_reports_type_item_and_offers_item_actions():
         screen.active_section = "items"
         await pilot.pause(0.2)
 
-        pane = screen.query_one("#watchlists-items-pane", ItemsPane)
+        pane = screen.query_one("#watchlists-items-pane", ArticleListPane)
         pane.items = [dict(REAL_ITEM)]
         await pilot.pause(0.2)
         pane.select_item_by_id(str(REAL_ITEM["id"]))

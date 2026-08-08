@@ -18,7 +18,8 @@ from tldw_chatbook.UI.Watchlists_Modules.inspector_pane import (
     InspectorPane,
     PreviewRequested,
 )
-from tldw_chatbook.UI.Watchlists_Modules.items_pane import ItemSelected, ItemsPane
+from tldw_chatbook.UI.Watchlists_Modules.article_list import ArticleListPane
+from tldw_chatbook.UI.Watchlists_Modules.items_pane import ItemSelected
 from tldw_chatbook.UI.Watchlists_Modules.opml_dialogs import (
     OpmlExportDialog,
     OpmlImportDialog,
@@ -450,6 +451,41 @@ async def test_items_reload_scopes_to_source():
 
 
 @pytest.mark.asyncio
+async def test_items_reload_scopes_to_starred():
+    """TASK-3072 plan task 6: the Starred smart feed lists flagged items from
+    every source -- membership is irrelevant, the flag is global (ADR-018
+    semantics, same as the briefing queue)."""
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+        service = app.watchlist_bundle_service
+        db = service._db
+
+        arxiv = db.add_subscription(
+            name="ArXiv", type="rss", source="https://a.example/f"
+        )
+        krebs = db.add_subscription(
+            name="Krebs", type="rss", source="https://b.example/f"
+        )
+        starred_a = _seed_item(db, arxiv, "Starred from ArXiv")
+        starred_b = _seed_item(db, krebs, "Starred from Krebs")
+        _seed_item(db, arxiv, "Plain ArXiv item")
+        db.set_item_flagged(starred_a, True)
+        db.set_item_flagged(starred_b, True)
+
+        screen._apply_tree_scope(TreeScope(kind="starred"))
+        await screen._load_items()
+
+        assert screen._loaded_items, "precondition: two items are starred"
+        assert {item["title"] for item in screen._loaded_items} == {
+            "Starred from ArXiv",
+            "Starred from Krebs",
+        }
+
+
+@pytest.mark.asyncio
 async def test_tree_move_triggers_items_reload_on_read_tab():
     """Moving the tree while on the Read tab re-fetches the items list.
 
@@ -508,7 +544,7 @@ async def test_m_toggles_read_state_on_open_item():
         )
         item_id = _seed_item(db, source_id, "Toggle me")
         await screen._load_items()
-        pane = screen.query_one("#watchlists-items-pane", ItemsPane)
+        pane = screen.query_one("#watchlists-items-pane", ArticleListPane)
         await _wait_for_items(pilot, pane)
         assert pane.items, "precondition: the seeded item reaches the pane"
 
@@ -556,7 +592,7 @@ async def test_m_refuses_on_ingested_item():
         item_id = _seed_item(db, source_id, "Ingested one")
         db.mark_item_status(item_id, "ingested")
         await screen._load_items()
-        pane = screen.query_one("#watchlists-items-pane", ItemsPane)
+        pane = screen.query_one("#watchlists-items-pane", ArticleListPane)
         await _wait_for_items(pilot, pane)
         assert pane.items, "precondition: the ingested item is listed (filter: all)"
 
@@ -578,6 +614,488 @@ async def test_m_refuses_on_ingested_item():
         )
 
 
+# --- TASK-3072 plan task 7: `s` and the reader's Star button -------------------
+
+
+def _flagged_value(db, item_id: int) -> int:
+    row = db.conn.execute(
+        "SELECT is_flagged FROM subscription_items WHERE id = ?", (item_id,)
+    ).fetchone()
+    return int(row[0]) if row else -1
+
+
+@pytest.mark.asyncio
+async def test_s_toggles_star_on_the_open_item():
+    """`s` stars, then unstars, the open item through the service; the row's
+    star repaints in place and the Starred badge catches up through the
+    debounced counts path."""
+    from textual.widgets import Static
+
+    from tldw_chatbook.UI.Watchlists_Modules.watchlist_tree import STARRED_BUCKET
+
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+        db = app.watchlist_bundle_service._db
+        source_id = db.add_subscription(
+            name="ArXiv", type="rss", source="https://a.example/f"
+        )
+        item_id = _seed_item(db, source_id, "Star me")
+        await screen._load_items()
+        pane = screen.query_one("#watchlists-items-pane", ArticleListPane)
+        await _wait_for_items(pilot, pane)
+
+        pane.select_item_by_id(str(pane.items[0]["id"]))
+        await pilot.pause(0.3)
+        assert screen._selected_content_item is not None, "precondition: item open"
+
+        await pilot.press("s")
+        for _ in range(60):
+            await pilot.pause()
+            if _flagged_value(db, item_id) == 1:
+                break
+        assert _flagged_value(db, item_id) == 1, "`s` must star the open item"
+
+        row_widget = pane._find_row(str(pane.items[0]["id"]))
+        assert pane._STAR_GLYPH in str(row_widget.query_one(Static).renderable), (
+            "the row's star repaints in place -- no recompose"
+        )
+
+        from textual.widgets import Button
+
+        assert str(screen.query_one("#content-star-button", Button).label) == (
+            "★ Starred"
+        ), "the reader's button flips on the success path, never optimistically"
+
+        for _ in range(80):
+            await pilot.pause(0.05)
+            if screen._tree_counts.get(STARRED_BUCKET, {}).get("unread") == 1:
+                break
+        assert screen._tree_counts[STARRED_BUCKET]["unread"] == 1, (
+            "the Starred badge must refresh through the debounced counts path"
+        )
+
+        # The open dict was patched, so the second press unstars rather than
+        # re-deriving from a stale flag.
+        await pilot.press("s")
+        for _ in range(60):
+            await pilot.pause()
+            if _flagged_value(db, item_id) == 0:
+                break
+        assert _flagged_value(db, item_id) == 0, "a second `s` must unstar"
+        assert str(screen.query_one("#content-star-button", Button).label) == "☆ Star"
+
+
+@pytest.mark.asyncio
+async def test_s_with_no_open_item_is_a_noop():
+    """`s` with nothing open writes nothing and raises nothing."""
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+        db = app.watchlist_bundle_service._db
+        source_id = db.add_subscription(
+            name="ArXiv", type="rss", source="https://a.example/f"
+        )
+        item_id = _seed_item(db, source_id, "Never opened")
+        await screen._load_items()
+        assert screen._selected_content_item is None, "precondition: nothing open"
+
+        await pilot.press("s")
+        await pilot.pause(0.3)
+        assert _flagged_value(db, item_id) == 0
+
+
+@pytest.mark.asyncio
+async def test_star_toggle_requested_toggles_the_same_path():
+    """The reader's Star button and the `s` key share one handler."""
+    from tldw_chatbook.UI.Watchlists_Modules.content_pane import StarToggleRequested
+
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+        db = app.watchlist_bundle_service._db
+        source_id = db.add_subscription(
+            name="ArXiv", type="rss", source="https://a.example/f"
+        )
+        item_id = _seed_item(db, source_id, "Button-starred")
+        await screen._load_items()
+        pane = screen.query_one("#watchlists-items-pane", ArticleListPane)
+        await _wait_for_items(pilot, pane)
+
+        pane.select_item_by_id(str(pane.items[0]["id"]))
+        await pilot.pause(0.3)
+        assert screen._selected_content_item is not None, "precondition: item open"
+
+        screen.post_message(
+            StarToggleRequested(dict(screen._selected_content_item))
+        )
+        for _ in range(60):
+            await pilot.pause()
+            if _flagged_value(db, item_id) == 1:
+                break
+        assert _flagged_value(db, item_id) == 1, (
+            "the button's message must reach the same write the `s` key does"
+        )
+
+
+# --- TASK-3072 plan task 8: `o` opens the item in the browser -----------------
+
+
+async def _open_item_and_get_url(pilot, screen, db, title: str, url: str) -> int:
+    """Seed one item carrying exactly `url`, open it in the reader."""
+    source_id = db.add_subscription(
+        name="ArXiv", type="rss", source="https://a.example/f"
+    )
+    item_id = _seed_item(db, source_id, title)
+    with db.transaction() as conn:
+        conn.execute(
+            "UPDATE subscription_items SET url = ? WHERE id = ?", (url, item_id)
+        )
+    await screen._load_items()
+    pane = screen.query_one("#watchlists-items-pane", ArticleListPane)
+    await _wait_for_items(pilot, pane)
+    pane.select_item_by_id(str(pane.items[0]["id"]))
+    await pilot.pause(0.3)
+    assert screen._selected_content_item is not None, "precondition: item open"
+    return item_id
+
+
+@pytest.mark.asyncio
+async def test_o_opens_the_open_items_url(monkeypatch):
+    """`o` hands the open item's http URL to the system browser."""
+    opened: list[str] = []
+    monkeypatch.setattr("webbrowser.open", opened.append)
+
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+        db = app.watchlist_bundle_service._db
+        await _open_item_and_get_url(
+            pilot, screen, db, "Readable", "https://example.com/post"
+        )
+
+        await pilot.press("o")
+        await pilot.pause(0.2)
+        assert opened == ["https://example.com/post"]
+
+
+@pytest.mark.asyncio
+async def test_o_refuses_a_non_http_url(monkeypatch):
+    """A `javascript:`/`file:`/empty URL is a remote-derived string reaching
+    an OS primitive: it is refused with a notification, never passed on."""
+    from unittest.mock import Mock
+
+    opened: list[str] = []
+    monkeypatch.setattr("webbrowser.open", opened.append)
+
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+        db = app.watchlist_bundle_service._db
+        app.notify = Mock()
+        await _open_item_and_get_url(
+            pilot, screen, db, "Hostile", "javascript:alert(1)"
+        )
+
+        await pilot.press("o")
+        for _ in range(20):
+            await pilot.pause()
+            if app.notify.called:
+                break
+
+        assert opened == [], "a non-http(s) scheme must never reach webbrowser"
+        assert app.notify.called, "a refusal must say so"
+        _args, kwargs = app.notify.call_args
+        assert kwargs.get("severity") == "warning"
+
+
+@pytest.mark.asyncio
+async def test_o_strips_control_bytes_from_the_url_before_opening(monkeypatch):
+    """A feed URL is remote-derived text: control bytes are stripped before
+    the (already scheme- and host-validated) string reaches the OS."""
+    opened: list[str] = []
+    monkeypatch.setattr("webbrowser.open", opened.append)
+
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+        db = app.watchlist_bundle_service._db
+        await _open_item_and_get_url(
+            pilot, screen, db, "Control bytes", "https://example.com/po\x07st"
+        )
+
+        await pilot.press("o")
+        for _ in range(20):
+            await pilot.pause()
+            if opened:
+                break
+        assert opened == ["https://example.com/post"]
+
+
+@pytest.mark.asyncio
+async def test_o_with_no_open_item_is_a_noop(monkeypatch):
+    opened: list[str] = []
+    monkeypatch.setattr("webbrowser.open", opened.append)
+
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+        db = app.watchlist_bundle_service._db
+        source_id = db.add_subscription(
+            name="ArXiv", type="rss", source="https://a.example/f"
+        )
+        _seed_item(db, source_id, "Never opened")
+        await screen._load_items()
+        assert screen._selected_content_item is None, "precondition: nothing open"
+
+        await pilot.press("o")
+        await pilot.pause(0.2)
+        assert opened == []
+
+
+@pytest.mark.asyncio
+async def test_open_in_browser_requested_takes_the_same_path(monkeypatch):
+    """The reader's Open button and the `o` key share one handler."""
+    from tldw_chatbook.UI.Watchlists_Modules.content_pane import (
+        OpenInBrowserRequested,
+    )
+
+    opened: list[str] = []
+    monkeypatch.setattr("webbrowser.open", opened.append)
+
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+        db = app.watchlist_bundle_service._db
+        await _open_item_and_get_url(
+            pilot, screen, db, "Button-opened", "https://example.com/via-button"
+        )
+
+        screen.post_message(
+            OpenInBrowserRequested(dict(screen._selected_content_item))
+        )
+        for _ in range(20):
+            await pilot.pause()
+            if opened:
+                break
+        assert opened == ["https://example.com/via-button"]
+
+
+# --- TASK-3072 plan task 9: the reader's position footer ----------------------
+
+
+@pytest.mark.asyncio
+async def test_the_reader_footer_numbers_the_open_item():
+    """"N of M": M is the displayed list, N the open item's 1-based place in
+    it; `j` advances the reader and the footer together."""
+    from textual.widgets import Static
+
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+        db = app.watchlist_bundle_service._db
+        source_id = db.add_subscription(
+            name="ArXiv", type="rss", source="https://a.example/f"
+        )
+        # Newest-first display: [c (09:02), b (09:01), a (09:00)].
+        _seed_item(db, source_id, "a", created_at="2026-08-06 09:00:00")
+        _seed_item(db, source_id, "b", created_at="2026-08-06 09:01:00")
+        _seed_item(db, source_id, "c", created_at="2026-08-06 09:02:00")
+        await screen._load_items()
+        pane = screen.query_one("#watchlists-items-pane", ArticleListPane)
+        await _wait_for_items(pilot, pane)
+        assert len(pane.displayed_items()) == 3, "precondition: all three listed"
+
+        pane.select_item_by_id(str(pane.displayed_items()[1]["id"]))
+        for _ in range(40):
+            await pilot.pause()
+            if screen._selected_content_item is not None:
+                break
+        assert screen._selected_content_item["title"] == "b", "precondition"
+        assert str(screen.query_one("#content-position", Static).renderable) == "2 of 3"
+
+        await pilot.press("j")
+        for _ in range(40):
+            await pilot.pause()
+            if screen._selected_content_item.get("title") == "a":
+                break
+        assert screen._selected_content_item["title"] == "a", "precondition: j moved"
+        assert str(screen.query_one("#content-position", Static).renderable) == "3 of 3", (
+            "the footer must walk with the reader"
+        )
+
+
+@pytest.mark.asyncio
+async def test_the_reader_footer_is_empty_with_nothing_open():
+    """Nothing open: no footer at all, and definitely not "0 of 0"."""
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+        assert screen._selected_content_item is None, "precondition"
+        assert not screen.query("#content-position")
+
+
+@pytest.mark.asyncio
+async def test_the_next_unread_footer_button_opens_the_next_unread():
+    """The footer's Next Unread control drives the same handler `space` does."""
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+        db = app.watchlist_bundle_service._db
+        source_id = db.add_subscription(
+            name="ArXiv", type="rss", source="https://a.example/f"
+        )
+        _seed_item(db, source_id, "a", created_at="2026-08-06 09:00:00")
+        b_id = _seed_item(db, source_id, "b", created_at="2026-08-06 09:01:00")
+        _seed_item(db, source_id, "c", created_at="2026-08-06 09:02:00")
+        db.mark_item_status(b_id, "reviewed")
+        # Nothing open yet, so no footer exists -- open any item first.
+        await screen._load_items()
+        pane = screen.query_one("#watchlists-items-pane", ArticleListPane)
+        await _wait_for_items(pilot, pane)
+        pane.select_item_by_id(str(pane.displayed_items()[1]["id"]))
+        for _ in range(40):
+            await pilot.pause()
+            if screen._selected_content_item is not None:
+                break
+        assert screen._selected_content_item["title"] == "b", "precondition"
+
+        from textual.widgets import Button
+
+        screen.query_one("#content-next-unread-button", Button).press()
+        for _ in range(40):
+            await pilot.pause()
+            if screen._selected_content_item.get("title") == "a":
+                break
+        assert screen._selected_content_item["title"] == "a", (
+            "from b, next unread walks the displayed sequence forward, "
+            "past nothing, to a -- the only unread item after it"
+        )
+
+
+# --- TASK-3072 plan task 10: the hostile-HTML end-to-end pin ------------------
+
+
+@pytest.mark.asyncio
+async def test_a_hostile_item_stars_queues_and_still_renders_inert():
+    """The phase-2 DoD, end to end: an item whose title and body carry
+    `<script>`, `[bold red]` and control bytes renders as INERT TEXT in the
+    row and the reader body while the star and queue verbs work on it --
+    and both flags survive a re-persist (Task 3's pin, at the surface)."""
+    from textual.widgets import Static
+
+    from tldw_chatbook.Subscriptions.item_persist import persist_subscription_item
+
+    hostile_title = "[bold red]x[/]<script>alert('TITLE_LITERAL')</script>\x1b[31m"
+    hostile_body = "<script>alert('BODY_PAYLOAD')</script> [bold red]injected[/]\x00\x07"
+
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+        db = app.watchlist_bundle_service._db
+        source_id = db.add_subscription(
+            name="Evil Feed", type="rss", source="https://evil.example/f"
+        )
+        with db.transaction() as conn:
+            item_id = persist_subscription_item(
+                conn,
+                source_id,
+                {
+                    "url": "https://evil.example/post",
+                    "title": hostile_title,
+                    "content": hostile_body,
+                    "content_hash": "hash-hostile",
+                },
+                run_id=None,
+                now="2026-08-06T09:00:00+00:00",
+            )
+        await screen._load_items()
+        pane = screen.query_one("#watchlists-items-pane", ArticleListPane)
+        await _wait_for_items(pilot, pane)
+
+        pane.select_item_by_id(str(pane.items[0]["id"]))
+        await pilot.pause(0.3)
+        assert screen._selected_content_item is not None, "precondition: item open"
+
+        # The verbs work on the hostile item exactly as on any other.
+        await pilot.press("s")
+        for _ in range(60):
+            await pilot.pause()
+            if _flagged_value(db, item_id) == 1:
+                break
+        assert _flagged_value(db, item_id) == 1, "the star write must land"
+        db.set_item_briefing_queued(item_id, True)
+
+        # The row renders the attacks as literal characters, control-stripped.
+        row_widget = pane._find_row(str(pane.items[0]["id"]))
+        row_text = str(row_widget.query_one(Static).renderable)
+        assert "[bold red]x[/]" in row_text, "markup-shaped text stays literal"
+        assert "\x1b" not in row_text, "no escape sequence survives into a row"
+
+        # The reader defends each field at its own layer. The TITLE is
+        # documented plain text (render_article appends, never parses), so
+        # its script-shaped characters render literally and inertly. The
+        # BODY goes through `readable_body_text`, which drops script tags
+        # AND their payloads. Bracket text stays literal; control bytes die.
+        body = screen.query_one("#content-body", Static).renderable
+        body_plain = getattr(body, "plain", str(body))
+        assert "[bold red]injected[/]" in body_plain
+        assert "TITLE_LITERAL" in body_plain, (
+            "the title renders -- as inert literal characters"
+        )
+        assert "BODY_PAYLOAD" not in body_plain, (
+            "the body's script payload is dropped, not shown"
+        )
+        assert "\x00" not in body_plain and "\x07" not in body_plain
+        assert "\x1b" not in body_plain
+
+        # Re-persist the same item (same url + content_hash, the re-fetch
+        # shape): neither flag is touched by the upsert.
+        with db.transaction() as conn:
+            persist_subscription_item(
+                conn,
+                source_id,
+                {
+                    "url": "https://evil.example/post",
+                    "title": hostile_title,
+                    "content": hostile_body,
+                    "content_hash": "hash-hostile",
+                },
+                run_id=None,
+                now="2026-08-06T09:05:00+00:00",
+            )
+        assert _flagged_value(db, item_id) == 1, "the star survives a re-persist"
+        queued = db.conn.execute(
+            "SELECT queued_for_briefing FROM subscription_items WHERE id = ?",
+            (item_id,),
+        ).fetchone()
+        assert int(queued[0]) == 1, "the queue flag survives a re-persist"
+
+
 @pytest.mark.asyncio
 async def test_space_opens_next_unread():
     """`space` walks to the next UNREAD item, skipping reviewed rows."""
@@ -596,7 +1114,7 @@ async def test_space_opens_next_unread():
         _seed_item(db, source_id, "c", created_at="2026-08-06 09:02:00")
         db.mark_item_status(b_id, "reviewed")
         await screen._load_items()
-        pane = screen.query_one("#watchlists-items-pane", ItemsPane)
+        pane = screen.query_one("#watchlists-items-pane", ArticleListPane)
         await _wait_for_items(pilot, pane)
         assert len(pane.displayed_items()) == 3, "precondition: all three listed"
         displayed = pane.displayed_items()
@@ -636,7 +1154,7 @@ async def test_space_at_end_notifies_all_caught_up():
         )
         _seed_item(db, source_id, "only one")
         await screen._load_items()
-        pane = screen.query_one("#watchlists-items-pane", ItemsPane)
+        pane = screen.query_one("#watchlists-items-pane", ArticleListPane)
         await _wait_for_items(pilot, pane)
         pane.select_item_by_id(str(pane.items[0]["id"]))
         await pilot.pause(0.3)
@@ -674,7 +1192,7 @@ async def test_space_with_rail_focused_does_not_navigate():
         )
         _seed_item(db, source_id, "unread one")
         await screen._load_items()
-        pane = screen.query_one("#watchlists-items-pane", ItemsPane)
+        pane = screen.query_one("#watchlists-items-pane", ArticleListPane)
         await _wait_for_items(pilot, pane)
         screen.query_one("#wl-tree-node-all", Button).focus()
         await pilot.press("space")
@@ -706,7 +1224,7 @@ async def test_space_in_items_search_input_still_types():
         )
         _seed_item(db, source_id, "f o matcher")
         await screen._load_items()
-        pane = screen.query_one("#watchlists-items-pane", ItemsPane)
+        pane = screen.query_one("#watchlists-items-pane", ArticleListPane)
         await _wait_for_items(pilot, pane)
         pane.query_one("#items-search-input", Input).focus()
         await pilot.press("f", "space", "o")
@@ -807,7 +1325,7 @@ async def test_mark_all_read_then_undo_roundtrip():
                 created_at=f"2026-08-06 09:0{minute}:00",
             )
         await screen._load_items()
-        pane = screen.query_one("#watchlists-items-pane", ItemsPane)
+        pane = screen.query_one("#watchlists-items-pane", ArticleListPane)
         await _wait_for_items(pilot, pane)
         assert len(pane.displayed_items()) == 3, "precondition"
 
@@ -849,7 +1367,7 @@ async def test_undo_failure_keeps_the_batch_for_retry(monkeypatch):
         )
         _seed_item(db, source_id, "item 0", created_at="2026-08-06 09:00:00")
         await screen._load_items()
-        pane = screen.query_one("#watchlists-items-pane", ItemsPane)
+        pane = screen.query_one("#watchlists-items-pane", ArticleListPane)
         await _wait_for_items(pilot, pane)
 
         await pilot.press("a")
@@ -920,7 +1438,7 @@ async def test_mark_all_read_scoped_to_watchlist():
         _seed_item(db, outsider, "outsider", created_at="2026-08-06 09:02:00")
 
         screen._apply_tree_scope(TreeScope(kind="watchlist", watchlist_id=watchlist["id"]))
-        pane = screen.query_one("#watchlists-items-pane", ItemsPane)
+        pane = screen.query_one("#watchlists-items-pane", ArticleListPane)
         for _ in range(60):
             await pilot.pause()
             if len(pane.displayed_items()) == 2:

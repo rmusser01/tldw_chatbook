@@ -363,6 +363,7 @@ class LocalWatchlistsService:
         watchlist_id: Any = None,
         unassigned_only: bool = False,
         statuses: list[str] | None = None,
+        is_flagged: bool | None = None,
     ) -> list[dict[str, Any]]:
         """List watchlist items from the local subscriptions database.
 
@@ -404,6 +405,9 @@ class LocalWatchlistsService:
                 `None` to defer to `status`. Safe to combine with the default
                 falsey `status` only -- `get_new_items` rejects passing both
                 a truthy `status` and `statuses`.
+            is_flagged: Restrict to starred rows (`True`) or unstarred rows
+                (`False`), or `None` -- the default -- to not filter by the
+                flag at all (TASK-3072).
 
         Returns:
             Normalized item dicts for the requested window.
@@ -420,6 +424,7 @@ class LocalWatchlistsService:
             watchlist_id=int(watchlist_id) if watchlist_id is not None else None,
             unassigned_only=bool(unassigned_only),
             statuses=list(statuses) if statuses is not None else None,
+            is_flagged=is_flagged,
         )
         normalized = [normalize_watchlist_item("local", row) for row in rows]
         return normalized[int(offset) : int(offset) + int(limit)]
@@ -629,6 +634,28 @@ class LocalWatchlistsService:
             except (TypeError, ValueError) as exc:
                 raise ValueError(f"Invalid watchlist item id: {item_id!r}") from exc
         return self._db().restore_items_new(row_ids)
+
+    async def set_item_flagged(self, *, item_id: Any, flagged: bool) -> None:
+        """Star or unstar one item (TASK-3072 plan task 7).
+
+        The write behind the reader's `s` key and Star button. Thin delegate
+        to `SubscriptionsDB.set_item_flagged` -- one row, one global flag,
+        with the same ``int(...)`` id normalization `restore_items_new`
+        applies to its ids.
+
+        Args:
+            item_id: The local row id (bare, already denamespaced by the
+                scope service).
+            flagged: `True` to star the item, `False` to unstar it.
+
+        Raises:
+            ValueError: If the id is not an integer id.
+        """
+        try:
+            row_id = int(item_id)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"Invalid watchlist item id: {item_id!r}") from exc
+        self._db().set_item_flagged(row_id, bool(flagged))
 
     async def delete_source(self, source_id: Any) -> dict[str, Any]:
         success = self._db().delete_subscription(int(source_id))

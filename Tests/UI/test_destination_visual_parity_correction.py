@@ -3378,7 +3378,8 @@ async def test_watchlists_other_filter_strip_controls_are_visible(size):
         strips = screen._compositor.render_strips()
         items_row = screen.query_one("#items-search-input").region.y
         painted = "".join(seg.text for seg in strips[items_row])
-        for label in ("Search items...", "All statuses"):
+        # TASK-3072: the Select's resting label is now the reader's "All".
+        for label in ("Search items...", "All"):
             assert label in painted, (
                 f"{label!r} never reaches the screen; the Items toolbar is "
                 f"clipped at {size}. Row {items_row} paints: {painted.strip()!r}"
