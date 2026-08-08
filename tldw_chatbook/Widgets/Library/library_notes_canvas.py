@@ -133,7 +133,6 @@ class LibraryNotesCanvas(Vertical):
         self.styles.width = "1fr"
         self.styles.min_width = 40
         self.add_class(f"library-notes-mode-{mode}")
-        self.set_class(compact, "library-notes-compact")
 
     def compose(self) -> ComposeResult:
         if self.mode == "editor":
@@ -612,9 +611,8 @@ class LibraryNotesCanvas(Vertical):
             self.apply_session_state(self.presentation_state)
 
     def apply_compact_presentation(self, compact: bool) -> None:
-        """Update responsive copy and classes without remounting the canvas."""
+        """Update responsive copy without remounting the canvas."""
         self.compact = compact
-        self.set_class(compact, "library-notes-compact")
         if not self.is_mounted:
             return
         if self.mode == "list" and self.list_state is not None:

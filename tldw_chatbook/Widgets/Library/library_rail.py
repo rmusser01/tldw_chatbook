@@ -298,6 +298,46 @@ class LibraryRail(RecomposeCaptureGuard, Vertical):
         self.query = query
         self.refresh(recompose=True)
 
+    def apply_selection(self, shell: LibraryShellState) -> None:
+        """Update route selection without recomposing the whole rail.
+
+        Route selection changes only the leading marker and selected class;
+        counts, sections, search state, and Details remain unchanged. Updating
+        the two affected rows in place avoids remounting the full Library rail
+        during a canvas-to-canvas route switch.
+
+        Args:
+            shell: Latest shell state carrying the new selected row.
+
+        Returns:
+            None.
+        """
+        previous_row_id = self.shell.selected_row_id
+        self.shell = shell
+        changed_row_ids = {previous_row_id, shell.selected_row_id} - {""}
+        rows = {
+            row.row_id: row
+            for section in shell.sections
+            for row in section.rows
+            if row.row_id in changed_row_ids
+        }
+        for row_id, row in rows.items():
+            button = self.query_one(f"#{LIBRARY_RAIL_ROW_PREFIX}{row_id}", Button)
+            selected = row_id == shell.selected_row_id
+            marker = "▸" if selected else " "
+            count_suffix = row.count_display or self._count_suffix(
+                row.count, row.count_known
+            )
+            section_hint = (
+                "opens screen" if row.target_kind == "screen" else "in Library"
+            )
+            button.label = (
+                f"{marker} {_visible_row_title(row.title)}{count_suffix}"
+                f"\n    {section_hint}"
+            )
+            if button.has_class("library-rail-row-selected") != selected:
+                button.set_class(selected, "library-rail-row-selected")
+
     def _section_open(self, section_id: str) -> bool:
         return bool(getattr(self.preferences, f"{section_id}_open", True))
 

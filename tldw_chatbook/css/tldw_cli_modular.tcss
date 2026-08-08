@@ -8915,7 +8915,7 @@ LibraryIngestCanvas #library-ingest-latest-batch {
 }
 
 #library-canvas.library-notes-compact #library-notes-filter-label {
-    width: 7;
+    width: 8;
     height: 1;
     padding: 0 1;
 }

@@ -12,6 +12,10 @@ from tldw_chatbook.Library.library_notes_state import (
     LibraryNotesListState,
 )
 from tldw_chatbook.Widgets.Library.library_notes_canvas import LibraryNotesCanvas
+from tldw_chatbook.Library.library_notes_session import (
+    NoteFlushOutcome,
+    NoteFlushOutcomeKind,
+)
 
 
 def _fake(select_mode):
@@ -34,6 +38,7 @@ async def test_notes_row_select_mode_toggles_and_does_not_open_editor():
 
     async def _flush():
         fake._flushed += 1
+        return NoteFlushOutcome(NoteFlushOutcomeKind.PERMITTED)
 
     fake._flush_library_note_save = _flush
     ev = SimpleNamespace(button=SimpleNamespace(note_id="n9"), stop=lambda: None)

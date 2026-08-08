@@ -12302,8 +12302,17 @@ async def test_library_shell_discard_new_note_disappears_after_edit_or_noop_save
         screen.query_one("#library-row-create-note").press()
         await _wait_for_selector(screen, pilot, "#library-notes-create-blank")
         screen.query_one("#library-notes-create-blank").press()
-        discard = await _wait_for_selector(screen, pilot, "#library-note-discard-new")
-        assert discard.display is True
+        await screen.workers.wait_for_complete()
+        await pilot.pause()
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                bool(screen.query("#library-note-discard-new"))
+                and screen.query_one("#library-note-discard-new", Button).display
+            ),
+            message="Discard new note never became visible after create.",
+        )
+        assert screen.query_one("#library-note-discard-new", Button).display is True
 
         if acknowledge == "edit":
             screen.query_one("#library-note-title", Input).value = "Kept note"
@@ -21576,6 +21585,10 @@ async def test_library_note_keyboard_focus_order_and_persistent_labels(
         filter_label = screen.query_one("#library-notes-filter-label", Static)
         assert str(filter_label.renderable) == "Filter"
         assert filter_label.region.width > 0 and filter_label.region.height == 1
+        if compact:
+            # Width includes one cell of horizontal padding on each side.
+            # Six visible label cells therefore require at least eight cells.
+            assert filter_label.region.width >= 8
         await _task10_activate_with_keyboard(screen, pilot, "#library-notes-row-0")
         await _wait_for_selector(screen, pilot, "#library-note-body")
         await pilot.pause()
@@ -21821,6 +21834,75 @@ async def test_library_note_fifty_same_side_resize_sequences_do_zero_notes_work(
             await pilot.pause()
             assert screen.query_one("#library-note-body") is body
             assert body.region.height == 20
+
+
+@pytest.mark.asyncio
+async def test_library_note_stage_visibility_skips_redundant_class_work() -> None:
+    """An unchanged wide presentation does not re-run stylesheet matching."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=(120, 30)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _wait_for_library_notes_compact(screen, pilot, False)
+        await _task10_open_notes_navigator(screen, pilot)
+
+        shell = screen.query_one("#library-shell-grid")
+        rail = screen.query_one("#library-rail")
+        canvas_host = screen.query_one("#library-canvas")
+        notes_canvas = screen.query_one("#library-notes-canvas", LibraryNotesCanvas)
+        class_mutators = []
+        for widget in (shell, rail, canvas_host):
+            wrapped = Mock(wraps=widget.set_class)
+            widget.set_class = wrapped
+            class_mutators.append(wrapped)
+        apply_compact = Mock(wraps=notes_canvas.apply_compact_presentation)
+        notes_canvas.apply_compact_presentation = apply_compact
+
+        screen._apply_library_notes_stage_visibility()
+
+        assert all(mutator.call_count == 0 for mutator in class_mutators)
+        apply_compact.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_library_note_media_route_switch_preserves_shell_surfaces() -> None:
+    """Notes/Media route changes replace only the active canvas subtree."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=(120, 30)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _wait_for_library_notes_compact(screen, pilot, False)
+        await _task10_open_notes_navigator(screen, pilot)
+        await _task10_activate_with_keyboard(screen, pilot, "#library-notes-row-0")
+        await _wait_for_selector(screen, pilot, "#library-note-body")
+
+        header = screen.query_one("#library-header-line")
+        shell = screen.query_one("#library-shell-grid")
+        rail = screen.query_one("#library-rail")
+        canvas_host = screen.query_one("#library-canvas")
+
+        await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_MEDIA)
+        await _wait_for_selector(screen, pilot, "#library-media-list")
+        assert screen.query_one("#library-header-line") is header
+        assert screen.query_one("#library-shell-grid") is shell
+        assert screen.query_one("#library-rail") is rail
+        assert screen.query_one("#library-canvas") is canvas_host
+
+        await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_NOTES)
+        await _wait_for_selector(screen, pilot, "#library-notes-filter")
+        assert screen.query_one("#library-header-line") is header
+        assert screen.query_one("#library-shell-grid") is shell
+        assert screen.query_one("#library-rail") is rail
+        assert screen.query_one("#library-canvas") is canvas_host
+        assert screen.query_one("#library-row-browse-notes").has_class(
+            "library-rail-row-selected"
+        )
 
 
 @pytest.mark.asyncio

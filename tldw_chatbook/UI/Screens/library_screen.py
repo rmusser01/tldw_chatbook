@@ -235,6 +235,7 @@ from ...Library.library_shell_state import (
     LIBRARY_ROW_INGEST_EXPORT,
     LIBRARY_ROW_INGEST_MEDIA,
     LibraryShellInput,
+    LibraryShellState,
     build_library_shell_state,
 )
 from ...Local_Ingestion.parakeet_v2_artifact import (
@@ -1730,7 +1731,7 @@ class LibraryScreen(BaseAppScreen):
     }
 
     #library-canvas.library-notes-compact #library-notes-filter-label {
-        width: 7;
+        width: 8;
         height: 1;
         padding: 0 1;
     }
@@ -3550,19 +3551,28 @@ class LibraryScreen(BaseAppScreen):
             canvas = self.query_one("#library-canvas", Widget)
         except (NoMatches, QueryError):
             return
-        for widget in (shell, rail, canvas):
-            widget.set_class(self._library_notes_compact, "library-notes-compact")
+        # Only the grid and canvas host participate in compact CSS selectors;
+        # tagging the rail and inner Notes canvas forced two needless global
+        # stylesheet matches on every breakpoint crossing.
+        for widget in (shell, canvas):
+            if widget.has_class("library-notes-compact") != self._library_notes_compact:
+                widget.set_class(self._library_notes_compact, "library-notes-compact")
         try:
             notes_canvas = canvas.query_one("#library-notes-canvas", LibraryNotesCanvas)
         except (NoMatches, QueryError):
             pass
         else:
-            notes_canvas.apply_compact_presentation(self._library_notes_compact)
+            if notes_canvas.compact != self._library_notes_compact:
+                notes_canvas.apply_compact_presentation(self._library_notes_compact)
         single_stage = (
             self._library_notes_compact and self._library_notes_compact_stage_applies()
         )
-        rail.display = not single_stage or self._library_notes_stage == "rail"
-        canvas.display = not single_stage or self._library_notes_stage == "notes"
+        rail_display = not single_stage or self._library_notes_stage == "rail"
+        canvas_display = not single_stage or self._library_notes_stage == "notes"
+        if rail.display != rail_display:
+            rail.display = rail_display
+        if canvas.display != canvas_display:
+            canvas.display = canvas_display
 
     def _transition_library_notes_presentation(
         self,
@@ -7147,7 +7157,6 @@ class LibraryScreen(BaseAppScreen):
                 classes="destination-workbench-pane",
             )
             rail.styles.height = "100%"
-            rail.set_class(self._library_notes_compact, "library-notes-compact")
             rail.display = not single_notes_stage or self._library_notes_stage == "rail"
             yield rail
             canvas_host = Vertical(
@@ -10856,6 +10865,78 @@ class LibraryScreen(BaseAppScreen):
         # Unknown target kind: select the row and recompose from selection.
         await self._select_library_rail_row(row_id)
 
+    async def _replace_library_browse_canvas(self, shell: LibraryShellState) -> bool:
+        """Replace a Notes/Media list canvas without rebuilding the shell.
+
+        Notes and Media are the high-frequency browse routes exercised by the
+        adaptive Notes workflow. Their list canvases can be rebuilt in the
+        existing canvas host while the header, rail, and workbench grid retain
+        identity. Other routes keep the central whole-screen recompose seam.
+
+        Args:
+            shell: Latest normalized Library shell state.
+
+        Returns:
+            True when the targeted update completed; False when the caller
+            should use the whole-screen fallback.
+        """
+        try:
+            if shell.canvas_kind == "notes":
+                if self._library_notes_view != "list":
+                    return False
+                canvas: Widget = LibraryNotesCanvas(
+                    self._build_library_notes_state(),
+                    sort_mode=self._library_notes_sort,
+                    filter_value=self._library_notes_filter,
+                    compact=self._library_notes_compact,
+                    id="library-notes-canvas",
+                )
+            elif shell.canvas_kind == "media":
+                if self._library_media_view != "list":
+                    return False
+                media_state = self._build_library_media_state()
+                self._selected_media_id = media_state.selected_id
+                canvas = LibraryMediaCanvas(
+                    media_state,
+                    id="library-media-canvas",
+                )
+            else:
+                return False
+
+            header = self.query_one("#library-header-line", Static)
+            rail = self.query_one("#library-rail", LibraryRail)
+            canvas_host = self.query_one("#library-canvas", Vertical)
+            if self.is_running:
+                try:
+                    self.app.capture_mouse(None)
+                except Exception:
+                    logger.debug(
+                        "Mouse-capture release before Library route update skipped.",
+                        exc_info=True,
+                    )
+            header.update(shell.header_line)
+            rail.apply_selection(shell)
+            # Hide the outgoing subtree before detaching it. Textual's
+            # compositor may still hold the previous geometry for one frame;
+            # without this guard a removed TextArea can be asked to render
+            # after its component-style context has already been released.
+            outgoing = tuple(canvas_host.children)
+            for child in outgoing:
+                child.display = False
+            await canvas_host.mount(canvas)
+            if outgoing:
+                await canvas_host.remove_children(outgoing)
+            self._apply_library_notes_stage_visibility()
+            self._apply_library_notes_footer_context()
+            return True
+        except Exception:
+            logger.debug(
+                "Targeted Library Notes/Media route update failed; falling back "
+                "to the central screen recompose seam.",
+                exc_info=True,
+            )
+            return False
+
     async def _select_library_rail_row(self, row_id: str) -> None:
         """Apply a rail-row selection and recompose the canvas from it.
 
@@ -10990,7 +11071,13 @@ class LibraryScreen(BaseAppScreen):
                 wait_for_recompose=True,
             )
             return
-        await self.recompose()
+        shell = build_library_shell_state(
+            self._build_library_shell_input(),
+            selected_row_id=self._library_selected_row_id,
+        )
+        self._library_selected_row_id = shell.selected_row_id
+        if not await self._replace_library_browse_canvas(shell):
+            self.refresh(recompose=True)
         # task-2856 AC1: a rail-row press landing on one of the four list
         # canvases focuses its primary list's first row -- the entry-point
         # half of the same seam ``_exit_library_skill_editor_guarded`` /
