@@ -28,6 +28,11 @@ UNASSIGNED_BUCKET = -1
 # from `get_flagged_items_count()` on every tree-data load, so the badge
 # refreshes through the existing debounced counts path.
 STARRED_BUCKET = -3
+# The Today smart feed (TASK-3603 plan task 4): unread items at/after local
+# midnight, from `get_unread_items_count_since`. All Unread needs no bucket
+# of its own -- its badge is the same unread count `ALL_SOURCES_BUCKET`
+# already carries (one fact, two angles).
+TODAY_BUCKET = -4
 
 # App-controlled constant, never user data: the same markup rule as the
 # article list's glyphs (`_STAR_GLYPH` there) -- a remote feed title never
@@ -39,7 +44,7 @@ _STARRED_LABEL = "★ Starred"
 class TreeScope:
     """What the user has selected, as the panes need to understand it."""
 
-    kind: Literal["all", "unassigned", "watchlist", "source", "starred"]
+    kind: Literal["all", "unassigned", "watchlist", "source", "starred", "unread", "today"]
     watchlist_id: int | None = None
     source_id: int | None = None
 
@@ -217,6 +222,12 @@ class WatchlistTree(Vertical):
         )
         yield self._root_node("all", "All sources", ALL_SOURCES_BUCKET)
         yield self._root_node("unassigned", "Unassigned", UNASSIGNED_BUCKET)
+        # TASK-3603 plan task 4: the smart-feed cluster. All Unread reads
+        # the same bucket as All sources (its badge IS the global unread
+        # count); Today's rides TODAY_BUCKET, which the screen inserts from
+        # the local-midnight unread count on every tree-data load.
+        yield self._root_node("unread", "All Unread", ALL_SOURCES_BUCKET)
+        yield self._root_node("today", "Today", TODAY_BUCKET)
         yield self._root_node(
             "starred",
             _STARRED_LABEL,
@@ -421,9 +432,9 @@ class WatchlistTree(Vertical):
             tooltip=f"Show {label.lower()}. {phrase_fn(count)}.",
         )
         button.add_class("watchlist-tree-root")
-        # `key` is a root kind -- "all", "unassigned" or "starred" (the only
-        # three callers, in `compose()`) -- each also a valid
-        # `TreeScope.kind` value.
+        # `key` is a root kind -- "all", "unassigned", "unread", "today" or
+        # "starred" (the only five callers, in `compose()`) -- each also a
+        # valid `TreeScope.kind` value.
         if self.active_scope == TreeScope(kind=key):
             button.add_class("is-active")
         return button
@@ -562,6 +573,10 @@ class WatchlistTree(Vertical):
             scope = TreeScope(kind="all")
         elif button_id == "wl-tree-node-unassigned":
             scope = TreeScope(kind="unassigned")
+        elif button_id == "wl-tree-node-unread":
+            scope = TreeScope(kind="unread")
+        elif button_id == "wl-tree-node-today":
+            scope = TreeScope(kind="today")
         elif button_id == "wl-tree-node-starred":
             scope = TreeScope(kind="starred")
         elif button_id.startswith("wl-tree-node-watchlist-"):

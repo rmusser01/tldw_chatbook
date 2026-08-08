@@ -485,6 +485,99 @@ async def test_items_reload_scopes_to_starred():
         }
 
 
+# --- TASK-3603 plan task 4: All Unread + Today scopes --------------------------
+
+
+@pytest.mark.asyncio
+async def test_items_reload_scopes_to_all_unread():
+    """All Unread: every source's unread items, membership irrelevant."""
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+        db = app.watchlist_bundle_service._db
+        arxiv = db.add_subscription(
+            name="ArXiv", type="rss", source="https://a.example/f"
+        )
+        krebs = db.add_subscription(
+            name="Krebs", type="rss", source="https://b.example/f"
+        )
+        _seed_item(db, arxiv, "Unread from ArXiv")
+        read_id = _seed_item(db, krebs, "Read from Krebs")
+        _seed_item(db, krebs, "Unread from Krebs")
+        db.mark_item_status(read_id, "reviewed")
+
+        screen._apply_tree_scope(TreeScope(kind="unread"))
+        await screen._load_items()
+
+        assert {item["title"] for item in screen._loaded_items} == {
+            "Unread from ArXiv",
+            "Unread from Krebs",
+        }
+
+
+@pytest.mark.asyncio
+async def test_all_unread_scope_wins_over_the_all_filter():
+    """The node is the stronger statement: All Unread + the pane's "All"
+    filter must still show unread only -- and must never trip the
+    status-vs-statuses ValueError in `get_new_items`."""
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+        db = app.watchlist_bundle_service._db
+        source_id = db.add_subscription(
+            name="ArXiv", type="rss", source="https://a.example/f"
+        )
+        _seed_item(db, source_id, "Still unread")
+        read_id = _seed_item(db, source_id, "Already read")
+        db.mark_item_status(read_id, "reviewed")
+
+        screen._apply_tree_scope(TreeScope(kind="unread"))
+        pane = screen.query_one("#watchlists-items-pane", ArticleListPane)
+        # The pane's "All" filter would normally widen the query to the
+        # reader statuses; under the All Unread scope it must not.
+        pane.status_filter = "all"
+        await screen._load_items()
+
+        assert [item["title"] for item in screen._loaded_items] == ["Still unread"]
+
+
+@pytest.mark.asyncio
+async def test_items_reload_scopes_to_today():
+    """Today: effective date at/after local midnight, across every source."""
+    from datetime import datetime, timedelta, timezone
+
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+        db = app.watchlist_bundle_service._db
+        source_id = db.add_subscription(
+            name="ArXiv", type="rss", source="https://a.example/f"
+        )
+        now = datetime.now(timezone.utc)
+        fresh = _seed_item(db, source_id, "Fresh today")
+        stale = _seed_item(db, source_id, "From yesterday")
+        with db.transaction() as conn:
+            conn.execute(
+                "UPDATE subscription_items SET published_date = ? WHERE id = ?",
+                (now.isoformat(), fresh),
+            )
+            conn.execute(
+                "UPDATE subscription_items SET published_date = ? WHERE id = ?",
+                ((now - timedelta(hours=25)).isoformat(), stale),
+            )
+
+        screen._apply_tree_scope(TreeScope(kind="today"))
+        await screen._load_items()
+
+        assert [item["title"] for item in screen._loaded_items] == ["Fresh today"]
+
+
 @pytest.mark.asyncio
 async def test_tree_move_triggers_items_reload_on_read_tab():
     """Moving the tree while on the Read tab re-fetches the items list.
@@ -2660,9 +2753,21 @@ async def test_clearing_the_search_restores_the_unsearched_page():
         assert screen._loaded_items == [], "the corpus query returned nothing"
         assert pane.displayed_items() == []
 
-        # The empty-page reload recomposed the pane, so the Input handle from
-        # before it is a dead widget -- re-query before the second edit.
+        # The empty-page reload recomposes the pane, rebuilding the Input --
+        # and the recompose lands asynchronously, so even a FRESH query can
+        # return the about-to-be-destroyed widget. Let it settle, re-query,
+        # and then prove propagation through the screen's mirror before
+        # waiting on the reload (a dead handle would stall every later
+        # wait with no signal).
+        await pilot.pause(0.5)
         screen.query_one("#items-search-input", Input).value = ""
+        for _ in range(80):
+            await pilot.pause(0.05)
+            if screen._items_search_query == "":
+                break
+        assert screen._items_search_query == "", (
+            "the clear must reach the screen's mirror"
+        )
         for _ in range(80):
             await pilot.pause(0.05)
             if len(screen._loaded_items) == 2:

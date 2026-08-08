@@ -5,6 +5,7 @@ from textual.widgets import Button, Static
 
 from tldw_chatbook.UI.Watchlists_Modules.watchlist_tree import (
     STARRED_BUCKET,
+    TODAY_BUCKET,
     AddSourceToWatchlistRequested,
     CreateWatchlistRequested,
     DeleteWatchlistRequested,
@@ -671,3 +672,56 @@ async def test_active_scope_starred_marks_the_starred_root_active():
     async with app.run_test():
         assert app.query_one("#wl-tree-node-starred", Button).has_class("is-active")
         assert not app.query_one("#wl-tree-node-all", Button).has_class("is-active")
+
+
+# --- TASK-3603 plan task 4: All Unread + Today smart feeds ---------------------
+
+
+def _phase3_data(today: int = 2):
+    data = _starred_data(5)
+    data["counts"][TODAY_BUCKET] = {"total": today, "unread": today}
+    return data
+
+
+@pytest.mark.asyncio
+async def test_unread_and_today_roots_render_in_the_smart_feed_cluster():
+    """NNW's standing smart feeds: All Unread and Today sit with Starred,
+    above the watchlists. All Unread's badge is the same unread count the
+    All sources root shows (one fact, two angles); Today's is the
+    unread-since-local-midnight count the screen inserts."""
+    app = _TreeApp(_phase3_data())
+    async with app.run_test():
+        assert str(app.query_one("#wl-tree-node-unread", Button).label) == "All Unread  37"
+        assert str(app.query_one("#wl-tree-node-today", Button).label) == "Today  2"
+        ids = [node.id for node in app.query(Button)]
+        assert ids.index("wl-tree-node-unassigned") < ids.index("wl-tree-node-unread")
+        assert ids.index("wl-tree-node-unread") < ids.index("wl-tree-node-today")
+        assert ids.index("wl-tree-node-today") < ids.index("wl-tree-node-starred")
+        assert ids.index("wl-tree-node-starred") < ids.index("wl-tree-node-watchlist-1")
+
+
+@pytest.mark.asyncio
+async def test_today_root_without_a_count_renders_zero():
+    app = _TreeApp(_starred_data(5))
+    async with app.run_test():
+        assert str(app.query_one("#wl-tree-node-today", Button).label) == "Today  0"
+
+
+@pytest.mark.asyncio
+async def test_selecting_unread_and_today_post_their_scopes():
+    app = _TreeApp(_phase3_data())
+    async with app.run_test() as pilot:
+        await pilot.click("#wl-tree-node-unread")
+        await pilot.pause()
+        assert app.scopes[-1] == TreeScope(kind="unread")
+        await pilot.click("#wl-tree-node-today")
+        await pilot.pause()
+        assert app.scopes[-1] == TreeScope(kind="today")
+
+
+@pytest.mark.asyncio
+async def test_active_scope_today_marks_the_today_root_active():
+    app = _TreeApp(_phase3_data(), active_scope=TreeScope(kind="today"))
+    async with app.run_test():
+        assert app.query_one("#wl-tree-node-today", Button).has_class("is-active")
+        assert not app.query_one("#wl-tree-node-unread", Button).has_class("is-active")

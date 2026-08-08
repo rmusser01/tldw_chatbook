@@ -191,6 +191,7 @@ from ..Watchlists_Modules.sources_pane import (
 from ..Watchlists_Modules.watchlist_tree import (
     ALL_SOURCES_BUCKET,
     STARRED_BUCKET,
+    TODAY_BUCKET,
     AddSourceToWatchlistRequested,
     CreateWatchlistRequested,
     DeleteWatchlistRequested,
@@ -1149,6 +1150,11 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             counts = dict(service.get_watchlist_item_counts())
             starred = service.get_flagged_items_count()
             counts[STARRED_BUCKET] = {"total": starred, "unread": starred}
+            # TASK-3603 plan task 4: the Today badge rides the same mapping
+            # -- unread items at/after local midnight, so the badge and the
+            # node's page answer the same question.
+            today = service.get_unread_items_count_since(self._today_floor_iso())
+            counts[TODAY_BUCKET] = {"total": today, "unread": today}
             self._tree_counts = counts
             self._tree_source_counts = service.get_source_item_counts()
         except Exception:
@@ -1777,6 +1783,10 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         scope = self.tree_scope
         if scope.kind == "starred":
             return "Starred"
+        if scope.kind == "unread":
+            return "All Unread"
+        if scope.kind == "today":
+            return "Today"
         if scope.kind == "unassigned":
             return "Unassigned"
         if scope.kind == "watchlist" and scope.watchlist_id is not None:
@@ -5113,10 +5123,11 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             backend listing's own order. Every loaded source when the scope is
             `all`, or when the runtime backend is not `local`.
         """
-        if self.tree_scope.kind in ("all", "starred") or self.runtime_backend != "local":
-            # `starred` scopes the ITEMS list (a flag predicate), not the
-            # Sources table -- every source can hold a starred item, so the
-            # truthful listing here is the same unscoped one `all` gets.
+        if self.tree_scope.kind in ("all", "starred", "unread", "today") or self.runtime_backend != "local":
+            # The smart feeds scope the ITEMS list (a flag/status/date
+            # predicate), not the Sources table -- every source can hold an
+            # unread/starred/today item, so the truthful listing here is the
+            # same unscoped one `all` gets.
             return list(self._loaded_sources)
         allowed = {
             str(row.get("id")) for row in self.scoped_source_rows() if row.get("id") is not None
@@ -8489,6 +8500,14 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             # global (same ADR-018 semantics as the briefing queue), so no
             # membership predicate -- just the flag itself.
             return {"is_flagged": True}
+        if scope.kind == "unread":
+            # TASK-3603 plan task 4: All Unread. The node forces the unread
+            # bucket regardless of the pane's filter -- `_load_items` drops
+            # any `statuses` kwarg when this scope is active, because the
+            # DB raises on status+statuses together.
+            return {"status": "new"}
+        if scope.kind == "today":
+            return {"since": self._today_floor_iso()}
         if scope.kind == "source" and scope.source_id is not None:
             return {"source_id": scope.source_id}
         if scope.kind == "watchlist" and scope.watchlist_id is not None:
@@ -8496,6 +8515,21 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         if scope.kind == "unassigned":
             return {"unassigned_only": True}
         return {}
+
+    @staticmethod
+    def _today_floor_iso() -> str:
+        """Local midnight tonight's floor, as a UTC ISO string (TASK-3603).
+
+        The Today feed is a LOCAL-day concept (the user's "today"), while
+        `subscription_items` dates are UTC ISO -- so the floor is computed
+        in local time and converted back to UTC before it reaches the
+        `COALESCE(published_date, created_at) >= ?` string comparison, which
+        is exact only between same-shape ISO strings.
+        """
+        local_midnight = datetime.now().astimezone().replace(
+            hour=0, minute=0, second=0, microsecond=0
+        )
+        return local_midnight.astimezone(timezone.utc).isoformat()
 
     def _with_open_item(
         self, page: list[dict[str, Any]]
@@ -8566,13 +8600,23 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             # query (the corpus-wide FTS path, falling back to LIKE), not a
             # client-side-only filter over the newest 100.
             query = self._items_search_query.strip()
+            items_kwargs = {
+                **self._items_status_kwargs(),
+                **self._items_scope_query(),
+                **({"search": query} if query else {}),
+            }
+            if self.tree_scope.kind == "unread":
+                # TASK-3603 plan task 4: the All Unread node forces the
+                # unread bucket (its scope kwarg above), so the filter's
+                # `statuses` must not ride along -- `get_new_items` raises
+                # on status and statuses together, and widening the list to
+                # the reader statuses would make the node lie besides.
+                items_kwargs.pop("statuses", None)
             items = await self._controller.list_items(
                 runtime_backend=self.runtime_backend,
                 limit=100,
                 offset=0,
-                **self._items_status_kwargs(),
-                **self._items_scope_query(),
-                **({"search": query} if query else {}),
+                **items_kwargs,
             )
             # Mirror to screen state (Finding 2, fix round 2) — see the note
             # on `_loaded_sources` in `_load_sources` above; same rebuild,
