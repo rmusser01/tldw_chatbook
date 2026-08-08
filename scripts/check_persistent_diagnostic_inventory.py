@@ -1,5 +1,13 @@
 #!/usr/bin/env python3
-"""Check the reviewed inventory of production diagnostics and disk sinks."""
+"""Check the reviewed inventory of production diagnostics and disk sinks.
+
+The inventory is keyed on the CONTENT of each diagnostic and sink -- the
+statement's own source text plus its log method -- and never on where in the
+file it sits.  Moving a logger call is therefore not a review event, while
+adding, deleting, rewording, or re-levelling one still is.  See task-3750: a
+digest that fires on pure line movement trains reviewers to regenerate this
+file without reading it, which is the one failure mode it exists to prevent.
+"""
 
 from __future__ import annotations
 
@@ -100,16 +108,44 @@ def _is_diagnostic_call(node: ast.Call, logger_symbols: set[str]) -> bool:
     )
 
 
+def _scope_names(tree: ast.Module) -> dict[int, str]:
+    """Map every node to the dotted name of its enclosing def/class scope.
+
+    Used to give persistent-sink entries a human navigation handle that, unlike
+    a line number, survives unrelated edits elsewhere in the file.
+    """
+    names: dict[int, str] = {}
+
+    def visit(node: ast.AST, prefix: str) -> None:
+        for child in ast.iter_child_nodes(node):
+            if isinstance(
+                child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+            ):
+                child_prefix = f"{prefix}.{child.name}" if prefix else child.name
+            else:
+                child_prefix = prefix
+            names[id(child)] = child_prefix
+            visit(child, child_prefix)
+
+    visit(tree, "")
+    return names
+
+
 def _call_entry(
-    path: Path,
     source: str,
     node: ast.Call,
     *,
     kind: str | None = None,
+    scope: str | None = None,
 ) -> dict[str, Any]:
+    """Describe one call by its CONTENT.
+
+    The entry deliberately carries no line number or byte offset: a call that
+    moves within a file is not a review event, while any change to the
+    statement's own text (message, level, arguments) changes ``digest``.
+    """
     segment = ast.get_source_segment(source, node) or ""
     return {
-        "line": node.lineno,
         "method": (
             node.func.attr
             if isinstance(node.func, ast.Attribute)
@@ -119,7 +155,22 @@ def _call_entry(
         ),
         "digest": hashlib.sha256(segment.encode("utf-8")).hexdigest()[:16],
         **({"kind": kind} if kind else {}),
+        **({"scope": scope or "<module>"} if scope is not None else {}),
     }
+
+
+def diagnostic_digest(diagnostics: list[dict[str, Any]]) -> str:
+    """Digest a file's diagnostics by content, independently of their order.
+
+    The projection is a sorted LIST, never a set, so multiplicity is part of
+    the digest: deleting one of two identical logger calls still changes it.
+    """
+    content = sorted(
+        (entry["method"], entry["digest"]) for entry in diagnostics
+    )
+    return hashlib.sha256(
+        json.dumps(content, sort_keys=True).encode("utf-8")
+    ).hexdigest()[:20]
 
 
 def _owner(path_text: str) -> tuple[str, str]:
@@ -134,17 +185,20 @@ def _owner(path_text: str) -> tuple[str, str]:
     )
 
 
-def _scan_file(path: Path) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    source = path.read_text(encoding="utf-8")
-    tree = ast.parse(source, filename=str(path))
+def scan_source(
+    source: str, *, filename: str = "<source>"
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Return the (diagnostics, sinks) content entries for one module's source."""
+    tree = ast.parse(source, filename=filename)
     symbols = _logger_symbols(tree)
+    scopes = _scope_names(tree)
     diagnostics: list[dict[str, Any]] = []
     sinks: list[dict[str, Any]] = []
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
             continue
         if _is_diagnostic_call(node, symbols):
-            diagnostics.append(_call_entry(path, source, node))
+            diagnostics.append(_call_entry(source, node))
         parts = _attribute_parts(node.func)
         call_name = parts[-1] if parts else ""
         is_loguru_add = call_name == "add" and any(
@@ -160,15 +214,26 @@ def _scan_file(path: Path) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         ):
             sinks.append(
                 _call_entry(
-                    path,
                     source,
                     node,
                     kind="loguru_sink" if is_loguru_add else call_name,
+                    scope=scopes.get(id(node), ""),
                 )
             )
-    diagnostics.sort(key=lambda entry: (entry["line"], entry["method"]))
-    sinks.sort(key=lambda entry: (entry["line"], entry["method"]))
+    diagnostics.sort(key=lambda entry: (entry["method"], entry["digest"]))
+    sinks.sort(
+        key=lambda entry: (
+            entry["scope"],
+            entry["kind"],
+            entry["method"],
+            entry["digest"],
+        )
+    )
     return diagnostics, sinks
+
+
+def _scan_file(path: Path) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    return scan_source(path.read_text(encoding="utf-8"), filename=str(path))
 
 
 def build_inventory() -> dict[str, Any]:
@@ -179,16 +244,13 @@ def build_inventory() -> dict[str, Any]:
         diagnostics, sinks = _scan_file(path)
         if diagnostics:
             owner, reason = _owner(relative)
-            diagnostic_digest = hashlib.sha256(
-                json.dumps(diagnostics, sort_keys=True).encode("utf-8")
-            ).hexdigest()[:20]
             owners.append(
                 {
                     "path": relative,
                     "owner": owner,
                     "reason": reason,
                     "call_count": len(diagnostics),
-                    "diagnostic_digest": diagnostic_digest,
+                    "diagnostic_digest": diagnostic_digest(diagnostics),
                 }
             )
         if sinks:
@@ -201,7 +263,10 @@ def build_inventory() -> dict[str, Any]:
         entry["call_count"] for entry in owners if entry["owner"] == "TASK-494"
     )
     return {
-        "schema_version": 1,
+        # 2: digests and sink entries are keyed on diagnostic CONTENT only.
+        # Line numbers are no longer an input, so v1 and v2 digests for an
+        # unchanged file differ and must never be compared across the bump.
+        "schema_version": 2,
         "scope": "tldw_chatbook/**/*.py",
         "classification_rules": {
             "TASK-492": {
