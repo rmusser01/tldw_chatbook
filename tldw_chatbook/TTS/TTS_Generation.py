@@ -541,13 +541,25 @@ class TTSService:
         *,
         deliberate: bool,
     ) -> AsyncIterator[_AudioCppPreparation | None]:
-        """Apply an eligible stage, then hold the shared admission side."""
+        """Fence a passive read or prepare a deliberate provider operation."""
         supervisor = self._audio_cpp_supervisor
-        if provider_id != "audio_cpp" or supervisor is None or not deliberate:
+        if provider_id != "audio_cpp" or supervisor is None:
             async with self._request_admission._gate.read():
                 token = self._audio_cpp_preparation.set(None)
                 try:
                     yield None
+                finally:
+                    self._audio_cpp_preparation.reset(token)
+            return
+
+        if not deliberate:
+            async with self._request_admission._gate.read():
+                passive_preparation = _AudioCppPreparation(
+                    require_existing=supervisor.admission_snapshot()
+                )
+                token = self._audio_cpp_preparation.set(passive_preparation)
+                try:
+                    yield passive_preparation
                 finally:
                     self._audio_cpp_preparation.reset(token)
             return
@@ -962,6 +974,7 @@ class TTSService:
             for model_id in model_ids
         }
         primary_error: BaseException | None = None
+        preparation = self._audio_cpp_preparation.get()
         try:
             async with asyncio.timeout_at(deadline):
                 if already_prepared:
@@ -974,12 +987,13 @@ class TTSService:
                     (
                         revision,
                         lease,
+                        preparation,
                     ) = await self._request_admission.acquire_native_capability_lease(
                         provider_id
                     )
                 with _adapter_admission_scope(
                     lease.adapter,
-                    self._audio_cpp_preparation.get(),
+                    preparation,
                 ):
                     result = await self._observe_native_capabilities(
                         provider_id,
@@ -1412,10 +1426,13 @@ class TTSService:
         """Read a catalog while the caller owns the shared admission side."""
         lease = await self.registry.acquire(provider_id)
         try:
+            preparation = self._audio_cpp_preparation.get()
             with _adapter_admission_scope(
                 lease.adapter,
-                self._audio_cpp_preparation.get(),
+                preparation,
             ):
+                if provider_id == "audio_cpp" and preparation is not None:
+                    await lease.adapter.ensure_ready()
                 return await lease.adapter.get_catalog(refresh=refresh)
         finally:
             await lease.release()

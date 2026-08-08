@@ -116,6 +116,7 @@ class _PreparationSupervisor:
         self.process_generation = 0
         self.observation_version = 0
         self.ensure_calls = 0
+        self.ensure_requirements: list[AudioCppProcessAdmissionSnapshot | None] = []
         self.launches = 0
         self.stop_calls = 0
         self.close_calls = 0
@@ -168,6 +169,7 @@ class _PreparationSupervisor:
         require_existing: AudioCppProcessAdmissionSnapshot | None = None,
     ) -> AudioCppReadyEndpoint:
         self.ensure_calls += 1
+        self.ensure_requirements.append(require_existing)
         if self.change_before_ensure:
             self.change_before_ensure = False
             if self.hooks is not None:
@@ -180,6 +182,7 @@ class _PreparationSupervisor:
             require_existing.lifecycle_epoch != self.lifecycle_epoch
             or require_existing.process_generation != self.process_generation
             or require_existing.state != self.state
+            or self.state not in {"starting", "running", "unhealthy"}
         ):
             raise _AudioCppGenerationChanged
         if self.state in {"draining", "stopping"}:
@@ -442,6 +445,27 @@ async def test_console_and_roleplay_admission_apply_stage_before_read_gate(
 
 
 @pytest.mark.asyncio
+async def test_default_first_available_launches_applied_managed_first_use(
+    tmp_path: Path,
+) -> None:
+    supervisor = _PreparationSupervisor()
+    managed = _managed_config(tmp_path, "default-first-use", 19_120)
+    service, _factory_configs = _service(managed, supervisor)
+
+    try:
+        response = await service.synthesize_default(text="first managed line")
+        audio = [chunk async for chunk in response.byte_stream]
+        await response.aclose()
+
+        assert response.model_id == "model"
+        assert audio == [_wav()]
+        assert supervisor.launches == 1
+    finally:
+        await service.close()
+        await service.wait_closed()
+
+
+@pytest.mark.asyncio
 async def test_passive_service_capability_paths_neither_apply_nor_launch(
     tmp_path: Path,
 ) -> None:
@@ -487,6 +511,57 @@ async def test_profile_capability_validation_stays_unverified_without_launch(
         assert (
             await service.registry.provider_configuration_snapshot("audio_cpp")
         ).staged_config is not None
+    finally:
+        await service.close()
+        await service.wait_closed()
+
+
+@pytest.mark.asyncio
+async def test_applied_managed_capability_read_never_launches_stopped_child(
+    tmp_path: Path,
+) -> None:
+    supervisor = _PreparationSupervisor()
+    managed = _managed_config(tmp_path, "applied-passive", 19_118)
+    service, _factory_configs = _service(managed, supervisor)
+
+    try:
+        snapshot = await service.get_native_capability_snapshot(
+            "audio_cpp",
+            ("model",),
+        )
+
+        assert snapshot.state == "unverified"
+        assert snapshot.catalog is None
+        assert supervisor.launches == 0
+        assert supervisor.state == "stopped"
+        assert supervisor.ensure_requirements[-1] is not None
+    finally:
+        await service.close()
+        await service.wait_closed()
+
+
+@pytest.mark.asyncio
+async def test_passive_capability_read_never_restarts_changed_managed_generation(
+    tmp_path: Path,
+) -> None:
+    supervisor = _PreparationSupervisor()
+    managed = _managed_config(tmp_path, "passive-generation-race", 19_119)
+    service, _factory_configs = _service(managed, supervisor)
+
+    try:
+        await service.get_catalog("audio_cpp", refresh=True)
+        assert supervisor.launches == 1
+        supervisor.change_before_ensure = True
+
+        snapshot = await service.get_native_capability_snapshot(
+            "audio_cpp",
+            ("model",),
+        )
+
+        assert snapshot.state == "unverified"
+        assert supervisor.launches == 1
+        assert supervisor.state == "unavailable"
+        assert supervisor.ensure_requirements[-1] is not None
     finally:
         await service.close()
         await service.wait_closed()

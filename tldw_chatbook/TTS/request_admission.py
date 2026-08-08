@@ -39,6 +39,7 @@ if TYPE_CHECKING:
     from tldw_chatbook.TTS.TTS_Generation import (
         TTSService,
         _AdmittedTTSOperation,
+        _AudioCppPreparation,
         _OperationCapacityReservation,
     )
 
@@ -425,14 +426,15 @@ class TTSRequestAdmissionCoordinator:
     async def acquire_native_capability_lease(
         self,
         provider_id: str,
-    ) -> tuple[int, TTSAdapterLease]:
-        """Acquire one revision-matched lease without retaining the read gate."""
+    ) -> tuple[int, TTSAdapterLease, _AudioCppPreparation | None]:
+        """Acquire one revision-matched lease and passive process fence."""
         lease: TTSAdapterLease | None = None
+        preparation: _AudioCppPreparation | None = None
         try:
             async with self._service._prepared_provider_read(
                 provider_id,
                 deliberate=False,
-            ):
+            ) as preparation:
                 revision = self._service.configuration_revision(provider_id)
                 lease = await self._service.registry.acquire(
                     provider_id,
@@ -447,7 +449,7 @@ class TTSRequestAdmissionCoordinator:
             raise
 
         assert lease is not None
-        return revision, lease
+        return revision, lease, preparation
 
     async def synthesize_exact(
         self,
