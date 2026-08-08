@@ -44,6 +44,8 @@ from tldw_chatbook.Chat.provider_usage import ProviderUsage
 from tldw_chatbook.Chat.rag_scope import RagScope, SessionScopeHolder
 from tldw_chatbook.TTS.profile_errors import ProfileValidationError
 from tldw_chatbook.TTS.profile_types import CharacterRef
+from tldw_chatbook.Video_Generation.video_metadata import VideoGenerationMetadata
+from tldw_chatbook.Video_Generation.video_store import video_content_marker
 
 #: Maximum number of attachments a Console session may stage before send.
 MAX_PENDING_ATTACHMENTS = 5
@@ -1364,6 +1366,58 @@ class ConsoleChatStore:
         )
         self._set_message_attachments(message, attachments)
         message.generation_metadata = tuple(meta for _, _, meta in variants)
+        self._sessions[session_id].updated_at = _utc_now_iso()
+        old_leaf = self._active_leaf_by_session[session_id]
+        self._register_tree_node(session_id, message, parent_native_id=old_leaf)
+        self._active_leaf_by_session[session_id] = message.id
+        self._recompute_active_path(session_id)
+        if persist:
+            self._persist_new_message_or_defer(session_id=session_id, message=message)
+        self._bump_payload_revision(session_id)
+        return message
+
+    def append_video_message(
+        self,
+        session_id: str,
+        *,
+        video_metadata: "VideoGenerationMetadata",
+        persist: bool = False,
+    ) -> ConsoleChatMessage:
+        """Append an assistant video-generation message (task-3401.4).
+
+        The video's bytes are NOT on this message -- they live (ephemerally)
+        in the VideoStore keyed by this message's id (ADR-044). The message
+        carries the ``[video] <slug>`` marker as content and the structured
+        ``video_metadata`` (persisted as a namespaced payload in the
+        local-only ``metadata_json`` column) from which the card renders
+        both the live video and, after restart/expiry, the named tombstone
+        with a regenerate action. No attachments are created -- the v25
+        generation-metadata sidecar's position-alignment invariant is
+        untouched by design.
+
+        Args:
+            session_id: Target Console session id.
+            video_metadata: Structured facts about the generated video;
+                ``video_metadata.name`` is the slug the marker renders.
+            persist: When True, persist through the durable adapter.
+
+        Returns:
+            The LIVE internal message node (parity with
+            ``append_generation_message``).
+
+        Raises:
+            KeyError: If ``session_id`` is unknown.
+        """
+        self._session_or_raise(session_id)
+        content = video_content_marker(video_metadata.name)
+        message = ConsoleChatMessage(
+            role=ConsoleMessageRole.ASSISTANT,
+            content=content,
+            status=self._initial_status(
+                role=ConsoleMessageRole.ASSISTANT, content=content
+            ),
+            video_metadata=video_metadata,
+        )
         self._sessions[session_id].updated_at = _utc_now_iso()
         old_leaf = self._active_leaf_by_session[session_id]
         self._register_tree_node(session_id, message, parent_native_id=old_leaf)
@@ -3096,10 +3150,19 @@ class ConsoleChatStore:
             self.persistence.create_message, "usage_json"
         ):
             create_kwargs["usage_json"] = message.usage.to_json()
+        # Video generation metadata (task-3401.4): persisted under the same
+        # local-only metadata_json column as a namespaced payload. Mutually
+        # exclusive with the provenance branch below by construction -- when
+        # both are somehow set, the video payload wins because it is the
+        # load-bearing one for the tombstone card.
+        if message.video_metadata is not None and self._persistence_accepts_kwarg(
+            self.persistence.create_message, "metadata_json"
+        ):
+            create_kwargs["metadata_json"] = message.video_metadata.to_json()
         # Structured message metadata (task-2364): same declare-to-receive
         # rule, and an all-default instance is treated as "nothing to
         # record" rather than written as a row of noise.
-        if (
+        elif (
             message.metadata is not None
             and not message.metadata.is_empty
             and self._persistence_accepts_kwarg(
@@ -3246,14 +3309,24 @@ class ConsoleChatStore:
         """
         if self.persistence is None:
             return
-        if message.persisted_message_id is None or message.metadata is None:
+        if message.persisted_message_id is None or (
+            message.metadata is None and message.video_metadata is None
+        ):
             self._persist_existing_message(message)
             return
         metadata_writer = getattr(self.persistence, "update_message_metadata", None)
         if callable(metadata_writer):
+            # task-3401.4: a video row's payload lives in video_metadata and
+            # is preferred, so a metadata flush can never overwrite the
+            # video facts with an (all-defaults) provenance payload.
+            payload = (
+                message.video_metadata.to_json()
+                if message.video_metadata is not None
+                else message.metadata.to_json()
+            )
             metadata_writer(
                 message_id=message.persisted_message_id,
-                metadata_json=message.metadata.to_json(),
+                metadata_json=payload,
             )
             # Sync v2 never transmits metadata_json either, and this row's
             # content was already enqueued by whichever write persisted it
@@ -3303,8 +3376,15 @@ class ConsoleChatStore:
             update_kwargs["usage_json"] = message.usage.to_json()
         # Structured message metadata (task-2364): omitted entirely, never
         # sent as ``None``, so a content-only update cannot NULL a value
-        # already on the row.
-        if (
+        # already on the row. task-3401.4: a video row's payload lives in
+        # ``video_metadata`` and is preferred -- a content edit rewrites the
+        # same video payload (idempotent) instead of clobbering it with an
+        # all-defaults provenance payload.
+        if message.video_metadata is not None and self._persistence_accepts_kwarg(
+            self.persistence.update_message_content, "metadata_json"
+        ):
+            update_kwargs["metadata_json"] = message.video_metadata.to_json()
+        elif (
             message.metadata is not None
             and not message.metadata.is_empty
             and self._persistence_accepts_kwarg(

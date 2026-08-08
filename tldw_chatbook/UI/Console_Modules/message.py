@@ -137,6 +137,7 @@ from ...Chat.console_save_targets import (
 )
 from ...Chat.message_metadata import MessageMetadata
 from ...Chat.provider_usage import ProviderUsage
+from ...Video_Generation.video_metadata import VideoGenerationMetadata
 from ...config import get_cli_setting
 from ...Notes.notes_scope_service import ScopeType
 from ...Widgets.Console import ConsoleEditMessageModal, ConsoleEditResult, ConsoleSaveAsModal
@@ -532,7 +533,18 @@ class ConsoleMessageController:
             raw_mime = node.get("image_mime_type")
             image_mime_type = str(raw_mime) if raw_mime else None
             usage = ProviderUsage.from_json(node.get("usage_json"))
-            metadata = MessageMetadata.from_json(node.get("metadata_json"))
+            raw_metadata_json = node.get("metadata_json")
+            # task-3401.4: a video generation row's metadata_json carries the
+            # namespaced video payload instead of turn provenance -- hydrate
+            # it into video_metadata and leave ``metadata`` None (the two
+            # shapes never co-write one row; persistence prefers the video
+            # payload so a later edit cannot clobber it).
+            video_metadata = VideoGenerationMetadata.from_json(raw_metadata_json)
+            metadata = (
+                None
+                if video_metadata is not None
+                else MessageMetadata.from_json(raw_metadata_json)
+            )
             raw_id = node.get("id")
             node_persisted_id = str(raw_id) if raw_id is not None else None
             kept = bool(content) or image_data is not None
@@ -564,6 +576,7 @@ class ConsoleMessageController:
                         attachments=attachments,
                         usage=usage,
                         metadata=metadata,
+                        video_metadata=video_metadata,
                     )
                 )
             # Children re-parent to this node when kept, else pass the nearest
@@ -716,11 +729,17 @@ class ConsoleMessageController:
             # `usage_json` above -- a screen-state round trip that dropped
             # it would lose the interrupted flag and a voice row's
             # transcript status, silently re-stranding what this field
-            # exists to record.
+            # exists to record. task-3401.4: a video row's payload lives in
+            # ``video_metadata`` (mutually exclusive with ``metadata``) and
+            # is preferred here so the round trip cannot strand it either.
             "metadata_json": (
-                metadata.to_json()
-                if (metadata := getattr(message, "metadata", None)) is not None
-                else None
+                video_metadata.to_json()
+                if (video_metadata := getattr(message, "video_metadata", None)) is not None
+                else (
+                    metadata.to_json()
+                    if (metadata := getattr(message, "metadata", None)) is not None
+                    else None
+                )
             ),
         }
 
@@ -791,7 +810,19 @@ class ConsoleMessageController:
             # which is exactly the "no usage known" state.
             usage=ProviderUsage.from_json(payload.get("usage_json")),
             # Same degrade-never-raise contract for structured metadata.
-            metadata=MessageMetadata.from_json(payload.get("metadata_json")),
+            # task-3401.4: video rows hydrate into video_metadata instead
+            # (the two shapes never co-write one row).
+            metadata=(
+                None
+                if (
+                    video_metadata := VideoGenerationMetadata.from_json(
+                        payload.get("metadata_json")
+                    )
+                )
+                is not None
+                else MessageMetadata.from_json(payload.get("metadata_json"))
+            ),
+            video_metadata=video_metadata,
         )
 
     def _rehydrate_console_message_image(self, message: ConsoleChatMessage) -> None:
