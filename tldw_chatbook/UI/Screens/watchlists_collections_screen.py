@@ -452,6 +452,9 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         # TASK-3603 plan task 3: jump to the search box; typing then drives
         # the corpus-wide FTS path through the debounced reload below.
         ("/", "focus_items_search", "Search"),
+        # TASK-3603 plan task 5: refresh every active source, one aggregated
+        # toast + the new-items pill at the end -- never N toasts.
+        ("r", "refresh_all", "Refresh all"),
         ("a", "mark_all_read", "Mark all read"),
         ("u", "undo_mark_all_read", "Undo mark-all-read"),
         ("z", "toggle_region", "Collapse"),
@@ -10287,6 +10290,75 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             self.query_one("#items-search-input", Input).focus()
         except NoMatches:
             return
+
+    #: One refresh-all batch at a time (TASK-3603): a second `r` while a
+    #: batch is in flight is a no-op, not a double launch.
+    _refresh_all_in_flight = False
+
+    def action_refresh_all(self) -> None:
+        """`r`: check every active source, then say so ONCE (TASK-3603 plan
+        task 5). Same gating as the other Read-tab verbs."""
+        if self._reader_verb_blocked():
+            return
+        if self._refresh_all_in_flight:
+            return
+        self.run_worker(
+            self._refresh_all_worker(), exclusive=True, group="wl-refresh-all"
+        )
+
+    async def _refresh_all_worker(self) -> None:
+        """The batch half of `r`: launch, aggregate, notify once, pill.
+
+        Eligibility reads the normalized source dicts' `active` (already
+        `is_active AND NOT paused` -- `normalize_local_subscription_row`),
+        so a source auto-paused by repeated failures is skipped, not poked.
+        The "N new items" number is the ALL-sources unread DELTA across the
+        batch -- the same fact the rail counts, per the legend -- not a
+        per-run archaeology. One toast names the batch's shape (checks,
+        new items, failures); the tree counts refresh once, at the end,
+        through the same loader every other writer uses.
+        """
+        notify = getattr(self.app_instance, "notify", None)
+        self._refresh_all_in_flight = True
+        try:
+            eligible = [
+                source
+                for source in self._loaded_sources
+                if source.get("active") and source.get("source_id") is not None
+            ]
+            if not eligible:
+                if callable(notify):
+                    notify("Nothing to check: no active sources.")
+                return
+            before = self._tree_counts.get(ALL_SOURCES_BUCKET, {}).get("unread", 0)
+            result = await self._controller.check_all(
+                runtime_backend=self.runtime_backend,
+                source_ids=[source["source_id"] for source in eligible],
+            )
+            try:
+                await self._load_tree_data().wait()
+            except Exception:
+                logger.opt(exception=True).debug(
+                    "Refresh-all: the terminal tree reload failed."
+                )
+            after = self._tree_counts.get(ALL_SOURCES_BUCKET, {}).get("unread", 0)
+            delta = max(0, after - before)
+            checked = int(result.get("checked", 0))
+            failed = list(result.get("failed") or [])
+            message = f"Checked {checked} sources — {delta} new items"
+            if failed:
+                message += f" ({len(failed)} failed)"
+            if callable(notify):
+                notify(message)
+            if delta:
+                try:
+                    pane = self.query_one("#watchlists-items-pane", ArticleListPane)
+                except NoMatches:
+                    pane = None
+                if pane is not None:
+                    pane.show_new_items_pill(delta)
+        finally:
+            self._refresh_all_in_flight = False
 
     @on(OpenInBrowserRequested)
     def handle_open_in_browser_requested(self, event: OpenInBrowserRequested) -> None:

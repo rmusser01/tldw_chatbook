@@ -187,6 +187,41 @@ class ArticleListPane(RecomposeCaptureGuard, Vertical):
     status_filter = reactive("all", recompose=True)
     search_query = reactive("", recompose=True)
     runtime_backend = reactive("local", recompose=True)
+    #: The pill's text ("" hides it). Screen-pushed after a refresh-all --
+    #: the pane holds no counts of its own. Plain reactive, NOT
+    #: `recompose=True`: flipping it must update one Static in place, never
+    #: rebuild the ListView under the user's cursor.
+    new_items_note = reactive("")
+
+    def watch_new_items_note(self, note: str) -> None:
+        """Show/hide the pill in place (see the reactive's note above)."""
+        try:
+            pill = self.query_one("#items-new-items-pill", Static)
+        except NoMatches:
+            return
+        pill.update(note)
+        pill.display = bool(note)
+
+    def show_new_items_pill(self, count: int) -> None:
+        """Post-refresh notice: "N new items" (click reloads + dismisses).
+
+        Args:
+            count: How many new items the refresh produced; <= 0 hides the
+                pill instead of showing a nonsense badge.
+        """
+        if count <= 0:
+            self.new_items_note = ""
+            return
+        noun = "item" if count == 1 else "items"
+        self.new_items_note = f"{count} new {noun}"
+
+    def on_click(self, event) -> None:
+        """A pill click reloads (the Refresh button's own message) + dismisses."""
+        widget_id = getattr(getattr(event, "widget", None), "id", None)
+        if widget_id == "items-new-items-pill":
+            event.stop()
+            self.new_items_note = ""
+            self.post_message(RefreshItemsRequested())
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
@@ -231,6 +266,19 @@ class ArticleListPane(RecomposeCaptureGuard, Vertical):
                 allow_blank=False,
                 compact=True,
             )
+            # TASK-3603 plan task 5: the "N new items" pill. A Static, not a
+            # Button: the strip's buttons are VERBS and this is a notice you
+            # can act on (click reloads through the same message the Refresh
+            # button posts). Hidden whenever there is nothing to say; the
+            # screen owns the count (`show_new_items_pill`), this pane never
+            # computes one itself.
+            pill = Static(
+                self.new_items_note,
+                id="items-new-items-pill",
+                classes="watchlists-new-items-pill",
+            )
+            pill.display = bool(self.new_items_note)
+            yield pill
 
         filtered = self._filtered_items()
         self._rendered_items = filtered

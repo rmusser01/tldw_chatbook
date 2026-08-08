@@ -528,3 +528,36 @@ async def test_the_client_side_filter_reads_content_and_author_too():
             str(items[0]["id"]),
             str(items[1]["id"]),
         }, "content- and author-only matches must survive the client filter"
+
+
+async def test_the_new_items_pill_shows_and_click_dismisses_and_reloads():
+    """TASK-3603 plan task 5: the pill is a notice you can act on, not a
+    verb -- it appears with the count a refresh produced, and clicking it
+    asks for a reload (the strip's existing RefreshItemsRequested) while
+    dismissing itself."""
+    app = ArticleListHarness()
+    async with app.run_test(size=(120, 40)) as pilot:
+        pane = app.query_one(ArticleListPane)
+        pane.items = [_item(1)]
+        await pilot.pause()
+        pill = pane.query_one("#items-new-items-pill", Static)
+        assert pill.display is False, "precondition: hidden with nothing to say"
+
+        pane.show_new_items_pill(3)
+        await pilot.pause()
+        assert pill.display is True
+        assert "3 new items" in str(pill.renderable)
+
+        # The harness carries no project CSS, so the 1fr search box eats the
+        # strip and a pointer click lands OutOfBounds -- a layout artifact,
+        # not the behavior under test. Dispatch the Click shape directly
+        # (the same fabrication `test_watchlists_source_row_click_selects`
+        # uses for ListView.Highlighted).
+        from types import SimpleNamespace
+
+        pane.on_click(SimpleNamespace(widget=pill, stop=lambda: None))
+        await pilot.pause()
+        assert pill.display is False, "the click dismisses the pill"
+        assert ("refresh_items_requested", None) in app.captured_messages, (
+            "the click asks for the same reload the refresh button posts"
+        )

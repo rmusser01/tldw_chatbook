@@ -161,6 +161,37 @@ class WatchlistsBackendController:
         )
         return dict(result)
 
+    async def check_all(self, *, runtime_backend: str | None = None, source_ids: list[Any]) -> dict[str, Any]:
+        """Check each given source in turn (TASK-3603 plan task 5).
+
+        The refresh-half of `r`: the screen supplies the ELIGIBLE ids (it
+        owns the active/paused call), and this iterates them sequentially --
+        the local executor serializes runs already, so concurrency is not
+        this method's risk to take. A source whose check raises never stops
+        the batch; its id lands in `failed` and the rest proceed.
+
+        Args:
+            runtime_backend: Target backend, or `None` for the default.
+            source_ids: The sources to check, in check order.
+
+        Returns:
+            ``{"checked": <int>, "failed": [<source_id>, ...]}`` -- the
+            aggregate the screen's single end-of-batch toast reads from.
+        """
+        checked = 0
+        failed: list[Any] = []
+        for source_id in source_ids:
+            try:
+                await self.check_now(runtime_backend=runtime_backend, source_id=source_id)
+            except Exception:
+                logger.opt(exception=True).debug(
+                    f"Refresh-all: check failed for source {source_id}."
+                )
+                failed.append(source_id)
+            else:
+                checked += 1
+        return {"checked": checked, "failed": failed}
+
     async def import_opml(self, *, runtime_backend: str | None = None, xml_text: str) -> dict[str, Any]:
         """Import watchlist sources from an OPML document.
 

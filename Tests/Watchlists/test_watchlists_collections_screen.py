@@ -2818,3 +2818,230 @@ async def test_search_keeps_the_open_item_pinned():
         titles = [str(i.get("title")) for i in pane.displayed_items()]
         assert any("bbb" in t for t in titles), "the match is listed"
         assert any("aaa" in t for t in titles), "the open item stays pinned"
+
+
+# --- TASK-3603 plan task 5: `r` refresh-all ------------------------------------
+
+
+def _seed_checkable_sources(app):
+    """Two active sources and one auto-paused one (eligible = `active`)."""
+    db = app.local_watchlists_service._db()
+    active_a = db.add_subscription(
+        name="Active A", type="rss", source="https://a.example/f"
+    )
+    active_b = db.add_subscription(
+        name="Active B", type="rss", source="https://b.example/f"
+    )
+    paused = db.add_subscription(
+        name="Paused", type="rss", source="https://c.example/f"
+    )
+    with db.transaction() as conn:
+        conn.execute(
+            "UPDATE subscriptions SET is_paused = 1 WHERE id = ?", (paused,)
+        )
+    return active_a, active_b, paused
+
+
+async def _screen_with_sources(pilot, host):
+    """The mounted screen with sources and tree data both loaded."""
+    await pilot.pause(0.1)
+    screen = host.screen_stack[-1]
+    for _ in range(40):
+        await pilot.pause()
+        if screen._tree_counts:
+            break
+    await screen._load_sources()
+    await pilot.pause()
+    return screen
+
+
+@pytest.mark.asyncio
+async def test_r_checks_every_active_source_once_and_aggregates():
+    """`r` launches a check per ACTIVE source (paused are skipped), then
+    ONE aggregated toast with the unread delta, and the pill shows it."""
+    from unittest.mock import Mock
+
+    from tldw_chatbook.Subscriptions.item_persist import persist_subscription_item
+
+    app = _build_test_app()
+    active_a, active_b, _paused = _seed_checkable_sources(app)
+    db = app.local_watchlists_service._db()
+
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = await _screen_with_sources(pilot, host)
+
+        calls: list[int] = []
+
+        async def _check(*, runtime_backend=None, source_id):
+            calls.append(source_id)
+            with db.transaction() as conn:
+                persist_subscription_item(
+                    conn,
+                    source_id,
+                    {
+                        "url": f"https://feed.test/new-{source_id}/",
+                        "title": f"New from {source_id}",
+                        "content_hash": f"hash-r-{source_id}",
+                    },
+                    run_id=None,
+                    now="2026-08-08T09:00:00+00:00",
+                )
+            return {"status": "completed"}
+
+        screen._controller.check_now = _check
+        app.notify = Mock()
+
+        await pilot.press("r")
+        for _ in range(100):
+            await pilot.pause(0.05)
+            if any(
+                "Checked" in str(call.args[0]) for call in app.notify.call_args_list
+            ):
+                break
+
+        assert sorted(calls) == sorted([active_a, active_b]), (
+            "every active source exactly once; the paused one never"
+        )
+        toasts = [
+            str(call.args[0]) for call in app.notify.call_args_list
+            if "Checked" in str(call.args[0])
+        ]
+        assert len(toasts) == 1, "one aggregated toast, never one per source"
+        assert "2" in toasts[0] and "new items" in toasts[0]
+
+        pane = screen.query_one("#watchlists-items-pane", ArticleListPane)
+        assert pane.new_items_note == "2 new items"
+
+
+@pytest.mark.asyncio
+async def test_r_with_no_eligible_sources_notifies_and_dispatches_nothing():
+    from unittest.mock import Mock
+
+    app = _build_test_app()
+    db = app.local_watchlists_service._db()
+    paused = db.add_subscription(
+        name="Paused", type="rss", source="https://c.example/f"
+    )
+    with db.transaction() as conn:
+        conn.execute(
+            "UPDATE subscriptions SET is_paused = 1 WHERE id = ?", (paused,)
+        )
+
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = await _screen_with_sources(pilot, host)
+        screen._controller.check_now = Mock(
+            side_effect=AssertionError("must not be called")
+        )
+        app.notify = Mock()
+
+        await pilot.press("r")
+        for _ in range(60):
+            await pilot.pause(0.05)
+            if app.notify.called:
+                break
+
+        assert app.notify.called
+        assert "Nothing to check" in str(app.notify.call_args.args[0])
+
+
+@pytest.mark.asyncio
+async def test_r_during_a_batch_is_a_noop():
+    """One batch at a time: a second `r` while checks are in flight does
+    not double-launch."""
+    import asyncio
+
+    app = _build_test_app()
+    active_a, active_b, _paused = _seed_checkable_sources(app)
+
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = await _screen_with_sources(pilot, host)
+
+        calls: list[int] = []
+        entered = asyncio.Event()
+        release = asyncio.Event()
+
+        async def _slow_check(*, runtime_backend=None, source_id):
+            calls.append(source_id)
+            entered.set()
+            await release.wait()
+            return {"status": "completed"}
+
+        screen._controller.check_now = _slow_check
+
+        await pilot.press("r")
+        for _ in range(60):
+            await pilot.pause(0.05)
+            if entered.is_set():
+                break
+        assert entered.is_set(), "precondition: the batch is in flight"
+
+        await pilot.press("r")
+        await pilot.pause(0.2)
+        release.set()
+        for _ in range(60):
+            await pilot.pause(0.05)
+            if len(calls) >= 2:
+                break
+        await pilot.pause(0.2)
+
+        assert sorted(calls) == sorted([active_a, active_b]), (
+            "the second `r` must not start a second batch"
+        )
+
+
+@pytest.mark.asyncio
+async def test_r_names_a_failed_source_and_finishes_the_batch():
+    from unittest.mock import Mock
+
+    from tldw_chatbook.Subscriptions.item_persist import persist_subscription_item
+
+    app = _build_test_app()
+    active_a, active_b, _paused = _seed_checkable_sources(app)
+    db = app.local_watchlists_service._db()
+
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = await _screen_with_sources(pilot, host)
+
+        async def _check(*, runtime_backend=None, source_id):
+            if source_id == active_b:
+                raise RuntimeError("boom")
+            with db.transaction() as conn:
+                persist_subscription_item(
+                    conn,
+                    source_id,
+                    {
+                        "url": f"https://feed.test/new-{source_id}/",
+                        "title": f"New from {source_id}",
+                        "content_hash": f"hash-rf-{source_id}",
+                    },
+                    run_id=None,
+                    now="2026-08-08T09:00:00+00:00",
+                )
+            return {"status": "completed"}
+
+        screen._controller.check_now = _check
+        app.notify = Mock()
+
+        await pilot.press("r")
+        for _ in range(100):
+            await pilot.pause(0.05)
+            if any(
+                "Checked" in str(call.args[0]) for call in app.notify.call_args_list
+            ):
+                break
+
+        toasts = [
+            str(call.args[0]) for call in app.notify.call_args_list
+            if "Checked" in str(call.args[0])
+        ]
+        assert len(toasts) == 1
+        assert "1" in toasts[0] and "failed" in toasts[0], (
+            "the aggregate names the failure count"
+        )
+        assert "1 new items" in toasts[0], (
+            "the delta counts what actually arrived"
+        )

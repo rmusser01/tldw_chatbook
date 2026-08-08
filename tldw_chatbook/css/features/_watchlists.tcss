@@ -974,6 +974,22 @@ WatchlistPickerDialog {
     width: 16;
 }
 
+/* TASK-3603 plan task 5. The pill is a notice, not a verb: no border
+ * chrome, content width (the 1fr search box yields to it), and a
+ * pointer so its click-to-reload affordance reads as one.
+ */
+#items-new-items-pill {
+    width: auto;
+    height: 1;
+    padding: 0 1;
+    color: $accent;
+    text-style: bold;
+}
+
+#items-new-items-pill:hover {
+    text-style: bold underline;
+}
+
 #watchlists-backend-select {
     width: 12;
 }
