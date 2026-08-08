@@ -67,6 +67,7 @@ class _Capture:
     next_sequence: int = 0
     finished: bool = False
     cancelled: bool = False
+    force_cancel: bool = False
     retrying: bool = False
     failure: TranscriptionFailureCode | None = None
     retry_audio: bytearray = field(default_factory=bytearray, repr=False)
@@ -172,9 +173,7 @@ class DictationCaptureHandle:
     def take_retry_buffer(self) -> RetryableDictationBuffer | None:
         """Transfer retained retry PCM at most once."""
 
-        with self._coordinator._lock:
-            value, self._capture.retry_buffer = self._capture.retry_buffer, None
-            return value
+        return self._coordinator._take_retry(self._capture)
 
 
 class LocalSTTDispatchCoordinator:
@@ -193,6 +192,7 @@ class LocalSTTDispatchCoordinator:
         self._active_attempt_id: str | None = None
         self._reservation: _Capture | None = None
         self._pending: _Pending | None = None
+        self._retry_owner: _Capture | None = None
         self._closed = False
 
     @property
@@ -229,9 +229,16 @@ class LocalSTTDispatchCoordinator:
                 on_failure=lambda value: self._terminal(callbacks, value),
             )
         except Exception:
+            next_request = done = None
+            notify = False
             with self._lock:
                 if self._matches_locked("library", attempt_id):
                     self._clear_active_locked()
+                    next_request, done, notify = self._advance_locked()
+            if next_request is not None:
+                submit_done, submit_notify = self._submit_dictation(next_request)
+                done, notify = submit_done or done, submit_notify or notify
+            self._post(done, notify)
             raise
         self._publish_generation(callbacks, generation)
         return generation
@@ -331,6 +338,8 @@ class LocalSTTDispatchCoordinator:
             if self._closed:
                 return
             self._closed = True
+            if self._retry_owner is not None:
+                self._release_retry_locked(self._retry_owner)
             capture = self._reservation
             if capture is None:
                 return
@@ -428,18 +437,25 @@ class LocalSTTDispatchCoordinator:
                 return True
             if self._reservation is not capture:
                 return False
+            capture.force_cancel = force
             self._mark_cancelled_locked(capture)
             if self._active_kind == "dictation":
                 attempt_id = self._active_attempt_id
             else:
                 notify = self._clear_reservation_locked(capture)
                 done = capture.done
-        accepted = True
         if attempt_id is not None:
             method = self._executor.force_stop if force else self._executor.cancel
-            accepted = method(attempt_id)
+            method(attempt_id)
         self._post(done, notify)
-        return accepted
+        return True
+
+    def _take_retry(self, capture: _Capture) -> RetryableDictationBuffer | None:
+        with self._lock:
+            value, capture.retry_buffer = capture.retry_buffer, None
+            if self._retry_owner is capture:
+                self._retry_owner = None
+            return value
 
     def _append_pending_locked(self, capture: _Capture, audio: bytes) -> None:
         if self._pending is None:
@@ -516,9 +532,14 @@ class LocalSTTDispatchCoordinator:
                 return capture.done, self._clear_reservation_locked(capture)
         self._publish_generation(callbacks, generation)
         with self._lock:
-            cancelled = capture.cancelled or self._closed
-        if cancelled:
-            self._executor.cancel(request.attempt_id)
+            cancel_method = (
+                self._executor.force_stop
+                if capture.cancelled and capture.force_cancel
+                else self._executor.cancel
+            )
+            cancel_after_submit = capture.cancelled or self._closed
+        if cancel_after_submit:
+            cancel_method(request.attempt_id)
         return None, False
 
     def _publish_generation(self, callbacks: _Callbacks, generation: int) -> None:
@@ -609,19 +630,7 @@ class LocalSTTDispatchCoordinator:
                 else:
                     capture.failure, capture.finished = envelope.code, True
                     self._discard_pending_locked(capture)
-            capture = self._reservation
-            if (
-                capture is not None
-                and not capture.cancelled
-                and not capture.retrying
-                and self._pending is not None
-            ):
-                next_request = self._snapshot_locked()
-            elif capture is not None and capture.finished:
-                if capture.retrying:
-                    self._finalize_retry_locked(capture)
-                notify = self._clear_reservation_locked(capture)
-                done = capture.done
+            next_request, done, notify = self._advance_locked()
         if next_request is not None:
             submit_done, submit_notify = self._submit_dictation(
                 next_request,
@@ -648,6 +657,23 @@ class LocalSTTDispatchCoordinator:
                         )
         self._post(done, notify)
 
+    def _advance_locked(
+        self,
+    ) -> tuple[_Request | None, threading.Event | None, bool]:
+        capture = self._reservation
+        if (
+            capture is not None
+            and not capture.cancelled
+            and not capture.retrying
+            and self._pending is not None
+        ):
+            return self._snapshot_locked(), None, False
+        if capture is not None and capture.finished:
+            if capture.retrying:
+                self._finalize_retry_locked(capture)
+            return None, capture.done, self._clear_reservation_locked(capture)
+        return None, None, False
+
     def _merge_retry_locked(
         self,
         capture: _Capture,
@@ -660,6 +686,8 @@ class LocalSTTDispatchCoordinator:
 
     def _finalize_retry_locked(self, capture: _Capture) -> None:
         if capture.retry_buffer is None and capture.retry_audio:
+            if self._retry_owner is not None and self._retry_owner is not capture:
+                self._release_retry_locked(self._retry_owner)
             capture.retry_buffer = RetryableDictationBuffer(
                 BufferAudioSource(
                     bytes(capture.retry_audio),
@@ -669,16 +697,22 @@ class LocalSTTDispatchCoordinator:
                 ),
                 tuple(capture.retry_ends),
             )
+            self._retry_owner = capture
         capture.retry_audio.clear()
         capture.retry_ends.clear()
 
     def _mark_cancelled_locked(self, capture: _Capture) -> None:
         capture.cancelled = capture.finished = True
         capture.failure = TranscriptionFailureCode.CANCELLED
+        self._release_retry_locked(capture)
+        self._discard_pending_locked(capture)
+
+    def _release_retry_locked(self, capture: _Capture) -> None:
         capture.retry_audio.clear()
         capture.retry_ends.clear()
         capture.retry_buffer = None
-        self._discard_pending_locked(capture)
+        if self._retry_owner is capture:
+            self._retry_owner = None
 
     def _discard_pending_locked(self, capture: _Capture) -> None:
         if self._pending is not None and self._pending.capture is capture:

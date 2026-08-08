@@ -20,6 +20,7 @@ from tldw_chatbook.STT.executor import (
     ExecutorBusyError,
     ExecutorFailure,
     ExecutorResult,
+    ExecutorUnavailableError,
     ModelIdentity,
 )
 from tldw_chatbook.STT.parakeet_dispatch import ParakeetDispatch
@@ -44,6 +45,7 @@ class FakeExecutor:
         self.force_stopped_attempts: list[str] = []
         self.closed = False
         self.order = order if order is not None else []
+        self.before_submit: Callable[[str], None] | None = None
 
     def submit(
         self,
@@ -62,6 +64,9 @@ class FakeExecutor:
         on_failure: Callable[[ExecutorFailure], None] = lambda _failure: None,
         explicit_retry: bool = False,
     ) -> int:
+        kind = "library" if job_id is not None else "dictation"
+        if self.before_submit is not None:
+            self.before_submit(kind)
         with self._condition:
             if self.active is not None:
                 raise ExecutorBusyError("fake executor already has active work")
@@ -85,7 +90,6 @@ class FakeExecutor:
             }
             self.active = submission
             self.submissions.append(submission)
-            kind = "library" if job_id is not None else "dictation"
             self.order.append(f"submit-{kind}")
             self._condition.notify_all()
             return self._generation
@@ -352,6 +356,53 @@ def test_batch_failure_also_submits_dictation_before_original_callback(
     _wait_for(failure_delivered)
 
     assert order[:3] == ["submit-library", "submit-dictation", "library-failure"]
+
+
+def test_synchronous_library_submit_failure_still_dispatches_reserved_dictation(
+    coordinator_module: Any,
+) -> None:
+    submit_entered = threading.Event()
+    release_submit = threading.Event()
+    submit_finished = threading.Event()
+    caught: list[Exception] = []
+    executor = FakeExecutor()
+
+    def fail_library_submit(kind: str) -> None:
+        if kind != "library":
+            return
+        submit_entered.set()
+        release_submit.wait()
+        raise ExecutorUnavailableError("planned Library submit failure")
+
+    executor.before_submit = fail_library_submit
+    coordinator = coordinator_module.LocalSTTDispatchCoordinator(executor)
+
+    def submit_library() -> None:
+        try:
+            coordinator.submit_library(**_library_kwargs())
+        except Exception as error:
+            caught.append(error)
+        finally:
+            submit_finished.set()
+
+    library_thread = threading.Thread(target=submit_library, name="failing-library")
+    library_thread.start()
+    _wait_for(submit_entered)
+    handle = _begin(coordinator_module, coordinator)
+    handle.append_segment(b"\x01\x00")
+    handle.finish()
+
+    release_submit.set()
+    _wait_for(submit_finished)
+    library_thread.join(1.0)
+
+    assert len(caught) == 1
+    assert isinstance(caught[0], ExecutorUnavailableError)
+    assert executor.wait_for_submissions(1)
+    assert executor.submissions[0]["job_id"] is None
+    executor.succeed({"text": "kept", "logical_segments": ("kept",)})
+    handle.wait()
+    assert coordinator.dictation_reserved is False
 
 
 def test_dictation_terminal_delivers_callback_then_clears_gate_and_tops_up(
@@ -734,6 +785,43 @@ def test_force_cancel_uses_executor_force_stop_and_resolves_once(
     assert coordinator.dictation_reserved is False
 
 
+def test_force_cancel_before_submit_residency_is_replayed_as_force_stop(
+    coordinator_module: Any,
+) -> None:
+    submit_entered = threading.Event()
+    release_submit = threading.Event()
+    append_finished = threading.Event()
+    executor = FakeExecutor()
+
+    def hold_dictation_submit(kind: str) -> None:
+        if kind == "dictation":
+            submit_entered.set()
+            release_submit.wait()
+
+    executor.before_submit = hold_dictation_submit
+    coordinator = coordinator_module.LocalSTTDispatchCoordinator(executor)
+    handle = _begin(coordinator_module, coordinator)
+    appender = threading.Thread(
+        target=lambda: (handle.append_segment(b"\x01\x00"), append_finished.set()),
+        name="dictation-submit-race",
+    )
+    appender.start()
+    _wait_for(submit_entered)
+
+    try:
+        assert handle.cancel(force=True) is True
+    finally:
+        release_submit.set()
+    _wait_for(append_finished)
+    appender.join(1.0)
+
+    with pytest.raises(RuntimeError) as caught:
+        handle.wait()
+    assert caught.value.args == (TranscriptionFailureCode.CANCELLED,)
+    assert len(executor.force_stopped_attempts) == 1
+    assert executor.cancelled_attempts == []
+
+
 def test_close_releases_pending_audio_without_closing_or_preempting_executor(
     coordinator_module: Any,
 ) -> None:
@@ -837,6 +925,27 @@ def test_cancel_releases_a_completed_retry_buffer(coordinator_module: Any) -> No
     with pytest.raises(RuntimeError) as caught:
         handle.wait()
     assert caught.value.args == (TranscriptionFailureCode.CANCELLED,)
+
+
+def test_close_releases_a_completed_untransferred_retry_buffer(
+    coordinator_module: Any,
+) -> None:
+    executor = FakeExecutor()
+    coordinator = coordinator_module.LocalSTTDispatchCoordinator(executor)
+    handle = _begin(coordinator_module, coordinator)
+    handle.append_segment(b"\x01\x00")
+    handle.finish()
+    executor.fail(
+        TranscriptionFailureCode.INFERENCE_FAILED,
+        recovery_actions=("retry_faster_whisper",),
+    )
+
+    with pytest.raises(coordinator_module.RetryableDictationFailure):
+        handle.wait()
+    assert coordinator.dictation_reserved is False
+    coordinator.close()
+
+    assert handle.take_retry_buffer() is None
 
 
 def test_identity_change_resubmits_off_reader_then_preserves_callback_order(
