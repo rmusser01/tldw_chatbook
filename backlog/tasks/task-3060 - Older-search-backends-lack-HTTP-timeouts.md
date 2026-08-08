@@ -1,9 +1,11 @@
 ---
 id: TASK-3060
 title: Older search backends lack HTTP timeouts
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@claude'
 created_date: '2026-08-07 14:10'
+updated_date: '2026-08-08 22:45'
 labels:
   - web-tools
   - tech-debt
@@ -18,7 +20,7 @@ Six older web-search backends (google, brave, duckduckgo, kagi, tavily, searx) p
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Every backend HTTP call (google, bing, brave, duckduckgo, kagi, tavily, searx, baidu) carries an explicit timeout
+- [ ] #1 Every backend HTTP call (google, brave, duckduckgo, kagi, tavily, searx) carries an explicit timeout (amended 2026-08-08: bing already carries timeout=10 — earlier correction; baidu is a bare `pass` stub with NO HTTP call, dropped — spec review caught the false premise)
 - [ ] #2 A simulated hang/unresponsive provider surfaces as a bounded-time error instead of blocking indefinitely
 - [ ] #3 Existing request-shape tests for each backend assert the timeout value
 <!-- AC:END -->

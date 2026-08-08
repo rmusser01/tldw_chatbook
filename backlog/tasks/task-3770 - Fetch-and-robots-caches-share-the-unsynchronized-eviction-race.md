@@ -1,9 +1,11 @@
 ---
 id: TASK-3770
 title: Fetch and robots caches share the unsynchronized eviction race
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@claude'
 created_date: '2026-08-08 15:55'
+updated_date: '2026-08-08 22:45'
 labels:
   - web-tools
   - tech-debt

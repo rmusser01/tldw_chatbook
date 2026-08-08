@@ -1,9 +1,11 @@
 ---
 id: TASK-3260
 title: Deep-search scrape path ignores robots.txt
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@claude'
 created_date: '2026-08-07 21:15'
+updated_date: '2026-08-08 22:45'
 labels:
   - web-tools
 dependencies:
@@ -19,7 +21,6 @@ This leaves an inconsistency: a path that web_fetch/web_crawl now refuse to fetc
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
-
 <!-- AC:BEGIN -->
 - [ ] #1 web_deep_search's scrape path (the per-result fetch inside `analyze_and_aggregate`/its scraping helper) is refused for a URL disallowed by that host's robots.txt, under the same `[webfetch] respect_robots_txt` toggle task-2833 introduced (default on, fail-open on an unreachable/unparsable robots.txt)
 - [ ] #2 A robots-disallowed result is skipped (not fatal to the overall deep-search run), mirroring web_crawl's skip-and-count behavior rather than web_fetch's hard refusal
