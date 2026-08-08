@@ -1436,6 +1436,57 @@ def test_explicit_f32_folder_snapshots_the_f32_payload_files(tmp_path: Path) -> 
     assert dispatch["local_source"].paths == tuple(model_root / item for item in required)
 
 
+def test_unqualified_legacy_v2_folder_cannot_satisfy_a_v3_dispatch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tldw_chatbook.Local_Ingestion import parakeet_v2_artifact as artifacts
+    from tldw_chatbook.Local_Ingestion.stt_batch_routing import PARAKEET_V3_MODEL
+
+    legacy_v2 = tmp_path / "legacy-v2-int8"
+    legacy_v2.mkdir()
+    for filename in (
+        "config.json",
+        "vocab.txt",
+        "encoder-model.int8.onnx",
+        "decoder_joint-model.int8.onnx",
+    ):
+        (legacy_v2 / filename).write_bytes(filename.encode())
+    monkeypatch.setattr(
+        _app_module,
+        "get_cli_setting",
+        lambda key, *args: str(legacy_v2)
+        if key == "transcription.parakeet_onnx_model_dir"
+        else args[0]
+        if args
+        else None,
+    )
+    monkeypatch.setattr(
+        artifacts,
+        "active_managed_parakeet_dir",
+        lambda model, precision, service=None: None,
+    )
+    monkeypatch.setattr(
+        artifacts,
+        "parakeet_v2_managed_service",
+        lambda: SimpleNamespace(),
+    )
+    app = _IngestRunnerHarness(None)
+
+    dispatch = app._build_local_stt_dispatch(
+        LibraryIngestJob(job_id="job-v3", source_path="speech.wav"),
+        {
+            "transcription_provider": "parakeet-onnx",
+            "transcription_model": PARAKEET_V3_MODEL,
+            "transcription_precision": "int8",
+        },
+    )
+
+    assert dispatch["identity"].model_id == PARAKEET_V3_MODEL
+    assert dispatch["local_source"] is None
+    assert dispatch["managed_artifact_ref"] is None
+
+
 @pytest.mark.asyncio
 async def test_faster_whisper_stays_in_general_pool(tmp_path: Path) -> None:
     pool = _FakeIngestParsePool(auto_run=False)
@@ -1742,11 +1793,39 @@ async def test_executor_failure_uses_stable_job_terminal(
 @pytest.mark.asyncio
 async def test_parakeet_failed_attempt_reaches_faster_whisper_retry_row(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    pool = _FakeIngestParsePool(auto_run=False)
+    from tldw_chatbook.Local_Ingestion.transcription_service import (
+        TranscriptionService,
+    )
+    from tldw_chatbook.STT.persistence import (
+        load_transcription_provenance_document,
+    )
+
+    monkeypatch.setattr(
+        TranscriptionService,
+        "transcribe",
+        lambda self, audio_path, **kwargs: {
+            "text": "Recovered with faster whisper.",
+            "segments": [
+                {
+                    "start": 0.0,
+                    "end": 1.5,
+                    "text": "Recovered with faster whisper.",
+                }
+            ],
+            "language": "en",
+            "language_probability": 0.99,
+            "duration": 1.5,
+            "provider": "faster-whisper",
+            "model": kwargs.get("model") or "base",
+        },
+    )
+    pool = _FakeIngestParsePool()
     executor = _FakeLocalSTTExecutor()
+    db = _make_db(tmp_path)
     app = _IngestRunnerHarness(
-        _make_db(tmp_path),
+        db,
         pool_factory=lambda: pool,
         local_stt_executor=executor,
         local_stt_dispatch_factory=_fake_local_stt_dispatch,
@@ -1819,7 +1898,24 @@ async def test_parakeet_failed_attempt_reaches_faster_whisper_retry_row(
         assert retry.ingest_options["audio_video"]["transcription_provider"] == (
             "faster-whisper"
         )
-        assert len(pool.calls) == 1
+        done = await _wait_for_job_state(
+            app,
+            pilot,
+            retry.job_id,
+            IngestJobState.DONE,
+        )
+        assert done.media_id is not None
+        row = db.get_media_by_id(done.media_id)
+        assert row is not None
+        provenance = load_transcription_provenance_document(
+            row["transcription_provenance_json"]
+        )
+        assert provenance["provider_id"] == "faster-whisper"
+        assert provenance["model_id"] == "base"
+        assert provenance["job_id"] == retry.job_id
+        assert provenance["retry_of_attempt_id"] == failed_attempt["attempt_id"]
+        assert provenance["retry_of_job_id"] == failed.job_id
+        assert provenance["failed_attempt"] == failed_attempt
 
 
 @pytest.mark.asyncio

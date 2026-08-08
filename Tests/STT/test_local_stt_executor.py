@@ -16,7 +16,10 @@ from Tests.STT.executor_test_support import (
     private_log_executor_worker,
     resident_executor_worker,
 )
-from tldw_chatbook.Local_Ingestion.stt_batch_routing import PARAKEET_V2_MODEL
+from tldw_chatbook.Local_Ingestion.stt_batch_routing import (
+    PARAKEET_V2_MODEL,
+    PARAKEET_V3_MODEL,
+)
 from tldw_chatbook.Model_Artifacts import ArtifactInUseError, ModelArtifactService
 from tldw_chatbook.STT.contracts import (
     DeviceFailureOrigin,
@@ -1047,10 +1050,133 @@ def test_managed_parakeet_provider_rejects_a_closure_without_vad(
     model_root.mkdir()
     handle = SimpleNamespace(root=root, closure=(root,), paths=((root, model_root),))
 
-    with pytest.raises(_ProviderLoadFailure) as raised:
-        _parakeet_provider(_request(), model_root, handle, lambda: False)
+    request = _request()
+    with pytest.raises(Exception) as raised:
+        _parakeet_provider(request, model_root, handle, lambda: False)
 
-    assert raised.value.code is TranscriptionFailureCode.ARTIFACT_INCOMPATIBLE
+    failure = _failure_from_exception(request, raised.value)
+    assert failure.code is TranscriptionFailureCode.ARTIFACT_INCOMPATIBLE
+    assert failure.failed_attempt is not None
+    assert failure.failed_attempt["artifact_root"] == {
+        "artifact_id": "parakeet-v2",
+        "revision": "root-revision",
+        "variant": "int8",
+    }
+
+
+@pytest.mark.parametrize(
+    (
+        "stage",
+        "expected_code",
+        "expected_effective_device",
+        "model_id",
+        "expected_attempt_id",
+        "expected_language",
+    ),
+    [
+        (
+            "load",
+            TranscriptionFailureCode.ARTIFACT_INCOMPATIBLE,
+            None,
+            PARAKEET_V2_MODEL,
+            "attempt-failure",
+            "en",
+        ),
+        (
+            "inference",
+            TranscriptionFailureCode.INFERENCE_FAILED,
+            "cpu",
+            PARAKEET_V3_MODEL,
+            "attempt-current",
+            "fr",
+        ),
+    ],
+)
+def test_parakeet_runtime_failures_preserve_normalized_failed_attempt(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    stage: str,
+    expected_code: TranscriptionFailureCode,
+    expected_effective_device: str | None,
+    model_id: str,
+    expected_attempt_id: str,
+    expected_language: str,
+) -> None:
+    from tldw_chatbook.Model_Artifacts import ArtifactRef
+    from tldw_chatbook.STT.parakeet_onnx import ParakeetOnnxRuntime
+
+    root = ArtifactRef("parakeet-v2", "root-revision", "int8")
+    dependency = ArtifactRef("silero-vad", "vad-revision", "f32")
+    model_root = tmp_path / "model"
+    vad_root = tmp_path / "vad"
+    model_root.mkdir()
+    vad_root.mkdir()
+    handle = SimpleNamespace(
+        root=root,
+        closure=(root, dependency),
+        paths=((root, model_root), (dependency, vad_root)),
+    )
+
+    class _FailingRuntime:
+        def transcribe(self, **_kwargs):
+            raise RuntimeError("private inference detail")
+
+        def close(self):
+            return None
+
+    def fake_load(**_kwargs):
+        if stage == "load":
+            raise RuntimeError("private load detail")
+        return _FailingRuntime()
+
+    monkeypatch.setattr(ParakeetOnnxRuntime, "load", fake_load)
+    request = ExecutorRequest(
+        generation=1,
+        attempt_id="attempt-failure",
+        job_id="job-failure",
+        source_path=tmp_path / "speech.wav",
+        identity=_identity(
+            model_id=model_id,
+            root_revision=root.revision,
+            closure_fingerprint="closure",
+            local_snapshot_token=None,
+        ),
+        options={
+            "language": "en",
+            "transcription_context": {"batch_id": "batch-failure"},
+        },
+    )
+
+    try:
+        provider = _parakeet_provider(request, model_root, handle, lambda: False)
+        provider.runner(
+            str(request.source_path),
+            attempt_id="attempt-current",
+            batch_id="batch-current",
+            job_id="job-current",
+            language="fr",
+        )
+    except Exception as error:
+        failure = _failure_from_exception(request, error)
+    else:
+        raise AssertionError("Parakeet failure was not raised")
+
+    assert failure.code is expected_code
+    assert failure.recovery_actions == ("retry_faster_whisper",)
+    assert failure.failed_attempt is not None
+    assert failure.failed_attempt["attempt_id"] == expected_attempt_id
+    assert failure.failed_attempt["batch_id"] == (
+        "batch-failure" if stage == "load" else "batch-current"
+    )
+    assert failure.failed_attempt["job_id"] == (
+        "job-failure" if stage == "load" else "job-current"
+    )
+    assert failure.failed_attempt["provider_id"] == "parakeet-onnx"
+    assert failure.failed_attempt["model_id"] == model_id
+    assert failure.failed_attempt["requested_language"] == expected_language
+    assert failure.failed_attempt["error_code"] == expected_code.value
+    assert failure.failed_attempt["effective_device"] == expected_effective_device
+    assert "private" not in str(failure)
 
 
 def test_loaded_residency_is_reported_before_first_parse_failure(

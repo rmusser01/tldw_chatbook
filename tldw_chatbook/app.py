@@ -2397,17 +2397,16 @@ class LibraryIngestQueueMixin:
             options["timestamps"] = flat_opts.get("timestamps", True)
             options["diarization"] = flat_opts.get("diarization", False)
             failed_attempt = job.retry_source_failure_provenance
-            if route.provider in {"parakeet-onnx", "transcribe-cpp"}:
-                options["transcription_context"] = {
-                    "attempt_id": f"{job.job_id}-attempt-{job.retry_count + 1}",
-                    "batch_id": job.batch_id,
-                    "job_id": job.job_id,
-                    "retry_of_attempt_id": failed_attempt.get("attempt_id")
-                    if failed_attempt
-                    else None,
-                    "retry_of_job_id": job.retry_of_job_id,
-                    "retry_source_failure_provenance": failed_attempt,
-                }
+            options["transcription_context"] = {
+                "attempt_id": f"{job.job_id}-attempt-{job.retry_count + 1}",
+                "batch_id": job.batch_id,
+                "job_id": job.job_id,
+                "retry_of_attempt_id": failed_attempt.get("attempt_id")
+                if failed_attempt
+                else None,
+                "retry_of_job_id": job.retry_of_job_id,
+                "retry_source_failure_provenance": failed_attempt,
+            }
             if route.provider == "transcribe-cpp":
                 configured_path = get_cli_setting(
                     "transcription.transcribe_cpp.model_path"
@@ -2480,7 +2479,11 @@ class LibraryIngestQueueMixin:
             model_id = options.get("transcription_model") or PARAKEET_V2_MODEL
             precision = options.get("transcription_precision") or "int8"
             selected_dir = options.get("transcription_model_dir")
-            if not selected_dir:
+            if (
+                not selected_dir
+                and model_id == PARAKEET_V2_MODEL
+                and precision == "int8"
+            ):
                 configured_dir = get_cli_setting(
                     "transcription.parakeet_onnx_model_dir"
                 )

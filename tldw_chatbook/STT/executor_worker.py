@@ -416,25 +416,66 @@ def _parakeet_provider(
     managed_handle: Any | None,
     is_cancelled: Callable[[], bool],
 ) -> ProviderRuntime:
+    from .parakeet_onnx import (
+        ParakeetOnnxCancelled,
+        ParakeetOnnxFailure,
+        ParakeetOnnxRuntime,
+    )
+
+    context = request.options.get("transcription_context") or {}
+    if not isinstance(context, dict):
+        context = {}
+    requested_language = request.options.get("language") or "en"
+    effective_language = (
+        "auto"
+        if request.identity.model_id == "nemo-parakeet-tdt-0.6b-v3"
+        else "en"
+    )
+    artifact_root = None
+    artifact_dependencies: tuple[Any, ...] = ()
+
+    def failure(
+        code: TranscriptionFailureCode,
+        message: str,
+        *,
+        effective_device: ExecutionDevice | None = None,
+        attempt_id: str | None = None,
+        batch_id: str | None = None,
+        job_id: str | None = None,
+        language: str | None = None,
+    ) -> ParakeetOnnxFailure:
+        return ParakeetOnnxFailure(
+            code,
+            message,
+            attempt_id=attempt_id or request.attempt_id,
+            batch_id=batch_id if batch_id is not None else context.get("batch_id"),
+            job_id=job_id or request.job_id,
+            model_id=request.identity.model_id,
+            artifact_root=artifact_root,
+            artifact_dependencies=artifact_dependencies,
+            precision=request.identity.precision,
+            requested_language=language or requested_language,
+            effective_language=effective_language,
+            effective_device=effective_device,
+        )
+
     if request.options.get("_verify_legacy_parakeet_v2"):
         from tldw_chatbook.Local_Ingestion.parakeet_v2_installer import (
             verify_parakeet_v2_bundle,
         )
 
         if model_root is None or not verify_parakeet_v2_bundle(model_root):
-            raise _ProviderLoadFailure(
+            raise failure(
                 TranscriptionFailureCode.ARTIFACT_CORRUPT,
-                ("retry_faster_whisper",),
+                "The selected Parakeet ONNX model is corrupt.",
             )
 
     if model_root is None:
-        raise _ProviderLoadFailure(
+        raise failure(
             TranscriptionFailureCode.MODEL_NOT_INSTALLED,
-            ("retry_faster_whisper",),
+            "The selected Parakeet ONNX model is not installed.",
         )
 
-    artifact_root = None
-    artifact_dependencies: tuple[Any, ...] = ()
     vad_root = None
     if managed_handle is not None:
         paths = dict(managed_handle.paths)
@@ -456,13 +497,12 @@ def _parakeet_provider(
             None,
         )
         if vad_ref is None or vad_ref not in paths:
-            raise _ProviderLoadFailure(
+            raise failure(
                 TranscriptionFailureCode.ARTIFACT_INCOMPATIBLE,
-                ("retry_faster_whisper",),
+                "The managed Parakeet artifact closure is incomplete.",
             )
         vad_root = paths[vad_ref]
 
-    from .parakeet_onnx import ParakeetOnnxRuntime
     from .persistence import build_transcription_provenance_document
 
     try:
@@ -475,40 +515,57 @@ def _parakeet_provider(
             artifact_dependencies=artifact_dependencies,
         )
     except ModuleNotFoundError:
-        raise _ProviderLoadFailure(
+        raise failure(
             TranscriptionFailureCode.PROVIDER_UNAVAILABLE,
-            ("retry_faster_whisper",),
+            "The Parakeet ONNX runtime is unavailable.",
         ) from None
-    except _ProviderLoadFailure:
+    except ParakeetOnnxFailure:
         raise
     except Exception:
-        raise _ProviderLoadFailure(
+        raise failure(
             TranscriptionFailureCode.ARTIFACT_INCOMPATIBLE,
-            ("retry_faster_whisper",),
+            "The selected Parakeet ONNX model cannot be loaded.",
         ) from None
 
-    context = request.options.get("transcription_context") or {}
-    if not isinstance(context, dict):
-        context = {}
-
     def runner(audio_path: str, **kwargs: Any) -> dict[str, Any]:
-        normalized = runtime.transcribe(
-            audio_path=Path(audio_path),
-            attempt_id=kwargs.get("attempt_id") or request.attempt_id,
-            batch_id=kwargs.get("batch_id") or context.get("batch_id"),
-            job_id=kwargs.get("job_id") or request.job_id,
-            retry_of_attempt_id=kwargs.get("retry_of_attempt_id")
-            or context.get("retry_of_attempt_id"),
-            retry_of_job_id=kwargs.get("retry_of_job_id")
-            or context.get("retry_of_job_id"),
-            language=kwargs.get("language") or request.options.get("language") or "en",
-            timestamps=bool(
-                kwargs.get("timestamps", request.options.get("timestamps", True))
-            ),
-            vad=bool(kwargs.get("vad_filter", request.options.get("vad_use", False))),
-            is_cancelled=is_cancelled,
-            ffmpeg_path=request.options.get("ffmpeg_path"),
+        attempt_id = kwargs.get("attempt_id") or request.attempt_id
+        batch_id = kwargs.get("batch_id") or context.get("batch_id")
+        job_id = kwargs.get("job_id") or request.job_id
+        language = (
+            kwargs.get("language") or request.options.get("language") or "en"
         )
+        try:
+            normalized = runtime.transcribe(
+                audio_path=Path(audio_path),
+                attempt_id=attempt_id,
+                batch_id=batch_id,
+                job_id=job_id,
+                retry_of_attempt_id=kwargs.get("retry_of_attempt_id")
+                or context.get("retry_of_attempt_id"),
+                retry_of_job_id=kwargs.get("retry_of_job_id")
+                or context.get("retry_of_job_id"),
+                language=language,
+                timestamps=bool(
+                    kwargs.get("timestamps", request.options.get("timestamps", True))
+                ),
+                vad=bool(
+                    kwargs.get("vad_filter", request.options.get("vad_use", False))
+                ),
+                is_cancelled=is_cancelled,
+                ffmpeg_path=request.options.get("ffmpeg_path"),
+            )
+        except (ParakeetOnnxCancelled, ParakeetOnnxFailure):
+            raise
+        except Exception:
+            raise failure(
+                TranscriptionFailureCode.INFERENCE_FAILED,
+                "Parakeet ONNX could not complete this transcription.",
+                effective_device=ExecutionDevice.CPU,
+                attempt_id=attempt_id,
+                batch_id=batch_id,
+                job_id=job_id,
+                language=language,
+            ) from None
         provenance = build_transcription_provenance_document(
             normalized,
             failed_attempt=kwargs.get("retry_source_failure_provenance")

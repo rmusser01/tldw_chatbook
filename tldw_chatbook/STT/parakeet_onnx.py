@@ -60,6 +60,7 @@ class ParakeetOnnxFailure(RuntimeError):
         precision: str,
         requested_language: str,
         effective_language: str,
+        effective_device: ExecutionDevice | None = ExecutionDevice.CPU,
     ) -> None:
         self.error_detail = {
             "category": "stt_failure",
@@ -77,7 +78,7 @@ class ParakeetOnnxFailure(RuntimeError):
             artifact_dependencies=artifact_dependencies,
             precision=precision,
             requested_device=ExecutionDevice.CPU,
-            effective_device=ExecutionDevice.CPU,
+            effective_device=effective_device,
             requested_language=requested_language,
             effective_language=effective_language,
             detected_language=None,
