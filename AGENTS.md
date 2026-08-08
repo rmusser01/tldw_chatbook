@@ -64,6 +64,7 @@ pytest --cov=tldw_chatbook  # With coverage
 - **`Tools/`** - `tool_executor.py`, built-in: DateTimeTool, CalculatorTool
 - **`Evals/`** - `eval_orchestrator.py`, `eval_runner.py`, task-specific runners
 - **`LLM_Calls/`** - Provider integrations, unified `chat_with_provider()` interface
+- **`Image_Generation/`** / **`Video_Generation/`** - Media-generation packages: adapter registry, config with secrets precedence, single validation choke point (`worker.run_generation`). Video mirrors image per ADR-044; `Video_Generation/video_store.py` is the ephemeral message-keyed video file store (task-3401.4); video backends land in task-3401.3/.6/.7
 
 ### Data Layer (`DB/`)
 
