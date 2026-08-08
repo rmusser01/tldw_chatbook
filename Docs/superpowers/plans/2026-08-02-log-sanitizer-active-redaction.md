@@ -812,6 +812,44 @@ git commit -m "fix(privacy): separate display validation from diagnostics"
 - Modify: `backlog/tasks/task-856 - Decide-the-fate-of-Utils-log_sanitizer.py-wire-it-in-fixed-or-delete-it.md`
 - Review: every file changed by Tasks 1–3
 
+#### Latest-dev rebase amendment
+
+After Tasks 1–3 passed their task-scoped reviews, `origin/dev` advanced and the
+branch rebased cleanly onto `85a46bea8704d076fd6b544e56bead760fd3e9d9`.
+None of TASK-856's scoped production/test files changed upstream, but five STT
+executor diagnostics landed without an inventory update. The checked manifest
+records `467/1151/6854/6`; generated state is `467/1151/6859/6` for owner
+files/TASK-492 calls/TASK-494 calls/sink files.
+
+The reviewed current-dev delta is exactly:
+
+| Path suffix | Calls | Generated digest |
+| --- | ---: | --- |
+| `Local_Ingestion/audio_processing.py` | 50 | `e161bcc2fa635027a846` |
+| `Local_Ingestion/local_file_ingestion.py` | 8 | `23248608ccde923a2339` |
+| `Local_Ingestion/video_processing.py` | 80 | `1e6bc554c059b1bbb859` |
+| `UI/Screens/library_screen.py` | 83 | `8a3d52f62abfd4600f79` |
+| `app.py` | 298 | `e64f633a5515b2ad809f` |
+
+Semantic AST call-multiset comparison shows the first four files have no added
+or removed diagnostics. `app.py` adds five metadata/constant-only error calls:
+callback marshal failure by callback name; dispatch failure by job ID and error
+type; dispatch failure by job ID/provider/error type; and two constant shutdown
+messages with exception context. Persistent-sink call shapes/digests are
+unchanged; only the three later `app.py` sink lines move to 6635, 6663, and
+6720. Existing admission tests remain the proof that these ordinary errors do
+not reach persistent diagnostic storage.
+
+Patch only those reviewed owner/summary/sink-line entries without `--write`,
+commit them separately, and place that reconciliation immediately before the
+Task 3 consumer commit. At that boundary `monitoring_engine.py` still has digest
+`f9ccee6989b39da1333b`; the current non-monitoring fingerprint is
+`a927b4bc7a229d3c3328a5336054c410aabdedfe5fd40219ab1152a9880763eb`.
+Task 3 then changes only the monitoring digest to
+`3826b76482fd484ff194`, preserving the same non-monitoring fingerprint. The
+final checker must report 467 owners, 1,151 TASK-492 calls, 6,859 TASK-494
+calls, and six sink files.
+
 - [ ] **Step 1: Run the complete focused sanitizer/security suite**
 
 ```bash
@@ -924,9 +962,9 @@ Review every changed line for:
 - no global logging hook or new config dependency;
 - no URL value remains in the pruning diagnostic;
 - no simplified/test-only app exists; and
-- no inventory entry beyond the separately reviewed latest-dev reconciliation
-  and the TASK-856 monitoring digest is included, and no user change is
-  disturbed.
+- no inventory entry beyond the two separately reviewed latest-dev
+  reconciliations and the TASK-856 monitoring digest is included, and no user
+  change is disturbed.
 
 - [ ] **Step 6: Request independent code review and address verified findings**
 
@@ -941,8 +979,8 @@ Update TASK-856 only after code and reviews are complete:
   reconciliation, classifier/scanner, consumer boundary changes,
   installed-wheel proof, subsequent one-digest TASK-856 inventory update,
   changed files, and ADR-029;
-- record every verification count, the initial latest-dev inventory mismatch,
-  the reconciliation commit, and the reconciled base/head fingerprints;
+- record every verification count, both latest-dev inventory mismatches, both
+  reconciliation commits, and the current reconciled base/head fingerprints;
 - change the design status to `Implemented and verified`;
 - check completed plan steps and document any deviation; and
 - run `backlog task edit 856 -s Done` only after all other Definition-of-Done items are satisfied.

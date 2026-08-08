@@ -425,6 +425,20 @@ head. The monitoring entry must retain its owner, reason, and 16-call count;
 only its digest may change. Closeout requires the checker and all three
 architecture tests to be green.
 
+After Tasks 1–3 were reviewed, `origin/dev` advanced to
+`85a46bea8704d076fd6b544e56bead760fd3e9d9`. The rebase left every TASK-856
+production/test file unchanged but exposed a second red upstream inventory
+baseline: five metadata/constant-only STT executor diagnostics in `app.py`,
+line-only digest changes in four related ingestion/library owners, and line-only
+movement of three existing `app.py` sinks. The semantic diagnostic multiset and
+sink-shape review found no additional payload/private-value sink. This drift is
+reconciled in its own commit immediately before the Task 3 consumer commit.
+The current boundary has `467/1151/6859/6`, monitoring digest
+`f9ccee6989b39da1333b`, and non-monitoring fingerprint
+`a927b4bc7a229d3c3328a5336054c410aabdedfe5fd40219ab1152a9880763eb`.
+The Task 3 head retains that fingerprint and changes only the monitoring digest
+to `3826b76482fd484ff194`.
+
 ## Architecture decision record
 
 ADR required: yes
