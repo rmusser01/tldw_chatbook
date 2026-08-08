@@ -119,6 +119,12 @@ class _CanvasHost(App):
         )
 
 
+class _StyledCanvasHost(_CanvasHost):
+    """Canvas harness with the application's real layout rules loaded."""
+
+    CSS_PATH = str(BUNDLED_STYLESHEET)
+
+
 def _structured_editor_state(*, artifact_type: str = "prompt") -> PromptEditorState:
     kind = "block_recipe" if artifact_type == "recipe" else "block_prompt"
     return build_prompt_editor_state(
@@ -2335,9 +2341,7 @@ async def test_prompts_canvas_editor_renders_system_and_user_field_hints():
 
 @pytest.mark.asyncio
 async def test_prompts_canvas_editor_copy_and_duplicate_relabeled():
-    """U8: #library-prompt-copy (clipboard) and #library-prompt-duplicate
-    (clone as new prompt) sit adjacent with near-identical labels today --
-    relabel to disambiguate. Ids are unchanged."""
+    """Catches the Task-202 copy-label mutation while stable ids remain unchanged."""
     editor_state = PromptEditorState(
         prompt_id=1,
         name="X",
@@ -2354,8 +2358,237 @@ async def test_prompts_canvas_editor_copy_and_duplicate_relabeled():
     async with app.run_test() as pilot:
         copy_button = pilot.app.query_one("#library-prompt-copy", Button)
         duplicate_button = pilot.app.query_one("#library-prompt-duplicate", Button)
-        assert str(copy_button.label) == "Copy text"
+        assert str(copy_button.label) == "Copy Markdown"
         assert str(duplicate_button.label) == "Duplicate prompt"
+
+
+# ---------------------------------------------------------------------------
+# Task 202: intentionally-red editor action geometry, grouping, and copy
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("size", [(80, 24), (100, 30), (140, 40), (200, 50)])
+async def test_library_prompt_editor_geometry_keeps_actions_visible_without_covering_author(
+    size: tuple[int, int],
+):
+    """Catches the planned ``_compose_editor`` shell/content/action split.
+
+    The production mutation must give the bounded editor a single scrollable
+    content owner plus a visible, non-scrolling action area. A flat trailing
+    toolbar leaves the actions below the viewport at these real terminal sizes.
+    """
+    app = _StyledCanvasHost(
+        None,
+        mode="editor",
+        editor_state=_structured_editor_state(),
+    )
+
+    async with app.run_test(size=size) as pilot:
+        canvas = pilot.app.query_one("#library-prompts-canvas")
+        content = pilot.app.query_one("#library-prompt-editor-content")
+        actions = pilot.app.query_one("#library-prompt-editor-actions")
+        author = pilot.app.query_one("#library-prompt-author", Input)
+
+        assert canvas.region.contains_region(actions.region)
+        assert actions.region.width > 0
+        assert actions.region.height > 0
+        assert content.max_scroll_y > 0
+        assert actions.max_scroll_y == 0
+
+        content.scroll_end(animate=False)
+        await pilot.pause()
+        assert not actions.region.overlaps(author.region)
+        for action_id in (
+            "library-prompt-save",
+            "library-prompt-insert-console",
+            "library-prompt-export",
+            "library-prompt-copy",
+            "library-prompt-duplicate",
+            "library-prompt-delete",
+        ):
+            assert pilot.app.screen.region.contains_region(
+                pilot.app.query_one(f"#{action_id}", Button).region
+            )
+
+
+@pytest.mark.asyncio
+async def test_library_prompt_action_groups_preserve_normal_dom_and_focus_order():
+    """Catches the action-group wrapper mutation replacing the flat toolbar."""
+    app = _StyledCanvasHost(
+        None,
+        mode="editor",
+        editor_state=_structured_editor_state(),
+    )
+
+    async with app.run_test(size=(140, 40)) as pilot:
+        actions = pilot.app.query_one("#library-prompt-editor-actions")
+        primary = pilot.app.query_one("#library-prompt-actions-primary")
+        content = pilot.app.query_one("#library-prompt-actions-content")
+        lifecycle = pilot.app.query_one("#library-prompt-actions-lifecycle")
+
+        assert [child.id for child in actions.children] == [
+            "library-prompt-actions-primary",
+            "library-prompt-actions-content",
+            "library-prompt-actions-lifecycle",
+        ]
+        assert [button.id for button in primary.query(Button)] == [
+            "library-prompt-save"
+        ]
+        assert [button.id for button in content.query(Button)] == [
+            "library-prompt-insert-console",
+            "library-prompt-export",
+            "library-prompt-copy",
+        ]
+        assert [button.id for button in lifecycle.query(Button)] == [
+            "library-prompt-duplicate",
+            "library-prompt-delete",
+        ]
+        assert [button.id for button in actions.query(Button)] == [
+            "library-prompt-save",
+            "library-prompt-insert-console",
+            "library-prompt-export",
+            "library-prompt-copy",
+            "library-prompt-duplicate",
+            "library-prompt-delete",
+        ]
+        assert str(pilot.app.query_one("#library-prompt-copy", Button).label) == (
+            "Copy Markdown"
+        )
+
+
+@pytest.mark.asyncio
+async def test_library_prompt_action_groups_preserve_conflict_action_order():
+    """Catches the conflict action-area mutation replacing the flat toolbar."""
+    app = _StyledCanvasHost(
+        None,
+        mode="editor",
+        editor_state=_structured_editor_state(),
+        conflict=True,
+    )
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        actions = pilot.app.query_one("#library-prompt-editor-actions")
+        assert [button.id for button in actions.query(Button)] == [
+            "library-prompt-conflict-save-new",
+            "library-prompt-conflict-reload",
+        ]
+        assert [
+            str(button.label) for button in actions.query(Button)
+        ] == ["Save as new", "Reload"]
+
+
+@pytest.mark.asyncio
+async def test_library_prompt_copy_uses_live_unsaved_system_and_user_markdown(tmp_path):
+    """Catches the missing ``handle_library_prompt_copy`` production handler."""
+    _db, service = _real_prompt_scope_service(tmp_path)
+    prompt_id, _uuid, _msg = _db.add_prompt(
+        name="Copy source",
+        author="Original author",
+        details="Original details",
+        system_prompt="Original system",
+        user_prompt="Original user",
+        keywords=["alpha", "beta"],
+    )
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    host = LibraryHarness(app)
+    copied: list[str] = []
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_prompt_editor(screen, pilot, prompt_id)
+        screen.query_one("#library-prompt-system", TextArea).text = "Edited system"
+        screen.query_one("#library-prompt-user", TextArea).text = "Edited user"
+        await pilot.pause()
+
+        screen.app_instance = host
+        host.copy_to_clipboard = copied.append
+        host._notifications.clear()
+        screen.query_one("#library-prompt-copy", Button).press()
+        await pilot.pause()
+
+        assert copied == [
+            render_prompt_markdown(
+                {
+                    "name": "Copy source",
+                    "author": "Original author",
+                    "details": "Original details",
+                    "system_prompt": "Edited system",
+                    "user_prompt": "Edited user",
+                    "keywords": ["alpha", "beta"],
+                }
+            )
+        ]
+        assert [notification.message for notification in host._notifications] == [
+            "Prompt copied to clipboard as markdown!"
+        ]
+
+
+@pytest.mark.asyncio
+async def test_library_prompt_copy_warns_when_clipboard_is_unavailable(tmp_path):
+    """Catches the missing unavailable-clipboard branch in the copy handler."""
+    db, service = _real_prompt_scope_service(tmp_path)
+    prompt_id, _uuid, _msg = db.add_prompt(
+        name="Copy source", author="A", details="d", user_prompt="u"
+    )
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_prompt_editor(screen, pilot, prompt_id)
+        screen.app_instance = host
+        host._notifications.clear()
+        screen.query_one("#library-prompt-copy", Button).press()
+        await pilot.pause()
+
+        notifications = list(host._notifications)
+        assert [notification.message for notification in notifications] == [
+            "Clipboard copy is unavailable in this runtime."
+        ]
+        assert [notification.severity for notification in notifications] == ["warning"]
+
+
+@pytest.mark.asyncio
+async def test_library_prompt_copy_reports_clipboard_error_without_success_notice(tmp_path):
+    """Catches the missing clipboard-exception branch in the copy handler."""
+    db, service = _real_prompt_scope_service(tmp_path)
+    prompt_id, _uuid, _msg = db.add_prompt(
+        name="Copy source", author="A", details="d", user_prompt="u"
+    )
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    host = LibraryHarness(app)
+
+    def unavailable_clipboard(_markdown: str) -> None:
+        raise RuntimeError("clipboard unavailable")
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_prompt_editor(screen, pilot, prompt_id)
+        screen.app_instance = host
+        host.copy_to_clipboard = unavailable_clipboard
+        host._notifications.clear()
+        screen.query_one("#library-prompt-copy", Button).press()
+        await pilot.pause()
+
+        notifications = list(host._notifications)
+        assert [notification.message for notification in notifications] == [
+            "Error copying prompt: RuntimeError"
+        ]
+        assert [notification.severity for notification in notifications] == ["error"]
+        assert all(
+            "copied to clipboard" not in notification.message.lower()
+            for notification in notifications
+        )
 
 
 @pytest.mark.asyncio
