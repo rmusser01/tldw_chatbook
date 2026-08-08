@@ -703,7 +703,18 @@ class ChatConversationService:
     def list_library_conversations(
         self, *, limit: int = 20, offset: int = 0
     ) -> dict[str, Any]:
-        """Page active local conversations for Library agent tools."""
+        """Page active local conversations for Library agent tools.
+
+        Args:
+            limit: Maximum number of conversations to return.
+            offset: Number of conversations to skip.
+
+        Returns:
+            A bounded page containing items, exact total, offset, and limit.
+
+        Raises:
+            CharactersRAGDBError: If the local conversation store cannot be read.
+        """
         payload = self.db.list_library_conversations_page(limit=limit, offset=offset)
         return {
             "items": payload["items"],
@@ -715,7 +726,19 @@ class ChatConversationService:
     def search_library_conversations(
         self, *, query: str, limit: int = 20, offset: int = 0
     ) -> dict[str, Any]:
-        """Search active local conversations for Library agent tools."""
+        """Search active local conversations for Library agent tools.
+
+        Args:
+            query: Literal case-insensitive search text.
+            limit: Maximum number of conversations to return.
+            offset: Number of matching conversations to skip.
+
+        Returns:
+            A bounded page with exact total and match evidence.
+
+        Raises:
+            CharactersRAGDBError: If the local conversation store cannot be read.
+        """
         payload = self.db.search_library_conversations_page(
             query=query, limit=limit, offset=offset
         )
@@ -739,6 +762,20 @@ class ChatConversationService:
         """Read a text-only, windowed message page for one active conversation.
 
         Returns None when no active conversation matches ``conversation_id``.
+
+        Args:
+            conversation_id: Stable conversation identifier.
+            message_offset: Number of messages to skip in page mode.
+            message_limit: Maximum messages to return in page mode.
+            max_chars: Maximum characters to return per message.
+            message_id: Optional single-message continuation target.
+            char_start: Zero-based character offset into message text.
+
+        Returns:
+            Bounded conversation metadata and messages, or None when absent.
+
+        Raises:
+            CharactersRAGDBError: If the local conversation store cannot be read.
         """
         return self.db.get_library_conversation_messages(
             conversation_id,

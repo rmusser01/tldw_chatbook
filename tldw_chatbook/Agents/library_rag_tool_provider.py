@@ -17,7 +17,6 @@ worker thread, where bridging the async retrieval service with
 from __future__ import annotations
 
 import asyncio
-import json
 from typing import Any
 
 from loguru import logger
@@ -37,6 +36,7 @@ from tldw_chatbook.Library.library_tool_contract import (
     LibraryToolError,
     MAX_RESULT_BYTES,
     MAX_SEARCH_QUERY_CHARS,
+    json_dumps_compact,
     serialized_size,
 )
 
@@ -48,6 +48,9 @@ SUPPORTED_RAG_SOURCE_TYPES: tuple[str, ...] = ("notes", "media", "conversations"
 _DEFAULT_TOP_K = 5
 _MAX_TOP_K = 10
 _MAX_SNIPPET_CHARS = 1200
+_MAX_RESULT_ID_CHARS = 2000
+_MAX_TITLE_CHARS = 1000
+_MAX_RUNTIME_BACKEND_CHARS = 1000
 
 _RAG_TOOL_DESCRIPTION = (
     "Search your Library's retrieval index (notes, media, and conversations) "
@@ -91,7 +94,7 @@ _ARGUMENT_KEYS = frozenset(_RAG_TOOL_SCHEMA["properties"])
 
 
 def _error_result(error: LibraryToolError) -> ToolResult:
-    return ToolResult(ok=False, error=json.dumps(error.to_payload()))
+    return ToolResult(ok=False, error=json_dumps_compact(error.to_payload()))
 
 
 def _invalid(message: str) -> ToolResult:
@@ -256,17 +259,22 @@ class LibraryRagToolProvider:
             "results": rows,
         }
         # Bound the sealed payload: drop trailing rows first, then shrink the
-        # lone remaining excerpt -- with the per-row excerpt cap this is pure
-        # defense in depth.
+        # lone remaining row in a fixed order. Every iteration removes at
+        # least one character or the row itself, so hostile metadata cannot
+        # trap this loop without progress.
         while rows and serialized_size(payload) > MAX_RESULT_BYTES:
             if len(rows) > 1:
                 rows.pop()
             else:
-                overflow = serialized_size(payload) - MAX_RESULT_BYTES
-                snippet = rows[0]["snippet"]
-                rows[0]["snippet"] = snippet[: max(0, len(snippet) - overflow - 1)]
+                for field in ("snippet", "title", "result_id", "runtime_backend"):
+                    value = rows[0][field]
+                    if value:
+                        rows[0][field] = value[: len(value) // 2]
+                        break
+                else:
+                    rows.clear()
             payload["returned"] = len(rows)
-        return ToolResult(ok=True, content=json.dumps(payload))
+        return ToolResult(ok=True, content=json_dumps_compact(payload))
 
     @staticmethod
     def _project_row(row: Any) -> dict[str, Any]:
@@ -274,11 +282,13 @@ class LibraryRagToolProvider:
         identities, chunk ids, citations, or provenance)."""
         score = getattr(row, "score", None)
         return {
-            "result_id": str(getattr(row, "result_id", "") or ""),
-            "title": str(getattr(row, "title", "") or ""),
+            "result_id": str(getattr(row, "result_id", "") or "")[:_MAX_RESULT_ID_CHARS],
+            "title": str(getattr(row, "title", "") or "")[:_MAX_TITLE_CHARS],
             "snippet": str(getattr(row, "snippet", "") or "")[:_MAX_SNIPPET_CHARS],
             "score": score if isinstance(score, (int, float)) else None,
-            "runtime_backend": str(getattr(row, "runtime_backend", "") or ""),
+            "runtime_backend": str(getattr(row, "runtime_backend", "") or "")[
+                :_MAX_RUNTIME_BACKEND_CHARS
+            ],
         }
 
 

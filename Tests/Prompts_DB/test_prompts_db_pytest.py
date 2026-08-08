@@ -860,6 +860,33 @@ def test_library_prompt_section_windows_text(in_memory_db):
     assert missing is None
 
 
+def test_library_prompt_detail_reads_run_inside_transaction(in_memory_db):
+    db = in_memory_db
+    _, prompt_uuid = _seed_library_prompt(
+        db, name="Transactional", system_prompt="bounded body"
+    )
+    conn = db.get_connection()
+    conn.commit()
+    observed: list[bool] = []
+
+    def record_transaction_state(sql: str) -> None:
+        if "FROM Prompts" in sql and (
+            "AS details_total" in sql or "AS total_chars" in sql
+        ):
+            observed.append(conn.in_transaction)
+
+    conn.set_trace_callback(record_transaction_state)
+    try:
+        assert db.get_library_prompt_overview(prompt_uuid) is not None
+        assert db.get_library_prompt_section(
+            prompt_uuid, section="system_prompt", start=0, max_chars=20
+        ) is not None
+    finally:
+        conn.set_trace_callback(None)
+
+    assert observed == [True, True]
+
+
 def test_library_prompt_section_rejects_invalid_section(in_memory_db):
     db = in_memory_db
     _, prompt_uuid = _seed_library_prompt(db, name="Guarded", system_prompt="body")

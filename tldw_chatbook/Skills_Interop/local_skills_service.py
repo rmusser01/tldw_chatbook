@@ -1094,6 +1094,16 @@ class LocalSkillsService:
 
         One enumeration produces the exact total before slicing; summaries
         carry safe fields and trust status only -- never body or files.
+
+        Args:
+            limit: Maximum number of skills to return.
+            offset: Number of skills to skip.
+
+        Returns:
+            A bounded page containing safe skill summaries and exact total.
+
+        Raises:
+            PolicyDeniedError: If local skill listing is denied by policy.
         """
         self._enforce("skills.list.local")
         records = self._load_index()
@@ -1124,6 +1134,9 @@ class LocalSkillsService:
         Returns:
             Dict with ``items`` (safe summaries plus ``matched_fields``),
             ``total``, ``offset``, and ``limit``.
+
+        Raises:
+            PolicyDeniedError: If local skill listing is denied by policy.
         """
         self._enforce("skills.list.local")
         records = self._load_index()

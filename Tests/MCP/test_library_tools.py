@@ -28,7 +28,11 @@ from types import SimpleNamespace
 import pytest
 
 from tldw_chatbook.Library.library_tool_contract import LIBRARY_TOOL_DESCRIPTORS
-from tldw_chatbook.MCP.local_runtime_delegate import LocalMCPRuntimeDelegate
+from tldw_chatbook.MCP.local_runtime_delegate import (
+    RAW_TOOL_CALL_REFUSED_MESSAGE,
+    LocalMCPRuntimeDelegate,
+    RawToolCallRefusedError,
+)
 from tldw_chatbook.MCP.server import describe_local_mcp_capabilities
 
 LEGACY_TOOL_NAMES = [
@@ -142,22 +146,18 @@ async def test_delegate_keeps_keyerror_for_unknown_tool_names():
 
 
 @pytest.mark.asyncio
-async def test_delegate_tools_call_request_routes_library_tools():
+async def test_delegate_raw_tools_call_request_refuses_library_tools():
     service = FakeLibraryToolService()
     delegate = LocalMCPRuntimeDelegate(library_service=service)
 
-    result = await delegate.request(
-        "tools/call",
-        {"name": "library_search_notes", "arguments": {"query": "roadmap"}},
-    )
+    with pytest.raises(RawToolCallRefusedError) as exc_info:
+        await delegate.request(
+            "tools/call",
+            {"name": "library_search_notes", "arguments": {"query": "roadmap"}},
+        )
 
-    assert result == {
-        "tool_name": "library_search_notes",
-        "result": {
-            "echo": "library_search_notes",
-            "arguments": {"query": "roadmap"},
-        },
-    }
+    assert str(exc_info.value) == RAW_TOOL_CALL_REFUSED_MESSAGE
+    assert service.calls == []
 
 
 def test_delegate_diagnostics_report_library_tools_implemented_not_missing():

@@ -10635,7 +10635,9 @@ UPDATE db_schema_version
             items = [self._library_note_item(row, keywords_by_note) for row in rows]
             return {"items": items, "total": total}
         except sqlite3.Error as e:
-            logger.error(f"Error listing library notes page: {e}")
+            logger.error(
+                f"Error listing library notes page (limit={limit}, offset={offset}): {e}"
+            )
             raise CharactersRAGDBError(f"Failed to list library notes page: {e}") from e
 
     def search_library_notes_page(
@@ -10741,7 +10743,10 @@ UPDATE db_schema_version
                 items.append(item)
             return {"items": items, "total": total}
         except sqlite3.Error as e:
-            logger.error(f"Error searching library notes: {e}")
+            logger.error(
+                "Error searching library notes "
+                f"(query_chars={len(query)}, limit={limit}, offset={offset}): {e}"
+            )
             raise CharactersRAGDBError(f"Failed to search library notes: {e}") from e
 
     def get_library_note_text(
@@ -10766,17 +10771,17 @@ UPDATE db_schema_version
             CharactersRAGDBError: If a database error occurs.
         """
         try:
-            cursor = self.execute_query(
-                """
-                SELECT id, title, created_at, last_modified, version,
-                       length(content) AS total_chars,
-                       substr(content, ?, ?) AS text
-                FROM notes
-                WHERE id = ? AND deleted = 0
-                """,
-                (start + 1, max_chars, note_id),
-            )
-            row = cursor.fetchone()
+            with self.transaction() as conn:
+                row = conn.execute(
+                    """
+                    SELECT id, title, created_at, last_modified, version,
+                           length(content) AS total_chars,
+                           substr(content, ?, ?) AS text
+                    FROM notes
+                    WHERE id = ? AND deleted = 0
+                    """,
+                    (start + 1, max_chars, note_id),
+                ).fetchone()
             if row is None:
                 return None
             text = row["text"] or ""
@@ -10794,7 +10799,10 @@ UPDATE db_schema_version
                 "text": text,
             }
         except sqlite3.Error as e:
-            logger.error(f"Error reading library note text: {e}")
+            logger.error(
+                "Error reading library note text "
+                f"(note_id={note_id!r}, start={start}, max_chars={max_chars}): {e}"
+            )
             raise CharactersRAGDBError(f"Failed to read library note text: {e}") from e
 
     # ---- Conversation library seams (task-1337, plan Task 4) ----
@@ -10911,7 +10919,10 @@ UPDATE db_schema_version
             ]
             return {"items": items, "total": total}
         except sqlite3.Error as e:
-            logger.error(f"Error listing library conversations page: {e}")
+            logger.error(
+                "Error listing library conversations page "
+                f"(limit={limit}, offset={offset}): {e}"
+            )
             raise CharactersRAGDBError(
                 f"Failed to list library conversations page: {e}"
             ) from e
@@ -11026,7 +11037,10 @@ UPDATE db_schema_version
                 items.append(item)
             return {"items": items, "total": total}
         except sqlite3.Error as e:
-            logger.error(f"Error searching library conversations: {e}")
+            logger.error(
+                "Error searching library conversations "
+                f"(query_chars={len(query)}, limit={limit}, offset={offset}): {e}"
+            )
             raise CharactersRAGDBError(
                 f"Failed to search library conversations: {e}"
             ) from e
@@ -11173,7 +11187,12 @@ UPDATE db_schema_version
                 "messages": messages,
             }
         except sqlite3.Error as e:
-            logger.error(f"Error reading library conversation messages: {e}")
+            logger.error(
+                "Error reading library conversation messages "
+                f"(conversation_id={conversation_id!r}, message_offset={message_offset}, "
+                f"message_limit={message_limit}, max_chars={max_chars}, "
+                f"message_id={message_id!r}, char_start={char_start}): {e}"
+            )
             raise CharactersRAGDBError(
                 f"Failed to read library conversation messages: {e}"
             ) from e

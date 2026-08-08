@@ -123,15 +123,28 @@ async def test_rows_render_grouped_sorted_with_tags_and_schema_columns():
 
 
 def test_all_builtin_tools_render_form_column():
-    """RAG-48 part 3: with array-of-simple-items support in
-    `parse_schema()`, every one of the ten builtin tools' real manifest
-    `inputSchema` -- including `search_rag.media_types` and
-    `ingest_media.tags`, both `array` typed -- renders as a form rather
-    than falling back to raw JSON."""
+    """Every legacy and descriptor-backed builtin tool renders as a form."""
+    from tldw_chatbook.Library.library_tool_contract import (
+        LIBRARY_TOOL_DESCRIPTORS,
+    )
     from tldw_chatbook.MCP.server import describe_local_mcp_capabilities
 
     tools = describe_local_mcp_capabilities()["tools"]
-    assert len(tools) == 10
+    legacy_tool_names = {
+        "chat_with_llm",
+        "chat_with_character",
+        "search_rag",
+        "search_conversations",
+        "create_note",
+        "search_notes",
+        "list_characters",
+        "get_conversation_history",
+        "export_conversation",
+        "ingest_media",
+    }
+    assert {tool["name"] for tool in tools} == (
+        legacy_tool_names | set(LIBRARY_TOOL_DESCRIPTORS)
+    )
     for tool in tools:
         assert parse_schema(tool["inputSchema"]) is not None, tool["name"]
 

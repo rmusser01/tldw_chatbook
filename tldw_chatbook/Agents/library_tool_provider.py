@@ -14,7 +14,6 @@ per run after `BuiltinToolProvider` and before skills/MCP.
 
 from __future__ import annotations
 
-import json
 from typing import Any, Mapping
 
 from loguru import logger
@@ -29,12 +28,13 @@ from tldw_chatbook.Library.library_tool_contract import (
     ERROR_STORAGE_ERROR,
     LIBRARY_TOOL_DESCRIPTORS,
     LibraryToolError,
+    json_dumps_compact,
 )
 
 
 def _error_result(error: LibraryToolError) -> ToolResult:
     """Serialize a structured Library error into the Console result model."""
-    return ToolResult(ok=False, error=json.dumps(error.to_payload()))
+    return ToolResult(ok=False, error=json_dumps_compact(error.to_payload()))
 
 
 class LibraryToolProvider:
@@ -101,7 +101,7 @@ class LibraryToolProvider:
                 "The local Library store could not complete the read.",
                 retryable=True,
             ).to_payload()
-        text = json.dumps(payload)
+        text = json_dumps_compact(payload)
         if isinstance(payload, Mapping) and "error" in payload:
             return ToolResult(ok=False, error=text)
         return ToolResult(ok=True, content=text)

@@ -103,7 +103,19 @@ class LocalMediaReadingService:
     def list_library_media(
         self, *, limit: int = 20, offset: int = 0
     ) -> dict[str, Any]:
-        """Page the active local media library for agent-facing list tools."""
+        """Page the active local media library for agent-facing list tools.
+
+        Args:
+            limit: Maximum number of media items to return.
+            offset: Number of media items to skip.
+
+        Returns:
+            A bounded page containing items, exact total, offset, and limit.
+
+        Raises:
+            ValueError: If no local media database is configured.
+            DatabaseError: If the local media database cannot be read.
+        """
         db = self._require_db()
         payload = db.list_library_media_page(limit=limit, offset=offset)
         return {
@@ -116,7 +128,20 @@ class LocalMediaReadingService:
     def search_library_media(
         self, *, query: str, limit: int = 20, offset: int = 0
     ) -> dict[str, Any]:
-        """Search the active local media library for agent-facing tools."""
+        """Search the active local media library for agent-facing tools.
+
+        Args:
+            query: Literal case-insensitive search text.
+            limit: Maximum number of media items to return.
+            offset: Number of matching items to skip.
+
+        Returns:
+            A bounded page with exact total and match evidence.
+
+        Raises:
+            ValueError: If no local media database is configured.
+            DatabaseError: If the local media database cannot be read.
+        """
         db = self._require_db()
         payload = db.search_library_media_page(query=query, limit=limit, offset=offset)
         return {
@@ -129,7 +154,20 @@ class LocalMediaReadingService:
     def get_library_media_text(
         self, media_uuid: str, *, start: int = 0, max_chars: int = 8000
     ) -> Optional[dict[str, Any]]:
-        """Read a windowed text segment for one active media item."""
+        """Read a windowed text segment for one active media item.
+
+        Args:
+            media_uuid: Stable media UUID.
+            start: Zero-based character offset.
+            max_chars: Maximum characters to return.
+
+        Returns:
+            Bounded media metadata and text, or None when absent.
+
+        Raises:
+            ValueError: If no local media database is configured.
+            DatabaseError: If the local media database cannot be read.
+        """
         db = self._require_db()
         return db.get_library_media_text(media_uuid, start=start, max_chars=max_chars)
 

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import inspect
 import json
+from types import MappingProxyType
 
 import pytest
 
@@ -25,7 +26,10 @@ from tldw_chatbook.Library.library_tool_contract import (
     LIBRARY_TOOL_DESCRIPTORS,
     MAX_RESULT_BYTES,
     MAX_SEARCH_QUERY_CHARS,
+    serialized_size,
 )
+from tldw_chatbook.Library.library_rag_service import LibraryRagSearchOutcome
+from tldw_chatbook.Library.library_rag_state import LibraryRagResultRow
 
 
 class FakeLibraryService:
@@ -105,6 +109,32 @@ def test_direct_invoke_success_serializes_payload_into_content():
     assert result.error == ""
     assert json.loads(result.content) == payload
     assert service.calls == [("library_list_notes", {"limit": 5})]
+
+
+def test_direct_provider_serializes_success_and_error_as_measured_compact_json():
+    payload = {"message": "café", "items": [{"title": "雪"}]}
+    provider = LibraryToolProvider(FakeLibraryService(result=payload))
+
+    success = provider.invoke("library:library_list_notes", {})
+    assert success.content == '{"message":"café","items":[{"title":"雪"}]}'
+    assert len(success.content.encode("utf-8")) == serialized_size(payload)
+
+    error_payload = {
+        "error": {
+            "code": "not_found",
+            "message": "élément absent",
+            "retryable": False,
+            "details": {},
+        }
+    }
+    error = LibraryToolProvider(FakeLibraryService(result=error_payload)).invoke(
+        "library:library_get_note", {"id": "note:abc"}
+    )
+    assert error.error == (
+        '{"error":{"code":"not_found","message":"élément absent",'
+        '"retryable":false,"details":{}}}'
+    )
+    assert len(error.error.encode("utf-8")) == serialized_size(error_payload)
 
 
 def test_direct_invoke_error_serializes_the_same_error_object():
@@ -264,6 +294,36 @@ def test_rag_invoke_caps_the_payload_under_the_ceiling():
 
     assert result.ok is True
     assert len(result.content.encode("utf-8")) <= MAX_RESULT_BYTES
+
+
+@pytest.mark.timeout(2)
+def test_rag_invoke_hostile_metadata_terminates_with_bounded_payload():
+    huge = "界" * 40_000
+    row = LibraryRagResultRow(
+        result_id=huge,
+        title=huge,
+        snippet="",
+        score=0.5,
+        source_id="source",
+        chunk_id="chunk",
+        citations=(),
+        provenance=MappingProxyType({}),
+        runtime_backend=huge,
+    )
+    outcome = LibraryRagSearchOutcome(status="ready", results=(row,))
+    provider = LibraryRagToolProvider(FakeRagService(result=outcome))
+
+    result = provider.invoke(f"library:{RAG_TOOL_NAME}", {"query": "q"})
+
+    assert result.ok is True
+    assert len(result.content.encode("utf-8")) <= MAX_RESULT_BYTES
+    projected = json.loads(result.content)["results"]
+    assert len(projected) <= 1
+    if projected:
+        assert all(
+            len(projected[0][field]) <= 2_000
+            for field in ("result_id", "title", "runtime_backend")
+        )
 
 
 def test_rag_invoke_empty_outcome_is_a_successful_empty_page():

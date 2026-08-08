@@ -102,17 +102,43 @@ class LibraryCollectionsService(Protocol):
     def list_library_collections(
         self, *, limit: int = 20, offset: int = 0
     ) -> dict:
-        """Page active Collections with an exact total for Library agent tools."""
+        """Page active Collections with an exact total for Library agent tools.
+
+        Args:
+            limit: Maximum number of Collections to return.
+            offset: Number of Collections to skip.
+
+        Returns:
+            A bounded page containing items, total, offset, and limit.
+        """
 
     def search_library_collections(
         self, *, query: str, limit: int = 20, offset: int = 0
     ) -> dict:
-        """Search active Collections by name/description/stored member title."""
+        """Search active Collections by name, description, or member title.
+
+        Args:
+            query: Literal case-insensitive search text.
+            limit: Maximum number of Collections to return.
+            offset: Number of matching Collections to skip.
+
+        Returns:
+            A bounded page with exact total and match evidence.
+        """
 
     def get_library_collection(
         self, collection_id: str, *, limit: int = 20, offset: int = 0
     ) -> dict | None:
-        """Return one active Collection plus a bounded membership page."""
+        """Return one active Collection plus a bounded membership page.
+
+        Args:
+            collection_id: Stable Collection identifier.
+            limit: Maximum number of members to return.
+            offset: Number of members to skip.
+
+        Returns:
+            The Collection and bounded member page, or None when absent.
+        """
 
 
 class LocalLibraryCollectionsService:
@@ -339,6 +365,16 @@ class LocalLibraryCollectionsService:
 
         Ordering matches ``list_collections`` (``created_at ASC, name
         COLLATE NOCASE ASC``). Count and page are read in one transaction.
+
+        Args:
+            limit: Maximum number of Collections to return.
+            offset: Number of Collections to skip.
+
+        Returns:
+            A bounded page containing items, total, offset, and limit.
+
+        Raises:
+            LibraryCollectionsServiceError: If the local store cannot be read.
         """
         try:
             with self.db.transaction() as conn:
@@ -384,6 +420,17 @@ class LocalLibraryCollectionsService:
         exact name, name substring, description substring, and direct stored
         member-title substring. LIKE input is escaped so wildcards match
         literally. Exact-name hits rank first, then the list ordering.
+
+        Args:
+            query: Literal case-insensitive search text.
+            limit: Maximum number of Collections to return.
+            offset: Number of matching Collections to skip.
+
+        Returns:
+            A bounded page with exact total and match evidence.
+
+        Raises:
+            LibraryCollectionsServiceError: If the local store cannot be read.
         """
         like_pattern = f"%{_escape_collection_like(query)}%"
         branches = [
@@ -456,6 +503,17 @@ class LocalLibraryCollectionsService:
         opaque ``source_ref``. Member titles are display-bounded and member
         content is never inlined. Returns None when no active Collection
         matches ``collection_id``.
+
+        Args:
+            collection_id: Stable Collection identifier.
+            limit: Maximum number of members to return.
+            offset: Number of members to skip.
+
+        Returns:
+            The Collection and bounded member page, or None when absent.
+
+        Raises:
+            LibraryCollectionsServiceError: If the local store cannot be read.
         """
         try:
             with self.db.transaction() as conn:

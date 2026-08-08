@@ -32,6 +32,7 @@ MAX_MAX_CHARS = 16_000
 MAX_RESULT_BYTES = 32 * 1024
 PAGE_MANDATORY_RESERVE_BYTES = 24 * 1024
 MAX_PUBLIC_ID_BYTES = 128
+MAX_CURSOR_CHARS = 2_048
 
 #: Brief/display bounds from spec §6.
 KEYWORDS_PER_ITEM_MAX = 20
@@ -118,9 +119,28 @@ def _invalid(message: str, *, details: dict | None = None) -> LibraryToolError:
 _JSON_KWARGS: dict[str, Any] = {"ensure_ascii": False, "separators": (",", ":")}
 
 
+def json_dumps_compact(payload: Any) -> str:
+    """Serialize a Library payload using the representation used for sizing.
+
+    Args:
+        payload: JSON-compatible Library payload.
+
+    Returns:
+        Compact UTF-8-preserving JSON text.
+    """
+    return json.dumps(payload, **_JSON_KWARGS)
+
+
 def serialized_size(payload: Any) -> int:
-    """The actual UTF-8 JSON byte length of ``payload`` (spec §7: bytes, not chars)."""
-    return len(json.dumps(payload, **_JSON_KWARGS).encode("utf-8"))
+    """Measure the actual UTF-8 JSON byte length of a Library payload.
+
+    Args:
+        payload: JSON-compatible Library payload.
+
+    Returns:
+        Byte length of the compact serialized payload.
+    """
+    return len(json_dumps_compact(payload).encode("utf-8"))
 
 
 # -- Descriptor table (spec §1, §2) ----------------------------------------------
@@ -165,6 +185,14 @@ def _max_chars_property() -> dict:
         "default": DEFAULT_MAX_CHARS,
         "minimum": 1,
         "maximum": MAX_MAX_CHARS,
+    }
+
+
+def _cursor_property() -> dict:
+    return {
+        "type": "string",
+        "maxLength": MAX_CURSOR_CHARS,
+        "description": "Opaque continuation cursor from a previous get.",
     }
 
 
@@ -230,7 +258,7 @@ LIBRARY_TOOL_DESCRIPTORS: dict[str, LibraryToolDescriptor] = {
             "Read one media item's textual metadata/content segment by opaque stable ID; never returns binary data or filesystem paths.",
             _get_schema({
                 "max_chars": _max_chars_property(),
-                "cursor": {"type": "string", "description": "Opaque continuation cursor from a previous get."},
+                "cursor": _cursor_property(),
             }),
         ),
         _descriptor(
@@ -249,7 +277,7 @@ LIBRARY_TOOL_DESCRIPTORS: dict[str, LibraryToolDescriptor] = {
             "Read one note's content in bounded, revision-aware chunks by opaque stable ID.",
             _get_schema({
                 "max_chars": _max_chars_property(),
-                "cursor": {"type": "string", "description": "Opaque continuation cursor from a previous get."},
+                "cursor": _cursor_property(),
             }),
         ),
         _descriptor(
@@ -273,7 +301,7 @@ LIBRARY_TOOL_DESCRIPTORS: dict[str, LibraryToolDescriptor] = {
                     "description": "Optional manifest section to read; omitted returns a bounded overview plus the section manifest.",
                 },
                 "max_chars": _max_chars_property(),
-                "cursor": {"type": "string", "description": "Opaque continuation cursor from a previous get."},
+                "cursor": _cursor_property(),
             }),
         ),
         _descriptor(
@@ -296,7 +324,7 @@ LIBRARY_TOOL_DESCRIPTORS: dict[str, LibraryToolDescriptor] = {
                     "description": "Opaque supporting-file token from this skill's file manifest; never a filesystem path.",
                 },
                 "max_chars": _max_chars_property(),
-                "cursor": {"type": "string", "description": "Opaque continuation cursor from a previous get."},
+                "cursor": _cursor_property(),
             }),
         ),
         _descriptor(
@@ -320,7 +348,7 @@ LIBRARY_TOOL_DESCRIPTORS: dict[str, LibraryToolDescriptor] = {
                     "minimum": 1,
                     "maximum": MAX_MESSAGE_LIMIT,
                 },
-                "cursor": {"type": "string", "description": "Opaque continuation cursor from a previous get."},
+                "cursor": _cursor_property(),
             }),
         ),
         _descriptor(
@@ -345,7 +373,7 @@ LIBRARY_TOOL_DESCRIPTORS: dict[str, LibraryToolDescriptor] = {
                     "maximum": MAX_PAGE_LIMIT,
                 },
                 "offset": {"type": "integer", "default": 0, "minimum": 0},
-                "cursor": {"type": "string", "description": "Opaque continuation cursor from a previous get."},
+                "cursor": _cursor_property(),
             }),
         ),
         _descriptor(
@@ -482,7 +510,12 @@ def parse_cursor(value: Any) -> dict[str, Any]:
             cursor -- never a decode of untrusted bytes.
     """
     _bad = _invalid("continuation cursor is invalid; start the read again without one")
-    if not isinstance(value, str) or not value or not value.isascii():
+    if (
+        not isinstance(value, str)
+        or not value
+        or len(value) > MAX_CURSOR_CHARS
+        or not value.isascii()
+    ):
         raise _bad
     padding = "=" * (-len(value) % 4)
     try:
@@ -790,6 +823,7 @@ __all__ = [
     "LIBRARY_TOOL_DESCRIPTORS",
     "LibraryToolDescriptor",
     "LibraryToolError",
+    "MAX_CURSOR_CHARS",
     "MAX_MAX_CHARS",
     "MAX_MESSAGE_LIMIT",
     "MAX_PAGE_LIMIT",
@@ -801,6 +835,7 @@ __all__ = [
     "check_cursor_revision",
     "fit_page_payload",
     "fit_text_segment",
+    "json_dumps_compact",
     "make_cursor",
     "make_public_id",
     "normalize_display_text",

@@ -2529,3 +2529,23 @@ def test_library_media_detail_returns_none_for_missing_uuid(memory_db_factory):
     db = memory_db_factory()
     service = LocalMediaReadingService(db)
     assert service.get_library_media_text("no-such-uuid", start=0, max_chars=100) is None
+
+
+def test_library_media_detail_read_runs_inside_transaction(memory_db_factory):
+    db = memory_db_factory()
+    _, media_uuid = _seed_active_media(db, title="Transactional", content="body")
+    conn = db.get_connection()
+    conn.commit()
+    observed: list[bool] = []
+
+    def record_transaction_state(sql: str) -> None:
+        if "FROM Media" in sql and "AS total_chars" in sql:
+            observed.append(conn.in_transaction)
+
+    conn.set_trace_callback(record_transaction_state)
+    try:
+        assert db.get_library_media_text(media_uuid, start=0, max_chars=20) is not None
+    finally:
+        conn.set_trace_callback(None)
+
+    assert observed == [True]

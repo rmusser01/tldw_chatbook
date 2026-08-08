@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import pytest
 
+import tldw_chatbook.Library.library_tool_contract as library_tool_contract
+
 from tldw_chatbook.Library.library_tool_contract import (
     DISPLAY_NAME_FLOOR_BYTES,
     DISPLAY_NAME_MAX_BYTES,
@@ -95,6 +97,13 @@ def test_get_schemas_require_id_and_cap_max_chars():
             allowed.update({"limit", "offset"})
             allowed.discard("max_chars")
         assert set(props) == allowed, descriptor.name
+
+
+def test_get_schemas_bound_continuation_cursor_length():
+    for descriptor in LIBRARY_TOOL_DESCRIPTORS.values():
+        cursor = descriptor.input_schema["properties"].get("cursor")
+        if cursor is not None:
+            assert cursor["maxLength"] == 2_048, descriptor.name
 
 
 def test_descriptions_carry_trust_and_read_only_boundaries():
@@ -213,6 +222,18 @@ def test_one_byte_cursor_mutation_fails_closed():
 def test_parse_cursor_rejects_garbage(bad):
     with pytest.raises(LibraryToolError) as excinfo:
         parse_cursor(bad)
+    assert excinfo.value.code == ERROR_INVALID_ARGUMENT
+
+
+def test_parse_cursor_rejects_oversized_input_before_base64_decode(monkeypatch):
+    def unexpected_decode(*_args, **_kwargs):
+        raise AssertionError("oversized cursor reached base64 decoding")
+
+    monkeypatch.setattr(library_tool_contract.base64, "b64decode", unexpected_decode)
+
+    with pytest.raises(LibraryToolError) as excinfo:
+        parse_cursor("A" * 2_049)
+
     assert excinfo.value.code == ERROR_INVALID_ARGUMENT
 
 

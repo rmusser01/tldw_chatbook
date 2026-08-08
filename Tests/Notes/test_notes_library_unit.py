@@ -529,6 +529,29 @@ def test_library_notes_detail_windows_text_and_missing_returns_none():
         db.close_connection()
 
 
+def test_library_note_detail_read_runs_inside_transaction():
+    db = _make_library_notes_db()
+    try:
+        note_id = _seed_library_note(db, title="Transactional", content="body")
+        conn = db.get_connection()
+        conn.commit()
+        observed: list[bool] = []
+
+        def record_transaction_state(sql: str) -> None:
+            if "FROM notes" in sql and "AS total_chars" in sql:
+                observed.append(conn.in_transaction)
+
+        conn.set_trace_callback(record_transaction_state)
+        try:
+            assert db.get_library_note_text(note_id, start=0, max_chars=20) is not None
+        finally:
+            conn.set_trace_callback(None)
+
+        assert observed == [True]
+    finally:
+        db.close_connection()
+
+
 class TestLibraryNotesInteropDelegates(TestNotesInteropService):
     """NotesInteropService delegates for the Library read seams (task-1337)."""
 

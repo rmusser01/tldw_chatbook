@@ -1094,3 +1094,21 @@ region arithmetic alone. If a label needs its button's full content width,
 set `styles.line_pad = 0` in Python (the CSS form does not parse) and
 record the budget math in a comment, the way `_bounded_button` call sites
 in `console_composer_bar.py` now do.
+
+---
+
+## A conflict-free rebase can still replay a test for an obsolete base contract
+
+**Incident.** PR #1435 added `Tests/MCP/test_library_tools.py` on a branch
+whose original base allowed raw `tools/call` dispatch. Current `dev` had since
+added a typed security refusal requiring execution through the permission-gated
+action. The rebase was entirely conflict-free because the feature commit
+created the test file, so Git had no overlapping lines to flag; the focused
+suite was what exposed the stale expectation. A prior task note even claimed
+the test had been updated, but the committed tree still expected raw dispatch.
+
+**What to do.** Treat a clean rebase as transport evidence, not compatibility
+evidence. Re-run the feature's complete focused suite after rebasing, and verify
+claimed conflict adaptations in the committed files themselves. Newly created
+tests are especially likely to preserve assumptions that the new base has
+intentionally invalidated without producing a textual conflict.

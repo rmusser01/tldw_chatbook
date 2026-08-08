@@ -2520,7 +2520,9 @@ class PromptsDatabase:
             items = [self._library_prompt_item(row, keywords_by_prompt) for row in rows]
             return {"items": items, "total": total}
         except sqlite3.Error as e:
-            logger.error(f"Error listing library prompts page: {e}")
+            logger.error(
+                f"Error listing library prompts page (limit={limit}, offset={offset}): {e}"
+            )
             raise DatabaseError(f"Failed to list library prompts page: {e}") from e
 
     def search_library_prompts_page(
@@ -2647,7 +2649,10 @@ class PromptsDatabase:
                 items.append(item)
             return {"items": items, "total": total}
         except sqlite3.Error as e:
-            logger.error(f"Error searching library prompts: {e}")
+            logger.error(
+                "Error searching library prompts "
+                f"(query_chars={len(query)}, limit={limit}, offset={offset}): {e}"
+            )
             raise DatabaseError(f"Failed to search library prompts: {e}") from e
 
     def get_library_prompt_overview(self, prompt_uuid: str) -> Optional[Dict[str, Any]]:
@@ -2674,15 +2679,15 @@ class PromptsDatabase:
             for column in self._LIBRARY_PROMPT_SECTIONS
         )
         try:
-            cursor = self.execute_query(
-                f"""
-                SELECT uuid, name, author, last_modified, version, {selects}
-                FROM Prompts
-                WHERE uuid = ? AND deleted = 0
-                """,
-                (prompt_uuid,),
-            )
-            row = cursor.fetchone()
+            with self.transaction() as conn:
+                row = conn.execute(
+                    f"""
+                    SELECT uuid, name, author, last_modified, version, {selects}
+                    FROM Prompts
+                    WHERE uuid = ? AND deleted = 0
+                    """,
+                    (prompt_uuid,),
+                ).fetchone()
             if row is None:
                 return None
             sections = {}
@@ -2702,7 +2707,9 @@ class PromptsDatabase:
                 "sections": sections,
             }
         except sqlite3.Error as e:
-            logger.error(f"Error reading library prompt overview: {e}")
+            logger.error(
+                f"Error reading library prompt overview (prompt_uuid={prompt_uuid!r}): {e}"
+            )
             raise DatabaseError(f"Failed to read library prompt overview: {e}") from e
 
     def get_library_prompt_section(
@@ -2736,17 +2743,17 @@ class PromptsDatabase:
                 f"{', '.join(self._LIBRARY_PROMPT_SECTIONS)}."
             )
         try:
-            cursor = self.execute_query(
-                f"""
-                SELECT uuid, name, version,
-                       length(coalesce({section}, '')) AS total_chars,
-                       substr(coalesce({section}, ''), ?, ?) AS text
-                FROM Prompts
-                WHERE uuid = ? AND deleted = 0
-                """,
-                (start + 1, max_chars, prompt_uuid),
-            )
-            row = cursor.fetchone()
+            with self.transaction() as conn:
+                row = conn.execute(
+                    f"""
+                    SELECT uuid, name, version,
+                           length(coalesce({section}, '')) AS total_chars,
+                           substr(coalesce({section}, ''), ?, ?) AS text
+                    FROM Prompts
+                    WHERE uuid = ? AND deleted = 0
+                    """,
+                    (start + 1, max_chars, prompt_uuid),
+                ).fetchone()
             if row is None:
                 return None
             text = row["text"] or ""
@@ -2763,7 +2770,11 @@ class PromptsDatabase:
                 "text": text,
             }
         except sqlite3.Error as e:
-            logger.error(f"Error reading library prompt section: {e}")
+            logger.error(
+                "Error reading library prompt section "
+                f"(prompt_uuid={prompt_uuid!r}, section={section!r}, "
+                f"start={start}, max_chars={max_chars}): {e}"
+            )
             raise DatabaseError(f"Failed to read library prompt section: {e}") from e
 
     def fetch_prompt_details(

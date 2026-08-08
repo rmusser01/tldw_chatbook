@@ -12,7 +12,6 @@ from __future__ import annotations
 import inspect
 import re
 import sqlite3
-from pathlib import Path
 from unittest.mock import ANY
 
 import pytest

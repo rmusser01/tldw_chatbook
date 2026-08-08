@@ -7469,7 +7469,9 @@ class MediaDatabase:
             items = [self._library_media_item(row, keywords_by_media) for row in rows]
             return {"items": items, "total": total}
         except sqlite3.Error as e:
-            logger.opt(exception=True).error(f"Error listing library media page: {e}")
+            logger.opt(exception=True).error(
+                f"Error listing library media page (limit={limit}, offset={offset}): {e}"
+            )
             raise DatabaseError(f"Failed to list library media page: {e}") from e
 
     def search_library_media_page(
@@ -7577,7 +7579,10 @@ class MediaDatabase:
                 items.append(item)
             return {"items": items, "total": total}
         except sqlite3.Error as e:
-            logger.opt(exception=True).error(f"Error searching library media: {e}")
+            logger.opt(exception=True).error(
+                "Error searching library media "
+                f"(query_chars={len(query)}, limit={limit}, offset={offset}): {e}"
+            )
             raise DatabaseError(f"Failed to search library media: {e}") from e
 
     def get_library_media_text(
@@ -7603,17 +7608,17 @@ class MediaDatabase:
             DatabaseError: If a database error occurs.
         """
         try:
-            cursor = self.execute_query(
-                """
-                SELECT uuid, title, type, author, ingestion_date, last_modified,
-                       version, length(content) AS total_chars,
-                       substr(content, ?, ?) AS text
-                FROM Media
-                WHERE uuid = ? AND deleted = 0 AND is_trash = 0
-                """,
-                (start + 1, max_chars, media_uuid),
-            )
-            row = cursor.fetchone()
+            with self.transaction() as conn:
+                row = conn.execute(
+                    """
+                    SELECT uuid, title, type, author, ingestion_date, last_modified,
+                           version, length(content) AS total_chars,
+                           substr(content, ?, ?) AS text
+                    FROM Media
+                    WHERE uuid = ? AND deleted = 0 AND is_trash = 0
+                    """,
+                    (start + 1, max_chars, media_uuid),
+                ).fetchone()
             if row is None:
                 return None
             text = row["text"] or ""
@@ -7633,7 +7638,10 @@ class MediaDatabase:
                 "text": text,
             }
         except sqlite3.Error as e:
-            logger.opt(exception=True).error(f"Error reading library media text: {e}")
+            logger.opt(exception=True).error(
+                "Error reading library media text "
+                f"(media_uuid={media_uuid!r}, start={start}, max_chars={max_chars}): {e}"
+            )
             raise DatabaseError(f"Failed to read library media text: {e}") from e
 
 
