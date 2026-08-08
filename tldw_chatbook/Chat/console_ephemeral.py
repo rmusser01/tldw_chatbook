@@ -91,6 +91,10 @@ EPHEMERAL_BLOCKED_ACTIONS: dict[str, str] = {
         "Generating an image writes a file to disk — not available in a "
         "temporary chat."
     ),
+    "generate-video": (
+        "Generating a video writes a file to disk — not available in a "
+        "temporary chat."
+    ),
     "save-chatbook": (
         "Saving a Chatbook exports a file to disk — not available in a "
         "temporary chat."

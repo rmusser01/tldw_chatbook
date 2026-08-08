@@ -126,6 +126,8 @@ from ...Chat.scope_picker_listers import (
 from ...Chat.console_command_grammar import (
     GENERATE_IMAGE_COMMAND_HANDLER_ID,
     GENERATE_IMAGE_COMMAND_NAME,
+    GENERATE_VIDEO_COMMAND_HANDLER_ID,
+    GENERATE_VIDEO_COMMAND_NAME,
     KIND_COMMAND,
     KIND_FALLBACK,
     KIND_NOT_COMMAND,
@@ -164,6 +166,15 @@ from ...Chat.console_generate_image import (
     prepare_generation_request,
     run_generation_batch,
 )
+from ...Chat.console_generate_video import (
+    GENERATE_VIDEO_USAGE_TEXT,
+    estimate_video_cost_text,
+    is_paid_backend,
+    parse_generate_video_args,
+    run_video_generation,
+)
+from ...Video_Generation.config import get_video_generation_config
+from ...Video_Generation.video_store import VideoStore
 from ...Image_Generation.config import get_image_generation_config
 from ...Image_Generation.listing import list_image_models_for_catalog
 from ...Chat.console_skill_resolver import (
@@ -429,6 +440,10 @@ from ...Widgets.Console.console_citation_sources_modal import (
 from ...Widgets.Console.console_generation_card import (
     ConsoleGenerationCardSpec,
     generation_card_signature,
+)
+from ...Widgets.Console.console_video_card import (
+    ConsoleVideoCardSpec,
+    video_card_signature,
 )
 from ...Widgets.Console.console_rag_settings_modal import (
     CONSOLE_RAG_DEFAULT_SOURCE_TYPES,
@@ -13741,6 +13756,8 @@ class ChatScreen(BaseAppScreen):
             transcript.set_image_specs(image_specs)
             card_specs = self._build_generation_card_specs(messages)
             transcript.set_generation_card_specs(card_specs)
+            video_specs = self._build_video_card_specs(messages)
+            transcript.set_video_card_specs(video_specs)
             _state, cache = self._ensure_console_image_view()
             # Same bounded subset as `_build_console_image_specs` — computing
             # pending work over the full transcript would prep messages the
@@ -13789,11 +13806,19 @@ class ChatScreen(BaseAppScreen):
                 generation_card_signature(card_specs[message_id])
                 for message_id in sorted(card_specs)
             )
+            # Same load-bearing role as card_signature: a video's file
+            # appearing or expiring flips the spec's status, and that alone
+            # must force a refresh (the message set is otherwise unchanged).
+            video_signature = tuple(
+                video_card_signature(video_specs[message_id])
+                for message_id in sorted(video_specs)
+            )
             refresh_key = (
                 id(transcript),
                 self._native_console_transcript_fingerprint(messages),
                 image_signature,
                 card_signature,
+                video_signature,
                 # SP2 /rewind: a boundary change alone (summarize / restore
                 # before-boundary) must force a refresh so the banner appears
                 # or clears even when the message set is otherwise unchanged.
@@ -14547,6 +14572,7 @@ class ChatScreen(BaseAppScreen):
         SKILLS_COMMAND_NAME: SKILLS_COMMAND_HANDLER_ID,
         PREFILL_COMMAND_NAME: PREFILL_COMMAND_HANDLER_ID,
         GENERATE_IMAGE_COMMAND_NAME: GENERATE_IMAGE_COMMAND_HANDLER_ID,
+        GENERATE_VIDEO_COMMAND_NAME: GENERATE_VIDEO_COMMAND_HANDLER_ID,
         REWIND_COMMAND_NAME: REWIND_COMMAND_HANDLER_ID,
     }
 
@@ -14592,12 +14618,24 @@ class ChatScreen(BaseAppScreen):
             if image_blocked is not None:
                 await self._append_native_console_system_message(image_blocked)
                 return
+        # task-3401.5: the video twin of the image gate above -- typing or
+        # pasting /generate-video hits the same choke point, so a temporary
+        # chat cannot reach the disk-writing sink through the command either.
+        if handler_id == GENERATE_VIDEO_COMMAND_HANDLER_ID:
+            video_blocked = blocked_reason(
+                GENERATE_VIDEO_COMMAND_HANDLER_ID,
+                ephemeral=self._console_active_session_is_ephemeral(),
+            )
+            if video_blocked is not None:
+                await self._append_native_console_system_message(video_blocked)
+                return
         dispatch_map = {
             "insert-prompt": self._console_command_insert_prompt,
             "apply-system": self._console_command_apply_system,
             SKILLS_COMMAND_HANDLER_ID: self._console_command_skills,
             PREFILL_COMMAND_HANDLER_ID: self._console_command_prefill,
             GENERATE_IMAGE_COMMAND_HANDLER_ID: self._console_command_generate_image,
+            GENERATE_VIDEO_COMMAND_HANDLER_ID: self._console_command_generate_video,
             REWIND_COMMAND_HANDLER_ID: self._console_command_rewind,
         }
         handler = dispatch_map.get(handler_id)
@@ -15096,6 +15134,349 @@ class ChatScreen(BaseAppScreen):
             )
         finally:
             inflight.discard(session.id)
+
+    # -- /generate-video (task-3401.5) --------------------------------------
+
+    def _console_videogen_inflight_sessions(self) -> set[str]:
+        """Per-session guard mirroring ``_console_imagegen_inflight_sessions``."""
+        inflight = getattr(self, "_console_videogen_inflight", None)
+        if inflight is None:
+            inflight = set()
+            self._console_videogen_inflight = inflight
+        return inflight
+
+    def _console_videogen_cancel_events(self) -> dict[str, "threading.Event"]:
+        """Session id -> cancel event for the in-flight video generation."""
+        events = getattr(self, "_console_videogen_cancels", None)
+        if events is None:
+            events = {}
+            self._console_videogen_cancels = events
+        return events
+
+    def _ensure_console_video_store(self) -> VideoStore:
+        """Return the Console VideoStore, driving the ADR-044 startup sweep once.
+
+        ``session`` retention wipes last run's files; ``ttl`` applies its
+        age/cap. A sweep failure degrades to "every video renders expired",
+        never a boot-time crash.
+        """
+        store = getattr(self, "_console_video_store", None)
+        if store is None:
+            store = VideoStore()
+            self._console_video_store = store
+            try:
+                store.enforce_retention()
+            except Exception:
+                logger.opt(exception=True).warning(
+                    "Console video store retention sweep failed."
+                )
+        return store
+
+    def _build_video_card_specs(
+        self, messages
+    ) -> dict[str, ConsoleVideoCardSpec]:
+        """Build video-generation card payloads, resolving each slug to its file.
+
+        A message whose file is missing (restart/expiry/LRU eviction) stays
+        in the map as an ``"expired"`` tombstone spec -- the card renders
+        the named tombstone instead of dropping the row (ADR-044).
+        """
+        store = self._ensure_console_video_store()
+        specs: dict[str, ConsoleVideoCardSpec] = {}
+        for message in messages:
+            meta = getattr(message, "video_metadata", None)
+            if meta is None:
+                continue
+            path = store.resolve(message.id, meta.name)
+            specs[message.id] = ConsoleVideoCardSpec(
+                message_id=message.id,
+                meta=meta,
+                status="ready" if path is not None else "expired",
+                file_path=str(path) if path is not None else None,
+            )
+        return specs
+
+    async def _console_command_generate_video(self, parse: CommandParse) -> None:
+        """Resolve and run one ``/generate-video`` generation (task-3401.5).
+
+        Mirrors ``_console_command_generate_image``: refusals leave the
+        composer draft untouched and never touch the store; the draft clears
+        on dispatch and is restored on failure; the blocking generation runs
+        via ``asyncio.to_thread``; the in-flight guard and cancel event are
+        always cleared in a ``finally`` so a crashed/cancelled run never
+        wedges the session. Cancellation is cooperative: the composer's Stop
+        button (visible while a video generation is in flight) sets the
+        event the MiniMax adapter polls.
+        """
+        from uuid import uuid4
+
+        args = parse_generate_video_args(parse.args)
+        store = self._ensure_console_chat_store()
+        session = store.ensure_session(
+            workspace_id=store.workspace_context.active_workspace_id,
+            settings=self._session._default_console_session_settings(),
+        )
+        if not args.prompt:
+            await self._append_native_console_system_message(
+                GENERATE_VIDEO_USAGE_TEXT, session_id=session.id
+            )
+            return
+        cfg = get_video_generation_config()
+        backend = args.backend or cfg.default_backend
+        if not backend:
+            await self._append_native_console_system_message(
+                "No video generation backend configured. Set "
+                "[video_generation].default_backend, or use "
+                "/generate-video :backend <prompt>.",
+                session_id=session.id,
+            )
+            return
+        from tldw_chatbook.Video_Generation.adapter_registry import (
+            get_registry as _get_video_registry,
+        )
+
+        if _get_video_registry().resolve_backend(backend) is None:
+            await self._append_native_console_system_message(
+                f"Video backend '{backend}' is not enabled. Check "
+                "[video_generation].enabled_backends.",
+                session_id=session.id,
+            )
+            return
+        # Cost-confirm gate (AC: paid backends only, settings-toggleable).
+        if cfg.confirm_cost_estimate and is_paid_backend(backend):
+            from tldw_chatbook.Widgets.cancel_confirmation_dialog import (
+                CancelConfirmationDialog,
+            )
+
+            confirmed = await self.push_screen_wait(
+                CancelConfirmationDialog(
+                    title="Generate video?",
+                    message=estimate_video_cost_text(backend, None),
+                    confirm_text="Generate",
+                    cancel_text="Cancel",
+                )
+            )
+            if not confirmed:
+                return
+        inflight = self._console_videogen_inflight_sessions()
+        if session.id in inflight:
+            await self._append_native_console_system_message(
+                "A video generation is already running for this session.",
+                session_id=session.id,
+            )
+            return
+        inflight.add(session.id)
+        # Capture draft before clearing so we can restore it on failure.
+        composer = self._console_composer_or_none()
+        saved_draft = composer.draft_text() if composer is not None else ""
+        self._clear_console_composer_draft()
+        cancel_event = threading.Event()
+        self._console_videogen_cancel_events()[session.id] = cancel_event
+        message_id = str(uuid4())
+        await self._append_native_console_system_message(
+            f"⏳ Generating video on {backend}… (Stop cancels)",
+            session_id=session.id,
+        )
+        try:
+            meta, _path = await asyncio.to_thread(
+                run_video_generation,
+                backend=backend,
+                prompt=args.prompt,
+                message_id=message_id,
+                cancel_event=cancel_event,
+                video_store=self._ensure_console_video_store(),
+            )
+            store.append_video_message(
+                session.id,
+                video_metadata=meta,
+                persist=True,
+                message_id=message_id,
+            )
+            await self._sync_native_console_chat_ui()
+        except Exception as exc:  # noqa: BLE001 - reported to the user, never a bare crash
+            if composer is not None and saved_draft:
+                composer.clear_draft()
+                composer.insert_text_as_paste(saved_draft)
+            logger.opt(exception=True).error(
+                f"Video generation raised for session {session.id}: {exc}"
+            )
+            await self._append_native_console_system_message(
+                f"Video generation failed: {exc}", session_id=session.id
+            )
+        finally:
+            inflight.discard(session.id)
+            self._console_videogen_cancel_events().pop(session.id, None)
+
+    async def _play_console_video(self, message_id: str) -> None:
+        """Open the ephemeral video file with the OS default player (v1).
+
+        The in-app player screens land with tasks 3401.9/.10; until then the
+        honest playback path is the system player. A missing file (tombstone)
+        re-syncs so the card renders expired, then reports.
+        """
+        import subprocess
+        import sys
+
+        store = self._ensure_console_chat_store()
+        try:
+            message = store.get_message(message_id)
+        except KeyError:
+            self.app_instance.notify(
+                "Console message no longer exists.", severity="warning"
+            )
+            return
+        meta = getattr(message, "video_metadata", None)
+        if meta is None:
+            return
+        path = self._ensure_console_video_store().resolve(message.id, meta.name)
+        if path is None:
+            await self._sync_native_console_chat_ui()
+            self.app_instance.notify(
+                "The ephemeral video file is gone — regenerate to recreate it.",
+                severity="warning",
+            )
+            return
+        try:
+            if sys.platform == "darwin":
+                subprocess.Popen(["open", str(path)])  # nosec B603 - app-generated path
+            elif sys.platform.startswith("win"):
+                os.startfile(str(path))  # type: ignore[attr-defined]  # nosec B606
+            else:
+                subprocess.Popen(["xdg-open", str(path)])  # nosec B603
+        except Exception as exc:
+            logger.opt(exception=True).warning(f"Console video play failed: {exc}")
+            self.app_instance.notify(
+                f"Could not open the video: {exc}", severity="error"
+            )
+
+    async def _save_console_video_copy(self, message_id: str) -> None:
+        """Copy the ephemeral video file out to the user's save location.
+
+        The ONLY byte escape hatch for the ephemeral model -- always an
+        explicit user act (ADR-044). Mirrors
+        ``_save_console_message_image``'s destination/collision pattern.
+        """
+        import shutil
+
+        from rich.markup import escape as escape_markup
+
+        store = self._ensure_console_chat_store()
+        try:
+            message = store.get_message(message_id)
+        except KeyError:
+            self.app_instance.notify(
+                "Console message no longer exists.", severity="warning"
+            )
+            return
+        meta = getattr(message, "video_metadata", None)
+        if meta is None:
+            return
+        path = self._ensure_console_video_store().resolve(message.id, meta.name)
+        if path is None:
+            await self._sync_native_console_chat_ui()
+            self.app_instance.notify(
+                "The ephemeral video file is gone — regenerate to recreate it.",
+                severity="warning",
+            )
+            return
+
+        def _copy_to_disk() -> "Path":
+            from tldw_chatbook.Utils.path_validation import validate_path_simple
+
+            save_location = validate_path_simple(
+                os.path.expanduser(
+                    get_cli_setting("chat.videos", "save_location", "~/Downloads")
+                )
+            )
+            save_location.mkdir(parents=True, exist_ok=True)
+            target = save_location / f"{meta.name}.mp4"
+            counter = 1
+            while target.exists():
+                target = save_location / f"{meta.name}_{counter}.mp4"
+                counter += 1
+            shutil.copy2(path, target)
+            return target
+
+        try:
+            written = await asyncio.to_thread(_copy_to_disk)
+        except Exception as exc:
+            logger.opt(exception=True).warning("Console save-video copy failed.")
+            self.app_instance.notify(
+                f"Could not save the video: {escape_markup(str(exc))}", severity="error"
+            )
+            return
+        self.app_instance.notify(f"Video saved to {escape_markup(str(written))}")
+
+    async def _regenerate_console_video_message(self, message_id: str) -> None:
+        """Regenerate a video message from its persisted facts (tombstone or not).
+
+        Appends a NEW video message (videos have no variants) rebuilt from
+        the stored ``VideoGenerationMetadata`` -- same backend/prompt/model/
+        shape -- with ``seed`` forced to ``-1`` so the recreation is never a
+        byte-duplicate. The per-session in-flight guard and cancel-event
+        bookkeeping mirror ``_console_command_generate_video`` exactly.
+        """
+        from uuid import uuid4
+
+        store = self._ensure_console_chat_store()
+        try:
+            message = store.get_message(message_id)
+        except KeyError:
+            self.app_instance.notify(
+                "Console message no longer exists.", severity="warning"
+            )
+            return
+        meta = getattr(message, "video_metadata", None)
+        if meta is None:
+            return
+        session_id = store.session_id_for_message(message_id)
+        inflight = self._console_videogen_inflight_sessions()
+        if session_id in inflight:
+            await self._append_native_console_system_message(
+                "A video generation is already running for this session.",
+                session_id=session_id,
+            )
+            return
+        inflight.add(session_id)
+        cancel_event = threading.Event()
+        self._console_videogen_cancel_events()[session_id] = cancel_event
+        new_message_id = str(uuid4())
+        try:
+            new_meta, _path = await asyncio.to_thread(
+                run_video_generation,
+                backend=meta.backend,
+                prompt=meta.prompt,
+                negative_prompt=meta.negative_prompt or None,
+                duration_seconds=(
+                    int(meta.duration_seconds) if meta.duration_seconds else None
+                ),
+                fps=int(meta.fps) if meta.fps else None,
+                width=meta.width,
+                height=meta.height,
+                ratio=meta.ratio,
+                seed=-1,
+                model=meta.model,
+                message_id=new_message_id,
+                cancel_event=cancel_event,
+                video_store=self._ensure_console_video_store(),
+            )
+            store.append_video_message(
+                session_id,
+                video_metadata=new_meta,
+                persist=True,
+                message_id=new_message_id,
+            )
+            await self._sync_native_console_chat_ui()
+        except Exception as exc:  # noqa: BLE001 - reported, never a bare crash
+            logger.opt(exception=True).error(
+                f"Video regeneration raised for message {message_id}: {exc}"
+            )
+            await self._append_native_console_system_message(
+                f"Video regeneration failed: {exc}", session_id=session_id
+            )
+        finally:
+            inflight.discard(session_id)
+            self._console_videogen_cancel_events().pop(session_id, None)
 
     async def _regenerate_console_generation_variant(self, message_id: str) -> None:
         """Append one new generated variant to an existing generation message.
@@ -15696,6 +16077,25 @@ class ChatScreen(BaseAppScreen):
 
     async def _stop_console_generation_from_visible_action(self) -> None:
         """Route the visible Console stop action through native run control."""
+        # task-3401.5: a video generation in flight for the active session
+        # takes the stop first -- it is not a controller "run", so
+        # stop_active_run() would only toast "No active Console run to stop."
+        # The cancel event wakes the adapter's poll loop immediately.
+        store = self._console_chat_store
+        active_session_id = (
+            store.active_session_id if store is not None else None
+        )
+        cancel_event = (
+            self._console_videogen_cancel_events().get(active_session_id)
+            if active_session_id is not None
+            else None
+        )
+        if cancel_event is not None:
+            cancel_event.set()
+            self.app_instance.notify(
+                "Stopping video generation…", severity="information"
+            )
+            return
         # TASK-337 AC1: acknowledge at the click, synchronously — the
         # stopped state itself renders via the (possibly coalesced) sync.
         stop_button: Button | None = None
@@ -16644,6 +17044,17 @@ class ChatScreen(BaseAppScreen):
             run_state = getattr(controller, "run_state", None)
             run_active = bool(getattr(run_state, "is_stop_allowed", False))
             send_blocked = not bool(getattr(run_state, "is_send_allowed", True))
+        # task-3401.5: an in-flight video generation shows the same Stop
+        # affordance (it sets the adapter's cooperative cancel event).
+        store_for_videogen = self._console_chat_store
+        active_session_id = (
+            store_for_videogen.active_session_id if store_for_videogen is not None else None
+        )
+        videogen_active = (
+            active_session_id is not None
+            and active_session_id in self._console_videogen_inflight_sessions()
+        )
+        run_active = run_active or videogen_active
         setup_blocked_reason = self._console_setup_blocked_reason()
         attachment_blocked_reason = self._console_attachment_blocked_reason()
         send_blocked = (
