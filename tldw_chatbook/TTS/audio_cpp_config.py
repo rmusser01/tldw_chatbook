@@ -19,7 +19,7 @@ from pydantic import (
 )
 
 _CONFIG_DIAGNOSTIC = "audio.cpp configuration must be a mapping"
-_MODE_DIAGNOSTIC = "audio.cpp mode must be external"
+_MODE_DIAGNOSTIC = "audio.cpp mode must be external or managed"
 _URL_DIAGNOSTIC = "audio.cpp base_url must be an absolute HTTP or HTTPS origin"
 _TIMEOUT_FIELDS = (
     "connect_timeout_seconds",
@@ -33,11 +33,23 @@ _LIMIT_FIELDS = (
     "max_voices_per_model",
     "max_identifier_characters",
 )
-_CONFIG_FIELDS = (
-    "mode",
-    "base_url",
+_COMMON_FIELDS = (
     *_TIMEOUT_FIELDS,
     *_LIMIT_FIELDS,
+)
+_MANAGED_TIMING_BOUNDS = {
+    "managed_startup_timeout_seconds": (1.0, 300.0),
+    "managed_health_check_interval_seconds": (2.0, 300.0),
+    "managed_termination_grace_seconds": (0.1, 60.0),
+}
+_MANAGED_TIMING_FIELDS = tuple(_MANAGED_TIMING_BOUNDS)
+_EXTERNAL_CONFIG_FIELDS = ("mode", "base_url", *_COMMON_FIELDS)
+_MANAGED_CONFIG_FIELDS = (
+    "mode",
+    "managed_binary_path",
+    "managed_server_json_path",
+    *_MANAGED_TIMING_FIELDS,
+    *_COMMON_FIELDS,
 )
 _MISSING = object()
 _DISALLOWED_HOST_CATEGORIES = frozenset({"Cc", "Cf", "Cs", "Cn", "Co"})
@@ -161,6 +173,26 @@ def _validate_limit(field_name: str, value: object) -> int:
     return value
 
 
+def _validate_managed_timing(field_name: str, value: object) -> float:
+    minimum, maximum = _MANAGED_TIMING_BOUNDS[field_name]
+    if isinstance(value, bool) or not isinstance(value, Real):
+        raise ValueError(
+            f"audio.cpp {field_name} must be a finite number from "
+            f"{minimum:g} through {maximum:g}"
+        )
+    numeric_value = float(value)
+    if (
+        not math.isfinite(numeric_value)
+        or numeric_value < minimum
+        or numeric_value > maximum
+    ):
+        raise ValueError(
+            f"audio.cpp {field_name} must be a finite number from "
+            f"{minimum:g} through {maximum:g}"
+        )
+    return numeric_value
+
+
 def _safe_validation_error(error: ValidationError) -> ValueError:
     """Translate Pydantic failures into fixed value-independent diagnostics."""
     details = error.errors(include_context=False, include_input=False)
@@ -173,11 +205,19 @@ def _safe_validation_error(error: ValidationError) -> ValueError:
         return ValueError(f"audio.cpp {field_name} must be a finite positive number")
     if field_name in _LIMIT_FIELDS:
         return ValueError(f"audio.cpp {field_name} must be a positive integer")
+    if field_name in _MANAGED_TIMING_FIELDS:
+        minimum, maximum = _MANAGED_TIMING_BOUNDS[field_name]
+        return ValueError(
+            f"audio.cpp {field_name} must be a finite number from "
+            f"{minimum:g} through {maximum:g}"
+        )
+    if field_name in {"managed_binary_path", "managed_server_json_path"}:
+        return ValueError(f"audio.cpp {field_name} must be a string")
     return ValueError(_CONFIG_DIAGNOSTIC)
 
 
 class AudioCppConfig(BaseModel):
-    """Validated external audio.cpp connection and safety limits."""
+    """Validated active-mode audio.cpp connection and safety limits."""
 
     model_config = ConfigDict(
         extra="forbid",
@@ -186,8 +226,13 @@ class AudioCppConfig(BaseModel):
         strict=True,
     )
 
-    mode: Literal["external"] = "external"
+    mode: Literal["external", "managed"] = "external"
     base_url: str = "http://127.0.0.1:8080"
+    managed_binary_path: str = ""
+    managed_server_json_path: str = ""
+    managed_startup_timeout_seconds: float = 30.0
+    managed_health_check_interval_seconds: float = 10.0
+    managed_termination_grace_seconds: float = 5.0
     connect_timeout_seconds: float = 5.0
     synthesis_timeout_seconds: float = 600.0
     max_input_characters: int = 10_000
@@ -200,9 +245,9 @@ class AudioCppConfig(BaseModel):
     @field_validator("mode", mode="before")
     @classmethod
     def _validate_mode(cls, value: object) -> str:
-        if value != "external":
+        if not isinstance(value, str) or value not in {"external", "managed"}:
             raise ValueError(_MODE_DIAGNOSTIC)
-        return "external"
+        return value
 
     @field_validator("base_url", mode="before")
     @classmethod
@@ -227,12 +272,21 @@ class AudioCppConfig(BaseModel):
     ) -> int:
         return _validate_limit(info.field_name, value)
 
+    @field_validator(*_MANAGED_TIMING_FIELDS, mode="before")
+    @classmethod
+    def _validate_managed_timing_field(
+        cls,
+        value: object,
+        info: ValidationInfo,
+    ) -> float:
+        return _validate_managed_timing(info.field_name, value)
+
     @classmethod
     def from_mapping(cls, values: Mapping[str, Any]) -> AudioCppConfig:
         """Copy and validate the approved fields from a registry mapping.
 
         Args:
-            values: Candidate external audio.cpp configuration.
+            values: Candidate audio.cpp configuration.
 
         Returns:
             An immutable validated configuration snapshot.
@@ -242,9 +296,17 @@ class AudioCppConfig(BaseModel):
         """
         if not isinstance(values, Mapping):
             raise ValueError(_CONFIG_DIAGNOSTIC)
+        raw_mode = values.get("mode", "external")
+        active_fields: tuple[str, ...]
+        if raw_mode == "external":
+            active_fields = _EXTERNAL_CONFIG_FIELDS
+        elif raw_mode == "managed":
+            active_fields = _MANAGED_CONFIG_FIELDS
+        else:
+            active_fields = ("mode",)
         projected = {
             field_name: deepcopy(values[field_name])
-            for field_name in _CONFIG_FIELDS
+            for field_name in active_fields
             if field_name in values
         }
         try:
@@ -259,9 +321,7 @@ class AudioCppConfig(BaseModel):
             A plain mapping containing only approved configuration fields.
 
         """
-        return {
-            "mode": self.mode,
-            "base_url": self.base_url,
+        common: dict[str, AudioCppConfigValue] = {
             "connect_timeout_seconds": self.connect_timeout_seconds,
             "synthesis_timeout_seconds": self.synthesis_timeout_seconds,
             "max_input_characters": self.max_input_characters,
@@ -270,6 +330,27 @@ class AudioCppConfig(BaseModel):
             "max_catalog_models": self.max_catalog_models,
             "max_voices_per_model": self.max_voices_per_model,
             "max_identifier_characters": self.max_identifier_characters,
+        }
+        if self.mode == "managed":
+            return {
+                "mode": self.mode,
+                "managed_binary_path": self.managed_binary_path,
+                "managed_server_json_path": self.managed_server_json_path,
+                "managed_startup_timeout_seconds": (
+                    self.managed_startup_timeout_seconds
+                ),
+                "managed_health_check_interval_seconds": (
+                    self.managed_health_check_interval_seconds
+                ),
+                "managed_termination_grace_seconds": (
+                    self.managed_termination_grace_seconds
+                ),
+                **common,
+            }
+        return {
+            "mode": self.mode,
+            "base_url": self.base_url,
+            **common,
         }
 
 
@@ -295,7 +376,7 @@ def _nested_audio_cpp_config(
 def project_audio_cpp_config(
     app_config: Mapping[str, Any],
 ) -> AudioCppConfig:
-    """Project the effective external audio.cpp configuration.
+    """Project the effective active-mode audio.cpp configuration.
 
     The exact nested raw entry takes precedence over the normalized entry.
     Missing entries use the immutable defaults; environment variables are not
@@ -305,7 +386,7 @@ def project_audio_cpp_config(
         app_config: Normalized application settings with optional raw config.
 
     Returns:
-        An immutable validated external configuration snapshot.
+        An immutable validated active-mode configuration snapshot.
 
     Raises:
         ValueError: If the selected entry or an approved field is invalid.

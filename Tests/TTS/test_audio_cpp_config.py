@@ -341,14 +341,14 @@ def test_raw_port_syntax_requires_non_empty_ascii_decimal_digits(
     assert base_url not in str(raised.value)
 
 
-@pytest.mark.parametrize("mode", ("managed", "EXTERNAL", "", None, 1))
-def test_mode_must_be_exactly_external(mode: object) -> None:
+@pytest.mark.parametrize("mode", ("EXTERNAL", "MANAGED", "", None, 1, [], {}))
+def test_mode_must_be_exactly_supported_value(mode: object) -> None:
     AudioCppConfig, _ = _config_api()
 
     with pytest.raises(ValueError) as raised:
         AudioCppConfig.from_mapping({"mode": mode})
 
-    assert str(raised.value) == "audio.cpp mode must be external"
+    assert str(raised.value) == "audio.cpp mode must be external or managed"
     if str(mode):
         assert str(mode) not in str(raised.value)
 
