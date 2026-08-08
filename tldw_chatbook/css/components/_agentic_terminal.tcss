@@ -1750,6 +1750,61 @@ with stray left-edge border fragments), and padding 0 1 so the full
     margin: 0 0 1 0;
 }
 
+/* TASK-202: the prompt editor owns two rows. The only vertical scroll owner
+   is the content row; the action area measures to its controls below it. This
+   prevents a tall editor from pushing its completion controls past the canvas. */
+#library-prompts-canvas {
+    height: 1fr;
+    min-height: 0;
+}
+
+#library-prompt-editor-shell {
+    width: 100%;
+    height: 1fr;
+    min-height: 0;
+}
+
+#library-prompt-editor-content {
+    width: 100%;
+    height: 1fr;
+    min-height: 0;
+    overflow-x: hidden;
+}
+
+#library-prompt-editor-actions {
+    width: 100%;
+    height: auto;
+    min-height: 0;
+    padding: 1 0 0 0;
+    background: $ds-surface-raised;
+}
+
+/* The groups deliberately stack in source order at every width. This avoids
+   a fragile wrapped Horizontal while keeping every long action label visible
+   in narrow terminals. */
+#library-prompt-actions-primary,
+#library-prompt-actions-content,
+#library-prompt-actions-lifecycle {
+    width: 100%;
+    height: auto;
+    min-height: 0;
+    margin: 0 0 1 0;
+}
+
+#library-prompt-actions-lifecycle {
+    margin-bottom: 0;
+}
+
+#library-prompt-editor-actions .library-canvas-action {
+    width: 100%;
+    min-width: 0;
+    margin: 0;
+}
+
+#library-prompt-actions-lifecycle .library-media-action-danger {
+    margin: 0 0 0 4;
+}
+
 /* Notes sync panel: section header matches the create view's group-label
    grammar; the folder Input matches the filter box's field look; status/
    activity are muted like the note editor's meta line. */

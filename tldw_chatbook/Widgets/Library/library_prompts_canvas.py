@@ -14,7 +14,7 @@ from typing import Any
 from rich.markup import escape as escape_markup
 from textual.app import ComposeResult
 from textual.css.query import NoMatches
-from textual.containers import Horizontal, Vertical
+from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.widgets import Button, Checkbox, Input, Static, TextArea
 
 from tldw_chatbook.Library.library_prompts_state import (
@@ -256,14 +256,11 @@ class LibraryPromptsListCanvas(Vertical):
         )
 
     def _compose_editor(self) -> ComposeResult:
-        """Render the prompt editor: Back, six fields, meta, actions.
+        """Render the prompt editor with a scrolling body and fixed actions.
 
-        Structural template copy of ``LibraryNotesCanvas._compose_editor``:
-        stacked full-width widgets plus a single plain ``ds-toolbar`` action
-        row. Unlike the notes editor there is no autosave/Preview toggle
-        here (prompts use an explicit Save button only), and no inline
-        delete-confirmation state -- Delete is a single, confirm-free
-        action (styled the same danger tier as the notes delete button).
+        The shell has one vertical scroll owner for the editable content and
+        an intrinsically sized action region below it. This keeps the action
+        controls reachable without covering the final editor field.
 
         Field order (Task 8b U2): Name, Description, System prompt, User
         prompt, Keywords, Author -- Author is demoted from 2nd position to
@@ -275,202 +272,201 @@ class LibraryPromptsListCanvas(Vertical):
         dirty (initial load, Duplicate, conflict entry/resolution) still
         shows the unsaved marker (U6 -- per-keystroke dirty updates instead
         patch ``#library-prompt-meta`` in place, never recomposing this
-        widget); Copy/Duplicate are relabeled "Copy text"/"Duplicate
-        prompt" (U8).
+        widget).
         """
         editor_state = self.editor_state
         if editor_state is None:
             return
-        yield Button(
-            "‹ Back to list",
-            id="library-prompt-back",
-            classes="library-canvas-action",
-            compact=True,
-        )
-        yield Static("Name", classes="library-prompt-field-label", markup=False)
-        yield Input(value=editor_state.name, id="library-prompt-name")
-        # Task 8b U4: rendered label only -- the DB/record field name
-        # (``details``, ``#library-prompt-details``) is untouched.
-        yield Static("Description", classes="library-prompt-field-label", markup=False)
-        yield Input(value=editor_state.details, id="library-prompt-details")
-        yield Static(
-            (
-                f"{editor_state.artifact_type.title()} · "
-                f"{editor_state.source.title()} · "
-                f"{editor_state.definition_state.replace('_', ' ')}"
-            ),
-            id="library-prompt-artifact-status",
-            classes="destination-purpose",
-            markup=False,
-        )
-        block_state = editor_state.block_editor_state
-        if block_state is not None:
-            block_editor = PromptBlockEditor(
-                block_state,
-                can_update_original=self.can_update_original,
-                allow_apply_system=False,
-                apply_system_unavailable_reason=(
-                    "System apply is unavailable in Library; use the Console "
-                    "prompt workbench to apply it to the session."
-                ),
-                id="library-prompt-block-editor",
-            )
-            block_editor.styles.height = "1fr"
-            block_editor.styles.min_height = 12
-            yield block_editor
-            yield Checkbox(
-                "Include current text as starter content",
-                value=self.include_starter_content,
-                id="library-prompt-recipe-starter",
-            )
-        else:
-            yield Static(
-                editor_state.compatibility_reason,
-                id="library-prompt-compatibility",
-                classes="destination-purpose",
-                markup=False,
-            )
-            convert = Button(
-                "Convert and save as new Prompt",
-                id="library-prompt-convert",
-                classes="library-canvas-action",
-                compact=True,
-                disabled=not editor_state.can_convert_as_new,
-            )
-            if convert.disabled:
-                convert.tooltip = (
-                    "Conversion unavailable — this artifact has no compatible "
-                    "System or User text."
-                )
-            yield convert
-        yield Static(
-            "Compiled System preview",
-            classes="library-prompt-field-label",
-            markup=False,
-        )
-        yield Static(
-            _SYSTEM_PROMPT_HINT, classes="library-prompt-field-hint", markup=False
-        )
-        yield TextArea(
-            editor_state.compiled_system_preview,
-            read_only=True,
-            id="library-prompt-system",
-        )
-        yield Static(
-            "Compiled User preview",
-            classes="library-prompt-field-label",
-            markup=False,
-        )
-        yield Static(
-            _USER_PROMPT_HINT, classes="library-prompt-field-hint", markup=False
-        )
-        yield TextArea(
-            editor_state.compiled_user_preview,
-            read_only=True,
-            id="library-prompt-user",
-        )
-        yield Input(
-            value=editor_state.keywords_csv,
-            placeholder="Keywords (comma-separated)",
-            id="library-prompt-keywords",
-        )
-        yield Static("Author", classes="library-prompt-field-label", markup=False)
-        yield Input(value=editor_state.author, id="library-prompt-author")
-        yield Static(
-            prompt_editor_meta_line(editor_state, dirty=self.dirty),
-            id="library-prompt-meta",
-            markup=False,
-        )
-        if self.conflict:
-            yield Static(
-                "This item changed elsewhere — Reload the current version or "
-                "save your kept blocks as a new item.",
-                id="library-prompt-conflict-copy",
-                classes="destination-purpose",
-                markup=False,
-            )
-        else:
-            yield Static(
-                self.status,
-                id="library-prompt-save-status",
-                markup=False,
-            )
-            if self.show_open_existing:
-                # Task 8b D3: makes the status copy's "...or open the
-                # existing prompt" a real affordance -- only shown in the
-                # name-in-use state (never alongside the conflict banner
-                # above, which has its own Save-as-new/Reload actions).
+        with Vertical(id="library-prompt-editor-shell"):
+            with VerticalScroll(id="library-prompt-editor-content"):
                 yield Button(
-                    "Open existing",
-                    id="library-prompt-open-existing",
+                    "‹ Back to list",
+                    id="library-prompt-back",
                     classes="library-canvas-action",
                     compact=True,
                 )
-        toolbar = Horizontal(classes="ds-toolbar")
-        toolbar.styles.height = "auto"
-        with toolbar:
-            if self.conflict:
-                yield Button(
-                    "Save as new",
-                    id="library-prompt-conflict-save-new",
-                    classes="library-canvas-action",
-                    compact=True,
-                )
-                yield Button(
-                    "Reload",
-                    id="library-prompt-conflict-reload",
-                    classes="library-canvas-action",
-                    compact=True,
-                )
-            else:
-                yield Button(
+                yield Static("Name", classes="library-prompt-field-label", markup=False)
+                yield Input(value=editor_state.name, id="library-prompt-name")
+                # Task 8b U4: rendered label only -- the DB/record field name
+                # (``details``, ``#library-prompt-details``) is untouched.
+                yield Static("Description", classes="library-prompt-field-label", markup=False)
+                yield Input(value=editor_state.details, id="library-prompt-details")
+                yield Static(
                     (
-                        f"Save {editor_state.artifact_type.title()}"
-                        if editor_state.prompt_id is None
-                        else "Update original"
+                        f"{editor_state.artifact_type.title()} · "
+                        f"{editor_state.source.title()} · "
+                        f"{editor_state.definition_state.replace('_', ' ')}"
                     ),
-                    id="library-prompt-save",
-                    classes="library-canvas-action",
-                    compact=True,
-                    disabled=(
-                        editor_state.prompt_id is not None
-                        and (block_state is None or not self.can_update_original)
-                    ),
+                    id="library-prompt-artifact-status",
+                    classes="destination-purpose",
+                    markup=False,
                 )
-                yield Button(
-                    "Use in Console",
-                    id="library-prompt-insert-console",
-                    classes="library-canvas-action",
-                    compact=True,
+                block_state = editor_state.block_editor_state
+                if block_state is not None:
+                    block_editor = PromptBlockEditor(
+                        block_state,
+                        can_update_original=self.can_update_original,
+                        allow_apply_system=False,
+                        apply_system_unavailable_reason=(
+                            "System apply is unavailable in Library; use the Console "
+                            "prompt workbench to apply it to the session."
+                        ),
+                        id="library-prompt-block-editor",
+                    )
+                    block_editor.styles.height = "1fr"
+                    block_editor.styles.min_height = 12
+                    yield block_editor
+                    yield Checkbox(
+                        "Include current text as starter content",
+                        value=self.include_starter_content,
+                        id="library-prompt-recipe-starter",
+                    )
+                else:
+                    yield Static(
+                        editor_state.compatibility_reason,
+                        id="library-prompt-compatibility",
+                        classes="destination-purpose",
+                        markup=False,
+                    )
+                    convert = Button(
+                        "Convert and save as new Prompt",
+                        id="library-prompt-convert",
+                        classes="library-canvas-action",
+                        compact=True,
+                        disabled=not editor_state.can_convert_as_new,
+                    )
+                    if convert.disabled:
+                        convert.tooltip = (
+                            "Conversion unavailable — this artifact has no compatible "
+                            "System or User text."
+                        )
+                    yield convert
+                yield Static(
+                    "Compiled System preview",
+                    classes="library-prompt-field-label",
+                    markup=False,
                 )
-                yield Button(
-                    "Export…",
-                    id="library-prompt-export",
-                    classes="library-canvas-action",
-                    compact=True,
+                yield Static(
+                    _SYSTEM_PROMPT_HINT, classes="library-prompt-field-hint", markup=False
                 )
-                yield Button(
-                    # Task 8c U8: "Copy text" (clipboard) vs "Duplicate
-                    # prompt" (clone as new prompt) below -- the two sat
-                    # adjacent with near-identical bare "Copy"/"Duplicate"
-                    # labels; ids are unchanged.
-                    "Copy text",
-                    id="library-prompt-copy",
-                    classes="library-canvas-action",
-                    compact=True,
+                yield TextArea(
+                    editor_state.compiled_system_preview,
+                    read_only=True,
+                    id="library-prompt-system",
                 )
-                yield Button(
-                    "Duplicate prompt",
-                    id="library-prompt-duplicate",
-                    classes="library-canvas-action",
-                    compact=True,
+                yield Static(
+                    "Compiled User preview",
+                    classes="library-prompt-field-label",
+                    markup=False,
                 )
-                yield Button(
-                    "Delete",
-                    id="library-prompt-delete",
-                    classes="library-canvas-action library-media-action-danger",
-                    compact=True,
+                yield Static(
+                    _USER_PROMPT_HINT, classes="library-prompt-field-hint", markup=False
                 )
+                yield TextArea(
+                    editor_state.compiled_user_preview,
+                    read_only=True,
+                    id="library-prompt-user",
+                )
+                yield Input(
+                    value=editor_state.keywords_csv,
+                    placeholder="Keywords (comma-separated)",
+                    id="library-prompt-keywords",
+                )
+                yield Static("Author", classes="library-prompt-field-label", markup=False)
+                yield Input(value=editor_state.author, id="library-prompt-author")
+                yield Static(
+                    prompt_editor_meta_line(editor_state, dirty=self.dirty),
+                    id="library-prompt-meta",
+                    markup=False,
+                )
+                if self.conflict:
+                    yield Static(
+                        "This item changed elsewhere — Reload the current version or "
+                        "save your kept blocks as a new item.",
+                        id="library-prompt-conflict-copy",
+                        classes="destination-purpose",
+                        markup=False,
+                    )
+                else:
+                    yield Static(
+                        self.status,
+                        id="library-prompt-save-status",
+                        markup=False,
+                    )
+                    if self.show_open_existing:
+                        # Task 8b D3: makes the status copy's "...or open the
+                        # existing prompt" a real affordance -- only shown in the
+                        # name-in-use state (never alongside the conflict banner
+                        # above, which has its own Save-as-new/Reload actions).
+                        yield Button(
+                            "Open existing",
+                            id="library-prompt-open-existing",
+                            classes="library-canvas-action",
+                            compact=True,
+                        )
+
+            with Vertical(id="library-prompt-editor-actions"):
+                if self.conflict:
+                    yield Button(
+                        "Save as new",
+                        id="library-prompt-conflict-save-new",
+                        classes="library-canvas-action console-action-primary",
+                        compact=True,
+                    )
+                    yield Button(
+                        "Reload",
+                        id="library-prompt-conflict-reload",
+                        classes="library-canvas-action",
+                        compact=True,
+                    )
+                else:
+                    with Vertical(id="library-prompt-actions-primary"):
+                        yield Button(
+                            (
+                                f"Save {editor_state.artifact_type.title()}"
+                                if editor_state.prompt_id is None
+                                else "Update original"
+                            ),
+                            id="library-prompt-save",
+                            classes="library-canvas-action console-action-primary",
+                            compact=True,
+                            disabled=(
+                                editor_state.prompt_id is not None
+                                and (block_state is None or not self.can_update_original)
+                            ),
+                        )
+                    with Vertical(id="library-prompt-actions-content"):
+                        yield Button(
+                            "Use in Console",
+                            id="library-prompt-insert-console",
+                            classes="library-canvas-action",
+                            compact=True,
+                        )
+                        yield Button(
+                            "Export…",
+                            id="library-prompt-export",
+                            classes="library-canvas-action",
+                            compact=True,
+                        )
+                        yield Button(
+                            "Copy Markdown",
+                            id="library-prompt-copy",
+                            classes="library-canvas-action",
+                            compact=True,
+                        )
+                    with Vertical(id="library-prompt-actions-lifecycle"):
+                        yield Button(
+                            "Duplicate prompt",
+                            id="library-prompt-duplicate",
+                            classes="library-canvas-action",
+                            compact=True,
+                        )
+                        yield Button(
+                            "Delete",
+                            id="library-prompt-delete",
+                            classes="library-canvas-action library-media-action-danger",
+                            compact=True,
+                        )
 
     def on_prompt_block_editor_block_field_changed(
         self, event: PromptBlockEditor.BlockFieldChanged
