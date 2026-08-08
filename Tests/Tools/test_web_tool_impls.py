@@ -14,6 +14,7 @@ from tldw_chatbook.Tools.web_tool_impls import (
     FETCH_MAX_BYTES,
     FETCH_MAX_REDIRECTS,
     LocalToolError,
+    robots_allows_for_scrape,
     validate_outbound_url,
     web_fetch,
 )
@@ -1624,3 +1625,60 @@ def test_cache_put_holds_its_lock_across_the_critical_section(
     # Lock is free again once the critical section exits.
     assert lock.acquire(blocking=False) is True
     lock.release()
+
+
+# ---------------------------------------------------------------------------
+# task-3260: robots_allows_for_scrape (web_deep_search's scrape-path helper)
+# ---------------------------------------------------------------------------
+
+
+def test_robots_allows_for_scrape_disallowed_path_refused(fetch_env):
+    fetch_env.routes["http://example.com/robots.txt"] = _text_page(
+        b"User-agent: *\nDisallow: /private\n"
+    )
+    assert robots_allows_for_scrape("http://example.com/private/page") is False
+
+
+def test_robots_allows_for_scrape_allowed_path_proceeds(fetch_env):
+    fetch_env.routes["http://example.com/robots.txt"] = _text_page(
+        b"User-agent: *\nDisallow: /private\n"
+    )
+    assert robots_allows_for_scrape("http://example.com/public/page") is True
+
+
+def test_robots_allows_for_scrape_uses_own_truthful_user_agent(fetch_env):
+    """Ruling 3: robots.txt is checked with _DEEP_SEARCH_ROBOTS_UA, distinct
+    from _USER_AGENT (web_fetch) and _CRAWL_USER_AGENT (web_crawl) -- a
+    group scoped to this tool's own UA product token must be honored
+    specifically, not only the wildcard group. (RobotFileParser's own
+    matching strips the *caller's* "/version" suffix before comparing --
+    the file's own token is conventionally written without one, same as
+    real-world "User-agent: Googlebot" groups.)"""
+    fetch_env.routes["http://example.com/robots.txt"] = _text_page(
+        b"User-agent: tldw-chatbook-deep-search\nDisallow: /\n"
+        b"User-agent: *\nAllow: /\n"
+    )
+    assert robots_allows_for_scrape("http://example.com/page") is False
+
+
+def test_robots_allows_for_scrape_unreachable_fails_open(fetch_env):
+    # No robots.txt route registered at all -> fetch fails -> fail open.
+    assert robots_allows_for_scrape("http://example.com/page") is True
+
+
+def test_robots_allows_for_scrape_shares_cache_with_web_fetch(fetch_env, monkeypatch):
+    """Ruling 3: robots_allows_for_scrape shares the module robots cache --
+    a host already warmed by web_fetch's own robots consult must not cost
+    a second robots.txt fetch here."""
+    monkeypatch.setattr(
+        web_tool_impls, "_webfetch_settings", lambda: {"respect_robots_txt": True}
+    )
+    fetch_env.routes["http://example.com/robots.txt"] = _text_page(
+        b"User-agent: *\nAllow: /\n"
+    )
+    fetch_env.routes["http://example.com/page"] = _html_page()
+    web_fetch("http://example.com/page")
+    assert fetch_env.calls.count("http://example.com/robots.txt") == 1
+
+    assert robots_allows_for_scrape("http://example.com/other-page") is True
+    assert fetch_env.calls.count("http://example.com/robots.txt") == 1  # cached, no re-fetch

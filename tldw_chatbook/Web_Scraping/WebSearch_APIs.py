@@ -650,6 +650,11 @@ async def analyze_and_aggregate(
             - user_review: Enable manual result selection
             - relevance_llm_timeout_s / relevance_scrape_timeout_s: per-call
               timeouts passed through to search_result_relevance (default 30/30)
+            - respect_robots_txt: bool, default False when absent -- passed
+              through to search_result_relevance's pre-scrape robots.txt
+              consult (task-3260). Absence (the dead-wired research-service
+              caller) keeps today's no-robots-check behavior; web_deep_search
+              (the tool) always sets this from the real [webfetch] setting.
         cancel_event: Optional cooperative-cancellation flag passed through to
             search_result_relevance (port of server WebSearch_APIs.py :638;
             task-1356).
@@ -676,6 +681,11 @@ async def analyze_and_aggregate(
     sub_questions = sub_query_dict.get("sub_questions", [])
     relevance_llm_timeout_s = float(search_params.get("relevance_llm_timeout_s", 30.0) or 30.0)
     relevance_scrape_timeout_s = float(search_params.get("relevance_scrape_timeout_s", 30.0) or 30.0)
+    # task-3260: default False when the key is absent -- the dead-wired
+    # research-service caller (never sets this) keeps today's no-robots-
+    # check behavior; web_deep_search (the tool) always places the real
+    # [webfetch] respect_robots_txt setting here.
+    respect_robots_txt = bool(search_params.get("respect_robots_txt", False))
     relevant_results = await search_result_relevance(
         web_search_results_dict["results"],
         sub_query_dict["main_goal"],
@@ -684,6 +694,7 @@ async def analyze_and_aggregate(
         cancel_event=cancel_event,
         llm_timeout_s=relevance_llm_timeout_s,
         scrape_timeout_s=relevance_scrape_timeout_s,
+        respect_robots_txt=respect_robots_txt,
     )
     # FIXME
     logger.debug("Relevant results returned by search_result_relevance:")
@@ -966,6 +977,7 @@ async def search_result_relevance(
     cancel_event: Optional[asyncio.Event] = None,
     llm_timeout_s: float = 30.0,
     scrape_timeout_s: float = 30.0,
+    respect_robots_txt: bool = False,
 ) -> Dict[str, Dict]:
     """
     Evaluate search results for relevance and extract key content.
@@ -986,6 +998,17 @@ async def search_result_relevance(
     result (not present on the server), for downstream citation display;
     (6) jitter stays chatbook's `random.uniform(0.2, 0.6)` (no config knob).
 
+    robots.txt parity (task-3260): when ``respect_robots_txt`` is True, a
+    relevant result's URL is also checked against its host's robots.txt --
+    same guard-class offload discipline as the SSRF check just above it
+    (dedicated DNS-guard executor, bounded by ``scrape_timeout_s``) -- right
+    before the ``scrape_article`` call. Disallowed takes the SAME path as an
+    SSRF refusal: the scrape is skipped and the result is kept with its
+    existing snippet/title/url fallback content, never discarded. A robots-
+    check error/timeout fails OPEN (proceeds to scrape) -- deliberately the
+    opposite of the SSRF guard's own timeout/refusal, matching
+    ``_fetch_robots_parser``'s existing fail-open for web_fetch/web_crawl.
+
     Args:
         search_results (List[Dict]): List of search results to evaluate.
         original_question (str): The original question posed by the user.
@@ -996,6 +1019,10 @@ async def search_result_relevance(
             the loop between results.
         llm_timeout_s: Wall-clock timeout for each relevance/summarization LLM call.
         scrape_timeout_s: Wall-clock timeout for the per-result scrape.
+        respect_robots_txt: When True, consult the target host's robots.txt
+            before scraping a relevant result (task-3260); default False
+            (no robots.txt fetch at all) preserves the pre-task-3260
+            behavior for any caller that doesn't pass this explicitly.
 
     Returns:
         Dict[str, Dict]: A dictionary of relevant results, keyed by a unique ID or index.
@@ -1137,16 +1164,70 @@ async def search_result_relevance(
                                     "back to search snippet/title/url"
                                 )
                             else:
-                                scraped_content = await asyncio.wait_for(
-                                    scrape_article(result["url"]), timeout=scrape_timeout_s
-                                )
-                                scraped_text = ""
-                                if isinstance(scraped_content, dict):
-                                    scraped_text = str(scraped_content.get("content") or "").strip()
-                                elif isinstance(scraped_content, str):
-                                    scraped_text = scraped_content.strip()
-                                if scraped_text:
-                                    source_content = scraped_text
+                                # robots.txt parity (task-3260): checked here,
+                                # between the SSRF guard above and the scrape
+                                # below -- same guard-class offload discipline
+                                # (dedicated DNS-guard executor, bounded by
+                                # scrape_timeout_s) as the SSRF check, since a
+                                # robots.txt fetch does its own network I/O.
+                                # Function-local import: no module-level cycle
+                                # (web_tool_impls already imports WebSearch_APIs
+                                # function-locally in the OTHER direction).
+                                robots_ok = True
+                                if respect_robots_txt:
+                                    from tldw_chatbook.Tools.web_tool_impls import (
+                                        robots_allows_for_scrape,
+                                    )
+
+                                    try:
+                                        robots_ok = await asyncio.wait_for(
+                                            asyncio.get_running_loop().run_in_executor(
+                                                _get_dns_guard_executor(),
+                                                robots_allows_for_scrape,
+                                                result["url"],
+                                            ),
+                                            timeout=scrape_timeout_s,
+                                        )
+                                    except asyncio.CancelledError:
+                                        raise
+                                    except Exception as robots_error:
+                                        # Fail-OPEN on a robots-check error or
+                                        # timeout (deliberately the opposite of
+                                        # the SSRF guard just above, whose own
+                                        # timeout/refusal still refuses) --
+                                        # matches _fetch_robots_parser's
+                                        # existing fail-open for web_fetch/
+                                        # web_crawl.
+                                        logger.debug(
+                                            f"robots.txt check failed for result "
+                                            f"{result_id}, failing open (will "
+                                            f"scrape): {robots_error}"
+                                        )
+                                        robots_ok = True
+
+                                if not robots_ok:
+                                    # Disallowed -> same path as an SSRF
+                                    # refusal: skip the scrape, keep the
+                                    # result via its existing fallback
+                                    # content (never discard). Log names the
+                                    # HOST only, never the query.
+                                    host = urlparse(result.get("url") or "").hostname or "unknown"
+                                    logger.debug(
+                                        f"Skipping scrape for result {result_id}: "
+                                        f"robots.txt disallows {host!r}; falling "
+                                        "back to search snippet/title/url"
+                                    )
+                                else:
+                                    scraped_content = await asyncio.wait_for(
+                                        scrape_article(result["url"]), timeout=scrape_timeout_s
+                                    )
+                                    scraped_text = ""
+                                    if isinstance(scraped_content, dict):
+                                        scraped_text = str(scraped_content.get("content") or "").strip()
+                                    elif isinstance(scraped_content, str):
+                                        scraped_text = scraped_content.strip()
+                                    if scraped_text:
+                                        source_content = scraped_text
                         except asyncio.CancelledError:
                             raise
                         except Exception as scrape_error:

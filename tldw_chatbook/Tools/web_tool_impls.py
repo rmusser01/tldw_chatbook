@@ -878,6 +878,60 @@ def _new_web_fetch_client() -> httpx.Client:
     )
 
 
+# task-3260: robots.txt parity for web_deep_search's scrape path. A truthful
+# bot identity, distinct from _USER_AGENT/_CRAWL_USER_AGENT -- scrape_article
+# itself masquerades as Chrome (pre-existing FIXME, Article_Extractor_Lib.py:192,
+# out of scope here), but checking robots.txt with that same UA would evade
+# every bot-scoped Disallow group; a truthful UA matches sites' `*` groups
+# the way a real crawler would.
+_DEEP_SEARCH_ROBOTS_UA = "tldw-chatbook-deep-search/1.0"
+
+
+def robots_allows_for_scrape(url: str) -> bool:
+    """True if ``_DEEP_SEARCH_ROBOTS_UA`` may fetch ``url`` per its host's
+    robots.txt -- public helper for web_deep_search's scrape path (task-3260).
+
+    Builds a short-lived ``httpx.Client`` on the module ``_transport`` seam,
+    mirroring ``_new_web_fetch_client()``: ``trust_env=False`` (an honored
+    ``HTTP(S)_PROXY`` would otherwise do its own DNS and connect on this
+    process's behalf, silently defeating ``validate_outbound_url``'s SSRF
+    check on the robots.txt URL itself) and the same bounded
+    ``FETCH_TIMEOUT_SECONDS`` timeout. Delegates to ``_robots_allows``, so
+    the module robots cache (30-min TTL, negative caching, redirect-
+    following, IPv6-bracket handling, and every other #1427 hardening) is
+    shared with ``web_fetch``/``web_crawl`` for free -- a host consulted by
+    one path warms the cache for the others too.
+
+    Fail-open semantics come from ``_robots_allows``/``_fetch_robots_parser``
+    themselves: an unreachable/unparsable robots.txt returns True (no
+    restrictions) from THIS function. Callers that want "treat a call that
+    raises (e.g. a caller-side timeout wrapping this synchronous call) as
+    allowed too" must implement that themselves -- this function only
+    covers the fetch-level fail-open, not a caller's own offload timeout.
+
+    Args:
+        url: The page URL about to be scraped (not the robots.txt URL --
+            that is derived internally, same as every other robots caller
+            in this module).
+
+    Returns:
+        bool: True if the URL may be fetched per its host's robots.txt (or
+        the policy was unreachable/unparsable); False if a fetched, parsed
+        policy disallows it for ``_DEEP_SEARCH_ROBOTS_UA``.
+    """
+    client = httpx.Client(
+        follow_redirects=False,
+        timeout=FETCH_TIMEOUT_SECONDS,
+        headers={"User-Agent": _DEEP_SEARCH_ROBOTS_UA},
+        transport=_transport,
+        trust_env=False,
+    )
+    try:
+        return _robots_allows(client, url, _DEEP_SEARCH_ROBOTS_UA)
+    finally:
+        client.close()
+
+
 def web_fetch(url: str, *, max_bytes: int = FETCH_MAX_BYTES) -> str:
     """Fetch ``url`` and return extracted text (trafilatura for HTML, PyMuPDF
     for PDF) or compact metadata for other allowlisted binary kinds.
@@ -2274,6 +2328,13 @@ def web_deep_search(question: str, engine: Optional[str] = None, max_results: Op
         # cheap bound on top of the per-request backend timeouts (Important
         # 3b), covering the six engines that still have none.
         "phase1_time_budget_s": deadline_s,
+        # task-3260: same toggle, plumbed like the timeouts above -- the
+        # pydantic-safe channel into analyze_and_aggregate/search_result_
+        # relevance, which read it from search_params (default False when
+        # absent, so the dead-wired research-service caller that never sets
+        # this key keeps today's behavior unchanged; this tool is the only
+        # user-facing caller and passes the real, configured setting).
+        "respect_robots_txt": _webfetch_settings()["respect_robots_txt"],
     }
 
     from ..Web_Scraping import WebSearch_APIs  # local import: keep module import cheap

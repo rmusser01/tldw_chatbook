@@ -4,11 +4,14 @@ scrape_article / Summarization analyze — the pipeline code runs real."""
 import asyncio
 import concurrent.futures
 import json
+import socket
 import threading
 import time
 
+import httpx
 import pytest
 
+from tldw_chatbook.Tools import web_tool_impls
 from tldw_chatbook.Web_Scraping import WebSearch_APIs
 from tldw_chatbook import config as config_module
 
@@ -711,6 +714,154 @@ def test_dns_guard_executor_saturation_does_not_starve_default_executor_offloads
     finally:
         release.set()
         WebSearch_APIs._reset_dns_guard_executor_for_tests()
+
+
+# --- robots.txt parity for the scrape path (task-3260) -------------------------
+
+
+@pytest.mark.asyncio
+async def test_relevance_robots_disallowed_skips_scrape_others_proceed(monkeypatch):
+    """respect_robots_txt=True must skip scraping a robots-disallowed host
+    (keeping its existing snippet/title/url fallback content, never
+    discarding the result) while an allowed host on the same run scrapes
+    normally -- mirrors the SSRF-refusal path's shape exactly.
+
+    THREE fakes required (task-3260 design doc, spec review Important 3 --
+    miss one and the test observes the wrong refusal or fail-open):
+    (1) WebSearch_APIs.is_public_http_url faked True -- the SSRF guard runs
+        FIRST, does real DNS, and fails CLOSED for every .example host in
+        this file before any robots check could run;
+    (2) web_tool_impls._transport MockTransport serving the robots.txt
+        body;
+    (3) socket.getaddrinfo faked to a public IP -- _fetch_robots_parser's
+        OWN _validate_hop does a SEPARATE DNS check on the robots.txt URL
+        and fails OPEN on DNS failure, silently bypassing the MockTransport
+        if this isn't faked too.
+    """
+    web_tool_impls._reset_state_for_tests()
+    monkeypatch.setattr(WebSearch_APIs, "is_public_http_url", lambda url: True)
+    monkeypatch.setattr(
+        socket, "getaddrinfo", lambda *a, **k: [(2, 1, 6, "", ("93.184.216.34", 80))]
+    )
+
+    def robots_handler(request: httpx.Request) -> httpx.Response:
+        if "disallowed.example" in str(request.url):
+            return httpx.Response(200, content=b"User-agent: *\nDisallow: /\n")
+        return httpx.Response(200, content=b"User-agent: *\nAllow: /\n")
+
+    monkeypatch.setattr(web_tool_impls, "_transport", httpx.MockTransport(robots_handler))
+    monkeypatch.setattr(
+        WebSearch_APIs, "chat_api_call",
+        _fake_chat(["Selected Answer: True\nReasoning: relevant"] * 2),
+    )
+
+    scraped = []
+
+    async def spy_scrape(url, **k):
+        scraped.append(url)
+        return {"content": "REAL SCRAPED CONTENT", "extraction_successful": True}
+
+    monkeypatch.setattr(WebSearch_APIs, "scrape_article", spy_scrape)
+
+    results = [
+        _std_result("Disallowed", "https://disallowed.example/page", "disallowed snippet"),
+        _std_result("Allowed", "https://allowed.example/page", "allowed snippet"),
+    ]
+    try:
+        out = await WebSearch_APIs.search_result_relevance(
+            results, "q", [], "openai", respect_robots_txt=True,
+        )
+    finally:
+        web_tool_impls._reset_state_for_tests()
+
+    assert scraped == ["https://allowed.example/page"], (
+        "the disallowed host must never reach scrape_article"
+    )
+    assert len(out) == 2  # both results kept -- disallowed is a fallback, not a discard
+    disallowed_entry = next(v for v in out.values() if v["url"] == "https://disallowed.example/page")
+    assert "REAL SCRAPED CONTENT" not in disallowed_entry["content"]
+    assert "disallowed snippet" in disallowed_entry["content"] or "Disallowed" in disallowed_entry["content"]
+    allowed_entry = next(v for v in out.values() if v["url"] == "https://allowed.example/page")
+    assert "REAL SCRAPED CONTENT" in allowed_entry["content"]
+
+
+@pytest.mark.asyncio
+async def test_relevance_robots_off_by_default_makes_no_robots_fetch(monkeypatch):
+    """Parity pin: respect_robots_txt defaults to False when the caller
+    doesn't pass it -- the dead-wired research-service caller never sets
+    this, and must keep making ZERO robots.txt fetches (transport-call
+    count) with the scrape proceeding exactly like before task-3260. The
+    registered robots.txt disallows everything, so if this test somehow DID
+    reach a robots check, the scrape would incorrectly get skipped."""
+    web_tool_impls._reset_state_for_tests()
+    monkeypatch.setattr(WebSearch_APIs, "is_public_http_url", lambda url: True)
+    monkeypatch.setattr(
+        socket, "getaddrinfo", lambda *a, **k: [(2, 1, 6, "", ("93.184.216.34", 80))]
+    )
+
+    transport_calls = []
+
+    def robots_handler(request: httpx.Request) -> httpx.Response:
+        transport_calls.append(str(request.url))
+        return httpx.Response(200, content=b"User-agent: *\nDisallow: /\n")
+
+    monkeypatch.setattr(web_tool_impls, "_transport", httpx.MockTransport(robots_handler))
+    monkeypatch.setattr(WebSearch_APIs, "chat_api_call",
+                        _fake_chat(["Selected Answer: True\nReasoning: relevant"]))
+
+    scraped = []
+
+    async def spy_scrape(url, **k):
+        scraped.append(url)
+        return {"content": "scraped ok", "extraction_successful": True}
+
+    monkeypatch.setattr(WebSearch_APIs, "scrape_article", spy_scrape)
+    results = [_std_result("T", "https://would-be-blocked.example/", "c")]
+    try:
+        # respect_robots_txt intentionally OMITTED -- must default to False.
+        out = await WebSearch_APIs.search_result_relevance(results, "q", [], "openai")
+    finally:
+        web_tool_impls._reset_state_for_tests()
+
+    assert transport_calls == [], "no robots.txt fetch should happen when the toggle is absent"
+    assert scraped == ["https://would-be-blocked.example/"]
+
+
+@pytest.mark.asyncio
+async def test_relevance_robots_unreachable_fails_open_and_scrapes(monkeypatch):
+    """A robots.txt that cannot be fetched (network error) must fail OPEN
+    and proceed to scrape -- deliberately the OPPOSITE of the SSRF guard's
+    own timeout/refusal just above it, matching _fetch_robots_parser's
+    existing fail-open for web_fetch/web_crawl (ruling 5)."""
+    web_tool_impls._reset_state_for_tests()
+    monkeypatch.setattr(WebSearch_APIs, "is_public_http_url", lambda url: True)
+    monkeypatch.setattr(
+        socket, "getaddrinfo", lambda *a, **k: [(2, 1, 6, "", ("93.184.216.34", 80))]
+    )
+
+    def robots_handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("simulated robots.txt fetch failure", request=request)
+
+    monkeypatch.setattr(web_tool_impls, "_transport", httpx.MockTransport(robots_handler))
+    monkeypatch.setattr(WebSearch_APIs, "chat_api_call",
+                        _fake_chat(["Selected Answer: True\nReasoning: relevant"]))
+
+    scraped = []
+
+    async def spy_scrape(url, **k):
+        scraped.append(url)
+        return {"content": "scraped ok", "extraction_successful": True}
+
+    monkeypatch.setattr(WebSearch_APIs, "scrape_article", spy_scrape)
+    results = [_std_result("T", "https://unreachable-robots.example/", "c")]
+    try:
+        out = await WebSearch_APIs.search_result_relevance(
+            results, "q", [], "openai", respect_robots_txt=True,
+        )
+    finally:
+        web_tool_impls._reset_state_for_tests()
+
+    assert scraped == ["https://unreachable-robots.example/"]  # fail-open: scrape proceeded
 
 
 # --- pure review ---------------------------------------------------------------
