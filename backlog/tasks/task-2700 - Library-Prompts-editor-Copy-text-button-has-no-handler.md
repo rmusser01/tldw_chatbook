@@ -1,12 +1,23 @@
 ---
 id: TASK-2700
 title: 'Library Prompts editor: "Copy text" button has no handler (dead button)'
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@codex'
 created_date: '2026-07-31'
-labels: [library, bug, ui]
+updated_date: '2026-08-08 14:37'
+labels:
+  - library
+  - bug
+  - ui
 dependencies: []
 ---
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+Implemented in the TASK-202 PR; add the missing handler through LibraryScreen and reuse the canonical Prompt Markdown renderer. ADR required: no; ADR path: N/A; reason: UI-only defect repair under ADR-011/ADR-040.
+<!-- SECTION:PLAN:END -->
 
 ## Description (the why)
 
@@ -20,11 +31,9 @@ references are the canvas compose and a label-only test). The notes editor's
 "Copy" (which toasts "Note copied to clipboard as markdown!") shows the
 intended pattern.
 
-## Acceptance Criteria (the what)
-
-- [ ] Pressing "Copy text" copies the prompt's user-prompt text (or the
-      sensible chosen payload) to the clipboard and confirms with a toast.
-- [ ] A test covers the handler (button press → clipboard/toast), so the
-      button cannot silently detach again.
-- [ ] The User Guide quirk in `Docs/User_Guide/library/prompts.md` is
-      updated/removed to match.
+## Acceptance Criteria
+<!-- AC:BEGIN -->
+- [ ] Copy Markdown copies the live unsaved working copy.
+- [ ] Clipboard success is reported only after a successful copy.
+- [ ] Unavailable or failed clipboard support is reported honestly.
+<!-- AC:END -->

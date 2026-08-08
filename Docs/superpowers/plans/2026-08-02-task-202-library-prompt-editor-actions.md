@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Deliver TASK-202 and its absorbed TASK-1640/TASK-1641 defects in the first of six merge-gated PRs: keep every Prompt editor action visible, group actions by purpose, make Copy Markdown real, and confirm single-item deletion.
+**Goal:** Deliver TASK-202 and its absorbed TASK-2700/TASK-2701 defects in the first of six merge-gated PRs: keep every Prompt editor action visible, group actions by purpose, make Copy Markdown real, and confirm single-item deletion.
 
 **Architecture:** Preserve `LibraryScreen` as the interaction coordinator and `LibraryPromptsListCanvas` as a state-driven view. Split the editor into a scrollable content region plus an auto-height action region; route live working-copy Markdown through the existing renderer and app clipboard seam; add one reusable Prompt deletion confirmation modal that TASK-203 can reuse. No service or storage boundary changes.
 
@@ -17,7 +17,7 @@
   and rebase those commits onto the latest merged `origin/dev`, then rename the
   branch for TASK-202 before any Backlog or production edit.
 - Carry the approved umbrella spec `Docs/superpowers/specs/2026-08-02-library-prompt-enhancement-series-design.md` and all six plan documents in this PR; do not open a separate design PR.
-- Close TASK-202, TASK-1640, and TASK-1641 in this one PR. Do not include TASK-1642 or any TASK-196 implementation.
+- Close TASK-202, TASK-2700, and TASK-2701 in this one PR. Do not include TASK-2702 or any TASK-196 implementation.
 - ADR required: no.
 - ADR path: N/A.
 - Reason: this is UI grouping and defect repair within ADR-011 and ADR-040.
@@ -57,10 +57,11 @@ approved spec and six plan files remain tracked.
 
 ```bash
 backlog task edit 202 -a @codex -s "In Progress" --plan "Implement grouped, always-visible editor actions; wire live Copy Markdown; add shared delete confirmation; verify TCSS geometry. ADR required: no; ADR path: N/A; reason: UI-only change under ADR-011/ADR-040."
-backlog task edit 1640 -a @codex -s "In Progress" --ac "Copy Markdown copies the live unsaved working copy,Clipboard success is reported only after a successful copy,Unavailable or failed clipboard support is reported honestly" --plan "Implemented in the TASK-202 PR; add the missing handler through LibraryScreen and reuse the canonical Prompt Markdown renderer. ADR required: no; ADR path: N/A."
-backlog task edit 1641 -a @codex -s "In Progress" --ac "Editor actions remain visible at 200x50,Actions remain scroll-reachable at shorter terminal sizes,The action area does not obscure the final editor field" --plan "Implemented in the TASK-202 PR; split the editor into a scrollable body and auto-height footer and add geometry regressions. ADR required: no; ADR path: N/A."
+backlog task edit 2700 -a @codex -s "In Progress" --plan "Implemented in the TASK-202 PR; add the missing handler through LibraryScreen and reuse the canonical Prompt Markdown renderer. ADR required: no; ADR path: N/A; reason: UI-only defect repair under ADR-011/ADR-040."
+backlog task edit 2701 -a @codex -s "In Progress" --plan "Implemented in the TASK-202 PR; split the editor into a scrollable body and auto-height footer and add geometry regressions. ADR required: no; ADR path: N/A; reason: UI-only defect repair under ADR-011/ADR-040."
 ```
 
+- [ ] Add each acceptance criterion as a separate checkbox line in the corresponding task file; do not pass comma-separated criteria to `backlog task edit --ac`.
 - [ ] Expand TASK-202's acceptance criteria from the approved spec, including stable action IDs, confirmation, and narrow layouts.
 - [ ] Confirm the umbrella spec and all six plan documents are present in the rebased history, then commit the three Backlog start-state changes before code.
 
@@ -144,13 +145,13 @@ git diff --check
 ```
 
 - [ ] Self-review for action loss, stale modal results, accidental body logging, generated CSS drift, and regressions to Recipe/conflict actions. Request independent code review and address every valid finding.
-- [ ] Check every acceptance criterion and add separate concise implementation notes to TASK-202, TASK-1640, and TASK-1641, including tests, docs, and ADR check.
+- [ ] Check every acceptance criterion and add separate concise implementation notes to TASK-202, TASK-2700, and TASK-2701, including tests, docs, and ADR check.
 - [ ] Mark all three tasks Done only after checks and review pass.
 
 ```bash
 backlog task edit 202 -s Done --notes "Grouped the always-visible Prompt editor actions, wired live Copy Markdown, reused confirmed deletion, updated docs, and verified focused/full suites. ADR required: no; ADR path: N/A."
-backlog task edit 1640 -s Done --notes "Added the Copy Markdown handler for live unsaved content with honest clipboard outcomes; verified UI regression tests. ADR required: no; ADR path: N/A."
-backlog task edit 1641 -s Done --notes "Made the editor body scroll independently of an auto-height action area and verified required terminal sizes. ADR required: no; ADR path: N/A."
+backlog task edit 2700 -s Done --notes "Added the Copy Markdown handler for live unsaved content with honest clipboard outcomes; verified UI regression tests. ADR required: no; ADR path: N/A."
+backlog task edit 2701 -s Done --notes "Made the editor body scroll independently of an auto-height action area and verified required terminal sizes. ADR required: no; ADR path: N/A."
 ```
 
 - [ ] Open one ready PR against `dev`, address CI/review, merge, and confirm the merge commit is present on `origin/dev`. Do not begin TASK-196 implementation before that confirmation.

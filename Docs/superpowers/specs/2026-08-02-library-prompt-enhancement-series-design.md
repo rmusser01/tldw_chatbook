@@ -197,15 +197,15 @@ the unsaved working copy will be discarded.
 
 ### Scope correction
 
-TASK-202 absorbs the directly overlapping defects in TASK-1640 and TASK-1641.
+TASK-202 absorbs the directly overlapping defects in TASK-2700 and TASK-2701.
 All three task records travel in the same PR. Before code changes, TASK-202,
-TASK-1640, and TASK-1641 are each put In Progress and receive their own concise
+TASK-2700, and TASK-2701 are each put In Progress and receive their own concise
 implementation plan and ADR check; the two defect plans link to the TASK-202
 series plan instead of creating separate branches. Before the PR is declared
 complete, each record receives its own checked acceptance criteria,
 verification evidence, implementation notes, and Done transition. This is one
 implementation PR, not three PRs and not an exception to Backlog hygiene.
-TASK-1642, the broader dirty-navigation feedback issue, remains separate.
+TASK-2702, the broader dirty-navigation feedback issue, remains separate.
 
 ### Updated acceptance boundary
 
@@ -216,7 +216,7 @@ TASK-1642, the broader dirty-navigation feedback issue, remains separate.
 - Copy Markdown succeeds through the clipboard seam and reports unavailable or
   failed clipboard states honestly.
 - Single delete is confirmed, including dirty-working-copy consequences.
-- A geometry regression test and user-guide correction close TASK-1641.
+- A geometry regression test and user-guide correction close TASK-2701.
 
 ## TASK-196 — Retained Prompt Version History
 
@@ -767,7 +767,7 @@ For each task:
 2. Create a fresh ignored `.worktrees/` worktree and `codex/` branch.
 3. Mark that Backlog task In Progress and add its implementation plan,
    including the required ADR path/reason. TASK-202 additionally puts its two
-   absorbed defect records, TASK-1640 and TASK-1641, In Progress and gives each
+   absorbed defect records, TASK-2700 and TASK-2701, In Progress and gives each
    the linked one-PR plan described above.
 4. If an ADR is required, write and commit it before implementation code.
 5. Add or update acceptance criteria before implementing any newly approved
@@ -818,7 +818,7 @@ Expected documentation updates include:
 - ADR links in the task implementation plan and notes.
 - Visual QA artifacts when the repository's current PR practice requires them.
 
-TASK-1640 and TASK-1641 are updated and closed by the TASK-202 PR after their
+TASK-2700 and TASK-2701 are updated and closed by the TASK-202 PR after their
 criteria pass. No unrelated Backlog task is silently marked complete.
 
 ## Open Questions

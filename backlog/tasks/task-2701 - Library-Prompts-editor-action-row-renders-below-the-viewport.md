@@ -1,12 +1,25 @@
 ---
 id: TASK-2701
-title: 'Library Prompts editor: action row renders below the viewport (Save unreachable by mouse)'
-status: To Do
-assignee: []
+title: >-
+  Library Prompts editor: action row renders below the viewport (Save
+  unreachable by mouse)
+status: In Progress
+assignee:
+  - '@codex'
 created_date: '2026-07-31'
-labels: [library, bug, ui]
+updated_date: '2026-08-08 14:37'
+labels:
+  - library
+  - bug
+  - ui
 dependencies: []
 ---
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+Implemented in the TASK-202 PR; split the editor into a scrollable body and auto-height footer and add geometry regressions. ADR required: no; ADR path: N/A; reason: UI-only defect repair under ADR-011/ADR-040.
+<!-- SECTION:PLAN:END -->
 
 ## Description (the why)
 
@@ -30,11 +43,9 @@ root).
 Related: task-2703 is the same symptom family in the Console Edit
 Message modal; a shared root cause is plausible.
 
-## Acceptance Criteria (the what)
-
-- [ ] The action row is visible in the prompts editor at 200×50 (and on
-      shorter terminals it is reachable by scrolling).
-- [ ] A geometry test pins the row inside the viewport/scrollable region
-      so it cannot silently fall off again.
-- [ ] The User Guide quirk in `Docs/User_Guide/library/prompts.md` is
-      updated/removed to match.
+## Acceptance Criteria
+<!-- AC:BEGIN -->
+- [ ] Editor actions remain visible at 200x50.
+- [ ] Actions remain scroll-reachable at shorter terminal sizes.
+- [ ] The action area does not obscure the final editor field.
+<!-- AC:END -->

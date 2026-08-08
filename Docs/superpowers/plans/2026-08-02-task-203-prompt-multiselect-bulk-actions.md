@@ -101,4 +101,4 @@ git diff --check
 
 - [ ] Complete TASK-203 criteria and implementation notes with tests/docs/ADR check; mark Done only after DoD.
 - [ ] Open one ready PR against `dev`, resolve every review/CI issue, merge, and confirm the merge on `origin/dev`.
-- [ ] Audit TASK-202/196/198/199/197/203 and absorbed TASK-1640/1641 statuses, ADR links, notes, and merged PR references. Report any unfinished external follow-up without expanding this six-PR scope.
+- [ ] Audit TASK-202/196/198/199/197/203 and absorbed TASK-2700/2701 statuses, ADR links, notes, and merged PR references. Report any unfinished external follow-up without expanding this six-PR scope.
