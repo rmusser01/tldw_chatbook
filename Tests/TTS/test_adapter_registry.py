@@ -1053,3 +1053,596 @@ async def test_registry_serves_configuration_revision_for_legacy_providers() -> 
         assert type(revision) is int and revision >= 0
 
     await registry.close()
+
+
+@pytest.mark.asyncio
+async def test_stage_keeps_applied_config_revision_and_active_adapter() -> None:
+    factory = FakeAdapterFactory("audio_cpp")
+    registry = TTSAdapterRegistry(
+        specs=(
+            provider_spec(
+                "audio_cpp",
+                factory,
+                {"mode": "external", "nested": {"value": 1}},
+                exclusive=True,
+            ),
+        ),
+        aliases={},
+    )
+    lease = await registry.acquire("audio_cpp")
+    adapter = lease.adapter
+    await lease.release()
+
+    result = await registry.stage_provider_configuration(
+        "audio_cpp",
+        {"mode": "managed", "nested": {"value": 2}},
+        generation=1,
+    )
+    snapshot = await registry.provider_configuration_snapshot("audio_cpp")
+
+    assert result is ReconfigureResult.CHANGED
+    assert snapshot.revision == 1
+    assert snapshot.applied_generation == 0
+    assert snapshot.applied_config == {
+        "mode": "external",
+        "nested": {"value": 1},
+    }
+    assert snapshot.staged_generation == 1
+    assert snapshot.staged_config == {
+        "mode": "managed",
+        "nested": {"value": 2},
+    }
+    assert factory.calls == 1
+    assert adapter.close_calls == 0
+    await registry.close()
+
+
+@pytest.mark.asyncio
+async def test_newer_stage_supersedes_older_without_starting_handoff() -> None:
+    factory = FakeAdapterFactory("audio_cpp")
+    registry = TTSAdapterRegistry(
+        specs=(provider_spec("audio_cpp", factory, {"revision": 0}, exclusive=True),),
+        aliases={},
+    )
+
+    first = await registry.stage_provider_configuration(
+        "audio_cpp", {"revision": 1}, generation=1
+    )
+    second = await registry.stage_provider_configuration(
+        "audio_cpp", {"revision": 2}, generation=2
+    )
+    superseded = await registry.stage_provider_configuration(
+        "audio_cpp", {"revision": 3}, generation=1
+    )
+    snapshot = await registry.provider_configuration_snapshot("audio_cpp")
+
+    assert first is ReconfigureResult.CHANGED
+    assert second is ReconfigureResult.CHANGED
+    assert superseded is ReconfigureResult.SUPERSEDED
+    assert snapshot.staged_generation == 2
+    assert snapshot.staged_config == {"revision": 2}
+    assert snapshot.revision == 1
+    assert factory.calls == 0
+    await registry.close()
+
+
+@pytest.mark.asyncio
+async def test_equal_config_advances_generation_without_restart_required() -> None:
+    factory = FakeAdapterFactory("audio_cpp")
+    registry = TTSAdapterRegistry(
+        specs=(
+            provider_spec(
+                "audio_cpp",
+                factory,
+                {"mode": "external", "options": {"timeout": 10}},
+                exclusive=True,
+            ),
+        ),
+        aliases={},
+    )
+
+    result = await registry.stage_provider_configuration(
+        "audio_cpp",
+        {"mode": "external", "options": {"timeout": 10}},
+        generation=4,
+    )
+    snapshot = await registry.provider_configuration_snapshot("audio_cpp")
+
+    assert result is ReconfigureResult.UNCHANGED
+    assert snapshot.revision == 1
+    assert snapshot.applied_generation == 4
+    assert snapshot.staged_generation is None
+    assert snapshot.staged_config is None
+    assert factory.calls == 0
+    await registry.close()
+
+
+@pytest.mark.asyncio
+async def test_reverting_to_applied_config_clears_an_older_stage() -> None:
+    factory = FakeAdapterFactory("audio_cpp")
+    registry = TTSAdapterRegistry(
+        specs=(provider_spec("audio_cpp", factory, {"revision": 0}, exclusive=True),),
+        aliases={},
+    )
+    await registry.stage_provider_configuration(
+        "audio_cpp", {"revision": 1}, generation=1
+    )
+
+    result = await registry.stage_provider_configuration(
+        "audio_cpp", {"revision": 0}, generation=2
+    )
+    snapshot = await registry.provider_configuration_snapshot("audio_cpp")
+
+    assert result is ReconfigureResult.UNCHANGED
+    assert snapshot.applied_generation == 2
+    assert snapshot.applied_config == {"revision": 0}
+    assert snapshot.staged_generation is None
+    assert snapshot.staged_config is None
+    assert factory.calls == 0
+    await registry.close()
+
+
+@pytest.mark.asyncio
+async def test_immediate_reconfigure_clears_every_older_stage() -> None:
+    factory = FakeAdapterFactory("audio_cpp")
+    registry = TTSAdapterRegistry(
+        specs=(provider_spec("audio_cpp", factory, {"revision": 0}, exclusive=True),),
+        aliases={},
+    )
+    await registry.stage_provider_configuration(
+        "audio_cpp", {"revision": 1}, generation=1
+    )
+
+    ticket = await registry.begin_reconfigure_provider(
+        "audio_cpp", {"revision": 2}, generation=2
+    )
+    assert await ticket.completion is ReconfigureResult.CHANGED
+    snapshot = await registry.provider_configuration_snapshot("audio_cpp")
+
+    assert snapshot.applied_generation == 2
+    assert snapshot.applied_config == {"revision": 2}
+    assert snapshot.staged_generation is None
+    assert snapshot.staged_config is None
+    await registry.close()
+
+
+@pytest.mark.asyncio
+async def test_configuration_snapshot_is_deeply_immutable() -> None:
+    source = {
+        "nested": {"items": ["first", {"leaf": "value"}]},
+        "set": {"one", "two"},
+    }
+    registry = TTSAdapterRegistry(
+        specs=(
+            provider_spec(
+                "audio_cpp",
+                FakeAdapterFactory("audio_cpp"),
+                {"applied": {"items": [1, 2]}},
+                exclusive=True,
+            ),
+        ),
+        aliases={},
+    )
+    await registry.stage_provider_configuration("audio_cpp", source, generation=1)
+    snapshot = await registry.provider_configuration_snapshot("audio_cpp")
+    source["nested"]["items"].append("mutated")
+
+    with pytest.raises(TypeError):
+        snapshot.applied_config["new"] = "value"  # type: ignore[index]
+    with pytest.raises(TypeError):
+        snapshot.staged_config["nested"]["new"] = "value"  # type: ignore[index,union-attr]
+    with pytest.raises(AttributeError):
+        snapshot.staged_config["nested"]["items"].append("value")  # type: ignore[union-attr]
+    assert snapshot.staged_config == {
+        "nested": {"items": ("first", {"leaf": "value"})},
+        "set": frozenset({"one", "two"}),
+    }
+    await registry.close()
+
+
+@pytest.mark.asyncio
+async def test_transition_rejects_new_leases_and_drains_admitted_lease() -> None:
+    factory = FakeAdapterFactory("audio_cpp")
+    registry = TTSAdapterRegistry(
+        specs=(provider_spec("audio_cpp", factory, {"revision": 0}, exclusive=True),),
+        aliases={},
+    )
+    lease = await registry.acquire("audio_cpp")
+    await registry.stage_provider_configuration(
+        "audio_cpp", {"revision": 1}, generation=1
+    )
+    draining = asyncio.Event()
+    action_calls = 0
+
+    async def on_draining() -> None:
+        draining.set()
+
+    async def action() -> None:
+        nonlocal action_calls
+        action_calls += 1
+
+    transition = asyncio.create_task(
+        registry.run_exclusive_provider_transition(
+            "audio_cpp",
+            on_draining=on_draining,
+            action=action,
+            apply_staged=True,
+        )
+    )
+    await draining.wait()
+
+    with pytest.raises(TTSProviderReconfiguringError):
+        await registry.acquire("audio_cpp")
+    assert transition.done() is False
+    assert action_calls == 0
+
+    await lease.release()
+    assert await transition is ReconfigureResult.CHANGED
+    assert action_calls == 1
+    assert lease.adapter.close_calls == 1
+    await registry.close()
+
+
+@pytest.mark.asyncio
+async def test_transition_publishes_draining_before_waiting_for_admitted_lease() -> (
+    None
+):
+    registry = TTSAdapterRegistry(
+        specs=(
+            provider_spec(
+                "audio_cpp",
+                FakeAdapterFactory("audio_cpp"),
+                {"revision": 0},
+                exclusive=True,
+            ),
+        ),
+        aliases={},
+    )
+    lease = await registry.acquire("audio_cpp")
+    observed_leases: list[int] = []
+    draining = asyncio.Event()
+
+    async def on_draining() -> None:
+        observed_leases.append(registry._total_leases())
+        draining.set()
+
+    transition = asyncio.create_task(
+        registry.run_exclusive_provider_transition(
+            "audio_cpp",
+            on_draining=on_draining,
+            action=lambda: asyncio.sleep(0),
+            apply_staged=False,
+        )
+    )
+    await draining.wait()
+
+    assert observed_leases == [1]
+    assert transition.done() is False
+    await lease.release()
+    assert await transition is ReconfigureResult.UNCHANGED
+    await registry.close()
+
+
+@pytest.mark.asyncio
+async def test_transition_action_runs_after_last_lease_without_holding_slot_lock() -> (
+    None
+):
+    registry = TTSAdapterRegistry(
+        specs=(
+            provider_spec(
+                "audio_cpp",
+                FakeAdapterFactory("audio_cpp"),
+                {"revision": 0},
+                exclusive=True,
+            ),
+        ),
+        aliases={},
+    )
+    lease = await registry.acquire("audio_cpp")
+    draining = asyncio.Event()
+    action_observations: list[int] = []
+
+    async def on_draining() -> None:
+        draining.set()
+
+    async def action() -> None:
+        slot = registry._slots["audio_cpp"]
+        async with slot.lock:
+            action_observations.append(lease.adapter.close_calls)
+
+    transition = asyncio.create_task(
+        registry.run_exclusive_provider_transition(
+            "audio_cpp",
+            on_draining=on_draining,
+            action=action,
+            apply_staged=False,
+        )
+    )
+    await draining.wait()
+    await lease.release()
+
+    assert await transition is ReconfigureResult.UNCHANGED
+    assert action_observations == [0]
+    await registry.close()
+
+
+@pytest.mark.asyncio
+async def test_transition_promotes_only_latest_staged_config() -> None:
+    factory = FakeAdapterFactory("audio_cpp")
+    registry = TTSAdapterRegistry(
+        specs=(provider_spec("audio_cpp", factory, {"revision": 0}, exclusive=True),),
+        aliases={},
+    )
+    lease = await registry.acquire("audio_cpp")
+    await registry.stage_provider_configuration(
+        "audio_cpp", {"revision": 1}, generation=1
+    )
+    draining = asyncio.Event()
+
+    async def on_draining() -> None:
+        draining.set()
+
+    transition = asyncio.create_task(
+        registry.run_exclusive_provider_transition(
+            "audio_cpp",
+            on_draining=on_draining,
+            action=lambda: asyncio.sleep(0),
+            apply_staged=True,
+        )
+    )
+    await draining.wait()
+    await registry.stage_provider_configuration(
+        "audio_cpp", {"revision": 2}, generation=2
+    )
+    await lease.release()
+
+    assert await transition is ReconfigureResult.CHANGED
+    snapshot = await registry.provider_configuration_snapshot("audio_cpp")
+    assert snapshot.applied_generation == 2
+    assert snapshot.applied_config == {"revision": 2}
+    assert snapshot.staged_config is None
+    assert registry.configuration_revision("audio_cpp") == 2
+    await registry.close()
+
+
+@pytest.mark.asyncio
+async def test_transition_without_stage_keeps_config_revision_and_adapter() -> None:
+    factory = FakeAdapterFactory("audio_cpp")
+    registry = TTSAdapterRegistry(
+        specs=(provider_spec("audio_cpp", factory, {"revision": 0}, exclusive=True),),
+        aliases={},
+    )
+    first = await registry.acquire("audio_cpp")
+    adapter = first.adapter
+    await first.release()
+
+    result = await registry.run_exclusive_provider_transition(
+        "audio_cpp",
+        on_draining=lambda: asyncio.sleep(0),
+        action=lambda: asyncio.sleep(0),
+        apply_staged=True,
+    )
+    second = await registry.acquire("audio_cpp")
+
+    assert result is ReconfigureResult.UNCHANGED
+    assert registry.configuration_revision("audio_cpp") == 1
+    assert second.adapter is adapter
+    assert adapter.close_calls == 0
+    await second.release()
+    await registry.close()
+
+
+@pytest.mark.asyncio
+async def test_transition_failure_seals_provider_unavailable_and_releases_waiters() -> (
+    None
+):
+    private_detail = "SYNTHETIC_PRIVATE_ACTION_FAILURE"
+    factory = FakeAdapterFactory("audio_cpp")
+    registry = TTSAdapterRegistry(
+        specs=(provider_spec("audio_cpp", factory, {"revision": 0}, exclusive=True),),
+        aliases={},
+    )
+    lease = await registry.acquire("audio_cpp")
+    await lease.release()
+    await registry.stage_provider_configuration(
+        "audio_cpp", {"revision": 1}, generation=1
+    )
+    action_started = asyncio.Event()
+    release_action = asyncio.Event()
+
+    async def action() -> None:
+        action_started.set()
+        await release_action.wait()
+        raise RuntimeError(private_detail)
+
+    transition = asyncio.create_task(
+        registry.run_exclusive_provider_transition(
+            "audio_cpp",
+            on_draining=lambda: asyncio.sleep(0),
+            action=action,
+            apply_staged=True,
+        )
+    )
+    await action_started.wait()
+    with pytest.raises(TTSProviderReconfiguringError):
+        await registry.acquire("audio_cpp")
+    release_action.set()
+
+    with pytest.raises(RuntimeError, match=private_detail):
+        await transition
+    with pytest.raises(TTSProviderUnavailableError) as unavailable:
+        await registry.acquire("audio_cpp")
+    snapshot = await registry.provider_configuration_snapshot("audio_cpp")
+    assert str(unavailable.value) == "TTS provider is unavailable: audio_cpp"
+    assert snapshot.staged_config == {"revision": 1}
+    assert registry._slots["audio_cpp"].reconfiguring is False
+    await registry.close()
+
+
+@pytest.mark.asyncio
+async def test_action_failure_retry_clears_unavailable_after_success() -> None:
+    private_detail = "SYNTHETIC_FIRST_ACTION_FAILURE"
+    factory = FakeAdapterFactory("audio_cpp")
+    registry = TTSAdapterRegistry(
+        specs=(provider_spec("audio_cpp", factory, {"revision": 0}, exclusive=True),),
+        aliases={},
+    )
+    lease = await registry.acquire("audio_cpp")
+    old_adapter = lease.adapter
+    await lease.release()
+    await registry.stage_provider_configuration(
+        "audio_cpp", {"revision": 1}, generation=1
+    )
+
+    async def failing_action() -> None:
+        raise RuntimeError(private_detail)
+
+    with pytest.raises(RuntimeError, match=private_detail):
+        await registry.run_exclusive_provider_transition(
+            "audio_cpp",
+            on_draining=lambda: asyncio.sleep(0),
+            action=failing_action,
+            apply_staged=True,
+        )
+
+    result = await registry.run_exclusive_provider_transition(
+        "audio_cpp",
+        on_draining=lambda: asyncio.sleep(0),
+        action=lambda: asyncio.sleep(0),
+        apply_staged=True,
+    )
+    replacement = await registry.acquire("audio_cpp")
+
+    assert result is ReconfigureResult.CHANGED
+    assert old_adapter.close_calls == 1
+    assert replacement.adapter is not old_adapter
+    assert registry.configuration_revision("audio_cpp") == 2
+    await replacement.release()
+    await registry.close()
+
+
+@pytest.mark.asyncio
+async def test_adapter_close_failure_retains_record_and_uses_fresh_retry_task() -> None:
+    class RetryCloseAdapter(FakeAdapter):
+        async def close(self) -> None:
+            self.close_calls += 1
+            if self.close_calls == 1:
+                raise RuntimeError("synthetic close failure")
+
+    adapter = RetryCloseAdapter("audio_cpp")
+    factory_calls = 0
+
+    def factory(_config: Mapping[str, Any]) -> FakeAdapter:
+        nonlocal factory_calls
+        factory_calls += 1
+        return adapter if factory_calls == 1 else FakeAdapter("audio_cpp")
+
+    spec = TTSProviderSpec(
+        descriptor=provider_spec("audio_cpp", FakeAdapterFactory("unused")).descriptor,
+        factory=factory,
+        initial_config={"revision": 0},
+        exclusive_reconfigure=True,
+    )
+    registry = TTSAdapterRegistry(specs=(spec,), aliases={})
+    lease = await registry.acquire("audio_cpp")
+    await lease.release()
+    await registry.stage_provider_configuration(
+        "audio_cpp", {"revision": 1}, generation=1
+    )
+
+    with pytest.raises(RuntimeError, match="synthetic close failure"):
+        await registry.run_exclusive_provider_transition(
+            "audio_cpp",
+            on_draining=lambda: asyncio.sleep(0),
+            action=lambda: asyncio.sleep(0),
+            apply_staged=True,
+        )
+    result = await registry.run_exclusive_provider_transition(
+        "audio_cpp",
+        on_draining=lambda: asyncio.sleep(0),
+        action=lambda: asyncio.sleep(0),
+        apply_staged=True,
+    )
+
+    assert result is ReconfigureResult.CHANGED
+    assert adapter.close_calls == 2
+    assert registry.configuration_revision("audio_cpp") == 2
+    await registry.close()
+
+
+@pytest.mark.asyncio
+async def test_successful_adapter_close_is_never_repeated_on_retry() -> None:
+    factory = FakeAdapterFactory("audio_cpp")
+    registry = TTSAdapterRegistry(
+        specs=(provider_spec("audio_cpp", factory, {"revision": 0}, exclusive=True),),
+        aliases={},
+    )
+    lease = await registry.acquire("audio_cpp")
+    old_adapter = lease.adapter
+    await lease.release()
+    await registry.stage_provider_configuration(
+        "audio_cpp", {"revision": 1}, generation=1
+    )
+
+    async def failing_action() -> None:
+        raise RuntimeError("synthetic action failure")
+
+    with pytest.raises(RuntimeError, match="synthetic action failure"):
+        await registry.run_exclusive_provider_transition(
+            "audio_cpp",
+            on_draining=lambda: asyncio.sleep(0),
+            action=failing_action,
+            apply_staged=True,
+        )
+    assert old_adapter.close_calls == 1
+
+    assert (
+        await registry.run_exclusive_provider_transition(
+            "audio_cpp",
+            on_draining=lambda: asyncio.sleep(0),
+            action=lambda: asyncio.sleep(0),
+            apply_staged=True,
+        )
+        is ReconfigureResult.CHANGED
+    )
+    assert old_adapter.close_calls == 1
+    await registry.close()
+
+
+@pytest.mark.asyncio
+async def test_registry_close_joins_an_in_progress_transition() -> None:
+    factory = FakeAdapterFactory("audio_cpp")
+    registry = TTSAdapterRegistry(
+        specs=(provider_spec("audio_cpp", factory, {"revision": 0}, exclusive=True),),
+        aliases={},
+    )
+    lease = await registry.acquire("audio_cpp")
+    await lease.release()
+    await registry.stage_provider_configuration(
+        "audio_cpp", {"revision": 1}, generation=1
+    )
+    action_started = asyncio.Event()
+    release_action = asyncio.Event()
+
+    async def action() -> None:
+        action_started.set()
+        await release_action.wait()
+
+    transition = asyncio.create_task(
+        registry.run_exclusive_provider_transition(
+            "audio_cpp",
+            on_draining=lambda: asyncio.sleep(0),
+            action=action,
+            apply_staged=True,
+        )
+    )
+    await action_started.wait()
+    close = asyncio.create_task(registry.close())
+    await asyncio.sleep(0)
+
+    assert close.done() is False
+    release_action.set()
+    assert await transition is ReconfigureResult.CHANGED
+    await close
+    await registry.wait_closed()
+    assert lease.adapter.close_calls == 1

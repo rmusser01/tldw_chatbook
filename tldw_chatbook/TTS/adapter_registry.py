@@ -5,6 +5,7 @@ from collections.abc import Awaitable, Callable, Iterable, Mapping
 from copy import deepcopy
 from dataclasses import dataclass, field
 from enum import Enum
+from types import MappingProxyType
 from typing import Any
 
 from tldw_chatbook.TTS._async_lifecycle import (
@@ -41,6 +42,17 @@ class TTSReconfigurationTicket:
     completion: asyncio.Task[ReconfigureResult]
 
 
+@dataclass(frozen=True, slots=True)
+class TTSProviderConfigurationSnapshot:
+    """Deeply immutable applied and staged configuration identities."""
+
+    revision: int
+    applied_generation: int
+    applied_config: Mapping[str, Any]
+    staged_generation: int | None
+    staged_config: Mapping[str, Any] | None
+
+
 @dataclass(slots=True)
 class _AdapterRecord:
     adapter: TTSAdapter
@@ -62,6 +74,8 @@ class _ProviderSlot:
     exclusive_record: _AdapterRecord | None = None
     pending_config: dict[str, Any] | None = None
     pending_generation: int | None = None
+    staged_config: dict[str, Any] | None = None
+    staged_generation: int | None = None
     applied_generation: int = 0
     highest_generation: int = 0
     sealed_generation: int = 0
@@ -70,6 +84,27 @@ class _ProviderSlot:
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     transition_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     lease_changed: asyncio.Event = field(default_factory=asyncio.Event)
+
+
+def _freeze_configuration_value(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return MappingProxyType(
+            {
+                deepcopy(key): _freeze_configuration_value(nested)
+                for key, nested in value.items()
+            }
+        )
+    if isinstance(value, (list, tuple)):
+        return tuple(_freeze_configuration_value(item) for item in value)
+    if isinstance(value, (set, frozenset)):
+        return frozenset(_freeze_configuration_value(item) for item in value)
+    return deepcopy(value)
+
+
+def _freeze_configuration(value: Mapping[str, Any]) -> Mapping[str, Any]:
+    frozen = _freeze_configuration_value(value)
+    assert isinstance(frozen, Mapping)
+    return frozen
 
 
 class TTSAdapterLease:
@@ -136,6 +171,7 @@ class TTSAdapterRegistry:
         self._lease_changed = asyncio.Event()
         self._records_collected = False
         self._closing_records: list[_AdapterRecord] = []
+        self._transition_tasks: set[asyncio.Task[ReconfigureResult]] = set()
 
     def descriptors(self) -> tuple[TTSProviderDescriptor, ...]:
         return tuple(slot.spec.descriptor for slot in self._slots.values())
@@ -159,6 +195,87 @@ class TTSAdapterRegistry:
             UnknownTTSProviderError: If the provider is not registered.
         """
         return self._slots[self._resolve_id(provider_id)].applied_generation
+
+    async def provider_configuration_snapshot(
+        self,
+        provider_id: str,
+    ) -> TTSProviderConfigurationSnapshot:
+        """Return deeply immutable applied and staged provider configuration."""
+        canonical_id = self._resolve_id(provider_id)
+        slot = self._slots[canonical_id]
+        async with slot.lock:
+            return TTSProviderConfigurationSnapshot(
+                revision=slot.revision,
+                applied_generation=slot.applied_generation,
+                applied_config=_freeze_configuration(slot.config),
+                staged_generation=slot.staged_generation,
+                staged_config=(
+                    None
+                    if slot.staged_config is None
+                    else _freeze_configuration(slot.staged_config)
+                ),
+            )
+
+    async def stage_provider_configuration(
+        self,
+        provider_id: str,
+        config: Mapping[str, Any],
+        *,
+        generation: int,
+    ) -> ReconfigureResult:
+        """Stage a latest-wins provider mapping without starting a handoff."""
+        canonical_id = self._resolve_id(provider_id)
+        if self._closed:
+            raise TTSRegistryClosedError("The TTS registry is closed")
+        if not isinstance(config, Mapping):
+            raise TypeError("TTS provider configuration must be a mapping")
+        if isinstance(generation, bool) or not isinstance(generation, int):
+            raise TypeError("TTS reconfiguration generation must be an integer")
+        if generation < 1:
+            raise ValueError("TTS reconfiguration generation must be positive")
+
+        slot = self._slots[canonical_id]
+        staged = deepcopy(dict(config))
+        self._generation_sequence = max(self._generation_sequence, generation)
+        async with slot.lock:
+            if self._closed:
+                raise TTSRegistryClosedError("The TTS registry is closed")
+            if generation <= slot.highest_generation:
+                return ReconfigureResult.SUPERSEDED
+            slot.highest_generation = generation
+            if staged == slot.config:
+                slot.staged_config = None
+                slot.staged_generation = None
+                slot.applied_generation = generation
+                return ReconfigureResult.UNCHANGED
+            slot.staged_config = staged
+            slot.staged_generation = generation
+            return ReconfigureResult.CHANGED
+
+    async def run_exclusive_provider_transition(
+        self,
+        provider_id: str,
+        *,
+        on_draining: Callable[[], Awaitable[None]],
+        action: Callable[[], Awaitable[None]],
+        apply_staged: bool,
+    ) -> ReconfigureResult:
+        """Drain one provider, run its lifecycle action, and optionally promote."""
+        canonical_id = self._resolve_id(provider_id)
+        if self._closed:
+            raise TTSRegistryClosedError("The TTS registry is closed")
+        slot = self._slots[canonical_id]
+        transition = asyncio.create_task(
+            self._run_exclusive_provider_transition(
+                slot,
+                on_draining=on_draining,
+                action=action,
+                apply_staged=apply_staged,
+            )
+        )
+        self._transition_tasks.add(transition)
+        transition.add_done_callback(self._transition_completed)
+        return await asyncio.shield(transition)
 
     def reserve_reconfiguration_generation(self) -> int:
         """Reserve one registry-wide generation for a future transition.
@@ -430,6 +547,13 @@ class TTSAdapterRegistry:
 
     async def _complete_close(self, deadline: float) -> None:
         loop = asyncio.get_running_loop()
+        transition_errors: list[BaseException] = []
+        while self._transition_tasks:
+            transitions = tuple(self._transition_tasks)
+            results = await asyncio.gather(*transitions, return_exceptions=True)
+            transition_errors.extend(
+                result for result in results if isinstance(result, BaseException)
+            )
         if not self._records_collected:
             while self._total_leases() > 0:
                 remaining = deadline - loop.time()
@@ -447,11 +571,15 @@ class TTSAdapterRegistry:
 
             for slot in self._slots.values():
                 async with slot.lock:
-                    if slot.active is not None:
-                        self._closing_records.append(slot.active)
-                    self._closing_records.extend(slot.retired)
+                    records = [slot.active, *slot.retired, slot.exclusive_record]
+                    for record in records:
+                        if record is not None and not any(
+                            retained is record for retained in self._closing_records
+                        ):
+                            self._closing_records.append(record)
                     slot.active = None
                     slot.retired = []
+                    slot.exclusive_record = None
             self._records_collected = True
 
         close_tasks = [
@@ -461,10 +589,12 @@ class TTSAdapterRegistry:
             )
             for record in self._closing_records
         ]
-        results = await asyncio.gather(*close_tasks, return_exceptions=True)
-        for result in results:
-            if isinstance(result, BaseException):
-                raise result
+        close_results = await asyncio.gather(*close_tasks, return_exceptions=True)
+        errors = transition_errors + [
+            result for result in close_results if isinstance(result, BaseException)
+        ]
+        if errors:
+            raise errors[0]
 
     def _known_close_error(self) -> BaseException | None:
         for record in self._closing_records:
@@ -506,6 +636,150 @@ class TTSAdapterRegistry:
             async with slot.lock:
                 if record in slot.retired:
                     slot.retired.remove(record)
+
+    def _transition_completed(
+        self,
+        transition: asyncio.Task[ReconfigureResult],
+    ) -> None:
+        self._transition_tasks.discard(transition)
+        self._observe_task_result(transition)
+
+    async def _run_exclusive_provider_transition(
+        self,
+        slot: _ProviderSlot,
+        *,
+        on_draining: Callable[[], Awaitable[None]],
+        action: Callable[[], Awaitable[None]],
+        apply_staged: bool,
+    ) -> ReconfigureResult:
+        async with slot.transition_lock:
+            async with slot.lock:
+                if slot.reconfiguring:
+                    raise TTSProviderReconfiguringError(
+                        "TTS provider is already reconfiguring"
+                    )
+                retrying_failed_transition = (
+                    slot.unavailable and slot.exclusive_record is not None
+                )
+                old_record = (
+                    slot.exclusive_record if retrying_failed_transition else slot.active
+                )
+                slot.reconfiguring = True
+                slot.unavailable = False
+                slot.exclusive_record = old_record
+
+            try:
+                await on_draining()
+                await self._wait_for_record_leases(slot, old_record)
+                await action()
+            except BaseException:
+                await self._seal_failed_lifecycle_transition(
+                    slot,
+                    old_record,
+                    retry_failed_close=retrying_failed_transition,
+                    attempt_close=True,
+                )
+                raise
+
+            async with slot.lock:
+                promote_requested = apply_staged and slot.staged_config is not None
+            if old_record is not None and (
+                promote_requested or retrying_failed_transition
+            ):
+                close_required = True
+                try:
+                    await self._close_record_for_transition(
+                        old_record,
+                        retry_failed=retrying_failed_transition,
+                    )
+                except BaseException:
+                    await self._seal_failed_lifecycle_transition(
+                        slot,
+                        old_record,
+                        retry_failed_close=True,
+                        attempt_close=False,
+                    )
+                    raise
+            else:
+                close_required = False
+
+            async with slot.lock:
+                if close_required and slot.active is old_record:
+                    slot.active = None
+                changed = False
+                if promote_requested and slot.staged_config is not None:
+                    staged_generation = slot.staged_generation
+                    assert staged_generation is not None
+                    slot.config = slot.staged_config
+                    slot.revision += 1
+                    slot.applied_generation = staged_generation
+                    slot.staged_config = None
+                    slot.staged_generation = None
+                    changed = True
+                slot.reconfiguring = False
+                slot.unavailable = False
+                slot.exclusive_record = None
+                slot.lease_changed.set()
+            return ReconfigureResult.CHANGED if changed else ReconfigureResult.UNCHANGED
+
+    @staticmethod
+    async def _wait_for_record_leases(
+        slot: _ProviderSlot,
+        record: _AdapterRecord | None,
+    ) -> None:
+        if record is None:
+            return
+        while True:
+            async with slot.lock:
+                if record.leases == 0:
+                    return
+                slot.lease_changed.clear()
+                if record.leases == 0:
+                    return
+            await slot.lease_changed.wait()
+
+    async def _seal_failed_lifecycle_transition(
+        self,
+        slot: _ProviderSlot,
+        record: _AdapterRecord | None,
+        *,
+        retry_failed_close: bool,
+        attempt_close: bool,
+    ) -> None:
+        close_succeeded = False
+        if attempt_close and record is not None:
+            try:
+                await self._close_record_for_transition(
+                    record,
+                    retry_failed=retry_failed_close,
+                )
+                close_succeeded = True
+            except BaseException:
+                pass
+
+        async with slot.lock:
+            if close_succeeded and slot.active is record:
+                slot.active = None
+            slot.reconfiguring = False
+            slot.unavailable = True
+            slot.exclusive_record = record
+            slot.sealed_generation = max(
+                slot.sealed_generation,
+                slot.highest_generation,
+            )
+            slot.lease_changed.set()
+
+    async def _close_record_for_transition(
+        self,
+        record: _AdapterRecord,
+        *,
+        retry_failed: bool,
+    ) -> None:
+        close_task = await self._start_close_record(
+            record,
+            retry_failed=retry_failed,
+        )
+        await asyncio.shield(close_task)
 
     async def _reconfigure_retiring(
         self, slot: _ProviderSlot, new_config: dict[str, Any]
@@ -556,6 +830,8 @@ class TTSAdapterRegistry:
                     ReconfigureResult.SUPERSEDED,
                 )
             slot.highest_generation = generation
+            slot.staged_config = None
+            slot.staged_generation = None
 
         async def apply() -> ReconfigureResult:
             async with slot.transition_lock:
@@ -595,6 +871,8 @@ class TTSAdapterRegistry:
                     ReconfigureResult.SUPERSEDED,
                 )
             slot.highest_generation = generation
+            slot.staged_config = None
+            slot.staged_generation = None
 
             if slot.reconfiguring:
                 slot.pending_config = new_config
@@ -719,8 +997,18 @@ class TTSAdapterRegistry:
         record: _AdapterRecord,
         *,
         shutdown_deadline: float | None = None,
+        retry_failed: bool = False,
     ) -> asyncio.Task[None]:
         async with record.close_lock:
+            if (
+                retry_failed
+                and record.close_task is not None
+                and record.close_task.done()
+            ):
+                try:
+                    record.close_task.result()
+                except BaseException:
+                    record.close_task = None
             if record.close_task is None:
                 with shutdown_deadline_scope(shutdown_deadline):
                     record.close_task = asyncio.create_task(record.adapter.close())
