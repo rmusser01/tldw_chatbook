@@ -102,7 +102,7 @@ unless you run Manual sync from Overview yourself.
 | Interface | **Appearance** | Theme, density, and visual defaults shared with the app shell. | Draft — save with s |
 | Interface | **Theme** | Full theme editor, custom colors, presets, and live preview. | Managed in editor |
 | Interface | **Splash Screen** | Startup splash card selection, defaults, and preview gallery. | Auto-saved |
-| Interface | **Console Behavior** | Composer, large paste handling, and chat-flow defaults. | Draft — save with s |
+| Interface | **Console Behavior** | Rail presentation, composer behavior, and chat-flow defaults. | Draft — save with s |
 | Data & Privacy | **Storage** | Config path, local databases, and file locations. | Draft — save with s |
 | Data & Privacy | **Workspaces** | Create, rename, archive, and bind folders for agent file tools. | Applies immediately |
 | Data & Privacy | **Privacy & Security** (view) | Secrets, encryption, redaction, and local privacy boundaries. | Read-only here |
@@ -226,6 +226,7 @@ Drafted, with one exception.
 
 | Group | What's in it |
 |---|---|
+| **Rail presentation** | **Stack collapsed rail labels** is off by default, so the collapsed handles read **Context ▸** and **Inspector** horizontally. Turn it on to use narrower three-column handles with the letters stacked upright. Save the category, then return to Console to see the new style; no restart is required. |
 | **Composer paste handling** | An Enabled/Disabled toggle plus **Threshold (chars)** (1–100000): "Collapse large pasted chunks only when they exceed the threshold." Normal typing stays literal and the message actually sent is unchanged. |
 | **Chat images** | One Enabled/Disabled toggle, off by default: "Render images linked in assistant replies (remote fetch)." and "Off by default: fetching a model-suggested link reveals your IP address to that host." **This is the one control on the page that writes immediately** — pressing it takes effect at once ("Linked images in replies will now render."), with no save and no draft. |
 | **Parallel agent runs** | **Max parallel agent runs**, read live, so it applies to the running app once saved. |
@@ -237,6 +238,10 @@ Two honest limits: fallbacks reach **new or default sessions**, not a
 conversation already open; and "Workbench (advanced)" under **Scope** is
 silently downgraded — "Workbench scope is not available in this build; using
 Transcript scope."
+
+**Save (s)** and **Revert (r)** apply to every unsaved Console Behavior edit
+together, including Rail presentation. A failed save keeps the draft and leaves
+the active Console rail style unchanged.
 
 ### Data & Privacy — Storage
 
@@ -478,7 +483,9 @@ not open an editor.
   only prints the file's location.
 - **A Console setting didn't take.** Global fallbacks reach *new or default*
   sessions; a conversation already open keeps what it resolved, and a session or
-  provider+model setting outranks them.
+  provider+model setting outranks them. Rail presentation is different: after a
+  successful Save, return to a freshly opened Console screen to see it; no app
+  restart is required.
 - **Save Raw TOML is greyed out.** You edited the text after validating it.
   Press **Validate Raw TOML** again — until you do, the status line says "Last
   validated: stale after edits".

@@ -58,7 +58,7 @@ it or a descendant -- both halves of the observed reality.
 from contextlib import asynccontextmanager
 
 import pytest
-from textual.widgets import Button
+from textual.widgets import Button, Static
 
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
@@ -139,6 +139,7 @@ async def test_fresh_console_composes_saved_rail_label_style(
         )
         left_button = console.query_one("#console-context-rail-open", Button)
         right_button = console.query_one("#console-inspector-rail-open", Button)
+        right_badge = console.query_one("#console-inspector-rail-badge", Static)
 
         assert left.styles.width.value == left_width
         assert right.styles.width.value == right_width
@@ -146,6 +147,27 @@ async def test_fresh_console_composes_saved_rail_label_style(
         assert right._display_label() == right_label
         assert left_button.tooltip == "Open Context rail"
         assert right_button.tooltip == "Open Inspector rail"
+        assert str(right_badge.renderable) == right._display_badge()
+        assert right_badge.tooltip == right.badge
+
+        await pilot.click("#console-context-rail-collapse")
+        await pilot.pause()
+        assert left.display is True
+        assert console.query_one("#console-left-rail").display is False
+        await pilot.click("#console-context-rail-open")
+        await pilot.pause()
+        assert left.display is False
+        assert console.query_one("#console-left-rail").display is True
+
+        assert right.display is True
+        await pilot.click("#console-inspector-rail-open")
+        await pilot.pause()
+        assert right.display is False
+        assert console.query_one("#console-right-rail").display is True
+        await pilot.click("#console-inspector-rail-collapse")
+        await pilot.pause()
+        assert right.display is True
+        assert console.query_one("#console-right-rail").display is False
 
 
 @pytest.mark.asyncio

@@ -4,8 +4,8 @@ import os
 from pathlib import Path
 import tomllib
 
-from loguru import logger
 import pytest
+from loguru import logger
 
 CONFIG_PATH_BEFORE_CONFIG_IMPORT = os.environ.get("TLDW_CONFIG_PATH")
 from tldw_chatbook import config as config_module  # noqa: E402

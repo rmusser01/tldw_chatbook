@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import pytest
-from textual.widgets import Button, Checkbox, Static
+from textual.widgets import Button, Checkbox, Input, Static
 
 from Tests.UI.test_destination_shells import (
     DestinationHarness,
@@ -15,6 +15,8 @@ from Tests.UI.test_destination_shells import (
 from Tests.UI.test_settings_configuration_hub import (
     _open_settings_category,
     _settle_settings_mount_storm,
+    _wait_for_settings_search_focus,
+    _wait_for_settings_text,
 )
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
@@ -71,7 +73,17 @@ async def test_console_rail_label_setting_is_searchable_and_has_focused_guidance
     async with host.run_test(size=(190, 55)) as pilot:
         await _settle_settings_mount_storm(pilot)
         screen = _active_destination_screen(host)
-        screen._submit_category_search("vertical")
+        await pilot.press("/")
+        await _wait_for_settings_search_focus(screen, pilot)
+        search = screen.query_one("#settings-category-search", Input)
+        assert search.has_focus
+        await pilot.press(*"vertical")
+        await _wait_for_settings_text(
+            screen,
+            pilot,
+            "Console Behavior › Stacked vertical Context Inspector",
+        )
+        await pilot.press("enter")
         for _ in range(8):
             await pilot.pause()
 
@@ -81,6 +93,8 @@ async def test_console_rail_label_setting_is_searchable_and_has_focused_guidance
         )
         visible = _visible_text(screen)
         assert "Purpose: Choose the collapsed Console rail label style." in visible
+        assert "Consequences: Stacked uses narrower 3-column handles" in visible
+        assert "Horizontal uses the established 13- and 11-column handles." in visible
         assert "Saved as: console." in visible
         assert "stack_collapsed_rail_labels" in visible
         assert "Applies: After saving, when Console is next opened." in visible

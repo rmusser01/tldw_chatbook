@@ -9943,7 +9943,7 @@ class SettingsScreen(BaseAppScreen):
             id="settings-console-behavior-card", classes="settings-secondary-card"
         ):
             if compact:
-                yield Static("Console paste collapse", classes="destination-section")
+                yield Static("Console behavior", classes="destination-section")
             yield Static("Rail presentation", classes="destination-section")
             yield Checkbox(
                 "Stack collapsed rail labels",
