@@ -6,9 +6,12 @@ import re
 from collections.abc import Mapping, Set as AbstractSet
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, NoReturn
+from typing import Annotated, Any, Literal, NoReturn
+
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from tldw_chatbook.TTS.audio_cpp_config import AudioCppConfig
+from tldw_chatbook.Utils.path_validation import validate_path_simple
 
 _MAX_SERVER_JSON_BYTES = 1_048_576
 _BINARY_DIAGNOSTIC = "audio.cpp managed_binary_path must be an absolute executable file"
@@ -115,6 +118,20 @@ class _StrictJSONError(ValueError):
     """Internal marker for JSON extensions forbidden by the managed contract."""
 
 
+class _AudioCppServerConfig(BaseModel):
+    """Strict Chatbook-owned fields from an otherwise server-owned document."""
+
+    model_config = ConfigDict(
+        extra="allow",
+        frozen=True,
+        hide_input_in_errors=True,
+        strict=True,
+    )
+
+    host: Literal["127.0.0.1"]
+    port: Annotated[int, Field(ge=1, le=65_535)]
+
+
 def collect_provider_credential_environment_names(
     app_config: Mapping[str, Any],
 ) -> frozenset[str]:
@@ -186,6 +203,7 @@ def _reject_non_json_constant(_constant: str) -> NoReturn:
 def _expanded_path(value: str, diagnostic: str) -> Path:
     try:
         path = Path(value).expanduser()
+        validate_path_simple(path, probe_existing=False)
     except (OSError, RuntimeError, ValueError):
         raise ValueError(diagnostic) from None
     if not path.is_absolute():
@@ -204,7 +222,7 @@ def _validated_binary_path(value: str) -> Path:
     return path
 
 
-def _read_server_json(value: str) -> tuple[Path, dict[str, Any]]:
+def _read_server_json(value: str) -> tuple[Path, _AudioCppServerConfig]:
     path = _expanded_path(value, _SERVER_PATH_DIAGNOSTIC)
     try:
         if not path.is_file() or not os.access(path, os.R_OK):
@@ -234,7 +252,21 @@ def _read_server_json(value: str) -> tuple[Path, dict[str, Any]]:
         raise ValueError(_SERVER_JSON_DIAGNOSTIC) from None
     if not isinstance(parsed, dict):
         raise ValueError(_SERVER_OBJECT_DIAGNOSTIC)
-    return path, parsed
+
+    invalid_fields: set[str] | None = None
+    try:
+        validated = _AudioCppServerConfig.model_validate(parsed, strict=True)
+    except ValidationError as error:
+        invalid_fields = {
+            str(item["loc"][0])
+            for item in error.errors(include_url=False, include_input=False)
+            if item["loc"]
+        }
+    if invalid_fields is not None:
+        if "host" in invalid_fields:
+            raise ValueError(_SERVER_HOST_DIAGNOSTIC)
+        raise ValueError(_SERVER_PORT_DIAGNOSTIC)
+    return path, validated
 
 
 def validate_audio_cpp_managed_launch(
@@ -256,11 +288,7 @@ def validate_audio_cpp_managed_launch(
 
     binary_path = _validated_binary_path(config.managed_binary_path)
     server_json_path, server_config = _read_server_json(config.managed_server_json_path)
-    if server_config.get("host") != "127.0.0.1":
-        raise ValueError(_SERVER_HOST_DIAGNOSTIC)
-    port = server_config.get("port")
-    if isinstance(port, bool) or not isinstance(port, int) or not 1 <= port <= 65_535:
-        raise ValueError(_SERVER_PORT_DIAGNOSTIC)
+    port = server_config.port
 
     return AudioCppManagedLaunchConfig(
         binary_path=binary_path,

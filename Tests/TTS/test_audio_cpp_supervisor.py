@@ -627,6 +627,19 @@ def test_construction_is_stopped_and_performs_no_io() -> None:
     assert admission.stage_application_eligible is True
 
 
+def test_construction_survives_an_unavailable_home_directory(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def unavailable_home() -> Path:
+        raise RuntimeError("synthetic home lookup failure")
+
+    monkeypatch.setattr(supervisor_module.Path, "home", unavailable_home)
+
+    supervisor = AudioCppSupervisor(source_environment={})
+
+    assert supervisor.snapshot().state == "stopped"
+
+
 @pytest.mark.asyncio
 async def test_first_deliberate_use_starts_one_generation(tmp_path: Path) -> None:
     process = _FakeProcess()

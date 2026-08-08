@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from pydantic import BaseModel, ValidationError
 
 from tldw_chatbook.TTS import audio_cpp_managed_config as managed_config_module
 from tldw_chatbook.TTS.audio_cpp_config import AudioCppConfig
@@ -341,6 +342,52 @@ def test_server_json_requires_readable_regular_utf8_object(tmp_path: Path) -> No
             )
     finally:
         server_json.chmod(0o600)
+
+
+def test_server_json_path_uses_the_central_path_safety_policy(
+    tmp_path: Path,
+) -> None:
+    binary = _write_executable(tmp_path / "audiocpp_server")
+    unsafe_directory = tmp_path / "configs;private"
+    unsafe_directory.mkdir()
+    server_json = _write_server_json(unsafe_directory / "server.json")
+
+    with pytest.raises(ValueError) as raised:
+        _validate_launch(_launch_config(binary, server_json))
+
+    assert str(raised.value) == (
+        "audio.cpp managed_server_json_path must be an absolute readable file"
+    )
+    assert str(server_json) not in str(raised.value)
+
+
+def test_server_json_owned_fields_have_a_strict_pydantic_boundary() -> None:
+    schema_type = getattr(managed_config_module, "_AudioCppServerConfig", None)
+
+    assert isinstance(schema_type, type), "managed server schema is missing"
+    assert issubclass(schema_type, BaseModel)
+    assert schema_type.model_config["extra"] == "allow"
+    assert schema_type.model_config["strict"] is True
+
+    validated = schema_type.model_validate(
+        {
+            "host": "127.0.0.1",
+            "port": 8080,
+            "models": [{"id": "pocket-tts", "path": "models/model.gguf"}],
+        },
+        strict=True,
+    )
+    assert validated.host == "127.0.0.1"
+    assert validated.port == 8080
+    assert validated.model_extra == {
+        "models": [{"id": "pocket-tts", "path": "models/model.gguf"}]
+    }
+
+    with pytest.raises(ValidationError):
+        schema_type.model_validate(
+            {"host": "127.0.0.1", "port": "8080"},
+            strict=True,
+        )
 
 
 def test_server_json_rejects_more_than_one_mib_before_parsing(tmp_path: Path) -> None:

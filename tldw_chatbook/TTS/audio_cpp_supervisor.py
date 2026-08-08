@@ -108,7 +108,13 @@ class _AudioCppDiagnosticRing:
     """Incrementally sanitize and retain a bounded child-output snapshot."""
 
     def __init__(self, *, home_directory: Path | None = None) -> None:
-        self._home_directory = str(home_directory or Path.home())
+        if home_directory is None:
+            try:
+                self._home_directory = str(Path.home())
+            except (OSError, RuntimeError, ValueError):
+                self._home_directory = ""
+        else:
+            self._home_directory = str(home_directory)
         self._entries: deque[tuple[AudioCppDiagnosticLine, int]] = deque()
         self._retained_bytes = 0
         self._dropped_lines = 0
