@@ -142,6 +142,8 @@ from ...Chat.console_command_grammar import (
     REWIND_COMMAND_NAME,
     SKILLS_COMMAND_HANDLER_ID,
     SKILLS_COMMAND_NAME,
+    STREAM_VIDEO_COMMAND_HANDLER_ID,
+    STREAM_VIDEO_COMMAND_NAME,
     SYSTEM_COMMAND_HANDLER_ID,
     SYSTEM_COMMAND_NAME,
     CommandParse,
@@ -14999,6 +15001,7 @@ class ChatScreen(BaseAppScreen):
         PREFILL_COMMAND_NAME: PREFILL_COMMAND_HANDLER_ID,
         GENERATE_IMAGE_COMMAND_NAME: GENERATE_IMAGE_COMMAND_HANDLER_ID,
         GENERATE_VIDEO_COMMAND_NAME: GENERATE_VIDEO_COMMAND_HANDLER_ID,
+        STREAM_VIDEO_COMMAND_NAME: STREAM_VIDEO_COMMAND_HANDLER_ID,
         REWIND_COMMAND_NAME: REWIND_COMMAND_HANDLER_ID,
     }
 
@@ -15062,6 +15065,7 @@ class ChatScreen(BaseAppScreen):
             PREFILL_COMMAND_HANDLER_ID: self._console_command_prefill,
             GENERATE_IMAGE_COMMAND_HANDLER_ID: self._console_command_generate_image,
             GENERATE_VIDEO_COMMAND_HANDLER_ID: self._console_command_generate_video,
+            STREAM_VIDEO_COMMAND_HANDLER_ID: self._console_command_stream_video,
             REWIND_COMMAND_HANDLER_ID: self._console_command_rewind,
         }
         handler = dispatch_map.get(handler_id)
@@ -15917,6 +15921,51 @@ class ChatScreen(BaseAppScreen):
         finally:
             inflight.discard(session_id)
             self._console_videogen_cancel_events().pop(session_id, None)
+
+    async def _console_command_stream_video(self, parse: CommandParse) -> None:
+        """Resolve and play one ``/stream-video <url>`` (task-3401.11).
+
+        Resolution (egress-gated redirect walk, yt-dlp subprocess fallback,
+        seekability probe) is blocking network I/O, so it runs via
+        ``asyncio.to_thread``; the player screen opens on success with the
+        stream's seek capability and the AC5 time box. Nothing is written
+        to disk on any path.
+        """
+        url = (parse.args or "").strip()
+        if not url:
+            await self._append_native_console_system_message(
+                "Usage: /stream-video <url>"
+            )
+            return
+        from tldw_chatbook.Media_Playback.stream_resolve import (
+            MAX_STREAM_SECONDS,
+            StreamResolutionError,
+            resolve_stream_url,
+        )
+
+        try:
+            resolution = await asyncio.to_thread(resolve_stream_url, url)
+        except StreamResolutionError as exc:
+            await self._append_native_console_system_message(
+                f"Cannot stream that URL: {exc}"
+            )
+            return
+        except Exception as exc:  # egress refusal or unexpected resolution failure
+            logger.opt(exception=True).warning(f"stream resolution failed: {exc}")
+            await self._append_native_console_system_message(
+                f"Cannot stream that URL: {exc}"
+            )
+            return
+        from tldw_chatbook.UI.Screens.video_player_screen import VideoPlayerScreen
+
+        self.push_screen(
+            VideoPlayerScreen(
+                resolution.final_url,
+                title="stream",
+                seekable=resolution.seekable,
+                max_seconds=MAX_STREAM_SECONDS,
+            )
+        )
 
     async def _regenerate_console_generation_variant(self, message_id: str) -> None:
         """Append one new generated variant to an existing generation message.

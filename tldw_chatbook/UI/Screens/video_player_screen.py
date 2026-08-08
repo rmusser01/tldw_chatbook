@@ -42,7 +42,9 @@ from tldw_chatbook.Widgets.Console.console_video_preview import ConsoleVideoPrev
 
 SEEK_STEP_SECONDS = 5.0
 _STATUS_INTERVAL_SECONDS = 0.25
+_STALL_THRESHOLD_SECONDS = 3.0
 _HINTS = "space pause · s stop · ←/→ seek ±5s · q close"
+_HINTS_NO_SEEK = "space pause · s stop · seek unavailable for this stream · q close"
 
 
 def _format_clock(seconds: float | None) -> str:
@@ -69,17 +71,25 @@ class VideoPlayerScreen(ModalScreen[None]):
         *,
         title: str = "",
         render_mode: RenderMode | None = None,
+        seekable: bool = True,
+        max_seconds: float | None = None,
     ) -> None:
         super().__init__()
         self._file_path = file_path
         self._title = title
         self._mode: RenderMode = render_mode or detect_render_mode()
+        #: AC4 (streams): a source without range support plays without seek.
+        self._seekable = seekable
+        #: AC5 (streams): session time-box; ``None`` for local files.
+        self._max_seconds = max_seconds
         self._pipeline: PlayerPipeline | None = None
         self._probe: PlayerProbe | None = None
         self._paused = False
         self._finished = False
         self._stop_requested = False
         self._frame_static_id = "video-player-frame"
+        self._started_wall: float | None = None
+        self._last_frame_wall: float | None = None
 
     # -- layout -------------------------------------------------------------
 
@@ -98,7 +108,11 @@ class VideoPlayerScreen(ModalScreen[None]):
         else:
             yield Static("", id=self._frame_static_id, classes="video-player-frame")
         yield Static("", id="video-player-status", classes="video-player-status")
-        yield Static(_HINTS, id="video-player-hints", classes="video-player-hints")
+        yield Static(
+            _HINTS if self._seekable else _HINTS_NO_SEEK,
+            id="video-player-hints",
+            classes="video-player-hints",
+        )
 
     # -- lifecycle ----------------------------------------------------------
 
@@ -118,6 +132,7 @@ class VideoPlayerScreen(ModalScreen[None]):
             return
         self._pipeline = PlayerPipeline(self._file_path, self._probe)
         self._pipeline.start()
+        self._started_wall = time.monotonic()
         self.run_worker(self._pump_loop, thread=True, exclusive=True, group="video-player-pump")
         self.set_interval(_STATUS_INTERVAL_SECONDS, self._refresh_status)
 
@@ -170,6 +185,7 @@ class VideoPlayerScreen(ModalScreen[None]):
         probe = self._probe
         if probe is None or self._finished:
             return
+        self._last_frame_wall = time.monotonic()
         from PIL import Image as PILImage
 
         image = PILImage.frombytes("RGB", (probe.width, probe.height), data)
@@ -204,7 +220,25 @@ class VideoPlayerScreen(ModalScreen[None]):
         pipeline = self._pipeline
         if pipeline is None:
             return
+        # AC5: time-boxed stream sessions auto-stop at the cap.
+        if self._max_seconds is not None and self._started_wall is not None:
+            elapsed = time.monotonic() - self._started_wall
+            if elapsed > self._max_seconds:
+                self.app.notify(
+                    f"Stream session hit the {int(self._max_seconds // 60)}-minute time box.",
+                    severity="information",
+                )
+                self.dismiss(None)
+                return
         state = "⏸ paused" if self._paused else ("■ finished" if self._finished else "▶ playing")
+        # AC3: surface stalls (no frames for a while mid-play) -- ffmpeg's
+        # reconnect flags are what actually resumes them.
+        if (
+            state == "▶ playing"
+            and self._last_frame_wall is not None
+            and time.monotonic() - self._last_frame_wall > _STALL_THRESHOLD_SECONDS
+        ):
+            state = "…stalled"
         probe = self._probe
         duration = probe.duration_seconds if probe else None
         stats = pipeline.stats
@@ -254,6 +288,10 @@ class VideoPlayerScreen(ModalScreen[None]):
     def _seek_relative(self, delta: float) -> None:
         pipeline = self._pipeline
         if pipeline is None or self._finished:
+            return
+        if not self._seekable:
+            # AC4: non-seekable streams disable seek (the hints line says so).
+            self.app.notify("Seek is unavailable for this stream.", severity="warning")
             return
         target = max(0.0, pipeline.stats.position_seconds + delta)
         pipeline.seek(target)
