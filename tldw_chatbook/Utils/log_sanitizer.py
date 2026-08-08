@@ -8,6 +8,29 @@ sensitive information from log messages.
 import re
 from typing import Any, Dict, List
 
+from tldw_chatbook.Utils.sensitive_config_keys import is_sensitive_config_key
+
+
+REDACTION_MARKER = "***REDACTED***"
+_LOG_ONLY_SENSITIVE_FIELDS = frozenset(
+    {
+        "authorization",
+        "proxy_authorization",
+        "cookie",
+        "set_cookie",
+        "credential",
+        "credentials",
+        "database_url",
+        "connection_string",
+        "dsn",
+    }
+)
+
+
+def _is_sensitive_log_key(key: object) -> bool:
+    normalized = str(key).strip().lower().replace("-", "_")
+    return is_sensitive_config_key(key) or normalized in _LOG_ONLY_SENSITIVE_FIELDS
+
 
 # Patterns for common sensitive data
 SENSITIVE_PATTERNS = [
@@ -44,34 +67,6 @@ SENSITIVE_PATTERNS = [
         r"\1=***REDACTED***",
     ),
 ]
-
-# Fields to redact in dictionaries
-SENSITIVE_FIELDS = {
-    "api_key",
-    "apikey",
-    "api-key",
-    "api_secret",
-    "api-secret",
-    "password",
-    "passwd",
-    "pwd",
-    "secret",
-    "token",
-    "auth_token",
-    "access_token",
-    "bearer_token",
-    "client_secret",
-    "private_key",
-    "openai_api_key",
-    "anthropic_api_key",
-    "google_api_key",
-    "aws_access_key_id",
-    "aws_secret_access_key",
-    "database_url",
-    "connection_string",
-    "credentials",
-}
-
 
 def sanitize_string(text: str) -> str:
     """
@@ -110,8 +105,8 @@ def sanitize_dict(data: Dict[str, Any], deep: bool = True) -> Dict[str, Any]:
     result = {}
     for key, value in data.items():
         # Check if key is sensitive
-        if key.lower() in SENSITIVE_FIELDS:
-            result[key] = "***REDACTED***"
+        if _is_sensitive_log_key(key):
+            result[key] = REDACTION_MARKER
         elif deep and isinstance(value, dict):
             result[key] = sanitize_dict(value, deep=True)
         elif deep and isinstance(value, list):
