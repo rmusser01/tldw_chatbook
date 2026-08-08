@@ -456,3 +456,83 @@ class TestCharacterEditorAvatarThumbnailFit:
             editor = screen.query_one(PersonasCharacterEditorWidget)
             assert editor.current_avatar_bytes() is not None
             assert len(editor.query("#personas-char-editor-avatar-thumb > *")) == 1
+
+
+
+# ===================================================================
+# task-3401: no-fold thumbnail pins.
+#
+# The thumb containers used to reserve max-width 24 PLUS padding 0 1, so the
+# 24-column mosaic baked by PersonasScreen._build_avatar_pixels folded at 22
+# content columns: every folded line painted a black continuation row (the
+# "striped portrait" the owner reported) and the folded stack clipped at
+# max-height 10. The boxes are now padding-free and set_avatar_thumbnail /
+# set_expression_thumbnail size the Static explicitly from the renderable
+# grid, so a mismatch degrades to a crop, never a fold.
+# ===================================================================
+
+
+def _cover_mosaic():
+    from tldw_chatbook.Utils.mosaic_render import mosaic_from_image
+
+    return mosaic_from_image(
+        Image.new("RGB", (820, 1230), (64, 200, 180)),
+        AVATAR_THUMB_COLS,
+        AVATAR_THUMB_LINES,
+        fit="cover",
+    )
+
+
+@pytest.mark.asyncio
+async def test_avatar_thumbnail_static_matches_mosaic_grid_no_fold():
+    from textual.containers import Container
+    from textual.widgets import Static
+
+    app = _Host()
+    async with app.run_test() as pilot:
+        ed = app.query_one(PersonasCharacterEditorWidget)
+        ed.load_character({"name": "A", "image": b"x"})
+        await pilot.pause()
+        mosaic = _cover_mosaic()
+        ed.set_avatar_thumbnail(mosaic)
+        await pilot.pause()
+        thumb_box = ed.query_one("#personas-char-editor-avatar-thumb", Container)
+        static = thumb_box.query_one(Static)
+        # Before task-3401 the painted height was ~2x the mosaic rows (fold).
+        assert static.region.height == len(mosaic.plain.split("\n"))
+        assert static.region.width <= thumb_box.content_size.width
+        padding = thumb_box.styles.padding
+        assert (padding.top, padding.right, padding.bottom, padding.left) == (
+            0,
+            0,
+            0,
+            0,
+        )
+
+
+@pytest.mark.asyncio
+async def test_expression_thumbnail_static_matches_mosaic_grid_no_fold():
+    from textual.containers import Container
+    from textual.widgets import Static
+
+    app = _Host()
+    async with app.run_test() as pilot:
+        ed = app.query_one(PersonasCharacterEditorWidget)
+        ed.load_character({"name": "A", "image": b"x"})
+        await pilot.pause()
+        mosaic = _cover_mosaic()
+        ed.set_expression_thumbnail("thinking", mosaic)
+        await pilot.pause()
+        thumb_box = ed.query_one(
+            "#personas-char-editor-expr-thinking-thumb", Container
+        )
+        static = thumb_box.query_one(Static)
+        assert static.region.height == len(mosaic.plain.split("\n"))
+        assert static.region.width <= thumb_box.content_size.width
+        padding = thumb_box.styles.padding
+        assert (padding.top, padding.right, padding.bottom, padding.left) == (
+            0,
+            0,
+            0,
+            0,
+        )

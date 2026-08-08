@@ -198,12 +198,14 @@ class PersonasCharacterEditorWidget(Container):
 
     /* A compact editor thumbnail box - smaller than the 80x40 chat
        transcript image box, since this is a single always-visible avatar
-       preview rather than a scrolling message history. */
+       preview rather than a scrolling message history. No horizontal
+       padding: the mosaic renderable is baked at exactly AVATAR_THUMB_COLS
+       columns, and padding used to shrink the content box below that,
+       folding every line into a black continuation stripe (task-3401). */
     PersonasCharacterEditorWidget #personas-char-editor-avatar-thumb {
         height: 10;
         max-width: 24;
         max-height: 10;
-        padding: 0 1;
     }
 
     /* Import/export set buttons (Roleplay P3d-2 Task 4) - the "Expressions"
@@ -292,12 +294,12 @@ class PersonasCharacterEditorWidget(Container):
 
     /* Same box as #personas-char-editor-avatar-thumb above - Task 4 reuses
        PersonasScreen._fit_avatar_cell_size/_build_avatar_pixels unchanged
-       for the expression thumbnails, so the box must match. */
+       for the expression thumbnails, so the box must match (padding-free
+       for the same fold-into-stripes reason, task-3401). */
     PersonasCharacterEditorWidget .personas-char-editor-expr-thumb {
         height: 10;
         max-width: 24;
         max-height: 10;
-        padding: 0 1;
     }
 
     PersonasCharacterEditorWidget .ds-toolbar {
@@ -1058,7 +1060,20 @@ class PersonasCharacterEditorWidget(Container):
         from textual.widget import Widget as _W
         from textual.widgets import Static as _S
 
-        holder.mount(renderable if isinstance(renderable, _W) else _S(renderable))
+        if isinstance(renderable, _W):
+            holder.mount(renderable)
+            return
+        from ...Utils.mosaic_render import explicit_cell_size
+
+        # Explicit cell size from the baked renderable's grid: the Static
+        # default width: 100% folds a full-width mosaic inside any narrower
+        # (or padded) box, painting black continuation stripes (task-3401);
+        # an explicit size degrades a future width mismatch to a crop.
+        thumb = _S(renderable)
+        grid_size = explicit_cell_size(renderable)
+        if grid_size is not None:
+            thumb.styles.width, thumb.styles.height = grid_size
+        holder.mount(thumb)
 
     def expression_character_id(self) -> int | None:
         """Return the loaded record's integer id, or ``None`` when unsaved.
@@ -1118,7 +1133,18 @@ class PersonasCharacterEditorWidget(Container):
         from textual.widget import Widget as _W
         from textual.widgets import Static as _S
 
-        holder.mount(renderable if isinstance(renderable, _W) else _S(renderable))
+        if isinstance(renderable, _W):
+            holder.mount(renderable)
+            return
+        from ...Utils.mosaic_render import explicit_cell_size
+
+        # Explicit cell size from the baked renderable's grid - same
+        # fold-into-stripes guard as set_avatar_thumbnail (task-3401).
+        thumb = _S(renderable)
+        grid_size = explicit_cell_size(renderable)
+        if grid_size is not None:
+            thumb.styles.width, thumb.styles.height = grid_size
+        holder.mount(thumb)
 
     def set_style_readout(self, text: str) -> None:
         """Update the "Style: {name}" / "Style: Custom" readout Static.
