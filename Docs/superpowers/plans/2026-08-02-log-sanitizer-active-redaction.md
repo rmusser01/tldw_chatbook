@@ -1030,7 +1030,7 @@ backlog task 856 --plain
 
 Expected: status Done, all acceptance criteria checked, Implementation Plan and Implementation Notes present, and ADR-029 linked.
 
-- [ ] **Step 8: Commit closeout documentation**
+- [x] **Step 8: Commit closeout documentation**
 
 ```bash
 git add \
@@ -1040,7 +1040,7 @@ git add \
 git commit -m "docs(security): close TASK-856 sanitizer repair"
 ```
 
-- [ ] **Step 9: Run final verification after the closeout commit**
+- [x] **Step 9: Run final verification after the closeout commit**
 
 Re-run the complete focused commands from Steps 1–5 plus the installed-wheel test. Confirm the worktree is clean, every implementation commit is based on the current `origin/dev`, and every required gate is green.
 
