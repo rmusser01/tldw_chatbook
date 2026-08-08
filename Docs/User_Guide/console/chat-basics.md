@@ -37,6 +37,21 @@ task...".
   Mic and Attach have their own page:
   [attachments, images & voice](attachments-images-voice.md).
 
+### Collapsed rail labels
+
+Collapsed Console rails use horizontal **Context ▸** and **Inspector** handles
+by default. If you prefer to save horizontal space, open **Settings > Console
+Behavior > Rail presentation**, turn on **Stack collapsed rail labels**, and
+save the category. The opt-in style stacks the upright letters inside narrower
+three-column handles; expanded rails, tooltips, and badges keep their normal
+behavior. Return to Console after a successful save to see the change — no app
+restart is required.
+
+Console Behavior uses category-wide drafts: **Save** writes every pending edit
+in that category, and **Revert** discards every pending edit there, not just the
+rail-label choice. A failed save keeps the draft and leaves the active rail
+style unchanged.
+
 ## Features & controls
 
 ### Composer
@@ -173,9 +188,10 @@ Transcript:
 
 ## Related settings & docs
 
-- `[console]` in config.toml: `collapse_large_pastes` (default `true`) and
-  `paste_collapse_threshold` (default `50` characters) — also editable in
-  **Settings > Console Behavior**.
+- `[console]` in config.toml: `stack_collapsed_rail_labels` (default `false`),
+  `collapse_large_pastes` (default `true`), and `paste_collapse_threshold`
+  (default `50` characters) — also editable in **Settings > Console
+  Behavior**.
 - [Console overview](../console.md) — layout, setup, session settings, help.
 - [Branching & rewind](branching-and-rewind.md) — what ♻ and the < >
   variant arrows really do, and their limitations.

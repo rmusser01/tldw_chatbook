@@ -375,6 +375,7 @@ MODEL_CATALOG_FIELD_IDS = frozenset(
 CONSOLE_BEHAVIOR_CONSOLE_KEYS = frozenset(
     {
         "collapse_large_pastes",
+        "stack_collapsed_rail_labels",
         "paste_collapse_threshold",
         "max_parallel_runs",
         "tool_result_display_chars",
@@ -440,6 +441,7 @@ CONSOLE_BEHAVIOR_CHAT_DEFAULT_KEYS = frozenset(
 )
 CONSOLE_BEHAVIOR_SAVE_ORDER = (
     "collapse_large_pastes",
+    "stack_collapsed_rail_labels",
     "paste_collapse_threshold",
     "max_parallel_runs",
     "tool_result_display_chars",
@@ -859,6 +861,18 @@ def _build_field_search_index() -> None:
     FIELD_SEARCH_INDEX.update(
         {
             SettingsCategoryId.CONSOLE_BEHAVIOR: (
+                (
+                    "settings-console-stack-collapsed-rail-labels",
+                    "Stack collapsed rail labels",
+                ),
+                (
+                    "settings-console-stack-collapsed-rail-labels",
+                    "Rail handle presentation",
+                ),
+                (
+                    "settings-console-stack-collapsed-rail-labels",
+                    "Stacked vertical Context Inspector",
+                ),
                 ("settings-console-paste-collapse-threshold", "Threshold (chars)"),
                 ("settings-console-max-parallel-runs", "Max parallel agent runs"),
                 ("settings-console-tool-result-display-chars", "Display cap (chars)"),
@@ -1832,6 +1846,7 @@ class SettingsScreen(BaseAppScreen):
         self._syncing_console_max_parallel_runs = False
         self._syncing_console_tool_result_display_chars = False
         self._syncing_console_paste_toggle = False
+        self._syncing_console_rail_label_style = False
         self._syncing_console_defaults = False
         self._syncing_console_background_effects = False
         self._syncing_library_rag_defaults = False
@@ -2412,7 +2427,7 @@ class SettingsScreen(BaseAppScreen):
             SettingsCategorySummary(
                 SettingsCategoryId.CONSOLE_BEHAVIOR,
                 "Console Behavior",
-                "Composer, large paste handling, and chat-flow defaults.",
+                "Rail presentation, composer behavior, and chat-flow defaults.",
                 "Console",
             ),
             SettingsCategorySummary(
@@ -2857,6 +2872,7 @@ class SettingsScreen(BaseAppScreen):
             SettingsOwnershipRecord(
                 category=SettingsCategoryId.CONSOLE_BEHAVIOR,
                 owns_config_sections=(
+                    "console.stack_collapsed_rail_labels",
                     "console.collapse_large_pastes",
                     "console.paste_collapse_threshold",
                     "console.max_parallel_runs",
@@ -2998,6 +3014,13 @@ class SettingsScreen(BaseAppScreen):
             True,
         )
 
+    def _loaded_stack_collapsed_rail_labels(self) -> bool:
+        """Return the saved collapsed-rail presentation preference."""
+        return coerce_bool_setting(
+            self._console_settings().get("stack_collapsed_rail_labels", False),
+            False,
+        )
+
     def _loaded_paste_collapse_threshold(self) -> int:
         return coerce_int_setting(
             self._console_settings().get(
@@ -3137,6 +3160,7 @@ class SettingsScreen(BaseAppScreen):
     def _console_behavior_loaded_values(self) -> dict[str, object]:
         return {
             "collapse_large_pastes": self._loaded_collapse_large_pastes_enabled(),
+            "stack_collapsed_rail_labels": self._loaded_stack_collapsed_rail_labels(),
             "paste_collapse_threshold": self._loaded_paste_collapse_threshold(),
             "max_parallel_runs": self._loaded_console_max_parallel_runs(),
             "tool_result_display_chars": self._loaded_tool_result_display_chars(),
@@ -3243,6 +3267,29 @@ class SettingsScreen(BaseAppScreen):
         if draft is not None and key in draft.values:
             return draft.values[key]
         return self._console_behavior_loaded_values().get(key, "")
+
+    def _console_rail_labels_stacked(self) -> bool:
+        """Return the selected saved-or-draft collapsed rail style."""
+        return coerce_bool_setting(
+            self._console_behavior_value("stack_collapsed_rail_labels"),
+            False,
+        )
+
+    def _console_rail_label_style_name(self, *, loaded: bool = False) -> str:
+        """Return the user-facing name for the selected or active style."""
+        stacked = (
+            self._loaded_stack_collapsed_rail_labels()
+            if loaded
+            else self._console_rail_labels_stacked()
+        )
+        return "Stacked" if stacked else "Horizontal"
+
+    def _console_rail_label_style_status(self) -> str:
+        """Return text-carried saved or unsaved state for the checkbox."""
+        draft = self._settings_drafts.get(SettingsCategoryId.CONSOLE_BEHAVIOR)
+        if draft is not None and "stack_collapsed_rail_labels" in draft.dirty_keys:
+            return f"Selected style: {self._console_rail_label_style_name()} — unsaved"
+        return f"Saved style: {self._console_rail_label_style_name(loaded=True)}"
 
     @staticmethod
     def _console_input_value(value: object) -> str:
@@ -4920,6 +4967,20 @@ class SettingsScreen(BaseAppScreen):
         fallback rows render only while no field owns focus, so the
         "Focus a field for guidance" promise is kept.
         """
+        if (
+            self._active_settings_field_id
+            == "settings-console-stack-collapsed-rail-labels"
+        ):
+            return (
+                ("Purpose", "Choose the collapsed Console rail label style."),
+                (
+                    "Consequences",
+                    "Stacked uses narrower 3-column handles; Horizontal uses "
+                    "the established 13- and 11-column handles.",
+                ),
+                ("Saved as", "console.stack_collapsed_rail_labels"),
+                ("Applies", "After saving, when Console is next opened."),
+            )
         if (
             self._active_settings_field_id
             == "settings-console-paste-collapse-threshold"
@@ -9882,7 +9943,25 @@ class SettingsScreen(BaseAppScreen):
             id="settings-console-behavior-card", classes="settings-secondary-card"
         ):
             if compact:
-                yield Static("Console paste collapse", classes="destination-section")
+                yield Static("Console behavior", classes="destination-section")
+            yield Static("Rail presentation", classes="destination-section")
+            yield Checkbox(
+                "Stack collapsed rail labels",
+                value=self._console_rail_labels_stacked(),
+                id="settings-console-stack-collapsed-rail-labels",
+                tooltip="Use narrower stacked Context and Inspector rail labels.",
+            )
+            yield Static(
+                self._console_rail_label_style_status(),
+                id="settings-console-rail-label-style-status",
+                classes="settings-help-copy",
+            )
+            yield Static(
+                "Uses narrower 3-column handles by stacking upright letters. "
+                "Direction glyphs are omitted.",
+                id="settings-console-rail-label-style-help",
+                classes="settings-help-copy",
+            )
             yield Static("Composer paste handling", classes="destination-section")
             yield Static(
                 "Collapse large pasted chunks only when they exceed the threshold.",
@@ -13320,6 +13399,7 @@ class SettingsScreen(BaseAppScreen):
             return
         if active_category is SettingsCategoryId.CONSOLE_BEHAVIOR:
             console_behavior_field_ids = {
+                "settings-console-stack-collapsed-rail-labels",
                 "settings-console-paste-collapse-threshold",
                 "settings-console-max-parallel-runs",
                 "settings-console-tool-result-display-chars",
@@ -14209,6 +14289,29 @@ class SettingsScreen(BaseAppScreen):
             return
         self._stage_console_large_paste_value(bool(event.value))
         self._update_console_paste_summary()
+        self._update_draft_status_widgets(SettingsCategoryId.CONSOLE_BEHAVIOR)
+
+    @on(Checkbox.Changed, "#settings-console-stack-collapsed-rail-labels")
+    def handle_console_rail_label_style_changed(
+        self, event: Checkbox.Changed
+    ) -> None:
+        """Stage the collapsed Console rail presentation preference."""
+        event.stop()
+        if self._syncing_console_rail_label_style:
+            return
+        self._stage_console_default_value(
+            "stack_collapsed_rail_labels",
+            bool(event.value),
+        )
+        self._console_behavior_result = "Console behavior settings staged."
+        self._set_static_text(
+            "#settings-console-rail-label-style-status",
+            self._console_rail_label_style_status(),
+        )
+        self._set_static_text(
+            "#settings-console-behavior-result",
+            self._console_behavior_result_text(),
+        )
         self._update_draft_status_widgets(SettingsCategoryId.CONSOLE_BEHAVIOR)
 
     @on(Button.Pressed, "#settings-console-remote-images-toggle")
@@ -16340,7 +16443,8 @@ class SettingsScreen(BaseAppScreen):
         self._settings_drafts.pop(category, None)
         if category is SettingsCategoryId.CONSOLE_BEHAVIOR:
             self._console_behavior_result = (
-                "Console behavior settings reverted to last loaded values."
+                "Console behavior settings reverted to last loaded values. "
+                f"Rail labels: {self._console_rail_label_style_name(loaded=True)}."
             )
             self._sync_console_behavior_widgets()
         elif category is SettingsCategoryId.APPEARANCE:
@@ -16913,18 +17017,28 @@ class SettingsScreen(BaseAppScreen):
             self._console_settings().update(normalized_console_values)
             self._chat_defaults().update(chat_default_values)
             self._settings_drafts.pop(SettingsCategoryId.CONSOLE_BEHAVIOR, None)
+            rail_result = (
+                f"Rail labels: {self._console_rail_label_style_name(loaded=True)}. "
+                "Return to Console to see the change."
+            )
             if workbench_scope_fallback:
                 self._console_behavior_result = (
-                    "Console behavior settings saved. "
+                    f"Console behavior settings saved. {rail_result} "
                     f"{CONSOLE_BACKGROUND_WORKBENCH_UNAVAILABLE_COPY}"
                 )
             else:
-                self._console_behavior_result = "Console behavior settings saved."
+                self._console_behavior_result = (
+                    f"Console behavior settings saved. {rail_result}"
+                )
             self._console_behavior_saved_this_session = True
             self._sync_console_behavior_widgets()
             self.app.notify("Console behavior settings saved.", severity="information")
             return
-        self._console_behavior_result = "Failed to save Console behavior settings."
+        self._console_behavior_result = (
+            "Failed to save Console behavior settings. Your draft is still here; "
+            "the active rail-label style is still "
+            f"{self._console_rail_label_style_name(loaded=True)}. Try again."
+        )
         self._set_static_text(
             "#settings-console-behavior-result",
             self._console_behavior_result,
@@ -16948,6 +17062,18 @@ class SettingsScreen(BaseAppScreen):
         )
 
     def _sync_console_behavior_widgets(self) -> None:
+        try:
+            self._syncing_console_rail_label_style = True
+            try:
+                rail_label_toggle = self.query_one(
+                    "#settings-console-stack-collapsed-rail-labels", Checkbox
+                )
+                with rail_label_toggle.prevent(Checkbox.Changed):
+                    rail_label_toggle.value = self._console_rail_labels_stacked()
+            finally:
+                self._syncing_console_rail_label_style = False
+        except QueryError:
+            pass
         try:
             self._syncing_console_paste_toggle = True
             try:
@@ -17090,6 +17216,10 @@ class SettingsScreen(BaseAppScreen):
             self._syncing_console_background_effects = False
         self._set_static_text(
             "#settings-console-behavior-result", self._console_behavior_result_text()
+        )
+        self._set_static_text(
+            "#settings-console-rail-label-style-status",
+            self._console_rail_label_style_status(),
         )
         self._update_console_paste_summary()
         self._update_draft_status_widgets(SettingsCategoryId.CONSOLE_BEHAVIOR)

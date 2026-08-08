@@ -1193,6 +1193,10 @@ def load_settings(force_reload: bool = False) -> Dict:
         final_console_settings_cli.get("collapse_large_pastes", True),
         True,
     )
+    final_console_settings_cli["stack_collapsed_rail_labels"] = coerce_bool_setting(
+        final_console_settings_cli.get("stack_collapsed_rail_labels", False),
+        False,
+    )
     final_console_settings_cli["paste_collapse_threshold"] = coerce_int_setting(
         final_console_settings_cli.get(
             "paste_collapse_threshold",
@@ -2583,6 +2587,7 @@ users_name = "default_user" # Default user name for the TUI
 
 [console]
 collapse_large_pastes = true  # Display large pasted chunks compactly in Console composer
+stack_collapsed_rail_labels = false  # Use compact stacked labels on collapsed Console rails
 paste_collapse_threshold = 50  # Collapse pasted/inserted chunks only when longer than this many characters
 # local_tools_enabled = false   # workspace-local agent tools (fs_*); approvals via MCP permission store
 # workspace_root = ""           # confinement root for fs_* tools; empty = app cwd at startup

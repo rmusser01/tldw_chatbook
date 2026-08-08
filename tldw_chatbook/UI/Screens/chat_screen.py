@@ -12352,6 +12352,7 @@ class ChatScreen(BaseAppScreen):
                 )
             )
             workspace_grid.styles.min_height = 0
+            stack_rail_labels = self._stack_collapsed_rail_labels()
             with workspace_grid:
                 left_handle = ConsoleRailHandle(
                     label=rail_state.left_label,
@@ -12359,11 +12360,15 @@ class ChatScreen(BaseAppScreen):
                     button_id="console-context-rail-open",
                     badge_id="console-context-rail-badge",
                     side="left",
+                    vertical=stack_rail_labels,
                     id="console-context-rail-handle",
                 )
-                left_handle.styles.width = 13
-                left_handle.styles.min_width = 13
-                left_handle.styles.max_width = 13
+                left_handle_width = (
+                    ConsoleRailHandle.VERTICAL_WIDTH if stack_rail_labels else 13
+                )
+                left_handle.styles.width = left_handle_width
+                left_handle.styles.min_width = left_handle_width
+                left_handle.styles.max_width = left_handle_width
                 if rail_state.left_open or rail_state.single_pane:
                     # TASK-2154.1: single-pane mode hides both handles -- the
                     # transcript is the only pane left to point at.
@@ -12435,7 +12440,7 @@ class ChatScreen(BaseAppScreen):
                 left_rail.can_focus = True
                 left_rail.styles.width = "3fr"
                 # Compact contract: left rail + main column + the collapsed
-                # inspector handle (11) must fit a 100-column terminal.
+                # three-cell inspector handle must fit a 100-column terminal.
                 # TASK-2154.1 (LY-08/LY-09): below 100 columns the rail state
                 # force-collapses the left rail instead (rendering override;
                 # see console_rail_state), and below
@@ -12449,7 +12454,7 @@ class ChatScreen(BaseAppScreen):
                 # 7 cells of border/gutter/padding chrome), so every Session
                 # row clipped mid-word at 100-160 cols where the 3fr share
                 # (18-27) is min-bound. 30 keeps the content whole and the
-                # compact contract still resolves: 30 + 56 + 11 + 2 = 99.
+                # compact contract still resolves: 30 + 56 + 3 + 2 = 91.
                 left_rail.styles.min_width = 30
                 if not rail_state.left_open:
                     left_rail.styles.display = "none"
@@ -12473,8 +12478,8 @@ class ChatScreen(BaseAppScreen):
                 # (60x18 included) instead of overflowing out of the grid;
                 # the handles are hidden, so nothing else competes for the
                 # row. At/above CONSOLE_SINGLE_PANE_COLUMNS the 56-column
-                # contract holds: handles (13+11) + 56 + grid frame (2) = 82,
-                # which is exactly what the 84-column threshold protects.
+                # contract holds: handles (3+3) + 56 + grid frame (2) = 64,
+                # within the 84-column threshold.
                 # TASK-2154.2 (LY-11): the waiver also holds while a rail is
                 # open below its compact-collapse threshold by explicit user
                 # toggle (compact_override) -- the user chose the rail over
@@ -12533,11 +12538,15 @@ class ChatScreen(BaseAppScreen):
                     button_id="console-inspector-rail-open",
                     badge_id="console-inspector-rail-badge",
                     side="right",
+                    vertical=stack_rail_labels,
                     id="console-inspector-rail-handle",
                 )
-                right_handle.styles.width = 11
-                right_handle.styles.min_width = 11
-                right_handle.styles.max_width = 11
+                right_handle_width = (
+                    ConsoleRailHandle.VERTICAL_WIDTH if stack_rail_labels else 11
+                )
+                right_handle.styles.width = right_handle_width
+                right_handle.styles.min_width = right_handle_width
+                right_handle.styles.max_width = right_handle_width
                 if rail_state.right_open or rail_state.single_pane:
                     right_handle.styles.display = "none"
                 yield self._frame_console_region(right_handle, variant="quiet")
@@ -12610,6 +12619,17 @@ class ChatScreen(BaseAppScreen):
             return True
         return coerce_bool_setting(
             console_config.get("collapse_large_pastes", True), True
+        )
+
+    def _stack_collapsed_rail_labels(self) -> bool:
+        """Return whether fresh collapsed Console handles use stacked labels."""
+        app_config = getattr(self.app_instance, "app_config", {}) or {}
+        console_config = app_config.get("console", {})
+        if not isinstance(console_config, dict):
+            return False
+        return coerce_bool_setting(
+            console_config.get("stack_collapsed_rail_labels", False),
+            False,
         )
 
     def _console_paste_collapse_threshold(self) -> int:
