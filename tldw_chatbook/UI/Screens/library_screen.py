@@ -191,6 +191,12 @@ from ...Widgets.Prompts.prompt_block_editor_state import (
     PromptBlockEditorState,
     set_artifact_type,
 )
+from ...Widgets.Library.prompt_delete_confirmation_modal import (
+    PromptDeleteConfirmationModal,
+    PromptDeleteDecision,
+    PromptDeleteItem,
+    PromptDeleteRequest,
+)
 from ...Library.library_rag_answer_service import (
     LibraryRagAnswer,
     generate_library_rag_answer,
@@ -15776,7 +15782,11 @@ class LibraryScreen(BaseAppScreen):
         prompt_id = self._selected_prompt_id
         artifact_fields: Mapping[str, Any] | None = None
         block_state = self._library_prompt_block_state
-        if block_state is not None:
+        if (
+            block_state is not None
+            and self._current_library_prompt_editor_state().definition_state
+            == "supported_v2"
+        ):
             try:
                 _draft, artifact_payload, _prepared = prepare_prompt_artifact_save(
                     block_state,
@@ -15848,6 +15858,69 @@ class LibraryScreen(BaseAppScreen):
                 artifact_fields,
             ),
         )
+
+    @on(Button.Pressed, "#library-prompt-copy")
+    def handle_library_prompt_copy(self, event: Button.Pressed) -> None:
+        """Copy the live Prompt/Recipe working copy as canonical Markdown."""
+        event.stop()
+        if self._library_prompts_view != "editor" or not self._selected_prompt_id:
+            return
+        fields = self._read_library_prompt_editor_fields()
+        if fields is None:
+            return
+        name, author, details, system_prompt, user_prompt, keywords_text = fields
+        detail: dict[str, Any] = {
+            "name": name,
+            "author": author,
+            "details": details,
+            "system_prompt": system_prompt,
+            "user_prompt": user_prompt,
+            "keywords": self._library_note_keywords_from_input(keywords_text) or [],
+        }
+        block_state = self._library_prompt_block_state
+        if (
+            block_state is not None
+            and self._current_library_prompt_editor_state().definition_state
+            == "supported_v2"
+        ):
+            try:
+                _draft, artifact_fields, _prepared = prepare_prompt_artifact_save(
+                    block_state,
+                    artifact_type=block_state.artifact_type,
+                    include_recipe_starter_content=True,
+                    request_fields={},
+                )
+            except ValueError:
+                notify = getattr(self.app_instance, "notify", None)
+                if callable(notify):
+                    notify(
+                        "Fix block validation errors before copying; "
+                        "the structured artifact was not downgraded.",
+                        severity="warning",
+                    )
+                return
+            detail.update(artifact_fields)
+
+        notify = getattr(self.app_instance, "notify", None)
+        copy_to_clipboard = getattr(self.app_instance, "copy_to_clipboard", None)
+        if not callable(copy_to_clipboard):
+            if callable(notify):
+                notify(
+                    "Clipboard copy is unavailable in this runtime.", severity="warning"
+                )
+            return
+        try:
+            copy_to_clipboard(render_prompt_markdown(detail))
+        except Exception as exc:
+            logger.warning(
+                "Failed to copy Library prompt {} to clipboard.",
+                self._selected_prompt_id,
+            )
+            if callable(notify):
+                notify(f"Error copying prompt: {type(exc).__name__}", severity="error")
+            return
+        if callable(notify):
+            notify("Prompt copied to clipboard as markdown!", severity="information")
 
     def _write_library_prompt_export_file(
         self,
@@ -15976,24 +16049,79 @@ class LibraryScreen(BaseAppScreen):
 
     @on(Button.Pressed, "#library-prompt-delete")
     def handle_library_prompt_delete(self, event: Button.Pressed) -> None:
-        """Soft-delete the open prompt and return to the list view.
-
-        Confirm-free by design (a single press deletes) -- unlike the
-        notes editor's Delete/Cancel inline confirmation, matching the
-        brief's "dim button, single press acceptable" delete affordance
-        while still sharing the same danger-tier styling class.
-
-        Args:
-            event: Button press event emitted by the editor's "Delete" action.
-        """
+        """Open a confirmation for the current Prompt/Recipe identity."""
         event.stop()
         if self._library_prompts_view != "editor" or not self._selected_prompt_id:
             return
+        fields = self._read_library_prompt_editor_fields()
+        fingerprint = self._library_prompt_delete_fingerprint()
+        if fields is None or fingerprint is None:
+            return
+        artifact_type = (
+            self._library_prompt_block_state.artifact_type
+            if self._library_prompt_block_state is not None
+            else "prompt"
+        )
+        if artifact_type not in {"prompt", "recipe"}:
+            return
+        self._library_prompt_delete_pending_fingerprint = fingerprint
+        self.app.push_screen(
+            PromptDeleteConfirmationModal(
+                PromptDeleteRequest(
+                    items=(PromptDeleteItem(fields[0], artifact_type),),
+                    fingerprint=fingerprint,
+                    dirty=self._library_prompt_dirty,
+                )
+            ),
+            self._settle_library_prompt_delete,
+        )
+
+    def _library_prompt_delete_fingerprint(self) -> str | None:
+        """Return the body-free identity captured by a delete confirmation."""
+        prompt_id = self._selected_prompt_id
+        if self._library_prompts_view != "editor" or not isinstance(prompt_id, int):
+            return None
+        artifact_type = (
+            self._library_prompt_block_state.artifact_type
+            if self._library_prompt_block_state is not None
+            else "prompt"
+        )
+        if artifact_type not in {"prompt", "recipe"}:
+            return None
+        version = self._library_prompt_version
+        version_token = str(version) if isinstance(version, int) else "none"
+        return f"library-prompt:{prompt_id}:{version_token}:{artifact_type}"
+
+    def _settle_library_prompt_delete(self, decision: PromptDeleteDecision) -> None:
+        """Delete only a once-settled confirmation for the same live editor."""
+        pending = getattr(self, "_library_prompt_delete_pending_fingerprint", None)
+        if decision.fingerprint != pending or pending is None:
+            return
+        self._library_prompt_delete_pending_fingerprint = None
+        if not decision.confirmed:
+            self._refocus_library_prompt_delete_action()
+            return
+        if pending != self._library_prompt_delete_fingerprint():
+            self._update_library_prompt_status_static(
+                "Delete confirmation is no longer current."
+            )
+            self._refocus_library_prompt_delete_action()
+            return
+        prompt_id = self._selected_prompt_id
+        if not isinstance(prompt_id, int):
+            return
         self.run_worker(
-            self._delete_library_prompt(self._selected_prompt_id),
+            self._delete_library_prompt(prompt_id),
             exclusive=True,
             group="library_prompt_delete",
         )
+
+    def _refocus_library_prompt_delete_action(self) -> None:
+        """Restore focus after a dismissed delete confirmation when possible."""
+        try:
+            self.query_one("#library-prompt-delete", Button).focus()
+        except (NoMatches, QueryError):
+            pass
 
     async def _delete_library_prompt(self, prompt_id: int) -> None:
         """Delete the selected Library prompt, then return to the list view.

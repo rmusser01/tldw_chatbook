@@ -62,6 +62,10 @@ from tldw_chatbook.UI.Navigation.pending_handoff_store import HandoffChannel
 from tldw_chatbook.Widgets.Library.library_prompts_canvas import (
     LibraryPromptsListCanvas,
 )
+from tldw_chatbook.Widgets.Library.prompt_delete_confirmation_modal import (
+    PromptDeleteConfirmationModal,
+    PromptDeleteDecision,
+)
 from tldw_chatbook.Widgets.Prompts.prompt_block_editor import PromptBlockEditor
 
 from Tests.UI.test_destination_shells import (
@@ -1526,6 +1530,10 @@ async def test_library_prompt_delete_returns_to_list_and_decrements_count(tmp_pa
 
         screen.query_one("#library-prompt-delete", Button).press()
         await pilot.pause()
+        modal = host.screen
+        assert isinstance(modal, PromptDeleteConfirmationModal)
+        modal.query_one("#prompt-delete-confirm", Button).press()
+        await pilot.pause()
         for _ in range(150):
             if screen._library_prompts_view == "list":
                 break
@@ -1541,6 +1549,102 @@ async def test_library_prompt_delete_returns_to_list_and_decrements_count(tmp_pa
             await pilot.pause(0.02)
         assert "(1)" in rail_label
         assert len(screen.query(f"#library-prompt-row-{eta_id}")) == 0
+        deleted = db.fetch_prompt_details(eta_id, include_deleted=True)
+        assert deleted is not None
+        assert deleted["deleted"] == 1
+
+
+@pytest.mark.asyncio
+async def test_library_prompt_delete_modal_cancel_preserves_dirty_editor_and_request(tmp_path):
+    """Delete opens a typed dirty request; Cancel performs no soft delete."""
+    db, service = _real_prompt_scope_service(tmp_path)
+    prompt_id, _uuid, _msg = db.add_prompt(
+        name="Keep me", author="A", details="d", user_prompt="x"
+    )
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_prompt_editor(screen, pilot, prompt_id)
+        screen.query_one("#library-prompt-author", Input).value = "Unsaved author"
+        await pilot.pause()
+
+        screen.query_one("#library-prompt-delete", Button).press()
+        await pilot.pause()
+        modal = host.screen
+        assert isinstance(modal, PromptDeleteConfirmationModal)
+        request = modal.request
+        assert request.dirty is True
+        assert request.items[0].name == "Keep me"
+        assert request.items[0].artifact_type == "prompt"
+        assert request.fingerprint == screen._library_prompt_delete_fingerprint()
+
+        modal.query_one("#prompt-delete-cancel", Button).press()
+        await pilot.pause()
+
+        assert host.screen is screen
+        assert screen._library_prompts_view == "editor"
+        assert screen._selected_prompt_id == prompt_id
+        assert db.fetch_prompt_details(prompt_id) is not None
+
+
+@pytest.mark.asyncio
+async def test_library_prompt_delete_rejects_a_stale_modal_result(tmp_path):
+    """A confirmation for an earlier editor identity must not delete either row."""
+    db, service = _real_prompt_scope_service(tmp_path)
+    first_id, _uuid, _msg = db.add_prompt(
+        name="First", author="A", details="d", user_prompt="x"
+    )
+    second_id, _uuid, _msg = db.add_prompt(
+        name="Second", author="B", details="d", user_prompt="y"
+    )
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_prompt_editor(screen, pilot, first_id)
+        screen.query_one("#library-prompt-delete", Button).press()
+        await pilot.pause()
+        modal = host.screen
+        assert isinstance(modal, PromptDeleteConfirmationModal)
+
+        screen._selected_prompt_id = second_id
+        modal.dismiss(PromptDeleteDecision(True, modal.request.fingerprint))
+        await pilot.pause()
+
+        assert host.screen is screen
+        assert db.fetch_prompt_details(first_id) is not None
+        assert db.fetch_prompt_details(second_id) is not None
+        assert screen._library_prompt_status == "Delete confirmation is no longer current."
+
+
+def test_library_prompt_delete_ignores_duplicate_modal_settlement() -> None:
+    """Only the first matching confirmation can schedule the delete worker."""
+    screen = SimpleNamespace(
+        _library_prompt_delete_pending_fingerprint="library-prompt:9:2:prompt",
+        _library_prompts_view="editor",
+        _selected_prompt_id=9,
+        _library_prompt_version=2,
+        _library_prompt_block_state=SimpleNamespace(artifact_type="prompt"),
+        _library_prompt_delete_fingerprint=lambda: "library-prompt:9:2:prompt",
+        run_worker=Mock(),
+        _delete_library_prompt=Mock(),
+        _update_library_prompt_status_static=Mock(),
+    )
+    decision = PromptDeleteDecision(True, "library-prompt:9:2:prompt")
+
+    LibraryScreen._settle_library_prompt_delete(screen, decision)
+    LibraryScreen._settle_library_prompt_delete(screen, decision)
+
+    screen.run_worker.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -2700,6 +2804,7 @@ async def test_library_prompt_copy_warns_when_clipboard_is_unavailable(tmp_path)
         await _wait_for_library_shell(screen, pilot)
         await _open_prompt_editor(screen, pilot, prompt_id)
         screen.app_instance = host
+        host.copy_to_clipboard = None
         host._notifications.clear()
         screen.query_one("#library-prompt-copy", Button).press()
         await pilot.pause()
