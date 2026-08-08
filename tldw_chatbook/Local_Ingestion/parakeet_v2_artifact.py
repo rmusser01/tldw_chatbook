@@ -152,7 +152,18 @@ def parakeet_vad_reference() -> ArtifactRef:
 
 
 def parakeet_reference(model: str, precision: str = "int8") -> ArtifactRef:
-    """Return one exact closure-bearing managed Parakeet root reference."""
+    """Return one exact closure-bearing managed Parakeet root reference.
+
+    Args:
+        model: Exact supported Parakeet v2 or v3 model identifier.
+        precision: Exact ``int8`` or ``f32`` artifact variant.
+
+    Returns:
+        The immutable managed root reference for the selection.
+
+    Raises:
+        ValueError: If the model or precision is unsupported.
+    """
     artifact_id, _repository, upstream_revision = _model_metadata(model)
     _bundle_files(model, precision)
     closure_revision = f"{upstream_revision}-vad-{PARAKEET_VAD_REVISION[:12]}"

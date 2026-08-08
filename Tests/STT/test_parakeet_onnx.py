@@ -144,6 +144,22 @@ def test_load_uses_explicit_local_cpu_paths_and_precision(
     runtime.close()
 
 
+def test_native_runtime_import_obeys_optional_dependency_gate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tldw_chatbook.STT import parakeet_onnx
+    from tldw_chatbook.Utils import optional_deps
+
+    monkeypatch.setattr(
+        optional_deps,
+        "parakeet_onnx_deps_installed",
+        lambda: False,
+    )
+
+    with pytest.raises(ModuleNotFoundError, match="onnx-asr"):
+        parakeet_onnx._onnx_asr_api()
+
+
 def test_short_v2_result_is_normalized_with_exact_artifact_provenance(
     tmp_path: Path,
 ) -> None:

@@ -93,6 +93,11 @@ class ParakeetOnnxFailure(RuntimeError):
 
 def _onnx_asr_api() -> tuple[Any, Callable[..., Any], Callable[..., Any]]:
     """Import the native runtime only when a resident is actually loaded."""
+    from tldw_chatbook.Utils.optional_deps import parakeet_onnx_deps_installed
+
+    if not parakeet_onnx_deps_installed():
+        raise ModuleNotFoundError("onnx-asr runtime is not installed")
+
     import onnx_asr
     from onnx_asr.utils import pad_list, read_wav_files
 
@@ -186,7 +191,23 @@ class ParakeetOnnxRuntime:
         artifact_root: Any | None,
         artifact_dependencies: tuple[Any, ...],
     ) -> "ParakeetOnnxRuntime":
-        """Load only explicit local paths with ONNX Runtime's CPU provider."""
+        """Load only explicit local paths with ONNX Runtime's CPU provider.
+
+        Args:
+            model_root: Existing local directory containing the ASR model.
+            vad_root: Existing local directory containing Silero VAD, if used.
+            model_id: Exact supported Parakeet v2 or v3 model identifier.
+            precision: Exact ``int8`` or ``f32`` artifact variant.
+            artifact_root: Root artifact lease identity for provenance.
+            artifact_dependencies: Dependency lease identities for provenance.
+
+        Returns:
+            A resident CPU-only Parakeet runtime.
+
+        Raises:
+            ModuleNotFoundError: If the optional ``onnx-asr`` runtime is absent.
+            ValueError: If the model or precision is unsupported.
+        """
         api, audio_reader, pad_list = _onnx_asr_api()
         started = time.monotonic()
         model = api.load_model(
@@ -235,7 +256,28 @@ class ParakeetOnnxRuntime:
         is_cancelled: Callable[[], bool] | None = None,
         ffmpeg_path: str | None = None,
     ) -> TranscriptionResult:
-        """Transcribe one local media file and return the normalized contract."""
+        """Transcribe one local media file and return the normalized contract.
+
+        Args:
+            audio_path: Existing local audio or video path.
+            attempt_id: Unique transcription-attempt identifier.
+            language: Canonical requested source language.
+            timestamps: Whether to include segment timestamps.
+            batch_id: Optional owning batch identifier.
+            job_id: Optional owning ingest-job identifier.
+            retry_of_attempt_id: Optional immediately preceding attempt.
+            retry_of_job_id: Optional immediately preceding ingest job.
+            vad: Whether to force VAD for short-form input.
+            is_cancelled: Optional cancellation probe checked before inference.
+            ffmpeg_path: Optional explicit local ffmpeg executable.
+
+        Returns:
+            The normalized transcript, capabilities, timings, and provenance.
+
+        Raises:
+            ParakeetOnnxCancelled: If cancellation is observed before inference.
+            ParakeetOnnxFailure: If long-form input lacks the managed VAD.
+        """
         started = time.monotonic()
         model_load_seconds = self.model_load_seconds
         self.model_load_seconds = 0.0
