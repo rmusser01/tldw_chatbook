@@ -202,3 +202,46 @@ Result: ruff and diff checks completed without findings.
 
 The unchanged Task 5 copy selection remains intentionally RED: `4 failed,
 83 deselected, 2 warnings in 7.75s`.
+
+## Task 7 affected-suite correction
+
+Task 7's affected suite exposed one final stale Task 4 characterization. The
+field-order test still inspected direct `LibraryPromptsListCanvas.children`,
+but the intentional editor shell now owns the content fields.
+
+### RED
+
+```text
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/UI/test_library_prompts_canvas.py::test_prompts_canvas_editor_field_order_author_last_beside_keywords -q --tb=short --show-capture=no --disable-warnings
+```
+
+Result:
+
+```text
+1 failed, 2 warnings in 1.78s
+ValueError: 'library-prompt-name' is not in list
+```
+
+### GREEN
+
+The test now pins `#library-prompt-editor-content` as a child of
+`#library-prompt-editor-shell`, then compares the ordered content descendants.
+The semantic contract remains exact: Name < Description < System < User <
+Keywords < Author.
+
+```text
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/UI/test_library_prompts_canvas.py::test_prompts_canvas_editor_field_order_author_last_beside_keywords -q --tb=short --show-capture=no --disable-warnings
+```
+
+Result: `1 passed, 2 warnings in 2.01s`.
+
+```text
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/UI/test_library_prompts_canvas.py -k "geometry or action_group or copy_and_duplicate_relabeled or duplicate_button_between or field_order_author_last" -q --tb=short --show-capture=no --disable-warnings
+```
+
+Result: `13 passed, 88 deselected, 2 warnings in 18.82s`.
+
+The full canvas command was also invoked, but this worker returned only 42
+progress markers and no normalized pytest completion summary; no pass/fail
+claim is made from that incomplete output. No production source changed in
+this correction.

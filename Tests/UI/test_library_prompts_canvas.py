@@ -2404,8 +2404,10 @@ async def test_prompts_canvas_editor_field_order_author_last_beside_keywords():
     )
     app = _CanvasHost(None, mode="editor", editor_state=editor_state)
     async with app.run_test() as pilot:
-        canvas = pilot.app.query_one(LibraryPromptsListCanvas)
-        ids = [child.id for child in canvas.children if child.id]
+        shell = pilot.app.query_one("#library-prompt-editor-shell")
+        content = shell.query_one("#library-prompt-editor-content")
+        assert content.parent is shell
+        ids = [child.id for child in content.walk_children() if child.id]
         assert (
             ids.index("library-prompt-name")
             < ids.index("library-prompt-details")
