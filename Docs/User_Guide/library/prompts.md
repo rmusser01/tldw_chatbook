@@ -100,9 +100,9 @@ blocks in a new item.
 |---|---|
 | Save Prompt / Save Recipe / Update original | Saves the current Prompt or Recipe (explicit save only) |
 | Use in Console | For a saved, clean Prompt, appends its compiled User text to the Console composer and switches there. For an editable Recipe, creates a detached unsaved Prompt copy in the editor; nothing is applied. |
-| Export… | Saves this Prompt or Recipe as a Markdown file ("Export Prompt as Markdown" dialog) |
-| Copy Markdown | Copies the exact live Markdown working copy, including unsaved create, duplicate, conversion, and block edits: System/User text plus applicable structured Prompt/Recipe metadata. Success follows a clipboard write; unavailable or failed clipboard support shows a warning or error. |
-| Duplicate prompt | Opens a new unsaved copy named "<name> (copy)" with all fields prefilled |
+| Export… | Saves a representable Prompt or Recipe as a Markdown file ("Export Prompt as Markdown" dialog). Compatibility or legacy Recipes that would lose their type fail closed and require **Convert and save as a new Prompt** first. |
+| Copy Markdown | Copies the exact live Markdown working copy, including unsaved create, duplicate, conversion, and block edits: System/User text plus applicable structured Prompt/Recipe metadata. Success follows a clipboard write; unavailable or failed clipboard support shows a warning or error. Compatibility or legacy Recipes that would flatten to Prompt-looking Markdown require **Convert and save as a new Prompt** first. |
+| Duplicate prompt | Opens a new unsaved copy named "<name> (copy)" with all fields prefilled. Compatibility or legacy Recipes that cannot retain Recipe identity require **Convert and save as a new Prompt** first. |
 | Delete | Opens a confirmation before discarding the saved Prompt or Recipe; if the editor is dirty, it also warns that the unsaved working copy will be discarded |
 
 For a Prompt, **Use in Console** works differently from the notes and media

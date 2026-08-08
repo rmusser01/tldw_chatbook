@@ -15961,6 +15961,9 @@ class LibraryScreen(BaseAppScreen):
         self, *, action: Literal["copying", "exporting"]
     ) -> dict[str, Any] | None:
         """Admit only working copies the Markdown grammar can preserve."""
+        if self._library_prompt_legacy_recipe_requires_conversion():
+            self._notify_library_prompt_legacy_recipe_requires_conversion()
+            return None
         detail = self._library_prompt_detail
         if isinstance(detail, Mapping):
             has_modern_metadata = (
@@ -16032,6 +16035,26 @@ class LibraryScreen(BaseAppScreen):
                 "This structured artifact cannot be represented as Markdown "
                 "without losing metadata. Use Convert and save as a new Prompt "
                 "first.",
+                severity="warning",
+            )
+
+    def _library_prompt_legacy_recipe_requires_conversion(self) -> bool:
+        """Return whether a legacy Recipe would lose its type in this action."""
+        if self._library_prompt_detached_structured:
+            return False
+        editor_state = self._current_library_prompt_editor_state()
+        return (
+            editor_state.definition_state == "legacy"
+            and editor_state.artifact_type == "recipe"
+        )
+
+    def _notify_library_prompt_legacy_recipe_requires_conversion(self) -> None:
+        """Direct a legacy Recipe to the explicit type-preserving conversion."""
+        notify = getattr(self.app_instance, "notify", None)
+        if callable(notify):
+            notify(
+                "This Recipe cannot use this action without losing its type. "
+                "Convert and save as a new Prompt first.",
                 severity="warning",
             )
 
@@ -16165,6 +16188,9 @@ class LibraryScreen(BaseAppScreen):
             return
         if self._library_prompt_action_artifact_type() is None:
             self._notify_library_prompt_unsupported_artifact_type()
+            return
+        if self._library_prompt_legacy_recipe_requires_conversion():
+            self._notify_library_prompt_legacy_recipe_requires_conversion()
             return
         fields = self._read_library_prompt_editor_fields()
         if fields is None:

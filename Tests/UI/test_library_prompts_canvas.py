@@ -3535,6 +3535,155 @@ async def test_library_prompt_duplicate_requires_conversion_for_compatibility_ar
 
 
 @pytest.mark.asyncio
+async def test_library_prompt_copy_rejects_legacy_recipe_without_clipboard_write(
+    tmp_path,
+):
+    """A legacy Recipe cannot be copied as Prompt-looking Markdown."""
+    db, service = _real_prompt_scope_service(tmp_path)
+    prompt_id, _uuid, _msg = db.add_prompt(
+        name="Legacy Recipe",
+        author="A",
+        details="PRIVATE_DETAILS",
+        system_prompt="PRIVATE_SYSTEM_BODY",
+        user_prompt="PRIVATE_USER_BODY",
+        prompt_format="legacy",
+        artifact_type="recipe",
+    )
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    host = LibraryHarness(app)
+    copied: list[str] = []
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_prompt_editor(screen, pilot, prompt_id)
+        state = screen._current_library_prompt_editor_state()
+        assert state.definition_state == "legacy"
+        assert state.artifact_type == "recipe"
+        assert screen._library_prompt_block_state is None
+        screen.app_instance = host
+        host.copy_to_clipboard = copied.append
+
+        host._notifications.clear()
+        screen.query_one("#library-prompt-copy", Button).press()
+        await pilot.pause()
+
+        assert copied == []
+        assert [notice.message for notice in host._notifications] == [
+            "This Recipe cannot use this action without losing its type. "
+            "Convert and save as a new Prompt first."
+        ]
+        assert [notice.severity for notice in host._notifications] == ["warning"]
+        notice = list(host._notifications)[0].message
+        assert "copied" not in notice.lower()
+        assert "PRIVATE_DETAILS" not in notice
+        assert "PRIVATE_SYSTEM_BODY" not in notice
+        assert "PRIVATE_USER_BODY" not in notice
+
+
+@pytest.mark.asyncio
+async def test_library_prompt_export_rejects_legacy_recipe_before_file_save(
+    tmp_path,
+):
+    """A legacy Recipe cannot open FileSave for a type-losing export."""
+    db, service = _real_prompt_scope_service(tmp_path)
+    prompt_id, _uuid, _msg = db.add_prompt(
+        name="Legacy Recipe",
+        author="A",
+        details="PRIVATE_DETAILS",
+        system_prompt="PRIVATE_SYSTEM_BODY",
+        user_prompt="PRIVATE_USER_BODY",
+        prompt_format="legacy",
+        artifact_type="recipe",
+    )
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_prompt_editor(screen, pilot, prompt_id)
+        state = screen._current_library_prompt_editor_state()
+        assert state.definition_state == "legacy"
+        assert state.artifact_type == "recipe"
+        assert screen._library_prompt_block_state is None
+        screen.app_instance = host
+
+        host._notifications.clear()
+        stack_size = len(host.screen_stack)
+        screen.query_one("#library-prompt-export", Button).press()
+        await pilot.pause()
+
+        assert len(host.screen_stack) == stack_size
+        assert not any(isinstance(item, FileSave) for item in host.screen_stack)
+        assert list(tmp_path.glob("*.md")) == []
+        assert [notice.message for notice in host._notifications] == [
+            "This Recipe cannot use this action without losing its type. "
+            "Convert and save as a new Prompt first."
+        ]
+        notice = list(host._notifications)[0].message
+        assert "exported" not in notice.lower()
+        assert "PRIVATE_DETAILS" not in notice
+        assert "PRIVATE_SYSTEM_BODY" not in notice
+        assert "PRIVATE_USER_BODY" not in notice
+
+
+@pytest.mark.asyncio
+async def test_library_prompt_duplicate_rejects_legacy_recipe_without_state_mutation(
+    tmp_path,
+):
+    """A legacy Recipe must use Convert instead of becoming a legacy Prompt copy."""
+    db, service = _real_prompt_scope_service(tmp_path)
+    prompt_id, _uuid, _msg = db.add_prompt(
+        name="Legacy Recipe",
+        author="A",
+        details="PRIVATE_DETAILS",
+        system_prompt="PRIVATE_SYSTEM_BODY",
+        user_prompt="PRIVATE_USER_BODY",
+        prompt_format="legacy",
+        artifact_type="recipe",
+    )
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_prompt_editor(screen, pilot, prompt_id)
+        state = screen._current_library_prompt_editor_state()
+        assert state.definition_state == "legacy"
+        assert state.artifact_type == "recipe"
+        assert screen._library_prompt_block_state is None
+        original_detail = dict(screen._library_prompt_detail)
+        original_dirty = screen._library_prompt_dirty
+        screen.app_instance = host
+
+        host._notifications.clear()
+        screen.query_one("#library-prompt-duplicate", Button).press()
+        await pilot.pause()
+
+        assert screen._selected_prompt_id == prompt_id
+        assert screen._library_prompt_detail == original_detail
+        assert screen._library_prompt_block_state is None
+        assert screen._library_prompt_dirty is original_dirty
+        assert db.fetch_prompt_details("Legacy Recipe (copy)") is None
+        assert [notice.message for notice in host._notifications] == [
+            "This Recipe cannot use this action without losing its type. "
+            "Convert and save as a new Prompt first."
+        ]
+        notice = list(host._notifications)[0].message
+        assert "PRIVATE_DETAILS" not in notice
+        assert "PRIVATE_SYSTEM_BODY" not in notice
+        assert "PRIVATE_USER_BODY" not in notice
+
+
+@pytest.mark.asyncio
 async def test_library_prompt_copy_uses_unsaved_legacy_create_working_copy(tmp_path):
     """A not-yet-saved create copies its live lanes without requiring an ID."""
     _db, service = _real_prompt_scope_service(tmp_path)
