@@ -1724,6 +1724,136 @@ async def test_dictation_reservation_gates_only_heavy_library_work(
 
 
 @pytest.mark.asyncio
+async def test_dictation_race_defers_claimed_library_job_without_failure(
+    tmp_path: Path,
+) -> None:
+    pool = _FakeIngestParsePool(auto_run=False)
+    executor = _FakeLocalSTTExecutor()
+    dispatch_started = threading.Event()
+    release_dispatch = threading.Event()
+    dispatch_count = 0
+
+    def build_dispatch(job, options):
+        nonlocal dispatch_count
+        dispatch_count += 1
+        if dispatch_count == 1:
+            dispatch_started.set()
+            assert release_dispatch.wait(5.0)
+        return _fake_local_stt_dispatch(job, options)
+
+    app = _IngestRunnerHarness(
+        _make_db(tmp_path),
+        pool_factory=lambda: pool,
+        worker_count=2,
+        heavy_lane=1,
+        local_stt_executor=executor,
+        local_stt_dispatch_factory=build_dispatch,
+    )
+    audio = tmp_path / "raced.wav"
+    audio.write_bytes(b"fixture")
+    document = _write_text_file(tmp_path, "ordered.txt", "document body")
+    later_document = _write_text_file(tmp_path, "later.txt", "later body")
+
+    async with app.run_test() as pilot:
+        job = app.submit_library_ingest_job(
+            source_path=str(audio),
+            ingest_options={"audio_video": {"transcription_provider": "parakeet-onnx"}},
+        )
+        assert dispatch_started.wait(1.0)
+        coordinator = app._ensure_local_stt_dispatch_coordinator()
+        handle = coordinator.begin_dictation(
+            capture_generation=11,
+            dispatch=_fake_parakeet_dispatch(),
+            sample_rate=16_000,
+            channels=1,
+            sample_width=2,
+            language="en",
+            on_logical_segment=lambda _sequence, _text: None,
+        )
+        document_job = app.submit_library_ingest_job(source_path=str(document))
+        later_document_job = app.submit_library_ingest_job(
+            source_path=str(later_document)
+        )
+        await pilot.pause()
+        current_document = app.library_ingest_jobs.get_job(document_job.job_id)
+        current_later_document = app.library_ingest_jobs.get_job(
+            later_document_job.job_id
+        )
+        assert current_document is not None
+        assert current_later_document is not None
+        assert current_document.state is IngestJobState.PARSING
+        assert current_later_document.state is IngestJobState.QUEUED
+        assert len(pool.calls) == 1
+        assert pool.calls[0]["args"][0] == document_job.source_path
+
+        release_dispatch.set()
+        for _ in range(_POLL_ATTEMPTS):
+            if job.job_id not in app._ingest_local_stt_jobs:
+                break
+            await pilot.pause(_POLL_INTERVAL)
+
+        deferred = app.library_ingest_jobs.get_job(job.job_id)
+        assert deferred is not None
+        assert deferred.state is IngestJobState.QUEUED
+        assert deferred.retry_count == 0
+        assert deferred.error == ""
+        assert deferred.error_detail is None
+        assert deferred.stt_failure_provenance is None
+        assert [item.job_id for item in app.library_ingest_jobs.jobs()] == [
+            later_document_job.job_id,
+            document_job.job_id,
+            job.job_id,
+        ]
+        assert executor.calls == []
+        assert coordinator.dictation_reserved is True
+        deferred_later_document = app.library_ingest_jobs.get_job(
+            later_document_job.job_id
+        )
+        assert deferred_later_document is not None
+        assert deferred_later_document.state is IngestJobState.PARSING
+        assert len(pool.calls) == 2
+
+        pool.trigger_success(
+            0,
+            {"ok": False, "error": "document failed", "permanent": False},
+        )
+        await _wait_for_job_state(
+            app,
+            pilot,
+            document_job.job_id,
+            IngestJobState.FAILED,
+        )
+
+        handle.append_segment(b"\x00\x00")
+        handle.finish()
+        assert [call["job_id"] for call in executor.calls] == [None]
+        dictation_attempt = executor.calls[0]["attempt_id"]
+        executor.trigger_result(
+            0,
+            ExecutorResult(
+                1,
+                dictation_attempt,
+                {"logical_segments": ["dictated"]},
+            ),
+        )
+        for _ in range(_POLL_ATTEMPTS):
+            if len(executor.calls) >= 2:
+                break
+            await pilot.pause(_POLL_INTERVAL)
+
+        resumed = app.library_ingest_jobs.get_job(job.job_id)
+        assert resumed is not None
+        assert resumed.state is IngestJobState.PARSING
+        assert resumed.retry_count == 0
+        assert resumed.error == ""
+        assert resumed.error_detail is None
+        assert [call["job_id"] for call in executor.calls] == [None, job.job_id]
+        still_parsing = app.library_ingest_jobs.get_job(later_document_job.job_id)
+        assert still_parsing is not None
+        assert still_parsing.state is IngestJobState.PARSING
+
+
+@pytest.mark.asyncio
 async def test_library_terminal_hands_executor_to_pending_dictation_before_top_up(
     tmp_path: Path,
 ) -> None:

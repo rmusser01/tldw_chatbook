@@ -2826,6 +2826,13 @@ class LibraryIngestQueueMixin:
                 ),
                 explicit_retry=job.retry_count > 0,
             )
+        except ExecutorBusyError:
+            self._marshal_local_stt_call(
+                self._on_ingest_local_stt_deferred,
+                job.job_id,
+                attempt_id,
+            )
+            return
         except Exception as exc:
             provider = str(options.get("transcription_provider") or "")
             code, actions = self._classify_local_stt_dispatch_error(provider, exc)
@@ -2896,6 +2903,9 @@ class LibraryIngestQueueMixin:
             or generation <= binding[0]
         ):
             return
+        if self._claim_ingest_local_stt_job(job_id) is None:
+            self._ingest_local_stt_jobs.pop(job_id, None)
+            return
         self._ingest_local_stt_jobs[job_id] = (generation, attempt_id)
 
     def cancel_local_ingest_job(self, job_id: str) -> bool:
@@ -2955,6 +2965,39 @@ class LibraryIngestQueueMixin:
             return
         if executor.wait_for_retirement(10.0):
             self._marshal_local_stt_call(self._top_up_ingest_parse_pool)
+
+    def _on_ingest_local_stt_deferred(
+        self,
+        job_id: str,
+        attempt_id: str,
+    ) -> None:
+        """Release a provisional Library claim blocked by dictation admission."""
+
+        if self._ingest_shutdown or self._ingest_local_stt_jobs.get(job_id) != (
+            0,
+            attempt_id,
+        ):
+            return
+        self._ingest_local_stt_jobs.pop(job_id, None)
+        self._top_up_ingest_parse_pool()
+
+    def _claim_ingest_local_stt_job(
+        self,
+        job_id: str,
+    ) -> LibraryIngestJob | None:
+        """Publish a provisionally dispatched local-STT job as parsing."""
+
+        current = self.library_ingest_jobs.get_job(job_id)
+        if current is None:
+            return None
+        if current.state is IngestJobState.PARSING:
+            return current
+        if current.state is not IngestJobState.QUEUED:
+            return None
+        return self.library_ingest_jobs.mark_parsing(
+            job_id,
+            detected_type=current.detected_type,
+        )
 
     def _on_ingest_local_stt_dispatch_failure(
         self,
@@ -3061,6 +3104,8 @@ class LibraryIngestQueueMixin:
                 event.generation,
                 event.attempt_id,
             )
+        if self._claim_ingest_local_stt_job(job_id) is None:
+            return
         existing = self.library_ingest_jobs.get_job(job_id)
         progress = dict(existing.progress or {}) if existing is not None else {}
         progress["phase"] = event.phase.value
@@ -3075,6 +3120,9 @@ class LibraryIngestQueueMixin:
             job_id, result
         ):
             return
+        if self._claim_ingest_local_stt_job(job_id) is None:
+            self._ingest_local_stt_jobs.pop(job_id, None)
+            return
         self._ingest_local_stt_jobs.pop(job_id, None)
         self._ingest_parsed_payloads[job_id] = result.payload
         self._start_library_ingest_queue_if_idle()
@@ -3088,6 +3136,9 @@ class LibraryIngestQueueMixin:
         if self._ingest_shutdown or not self._local_stt_terminal_matches(
             job_id, failure
         ):
+            return
+        if self._claim_ingest_local_stt_job(job_id) is None:
+            self._ingest_local_stt_jobs.pop(job_id, None)
             return
         self._ingest_local_stt_jobs.pop(job_id, None)
         message = TRANSCRIPTION_FAILURE_CONTRACT[failure.code][0]
@@ -3147,14 +3198,27 @@ class LibraryIngestQueueMixin:
             return
         worker_count = self._ingest_parse_worker_count()
         heavy_cap = self._ingest_heavy_lane_max_workers()
-        # Read the total + heavy in-flight counts ONCE, then track them locally
-        # as we dispatch. This whole method is UI-thread-only and synchronous,
-        # so nothing but our own mark_parsing() calls can change these counts
-        # mid-loop -- re-scanning the registry (O(N)) every iteration would make
-        # the loop O(worker_count * N) on the UI thread for no benefit.
+        # Read the total + heavy in-flight counts ONCE, then include local-STT
+        # jobs provisionally owned by an off-loop dispatch thread. Those rows
+        # remain QUEUED until coordinator admission succeeds, but still consume
+        # capacity; otherwise a later top-up could overfill the pool with light
+        # work while identity resolution is in flight.
         parsing_count = self.library_ingest_jobs.counts().get("parsing", 0)
         heavy_parsing_count = self.library_ingest_jobs.parsing_count_for_types(
             _INGEST_HEAVY_TYPES
+        )
+        provisional_local_jobs = []
+        for provisional_job_id in self._ingest_local_stt_jobs:
+            provisional = self.library_ingest_jobs.get_job(provisional_job_id)
+            if (
+                provisional is not None
+                and provisional.state is IngestJobState.QUEUED
+            ):
+                provisional_local_jobs.append(provisional)
+        parsing_count += len(provisional_local_jobs)
+        heavy_parsing_count += sum(
+            job.detected_type in _INGEST_HEAVY_TYPES
+            for job in provisional_local_jobs
         )
         while parsing_count < worker_count:
             # LocalSTTExecutor intentionally accepts one request at a time.
@@ -3175,63 +3239,31 @@ class LibraryIngestQueueMixin:
             )
             if job is None:
                 return
-            claimed = self.library_ingest_jobs.mark_parsing(
-                job.job_id, detected_type=job.detected_type
-            )
-            if claimed is None:
-                # Invariant violation (Task-3 reviewer's guard note): the
-                # job we just pulled off `next_queued()` was no longer
-                # QUEUED by the time we tried to claim it -- should be
-                # impossible on the UI thread (this whole method is
-                # UI-thread-only, so nothing else can race the queue
-                # between the two calls), but a coordinator bug here must
-                # never crash the submission path. `break`, not `continue`
-                # (whole-branch review, Minor 2): `next_queued()` always
-                # returns the OLDEST queued job, so a `continue` would get
-                # the exact same unclaimable job handed straight back --
-                # an infinite loop on the UI thread. Breaking abandons
-                # only this top-up pass (logged); the next submission/
-                # retry/parse-completion re-attempts from scratch.
-                logger.error(
-                    f"Library ingest coordinator: mark_parsing rejected "
-                    f"job {job.job_id} (expected QUEUED) -- abandoning "
-                    f"this top-up pass."
-                )
-                break
-            # Track the just-claimed job locally (mirrors what a fresh
-            # counts()/parsing_count_for_types() scan would report next
-            # iteration) so the loop stays O(N), not O(worker_count * N).
-            parsing_count += 1
-            if job.detected_type in _INGEST_HEAVY_TYPES:
-                heavy_parsing_count += 1
             try:
-                options = self._ingest_job_options(claimed)
+                options = self._ingest_job_options(job)
             except BatchSTTRoutingError as exc:
                 error_text = _sanitize_library_ingest_error_text(str(exc))
                 failure_text = error_text or "Batch transcription routing failed."
                 logger.warning(
                     "Library ingest batch STT routing failed "
-                    f"(job_id={claimed.job_id}, "
-                    f"detected_type={claimed.detected_type}, "
+                    f"(job_id={job.job_id}, "
+                    f"detected_type={job.detected_type}, "
                     f"error={failure_text})."
                 )
                 self.library_ingest_jobs.mark_failed(
-                    claimed.job_id,
+                    job.job_id,
                     error=failure_text,
                     permanent=False,
                 )
-                parsing_count -= 1
-                if claimed.detected_type in _INGEST_HEAVY_TYPES:
-                    heavy_parsing_count -= 1
                 continue
-            job_id = claimed.job_id
-            source_path = claimed.source_path
+            job_id = job.job_id
+            source_path = job.source_path
             if options.get("transcription_provider") in {
                 "parakeet-onnx",
                 "transcribe-cpp",
             }:
                 try:
-                    self._submit_local_stt_job(claimed, options)
+                    self._submit_local_stt_job(job, options)
                 except Exception as exc:
                     code, recovery_actions = self._classify_local_stt_dispatch_error(
                         str(options.get("transcription_provider") or ""), exc
@@ -3254,11 +3286,24 @@ class LibraryIngestQueueMixin:
                             "actions": list(recovery_actions),
                         },
                     )
-                    parsing_count -= 1
-                    if claimed.detected_type in _INGEST_HEAVY_TYPES:
-                        heavy_parsing_count -= 1
                     continue
+                parsing_count += 1
+                if job.detected_type in _INGEST_HEAVY_TYPES:
+                    heavy_parsing_count += 1
                 continue
+            claimed = self.library_ingest_jobs.mark_parsing(
+                job.job_id, detected_type=job.detected_type
+            )
+            if claimed is None:
+                logger.error(
+                    f"Library ingest coordinator: mark_parsing rejected "
+                    f"job {job.job_id} (expected QUEUED) -- abandoning "
+                    f"this top-up pass."
+                )
+                break
+            parsing_count += 1
+            if job.detected_type in _INGEST_HEAVY_TYPES:
+                heavy_parsing_count += 1
             try:
                 pool = self._ensure_ingest_parse_pool()
             except Exception as exc:
