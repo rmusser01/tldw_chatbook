@@ -22,7 +22,8 @@ next batch item, and then let the batch continue automatically.
 
 ## Confirmed product decisions
 
-- English remains the dictation default and routes to Parakeet v2 INT8.
+- English remains the dictation default and routes to Parakeet v2 with INT8 as
+  the default precision; an explicitly persisted F32 selection remains usable.
 - Parakeet ONNX is buffer transcription, not true streaming.
 - A Mic press reserves the next local-STT slot automatically. There is no extra
   pause prompt or separate batch-pause control.
@@ -253,6 +254,13 @@ Existing partial/final events, voice-command classification, hands-free state,
 caret insertion, draft preservation, and no-auto-send behavior remain owned by
 their current controllers.
 
+The retained silence-transcription warm-up is skipped for this deferred shared-
+executor path. Otherwise an active batch inference would block the Mic press
+before the recorder opens, contradicting the approved behavior that capture may
+continue while dictation waits for the next executor slot. Model loading occurs
+inside the reserved executor attempt and the existing preparing/busy states
+remain honest about that work.
+
 On a retryable Parakeet failure, the Console retains the exact bounded PCM and
 segment-boundary metadata long enough to offer one confirmation:
 **Parakeet failed. Retry this audio with faster-whisper?** Acceptance replays
@@ -295,6 +303,11 @@ The UI receives bounded categories, not native exception text:
 
 Failures leave the draft unchanged unless a prior, independently successful
 segment was already inserted. No error path starts a download.
+
+The explicit-resume rule also wins over the hands-free loop's historical
+limit-triggered reopen behavior: reaching the canonical capture ceiling exits
+that loop after preserving the captured transcript. It does not send or reopen
+the microphone automatically; another physical Mic press is required.
 
 ## Focused verification
 

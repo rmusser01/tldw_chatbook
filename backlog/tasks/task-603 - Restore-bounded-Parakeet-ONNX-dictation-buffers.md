@@ -1,9 +1,11 @@
 ---
 id: TASK-603
 title: Restore bounded Parakeet ONNX dictation buffers
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@codex'
 created_date: '2026-07-24 01:04'
+updated_date: '2026-08-08 21:29'
 labels:
   - stt
   - dictation
@@ -14,6 +16,9 @@ references:
   - backlog/decisions/025-shared-stt-artifacts-and-runtime-routing.md
 documentation:
   - Docs/superpowers/specs/2026-07-23-stt-parakeet-onnx-transcribe-cpp-design.md
+  - >-
+    Docs/superpowers/specs/2026-08-08-task-603-bounded-parakeet-dictation-design.md
+  - Docs/superpowers/plans/2026-08-08-task-603-bounded-parakeet-dictation.md
 priority: high
 ---
 
@@ -32,3 +37,19 @@ Preserve microphone and in-memory buffer transcription after legacy Parakeet rem
 - [ ] #5 Dictation is selected before the next batch item without preempting active native inference, and users can pause future batch dispatch while local transcription is busy.
 - [ ] #6 Latency, backpressure, cancellation, shutdown, and batch coexistence tests pass on representative supported platforms before legacy providers can be removed.
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+ADR required: no new ADR
+ADR path: backlog/decisions/025-shared-stt-artifacts-and-runtime-routing.md
+Reason: ADR-025 already governs the shared executor, bounded in-memory dictation, dictation-next admission, fallback, and release gates.
+Plan: Docs/superpowers/plans/2026-08-08-task-603-bounded-parakeet-dictation.md
+1. Extend LocalSTTExecutor requests from file-only to file-or-buffer with validated logical frame boundaries.
+2. Share exact Parakeet artifact identity and add normalized in-memory recognition.
+3. Add one bounded dictation-next admission coordinator in front of the queue-less executor.
+4. Route Library and Console through the same app-owned coordinator and shutdown boundary.
+5. Adapt the public facade and live dictation service without blocking the audio processing thread.
+6. Wire Console busy, limit, explicit resume, and faster-whisper retry through existing UI controllers.
+7. Run only focused verification, collect macOS evidence, and keep Windows/Linux/TASK-605 gates open.
+<!-- SECTION:PLAN:END -->
