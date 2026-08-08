@@ -993,7 +993,10 @@ def _default_specs(
             description=(
                 "Fetch a web page and return its extracted text; PDFs are "
                 "text-extracted too (up to 20 MB, ephemeral — nothing is "
-                "ingested). SSRF-guarded (public http(s) only), "
+                "ingested). Images, ZIP archives, and audio return compact "
+                "metadata (format/size/listing; up to 10 MB, refused over "
+                "that), not contents. "
+                "SSRF-guarded (public http(s) only), "
                 "redirect-capped, byte-capped, cached. Honors robots.txt "
                 "(configurable)."
             ),
@@ -1001,7 +1004,7 @@ def _default_specs(
                 "type": "object",
                 "properties": {
                     "url": {"type": "string", "description": "Public http(s) URL to fetch."},
-                    "max_bytes": {"type": "integer", "description": "Maximum response bytes to read (default 1 MiB; hard cap 5 MiB)."},
+                    "max_bytes": {"type": "integer", "description": "Maximum response bytes to read for text/HTML (default 1 MiB; hard cap 5 MiB). Declared or sniffed binaries read against their own ceilings instead (20 MB PDF, 10 MB image/ZIP/audio) and are refused, not truncated, when over."},
                 },
                 "required": ["url"],
             },

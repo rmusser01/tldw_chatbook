@@ -22,8 +22,11 @@ import re
 import socket
 import threading
 import time
+import zipfile
 from collections import deque
 from html.parser import HTMLParser
+from io import BytesIO
+from pathlib import PurePosixPath
 from typing import NamedTuple, Optional
 from urllib.parse import urljoin, urlsplit
 from urllib.robotparser import RobotFileParser
@@ -134,6 +137,18 @@ FETCH_CACHE_TTL_SECONDS = 900.0
 FETCH_CACHE_MAX_ENTRIES = 256
 RATE_LIMIT_INTERVAL_SECONDS = 1.0          # per-domain min interval
 PDF_MAX_BYTES = 20 * 1024 * 1024  # refusal threshold, never a truncation (spec §1)
+# Refusal threshold for the OTHER allowlisted binary kinds (image/zip/audio):
+# one shared ceiling, PDF keeps its own untouched (binary-fetch design doc
+# ruling 4). Raised mid-stream on sniff/declared match, like pdf_max_bytes;
+# a byte-truncated binary body is refused, never processed partially.
+BINARY_MAX_BYTES = 10 * 1024 * 1024
+ARCHIVE_LIST_MAX = 20  # display cap on ZIP member lines (design doc ruling 2, Minor 10)
+# Per-member display cap (Qodo PR #1442): zip member names are attacker-
+# controlled and the format allows up to 64 KiB per name — 20 such lines
+# would blow the 32 KiB provider cap / 16,000-char runtime ceiling and get
+# head-truncated, eating the "… and N more" marker off the end. Applied
+# AFTER the suspicious-name repr-escaping, so it bounds that output too.
+ARCHIVE_MEMBER_NAME_MAX = 200
 
 _USER_AGENT = "tldw-chatbook-web-fetch/1.0"
 _REDIRECT_STATUSES = frozenset({301, 302, 303, 307, 308})
@@ -227,6 +242,87 @@ def _enforce_rate_limit(host: str) -> None:
 
 _PDF_MAGIC = b"%PDF-"
 
+# Declared content-type -> kind, resolved IMMEDIATELY with no byte
+# confirmation (PDF-shortcut precedent, binary-fetch design doc ruling 3).
+# Audio is deliberately absent: it has no reliable single magic, so it is
+# matched by TOP-LEVEL type in _declared_kind() below instead of an exact
+# subtype, accepting real-world variants (audio/mp3, audio/x-wav, ...).
+_DECLARED_BINARY_KINDS = {
+    "application/pdf": "pdf",
+    "image/png": "image",
+    "image/jpeg": "image",
+    "image/gif": "image",
+    "image/webp": "image",
+    "application/zip": "zip",
+}
+
+# WEBP is NOT a contiguous-prefix magic like the others (RIFF....WEBP, with
+# a 4-byte size field at [4:8] ignored) -- it needs both anchors, which is
+# why the minimum sniff buffering rises from 5 (%PDF-) to 12 (design doc
+# ruling 3, Important 2).
+_SNIFF_PREFIX_LEN = 12
+
+
+def _top_level_type(content_type: str) -> str:
+    """The substring before '/' of an already-lowercased, parameter-
+    stripped main type (e.g. the ``declared`` value computed in
+    ``_fetch_once``). Deliberately distinct from ``_extract_text``'s
+    ``main_type``, which keeps the full type/subtype (design doc ruling on
+    audio, Important 7 -- reusing that splitter here previously collided).
+    """
+    return content_type.split("/", 1)[0] if content_type else ""
+
+
+def _declared_kind(declared: str) -> "str | None":
+    """Resolve a binary ``kind`` from a declared content-type ALONE -- no
+    byte confirmation, mirroring the PDF shortcut. Returns None when the
+    declared type doesn't shortcut resolution (sniff decides instead)."""
+    kind = _DECLARED_BINARY_KINDS.get(declared)
+    if kind is not None:
+        return kind
+    if _top_level_type(declared) == "audio":
+        return "audio"
+    return None
+
+
+def _sniff_kind(prefix: bytes) -> "str | None":
+    """Identify a binary kind from the leading bytes of a response body.
+
+    Audio has no reliable single magic (ID3/frame-sync ambiguity) and is
+    declared-type-only -- never returned here. ``prefix`` may be shorter
+    than ``_SNIFF_PREFIX_LEN`` for a short body; magics needing more bytes
+    than are present simply fail to match (no crash, no false positive).
+    """
+    if prefix.startswith(_PDF_MAGIC):
+        return "pdf"
+    if prefix.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image"
+    if prefix.startswith(b"\xff\xd8\xff"):
+        return "image"
+    if prefix.startswith(b"GIF8"):
+        return "image"
+    if prefix.startswith(b"PK\x03\x04"):
+        return "zip"
+    if prefix[0:4] == b"RIFF" and prefix[8:12] == b"WEBP":
+        return "image"
+    return None
+
+
+def _binary_read_cap(
+    kind: "str | None",
+    max_bytes: int,
+    pdf_max_bytes: "int | None",
+    binary_max_bytes: "int | None",
+) -> int:
+    """The read/truncation cap for a resolved ``kind`` (design doc ruling 4):
+    PDF keeps its own ceiling; the other allowlisted binary kinds share
+    ``binary_max_bytes``; anything else uses the caller's ``max_bytes``."""
+    if kind == "pdf" and pdf_max_bytes is not None:
+        return pdf_max_bytes
+    if kind in ("image", "zip", "audio") and binary_max_bytes is not None:
+        return binary_max_bytes
+    return max_bytes
+
 
 def _fetch_once(
     client: httpx.Client,
@@ -234,46 +330,81 @@ def _fetch_once(
     max_bytes: int,
     *,
     pdf_max_bytes: "int | None" = None,
+    binary_max_bytes: "int | None" = None,
     html_only: bool = False,
-) -> tuple[int, httpx.Headers, bytes, bool, bool]:
+) -> tuple[int, httpx.Headers, bytes, bool, "str | None"]:
     """One GET with a bounded streaming read; redirects are NOT followed.
 
-    Returns (status, headers, body, truncated, is_pdf). The read cap is
-    decided MID-STREAM (spec §1): a response identified as PDF — by header
-    or by a %PDF- prefix sniff on the first >=5 buffered bytes — reads up
-    to ``pdf_max_bytes`` instead of ``max_bytes``, because a byte-truncated
-    PDF is unparseable. ``html_only`` (web_crawl) stops the body read once
-    the type is KNOWN (after the sniff buffer) and it is not HTML — either
-    the sniff resolved ``is_pdf`` True, or a non-empty declared type is not
-    an HTML type. A response that sniffs as non-PDF and declares HTML (or
-    nothing) keeps reading for the caller's later ``<html`` sniff.
+    Returns (status, headers, body, truncated, kind). ``kind`` is one of
+    "pdf", "image", "zip", "audio", or None (no recognized binary kind --
+    the body proceeds to ordinary text extraction). The read cap is
+    decided MID-STREAM (spec §1, generalized by the binary-fetch design
+    doc): a response resolving to "pdf" reads up to ``pdf_max_bytes``
+    (PDF's own ceiling, unaffected by this generalization); a response
+    resolving to "image"/"zip"/"audio" reads up to ``binary_max_bytes``
+    (the shared ceiling); anything else uses ``max_bytes``. A byte-
+    truncated binary body is refused by the caller, never processed
+    partially.
+
+    Kind resolution mirrors the PDF precedent (design doc ruling 3): a
+    declared content-type in the allowlist resolves the kind IMMEDIATELY,
+    no byte confirmation (see ``_declared_kind``); otherwise a magic-byte
+    sniff on the first ``_SNIFF_PREFIX_LEN`` buffered bytes (see
+    ``_sniff_kind``) OVERRIDES a wrong or absent declared type.
+
+    ``html_only`` (web_crawl) stops the body read once the kind is KNOWN
+    (after the sniff/declared-type lookup resolves) and it is not a plain
+    HTML/absent-type response -- either a recognized kind was resolved, or
+    a non-empty declared type is not an HTML type. A response that
+    resolves to no recognized kind and declares HTML (or nothing) keeps
+    reading for the caller's later ``<html`` sniff. Side effect of the
+    12-byte sniff window (design doc, Blast radius): the minimum buffering
+    before this early abort can fire rises from 5 to 12 bytes -- bounded
+    and harmless, but real.
     """
     with client.stream("GET", url) as response:
         status = response.status_code
         if status in _REDIRECT_STATUSES:
-            return status, response.headers, b"", False, False
+            return status, response.headers, b"", False, None
         declared = (response.headers.get("content-type") or "").split(";", 1)[0].strip().lower()
         chunks: list[bytes] = []
         downloaded = 0
-        is_pdf: "bool | None" = True if declared == "application/pdf" else None
+        kind: "str | None" = _declared_kind(declared)
+        resolved = kind is not None
         for chunk in response.iter_bytes():
             chunks.append(chunk)
             downloaded += len(chunk)
-            if is_pdf is None and downloaded >= len(_PDF_MAGIC):
-                is_pdf = b"".join(chunks)[: len(_PDF_MAGIC)] == _PDF_MAGIC
-            if html_only and is_pdf is not None and (is_pdf or (declared and declared not in _HTML_TYPES)):
+            if not resolved and downloaded >= _SNIFF_PREFIX_LEN:
+                kind = _sniff_kind(b"".join(chunks)[:_SNIFF_PREFIX_LEN])
+                resolved = True
+            # Review fix (Important 2): the abort predicate keys on
+            # kind == "pdf" plus the DECLARED type only -- never on a
+            # sniffed image/zip/audio kind -- so a binary served as
+            # text/html during a crawl keeps today's full-read behavior
+            # (the design doc's stated non-goal) instead of being cut at
+            # the sniff window with truncated=False.
+            if html_only and resolved and (kind == "pdf" or (declared and declared not in _HTML_TYPES)):
                 break  # crawl only needs the type; don't drain the body
-            cap = pdf_max_bytes if (is_pdf and pdf_max_bytes is not None) else max_bytes
+            # Review fix (Minor 3): while the kind is UNRESOLVED the loop
+            # must not break before the sniff window fills -- a caller
+            # max_bytes under _SNIFF_PREFIX_LEN could otherwise hand the
+            # post-loop sniff a partial prefix that still resolves (e.g.
+            # 5 of 12 bytes matching %PDF-), mis-computing truncated
+            # against the raised ceiling.
+            if resolved:
+                cap = _binary_read_cap(kind, max_bytes, pdf_max_bytes, binary_max_bytes)
+            else:
+                cap = max(max_bytes, _SNIFF_PREFIX_LEN)
             if downloaded > cap:
                 break  # overshoot by at most one chunk; sliced below
-        if is_pdf is None:  # body shorter than the magic prefix
-            is_pdf = b"".join(chunks)[: len(_PDF_MAGIC)] == _PDF_MAGIC
+        if not resolved:  # body shorter than the sniff prefix
+            kind = _sniff_kind(b"".join(chunks)[:_SNIFF_PREFIX_LEN])
         body = b"".join(chunks)
-        cap = pdf_max_bytes if (is_pdf and pdf_max_bytes is not None) else max_bytes
+        cap = _binary_read_cap(kind, max_bytes, pdf_max_bytes, binary_max_bytes)
         truncated = len(body) > cap
         if truncated:
             body = body[:cap]
-        return status, response.headers, body, truncated, is_pdf
+        return status, response.headers, body, truncated, kind
 
 
 def _decode_body(body: bytes, content_type: str) -> str:
@@ -300,8 +431,141 @@ def _strip_tags(html: str) -> str:
     return text.strip()
 
 
-def _extract_text(body: bytes, content_type: str) -> str:
-    """Extract readable text; trafilatura for HTML, raw for plain types."""
+def _format_size(num_bytes: int) -> str:
+    """Human-readable byte count for binary-fetch metadata lines."""
+    size = float(num_bytes)
+    for unit in ("B", "KB", "MB", "GB"):
+        if size < 1024.0:
+            return f"{int(size)} {unit}" if unit == "B" else f"{size:.1f} {unit}"
+        size /= 1024.0
+    return f"{size:.1f} TB"
+
+
+def _member_display_name(name: str) -> str:
+    """Traversal screen for one ZIP member name (design doc ruling 2):
+    flag-and-show, not reject -- this module never extracts, so the only
+    duty is to list a hostile name SAFELY (repr-escaped, not printed
+    verbatim). Mirrors ``chatbook_importer._validated_archive_parts``'s
+    checks (absolute path, ``..`` segments, a drive-letter-looking first
+    segment -- ``PurePosixPath`` collapses ``""``/``"."`` segments before
+    ``.parts``, so only ``..`` is live in that membership check) plus a
+    screen up front for NUL, backslash (``PurePosixPath`` doesn't treat it
+    as a separator), and ANY non-printable character: a member name is
+    attacker-controlled text embedded in a structured listing, and a
+    newline/ESC/RTL-override in it could forge listing rows or smuggle
+    terminal control bytes into the model-facing transcript.
+    ``str.isprintable()`` is False for all of those and True for ordinary
+    Unicode names, so legitimate non-ASCII filenames list plainly.
+    """
+    if not name or not name.isprintable() or "\x00" in name or "\\" in name:
+        return f"[suspicious name] {name!r}"
+    posix = PurePosixPath(name)
+    parts = posix.parts
+    if (
+        posix.is_absolute()
+        or not parts
+        or any(part in ("", ".", "..") for part in parts)
+        or parts[0].endswith(":")
+    ):
+        return f"[suspicious name] {name!r}"
+    return name
+
+
+def _describe_image(body: bytes) -> str:
+    """In-memory Pillow probe: format/size metadata only, never pixel
+    data (design doc ruling 2; ``mode`` is deliberately not emitted --
+    the spec's output format carries format/dimensions/bytes and nothing
+    else). ``Image.MAX_IMAGE_PIXELS`` stays at its
+    default -- this path never decodes pixel data, only headers, so
+    declared-dimension abuse costs nothing beyond an honest metadata line.
+
+    ``.verify()`` catches corruption (bad checksums raise SyntaxError,
+    truncation raises OSError) without decoding pixel data; format/size
+    survive it as cached header attributes, but a defensive re-open reads
+    them anyway -- hygiene that matters for animated GIF/WEBP frame-
+    seeking, since ``verify()`` leaves the file object unusable for
+    anything further.
+    """
+    from PIL import Image, UnidentifiedImageError  # local import: keep module import cheap
+
+    try:
+        with Image.open(BytesIO(body)) as probe:
+            probe.verify()
+    except UnidentifiedImageError as exc:
+        # Fixed message: Pillow's own text interpolates the BytesIO repr
+        # (a heap address) -- noise the model can't use.
+        raise LocalToolError("[image-error] could not identify image format") from exc
+    except Exception as exc:
+        raise LocalToolError(f"[image-error] could not read image: {exc}") from exc
+    try:
+        with Image.open(BytesIO(body)) as img:
+            fmt = img.format or "unknown"
+            width, height = img.size
+    except Exception as exc:
+        raise LocalToolError(f"[image-error] could not read image: {exc}") from exc
+    return f"[image] {fmt} {width}×{height}, {_format_size(len(body))}"
+
+
+def _describe_archive(body: bytes) -> str:
+    """ZIP LISTING ONLY (design doc ruling 2) -- never extracts, never
+    reads a member's body. Encrypted members are annotated via
+    ``flag_bits & 0x1`` (``infolist()`` works fine under encryption; only
+    a member's own ``.read()`` would need the password). Only a genuinely
+    malformed archive raises; an encrypted-but-well-formed one lists fine.
+    """
+    try:
+        with zipfile.ZipFile(BytesIO(body)) as zf:
+            infos = zf.infolist()
+    except zipfile.BadZipFile as exc:
+        raise LocalToolError(f"[archive-error] could not read ZIP: {exc}") from exc
+    except Exception as exc:  # noqa: BLE001 — error contract: only LocalToolError escapes
+        # Hostile central directories can raise beyond BadZipFile
+        # (struct/Overflow/Value errors on absurd fields); normalize with a
+        # fixed message — never interpolate an arbitrary exception string
+        # derived from attacker-controlled bytes (Qodo PR #1442).
+        raise LocalToolError("[archive-error] could not read ZIP (malformed metadata)") from exc
+    lines = [f"[archive] ZIP, {_format_size(len(body))}, {len(infos)} members"]
+    for info in infos[:ARCHIVE_LIST_MAX]:
+        name = _member_display_name(info.filename)
+        if len(name) > ARCHIVE_MEMBER_NAME_MAX:
+            name = name[:ARCHIVE_MEMBER_NAME_MAX] + "… [name truncated]"
+        encrypted = " (encrypted)" if (info.flag_bits & 0x1) else ""
+        lines.append(f"{name} — {_format_size(info.file_size)}{encrypted}")
+    if len(infos) > ARCHIVE_LIST_MAX:
+        lines.append(f"… and {len(infos) - ARCHIVE_LIST_MAX} more")
+    return "\n".join(lines)
+
+
+def _describe_audio(content_type: str, size: int) -> str:
+    """Metadata only, WITHOUT new dependencies (design doc ruling 2):
+    mutagen is not a declared dep anywhere in pyproject and does not get
+    added; richer audio metadata is a recorded non-goal."""
+    main = content_type.split(";", 1)[0].strip().lower() or "audio/unknown"
+    return f"[audio] {main}, {_format_size(size)}"
+
+
+_BINARY_KIND_LABEL = {"image": "image", "zip": "archive", "audio": "audio"}
+
+
+def _extract_text(body: bytes, content_type: str, kind: "str | None" = None) -> str:
+    """Extract readable text, or metadata for a recognized binary ``kind``.
+
+    ``kind`` (from ``_fetch_once``'s sniff+declared-type resolution)
+    short-circuits straight to the matching binary describer BEFORE any
+    decode is attempted -- binary bodies never round-trip through
+    UTF-8-replace (design doc ruling 5). ``web_crawl`` deliberately never
+    passes ``kind`` here: its own marker path already special-cases "pdf",
+    and a wrong/absent declared type on any OTHER binary kind during a
+    crawl keeps today's mojibake-decode behavior by design (design doc
+    non-goals -- not rescued by the new sniff).
+    """
+    if kind == "image":
+        return _describe_image(body)
+    if kind == "zip":
+        return _describe_archive(body)
+    if kind == "audio":
+        return _describe_audio(content_type, len(body))
+
     main_type = content_type.split(";", 1)[0].strip().lower()
     text = _decode_body(body, content_type)
 
@@ -487,7 +751,7 @@ def _fetch_robots_parser(client: httpx.Client, cache_key: str) -> "RobotFilePars
             return None
         _enforce_rate_limit(urlsplit(current).hostname or "unknown")  # propagates; see docstring
         try:
-            status, headers, body, truncated, _is_pdf = _fetch_once(client, current, ROBOTS_MAX_BYTES)
+            status, headers, body, truncated, _kind = _fetch_once(client, current, ROBOTS_MAX_BYTES)
         except Exception as exc:  # noqa: BLE001 - broad by design: fails open
             logger.debug(f"robots.txt unreachable for {cache_key}: {exc} — failing open")
             return None
@@ -586,7 +850,8 @@ def _new_web_fetch_client() -> httpx.Client:
 
 
 def web_fetch(url: str, *, max_bytes: int = FETCH_MAX_BYTES) -> str:
-    """Fetch ``url`` and return extracted text (trafilatura for HTML, PyMuPDF for PDF).
+    """Fetch ``url`` and return extracted text (trafilatura for HTML, PyMuPDF
+    for PDF) or compact metadata for other allowlisted binary kinds.
 
     Args:
         url: public http(s) URL to fetch.
@@ -614,22 +879,40 @@ def web_fetch(url: str, *, max_bytes: int = FETCH_MAX_BYTES) -> str:
     ``[missing-dep]``. Extracted text is truncated per-page if total exceeds
     max_bytes; the result includes page count.
 
+    Binary-file support (task-1359, in-memory only, zero disk writes):
+    images (``image/png|jpeg|gif|webp``), ZIP archives, and audio return
+    compact METADATA, not contents or extracted bytes -- never file
+    contents. Images are probed with Pillow (format/size only, no pixel
+    decode, no EXIF); ZIPs are LISTED via stdlib zipfile (never extracted,
+    never member-read); audio gets a one-line content-type + size summary
+    (no new dependency). Detection mirrors the PDF precedent: an
+    allowlisted declared content-type resolves immediately, and a magic-
+    byte sniff overrides a wrong or absent declared type (audio has no
+    magic and is declared-type-only). All three binary kinds share a
+    10 MB refusal ceiling (``BINARY_MAX_BYTES``) -- a byte-truncated
+    binary body is refused, never processed partially. Any other content
+    type keeps the pre-existing ``[empty-content] unsupported content
+    type`` refusal.
+
     All failures raise LocalToolError with structured reasons:
         - "invalid-url", "ssrf", "robots-disallowed", "redirect-limit",
           "timeout", "http-<status>", "rate-limited", "fetch-failed" (general fetch)
-        - "empty-content" (unextractable HTML/text/PDF)
+        - "empty-content" (unextractable HTML/text/PDF, or unsupported content type)
         - "missing-dep" (PDF requires pymupdf extra)
         - "pdf-error" (PyMuPDF extraction or encryption failure)
-        - "too-large" (PDF exceeds 20 MB ceiling when pymupdf available)
+        - "image-error" (corrupt/unidentifiable image bytes)
+        - "archive-error" (malformed ZIP bytes)
+        - "too-large" (PDF exceeds 20 MB, or image/zip/audio exceeds 10 MB)
 
     Returns:
         str: extracted text — trafilatura/tag-strip for HTML, raw for plain
-        types, pymupdf text for PDFs — with a truncation marker when capped.
+        types, pymupdf text for PDFs, compact metadata for image/zip/audio
+        — with a truncation marker when a text response was capped.
 
     Raises:
         LocalToolError: on invalid/SSRF URLs, redirect overflow, timeouts,
-            HTTP error statuses, rate limiting, PDF processing errors, or
-            unextractable content.
+            HTTP error statuses, rate limiting, PDF/image/archive processing
+            errors, oversized binary bodies, or unextractable content.
     """
     if not isinstance(url, str) or not url.strip():
         raise LocalToolError("[invalid-url] url must be a non-empty string")
@@ -684,9 +967,10 @@ def web_fetch(url: str, *, max_bytes: int = FETCH_MAX_BYTES) -> str:
             if respect_robots and not _robots_allows(client, current_url, _USER_AGENT):
                 raise LocalToolError(_robots_disallowed_message(current_url))
             _enforce_rate_limit(urlsplit(current_url).hostname or "unknown")
-            status, headers, body, truncated, is_pdf = _fetch_once(
+            status, headers, body, truncated, kind = _fetch_once(
                 client, current_url, max_bytes,
                 pdf_max_bytes=PDF_MAX_BYTES if pymupdf_ok else None,
+                binary_max_bytes=BINARY_MAX_BYTES,
             )
             if status in _REDIRECT_STATUSES:
                 location = headers.get("location")
@@ -714,7 +998,7 @@ def web_fetch(url: str, *, max_bytes: int = FETCH_MAX_BYTES) -> str:
     if status >= 400:
         raise LocalToolError(f"[http-{status}] upstream returned status {status} for {url!r}")
 
-    if is_pdf:
+    if kind == "pdf":
         if not pymupdf_ok:
             # Decided BEFORE the size check: pdf_max_bytes was already None
             # for this fetch (above), so `truncated` reflects the ordinary
@@ -729,6 +1013,13 @@ def web_fetch(url: str, *, max_bytes: int = FETCH_MAX_BYTES) -> str:
                 "use media ingestion for large documents"
             )
         text = _extract_pdf_text(body, max_bytes)
+    elif kind in ("image", "zip", "audio"):
+        if truncated:  # hit the shared binary ceiling: refuse, never truncate bytes
+            raise LocalToolError(
+                f"[too-large] {_BINARY_KIND_LABEL[kind]} exceeds "
+                f"{BINARY_MAX_BYTES // (1024 * 1024)} MB — use media ingestion for large files"
+            )
+        text = _extract_text(body, headers.get("content-type", ""), kind=kind)
     else:
         text = _extract_text(body, headers.get("content-type", ""))
         if truncated:
@@ -1037,17 +1328,21 @@ def _crawl_fetch_page(
     max_bytes: int = FETCH_MAX_BYTES,
     html_only: bool = True,
     respect_robots: bool = True,
-) -> tuple[str, "httpx.Headers", bytes, bool, bool]:
+) -> tuple[str, "httpx.Headers", bytes, bool, "str | None"]:
     """Guarded, rate-limited GET with the crawl's redirect loop.
 
-    Returns (final_url, headers, body, truncated, is_pdf). Checks the
+    Returns (final_url, headers, body, truncated, kind). Checks the
     deadline between redirect hops — one page's full chain must not
-    overshoot the crawl budget by minutes (spec §2). ``is_pdf`` is
-    ``_fetch_once``'s sniff result and MUST be consulted by callers before
-    treating a response as HTML: a PDF mislabeled (or unlabeled) as
-    text/html must not fall through to HTML extraction, or its raw bytes
-    become the page excerpt and its garbage "extracted text" warm-writes
-    the shared web_fetch cache (see web_crawl's marker branch).
+    overshoot the crawl budget by minutes (spec §2). ``kind`` is
+    ``_fetch_once``'s sniff+declared-type result and MUST be consulted by
+    callers before treating a response as HTML: a PDF mislabeled (or
+    unlabeled) as text/html must not fall through to HTML extraction, or
+    its raw bytes become the page excerpt and its garbage "extracted text"
+    warm-writes the shared web_fetch cache (see web_crawl's marker
+    branch). Binary-fetch design doc non-goal: crawl's own marker branch
+    only special-cases ``kind == "pdf"`` -- other binary kinds (image/zip/
+    audio) sniffed here are NOT rescued into a marker or into metadata
+    extraction; they keep today's mojibake-decode behavior, unchanged.
 
     This is also the path every sitemap fetch takes (task-2833 design doc
     ruling 4: root + child sitemap fetches go through this same loop), so
@@ -1066,7 +1361,7 @@ def _crawl_fetch_page(
             raise LocalToolError(_robots_disallowed_message(current))
         _enforce_rate_limit(urlsplit(current).hostname or "unknown")
         try:
-            status, headers, body, truncated, is_pdf = _fetch_once(
+            status, headers, body, truncated, kind = _fetch_once(
                 client, current, max_bytes, html_only=html_only
             )
         except httpx.TimeoutException as exc:
@@ -1086,7 +1381,7 @@ def _crawl_fetch_page(
             continue
         if status >= 400:
             raise LocalToolError(f"[http-{status}] upstream returned status {status} for {current!r}")
-        return current, headers, body, truncated, is_pdf
+        return current, headers, body, truncated, kind
     raise LocalToolError(f"[redirect-limit] exceeded {FETCH_MAX_REDIRECTS} redirects for {url!r}")
 
 
@@ -1141,7 +1436,7 @@ def _seed_from_sitemap(
     simply counted in ``children_skipped``, same as any other child
     fetch failure.
     """
-    final_url, _headers, body, truncated, _is_pdf = _crawl_fetch_page(
+    final_url, _headers, body, truncated, _kind = _crawl_fetch_page(
         client, sitemap_url, deadline, max_bytes=SITEMAP_MAX_BYTES, html_only=False,
         respect_robots=respect_robots,
     )
@@ -1198,7 +1493,7 @@ def _seed_from_sitemap(
             break
         children_fetched += 1
         try:
-            _f, _h, child_body, child_truncated, _is_pdf = _crawl_fetch_page(
+            _f, _h, child_body, child_truncated, _kind = _crawl_fetch_page(
                 client, child, deadline, max_bytes=SITEMAP_MAX_BYTES, html_only=False,
                 respect_robots=respect_robots,
             )
@@ -1355,7 +1650,7 @@ def web_crawl(
             is_start = attempts == 0
             attempts += 1
             try:
-                final_url, headers, body, truncated, is_pdf = _crawl_fetch_page(
+                final_url, headers, body, truncated, kind = _crawl_fetch_page(
                     client, current, deadline, respect_robots=respect_robots
                 )
             except _CrawlDeadline:
@@ -1396,20 +1691,28 @@ def web_crawl(
             visited.add(final_norm)
 
             ctype = (headers.get("content-type") or "").split(";", 1)[0].strip().lower()
-            # is_pdf (the %PDF- sniff) takes priority over the declared
-            # content-type: a PDF mislabeled as text/html (or unlabeled)
-            # must never fall through to HTML extraction below, or its raw
-            # bytes become the excerpt and its "extracted text" warm-writes
-            # the shared web_fetch cache with binary garbage. Matches the
-            # spec's own detection rule ("the sniff wins over the declared
-            # type" §1): when is_pdf is true the marker is always
-            # "[application/pdf]", regardless of what the server claimed;
-            # only a genuinely non-PDF, non-HTML response is labeled with
-            # its own declared type. `ctype` is guaranteed non-empty on the
-            # else side (the `or` branch below required it truthy to enter
-            # this block at all), so no `ctype or ...` fallback is needed.
-            if is_pdf or (ctype and ctype not in _HTML_TYPES):
-                marker = "[application/pdf]" if is_pdf else f"[{ctype}]"
+            # kind == "pdf" (the %PDF- sniff, or the declared-type shortcut)
+            # takes priority over the declared content-type: a PDF
+            # mislabeled as text/html (or unlabeled) must never fall
+            # through to HTML extraction below, or its raw bytes become
+            # the excerpt and its "extracted text" warm-writes the shared
+            # web_fetch cache with binary garbage. Matches the spec's own
+            # detection rule ("the sniff wins over the declared type" §1):
+            # when kind is "pdf" the marker is always "[application/pdf]",
+            # regardless of what the server claimed; only a genuinely
+            # non-PDF, non-HTML response is labeled with its own declared
+            # type. `ctype` is guaranteed non-empty on the else side (the
+            # `or` branch below required it truthy to enter this block at
+            # all), so no `ctype or ...` fallback is needed. Deliberately
+            # NOT generalized to "any recognized binary kind" (binary-fetch
+            # design doc non-goal): a page whose body sniffs as image/zip
+            # but is declared text/html (or unlabeled) is NOT rescued into
+            # a marker here -- it falls through to the HTML/decode path
+            # below exactly as it did before kind detection existed for
+            # those other kinds, keeping crawl's pre-existing mojibake-
+            # decode behavior for that edge case unchanged.
+            if kind == "pdf" or (ctype and ctype not in _HTML_TYPES):
+                marker = "[application/pdf]" if kind == "pdf" else f"[{ctype}]"
                 pages.append({"url": final_url, "title": "", "excerpt": "", "marker": marker})
                 listed.add(final_norm)
                 continue
@@ -1422,13 +1725,21 @@ def web_crawl(
             except Exception:  # noqa: BLE001 — keep whatever was collected
                 pass
             try:
+                # kind deliberately NOT passed here (see the comment on the
+                # marker branch above): crawl never rescues a sniffed
+                # non-PDF binary kind into metadata extraction either.
                 full_text = _extract_text(body, headers.get("content-type", ""))
             except LocalToolError:
                 full_text = ""
-            if full_text:
+            if full_text and kind not in ("image", "zip", "audio"):
                 # Parity with web_fetch: a body already sliced to FETCH_MAX_BYTES
                 # must carry the same marker web_fetch would have appended, or a
                 # default web_fetch() cache hit silently hands back a cut page.
+                # Sniffed binary kinds are excluded from the warm-write
+                # (task-3280 / Qodo PR #1442): crawl's mojibake decode of a
+                # mislabeled binary must not occupy the cache key web_fetch
+                # reads, or web_fetch returns garbage instead of its binary
+                # metadata shape for the whole cache TTL.
                 cache_text = full_text
                 if truncated:
                     cache_text += f"\n\n[... truncated: response exceeded max_bytes={FETCH_MAX_BYTES} ...]"
