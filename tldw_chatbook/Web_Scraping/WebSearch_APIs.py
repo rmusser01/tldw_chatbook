@@ -2631,7 +2631,9 @@ def search_web_brave(
         "safeSearch": "Moderate",
     }
 
-    response = requests.get(search_url, headers=headers, params=params)
+    # task-3060: bound worst-case latency -- an unresponsive Brave endpoint
+    # must not hang perform_websearch (and the deep-search pipeline) indefinitely.
+    response = requests.get(search_url, headers=headers, params=params, timeout=30)
     response.raise_for_status()
     # Response: https://api.search.brave.com/app/documentation/web-search/responses#WebSearchApiResponse
     brave_search_results = response.json()
@@ -2788,7 +2790,9 @@ def search_web_duckduckgo(
     results: list[dict[str, str]] = []
 
     for _ in range(5):
-        response = requests.post("https://html.duckduckgo.com/html", data=payload)
+        # task-3060: bound worst-case latency per bootstrap/pagination call
+        # (this loop can issue up to 5 requests.post calls, all this one site).
+        response = requests.post("https://html.duckduckgo.com/html", data=payload, timeout=30)
         resp_content = response.content
         if b"No  results." in resp_content:
             return results
@@ -3081,7 +3085,9 @@ def search_web_google(
         logger.info(f"Prepared parameters for Google Search: {params}")
 
         # Make the API call
-        response = requests.get(search_url, params=params)
+        # task-3060: bound worst-case latency -- an unresponsive Google CSE
+        # endpoint must not hang perform_websearch indefinitely.
+        response = requests.get(search_url, params=params, timeout=30)
         response.raise_for_status()
         google_search_results = response.json()
 
@@ -3282,7 +3288,9 @@ def search_web_kagi(query: str, limit: int = 10) -> Dict:
     endpoint = f"{search_url}/search"
     params = {"q": query, "limit": limit}
 
-    response = requests.get(endpoint, headers=headers, params=params)
+    # task-3060: bound worst-case latency -- an unresponsive Kagi endpoint
+    # must not hang perform_websearch indefinitely.
+    response = requests.get(endpoint, headers=headers, params=params, timeout=30)
     response.raise_for_status()
     logger.debug(response.json())
     return response.json()
@@ -3443,7 +3451,10 @@ def search_web_searx(
         time.sleep(delay)
 
         session = searx_create_session()
-        response = session.get(search_url, headers=headers)
+        # task-3060: bound worst-case latency -- Session.get() does not
+        # inherit a timeout from the Session itself, so it must be passed
+        # per-request like every other engine here.
+        response = session.get(search_url, headers=headers, timeout=30)
         response.raise_for_status()
 
         # Check if the response is JSON
@@ -3728,8 +3739,10 @@ def search_web_tavily(
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:133.0) Gecko/20100101 Firefox/133.0",
         }
 
+        # task-3060: bound worst-case latency -- an unresponsive Tavily
+        # endpoint must not hang perform_websearch indefinitely.
         response = requests.post(
-            tavily_api_url, headers=headers, data=json.dumps(payload)
+            tavily_api_url, headers=headers, data=json.dumps(payload), timeout=30
         )
         response.raise_for_status()
         return response.json()
