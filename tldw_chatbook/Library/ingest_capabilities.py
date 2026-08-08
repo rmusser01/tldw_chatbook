@@ -368,6 +368,16 @@ _TYPE_GROUPS: dict[str, TypeGroupCapabilities] = {
                 enabled_when_values=("parakeet-onnx",),
             ),
             OptionField(
+                name="transcription_precision",
+                label="Parakeet precision",
+                type="select",
+                default="int8",
+                options=("int8", "f32"),
+                depends_on="parakeet_onnx",
+                enabled_when="transcription_provider",
+                enabled_when_values=("parakeet-onnx",),
+            ),
+            OptionField(
                 name="transcription_model",
                 label="Transcription model",
                 type="select",

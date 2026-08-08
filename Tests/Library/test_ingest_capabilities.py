@@ -141,6 +141,7 @@ def test_get_capabilities_audio_video() -> None:
     assert caps.field_names == (
         "transcription_provider",
         "transcription_model_dir",
+        "transcription_precision",
         "transcription_model",
         "language",
         "timestamps",
@@ -162,6 +163,14 @@ def test_get_capabilities_audio_video() -> None:
     assert model_dir_field.default == ""
     assert model_dir_field.enabled_when == "transcription_provider"
     assert model_dir_field.enabled_when_values == ("parakeet-onnx",)
+
+    precision_field = next(
+        f for f in caps.fields if f.name == "transcription_precision"
+    )
+    assert precision_field.options == ("int8", "f32")
+    assert precision_field.default == "int8"
+    assert precision_field.enabled_when == "transcription_provider"
+    assert precision_field.enabled_when_values == ("parakeet-onnx",)
 
     model_field = next(f for f in caps.fields if f.name == "transcription_model")
     assert model_field.options == ("tiny", "base", "small", "medium", "large")

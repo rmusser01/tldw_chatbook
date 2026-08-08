@@ -2369,6 +2369,7 @@ class LibraryIngestQueueMixin:
                 provider=provider,
                 language=flat_opts.get("language"),
                 target_language=target_language,
+                precision=flat_opts.get("transcription_precision"),
             )
             options["transcription_provider"] = route.provider
             selected_model_dir = (

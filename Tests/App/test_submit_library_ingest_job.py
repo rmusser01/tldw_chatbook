@@ -204,6 +204,24 @@ class TestIngestJobOptions:
         assert options["transcription_local_files_only"] is True
         assert options["transcription_batch_route_resolved"] is True
 
+    def test_explicit_parakeet_f32_is_preserved_in_worker_options(self) -> None:
+        app = _minimal_app()
+        job = _make_job(
+            source_path="/tmp/test.mp4",
+            ingest_options={
+                "audio_video": {
+                    "transcription_provider": "parakeet-onnx",
+                    "transcription_precision": "F32",
+                    "language": "de",
+                },
+            },
+        )
+
+        options = app._ingest_job_options(job)
+
+        assert options["transcription_model"] == "nemo-parakeet-tdt-0.6b-v3"
+        assert options["transcription_precision"] == "f32"
+
     def test_parakeet_onnx_defaults_language_to_english(self) -> None:
         app = _minimal_app()
         job = _make_job(
