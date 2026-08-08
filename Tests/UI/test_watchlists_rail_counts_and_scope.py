@@ -174,7 +174,7 @@ async def test_a_check_that_produces_items_updates_the_rail_counts():
 async def test_ingesting_an_item_updates_the_rail_counts():
     """AC#1. Triage moves items out of the unread bucket the rail counts."""
     from tldw_chatbook.UI.Watchlists_Modules.inspector_pane import IngestRequested
-    from tldw_chatbook.UI.Watchlists_Modules.items_pane import ItemsPane
+    from tldw_chatbook.UI.Watchlists_Modules.article_list import ArticleListPane
 
     app = _build_test_app()
     watchlist_id, assigned_id, _unassigned = _seed_two_sources_one_assigned(app)
@@ -197,7 +197,7 @@ async def test_ingesting_an_item_updates_the_rail_counts():
         screen = await _mounted(host, pilot)
         screen.active_section = "items"
         await pilot.pause(0.3)
-        pane = screen.query_one("#watchlists-items-pane", ItemsPane)
+        pane = screen.query_one("#watchlists-items-pane", ArticleListPane)
         for _ in range(40):
             await pilot.pause()
             if pane.items:
@@ -493,7 +493,7 @@ async def test_opening_items_refreshes_the_rail_once_the_user_pauses():
     lag is removed with a debounce rather than the label weakened: a burst of
     opens costs one reload after the burst.
     """
-    from tldw_chatbook.UI.Watchlists_Modules.items_pane import ItemsPane
+    from tldw_chatbook.UI.Watchlists_Modules.article_list import ArticleListPane
 
     app = _build_test_app()
     watchlist_id, assigned_id, _unassigned = _seed_two_sources_one_assigned(app)
@@ -517,7 +517,7 @@ async def test_opening_items_refreshes_the_rail_once_the_user_pauses():
         screen = await _mounted(host, pilot)
         screen.active_section = "items"
         await pilot.pause(0.3)
-        pane = screen.query_one("#watchlists-items-pane", ItemsPane)
+        pane = screen.query_one("#watchlists-items-pane", ArticleListPane)
         for _ in range(60):
             await pilot.pause()
             if len(pane.items) >= 3:

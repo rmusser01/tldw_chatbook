@@ -1235,7 +1235,12 @@ async def test_bracket_toggle_preserves_loaded_sources_items_and_rules_tables():
             return_value=[{"id": "s1", "name": "Feed One", "source_type": "rss"}]
         )
         screen._controller.list_items = AsyncMock(
-            return_value=[{"id": "i1", "title": "Item One", "source_name": "Feed One"}]
+            return_value=[
+                {"id": "i1", "title": "Item One", "source_name": "Feed One",
+                 # The real backend always carries a status; without one the
+                 # reader-set filter (TASK-3072) legitimately hides the row.
+                 "status": "new"}
+            ]
         )
         screen._controller.list_alert_rules = AsyncMock(
             return_value=[{"id": "r1", "name": "Rule One", "condition_type": "no_items"}]
@@ -1243,7 +1248,6 @@ async def test_bracket_toggle_preserves_loaded_sources_items_and_rules_tables():
 
         for section, table_id in (
             ("sources", "#sources-table"),
-            ("items", "#items-table"),
             ("rules", "#rules-table"),
         ):
             screen.query_one(f"#wl-tab-{section}", Button).press()
@@ -1264,6 +1268,30 @@ async def test_bracket_toggle_preserves_loaded_sources_items_and_rules_tables():
             # is reachable again.
             await pilot.press("[")
             await pilot.pause()
+
+        # The items list is a ListView (TASK-3072), so its row count lives in
+        # the pane's rendered items, not a DataTable: same "an unrelated rail
+        # toggle must not empty it" assertion, one level up.
+        from tldw_chatbook.UI.Watchlists_Modules.article_list import ArticleListPane
+
+        screen.query_one("#wl-tab-items", Button).press()
+        await pilot.pause()
+        pane = screen.query_one("#watchlists-items-pane", ArticleListPane)
+        for _ in range(40):
+            await pilot.pause()
+            if pane.displayed_items():
+                break
+        assert len(pane.displayed_items()) == 1, (
+            "items list never loaded its one row"
+        )
+
+        await pilot.press("[")
+        await pilot.pause()
+
+        pane = screen.query_one("#watchlists-items-pane", ArticleListPane)
+        assert len(pane.displayed_items()) == 1, (
+            "items list was emptied by an unrelated left-rail toggle"
+        )
 
 
 @pytest.mark.asyncio
@@ -3212,7 +3240,7 @@ async def test_section_loader_results_landing_in_the_mount_window_still_paint():
     rot.
     """
     from tldw_chatbook.UI.Watchlists_Modules.artifacts_pane import ArtifactsPane
-    from tldw_chatbook.UI.Watchlists_Modules.items_pane import ItemsPane
+    from tldw_chatbook.UI.Watchlists_Modules.items_pane import ItemsPane  # noqa: F401
     from tldw_chatbook.UI.Watchlists_Modules.overview_pane import OverviewPane  # noqa: F401
     from tldw_chatbook.UI.Watchlists_Modules.watchlist_tree import (
         TreeScope,

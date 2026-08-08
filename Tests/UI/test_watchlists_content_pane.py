@@ -325,7 +325,7 @@ async def test_selecting_an_item_renders_it_in_the_content_region():
     from Tests.UI.test_destination_shells import DestinationHarness
     from Tests.UI.app_factory import _build_test_app
     from tldw_chatbook.UI.Watchlists_Modules.content_pane import ContentPane
-    from tldw_chatbook.UI.Watchlists_Modules.items_pane import ItemsPane
+    from tldw_chatbook.UI.Watchlists_Modules.article_list import ArticleListPane
 
     item = {
         "id": 7,
@@ -344,7 +344,7 @@ async def test_selecting_an_item_renders_it_in_the_content_region():
         screen.active_section = "items"
         await pilot.pause(0.2)
 
-        items_pane = screen.query_one("#watchlists-items-pane", ItemsPane)
+        items_pane = screen.query_one("#watchlists-items-pane", ArticleListPane)
         items_pane.items = [item]
         await pilot.pause(0.2)
 
@@ -553,14 +553,14 @@ def _seed_three_items(db):
 
 async def _mount_items_screen(pilot, host, expected_count: int = 3):
     """Shared setup: switch to Items, wait for the seeded items to load."""
-    from tldw_chatbook.UI.Watchlists_Modules.items_pane import ItemsPane
+    from tldw_chatbook.UI.Watchlists_Modules.article_list import ArticleListPane
 
     await pilot.pause(0.2)
     screen = host.screen_stack[-1]
     screen.active_section = "items"
     await pilot.pause(0.3)
 
-    pane = screen.query_one("#watchlists-items-pane", ItemsPane)
+    pane = screen.query_one("#watchlists-items-pane", ArticleListPane)
     for _ in range(40):
         await pilot.pause()
         if len(pane.items) >= expected_count:
@@ -871,7 +871,7 @@ async def test_j_keeps_the_reader_the_pane_selection_and_the_cursor_in_sync():
     ran) and never re-posted `ItemSelected`. Asserts all three agree after
     `j`, and that a subsequent click on the row the reader left IS honoured.
     """
-    from textual.widgets import DataTable, Static
+    from textual.widgets import ListView, Static
 
     from Tests.UI.test_destination_shells import DestinationHarness
     from Tests.UI.app_factory import _build_test_app
@@ -886,11 +886,14 @@ async def test_j_keeps_the_reader_the_pane_selection_and_the_cursor_in_sync():
         screen, pane = await _mount_items_screen(pilot, host)
         items = screen._loaded_items
         content_pane = screen.query_one("#watchlists-content-pane", ContentPane)
-        table = pane.query_one("#items-table", DataTable)
+        # TASK-3072 note: the three items share one day bucket, so the
+        # ListView's child 0 is the date-group header and the rows sit at
+        # indices 1-3 -- every old `cursor_row` assertion shifts by one.
+        list_view = pane.query_one("#items-table", ListView)
 
         pane.select_and_reveal(items[0])
         await pilot.pause(0.3)
-        assert table.cursor_row == 0
+        assert list_view.index == 1
 
         await pilot.press("j")
         await pilot.pause(0.3)
@@ -900,11 +903,11 @@ async def test_j_keeps_the_reader_the_pane_selection_and_the_cursor_in_sync():
         )
         assert pane.selected_item is not None
         assert pane.selected_item["id"] == items[1]["id"], (
-            "ItemsPane.selected_item must follow the reader, not stay stuck "
-            "on the previous item"
+            "ArticleListPane.selected_item must follow the reader, not stay "
+            "stuck on the previous item"
         )
-        assert table.cursor_row == 1, (
-            "the table's cursor must follow the reader too, so the "
+        assert list_view.index == 2, (
+            "the list's cursor must follow the reader too, so the "
             "highlighted row and the open item are never out of sync"
         )
         body = content_pane.query_one("#content-body", Static)
@@ -1005,7 +1008,7 @@ async def test_j_and_k_move_forward_and_back_under_a_status_filter():
         screen, pane = await _mount_items_screen(pilot, host)
         content_pane = screen.query_one("#watchlists-content-pane", ContentPane)
 
-        pane.status_filter = "new"
+        pane.status_filter = "unread"
         await pilot.pause(0.3)
         displayed = pane.displayed_items()
         assert len(displayed) == 3, "all three seeded items are still new"
@@ -1057,7 +1060,7 @@ async def test_the_open_item_survives_a_rebuild_of_the_filtered_table():
     async with host.run_test(size=(180, 50)) as pilot:
         screen, pane = await _mount_items_screen(pilot, host)
 
-        pane.status_filter = "new"
+        pane.status_filter = "unread"
         await pilot.pause(0.3)
         open_item = pane.displayed_items()[0]
 
@@ -1111,46 +1114,58 @@ async def test_k_with_nothing_open_goes_to_the_last_item_not_nowhere():
 
 
 @pytest.mark.asyncio
-async def test_opening_an_item_repaints_its_status_cell_in_the_table():
-    """The Items table never showed what you had read.
+async def test_opening_an_item_repaints_its_row_in_the_list():
+    """The Items list never showed what you had read.
 
-    Rows are built once, in `ItemsPane.compose()`, and the mark-read-on-open
-    path deliberately never recomposes (Task 5: a recompose destroys the live
-    table). So `patch_item`'s in-place mutation was invisible: the Status
-    column read "new" for every item the user had opened until they left the
-    tab. Visible with no filter at all.
+    Rows are built once, in `ArticleListPane.compose()`, and the
+    mark-read-on-open path deliberately never recomposes (Task 5: a recompose
+    destroys the live list). So `patch_item`'s in-place mutation was
+    invisible: the row stayed bold with its unread dot for every item the
+    user had opened until they left the tab. Visible with no filter at all.
+
+    TASK-3072 note: what ItemsPane's Status column said in words, the reader
+    row says in shape -- unread is a leading dot and bold title, read is
+    neither. `_repaint_row` rebuilds the row's `Text` in place from the
+    patched dict, which is what the assertions below read back.
     """
-    from textual.widgets import DataTable
+    from textual.widgets import ListView
 
     from Tests.UI.test_destination_shells import DestinationHarness
     from Tests.UI.app_factory import _build_test_app
-    from tldw_chatbook.UI.Watchlists_Modules.items_pane import ItemsPane
+    from tldw_chatbook.UI.Watchlists_Modules.article_list import (
+        ArticleListPane,
+        _ArticleRow,
+    )
 
     app = _build_test_app()
     db = app.local_watchlists_service._db()
     _seed_three_items(db)
 
+    def _row_text(pane, item_id) -> str:
+        list_view = pane.query_one("#items-table", ListView)
+        for node in list_view.children:
+            if isinstance(node, _ArticleRow) and node.item_id_key == str(item_id):
+                return node.children[0].render().plain
+        raise AssertionError(f"no rendered row for {item_id!r}")
+
     host = DestinationHarness(app, "watchlists_collections")
     async with host.run_test(size=(180, 50)) as pilot:
         screen, pane = await _mount_items_screen(pilot, host)
         items = screen._loaded_items
-        table = pane.query_one("#items-table", DataTable)
-        row_key = str(items[0]["id"])
+        item_id = str(items[0]["id"])
 
-        # The column shows the FILTER's vocabulary, not the stored value
-        # (review wave, Minor 1): the filter above this table has always
-        # offered "Read" for the `reviewed` status, and TASK-2301 is what
-        # first put the two words in the same frame.
-        assert table.get_row(row_key)[2] == "New"
+        assert _row_text(pane, item_id).startswith("● "), (
+            "precondition: an unread row leads with the unread dot"
+        )
 
-        pane.select_item_by_id(row_key)
+        pane.select_item_by_id(item_id)
         await pilot.pause(0.6)
 
-        assert table.get_row(row_key)[2] == "Read", (
-            "the Status cell must show what the user has actually read"
+        assert not _row_text(pane, item_id).startswith("● "), (
+            "the row must stop showing unread the moment the user has read it"
         )
         # And it must have got there WITHOUT a recompose (Task 5's CRITICAL).
-        assert screen.query_one("#watchlists-items-pane", ItemsPane) is pane
+        assert screen.query_one("#watchlists-items-pane", ArticleListPane) is pane
 
 
 @pytest.mark.asyncio
@@ -1270,7 +1285,7 @@ async def test_a_workbench_rebuild_keeps_the_items_filter_search_and_selection()
     """
     from Tests.UI.test_destination_shells import DestinationHarness
     from Tests.UI.app_factory import _build_test_app
-    from tldw_chatbook.UI.Watchlists_Modules.items_pane import ItemsPane
+    from tldw_chatbook.UI.Watchlists_Modules.article_list import ArticleListPane
 
     app = _build_test_app()
     db = app.local_watchlists_service._db()
@@ -1280,7 +1295,7 @@ async def test_a_workbench_rebuild_keeps_the_items_filter_search_and_selection()
     async with host.run_test(size=(180, 50)) as pilot:
         screen, pane = await _mount_items_screen(pilot, host)
 
-        pane.status_filter = "new"
+        pane.status_filter = "unread"
         pane.search_query = "Nav item"
         await pilot.pause(0.4)
         open_item = pane.displayed_items()[0]
@@ -1291,11 +1306,11 @@ async def test_a_workbench_rebuild_keeps_the_items_filter_search_and_selection()
         screen.action_toggle_left_rail()
         await pilot.pause(0.5)
 
-        rebuilt = screen.query_one("#watchlists-items-pane", ItemsPane)
+        rebuilt = screen.query_one("#watchlists-items-pane", ArticleListPane)
         assert rebuilt is not pane, (
             "the precondition: the rail toggle really did rebuild the pane"
         )
-        assert rebuilt.status_filter == "new", "the status filter must survive"
+        assert rebuilt.status_filter == "unread", "the status filter must survive"
         assert rebuilt.search_query == "Nav item", "the search box must survive"
         assert rebuilt.selected_item is not None, "the selection must survive"
         assert rebuilt.selected_item["id"] == open_item["id"]
@@ -1654,7 +1669,7 @@ async def test_pressing_expand_actually_solos_content_and_restores_on_a_second_p
     from Tests.UI.test_destination_shells import DestinationHarness
     from Tests.UI.app_factory import _build_test_app
     from tldw_chatbook.UI.Watchlists_Modules.content_pane import ContentPane
-    from tldw_chatbook.UI.Watchlists_Modules.items_pane import ItemsPane
+    from tldw_chatbook.UI.Watchlists_Modules.article_list import ArticleListPane
     from tldw_chatbook.UI.Watchlists_Modules.region_layout import Region
 
     item = {
@@ -1674,7 +1689,7 @@ async def test_pressing_expand_actually_solos_content_and_restores_on_a_second_p
         screen.active_section = "items"
         await pilot.pause(0.2)
 
-        items_pane = screen.query_one("#watchlists-items-pane", ItemsPane)
+        items_pane = screen.query_one("#watchlists-items-pane", ArticleListPane)
         items_pane.items = [item]
         await pilot.pause(0.2)
         items_pane.select_item_by_id("11")
@@ -2605,7 +2620,7 @@ async def test_selecting_an_html_item_shows_readable_prose_in_the_mounted_reader
     from Tests.UI.test_destination_shells import DestinationHarness
     from Tests.UI.app_factory import _build_test_app
     from tldw_chatbook.UI.Watchlists_Modules.content_pane import ContentPane
-    from tldw_chatbook.UI.Watchlists_Modules.items_pane import ItemsPane
+    from tldw_chatbook.UI.Watchlists_Modules.article_list import ArticleListPane
 
     item = {
         "id": 9,
@@ -2624,7 +2639,7 @@ async def test_selecting_an_html_item_shows_readable_prose_in_the_mounted_reader
         screen.active_section = "items"
         await pilot.pause(0.2)
 
-        items_pane = screen.query_one("#watchlists-items-pane", ItemsPane)
+        items_pane = screen.query_one("#watchlists-items-pane", ArticleListPane)
         items_pane.items = [item]
         await pilot.pause(0.2)
         items_pane.select_item_by_id("9")

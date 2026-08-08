@@ -22,8 +22,9 @@ path, which calls `_refresh_overview_data()` -- and `overview_data` is
 recompose that replaced the mounted `ItemsPane`/`DataTable` wholesale and
 dropped keyboard focus. `_mark_item_read_on_open` now calls
 `_update_item_status(..., refresh=False, patch_item=item)` instead, patching
-the same dict object already held by `ItemsPane.items` in place rather than
-reloading and recomposing.
+the same dict object already held by `ArticleListPane.items` in place rather
+than reloading and recomposing. (TASK-3072 later swapped the pane itself:
+`ArticleListPane` + `ListView` now sit where `ItemsPane` + `DataTable` did.)
 """
 
 from __future__ import annotations
@@ -31,13 +32,13 @@ from __future__ import annotations
 import asyncio
 
 import pytest
-from textual.widgets import Button, DataTable
+from textual.widgets import Button, ListView
 
 from Tests.UI.test_destination_shells import DestinationHarness
 from Tests.UI.app_factory import _build_test_app
 from tldw_chatbook.Subscriptions.item_persist import persist_subscription_item
 from tldw_chatbook.UI.Watchlists_Modules.content_pane import ContentPane
-from tldw_chatbook.UI.Watchlists_Modules.items_pane import ItemsPane
+from tldw_chatbook.UI.Watchlists_Modules.article_list import ArticleListPane
 
 pytestmark = pytest.mark.unit
 
@@ -83,7 +84,7 @@ async def test_opening_an_item_marks_it_read():
         screen.active_section = "items"
         await pilot.pause(0.3)
 
-        pane = screen.query_one("#watchlists-items-pane", ItemsPane)
+        pane = screen.query_one("#watchlists-items-pane", ArticleListPane)
         for _ in range(40):
             await pilot.pause()
             if pane.items:
@@ -124,7 +125,7 @@ async def test_the_unread_toggle_restores_unread():
         screen.active_section = "items"
         await pilot.pause(0.3)
 
-        pane = screen.query_one("#watchlists-items-pane", ItemsPane)
+        pane = screen.query_one("#watchlists-items-pane", ArticleListPane)
         for _ in range(40):
             await pilot.pause()
             if pane.items:
@@ -208,7 +209,7 @@ async def test_read_status_is_global_across_watchlists():
         screen.active_section = "items"
         await pilot.pause(0.3)
 
-        pane = screen.query_one("#watchlists-items-pane", ItemsPane)
+        pane = screen.query_one("#watchlists-items-pane", ArticleListPane)
         for _ in range(40):
             await pilot.pause()
             if pane.items:
@@ -265,16 +266,23 @@ async def test_selecting_an_item_does_not_break_keyboard_navigation():
     `reactive({}, recompose=True)` on the screen. So EVERY single item
     selection (not just a deliberate button press) forced a full screen
     recompose, which rebuilds every region through its factory and replaces
-    the mounted `ItemsPane`/`DataTable` wholesale. Proven live: with the old
-    behaviour, one `down` press detached the `ItemsPane`, reset the cursor
+    the mounted `ItemsPane`/`DataTable` wholesale (today:
+    `ArticleListPane`/`ListView`, TASK-3072). Proven live: with the old
+    behaviour, one `down` press detached the pane, reset the cursor
     to row 0, cleared screen focus, and a SECOND `down` press did nothing at
     all -- the list became unusable by keyboard after the very first
     selection.
 
-    Drives the real keyboard path (`pilot.press`, a focused `DataTable`)
+    Drives the real keyboard path (`pilot.press`, a focused `ListView`)
     rather than `select_item_by_id` directly, since the bug is specifically
     about what selecting a row does to the table hosting it, not about
     selection itself (already covered by the other tests in this file).
+
+    ListView shape note (TASK-3072): the four seeded items share one
+    `created_at`, so they render under a single date-group header -- child 0
+    is the disabled header, the rows are children 1-4. `_ArticleListView`
+    starts the cursor at the first enabled row, so the first `down` selects
+    "Item 0" (index 1) and the second "Item 1" (index 2).
     """
     app = _build_test_app()
     db = app.local_watchlists_service._db()
@@ -303,15 +311,15 @@ async def test_selecting_an_item_does_not_break_keyboard_navigation():
         screen.active_section = "items"
         await pilot.pause(0.3)
 
-        pane = screen.query_one("#watchlists-items-pane", ItemsPane)
+        pane = screen.query_one("#watchlists-items-pane", ArticleListPane)
         for _ in range(40):
             await pilot.pause()
             if len(pane.items) >= 4:
                 break
         assert len(pane.items) == 4, "all four seeded items must reach the Items pane"
 
-        table = pane.query_one("#items-table", DataTable)
-        table.focus()
+        list_view = pane.query_one("#items-table", ListView)
+        list_view.focus()
         await pilot.pause(0.2)
 
         await pilot.press("down")
@@ -322,29 +330,29 @@ async def test_selecting_an_item_does_not_break_keyboard_navigation():
             await pilot.pause()
 
         assert pane.is_attached, (
-            "selecting a row must not detach the mounted ItemsPane via a "
+            "selecting a row must not detach the mounted ArticleListPane via a "
             "screen-level recompose"
         )
-        assert screen.query_one("#watchlists-items-pane", ItemsPane) is pane, (
-            "the screen must still be hosting the SAME ItemsPane instance, "
+        assert screen.query_one("#watchlists-items-pane", ArticleListPane) is pane, (
+            "the screen must still be hosting the SAME ArticleListPane instance, "
             "not one rebuilt from scratch"
         )
-        current_table = pane.query_one("#items-table", DataTable)
-        assert current_table is table, "the DataTable itself must survive too"
-        assert current_table.has_focus, (
-            "a recompose drops focus entirely -- the table must still be "
+        current_list = pane.query_one("#items-table", ListView)
+        assert current_list is list_view, "the ListView itself must survive too"
+        assert current_list.has_focus, (
+            "a recompose drops focus entirely -- the list must still be "
             "focused after a plain row selection"
         )
-        assert current_table.cursor_row == 1, "the cursor must stay where the user put it"
+        assert current_list.index == 1, "the cursor must stay where the user put it"
 
         await pilot.press("down")
         await pilot.pause(0.3)
-        assert current_table.cursor_row == 2, (
+        assert current_list.index == 2, (
             "a SECOND arrow key must still move the cursor -- before the fix "
-            "this did nothing at all once the table had been replaced"
+            "this did nothing at all once the list had been replaced"
         )
         assert pane.selected_item is not None
-        assert pane.selected_item.get("title") == "Item 2"
+        assert pane.selected_item.get("title") == "Item 1"
 
 
 @pytest.mark.asyncio
@@ -404,7 +412,7 @@ async def test_a_cancelled_mark_read_still_leaves_the_cached_dict_coherent():
         screen.active_section = "items"
         await pilot.pause(0.3)
 
-        pane = screen.query_one("#watchlists-items-pane", ItemsPane)
+        pane = screen.query_one("#watchlists-items-pane", ArticleListPane)
         for _ in range(40):
             await pilot.pause()
             if pane.items:
@@ -458,9 +466,16 @@ async def test_a_cancelled_mark_read_still_leaves_the_cached_dict_coherent():
         # `status="new"`, so a triaged item fell out of the cache entirely
         # and "coherent" could only mean "no longer here". That collapse WAS
         # the defect (the Items tab could not show a triaged item at all), so
-        # the cache now carries every status and this can name the status the
-        # item must hold: `ignored` -- the last dispatched action, not the
-        # superseded Ingest's `ingested`, not the pre-write `new`.
+        # the cache then carried every status and this named the status the
+        # item must hold: `ignored`.
+        #
+        # TASK-3072 changes the contract once more, deliberately: the
+        # reader's "all" is `_READER_ALL_STATUSES` (new/reviewed/ingested) --
+        # an item the user just told the reader to hide does not belong in
+        # the article list, so the reloaded cache legitimately drops it, and
+        # "coherent" is absence again. The DB assertion above is what pins
+        # the write itself landing on `ignored` (the last dispatched action,
+        # not the superseded Ingest's `ingested`, not the pre-write `new`).
         def _cached_status():
             return next(
                 (
@@ -473,13 +488,13 @@ async def test_a_cancelled_mark_read_still_leaves_the_cached_dict_coherent():
 
         for _ in range(40):
             await pilot.pause(0.05)
-            if _cached_status() == "ignored":
+            if screen._loaded_items and _cached_status() is None:
                 break
-        assert _cached_status() == "ignored", (
-            "the reloaded Items cache must agree with the database's final "
-            "('ignored') status -- not the superseded Ingest's write, not "
-            "the original pre-write 'new', and not missing from the cache "
-            "altogether"
+        assert _cached_status() is None, (
+            "the reloaded reader cache must NOT carry the just-ignored item: "
+            "TASK-3072's 'all' is the reader set (new/reviewed/ingested), "
+            "and an item the user hid leaves the article list immediately -- "
+            "the database assertion above is what pins the ignored write"
         )
 
 
@@ -523,7 +538,7 @@ async def test_mark_read_on_open_does_not_overwrite_an_item_ingested_behind_the_
         screen.active_section = "items"
         await pilot.pause(0.3)
 
-        pane = screen.query_one("#watchlists-items-pane", ItemsPane)
+        pane = screen.query_one("#watchlists-items-pane", ArticleListPane)
         for _ in range(40):
             await pilot.pause()
             if pane.items:
@@ -587,7 +602,7 @@ async def test_a_failed_item_status_write_toasts_an_error_and_leaves_the_cache_u
         screen.active_section = "items"
         await pilot.pause(0.3)
 
-        pane = screen.query_one("#watchlists-items-pane", ItemsPane)
+        pane = screen.query_one("#watchlists-items-pane", ArticleListPane)
         for _ in range(40):
             await pilot.pause()
             if pane.items:

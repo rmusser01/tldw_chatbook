@@ -107,6 +107,7 @@ async def test_list_items_delegates_to_local_service():
     local_service.list_items.assert_awaited_once_with(
         source_id=None, status="new", limit=100, offset=0, run_id=None,
         watchlist_id=None, unassigned_only=False, statuses=None,
+        is_flagged=None,
     )
     assert len(result) == 1
 
@@ -125,6 +126,7 @@ async def test_list_items_forwards_watchlist_scope():
     local_service.list_items.assert_awaited_once_with(
         source_id=None, status=None, limit=100, offset=0, run_id=None,
         watchlist_id=3, unassigned_only=False, statuses=["new", "reviewed"],
+        is_flagged=None,
     )
 
 

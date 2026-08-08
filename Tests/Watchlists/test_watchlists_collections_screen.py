@@ -18,7 +18,8 @@ from tldw_chatbook.UI.Watchlists_Modules.inspector_pane import (
     InspectorPane,
     PreviewRequested,
 )
-from tldw_chatbook.UI.Watchlists_Modules.items_pane import ItemSelected, ItemsPane
+from tldw_chatbook.UI.Watchlists_Modules.article_list import ArticleListPane
+from tldw_chatbook.UI.Watchlists_Modules.items_pane import ItemSelected
 from tldw_chatbook.UI.Watchlists_Modules.opml_dialogs import (
     OpmlExportDialog,
     OpmlImportDialog,
@@ -508,7 +509,7 @@ async def test_m_toggles_read_state_on_open_item():
         )
         item_id = _seed_item(db, source_id, "Toggle me")
         await screen._load_items()
-        pane = screen.query_one("#watchlists-items-pane", ItemsPane)
+        pane = screen.query_one("#watchlists-items-pane", ArticleListPane)
         await _wait_for_items(pilot, pane)
         assert pane.items, "precondition: the seeded item reaches the pane"
 
@@ -556,7 +557,7 @@ async def test_m_refuses_on_ingested_item():
         item_id = _seed_item(db, source_id, "Ingested one")
         db.mark_item_status(item_id, "ingested")
         await screen._load_items()
-        pane = screen.query_one("#watchlists-items-pane", ItemsPane)
+        pane = screen.query_one("#watchlists-items-pane", ArticleListPane)
         await _wait_for_items(pilot, pane)
         assert pane.items, "precondition: the ingested item is listed (filter: all)"
 
@@ -596,7 +597,7 @@ async def test_space_opens_next_unread():
         _seed_item(db, source_id, "c", created_at="2026-08-06 09:02:00")
         db.mark_item_status(b_id, "reviewed")
         await screen._load_items()
-        pane = screen.query_one("#watchlists-items-pane", ItemsPane)
+        pane = screen.query_one("#watchlists-items-pane", ArticleListPane)
         await _wait_for_items(pilot, pane)
         assert len(pane.displayed_items()) == 3, "precondition: all three listed"
         displayed = pane.displayed_items()
@@ -636,7 +637,7 @@ async def test_space_at_end_notifies_all_caught_up():
         )
         _seed_item(db, source_id, "only one")
         await screen._load_items()
-        pane = screen.query_one("#watchlists-items-pane", ItemsPane)
+        pane = screen.query_one("#watchlists-items-pane", ArticleListPane)
         await _wait_for_items(pilot, pane)
         pane.select_item_by_id(str(pane.items[0]["id"]))
         await pilot.pause(0.3)
@@ -674,7 +675,7 @@ async def test_space_with_rail_focused_does_not_navigate():
         )
         _seed_item(db, source_id, "unread one")
         await screen._load_items()
-        pane = screen.query_one("#watchlists-items-pane", ItemsPane)
+        pane = screen.query_one("#watchlists-items-pane", ArticleListPane)
         await _wait_for_items(pilot, pane)
         screen.query_one("#wl-tree-node-all", Button).focus()
         await pilot.press("space")
@@ -706,7 +707,7 @@ async def test_space_in_items_search_input_still_types():
         )
         _seed_item(db, source_id, "f o matcher")
         await screen._load_items()
-        pane = screen.query_one("#watchlists-items-pane", ItemsPane)
+        pane = screen.query_one("#watchlists-items-pane", ArticleListPane)
         await _wait_for_items(pilot, pane)
         pane.query_one("#items-search-input", Input).focus()
         await pilot.press("f", "space", "o")
@@ -807,7 +808,7 @@ async def test_mark_all_read_then_undo_roundtrip():
                 created_at=f"2026-08-06 09:0{minute}:00",
             )
         await screen._load_items()
-        pane = screen.query_one("#watchlists-items-pane", ItemsPane)
+        pane = screen.query_one("#watchlists-items-pane", ArticleListPane)
         await _wait_for_items(pilot, pane)
         assert len(pane.displayed_items()) == 3, "precondition"
 
@@ -849,7 +850,7 @@ async def test_undo_failure_keeps_the_batch_for_retry(monkeypatch):
         )
         _seed_item(db, source_id, "item 0", created_at="2026-08-06 09:00:00")
         await screen._load_items()
-        pane = screen.query_one("#watchlists-items-pane", ItemsPane)
+        pane = screen.query_one("#watchlists-items-pane", ArticleListPane)
         await _wait_for_items(pilot, pane)
 
         await pilot.press("a")
@@ -920,7 +921,7 @@ async def test_mark_all_read_scoped_to_watchlist():
         _seed_item(db, outsider, "outsider", created_at="2026-08-06 09:02:00")
 
         screen._apply_tree_scope(TreeScope(kind="watchlist", watchlist_id=watchlist["id"]))
-        pane = screen.query_one("#watchlists-items-pane", ItemsPane)
+        pane = screen.query_one("#watchlists-items-pane", ArticleListPane)
         for _ in range(60):
             await pilot.pause()
             if len(pane.displayed_items()) == 2:

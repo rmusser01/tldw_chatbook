@@ -134,10 +134,10 @@ from ..Watchlists_Modules.content_pane import (
     UnreadToggleRequested,
     ViewSnapshotRequested,
 )
+from ..Watchlists_Modules.article_list import ArticleListPane
 from ..Watchlists_Modules.items_pane import (
     ItemSelected,
     ItemsFilterChanged,
-    ItemsPane,
     NextUnreadRequested,
     RefreshItemsRequested,
 )
@@ -273,6 +273,26 @@ _ITEM_STATUS_DRAIN_GROUP_PREFIX = "wl-item-status-drain:"
 #: A frozenset, since `_blocking_status_for` now asks the backend for the
 #: item's one status and only has to decide whether it is in this set.
 _NON_READ_STATE_STATUSES: frozenset[str] = frozenset({"ingested", "ignored", "error"})
+
+#: Statuses the reader's "All" filter actually queries (TASK-3072). "All" in
+#: a reader means "everything I might still want to read", not "every row in
+#: the table": `ignored` items were explicitly triaged away and `error` rows
+#: are a Runs-tab concern, so neither belongs in the article list.
+_READER_ALL_STATUSES: tuple[str, ...] = ("new", "reviewed", "ingested")
+
+
+def _normalize_items_status_filter(value: Any) -> str:
+    """Map any stored items-filter value onto the reader's Unread/All pair.
+
+    TASK-3072. `ArticleListPane`'s Select only offers `unread`/`all`, but the
+    screen mirrors the filter across workbench rebuilds and the pre-reader
+    `ItemsPane` used per-status values (`new`, `reviewed`, `ignored`, ...).
+    Seeding one of those into the two-option Select would raise, so every
+    read of the mirrored value goes through here: legacy `new` is exactly
+    the reader's `unread`; everything else falls back to `all`.
+    """
+    text = str(value or "").strip().lower()
+    return "unread" if text in {"unread", "new"} else "all"
 
 
 @dataclass(frozen=True)
@@ -1982,15 +2002,20 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         elif self.active_section == "items":
             # Seed the last-loaded rows (Finding 2, fix round 2) — see the
             # note on `sources_pane.sources` above; same rebuild, same gap.
-            items_pane = ItemsPane(id="watchlists-items-pane")
+            items_pane = ArticleListPane(id="watchlists-items-pane")
             items_pane.items = self._loaded_items
             # Seed the filter, the search box and the selection too
             # (whole-branch review, Important) -- the sibling Sources/Runs/
             # Notifications panes above and below already re-seed their
             # selection, and this one seeded only `.items`, so every rebuild
             # silently reset the user's filtered view to "all items, nothing
-            # selected". See `_items_status_filter` in `__init__`.
-            items_pane.status_filter = self._items_status_filter
+            # selected". See `_items_status_filter` in `__init__`. The value
+            # goes through `_normalize_items_status_filter` (TASK-3072): the
+            # mirror can still hold a pre-reader per-status value, which the
+            # two-option Select would reject.
+            items_pane.status_filter = _normalize_items_status_filter(
+                self._items_status_filter
+            )
             items_pane.search_query = self._items_search_query
             items_pane.selected_item = self._selected_content_item
             children.append(items_pane)
@@ -6175,7 +6200,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             if not self.is_mounted:
                 return
             try:
-                items_pane = self.query_one("#watchlists-items-pane", ItemsPane)
+                items_pane = self.query_one("#watchlists-items-pane", ArticleListPane)
             except NoMatches:
                 return
             items_pane.select_and_reveal(item)
@@ -8383,8 +8408,8 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
 
         stop_audio_playback_if_current(Path(str(file_path)))
 
-    def _items_status_query(self) -> str | None:
-        """The status the item PAGE should be fetched for, or `None` for all.
+    def _items_status_kwargs(self) -> dict[str, Any]:
+        """The status predicate the item PAGE should be fetched with.
 
         Review wave, I2. TASK-2301 made `_load_items` ask for every status,
         which fixed "triaged items are unreachable" and quietly broke a
@@ -8398,16 +8423,22 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         which is the defect class this batch exists to remove.
 
         Pushing the active filter into the query makes a page 100 rows OF THE
-        FILTERED STATUS, so "New" can reach unread items however deep they sit.
-        "All statuses" is unchanged: it genuinely wants a mixed page.
+        FILTERED STATUS, so "Unread" can reach unread items however deep they
+        sit. TASK-3072 renames the filter vocabulary to the reader's
+        Unread/All pair (`_normalize_items_status_filter`): "unread" queries
+        `status="new"`; "all" queries `_READER_ALL_STATUSES` -- every status
+        a reader can still act on, excluding `ignored` (triaged away on
+        purpose) and `error` (a Runs-tab concern), which the pre-reader
+        pane's literal "all statuses" mixed in.
 
         The pane keeps its own in-memory filter as well. That is not redundant
         -- it is what pins the currently-open item into a view its status no
         longer matches (see `_filtered_items`), and it is what makes the list
         correct in the window between a filter change and its reload landing.
         """
-        status = str(self._items_status_filter or "all")
-        return None if status == "all" else status
+        if _normalize_items_status_filter(self._items_status_filter) == "unread":
+            return {"status": "new"}
+        return {"statuses": list(_READER_ALL_STATUSES)}
 
     def _items_scope_query(self) -> dict[str, Any]:
         """The tree scope as `list_items` kwargs.
@@ -8460,16 +8491,24 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         this sequence, and an item teleporting to the top of the list when its
         status changed would be its own small lie.
 
+        TASK-3072 removed the old "All statuses covers everything" skip: the
+        reader's "all" is itself a restricted query (`_READER_ALL_STATUSES`),
+        so BOTH filters can now return a page without the open item, and the
+        pin applies unconditionally. Under "all" the common case still
+        short-circuits on the open item being present; the pin only fires
+        when the item genuinely fell out of the query -- e.g. it was ignored
+        while open, which is exactly the "the article I'm reading vanished"
+        moment this method exists to prevent.
+
         Args:
             page: The rows the backend returned for the current filter.
 
         Returns:
-            `page` unchanged when no item is open, when the filter is "All
-            statuses" (the page already covers every status), or when the open
-            item is in it already; otherwise `page` plus that one item.
+            `page` unchanged when no item is open or when the open item is
+            in it already; otherwise `page` plus that one item.
         """
         open_item = self._selected_content_item
-        if open_item is None or self._items_status_query() is None:
+        if open_item is None:
             return page
         open_id = str(open_item.get("id") or "")
         if not open_id or any(str(row.get("id")) == open_id for row in page):
@@ -8486,9 +8525,9 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         try:
             items = await self._controller.list_items(
                 runtime_backend=self.runtime_backend,
-                status=self._items_status_query(),
                 limit=100,
                 offset=0,
+                **self._items_status_kwargs(),
                 **self._items_scope_query(),
             )
             # Mirror to screen state (Finding 2, fix round 2) — see the note
@@ -8499,7 +8538,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             )
             if self._dom_is_live:
                 try:
-                    items_pane = self.query_one("#watchlists-items-pane", ItemsPane)
+                    items_pane = self.query_one("#watchlists-items-pane", ArticleListPane)
                     items_pane.items = self._loaded_items
                 except Exception:
                     pass
@@ -9013,18 +9052,24 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         """Mirror the Items filter/search, and re-page when the STATUS moves.
 
         Review wave, I2. The status is now part of the query
-        (`_items_status_query`), so changing it has to re-fetch or the pane is
+        (`_items_status_kwargs`), so changing it has to re-fetch or the pane is
         left filtering the previous status's page in memory -- which is exactly
         the "the filter can only narrow what was already fetched" defect this
         fix removes.
 
         Gated on the status ACTUALLY changing. This message also fires on every
         keystroke in the search box, which is a purely in-memory filter and
-        must not cost a query per character.
+        must not cost a query per character. Both sides are compared through
+        `_normalize_items_status_filter` (TASK-3072): a pre-reader `new`
+        still sitting in the mirror IS the reader's `unread`, and must not
+        trigger a spurious reload when the pane first posts it.
         """
         event.stop()
-        status_changed = event.status_filter != self._items_status_filter
-        self._items_status_filter = event.status_filter
+        incoming = _normalize_items_status_filter(event.status_filter)
+        status_changed = incoming != _normalize_items_status_filter(
+            self._items_status_filter
+        )
+        self._items_status_filter = incoming
         self._items_search_query = event.search_query
         if status_changed:
             # Own group, as in `watch_tree_scope`: an exclusive reload in
@@ -9384,7 +9429,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                     row_key = entity.get("id")
         if row_key is not None:
             try:
-                pane = self.query_one("#watchlists-items-pane", ItemsPane)
+                pane = self.query_one("#watchlists-items-pane", ArticleListPane)
                 pane.update_item_queued_cell(row_key, queued)
             except NoMatches:
                 pass
@@ -9601,7 +9646,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     def _repaint_item_status_cell(self, item_id: Any, status: str) -> None:
         """Push a patched status into the mounted Items table's Status cell."""
         try:
-            pane = self.query_one("#watchlists-items-pane", ItemsPane)
+            pane = self.query_one("#watchlists-items-pane", ArticleListPane)
         except NoMatches:
             return
         pane.update_item_status_cell(item_id, status)
@@ -9913,7 +9958,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         if self.active_section != "items":
             return
         try:
-            pane = self.query_one("#watchlists-items-pane", ItemsPane)
+            pane = self.query_one("#watchlists-items-pane", ArticleListPane)
         except NoMatches:
             return
         items = pane.displayed_items()
@@ -10016,7 +10061,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         if self.active_section != "items":
             return
         try:
-            pane = self.query_one("#watchlists-items-pane", ItemsPane)
+            pane = self.query_one("#watchlists-items-pane", ArticleListPane)
         except NoMatches:
             return
         items = pane.displayed_items()
@@ -10126,7 +10171,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         currently rendered are skipped inside `update_item_status_cell`.
         """
         try:
-            pane = self.query_one("#watchlists-items-pane", ItemsPane)
+            pane = self.query_one("#watchlists-items-pane", ArticleListPane)
         except NoMatches:
             return
         for item in pane.displayed_items():
