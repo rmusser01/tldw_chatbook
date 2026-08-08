@@ -138,6 +138,14 @@ image_generation = [
     # pandas, nltk, scikit-learn, ...) to obtain one HTTP client (task-1262).
     "aiohttp",
 ]
+video_playback = [
+    # In-app video playback (task-3401.9/.10): PyAV decodes frames for the
+    # in-transcript silent preview; textual-canvas backs the full player
+    # screen's scrubber. Both are optional -- surfaces degrade to guidance
+    # (or the OS player) when absent, and video generation never needs them.
+    "av",
+    "textual-canvas",
+]
 svg = [
     "cairosvg",  # SVG rasterization for image attachments; needs the cairo C library (e.g. `brew install cairo`)
 ]

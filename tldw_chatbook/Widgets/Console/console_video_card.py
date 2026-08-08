@@ -23,6 +23,7 @@ from textual.containers import Vertical
 from textual.widgets import Static
 
 from tldw_chatbook.Video_Generation.video_metadata import VideoGenerationMetadata
+from tldw_chatbook.Widgets.Console.console_video_preview import ConsoleVideoPreview
 
 #: Same inline frame color as the rest of native Console's bordered panels
 #: (duplicated locally, same rationale as console_generation_card.py).
@@ -166,6 +167,26 @@ class ConsoleVideoCard(Vertical):
         self.styles.border = ("round", CARD_BORDER_COLOR)
 
     def compose(self) -> ComposeResult:
+        if self.spec.status == "ready" and self.spec.file_path:
+            # Silent in-card preview (task-3401.9): paused by default, never
+            # decoded until an explicit click. Eligibility/cap failures and a
+            # missing av extra render guidance inside the preview area
+            # instead of a player -- never an exception.
+            from tldw_chatbook.Media_Playback.preview_policy import (
+                check_preview_eligibility,
+            )
+
+            eligibility = check_preview_eligibility(
+                duration_seconds=self.spec.meta.duration_seconds,
+                width=self.spec.meta.width,
+                height=self.spec.meta.height,
+            )
+            yield ConsoleVideoPreview(
+                self.spec.file_path,
+                duration_seconds=self.spec.meta.duration_seconds,
+                eligible=eligibility.eligible,
+                ineligible_reason=eligibility.reason,
+            )
         yield Static(
             video_card_status_line(self.spec),
             id=f"console-video-card-status-{self.spec.message_id}",
