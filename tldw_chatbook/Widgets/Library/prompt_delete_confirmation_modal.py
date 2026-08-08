@@ -13,6 +13,8 @@ from textual.widgets import Button, Static
 
 
 ArtifactType = Literal["prompt", "recipe"]
+_ARTIFACT_TYPES = frozenset(("prompt", "recipe"))
+_DISPLAY_NAME_LIMIT = 48
 
 
 @dataclass(frozen=True)
@@ -21,6 +23,15 @@ class PromptDeleteItem:
 
     name: str
     artifact_type: ArtifactType
+
+    def __post_init__(self) -> None:
+        """Fail closed for data outside the supported Prompt/Recipe contract."""
+        if type(self.name) is not str:
+            raise TypeError("Prompt deletion item names must be strings.")
+        if type(self.artifact_type) is not str:
+            raise TypeError("Prompt deletion item artifact types must be strings.")
+        if self.artifact_type not in _ARTIFACT_TYPES:
+            raise ValueError("Prompt deletion item artifact type must be prompt or recipe.")
 
 
 @dataclass(frozen=True)
@@ -34,10 +45,18 @@ class PromptDeleteRequest:
 
     def __post_init__(self) -> None:
         """Reject incomplete or mutable presentation requests at the boundary."""
+        if type(self.items) is not tuple:
+            raise TypeError("Prompt deletion confirmation items must be an immutable tuple.")
         if not self.items:
             raise ValueError("Prompt deletion confirmation requires at least one item.")
-        if not isinstance(self.items, tuple):
-            raise TypeError("Prompt deletion confirmation items must be an immutable tuple.")
+        if not all(isinstance(item, PromptDeleteItem) for item in self.items):
+            raise TypeError("Prompt deletion confirmation items must be PromptDeleteItem values.")
+        if self.fingerprint is not None and type(self.fingerprint) is not str:
+            raise TypeError("Prompt deletion confirmation fingerprints must be strings or None.")
+        if type(self.dirty) is not bool:
+            raise TypeError("Prompt deletion confirmation dirty state must be a bool.")
+        if type(self.preview_limit) is not int:
+            raise TypeError("Prompt deletion confirmation preview_limit must be an integer.")
         if self.preview_limit < 1:
             raise ValueError("Prompt deletion confirmation preview_limit must be positive.")
 
@@ -48,6 +67,13 @@ class PromptDeleteDecision:
 
     confirmed: bool
     fingerprint: str | None
+
+    def __post_init__(self) -> None:
+        """Keep the dismissal result as strictly typed as the opening request."""
+        if type(self.confirmed) is not bool:
+            raise TypeError("Prompt deletion decisions must have a bool confirmation.")
+        if self.fingerprint is not None and type(self.fingerprint) is not str:
+            raise TypeError("Prompt deletion decision fingerprints must be strings or None.")
 
 
 class PromptDeleteConfirmationModal(ModalScreen[PromptDeleteDecision]):
@@ -124,16 +150,20 @@ class PromptDeleteConfirmationModal(ModalScreen[PromptDeleteDecision]):
         if self._is_single:
             item = self.request.items[0]
             artifact_label = item.artifact_type.title()
+            display_name = _display_name(item.name)
             if self.request.dirty:
                 return (
-                    f'The saved {artifact_label} "{item.name}" and this unsaved working copy '
+                    f'The saved {artifact_label} "{display_name}" and this unsaved working copy '
                     "will be discarded."
                 )
-            return f'The saved {artifact_label} "{item.name}" will be discarded.'
+            return f'The saved {artifact_label} "{display_name}" will be discarded.'
         return f"This will discard {self._plural_count_copy()}."
 
     def _preview_copy(self) -> str:
-        names = [item.name for item in self.request.items[: self.request.preview_limit]]
+        names = [
+            _display_name(item.name)
+            for item in self.request.items[: self.request.preview_limit]
+        ]
         hidden_count = len(self.request.items) - len(names)
         if hidden_count:
             names.append(f"and {hidden_count} more")
@@ -164,3 +194,11 @@ class PromptDeleteConfirmationModal(ModalScreen[PromptDeleteDecision]):
         elif event.button.id == "prompt-delete-confirm":
             event.stop()
             self.dismiss(PromptDeleteDecision(True, self.request.fingerprint))
+
+
+def _display_name(name: str) -> str:
+    """Keep untrusted names literal and compact enough for a terminal modal."""
+    normalized = " ".join(name.splitlines())
+    if len(normalized) <= _DISPLAY_NAME_LIMIT:
+        return normalized
+    return normalized[: _DISPLAY_NAME_LIMIT - 1].rstrip() + "…"
