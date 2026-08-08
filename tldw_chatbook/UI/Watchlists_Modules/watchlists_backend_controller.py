@@ -320,6 +320,13 @@ class WatchlistsBackendController:
         The write behind the reader's `s` key and Star button; the id
         forwards untouched (the scope service denamespaces it, exactly as
         `update_item_status`'s does).
+
+        Args:
+            runtime_backend: Target backend, or `None` for the configured
+                default; normalized by `_normalize_backend`.
+            item_id: Item identifier, namespaced
+                (``local:watchlist_item:7``) or bare.
+            flagged: `True` to star the item, `False` to unstar it.
         """
         backend = self._normalize_backend(runtime_backend)
         await self._maybe_await(

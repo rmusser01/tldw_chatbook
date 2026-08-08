@@ -16,7 +16,6 @@ from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlsplit
 
 from loguru import logger
 from rich.markup import escape as escape_markup
@@ -77,11 +76,12 @@ from ...Subscriptions.feed_server import (
     configured_bind_and_port,
     is_loopback_bind,
 )
+from ...Subscriptions.html_text import strip_control_characters
 from ...Subscriptions.watchlist_bundle_service import WatchlistBundleService
 from ...Subscriptions.watchlist_normalizers import normalize_watchlist_item
 from ...Third_Party.textual_fspicker import FileSave, SelectDirectory
 from ...TTS.audio_player import play_audio_file
-from ...Utils.input_validation import sanitize_string, validate_text_input
+from ...Utils.input_validation import sanitize_string, validate_text_input, validate_url
 from ...Utils.path_validation import validate_path_simple
 from ...Widgets.confirmation_dialog import ConfirmationDialog
 from ...Widgets.prune_safe_select import PruneSafeSelect
@@ -10174,6 +10174,16 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             pane = None
         if pane is not None:
             pane.update_item_starred_cell(item_id, target)
+        # The reader's Star button flips HERE, on the success path only --
+        # never optimistically in the pane (PR #1430 review): after a failed
+        # write there is no patch and no flip, so the label can never show
+        # the opposite of `item["is_flagged"]` until the next open.
+        try:
+            star_button = self.query_one("#content-star-button", Button)
+        except NoMatches:
+            star_button = None
+        if star_button is not None:
+            star_button.label = "★ Starred" if target else "☆ Star"
         self._request_tree_counts_refresh()
 
     def action_open_in_browser(self) -> None:
@@ -10196,17 +10206,21 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         self._open_item_in_browser(item)
 
     def _open_item_in_browser(self, item: dict[str, Any]) -> None:
-        """`webbrowser.open`, http/https only.
+        """`webbrowser.open`, gated by the shared URL validator.
 
         A feed item's `url` is a REMOTE-derived string and `webbrowser.open`
-        hands it to the OS: a `javascript:`/`file:`/empty URL is refused
-        with a notification, never passed on -- validate at this boundary,
-        per `input_validation`'s convention that the sink's own contract
-        decides what is acceptable.
+        hands it to the OS, so validation runs at this boundary through
+        `input_validation.validate_url` -- the centralized validator: only
+        well-formed http/https URLs with a valid host pass, and
+        whitespace/backslash/credential/malformed-host shapes are refused
+        with a notification, never passed on.
         """
         notify = getattr(self.app_instance, "notify", None)
-        url = str(item.get("url") or "").strip()
-        if not url or urlsplit(url).scheme.lower() not in ("http", "https"):
+        # Control characters first (a feed URL is remote-derived text, and
+        # the OS open is a shell-shaped sink on some platforms), then the
+        # centralized validator decides what is openable.
+        url = strip_control_characters(str(item.get("url") or "")).strip()
+        if not url or not validate_url(url):
             if callable(notify):
                 notify(
                     "This item has no web URL to open (http/https only).",

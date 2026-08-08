@@ -663,6 +663,12 @@ async def test_s_toggles_star_on_the_open_item():
             "the row's star repaints in place -- no recompose"
         )
 
+        from textual.widgets import Button
+
+        assert str(screen.query_one("#content-star-button", Button).label) == (
+            "★ Starred"
+        ), "the reader's button flips on the success path, never optimistically"
+
         for _ in range(80):
             await pilot.pause(0.05)
             if screen._tree_counts.get(STARRED_BUCKET, {}).get("unread") == 1:
@@ -679,6 +685,7 @@ async def test_s_toggles_star_on_the_open_item():
             if _flagged_value(db, item_id) == 0:
                 break
         assert _flagged_value(db, item_id) == 0, "a second `s` must unstar"
+        assert str(screen.query_one("#content-star-button", Button).label) == "☆ Star"
 
 
 @pytest.mark.asyncio
@@ -810,6 +817,31 @@ async def test_o_refuses_a_non_http_url(monkeypatch):
         assert app.notify.called, "a refusal must say so"
         _args, kwargs = app.notify.call_args
         assert kwargs.get("severity") == "warning"
+
+
+@pytest.mark.asyncio
+async def test_o_strips_control_bytes_from_the_url_before_opening(monkeypatch):
+    """A feed URL is remote-derived text: control bytes are stripped before
+    the (already scheme- and host-validated) string reaches the OS."""
+    opened: list[str] = []
+    monkeypatch.setattr("webbrowser.open", opened.append)
+
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+        db = app.watchlist_bundle_service._db
+        await _open_item_and_get_url(
+            pilot, screen, db, "Control bytes", "https://example.com/po\x07st"
+        )
+
+        await pilot.press("o")
+        for _ in range(20):
+            await pilot.pause()
+            if opened:
+                break
+        assert opened == ["https://example.com/post"]
 
 
 @pytest.mark.asyncio

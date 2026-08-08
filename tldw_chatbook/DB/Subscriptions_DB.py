@@ -2156,10 +2156,14 @@ class SubscriptionsDB(BaseDB):
         The Starred rail node's badge (TASK-3072). Status-agnostic on
         purpose: starring is orthogonal to triage, and a badge that shrank
         as the user read their starred items would read as data loss.
+
+        Returns:
+            The count of rows with ``is_flagged = 1``.
         """
-        row = self.conn.execute(
-            "SELECT COUNT(*) FROM subscription_items WHERE is_flagged = 1"
-        ).fetchone()
+        with self.transaction() as conn:
+            row = conn.execute(
+                "SELECT COUNT(*) FROM subscription_items WHERE is_flagged = 1"
+            ).fetchone()
         return int(row[0]) if row else 0
 
     def insert_briefing(self, watchlist_id: int, status: str = "generating") -> int:

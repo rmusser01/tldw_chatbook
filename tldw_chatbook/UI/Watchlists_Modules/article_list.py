@@ -428,6 +428,14 @@ class ArticleListPane(RecomposeCaptureGuard, Vertical):
         self._repaint_row(item_id, is_flagged=starred)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
+        """Route the strip's one button; stop every press from bubbling.
+
+        Args:
+            event: The button press; only `#items-refresh-button` carries a
+                meaning here (it posts `RefreshItemsRequested`), and every
+                id is stopped so a stray press cannot reach the screen's own
+                `Button.Pressed` handlers.
+        """
         button_id = str(event.button.id)
         if button_id == "items-refresh-button":
             self.post_message(RefreshItemsRequested())
@@ -506,6 +514,16 @@ class ArticleListPane(RecomposeCaptureGuard, Vertical):
                 break
 
     def watch_selected_item(self, item: dict[str, Any] | None) -> None:
+        """Mirror a selection change to the screen as `ItemSelected`.
+
+        `is_mounted`-gated for the same reason as `_post_filter_changed`:
+        the screen seeds this reactive on a pane it has only just built, and
+        echoing the seed straight back is noise.
+
+        Args:
+            item: The newly selected normalized item dict, or `None` when
+                the selection cleared.
+        """
         if self.is_mounted:
             self.post_message(ItemSelected(item))
 

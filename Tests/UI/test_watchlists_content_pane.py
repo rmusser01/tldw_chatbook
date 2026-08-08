@@ -2685,11 +2685,11 @@ async def test_the_star_button_reflects_the_open_items_state():
 
 
 @pytest.mark.asyncio
-async def test_the_star_button_posts_the_toggle_and_flips_its_label():
+async def test_the_star_button_posts_the_toggle_without_an_optimistic_flip():
     """Pressing Star posts `StarToggleRequested` with the full item (the same
-    message the screen's `s` handler serves) and flips its own label
-    optimistically -- the authoritative dict patch lands screen-side, and
-    the next open re-seeds from it."""
+    message the screen's `s` handler serves) and does NOT flip its own
+    label: the write is async and can fail, so the flip lands on the
+    screen's success path -- the label can never lie about a failed write."""
     from textual.app import App
     from textual.widgets import Button
 
@@ -2726,8 +2726,8 @@ async def test_the_star_button_posts_the_toggle_and_flips_its_label():
             "pressing the button must post StarToggleRequested exactly once, "
             "carrying the open item"
         )
-        assert str(button.label) == "★ Starred", (
-            "the flip is optimistic; the dict patch lands screen-side"
+        assert str(button.label) == "☆ Star", (
+            "no optimistic flip: the screen flips the label on write success"
         )
 
 

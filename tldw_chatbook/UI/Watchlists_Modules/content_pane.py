@@ -361,7 +361,12 @@ class ContentPane(RecomposeCaptureGuard, Vertical):
     position: reactive[str] = reactive("")
 
     def watch_position(self, position: str) -> None:
-        """Re-render the footer Static in place -- never a reader recompose."""
+        """Re-render the footer Static in place -- never a reader recompose.
+
+        Args:
+            position: The screen-computed "N of M" string ("" clears the
+                footer); pushed by the screen on every selection change.
+        """
         try:
             self.query_one("#content-position", Static).update(position)
         except NoMatches:
@@ -411,10 +416,9 @@ class ContentPane(RecomposeCaptureGuard, Vertical):
                 compact=True,
             )
             # TASK-3072 plan task 7: the same star the `s` key toggles, as a
-            # button. The label reflects the open item's state on compose;
-            # the press flips it optimistically in `on_button_pressed` (the
-            # authoritative dict patch lands screen-side, and the next open
-            # re-seeds from it).
+            # button. The label reflects the open item's state on compose and
+            # flips on the screen's SUCCESS path (see `on_button_pressed` --
+            # no optimistic flip, so it can never lie after a failed write).
             yield Button(
                 "★ Starred" if self.item.get("is_flagged") else "☆ Star",
                 id="content-star-button",
@@ -506,15 +510,11 @@ class ContentPane(RecomposeCaptureGuard, Vertical):
             self.post_message(UnreadToggleRequested(self.item))
         elif event.button.id == "content-star-button":
             event.stop()
+            # No optimistic label flip (PR #1430 review): the write is async
+            # and can fail, and a label flipped on hope would then lie until
+            # the next open. The screen flips the label on the SUCCESS path
+            # (`_toggle_star_worker`), after the shared item dict is patched.
             self.post_message(StarToggleRequested(self.item))
-            # Optimistic flip: no recompose (the reader must not tear down
-            # mid-press), and the shared item dict is patched screen-side on
-            # success -- the next open re-seeds the label from it.
-            event.button.label = (
-                "☆ Star"
-                if str(event.button.label).startswith("★")
-                else "★ Starred"
-            )
         elif event.button.id == "content-open-button":
             event.stop()
             self.post_message(OpenInBrowserRequested(self.item))
