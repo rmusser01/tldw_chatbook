@@ -33,6 +33,7 @@ from tldw_chatbook.TTS.adapters.audio_cpp import AudioCppAdapter
 from tldw_chatbook.TTS.audio_cpp_config import AudioCppConfig
 from tldw_chatbook.TTS.audio_cpp_supervisor import (
     AudioCppGenerationHooks,
+    AudioCppProcessAdmissionSnapshot,
     AudioCppReadyEndpoint,
     AudioCppSupervisor,
     _OwnedAudioCppProcess,
@@ -180,7 +181,17 @@ class _StubSupervisor:
         self.stop_calls: list[int | None] = []
         self.close_calls = 0
         self.process_generation = 0
+        self.lifecycle_epoch = 0
+        self.state = "stopped"
         self.hooks: AudioCppGenerationHooks | None = None
+
+    def admission_snapshot(self) -> AudioCppProcessAdmissionSnapshot:
+        return AudioCppProcessAdmissionSnapshot(
+            lifecycle_epoch=self.lifecycle_epoch,
+            process_generation=self.process_generation,
+            state=self.state,  # type: ignore[arg-type]
+            stage_application_eligible=self.state in {"stopped", "unavailable"},
+        )
 
     async def ensure_running(
         self,
@@ -192,12 +203,14 @@ class _StubSupervisor:
         del require_existing
         self.ensure_calls += 1
         if self.hooks is None:
+            self.state = "starting"
             self.process_generation += 1
             self.hook_factory_calls += 1
             self.hooks = await generation_hooks_factory(self.process_generation)
             if not await self.hooks.health_probe():
                 raise RuntimeError("synthetic health failure")
             await self.hooks.contract_probe()
+            self.state = "running"
         return AudioCppReadyEndpoint(
             base_url=launch.base_url,
             process_generation=self.process_generation,
@@ -223,6 +236,8 @@ class _StubSupervisor:
                 await hooks.cleanup()
             except BaseException:
                 pass
+            self.lifecycle_epoch += 1
+            self.state = "stopped"
 
     async def replace_generation(self) -> None:
         if self.hooks is not None:
@@ -231,6 +246,8 @@ class _StubSupervisor:
                 await hooks.cleanup()
             except BaseException:
                 pass
+        self.lifecycle_epoch += 1
+        self.state = "unavailable"
 
     async def close(self) -> None:
         self.close_calls += 1
@@ -1669,6 +1686,33 @@ class BlockingCloseTransport(httpx.AsyncBaseTransport):
         self.close_count += 1
         self.close_started.set()
         await asyncio.wait_for(self.allow_close.wait(), timeout=1)
+
+
+class GenerationInvalidatingTransport(httpx.AsyncBaseTransport):
+    def __init__(self, private_detail: str) -> None:
+        self.private_detail = private_detail
+        self.block_path: str | None = None
+        self.request_started = asyncio.Event()
+        self.generation_closed = asyncio.Event()
+
+    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        if request.url.path == self.block_path:
+            self.request_started.set()
+            await self.generation_closed.wait()
+            raise RuntimeError(self.private_detail)
+        if request.url.path == "/health":
+            return _streaming_response(_health_body())
+        if request.url.path == "/v1/models":
+            return _streaming_response(_models_body(_model()))
+        if request.url.path == "/v1/audio/speech":
+            return _streaming_response(
+                _wav(),
+                headers={"Content-Type": "audio/wav"},
+            )
+        raise AssertionError(f"unexpected path: {request.url.path}")
+
+    async def aclose(self) -> None:
+        self.generation_closed.set()
 
 
 @pytest.mark.asyncio
@@ -3294,6 +3338,84 @@ async def test_managed_refresh_and_synthesis_ensure_supervisor_running(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "server_json_changed",
+        "server_json_deleted",
+        "binary_changed",
+        "binary_deleted",
+    ],
+)
+async def test_running_generation_keeps_immutable_launch_after_files_change(
+    tmp_path: Path,
+    mutation: str,
+) -> None:
+    supervisor = _StubSupervisor()
+    config = _managed_config(tmp_path)
+    adapter = AudioCppAdapter(
+        config,
+        transport=httpx.MockTransport(_managed_handler),
+        supervisor=supervisor,
+    )
+    try:
+        await adapter.get_catalog(refresh=True)
+        if mutation == "server_json_changed":
+            Path(config.managed_server_json_path).write_text(
+                "not json",
+                encoding="utf-8",
+            )
+        elif mutation == "server_json_deleted":
+            Path(config.managed_server_json_path).unlink()
+        elif mutation == "binary_changed":
+            Path(config.managed_binary_path).chmod(0o600)
+        else:
+            Path(config.managed_binary_path).unlink()
+
+        response = await adapter.synthesize(_speech_request())
+        assert [chunk async for chunk in response.byte_stream] == [_wav()]
+        await response.aclose()
+    finally:
+        await adapter.close()
+
+    assert supervisor.hook_factory_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_new_generation_revalidates_changed_launch_files(tmp_path: Path) -> None:
+    supervisor = _StubSupervisor()
+    config = _managed_config(tmp_path)
+    adapter = AudioCppAdapter(
+        config,
+        transport=httpx.MockTransport(_managed_handler),
+        supervisor=supervisor,
+    )
+    try:
+        await adapter.get_catalog(refresh=True)
+        await supervisor.stop(
+            expected_process_generation=supervisor.process_generation,
+        )
+        Path(config.managed_server_json_path).write_text(
+            "not json",
+            encoding="utf-8",
+        )
+
+        with pytest.raises(TTSOperationError) as raised:
+            await adapter.get_catalog(refresh=True)
+    finally:
+        await adapter.close()
+
+    _assert_operation_error(
+        raised.value,
+        code="configuration_invalid",
+        message="Managed audio.cpp configuration is invalid",
+        retryable=False,
+        recovery_action="open_settings",
+    )
+    assert supervisor.hook_factory_calls == 1
+
+
+@pytest.mark.asyncio
 async def test_passive_catalog_voice_and_capability_reads_do_not_launch(
     tmp_path: Path,
 ) -> None:
@@ -3363,6 +3485,14 @@ async def test_process_generation_change_closes_client_and_clears_catalog_voice_
         assert adapter._voice_cache
 
         await supervisor.replace_generation()
+        stale_catalog = await adapter.get_catalog(refresh=False)
+        stale_voices = await adapter.get_voices("model", refresh=False)
+
+        assert stale_catalog.health == TRANSIENT_HEALTH
+        assert stale_voices == ()
+        assert adapter._voice_cache == {}
+        assert adapter._managed_process_generation is None
+
         await adapter.get_catalog(refresh=True)
 
         assert first_client is not None and first_client.is_closed
@@ -3370,6 +3500,253 @@ async def test_process_generation_change_closes_client_and_clears_catalog_voice_
         assert adapter._voice_cache == {}
         assert adapter._managed_process_generation == 2
     finally:
+        await adapter.close()
+
+
+@pytest.mark.asyncio
+async def test_process_exit_invalidates_catalog_before_output_join_finishes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _Reader:
+        async def read(self, _size: int = -1) -> bytes:
+            return b""
+
+    class _Process:
+        def __init__(self) -> None:
+            self.returncode: int | None = None
+            self.stdout = _Reader()
+            self.stderr = _Reader()
+            self._exited = asyncio.Event()
+
+        async def wait(self) -> int:
+            await self._exited.wait()
+            assert self.returncode is not None
+            return self.returncode
+
+        def exit(self, returncode: int) -> None:
+            self.returncode = returncode
+            self._exited.set()
+
+        def terminate(self) -> None:
+            self.exit(-15)
+
+        def kill(self) -> None:
+            self.exit(-9)
+
+        def close_parent_pipes(self) -> None:
+            return None
+
+    process = _Process()
+
+    async def launch(_launch: Any, _environment: dict[str, str]) -> Any:
+        return _OwnedAudioCppProcess(
+            process=process,
+            close_parent_pipes=process.close_parent_pipes,
+        )
+
+    async def available(_port: int, _timeout: float) -> str:
+        return "available"
+
+    output_join_started = asyncio.Event()
+    release_output_join = asyncio.Event()
+    supervisor = AudioCppSupervisor(
+        source_environment={},
+        process_launcher=launch,
+        port_preflight=available,
+    )
+
+    async def blocked_output_join(_record: Any) -> None:
+        output_join_started.set()
+        await release_output_join.wait()
+
+    monkeypatch.setattr(supervisor, "_join_output_drains", blocked_output_join)
+    adapter = AudioCppAdapter(
+        _managed_config(tmp_path),
+        transport=httpx.MockTransport(_managed_handler),
+        supervisor=supervisor,
+    )
+    try:
+        await adapter.get_catalog(refresh=True)
+        process.exit(12)
+        await asyncio.wait_for(output_join_started.wait(), timeout=1)
+
+        process_snapshot = supervisor.snapshot()
+        catalog = await adapter.get_catalog(refresh=False)
+        assert process_snapshot.state == "unavailable"
+        assert catalog.health == TRANSIENT_HEALTH
+        assert catalog.health.fresh is False
+    finally:
+        release_output_join.set()
+        await adapter.close()
+        await supervisor.close()
+        await supervisor.wait_closed()
+
+
+@pytest.mark.asyncio
+async def test_exit_fences_inflight_refresh_from_republishing_old_generation(
+    tmp_path: Path,
+) -> None:
+    blocked_models = BlockingStream(_models_body(_model()))
+    model_requests = 0
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        nonlocal model_requests
+        if request.url.path == "/health":
+            return _streaming_response(_health_body())
+        if request.url.path == "/v1/models":
+            model_requests += 1
+            if model_requests > 1:
+                return httpx.Response(200, stream=blocked_models)
+            return _streaming_response(_models_body(_model()))
+        raise AssertionError(f"unexpected path: {request.url.path}")
+
+    supervisor = _StubSupervisor()
+    adapter = AudioCppAdapter(
+        _managed_config(tmp_path),
+        transport=httpx.MockTransport(respond),
+        supervisor=supervisor,
+    )
+    refresh = None
+    try:
+        await adapter.get_catalog(refresh=True)
+        refresh = asyncio.create_task(adapter.get_catalog(refresh=True))
+        await blocked_models.started.wait()
+
+        await supervisor.replace_generation()
+        blocked_models.release.set()
+        await refresh
+
+        stale_catalog = await adapter.get_catalog(refresh=False)
+        assert stale_catalog.health == TRANSIENT_HEALTH
+        assert stale_catalog.health.fresh is False
+        assert adapter._managed_process_generation is None
+    finally:
+        blocked_models.release.set()
+        if refresh is not None:
+            await asyncio.gather(refresh, return_exceptions=True)
+        await adapter.close()
+
+
+@pytest.mark.asyncio
+async def test_health_failure_fences_inflight_refresh_publication(
+    tmp_path: Path,
+) -> None:
+    blocked_models = BlockingStream(_models_body(_model()))
+    model_requests = 0
+    health_fails = False
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        nonlocal model_requests
+        if request.url.path == "/health":
+            if health_fails:
+                raise httpx.ConnectError("synthetic health failure", request=request)
+            return _streaming_response(_health_body())
+        if request.url.path == "/v1/models":
+            model_requests += 1
+            if model_requests > 1:
+                return httpx.Response(200, stream=blocked_models)
+            return _streaming_response(_models_body(_model()))
+        raise AssertionError(f"unexpected path: {request.url.path}")
+
+    supervisor = _StubSupervisor()
+    adapter = AudioCppAdapter(
+        _managed_config(tmp_path),
+        transport=httpx.MockTransport(respond),
+        supervisor=supervisor,
+    )
+    refresh = None
+    try:
+        await adapter.get_catalog(refresh=True)
+        bundle = adapter._managed_bundle
+        assert bundle is not None
+        refresh = asyncio.create_task(adapter.get_catalog(refresh=True))
+        await blocked_models.started.wait()
+
+        health_fails = True
+        assert await adapter._probe_managed_health(bundle) is False
+        assert (await adapter.get_catalog(refresh=False)).health == TRANSIENT_HEALTH
+
+        blocked_models.release.set()
+        await refresh
+
+        stale_catalog = await adapter.get_catalog(refresh=False)
+        assert stale_catalog.health == TRANSIENT_HEALTH
+        assert stale_catalog.health.fresh is False
+    finally:
+        blocked_models.release.set()
+        if refresh is not None:
+            await asyncio.gather(refresh, return_exceptions=True)
+        await adapter.close()
+
+
+@pytest.mark.asyncio
+async def test_generation_exit_during_speech_returns_private_context_free_error(
+    tmp_path: Path,
+) -> None:
+    private_detail = "PRIVATE_CLOSED_GENERATION_SPEECH_CLIENT"
+    transport = GenerationInvalidatingTransport(private_detail)
+    supervisor = _StubSupervisor()
+    adapter = AudioCppAdapter(
+        _managed_config(tmp_path),
+        transport=transport,
+        supervisor=supervisor,
+    )
+    speech = None
+    try:
+        await adapter.get_catalog(refresh=True)
+        transport.block_path = "/v1/audio/speech"
+        speech = asyncio.create_task(adapter.synthesize(_speech_request()))
+        await asyncio.wait_for(transport.request_started.wait(), timeout=1)
+
+        await supervisor.replace_generation()
+        with pytest.raises(TTSOperationError) as raised:
+            await speech
+
+        _assert_operation_error(
+            raised.value,
+            code="connection_unavailable",
+            message="The audio.cpp server is unavailable",
+            retryable=True,
+            recovery_action="retry",
+        )
+        assert private_detail not in str(raised.value)
+        assert _exception_graph(raised.value) == [raised.value]
+    finally:
+        transport.generation_closed.set()
+        if speech is not None:
+            await asyncio.gather(speech, return_exceptions=True)
+        await adapter.close()
+
+
+@pytest.mark.asyncio
+async def test_generation_exit_during_catalog_returns_stale_private_free_result(
+    tmp_path: Path,
+) -> None:
+    private_detail = "PRIVATE_CLOSED_GENERATION_CATALOG_CLIENT"
+    transport = GenerationInvalidatingTransport(private_detail)
+    supervisor = _StubSupervisor()
+    adapter = AudioCppAdapter(
+        _managed_config(tmp_path),
+        transport=transport,
+        supervisor=supervisor,
+    )
+    refresh = None
+    try:
+        await adapter.get_catalog(refresh=True)
+        transport.block_path = "/v1/models"
+        refresh = asyncio.create_task(adapter.get_catalog(refresh=True))
+        await asyncio.wait_for(transport.request_started.wait(), timeout=1)
+
+        await supervisor.replace_generation()
+        catalog = await refresh
+
+        assert catalog.health == TRANSIENT_HEALTH
+        assert private_detail not in str(catalog)
+    finally:
+        transport.generation_closed.set()
+        if refresh is not None:
+            await asyncio.gather(refresh, return_exceptions=True)
         await adapter.close()
 
 
@@ -3499,6 +3876,7 @@ async def test_partial_managed_client_construction_rolls_back_every_resource(
     assert process.terminate_calls == 1
     assert process.wait_calls == 1
     assert private_detail not in str(raised.value)
+    assert _exception_graph(raised.value) == [raised.value]
     assert failed_snapshot.state == "unavailable"
     assert failed_snapshot.last_failure is not None
     assert private_detail not in failed_snapshot.last_failure.message

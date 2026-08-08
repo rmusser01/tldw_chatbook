@@ -2,13 +2,15 @@ from __future__ import annotations
 
 import asyncio
 import codecs
+import logging
 import os
 import re
 import time
 import unicodedata
 from collections import deque
 from collections.abc import Awaitable, Callable, Mapping, Set as AbstractSet
-from dataclasses import dataclass
+from contextvars import ContextVar
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal, TypeVar
 from urllib.parse import urlsplit
@@ -49,6 +51,21 @@ _ASSIGNMENT_SECRET_RE = re.compile(
 )
 _BEARER_SECRET_RE = re.compile(r"(?i)(\bbearer\s+)[^\s,;]+")
 _REDACTION = "<redacted>"
+_ASYNCIO_SPAWN_LOG_SUPPRESSION_ACTIVE: ContextVar[bool] = ContextVar(
+    "audio_cpp_asyncio_spawn_log_suppression_active",
+    default=False,
+)
+
+
+class _AsyncioSpawnPrivacyFilter(logging.Filter):
+    """Suppress asyncio records only while it renders the private launch argv."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        del record
+        return not _ASYNCIO_SPAWN_LOG_SUPPRESSION_ACTIVE.get()
+
+
+_ASYNCIO_SPAWN_PRIVACY_FILTER = _AsyncioSpawnPrivacyFilter()
 
 
 @dataclass(frozen=True, slots=True)
@@ -219,6 +236,7 @@ AudioCppProcessState = Literal[
 AudioCppTTSCapability = Literal["available", "not_configured", "unknown"]
 AudioCppContractProbe = Callable[[], Awaitable[AudioCppTTSCapability]]
 AudioCppHealthProbe = Callable[[], Awaitable[bool]]
+AudioCppGenerationInvalidation = Callable[[], None]
 AudioCppGenerationCleanup = Callable[[], Awaitable[None]]
 _PortPreflightResult = Literal["available", "occupied", "ambiguous"]
 _PortPreflight = Callable[[int, float], Awaitable[_PortPreflightResult]]
@@ -262,6 +280,7 @@ class AudioCppGenerationHooks:
     contract_probe: AudioCppContractProbe
     health_probe: AudioCppHealthProbe
     cleanup: AudioCppGenerationCleanup
+    invalidate: AudioCppGenerationInvalidation | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -372,6 +391,8 @@ class _ProcessGeneration:
     terminal_state: AudioCppProcessState = "unavailable"
     failure: AudioCppProcessFailure | None = None
     cleanup_deadline: float | None = None
+    cleanup_deadline_changed: asyncio.Event = field(default_factory=asyncio.Event)
+    invalidation_called: bool = False
     cleanup_called: bool = False
     parent_pipes_closed: bool = False
 
@@ -416,16 +437,23 @@ async def _default_process_launcher(
     launch: AudioCppManagedLaunchConfig,
     child_environment: dict[str, str],
 ) -> _OwnedAudioCppProcess:
-    process = await asyncio.create_subprocess_exec(
-        str(launch.binary_path),
-        "--config",
-        str(launch.server_json_path),
-        cwd=str(launch.working_directory),
-        env=child_environment,
-        stdin=asyncio.subprocess.DEVNULL,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
+    asyncio_logger = logging.getLogger("asyncio")
+    if _ASYNCIO_SPAWN_PRIVACY_FILTER not in asyncio_logger.filters:
+        asyncio_logger.addFilter(_ASYNCIO_SPAWN_PRIVACY_FILTER)
+    suppression_token = _ASYNCIO_SPAWN_LOG_SUPPRESSION_ACTIVE.set(True)
+    try:
+        process = await asyncio.create_subprocess_exec(
+            str(launch.binary_path),
+            "--config",
+            str(launch.server_json_path),
+            cwd=str(launch.working_directory),
+            env=child_environment,
+            stdin=asyncio.subprocess.DEVNULL,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+    finally:
+        _ASYNCIO_SPAWN_LOG_SUPPRESSION_ACTIVE.reset(suppression_token)
     return _OwnedAudioCppProcess(
         process=process,
         close_parent_pipes=lambda: _close_process_parent_pipes(process),
@@ -489,6 +517,7 @@ class AudioCppSupervisor:
         self._startup_task: asyncio.Task[AudioCppReadyEndpoint] | None = None
         self._stop_task: asyncio.Task[None] | None = None
         self._close_task: asyncio.Task[None] | None = None
+        self._shutdown_started = False
         self._closed = False
 
     def snapshot(self) -> AudioCppProcessSnapshot:
@@ -514,6 +543,7 @@ class AudioCppSupervisor:
             and self._startup_task is None
             and self._stop_task is None
             and self._close_task is None
+            and not self._shutdown_started
             and not self._closed
         )
         return AudioCppProcessAdmissionSnapshot(
@@ -531,22 +561,42 @@ class AudioCppSupervisor:
         require_existing: AudioCppProcessAdmissionSnapshot | None = None,
     ) -> AudioCppReadyEndpoint:
         """Return the current ready generation or share one lazy startup."""
+        cleanup_monitor: asyncio.Task[None] | None = None
         async with self._lock:
-            if self._closed:
+            if self._closed or self._shutdown_started:
                 raise _operation_error(
                     _failure_for(_PROCESS_EXITED_FAILURE, self._process_generation)
                 )
+            active_generation = self._generation
+            if (
+                active_generation is not None
+                and self._state in ("starting", "running", "unhealthy", "draining")
+                and not active_generation.expected_exit
+                and (
+                    active_generation.owned.process.returncode is not None
+                    or active_generation.process_exited.is_set()
+                )
+            ):
+                failure = self._publish_process_exited_locked(active_generation)
+                raise _operation_error(failure)
             if require_existing is not None and not self._matches_admission_locked(
                 require_existing
             ):
                 raise _AudioCppGenerationChanged
-            if self._state in ("draining", "stopping"):
+            if self._state == "unavailable" and self._generation is not None:
+                cleanup_monitor = self._generation.exit_monitor
+                assert cleanup_monitor is not None
+                generation = None
+                startup_task = None
+            elif self._state == "draining" and require_existing is not None:
+                return self._ready_endpoint_locked()
+            elif self._state in ("draining", "stopping"):
                 raise TTSProviderReconfiguringError(
                     "The audio.cpp provider is reconfiguring"
                 )
-            if self._state == "running" and self._generation is not None:
+            elif self._state == "running" and self._generation is not None:
                 return self._ready_endpoint_locked()
-            if self._state == "unhealthy" and self._generation is not None:
+            elif self._state == "unhealthy" and self._generation is not None:
                 generation = self._generation
                 startup_task = None
             elif self._startup_task is not None:
@@ -567,6 +617,14 @@ class AudioCppSupervisor:
                 )
                 self._startup_task = startup_task
                 generation = None
+
+        if cleanup_monitor is not None:
+            await asyncio.shield(cleanup_monitor)
+            return await self.ensure_running(
+                launch,
+                generation_hooks_factory=generation_hooks_factory,
+                require_existing=require_existing,
+            )
 
         if generation is not None:
             healthy = await asyncio.shield(self._shared_health_probe(generation))
@@ -603,6 +661,10 @@ class AudioCppSupervisor:
     ) -> None:
         """Stop only the accepted exact owned generation and join cleanup."""
         async with self._lock:
+            self._adopt_cleanup_deadline_locked(
+                self._generation,
+                current_shutdown_deadline(),
+            )
             if expected_process_generation is not None and (
                 self._generation is None
                 or self._generation.generation != expected_process_generation
@@ -617,6 +679,55 @@ class AudioCppSupervisor:
                 )
             task = self._stop_task
         await join_retained_task(task)
+
+    async def begin_terminal_shutdown(self, deadline: float | None) -> None:
+        """Seal startup and propagate the outer deadline to retained cleanup."""
+        async with self._lock:
+            if not self._shutdown_started:
+                self._shutdown_started = True
+                self._lifecycle_epoch += 1
+                self._state = "stopping"
+                self._endpoint = None
+                self._tts_capability = "unknown"
+                self._consecutive_health_failures = 0
+                self._observation_version += 1
+            record = self._generation
+            self._adopt_cleanup_deadline_locked(record, deadline)
+            if record is not None:
+                record.expected_exit = True
+                record.terminal_state = "stopped"
+                record.failure = None
+            startup = self._startup_task
+        if startup is not None and not startup.done():
+            startup.cancel()
+            await asyncio.gather(startup, return_exceptions=True)
+
+    async def wait_for_stage_application_boundary(self) -> None:
+        """Wait for temporary Stopped/Unavailable cleanup ownership to settle."""
+        while True:
+            async with self._lock:
+                if self._state not in {"stopped", "unavailable"}:
+                    return
+                tasks = tuple(
+                    task
+                    for task in (
+                        (
+                            self._generation.exit_monitor
+                            if self._generation is not None
+                            else None
+                        ),
+                        self._startup_task,
+                        self._stop_task,
+                        self._close_task,
+                    )
+                    if task is not None and not task.done()
+                )
+                if not tasks:
+                    return
+            await asyncio.gather(
+                *(asyncio.shield(task) for task in tasks),
+                return_exceptions=True,
+            )
 
     async def close(self) -> None:
         """Perform retained terminal cleanup exactly once."""
@@ -644,8 +755,18 @@ class AudioCppSupervisor:
         return (
             snapshot.lifecycle_epoch == self._lifecycle_epoch
             and snapshot.process_generation == self._process_generation
-            and snapshot.state == self._state
-            and self._state in ("starting", "running", "unhealthy")
+            and snapshot.state in ("starting", "running", "unhealthy")
+            and (
+                snapshot.state == self._state
+                or (self._state == "draining" and self._generation is not None)
+            )
+            and (
+                self._generation is None
+                or (
+                    self._generation.owned.process.returncode is None
+                    and not self._generation.process_exited.is_set()
+                )
+            )
         )
 
     def _ready_endpoint_locked(self) -> AudioCppReadyEndpoint:
@@ -691,17 +812,20 @@ class AudioCppSupervisor:
             spawn_timeout = _remaining(deadline, self._monotonic)
             if spawn_timeout <= 0:
                 raise _operation_error(_failure_for(_STARTUP_TIMEOUT_FAILURE, None))
+            spawn_failed = False
             try:
                 owned = await asyncio.wait_for(
                     self._process_launcher(validated, dict(self._child_environment)),
                     timeout=spawn_timeout,
                 )
             except asyncio.TimeoutError:
-                raise _operation_error(_failure_for(_SPAWN_FAILURE, None)) from None
+                spawn_failed = True
             except asyncio.CancelledError:
                 raise
             except BaseException:
-                raise _operation_error(_failure_for(_SPAWN_FAILURE, None)) from None
+                spawn_failed = True
+            if spawn_failed:
+                raise _operation_error(_failure_for(_SPAWN_FAILURE, None))
 
             async with self._lock:
                 stale = self._lifecycle_epoch != epoch or self._state != "starting"
@@ -742,6 +866,7 @@ class AudioCppSupervisor:
                 await self._rollback_generation(record, failure, deadline=deadline)
                 raise _operation_error(failure)
 
+            hooks_failure: AudioCppProcessFailure | None = None
             try:
                 hooks = await self._await_generation_step(
                     record,
@@ -752,15 +877,20 @@ class AudioCppSupervisor:
                 record.hooks_ready.set()
                 raise
             except _ProcessExitedDuringStartup:
-                record.hooks_ready.set()
-                failure = _failure_for(_PROCESS_EXITED_FAILURE, record.generation)
-                await self._rollback_generation(record, failure, deadline=deadline)
-                raise _operation_error(failure) from None
+                hooks_failure = _failure_for(
+                    _PROCESS_EXITED_FAILURE,
+                    record.generation,
+                )
             except BaseException:
+                hooks_failure = _failure_for(_SPAWN_FAILURE, record.generation)
+            if hooks_failure is not None:
                 record.hooks_ready.set()
-                failure = _failure_for(_SPAWN_FAILURE, record.generation)
-                await self._rollback_generation(record, failure, deadline=deadline)
-                raise _operation_error(failure) from None
+                await self._rollback_generation(
+                    record,
+                    hooks_failure,
+                    deadline=deadline,
+                )
+                raise _operation_error(hooks_failure)
             record.hooks = hooks
             record.hooks_ready.set()
 
@@ -770,6 +900,7 @@ class AudioCppSupervisor:
                 await self._rollback_generation(record, failure, deadline=deadline)
                 raise _operation_error(failure)
 
+            contract_failure: AudioCppProcessFailure | None = None
             try:
                 capability = await self._await_generation_step(
                     record,
@@ -779,38 +910,59 @@ class AudioCppSupervisor:
             except asyncio.CancelledError:
                 raise
             except _ProcessExitedDuringStartup:
-                failure = _failure_for(_PROCESS_EXITED_FAILURE, record.generation)
-                await self._rollback_generation(record, failure, deadline=deadline)
-                raise _operation_error(failure) from None
+                contract_failure = _failure_for(
+                    _PROCESS_EXITED_FAILURE,
+                    record.generation,
+                )
             except asyncio.TimeoutError:
-                failure = _failure_for(_STARTUP_TIMEOUT_FAILURE, record.generation)
-                await self._rollback_generation(record, failure, deadline=deadline)
-                raise _operation_error(failure) from None
+                contract_failure = _failure_for(
+                    _STARTUP_TIMEOUT_FAILURE,
+                    record.generation,
+                )
             except TTSOperationError as error:
                 spec = (
                     _CONTRACT_FAILURE
                     if error.code == "contract_incompatible"
                     else _STARTUP_TIMEOUT_FAILURE
                 )
-                failure = _failure_for(spec, record.generation)
-                await self._rollback_generation(record, failure, deadline=deadline)
-                raise _operation_error(failure) from None
+                contract_failure = _failure_for(spec, record.generation)
             except BaseException:
-                failure = _failure_for(_CONTRACT_FAILURE, record.generation)
-                await self._rollback_generation(record, failure, deadline=deadline)
-                raise _operation_error(failure) from None
+                contract_failure = _failure_for(
+                    _CONTRACT_FAILURE,
+                    record.generation,
+                )
+            if contract_failure is not None:
+                await self._rollback_generation(
+                    record,
+                    contract_failure,
+                    deadline=deadline,
+                )
+                raise _operation_error(contract_failure)
 
             if capability not in ("available", "not_configured"):
                 failure = _failure_for(_CONTRACT_FAILURE, record.generation)
                 await self._rollback_generation(record, failure, deadline=deadline)
                 raise _operation_error(failure)
 
+            startup_failure: AudioCppProcessFailure | None = None
             async with self._lock:
-                if (
+                process_failed = (
+                    record.failure is not None
+                    and record.failure.code == "process_exited"
+                ) or (
+                    not record.expected_exit
+                    and (
+                        record.owned.process.returncode is not None
+                        or record.process_exited.is_set()
+                    )
+                )
+                if process_failed:
+                    startup_failure = self._publish_process_exited_locked(record)
+                    stale = False
+                elif (
                     self._generation is not record
                     or self._lifecycle_epoch != epoch
                     or self._state != "starting"
-                    or record.owned.process.returncode is not None
                 ):
                     stale = True
                 else:
@@ -823,6 +975,13 @@ class AudioCppSupervisor:
                         self._health_scheduler(record)
                     )
                     endpoint = self._ready_endpoint_locked()
+            if startup_failure is not None:
+                await self._rollback_generation(
+                    record,
+                    startup_failure,
+                    deadline=deadline,
+                )
+                raise _operation_error(startup_failure)
             if stale:
                 raise asyncio.CancelledError
             return endpoint
@@ -844,6 +1003,7 @@ class AudioCppSupervisor:
     def _revalidate_launch(
         self, launch: AudioCppManagedLaunchConfig
     ) -> AudioCppManagedLaunchConfig:
+        invalid = False
         try:
             config = AudioCppConfig.from_mapping(
                 {
@@ -859,9 +1019,12 @@ class AudioCppSupervisor:
                     ),
                 }
             )
-            return validate_audio_cpp_managed_launch(config)
+            validated = validate_audio_cpp_managed_launch(config)
         except (TypeError, ValueError):
-            raise _operation_error(_failure_for(_CONFIGURATION_FAILURE, None)) from None
+            invalid = True
+        if invalid:
+            raise _operation_error(_failure_for(_CONFIGURATION_FAILURE, None))
+        return validated
 
     async def _assert_start_epoch(self, epoch: int) -> None:
         async with self._lock:
@@ -976,6 +1139,7 @@ class AudioCppSupervisor:
         *,
         deadline: float | None = None,
     ) -> None:
+        cleanup: asyncio.Task[None] | None = None
         async with self._lock:
             if self._generation is not record:
                 return
@@ -983,7 +1147,13 @@ class AudioCppSupervisor:
                 record.terminal_state = "unavailable"
                 record.failure = failure
                 record.expected_exit = True
-        await self._terminate_and_join(record, deadline=deadline)
+            cleanup = record.output_failure_cleanup
+            if cleanup is not None:
+                self._adopt_cleanup_deadline_locked(record, deadline)
+        if cleanup is not None:
+            await join_retained_task(cleanup)
+        else:
+            await self._terminate_and_join(record, deadline=deadline)
 
     async def _cancelled_start_rollback(self, record: _ProcessGeneration) -> None:
         async with self._lock:
@@ -1018,30 +1188,45 @@ class AudioCppSupervisor:
                 if effective_deadline is None
                 else min(effective_deadline, outer_deadline)
             )
-        if effective_deadline is not None:
-            record.cleanup_deadline = (
-                effective_deadline
-                if record.cleanup_deadline is None
-                else min(record.cleanup_deadline, effective_deadline)
-            )
+        self._adopt_cleanup_deadline_locked(record, effective_deadline)
         if process.returncode is None:
             try:
                 process.terminate()
             except (OSError, ProcessLookupError):
                 pass
 
-        grace = record.launch.termination_grace_seconds
-        if effective_deadline is not None:
-            grace = min(grace, _remaining(effective_deadline, self._monotonic))
         if not record.process_exited.is_set():
-            try:
-                await asyncio.wait_for(record.process_exited.wait(), timeout=grace)
-            except asyncio.TimeoutError:
-                if process.returncode is None:
-                    try:
-                        process.kill()
-                    except (OSError, ProcessLookupError):
-                        pass
+            grace_deadline = self._monotonic() + record.launch.termination_grace_seconds
+            while not record.process_exited.is_set():
+                record.cleanup_deadline_changed.clear()
+                deadline = grace_deadline
+                if record.cleanup_deadline is not None:
+                    deadline = min(deadline, record.cleanup_deadline)
+                remaining = _remaining(deadline, self._monotonic)
+                if remaining <= 0:
+                    break
+                if record.process_exited.is_set():
+                    break
+                exited = asyncio.create_task(record.process_exited.wait())
+                changed = asyncio.create_task(record.cleanup_deadline_changed.wait())
+                done, pending = await asyncio.wait(
+                    (exited, changed),
+                    timeout=remaining,
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                for task in pending:
+                    task.cancel()
+                await asyncio.gather(*pending, return_exceptions=True)
+                if exited in done:
+                    break
+                if changed in done:
+                    continue
+                break
+            if not record.process_exited.is_set() and process.returncode is None:
+                try:
+                    process.kill()
+                except (OSError, ProcessLookupError):
+                    pass
         monitor = record.exit_monitor
         if monitor is not None:
             await asyncio.shield(monitor)
@@ -1075,6 +1260,14 @@ class AudioCppSupervisor:
             record.expected_exit = True
             record.terminal_state = "unavailable"
             record.failure = _failure_for(_PROCESS_EXITED_FAILURE, record.generation)
+            self._lifecycle_epoch += 1
+            self._state = "unavailable"
+            self._endpoint = None
+            self._tts_capability = "unknown"
+            self._consecutive_health_failures = 0
+            self._last_failure = record.failure
+            self._observation_version += 1
+            self._invalidate_generation(record)
             record.output_failure_cleanup = asyncio.create_task(
                 self._terminate_and_join(record)
             )
@@ -1082,7 +1275,6 @@ class AudioCppSupervisor:
     async def _monitor_exit(self, record: _ProcessGeneration) -> None:
         await self._await_owned_process_exit(record)
         record.process_exited.set()
-        await record.hooks_ready.wait()
 
         tasks_to_cancel: list[asyncio.Task[Any]] = []
         async with self._lock:
@@ -1090,6 +1282,24 @@ class AudioCppSupervisor:
                 tasks_to_cancel.append(record.health_scheduler)
             if record.health_probe is not None:
                 tasks_to_cancel.append(record.health_probe)
+            if self._generation is record:
+                unexpected = not record.expected_exit
+                self._endpoint = None
+                self._tts_capability = "unknown"
+                self._consecutive_health_failures = 0
+                if unexpected:
+                    self._state = "unavailable"
+                    self._last_failure = _failure_for(
+                        _PROCESS_EXITED_FAILURE,
+                        record.generation,
+                    )
+                elif self._state not in ("draining", "stopping"):
+                    self._state = record.terminal_state
+                    self._last_failure = record.failure
+                self._observation_version += 1
+
+        await record.hooks_ready.wait()
+        self._invalidate_generation(record)
         for task in tasks_to_cancel:
             if task is not asyncio.current_task():
                 task.cancel()
@@ -1103,17 +1313,8 @@ class AudioCppSupervisor:
         async with self._lock:
             if self._generation is not record:
                 return
-            unexpected = not record.expected_exit
             self._generation = None
-            self._endpoint = None
-            self._tts_capability = "unknown"
-            self._consecutive_health_failures = 0
-            if unexpected:
-                self._state = "unavailable"
-                self._last_failure = _failure_for(
-                    _PROCESS_EXITED_FAILURE, record.generation
-                )
-            else:
+            if record.expected_exit:
                 self._state = record.terminal_state
                 self._last_failure = record.failure
             self._observation_version += 1
@@ -1173,11 +1374,25 @@ class AudioCppSupervisor:
             pass
 
     async def _cleanup_generation(self, record: _ProcessGeneration) -> None:
+        self._invalidate_generation(record)
         if record.cleanup_called or record.hooks is None:
             return
         record.cleanup_called = True
         try:
             await record.hooks.cleanup()
+        except BaseException:
+            pass
+
+    @staticmethod
+    def _invalidate_generation(record: _ProcessGeneration) -> None:
+        if record.invalidation_called or record.hooks is None:
+            return
+        record.invalidation_called = True
+        invalidate = record.hooks.invalidate
+        if invalidate is None:
+            return
+        try:
+            invalidate()
         except BaseException:
             pass
 
@@ -1217,7 +1432,16 @@ class AudioCppSupervisor:
             except BaseException:
                 healthy = False
             async with self._lock:
-                if self._generation is not record:
+                if self._generation is not record or self._state not in (
+                    "running",
+                    "unhealthy",
+                ):
+                    return False
+                if (
+                    record.owned.process.returncode is not None
+                    or record.process_exited.is_set()
+                ):
+                    self._publish_process_exited_locked(record)
                     return False
                 if healthy:
                     self._consecutive_health_failures = 0
@@ -1243,6 +1467,32 @@ class AudioCppSupervisor:
                 if record.health_probe is current:
                     record.health_probe = None
 
+    def _publish_process_exited_locked(
+        self, record: _ProcessGeneration
+    ) -> AudioCppProcessFailure:
+        failure = record.failure
+        if failure is None or failure.code != "process_exited":
+            failure = _failure_for(_PROCESS_EXITED_FAILURE, record.generation)
+            record.failure = failure
+        record.terminal_state = "unavailable"
+        if self._generation is record:
+            changed = (
+                self._state != "unavailable"
+                or self._endpoint is not None
+                or self._tts_capability != "unknown"
+                or self._consecutive_health_failures != 0
+                or self._last_failure != failure
+            )
+            self._state = "unavailable"
+            self._endpoint = None
+            self._tts_capability = "unknown"
+            self._consecutive_health_failures = 0
+            self._last_failure = failure
+            self._invalidate_generation(record)
+            if changed:
+                self._observation_version += 1
+        return failure
+
     async def _stop_impl(
         self,
         *,
@@ -1267,10 +1517,9 @@ class AudioCppSupervisor:
                 if record is not None:
                     shutdown_deadline = current_shutdown_deadline()
                     if shutdown_deadline is not None:
-                        record.cleanup_deadline = (
-                            shutdown_deadline
-                            if record.cleanup_deadline is None
-                            else min(record.cleanup_deadline, shutdown_deadline)
+                        self._adopt_cleanup_deadline_locked(
+                            record,
+                            shutdown_deadline,
                         )
                     record.expected_exit = True
                     record.terminal_state = "stopped"
@@ -1325,3 +1574,14 @@ class AudioCppSupervisor:
                 self._observation_version += 1
                 if self._close_task is current:
                     self._close_task = None
+
+    @staticmethod
+    def _adopt_cleanup_deadline_locked(
+        record: _ProcessGeneration | None,
+        deadline: float | None,
+    ) -> None:
+        if record is None or deadline is None:
+            return
+        if record.cleanup_deadline is None or deadline < record.cleanup_deadline:
+            record.cleanup_deadline = deadline
+            record.cleanup_deadline_changed.set()

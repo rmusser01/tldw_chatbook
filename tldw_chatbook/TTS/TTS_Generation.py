@@ -379,6 +379,7 @@ class _AdmittedTTSOperation:
 
         lease = self._resources._lease
         safe_sink = _isolate_progress_sink(progress_sink)
+        generation_changed = False
         try:
             with _adapter_admission_scope(
                 lease.adapter,
@@ -386,12 +387,27 @@ class _AdmittedTTSOperation:
             ):
                 await lease.adapter.ensure_ready()
                 response = await lease.adapter.synthesize(self._request, safe_sink)
+        except _AudioCppGenerationChanged:
+            generation_changed = True
         except BaseException as error:
             try:
                 await _cleanup_preserving_primary(self._resources.close, error)
             finally:
                 self._finish_tracking()
             raise
+        if generation_changed:
+            unavailable = TTSOperationError(
+                code="connection_unavailable",
+                message="The audio.cpp server is unavailable",
+                retryable=True,
+                operation_id=uuid4().hex,
+                recovery_action="retry",
+            )
+            try:
+                await _cleanup_preserving_primary(self._resources.close, unavailable)
+            finally:
+                self._finish_tracking()
+            raise unavailable
 
         try:
             response_provider_id = response.provider_id
@@ -503,6 +519,7 @@ class TTSService:
         self._close_signal = asyncio.Event()
         self._registry_close_task: asyncio.Task[None] | None = None
         self._shutdown_task: asyncio.Task[None] | None = None
+        self._shutdown_deadline: float | None = None
         self._responses: set[_ManagedAudioResponse] = set()
         self._admitted_operations: set[_AdmittedTTSOperation] = set()
         self._settings_generation = 0
@@ -565,6 +582,7 @@ class TTSService:
             return
 
         while True:
+            wait_for_stage_boundary = False
             async with self._request_admission._publication_lock:
                 configuration = await self.registry.provider_configuration_snapshot(
                     "audio_cpp"
@@ -589,10 +607,19 @@ class TTSService:
                         await self.registry.run_exclusive_provider_transition(
                             "audio_cpp",
                             on_draining=supervisor.begin_draining,
-                            action=supervisor.stop,
+                            action=self._stop_audio_cpp_for_transition,
                             apply_staged=True,
                         )
                     continue
+                if configuration.staged_config is not None and admission.state in {
+                    "stopped",
+                    "unavailable",
+                }:
+                    wait_for_stage_boundary = True
+
+            if wait_for_stage_boundary:
+                await supervisor.wait_for_stage_application_boundary()
+                continue
 
             async with self._request_admission._gate.read():
                 configuration = await self.registry.provider_configuration_snapshot(
@@ -690,6 +717,13 @@ class TTSService:
             try:
                 with _adapter_admission_scope(lease.adapter, preparation):
                     await lease.adapter.ensure_ready()
+                supervisor = self._audio_cpp_supervisor
+                if supervisor is not None:
+                    admission = supervisor.admission_snapshot()
+                    if admission.state in {"starting", "running", "unhealthy"}:
+                        preparation = _AudioCppPreparation(
+                            require_existing=admission,
+                        )
             except BaseException as error:
                 await _cleanup_preserving_primary(lease.release, error)
                 raise
@@ -975,6 +1009,14 @@ class TTSService:
         }
         primary_error: BaseException | None = None
         preparation = self._audio_cpp_preparation.get()
+        process_fence_required = False
+        process_fence: (
+            tuple[
+                AudioCppProcessAdmissionSnapshot,
+                AudioCppProcessSnapshot,
+            ]
+            | None
+        ) = None
         try:
             async with asyncio.timeout_at(deadline):
                 if already_prepared:
@@ -1001,6 +1043,33 @@ class TTSService:
                         lease.adapter,
                         model_ids,
                     )
+                required_process = (
+                    preparation.require_existing
+                    if provider_id == "audio_cpp" and preparation is not None
+                    else None
+                )
+                process_fence_required = (
+                    required_process is not None
+                    and required_process.state in {"starting", "running", "unhealthy"}
+                )
+                supervisor = self._audio_cpp_supervisor
+                if process_fence_required and supervisor is not None:
+                    assert required_process is not None
+                    admission = supervisor.admission_snapshot()
+                    process = supervisor.snapshot()
+                    if (
+                        admission.lifecycle_epoch == required_process.lifecycle_epoch
+                        and admission.process_generation
+                        == required_process.process_generation
+                        and admission.state in {"running", "unhealthy"}
+                        and process.process_generation == admission.process_generation
+                        and process.state == admission.state
+                        and process.endpoint is not None
+                        and process.tts_capability in {"available", "not_configured"}
+                        and process.consecutive_health_failures == 0
+                        and process.last_failure is None
+                    ):
+                        process_fence = (admission, process)
                 if self._close_signal.is_set():
                     result = self._unverified_native_capabilities(
                         provider_id,
@@ -1028,18 +1097,70 @@ class TTSService:
                         lease.release,
                         primary_error,
                     )
-        if self._close_signal.is_set():
-            result = self._unverified_native_capabilities(
-                provider_id,
-                revision,
-                result.catalog,
+
+        def finalize_result() -> TTSNativeCapabilitySnapshot:
+            finalized = result
+            process_fence_current = True
+            if process_fence_required:
+                supervisor = self._audio_cpp_supervisor
+                if process_fence is None or supervisor is None:
+                    process_fence_current = False
+                else:
+                    admission_fence, process_snapshot_fence = process_fence
+                    current_admission = supervisor.admission_snapshot()
+                    current_process = supervisor.snapshot()
+                    process_fence_current = (
+                        current_admission == admission_fence
+                        and current_process.state == process_snapshot_fence.state
+                        and current_process.process_generation
+                        == process_snapshot_fence.process_generation
+                        and current_process.observation_version
+                        == process_snapshot_fence.observation_version
+                        and current_process.endpoint == process_snapshot_fence.endpoint
+                        and current_process.tts_capability
+                        == process_snapshot_fence.tts_capability
+                        and current_process.consecutive_health_failures
+                        == process_snapshot_fence.consecutive_health_failures
+                        and current_process.last_failure
+                        == process_snapshot_fence.last_failure
+                    )
+            if not process_fence_current:
+                finalized = self._unverified_native_capabilities(
+                    provider_id,
+                    revision,
+                    None,
+                )
+            elif self.configuration_revision(provider_id) != revision:
+                finalized = self._unverified_native_capabilities(
+                    provider_id,
+                    revision,
+                    None,
+                )
+            elif provider_id == "audio_cpp" and self.saved_configuration_revision(
+                provider_id
+            ) != self.applied_configuration_revision(provider_id):
+                finalized = self._unverified_native_capabilities(
+                    provider_id,
+                    revision,
+                    None,
+                )
+            elif self._close_signal.is_set():
+                finalized = self._unverified_native_capabilities(
+                    provider_id,
+                    revision,
+                    finalized.catalog,
+                )
+            self._publish_native_snapshot_result(
+                finalized,
+                catalog_request_generation=catalog_request_generation,
+                voice_request_generations=voice_request_generations,
             )
-        self._publish_native_snapshot_result(
-            result,
-            catalog_request_generation=catalog_request_generation,
-            voice_request_generations=voice_request_generations,
-        )
-        return result
+            return finalized
+
+        if already_prepared:
+            return finalize_result()
+        async with self._request_admission._gate.read():
+            return finalize_result()
 
     def _publish_native_snapshot_result(
         self,
@@ -1610,6 +1731,8 @@ class TTSService:
 
     async def restart_audio_cpp(self) -> TTSProviderCatalog | None:
         """Drain audio.cpp, apply the latest stage, and restart Managed mode."""
+        if self._close_signal.is_set():
+            raise TTSRegistryClosedError("The TTS service is closed")
         task = self._start_audio_cpp_lifecycle(
             self._restart_audio_cpp(),
             name="tts_audio_cpp_restart",
@@ -1619,6 +1742,8 @@ class TTSService:
 
     async def shutdown_audio_cpp(self) -> None:
         """Drain and stop audio.cpp while promoting the latest stage lazily."""
+        if self._close_signal.is_set():
+            raise TTSRegistryClosedError("The TTS service is closed")
         task = self._start_audio_cpp_lifecycle(
             self._shutdown_audio_cpp(),
             name="tts_audio_cpp_shutdown",
@@ -1639,15 +1764,46 @@ class TTSService:
 
     async def _restart_audio_cpp(self) -> TTSProviderCatalog | None:
         async with self._audio_cpp_lifecycle_lock:
-            await self._transition_audio_cpp_lifecycle(apply_staged=True)
-            configuration = await self.registry.provider_configuration_snapshot(
-                "audio_cpp"
-            )
-            if AudioCppConfig.from_mapping(configuration.applied_config).mode == (
-                "external"
+            supervisor = self._audio_cpp_supervisor
+            if supervisor is None:
+                raise RuntimeError("Managed audio.cpp lifecycle is unavailable")
+            request_generation = self._reserve_native_catalog_request("audio_cpp")
+            async with self._request_admission._publication_lock:
+                async with self._request_admission._gate.write():
+                    await self.registry.run_exclusive_provider_transition(
+                        "audio_cpp",
+                        on_draining=supervisor.begin_draining,
+                        action=self._stop_audio_cpp_for_transition,
+                        apply_staged=True,
+                    )
+                    configuration = await self.registry.provider_configuration_snapshot(
+                        "audio_cpp"
+                    )
+                    if (
+                        AudioCppConfig.from_mapping(configuration.applied_config).mode
+                        == "external"
+                    ):
+                        return None
+                    configuration_revision = self.configuration_revision("audio_cpp")
+                    preparation = _AudioCppPreparation(require_existing=None)
+                    token = self._audio_cpp_preparation.set(preparation)
+                    try:
+                        catalog = await self._get_catalog_already_prepared(
+                            "audio_cpp",
+                            refresh=True,
+                        )
+                    finally:
+                        self._audio_cpp_preparation.reset(token)
+            if self._native_catalog_request_is_current(
+                "audio_cpp",
+                request_generation,
             ):
-                return None
-            return await self.get_catalog("audio_cpp", refresh=True)
+                self._publish_native_catalog(
+                    "audio_cpp",
+                    configuration_revision,
+                    catalog,
+                )
+            return catalog
 
     async def _shutdown_audio_cpp(self) -> None:
         async with self._audio_cpp_lifecycle_lock:
@@ -1666,9 +1822,17 @@ class TTSService:
                 return await self.registry.run_exclusive_provider_transition(
                     "audio_cpp",
                     on_draining=supervisor.begin_draining,
-                    action=supervisor.stop,
+                    action=self._stop_audio_cpp_for_transition,
                     apply_staged=apply_staged,
                 )
+
+    async def _stop_audio_cpp_for_transition(self) -> None:
+        """Stop a transition under the outer shutdown deadline, if active."""
+        supervisor = self._audio_cpp_supervisor
+        if supervisor is None:
+            raise RuntimeError("Managed audio.cpp lifecycle is unavailable")
+        with shutdown_deadline_scope(self._shutdown_deadline):
+            await supervisor.stop()
 
     def begin_preferences_publication(
         self,
@@ -1806,6 +1970,14 @@ class TTSService:
                 return result
 
             async with self._request_admission._gate.write():
+                for provider_id in provider_configs:
+                    self._settings_persisted_provider_generations[provider_id] = max(
+                        generation,
+                        self._settings_persisted_provider_generations.get(
+                            provider_id,
+                            0,
+                        ),
+                    )
                 transition_failed = False
                 for provider_id, config in provider_configs.items():
                     try:
@@ -1833,16 +2005,6 @@ class TTSService:
                         {provider_id: "unavailable" for provider_id in provider_configs}
                     )
                 else:
-                    for provider_id in provider_configs:
-                        self._settings_persisted_provider_generations[provider_id] = (
-                            max(
-                                generation,
-                                self._settings_persisted_provider_generations.get(
-                                    provider_id,
-                                    0,
-                                ),
-                            )
-                        )
                     provider_statuses.update(
                         await self._bounded_reconfiguration_statuses(
                             tickets,
@@ -2109,6 +2271,7 @@ class TTSService:
                 asyncio.get_running_loop().time()
                 + self.registry.shutdown_timeout_seconds
             )
+            self._shutdown_deadline = deadline
             with shutdown_deadline_scope(deadline):
                 self._registry_close_task = asyncio.create_task(self.registry.close())
                 self._shutdown_task = asyncio.create_task(
@@ -2131,7 +2294,19 @@ class TTSService:
         lifecycle_tasks: tuple[asyncio.Task[Any], ...],
     ) -> None:
         failures: list[BaseException] = []
+        supervisor = self._audio_cpp_supervisor
         try:
+            if supervisor is not None:
+                try:
+                    begin_terminal_shutdown = getattr(
+                        supervisor,
+                        "begin_terminal_shutdown",
+                        None,
+                    )
+                    if callable(begin_terminal_shutdown):
+                        await begin_terminal_shutdown(self._shutdown_deadline)
+                except BaseException as error:
+                    failures.append(error)
             try:
                 await asyncio.shield(registry_close_task)
             except BaseException as error:
@@ -2181,7 +2356,6 @@ class TTSService:
         except BaseException as error:
             failures.append(error)
         finally:
-            supervisor = self._audio_cpp_supervisor
             if supervisor is not None:
                 try:
                     await supervisor.close()

@@ -258,13 +258,16 @@ class _ManagedGenerationBundle:
 
     async def supervisor_cleanup(self) -> None:
         """Run generation cleanup while remembering swallowed supervisor errors."""
+        cleanup_failed = False
         try:
             await self.close_remaining()
         except asyncio.CancelledError:
             raise
         except BaseException:
+            cleanup_failed = True
+        if cleanup_failed:
             self.supervisor_cleanup_failed = True
-            raise RuntimeError(_MANAGED_CLEANUP_FAILURE_MESSAGE) from None
+            raise RuntimeError(_MANAGED_CLEANUP_FAILURE_MESSAGE)
 
 
 async def _complete_wav_stream(audio: bytes) -> AsyncIterator[bytes]:
@@ -324,6 +327,7 @@ class AudioCppAdapter:
             else None
         )
         self._managed_bundle: _ManagedGenerationBundle | None = None
+        self._managed_launch: AudioCppManagedLaunchConfig | None = None
         self._managed_process_generation: int | None = None
         self._managed_catalog_process_generation: int | None = None
         self._managed_stop_complete = False
@@ -579,7 +583,11 @@ class AudioCppAdapter:
                         failure = (
                             _CLOSED_UNAVAILABLE if self._closed else _GENERATION_TIMEOUT
                         )
-                    except (httpx.StreamError, httpx.TransportError):
+                    except (
+                        _TransientHttpFailure,
+                        httpx.StreamError,
+                        httpx.TransportError,
+                    ):
                         if self._closed:
                             failure = _CLOSED_UNAVAILABLE
                         else:
@@ -723,6 +731,8 @@ class AudioCppAdapter:
         payload: Mapping[str, str],
     ) -> _SpeechOutcome:
         client = self._require_request_client()
+        process_generation = self._managed_client_generation(client)
+        runtime_failure: RuntimeError | None = None
         client.cookies.clear()
         try:
             async with client.stream(
@@ -779,8 +789,14 @@ class AudioCppAdapter:
                 if status == 404 or 300 <= status < 400:
                     return _SpeechOutcome(kind="contract_failure")
                 return _SpeechOutcome(kind="generation_failure")
+        except RuntimeError as error:
+            runtime_failure = error
         finally:
             client.cookies.clear()
+        assert runtime_failure is not None
+        if self._managed_client_invalidated(client, process_generation):
+            raise _TransientHttpFailure
+        raise runtime_failure
 
     def _require_request_client(self) -> httpx.AsyncClient:
         client = self._client
@@ -980,6 +996,8 @@ class AudioCppAdapter:
                 and self._managed_process_generation != process_generation
             ):
                 return "unknown"
+            if self._refresh_generation != started_generation:
+                return "unknown"
             models = tuple(
                 TTSModelInfo(
                     model_id=model.model_id,
@@ -1014,13 +1032,29 @@ class AudioCppAdapter:
                 _MANAGED_CONFIGURATION_INVALID,
                 uuid4().hex,
             ) from None
-        try:
-            launch = validate_audio_cpp_managed_launch(self._config)
-        except (TypeError, ValueError):
+        admission = supervisor.admission_snapshot()
+        launch = self._managed_launch
+        reuse_launch = launch is not None and admission.state in {
+            "starting",
+            "running",
+            "unhealthy",
+            "draining",
+        }
+        invalid_launch = False
+        if not reuse_launch:
+            self._managed_launch = None
+            try:
+                launch = validate_audio_cpp_managed_launch(self._config)
+            except (TypeError, ValueError):
+                invalid_launch = True
+            if not invalid_launch:
+                self._managed_launch = launch
+        if invalid_launch:
             raise self._operation_error(
                 _MANAGED_CONFIGURATION_INVALID,
                 uuid4().hex,
-            ) from None
+            )
+        assert launch is not None
 
         async def generation_hooks_factory(
             process_generation: int,
@@ -1050,6 +1084,7 @@ class AudioCppAdapter:
     ) -> AudioCppGenerationHooks:
         request_client: httpx.AsyncClient | None = None
         health_client: httpx.AsyncClient | None = None
+        setup_failed = False
         try:
             request_client = self._new_request_client(launch.base_url)
             health_client = self._new_health_client(launch.base_url)
@@ -1060,11 +1095,13 @@ class AudioCppAdapter:
             )
             raise
         except BaseException:
+            setup_failed = True
+        if setup_failed:
             await self._close_partial_managed_clients(
                 request_client,
                 health_client,
             )
-            raise RuntimeError("audio.cpp generation resource setup failed") from None
+            raise RuntimeError("audio.cpp generation resource setup failed")
 
         bundle = _ManagedGenerationBundle(
             process_generation=process_generation,
@@ -1073,11 +1110,14 @@ class AudioCppAdapter:
         )
         previous = self._managed_bundle
         if previous is not None and previous.process_generation != process_generation:
+            previous_cleanup_failed = False
             try:
                 await previous.close_remaining()
             except BaseException:
+                previous_cleanup_failed = True
+            if previous_cleanup_failed:
                 await bundle.close_remaining()
-                raise RuntimeError(_MANAGED_CLEANUP_FAILURE_MESSAGE) from None
+                raise RuntimeError(_MANAGED_CLEANUP_FAILURE_MESSAGE)
 
         self._managed_bundle = bundle
         self._managed_process_generation = process_generation
@@ -1103,10 +1143,22 @@ class AudioCppAdapter:
                 raise_on_failure=True,
             )
 
+        def generation_invalidate() -> None:
+            if self._managed_process_generation == process_generation:
+                self._managed_process_generation = None
+                self._managed_catalog_process_generation = None
+                self._clear_voice_state()
+                self._mark_catalog_stale(_TRANSIENT_FAILURE_HEALTH)
+
+        async def generation_cleanup() -> None:
+            generation_invalidate()
+            await bundle.supervisor_cleanup()
+
         return AudioCppGenerationHooks(
             contract_probe=contract_probe,
             health_probe=health_probe,
-            cleanup=bundle.supervisor_cleanup,
+            cleanup=generation_cleanup,
+            invalidate=generation_invalidate,
         )
 
     @staticmethod
@@ -1196,7 +1248,9 @@ class AudioCppAdapter:
         client: httpx.AsyncClient | None = None,
     ) -> bytes:
         active_client = client or self._require_request_client()
+        process_generation = self._managed_client_generation(active_client)
         for attempt in range(_MAX_GET_ATTEMPTS):
+            runtime_failure: RuntimeError | None = None
             suppression_token = self._begin_http_log_suppression()
             try:
                 active_client.cookies.clear()
@@ -1221,16 +1275,51 @@ class AudioCppAdapter:
                 raise
             except httpx.StreamError:
                 raise _HttpContractFailure from None
-            except RuntimeError:
-                if not self._closed:
-                    raise
-                raise _TransientHttpFailure from None
+            except RuntimeError as error:
+                runtime_failure = error
             except (TimeoutError, httpx.TransportError):
                 if self._closed or attempt + 1 >= _MAX_GET_ATTEMPTS:
                     raise _TransientHttpFailure from None
             finally:
                 self._end_http_log_suppression(suppression_token)
+            if runtime_failure is not None:
+                if self._managed_client_invalidated(
+                    active_client,
+                    process_generation,
+                ):
+                    raise _TransientHttpFailure
+                raise runtime_failure
         raise _TransientHttpFailure
+
+    def _managed_client_generation(
+        self,
+        client: httpx.AsyncClient,
+    ) -> int | None:
+        bundle = self._managed_bundle
+        if (
+            self._config.mode == "managed"
+            and bundle is not None
+            and client in {bundle.request_client, bundle.health_client}
+        ):
+            return bundle.process_generation
+        return None
+
+    def _managed_client_invalidated(
+        self,
+        client: httpx.AsyncClient,
+        process_generation: int | None,
+    ) -> bool:
+        if self._closed:
+            return True
+        if process_generation is None:
+            return False
+        bundle = self._managed_bundle
+        return (
+            self._managed_process_generation != process_generation
+            or bundle is None
+            or bundle.process_generation != process_generation
+            or client not in {bundle.request_client, bundle.health_client}
+        )
 
     async def _read_bounded_metadata(
         self,
@@ -1388,6 +1477,7 @@ class AudioCppAdapter:
         if self._closed:
             return
         self._catalog = self._failed_catalog(self._catalog, health)
+        self._refresh_generation += 1
 
     @staticmethod
     def _unverified_voice_result(

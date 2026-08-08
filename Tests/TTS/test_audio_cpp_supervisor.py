@@ -54,6 +54,22 @@ class _FakeReader:
         self._queue.put_nowait(None)
 
 
+def _exception_graph(error: BaseException) -> list[BaseException]:
+    pending = [error]
+    seen: set[int] = set()
+    graph: list[BaseException] = []
+    while pending:
+        current = pending.pop()
+        if id(current) in seen:
+            continue
+        seen.add(id(current))
+        graph.append(current)
+        for linked in (current.__context__, current.__cause__):
+            if linked is not None:
+                pending.append(linked)
+    return graph
+
+
 class _FakeProcess:
     def __init__(
         self,
@@ -88,9 +104,17 @@ class _FakeProcess:
         self.exit(-9)
 
     def exit(self, returncode: int = 0) -> None:
+        self.publish_returncode(returncode)
+        self.complete_exit()
+
+    def publish_returncode(self, returncode: int = 0) -> None:
         if self.returncode is not None:
             return
         self.returncode = returncode
+
+    def complete_exit(self) -> None:
+        if self.returncode is None or self._exited.is_set():
+            return
         if self._finish_pipes_on_exit:
             self.stdout.finish()
             self.stderr.finish()
@@ -733,6 +757,7 @@ async def test_generation_hooks_factory_failure_rolls_back_child_and_uses_safe_c
 
     assert raised.value.code == "process_spawn_failed"
     assert private_detail not in str(raised.value)
+    assert _exception_graph(raised.value) == [raised.value]
     assert process.terminate_calls == 1
     assert process.wait_calls == 1
     snapshot = supervisor.snapshot()
@@ -830,10 +855,11 @@ async def test_successful_new_generation_clears_prior_failure(tmp_path: Path) ->
         port_preflight=_available_preflight,
     )
     launch = _make_launch(tmp_path)
-    with pytest.raises(TTSOperationError):
+    with pytest.raises(TTSOperationError) as raised:
         await supervisor.ensure_running(
             launch, generation_hooks_factory=_HooksFactory()
         )
+    assert _exception_graph(raised.value) == [raised.value]
     assert supervisor.snapshot().last_failure is not None
 
     await supervisor.ensure_running(launch, generation_hooks_factory=_HooksFactory())
@@ -906,6 +932,33 @@ async def test_spawn_uses_exact_argv_cwd_stdin_and_environment(
         "stderr": asyncio.subprocess.PIPE,
     }
     await supervisor.stop()
+
+
+@pytest.mark.asyncio
+async def test_default_launcher_suppresses_paths_in_asyncio_debug_logs(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    launch = _make_launch(tmp_path)
+    loop = asyncio.get_running_loop()
+    prior_debug = loop.get_debug()
+    caplog.set_level(logging.DEBUG, logger="asyncio")
+    asyncio_logger = logging.getLogger("asyncio")
+
+    try:
+        loop.set_debug(True)
+        asyncio_logger.debug("UNRELATED_ASYNCIO_BEFORE")
+        owned = await supervisor_module._default_process_launcher(launch, {})
+        await asyncio.wait_for(owned.process.wait(), timeout=1)
+        owned.close_parent_pipes()
+        asyncio_logger.debug("UNRELATED_ASYNCIO_AFTER")
+    finally:
+        loop.set_debug(prior_debug)
+
+    assert str(launch.binary_path) not in caplog.text
+    assert str(launch.server_json_path) not in caplog.text
+    assert "UNRELATED_ASYNCIO_BEFORE" in caplog.text
+    assert "UNRELATED_ASYNCIO_AFTER" in caplog.text
 
 
 @pytest.mark.asyncio
@@ -1186,6 +1239,88 @@ async def test_exit_during_contract_probe_cancels_startup_promptly(
 
 
 @pytest.mark.asyncio
+async def test_exit_at_successful_contract_completion_is_process_exited(
+    tmp_path: Path,
+) -> None:
+    process = _FakeProcess()
+
+    async def factory(_generation: int) -> AudioCppGenerationHooks:
+        async def contract_probe() -> str:
+            process.publish_returncode(8)
+            asyncio.get_running_loop().call_soon(process.complete_exit)
+            return "available"
+
+        async def health_probe() -> bool:
+            return True
+
+        async def cleanup() -> None:
+            return None
+
+        return AudioCppGenerationHooks(
+            contract_probe=contract_probe,
+            health_probe=health_probe,
+            cleanup=cleanup,
+        )
+
+    supervisor = AudioCppSupervisor(
+        source_environment={},
+        process_launcher=_FakeLauncher([process]),
+        port_preflight=_available_preflight,
+    )
+
+    with pytest.raises(TTSOperationError) as raised:
+        await supervisor.ensure_running(
+            _make_launch(tmp_path), generation_hooks_factory=factory
+        )
+
+    assert raised.value.code == "process_exited"
+    assert supervisor.snapshot().state == "unavailable"
+
+
+@pytest.mark.asyncio
+async def test_output_failure_at_contract_completion_is_process_exited(
+    tmp_path: Path,
+) -> None:
+    process = _FakeProcess(exit_on_terminate=False)
+    supervisor: AudioCppSupervisor
+
+    async def factory(_generation: int) -> AudioCppGenerationHooks:
+        async def contract_probe() -> str:
+            process.stderr.fail(RuntimeError("private output failure"))
+            await _wait_until(lambda: supervisor.snapshot().state == "unavailable")
+            return "available"
+
+        async def health_probe() -> bool:
+            return True
+
+        async def cleanup() -> None:
+            return None
+
+        return AudioCppGenerationHooks(
+            contract_probe=contract_probe,
+            health_probe=health_probe,
+            cleanup=cleanup,
+        )
+
+    supervisor = AudioCppSupervisor(
+        source_environment={},
+        process_launcher=_FakeLauncher([process]),
+        port_preflight=_available_preflight,
+    )
+
+    with pytest.raises(TTSOperationError) as raised:
+        await supervisor.ensure_running(
+            _make_launch(tmp_path, termination_grace_seconds=0.1),
+            generation_hooks_factory=factory,
+        )
+
+    assert raised.value.code == "process_exited"
+    assert process.terminate_calls == 1
+    assert process.kill_calls == 1
+    assert supervisor.snapshot().state == "unavailable"
+
+
+@pytest.mark.asyncio
 async def test_draining_rejects_new_deliberate_use(tmp_path: Path) -> None:
     supervisor = AudioCppSupervisor(
         source_environment={},
@@ -1433,6 +1568,74 @@ async def test_two_failures_mark_unhealthy_and_one_success_recovers(
 
 
 @pytest.mark.asyncio
+async def test_successful_recovery_probe_cannot_publish_a_dead_process(
+    tmp_path: Path,
+) -> None:
+    sleep = _ManualSleep()
+    hooks = _ControlledHooksFactory()
+    process = _FakeProcess()
+    supervisor = AudioCppSupervisor(
+        source_environment={},
+        process_launcher=_FakeLauncher([process]),
+        port_preflight=_available_preflight,
+        sleep=sleep,
+    )
+    launch = _make_launch(tmp_path)
+    await supervisor.ensure_running(launch, generation_hooks_factory=hooks)
+    await _run_periodic_probe(sleep, hooks, False)
+    await _run_periodic_probe(sleep, hooks, False)
+    assert supervisor.snapshot().state == "unhealthy"
+    recovery = asyncio.get_running_loop().create_future()
+    hooks.queue_health(recovery)
+
+    request = asyncio.create_task(
+        supervisor.ensure_running(launch, generation_hooks_factory=_HooksFactory())
+    )
+    await _wait_until(lambda: hooks.health_calls == 4)
+    process.publish_returncode(8)
+    recovery.set_result(True)
+
+    try:
+        with pytest.raises(TTSOperationError) as raised:
+            await request
+        assert raised.value.code == "process_exited"
+        snapshot = supervisor.snapshot()
+        assert snapshot.state == "unavailable"
+        assert snapshot.endpoint is None
+    finally:
+        process.complete_exit()
+        await supervisor.close()
+
+
+@pytest.mark.asyncio
+async def test_running_fast_path_cannot_return_a_dead_process(
+    tmp_path: Path,
+) -> None:
+    process = _FakeProcess()
+    supervisor = AudioCppSupervisor(
+        source_environment={},
+        process_launcher=_FakeLauncher([process]),
+        port_preflight=_available_preflight,
+    )
+    launch = _make_launch(tmp_path)
+    await supervisor.ensure_running(launch, generation_hooks_factory=_HooksFactory())
+    process.publish_returncode(8)
+
+    try:
+        with pytest.raises(TTSOperationError) as raised:
+            await supervisor.ensure_running(
+                launch, generation_hooks_factory=_HooksFactory()
+            )
+        assert raised.value.code == "process_exited"
+        snapshot = supervisor.snapshot()
+        assert snapshot.state == "unavailable"
+        assert snapshot.endpoint is None
+    finally:
+        process.complete_exit()
+        await supervisor.close()
+
+
+@pytest.mark.asyncio
 async def test_request_probe_failure_does_not_kill_unhealthy_child(
     tmp_path: Path,
 ) -> None:
@@ -1464,6 +1667,38 @@ async def test_request_probe_failure_does_not_kill_unhealthy_child(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("probe_result", [False, True])
+async def test_inflight_health_result_cannot_overwrite_draining(
+    tmp_path: Path,
+    probe_result: bool,
+) -> None:
+    sleep = _ManualSleep()
+    hooks = _ControlledHooksFactory()
+    supervisor = AudioCppSupervisor(
+        source_environment={},
+        process_launcher=_FakeLauncher([_FakeProcess()]),
+        port_preflight=_available_preflight,
+        sleep=sleep,
+    )
+    await supervisor.ensure_running(
+        _make_launch(tmp_path),
+        generation_hooks_factory=hooks,
+    )
+    await _run_periodic_probe(sleep, hooks, False)
+    blocked_result = asyncio.get_running_loop().create_future()
+    await _run_periodic_probe(sleep, hooks, blocked_result)
+
+    await supervisor.begin_draining()
+    blocked_result.set_result(probe_result)
+    await _wait_until(lambda: hooks.active_health_calls == 0)
+
+    snapshot = supervisor.snapshot()
+    assert snapshot.state == "draining"
+    assert snapshot.consecutive_health_failures == 1
+    await supervisor.stop()
+
+
+@pytest.mark.asyncio
 async def test_unexpected_exit_invalidates_generation_without_restart(
     tmp_path: Path,
 ) -> None:
@@ -1486,6 +1721,73 @@ async def test_unexpected_exit_invalidates_generation_without_restart(
     assert snapshot.last_failure is not None
     assert snapshot.last_failure.code == "process_exited"
     assert len(launcher.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_unexpected_exit_is_public_before_generation_cleanup_finishes(
+    tmp_path: Path,
+) -> None:
+    process = _FakeProcess()
+    replacement = _FakeProcess()
+    launcher = _FakeLauncher([process, replacement])
+    cleanup_started = asyncio.Event()
+    release_cleanup = asyncio.Event()
+    hooks = _HooksFactory()
+
+    async def blocking_cleanup_factory(generation: int) -> AudioCppGenerationHooks:
+        base = await hooks(generation)
+
+        async def cleanup() -> None:
+            cleanup_started.set()
+            await release_cleanup.wait()
+            await base.cleanup()
+
+        return AudioCppGenerationHooks(
+            contract_probe=base.contract_probe,
+            health_probe=base.health_probe,
+            cleanup=cleanup,
+        )
+
+    supervisor = AudioCppSupervisor(
+        source_environment={},
+        process_launcher=launcher,
+        port_preflight=_available_preflight,
+    )
+    launch = _make_launch(tmp_path)
+    await supervisor.ensure_running(
+        launch,
+        generation_hooks_factory=blocking_cleanup_factory,
+    )
+
+    process.exit(12)
+    await asyncio.wait_for(cleanup_started.wait(), timeout=1)
+    snapshot = supervisor.snapshot()
+    admission = supervisor.admission_snapshot()
+    replacement_start = asyncio.create_task(
+        supervisor.ensure_running(
+            launch,
+            generation_hooks_factory=_HooksFactory(),
+        )
+    )
+
+    try:
+        assert snapshot.state == "unavailable"
+        assert snapshot.endpoint is None
+        assert snapshot.tts_capability == "unknown"
+        assert snapshot.last_failure is not None
+        assert snapshot.last_failure.code == "process_exited"
+        assert admission.stage_application_eligible is False
+        await asyncio.sleep(0)
+        assert replacement_start.done() is False
+
+        release_cleanup.set()
+        endpoint = await asyncio.wait_for(replacement_start, timeout=1)
+        assert endpoint.process_generation == 2
+        assert len(launcher.calls) == 2
+    finally:
+        release_cleanup.set()
+        await asyncio.gather(replacement_start, return_exceptions=True)
+        await supervisor.stop()
 
 
 @pytest.mark.asyncio
@@ -1859,7 +2161,12 @@ async def test_output_drain_failure_stops_child_and_records_safe_failure(
     )
 
     process.stderr.fail(RuntimeError(private_detail))
-    await _wait_until(lambda: supervisor.snapshot().state == "unavailable")
+    await _wait_until(
+        lambda: (
+            supervisor.snapshot().state == "unavailable"
+            and process.terminate_calls == 1
+        )
+    )
 
     failure = supervisor.snapshot().last_failure
     assert failure is not None
@@ -1867,6 +2174,41 @@ async def test_output_drain_failure_stops_child_and_records_safe_failure(
     assert private_detail not in failure.message
     assert process.terminate_calls == 1
     assert process.wait_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_output_drain_failure_seals_admission_before_stubborn_child_exits(
+    tmp_path: Path,
+) -> None:
+    process = _FakeProcess(exit_on_terminate=False)
+    supervisor = AudioCppSupervisor(
+        source_environment={},
+        process_launcher=_FakeLauncher([process]),
+        port_preflight=_available_preflight,
+    )
+    await supervisor.ensure_running(
+        _make_launch(tmp_path),
+        generation_hooks_factory=_HooksFactory(),
+    )
+    running_admission = supervisor.admission_snapshot()
+
+    process.stderr.fail(RuntimeError("private drain failure"))
+    await _wait_until(lambda: process.terminate_calls == 1)
+
+    snapshot = supervisor.snapshot()
+    failed_admission = supervisor.admission_snapshot()
+    assert snapshot.state == "unavailable"
+    assert snapshot.endpoint is None
+    assert snapshot.tts_capability == "unknown"
+    assert snapshot.last_failure is not None
+    assert snapshot.last_failure.code == "process_exited"
+    assert failed_admission.lifecycle_epoch > running_admission.lifecycle_epoch
+    assert failed_admission.stage_application_eligible is False
+
+    process.exit(7)
+    await _wait_until(
+        lambda: supervisor.admission_snapshot().stage_application_eligible
+    )
 
 
 @pytest.mark.asyncio

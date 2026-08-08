@@ -17,9 +17,12 @@ from tldw_chatbook.TTS import audio_cpp_supervisor as supervisor_module
 from tldw_chatbook.TTS.adapter_registry import TTSAdapterRegistry
 from tldw_chatbook.TTS._async_lifecycle import current_shutdown_deadline
 from tldw_chatbook.TTS.adapter_types import (
+    TTSOperationError,
+    TTSProviderCatalog,
     TTSProviderDescriptor,
     TTSProviderReconfiguringError,
     TTSProviderSpec,
+    TTSRegistryClosedError,
     TTSRequest,
 )
 from tldw_chatbook.TTS.adapters.audio_cpp import AudioCppAdapter
@@ -31,13 +34,17 @@ from tldw_chatbook.TTS.audio_cpp_supervisor import (
     AudioCppReadyEndpoint,
     AudioCppSupervisor,
     _AudioCppGenerationChanged,
+    _OwnedAudioCppProcess,
 )
 from tldw_chatbook.TTS.effective_settings import (
     TTSCharacterProfileSelection,
     TTSSelectionOverrides,
 )
 from tldw_chatbook.TTS.preferences import TTSPreferencesSnapshot
-from tldw_chatbook.TTS.TTS_Generation import TTSService
+from tldw_chatbook.TTS.TTS_Generation import (
+    TTSService,
+    TTSSettingsPersistenceOutcome,
+)
 
 
 def _wav() -> bytes:
@@ -181,10 +188,12 @@ class _PreparationSupervisor:
         if require_existing is not None and (
             require_existing.lifecycle_epoch != self.lifecycle_epoch
             or require_existing.process_generation != self.process_generation
-            or require_existing.state != self.state
-            or self.state not in {"starting", "running", "unhealthy"}
+            or require_existing.state not in {"starting", "running", "unhealthy"}
+            or (require_existing.state != self.state and self.state != "draining")
         ):
             raise _AudioCppGenerationChanged
+        if self.state == "draining" and require_existing is not None:
+            return self._endpoint(launch.base_url)
         if self.state in {"draining", "stopping"}:
             raise TTSProviderReconfiguringError(
                 "The audio.cpp provider is reconfiguring"
@@ -259,6 +268,95 @@ class _PreparationSupervisor:
             process_generation=self.process_generation,
             observation_version=self.observation_version,
         )
+
+
+class _LifecycleReader:
+    def __init__(self) -> None:
+        self._items: asyncio.Queue[bytes | BaseException | None] = asyncio.Queue()
+
+    async def read(self, _size: int = -1) -> bytes:
+        item = await self._items.get()
+        if isinstance(item, BaseException):
+            raise item
+        return b"" if item is None else item
+
+    def finish(self) -> None:
+        self._items.put_nowait(None)
+
+    def fail(self, error: BaseException) -> None:
+        self._items.put_nowait(error)
+
+
+class _LifecycleProcess:
+    def __init__(self, *, exit_on_terminate: bool = True) -> None:
+        self.returncode: int | None = None
+        self.stdout = _LifecycleReader()
+        self.stderr = _LifecycleReader()
+        self.terminate_calls = 0
+        self.kill_calls = 0
+        self._exit_on_terminate = exit_on_terminate
+        self._exited = asyncio.Event()
+
+    async def wait(self) -> int:
+        await self._exited.wait()
+        assert self.returncode is not None
+        return self.returncode
+
+    def terminate(self) -> None:
+        self.terminate_calls += 1
+        if self._exit_on_terminate:
+            self.exit(-15)
+
+    def kill(self) -> None:
+        self.kill_calls += 1
+        self.exit(-9)
+
+    def exit(self, returncode: int = 0) -> None:
+        if self.returncode is not None:
+            return
+        self.returncode = returncode
+        self.stdout.finish()
+        self.stderr.finish()
+        self._exited.set()
+
+    def close_parent_pipes(self) -> None:
+        self.stdout.finish()
+        self.stderr.finish()
+
+
+class _LifecycleLauncher:
+    def __init__(
+        self,
+        processes: list[_LifecycleProcess],
+        *,
+        block_call: int | None = None,
+    ) -> None:
+        self._processes = processes
+        self._block_call = block_call
+        self.release_blocked_call = asyncio.Event()
+        self.blocked_call_started = asyncio.Event()
+        self.calls = 0
+        self.launches: list[Any] = []
+
+    async def __call__(
+        self,
+        _launch: Any,
+        _environment: dict[str, str],
+    ) -> _OwnedAudioCppProcess:
+        self.calls += 1
+        self.launches.append(_launch)
+        if self.calls == self._block_call:
+            self.blocked_call_started.set()
+            await self.release_blocked_call.wait()
+        process = self._processes[self.calls - 1]
+        return _OwnedAudioCppProcess(
+            process=process,
+            close_parent_pipes=process.close_parent_pipes,
+        )
+
+
+async def _available_port(_port: int, _timeout: float) -> str:
+    return "available"
 
 
 def _external_config() -> dict[str, Any]:
@@ -858,6 +956,280 @@ async def test_restart_applies_latest_stage_not_earlier_stage(
 
 
 @pytest.mark.asyncio
+async def test_restart_launches_chosen_generation_and_leaves_later_save_staged(
+    tmp_path: Path,
+) -> None:
+    supervisor = _PreparationSupervisor()
+    managed_a = _managed_config(tmp_path, "restart-a", 19_133)
+    managed_b = _managed_config(tmp_path, "restart-b", 19_134)
+    managed_c = _managed_config(tmp_path, "restart-c", 19_135)
+    service, factory_configs = _service(managed_a, supervisor)
+    await service.start_and_test_audio_cpp()
+    await _stage(service, managed_b, generation=1)
+    supervisor.inflight_probe_gate = asyncio.Event()
+
+    restart = asyncio.create_task(service.restart_audio_cpp())
+    publication = None
+    try:
+        await asyncio.wait_for(supervisor.draining_started.wait(), timeout=1)
+        while "generation_stop" not in supervisor.events:
+            await asyncio.sleep(0)
+
+        publication = service.begin_preferences_publication(
+            _preferences(),
+            {"audio_cpp": managed_c},
+            lambda: TTSSettingsPersistenceOutcome(
+                file_replaced=True,
+                caches_reloaded=True,
+                failure_phase=None,
+            ),
+            foreground_timeout_seconds=0,
+        )
+        await asyncio.sleep(0)
+        assert publication.completion.done() is False
+
+        supervisor.inflight_probe_gate.set()
+        catalog = await asyncio.wait_for(restart, timeout=1)
+        await asyncio.wait_for(publication.completion, timeout=1)
+        snapshot = await service.registry.provider_configuration_snapshot("audio_cpp")
+
+        assert catalog is not None
+        assert catalog.models[0].model_id == "model"
+        assert dict(snapshot.applied_config) == managed_b
+        assert dict(snapshot.staged_config or {}) == managed_c
+        assert factory_configs == [managed_a, managed_b]
+        assert supervisor.launches == 2
+    finally:
+        if supervisor.inflight_probe_gate is not None:
+            supervisor.inflight_probe_gate.set()
+        await asyncio.gather(restart, return_exceptions=True)
+        if publication is not None:
+            await asyncio.gather(publication.completion, return_exceptions=True)
+        await service.close()
+        await service.wait_closed()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("lifecycle", ["restart", "shutdown"])
+async def test_admitted_synthesis_finishes_after_draining_begins(
+    tmp_path: Path,
+    lifecycle: str,
+) -> None:
+    supervisor = _PreparationSupervisor()
+    managed = _managed_config(tmp_path, f"admitted-{lifecycle}", 19_136)
+    service, _factory_configs = _service(managed, supervisor)
+    await service.start_and_test_audio_cpp()
+    operation = await service.admit(_request())
+    transition = asyncio.create_task(
+        service.restart_audio_cpp()
+        if lifecycle == "restart"
+        else service.shutdown_audio_cpp()
+    )
+    response = None
+
+    try:
+        await asyncio.wait_for(supervisor.draining_started.wait(), timeout=1)
+        response = await operation.synthesize()
+        assert [chunk async for chunk in response.byte_stream] == [_wav()]
+        assert transition.done() is False
+
+        await response.aclose()
+        response = None
+        await asyncio.wait_for(transition, timeout=1)
+    finally:
+        if response is not None:
+            await response.aclose()
+        await asyncio.gather(transition, return_exceptions=True)
+        await service.close()
+        await service.wait_closed()
+
+
+@pytest.mark.asyncio
+async def test_admitted_synthesis_reports_safe_error_after_generation_exit(
+    tmp_path: Path,
+) -> None:
+    supervisor = _PreparationSupervisor()
+    managed = _managed_config(tmp_path, "admitted-exit", 19_139)
+    service, _factory_configs = _service(managed, supervisor)
+    await service.start_and_test_audio_cpp()
+    operation = await service.admit(_request())
+    await supervisor.force_exit()
+
+    try:
+        with pytest.raises(TTSOperationError) as raised:
+            await operation.synthesize()
+
+        assert raised.value.code == "connection_unavailable"
+        assert str(raised.value) == "The audio.cpp server is unavailable"
+        assert raised.value.retryable is True
+        assert raised.value.recovery_action == "retry"
+        assert raised.value.__context__ is None
+        assert raised.value.__cause__ is None
+    finally:
+        await service.close()
+        await service.wait_closed()
+
+
+@pytest.mark.asyncio
+async def test_passive_capability_save_race_stays_unverified(
+    tmp_path: Path,
+) -> None:
+    supervisor = _PreparationSupervisor()
+    managed_a = _managed_config(tmp_path, "capability-a", 19_137)
+    managed_b = _managed_config(tmp_path, "capability-b", 19_138)
+    service, _factory_configs = _service(managed_a, supervisor)
+    await service.start_and_test_audio_cpp()
+    lease = await service.registry.acquire("audio_cpp")
+    adapter = lease.adapter
+    await lease.release()
+    original_get_catalog = adapter.get_catalog
+    observation_started = asyncio.Event()
+    release_observation = asyncio.Event()
+    catalog_calls = 0
+
+    async def controlled_get_catalog(refresh: bool = False) -> TTSProviderCatalog:
+        nonlocal catalog_calls
+        catalog_calls += 1
+        if catalog_calls == 1:
+            observation_started.set()
+            await release_observation.wait()
+        return await original_get_catalog(refresh=refresh)
+
+    adapter.get_catalog = controlled_get_catalog  # type: ignore[method-assign]
+    observation = asyncio.create_task(
+        service.get_native_capability_snapshot("audio_cpp", ("model",))
+    )
+    publication = None
+    try:
+        await asyncio.wait_for(observation_started.wait(), timeout=1)
+        publication = service.begin_preferences_publication(
+            _preferences(),
+            {"audio_cpp": managed_b},
+            lambda: TTSSettingsPersistenceOutcome(
+                file_replaced=True,
+                caches_reloaded=True,
+                failure_phase=None,
+            ),
+            foreground_timeout_seconds=0,
+        )
+        await asyncio.wait_for(publication.completion, timeout=1)
+        release_observation.set()
+        result = await asyncio.wait_for(observation, timeout=1)
+
+        assert service.saved_configuration_revision("audio_cpp") == 1
+        assert service.applied_configuration_revision("audio_cpp") == 0
+        assert result.state == "unverified"
+        assert result.catalog is None
+        assert result.voice_results == {}
+    finally:
+        release_observation.set()
+        await asyncio.gather(observation, return_exceptions=True)
+        if publication is not None:
+            await asyncio.gather(publication.completion, return_exceptions=True)
+        await service.close()
+        await service.wait_closed()
+
+
+@pytest.mark.asyncio
+async def test_passive_capability_apply_race_stays_unverified(
+    tmp_path: Path,
+) -> None:
+    supervisor = _PreparationSupervisor()
+    managed_a = _managed_config(tmp_path, "capability-apply-a", 19_142)
+    managed_b = _managed_config(tmp_path, "capability-apply-b", 19_143)
+    service, _factory_configs = _service(managed_a, supervisor)
+    await service.start_and_test_audio_cpp()
+    lease = await service.registry.acquire("audio_cpp")
+    adapter = lease.adapter
+    await lease.release()
+    original_get_catalog = adapter.get_catalog
+    observation_started = asyncio.Event()
+    release_observation = asyncio.Event()
+    catalog_calls = 0
+
+    async def controlled_get_catalog(refresh: bool = False) -> TTSProviderCatalog:
+        nonlocal catalog_calls
+        catalog_calls += 1
+        if catalog_calls == 1:
+            observation_started.set()
+            await release_observation.wait()
+        return await original_get_catalog(refresh=refresh)
+
+    adapter.get_catalog = controlled_get_catalog  # type: ignore[method-assign]
+    observation = asyncio.create_task(
+        service.get_native_capability_snapshot("audio_cpp", ("model",))
+    )
+    restart = None
+    try:
+        await asyncio.wait_for(observation_started.wait(), timeout=1)
+        await _stage(service, managed_b, generation=1)
+        restart = asyncio.create_task(service.restart_audio_cpp())
+        await asyncio.wait_for(supervisor.draining_started.wait(), timeout=1)
+
+        release_observation.set()
+        await asyncio.wait_for(restart, timeout=1)
+        result = await asyncio.wait_for(observation, timeout=1)
+
+        assert service.saved_configuration_revision("audio_cpp") == 1
+        assert service.applied_configuration_revision("audio_cpp") == 1
+        assert result.state == "unverified"
+        assert result.catalog is None
+        assert result.voice_results == {}
+    finally:
+        release_observation.set()
+        await asyncio.gather(observation, return_exceptions=True)
+        if restart is not None:
+            await asyncio.gather(restart, return_exceptions=True)
+        await service.close()
+        await service.wait_closed()
+
+
+@pytest.mark.asyncio
+async def test_passive_capability_exit_before_publication_stays_unverified(
+    tmp_path: Path,
+) -> None:
+    supervisor = _PreparationSupervisor()
+    managed = _managed_config(tmp_path, "capability-exit", 19_144)
+    service, _factory_configs = _service(managed, supervisor)
+    await service.start_and_test_audio_cpp()
+    original_acquire = service.registry.acquire
+    release_started = asyncio.Event()
+    release_allowed = asyncio.Event()
+
+    async def controlled_acquire(*args: Any, **kwargs: Any) -> Any:
+        lease = await original_acquire(*args, **kwargs)
+        original_release = lease.release
+
+        async def controlled_release() -> None:
+            release_started.set()
+            await release_allowed.wait()
+            await original_release()
+
+        lease.release = controlled_release
+        return lease
+
+    service.registry.acquire = controlled_acquire  # type: ignore[method-assign]
+    observation = asyncio.create_task(
+        service.get_native_capability_snapshot("audio_cpp", ("model",))
+    )
+    try:
+        await asyncio.wait_for(release_started.wait(), timeout=1)
+        await supervisor.force_exit()
+        release_allowed.set()
+        result = await asyncio.wait_for(observation, timeout=1)
+
+        assert result.state == "unverified"
+        assert result.catalog is None
+        assert result.voice_results == {}
+    finally:
+        service.registry.acquire = original_acquire  # type: ignore[method-assign]
+        release_allowed.set()
+        await asyncio.gather(observation, return_exceptions=True)
+        await service.close()
+        await service.wait_closed()
+
+
+@pytest.mark.asyncio
 async def test_shutdown_drains_work_stops_child_and_promotes_stage_without_launch(
     tmp_path: Path,
 ) -> None:
@@ -1064,6 +1436,291 @@ async def test_service_close_uses_one_deadline_for_registry_then_supervisor(
     first, terminal = supervisor.deadline_observations
     assert first is not None
     assert terminal == first
+
+
+@pytest.mark.asyncio
+async def test_close_deadline_reaches_lifecycle_transition_accepted_before_close(
+    tmp_path: Path,
+) -> None:
+    supervisor = _PreparationSupervisor()
+    managed = _managed_config(tmp_path, "close-draining-deadline", 19_145)
+    service, _factory_configs = _service(
+        managed,
+        supervisor,
+        shutdown_timeout_seconds=0.25,
+    )
+    await service.start_and_test_audio_cpp()
+    response = await service.synthesize(_request())
+    restart = asyncio.create_task(service.restart_audio_cpp())
+    close = None
+
+    try:
+        await asyncio.wait_for(supervisor.draining_started.wait(), timeout=1)
+        close = asyncio.create_task(service.close())
+        await asyncio.wait_for(service._close_signal.wait(), timeout=1)
+        while service.registry._shutdown_deadline is None:
+            await asyncio.sleep(0)
+        expected_deadline = service.registry._shutdown_deadline
+
+        await response.aclose()
+        await asyncio.gather(restart, return_exceptions=True)
+        await asyncio.gather(close, return_exceptions=True)
+        await asyncio.gather(service.wait_closed(), return_exceptions=True)
+
+        assert expected_deadline is not None
+        assert supervisor.deadline_observations[0] == expected_deadline
+    finally:
+        await response.aclose()
+        await asyncio.gather(restart, return_exceptions=True)
+        if close is not None:
+            await asyncio.gather(close, return_exceptions=True)
+        await asyncio.gather(service.wait_closed(), return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_close_deadline_interrupts_lifecycle_stop_already_waiting_on_grace(
+    tmp_path: Path,
+) -> None:
+    process = _LifecycleProcess(exit_on_terminate=False)
+    launcher = _LifecycleLauncher([process])
+    supervisor = AudioCppSupervisor(
+        source_environment={},
+        process_launcher=launcher,
+        port_preflight=_available_port,
+    )
+    managed = _managed_config(tmp_path, "close-active-grace", 19_146)
+    managed["managed_termination_grace_seconds"] = 1.0
+    service, _factory_configs = _service(
+        managed,
+        supervisor,  # type: ignore[arg-type]
+        shutdown_timeout_seconds=0.05,
+    )
+    await service.start_and_test_audio_cpp()
+    lifecycle = asyncio.create_task(service.shutdown_audio_cpp())
+    close = None
+
+    try:
+        while process.terminate_calls == 0:
+            await asyncio.sleep(0)
+        close = asyncio.create_task(service.close())
+        await asyncio.wait_for(service._close_signal.wait(), timeout=1)
+
+        for _ in range(30):
+            if process.kill_calls:
+                break
+            await asyncio.sleep(0.01)
+
+        assert process.kill_calls == 1
+        await asyncio.gather(lifecycle, close, return_exceptions=True)
+        await asyncio.gather(service.wait_closed(), return_exceptions=True)
+    finally:
+        process.exit(0)
+        await asyncio.gather(lifecycle, return_exceptions=True)
+        if close is not None:
+            await asyncio.gather(close, return_exceptions=True)
+        await asyncio.gather(service.wait_closed(), return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_close_cancels_replacement_spawn_before_startup_timeout(
+    tmp_path: Path,
+) -> None:
+    first = _LifecycleProcess()
+    replacement = _LifecycleProcess()
+    launcher = _LifecycleLauncher([first, replacement], block_call=2)
+    supervisor = AudioCppSupervisor(
+        source_environment={},
+        process_launcher=launcher,
+        port_preflight=_available_port,
+    )
+    managed = _managed_config(tmp_path, "close-replacement-spawn", 19_147)
+    managed["managed_startup_timeout_seconds"] = 30.0
+    service, _factory_configs = _service(
+        managed,
+        supervisor,  # type: ignore[arg-type]
+        shutdown_timeout_seconds=0.05,
+    )
+    await service.start_and_test_audio_cpp()
+    restart = asyncio.create_task(service.restart_audio_cpp())
+    close = None
+    waiter = None
+
+    try:
+        await asyncio.wait_for(launcher.blocked_call_started.wait(), timeout=1)
+        close = asyncio.create_task(service.close())
+        waiter = asyncio.create_task(service.wait_closed())
+
+        await asyncio.wait_for(
+            asyncio.gather(close, waiter, return_exceptions=True),
+            timeout=0.5,
+        )
+        assert supervisor.snapshot().state == "stopped"
+        assert restart.done() is True
+    finally:
+        launcher.release_blocked_call.set()
+        first.exit(0)
+        replacement.exit(0)
+        await asyncio.gather(restart, return_exceptions=True)
+        if close is not None:
+            await asyncio.gather(close, return_exceptions=True)
+        if waiter is not None:
+            await asyncio.gather(waiter, return_exceptions=True)
+        await asyncio.gather(service.wait_closed(), return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_first_use_after_exit_waits_cleanup_then_applies_latest_stage(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    first = _LifecycleProcess()
+    replacement = _LifecycleProcess()
+    launcher = _LifecycleLauncher([first, replacement])
+    supervisor = AudioCppSupervisor(
+        source_environment={},
+        process_launcher=launcher,
+        port_preflight=_available_port,
+    )
+    managed_a = _managed_config(tmp_path, "exit-stage-a", 19_148)
+    managed_b = _managed_config(tmp_path, "exit-stage-b", 19_149)
+    service, _factory_configs = _service(
+        managed_a,
+        supervisor,  # type: ignore[arg-type]
+    )
+    await service.start_and_test_audio_cpp()
+    await _stage(service, managed_b, generation=1)
+    output_join_started = asyncio.Event()
+    release_output_join = asyncio.Event()
+
+    async def blocked_output_join(_record: Any) -> None:
+        output_join_started.set()
+        await release_output_join.wait()
+
+    monkeypatch.setattr(supervisor, "_join_output_drains", blocked_output_join)
+    first.exit(12)
+    await asyncio.wait_for(output_join_started.wait(), timeout=1)
+    first_use = asyncio.create_task(service.start_and_test_audio_cpp())
+
+    try:
+        await asyncio.sleep(0)
+        assert launcher.calls == 1
+        assert first_use.done() is False
+
+        release_output_join.set()
+        catalog = await asyncio.wait_for(first_use, timeout=1)
+        configuration = await service.registry.provider_configuration_snapshot(
+            "audio_cpp"
+        )
+
+        assert catalog.health.fresh is True
+        assert launcher.calls == 2
+        assert launcher.launches[1].base_url == "http://127.0.0.1:19149"
+        assert dict(configuration.applied_config) == managed_b
+        assert configuration.staged_config is None
+    finally:
+        release_output_join.set()
+        await asyncio.gather(first_use, return_exceptions=True)
+        await service.close()
+        await service.wait_closed()
+
+
+@pytest.mark.asyncio
+async def test_output_failure_invalidates_passive_catalog_before_child_exits(
+    tmp_path: Path,
+) -> None:
+    process = _LifecycleProcess(exit_on_terminate=False)
+    launcher = _LifecycleLauncher([process])
+    supervisor = AudioCppSupervisor(
+        source_environment={},
+        process_launcher=launcher,
+        port_preflight=_available_port,
+    )
+    managed = _managed_config(tmp_path, "output-failure-passive", 19_150)
+    managed["managed_termination_grace_seconds"] = 1.0
+    service, _factory_configs = _service(
+        managed,
+        supervisor,  # type: ignore[arg-type]
+    )
+    await service.start_and_test_audio_cpp()
+
+    try:
+        process.stderr.fail(RuntimeError("private output failure"))
+        while process.terminate_calls == 0:
+            await asyncio.sleep(0)
+
+        catalog = await service.get_catalog("audio_cpp", refresh=False)
+        observation = service.latest_native_capability_observation("audio_cpp")
+
+        assert supervisor.snapshot().state == "unavailable"
+        assert catalog.health.fresh is False
+        assert catalog.health.state == "unavailable"
+        assert observation is not None
+        assert observation.snapshot.catalog is not None
+        assert observation.snapshot.catalog.health.fresh is False
+    finally:
+        process.exit(7)
+        await service.close()
+        await service.wait_closed()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("lifecycle", ["restart", "shutdown"])
+async def test_lifecycle_commands_reject_after_service_close(
+    tmp_path: Path,
+    lifecycle: str,
+) -> None:
+    supervisor = _PreparationSupervisor()
+    managed = _managed_config(tmp_path, f"closed-{lifecycle}", 19_140)
+    service, _factory_configs = _service(managed, supervisor)
+    await service.close()
+    await service.wait_closed()
+    await service._audio_cpp_lifecycle_lock.acquire()
+
+    try:
+        with pytest.raises(TTSRegistryClosedError):
+            async with asyncio.timeout(0.1):
+                if lifecycle == "restart":
+                    await service.restart_audio_cpp()
+                else:
+                    await service.shutdown_audio_cpp()
+    finally:
+        service._audio_cpp_lifecycle_lock.release()
+
+    assert service._audio_cpp_lifecycle_tasks == set()
+
+
+@pytest.mark.asyncio
+async def test_wait_closed_joins_lifecycle_command_accepted_before_close(
+    tmp_path: Path,
+) -> None:
+    supervisor = _PreparationSupervisor()
+    managed = _managed_config(tmp_path, "close-race", 19_141)
+    service, _factory_configs = _service(managed, supervisor)
+    await service._audio_cpp_lifecycle_lock.acquire()
+    restart = asyncio.create_task(service.restart_audio_cpp())
+    waiter = None
+
+    try:
+        while not service._audio_cpp_lifecycle_tasks:
+            await asyncio.sleep(0)
+        await service.close()
+        waiter = asyncio.create_task(service.wait_closed())
+        await asyncio.sleep(0)
+        assert waiter.done() is False
+
+        service._audio_cpp_lifecycle_lock.release()
+        with pytest.raises(TTSRegistryClosedError):
+            await restart
+        with pytest.raises(RuntimeError, match="TTS shutdown cleanup failed"):
+            await asyncio.wait_for(waiter, timeout=1)
+        assert service._audio_cpp_lifecycle_tasks == set()
+    finally:
+        if service._audio_cpp_lifecycle_lock.locked():
+            service._audio_cpp_lifecycle_lock.release()
+        await asyncio.gather(restart, return_exceptions=True)
+        if waiter is not None:
+            await asyncio.gather(waiter, return_exceptions=True)
+        await asyncio.gather(service.wait_closed(), return_exceptions=True)
 
 
 @pytest.mark.asyncio
