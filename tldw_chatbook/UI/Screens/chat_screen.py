@@ -1453,37 +1453,6 @@ def _run_dictionary_summary_off_thread(
     )
 
 
-#: Modifier prefixes that make a key a CHORD rather than text input, even
-#: when it carries a printable ``character``. Textual's terminal parser
-#: renames the key (``alt+m``) but passes the bare letter through as the
-#: character (``_xterm_parser.py``), so ``is_printable`` is True for every
-#: ``alt+<letter>``. Without this check ``ChatScreen.on_key``'s
-#: printable-capture branch swallowed the chord as typing -- pressing Alt+M
-#: inserted a literal "m" into the draft and the screen's own
-#: ``Binding("alt+m", ...)`` never ran (TASK-1800).
-#:
-#: ``ctrl+``/``super+``/``meta+`` are listed for completeness, not because
-#: they leak today: their characters are C0 control bytes, which are not
-#: printable, so they never reached that branch. ``alt`` is the one that
-#: does. Listing all four keeps the rule "a modified key is not text" true
-#: by construction rather than by accident of the control-byte encoding.
-_CHORD_MODIFIER_PREFIXES = ("alt+", "ctrl+", "super+", "meta+")
-
-
-def _is_modified_chord(key: str) -> bool:
-    """Return whether ``key`` names a modifier chord rather than plain text.
-
-    Args:
-        key: Textual key name, e.g. ``"m"``, ``"alt+m"``, ``"shift+alt+m"``.
-
-    Returns:
-        True when any modifier prefix appears in the name. ``shift+`` alone
-        is deliberately NOT a chord -- ``shift+a`` is how a capital letter
-        arrives, and treating it as a chord would break typing.
-    """
-    return any(prefix in key for prefix in _CHORD_MODIFIER_PREFIXES)
-
-
 class ChatScreen(BaseAppScreen):
     """
     Chat screen with comprehensive state management.
@@ -16948,14 +16917,32 @@ class ChatScreen(BaseAppScreen):
         except QueryError:
             return None
 
+    #: Draft text `_sync_console_command_popup` last ran against, or
+    #: None before the first sync. A CLASS attribute, deliberately: the
+    #: hand-built `ChatScreen.__new__()` test fixtures never run `__init__`,
+    #: and this programme has shipped one fixture AttributeError per wave.
+    _console_popup_synced_draft: str | None = None
+
     def _sync_console_command_popup(self) -> None:
-        """Show/hide the slash-command popup from the current composer draft."""
+        """Show/hide the slash-command popup from the current composer draft.
+
+        Records the draft text it ran against (NOT the composer's
+        `_draft_generation` -- that is an undo-checkpoint counter that
+        `insert_text` never advances; a gate on it no-oped on every
+        keystroke, measured), so
+        `_ensure_console_command_popup_current` can tell a popup that is
+        merely CLOSED (Escape) from one that is STALE (an edit happened but
+        its `DraftChanged` has not been delivered yet). Recorded on every
+        path, including the hide paths -- "synced" means "reflects this
+        draft", not "open".
+        """
         popup = self._console_command_popup_or_none()
         if popup is None:
             return
         composer = self._console_composer_or_none()
         if composer is None:
             return
+        self._console_popup_synced_draft = composer.draft_text()
         if composer.has_paste_segments():
             popup.hide()
             return
@@ -16968,6 +16955,26 @@ class ChatScreen(BaseAppScreen):
             popup.hide()
             return
         popup.show_suggestions(suggestions)
+
+    def _ensure_console_command_popup_current(self) -> None:
+        """Re-sync the popup only if the draft moved since the last sync.
+
+        Closes the same-driver-read window (task-3790): when `/`+Down or
+        `/`+Enter arrive in one read, the second key's routing used to
+        consult a popup whose `DraftChanged` was still queued. Re-deriving
+        here is safe ONLY because it is gated on the synced draft text -- an ungated
+        re-sync would re-open a popup the user just dismissed with Escape
+        (dismissal edits nothing, so the text does not move, so this
+        is a no-op for it). The queued `DraftChanged` still delivers and
+        re-runs the full sync; by then the generation matches and
+        `show_suggestions` is idempotent for identical rows, so the
+        highlight a routed Down moved is not yanked back.
+        """
+        composer = self._console_composer_or_none()
+        if composer is None:
+            return
+        if composer.draft_text() != self._console_popup_synced_draft:
+            self._sync_console_command_popup()
 
     def _dismiss_console_command_popup(self) -> bool:
         """Hide the popup if open. Returns True when it was open."""
@@ -17396,6 +17403,7 @@ class ChatScreen(BaseAppScreen):
             realtime.controller.on_keypress()
         if not self._should_capture_console_input(composer):
             return
+        self._ensure_console_command_popup_current()
         popup = self._console_command_popup_or_none()
         if popup is not None and popup.is_open:
             if event.key == "up":
@@ -17417,9 +17425,14 @@ class ChatScreen(BaseAppScreen):
         # operation (select-all and caret movement, including Up/Down's
         # history-recall-first shape, which still falls through UNCONSUMED
         # on a boundary row where nothing moved) now live on the composer
-        # itself. Everything below stays because it reaches past the
-        # composer -- Workbench/guidance resync, the clipboard, undo/redo's
-        # store persistence, send, transcript paging.
+        # itself. TASK-3749 added the draft-EDITING keys to that set -- they
+        # post `ConsoleComposerBar.DraftChanged`, which
+        # `_handle_console_composer_draft_edit` below turns back into the
+        # Workbench/guidance resync this method used to do inline. That
+        # includes the printable fallthrough, so this delegation is now also
+        # where ordinary typing lands. Everything below stays because it
+        # reaches past the composer -- the clipboard, undo/redo's store
+        # persistence, send, transcript paging.
         if composer.handle_console_key(event):
             return
         if (
@@ -17429,34 +17442,6 @@ class ChatScreen(BaseAppScreen):
             copy_to_clipboard = getattr(self.app_instance, "copy_to_clipboard", None)
             if callable(copy_to_clipboard):
                 copy_to_clipboard(composer.draft_text())
-            event.stop()
-            event.prevent_default()
-            return
-        if event.key in {"backspace", "ctrl+h"}:
-            composer.delete_left()
-            self._sync_console_workbench_actions_from_draft()
-            event.stop()
-            event.prevent_default()
-            return
-        if event.key == "delete":
-            composer.delete_right()
-            self._sync_console_workbench_actions_from_draft()
-            event.stop()
-            event.prevent_default()
-            return
-        if event.key == "ctrl+w":
-            composer.delete_word_left()
-            self._sync_console_workbench_actions_from_draft()
-            event.stop()
-            event.prevent_default()
-            return
-        # TASK-381: Shift+Enter is the natural newline chord, but terminals
-        # deliver it as a plain CR (which sends), so also accept Ctrl+J -- a
-        # control code that survives every terminal -- as a portable newline.
-        if event.key in ("shift+enter", "ctrl+j"):
-            composer.insert_text("\n")
-            self._sync_console_workbench_actions_from_draft()
-            self._dismiss_console_guidance()
             event.stop()
             event.prevent_default()
             return
@@ -17565,14 +17550,6 @@ class ChatScreen(BaseAppScreen):
             event.stop()
             event.prevent_default()
             return
-        if event.key == "ctrl+u":
-            # TASK-1281: this is the one call site that opts into undo --
-            # an accidental full clear is exactly what undo exists for.
-            composer.clear_draft(record_history=True)
-            self._sync_console_workbench_actions_from_draft()
-            event.stop()
-            event.prevent_default()
-            return
         if event.key == "ctrl+z":
             self._console_composer_undo()
             event.stop()
@@ -17607,16 +17584,46 @@ class ChatScreen(BaseAppScreen):
             event.stop()
             event.prevent_default()
             return
-        if (
-            event.is_printable
-            and event.character is not None
-            and not _is_modified_chord(event.key)
-        ):
-            composer.insert_text(event.character)
-            self._sync_console_workbench_actions_from_draft()
+
+    @on(ConsoleComposerBar.DraftChanged)
+    def _handle_console_composer_draft_edit(
+        self, event: ConsoleComposerBar.DraftChanged
+    ) -> None:
+        """React to a draft edit the composer made handling a Console key.
+
+        TASK-3749, the inverse of what `on_key` used to do inline: instead
+        of the screen editing the draft through the composer and then
+        calling itself back, the composer announces the edit and the screen
+        does the two screen-owned follow-ups here -- re-derive Workbench
+        command readiness (which is also what opens/closes the
+        slash-command popup), and, for a text-ADDING edit only, retire the
+        first-run guidance. Deletions deliberately do not dismiss it: "the
+        user has started composing" is a claim only an insertion makes, and
+        that is precisely the split those keys had before the message
+        existed.
+
+        NOT to be confused with the sibling `_on_console_composer_draft_
+        changed` (`Input.Changed` on the composer's hidden compatibility
+        input), which fires on EVERY draft mutation from any source --
+        `load_draft`, paste, dictation, a session restore -- and disarms
+        the unknown-command escape. That signal is deliberately not reused
+        here: syncing the Workbench and dismissing guidance off it would
+        fire those on mutation paths that do neither today. (The two also
+        must not share a method NAME: the second definition would silently
+        replace the first in the class body, which is exactly how the
+        first draft of this handler killed the disarm subscription.)
+
+        `event.stop()` because this is a Console-composer-internal
+        notification: nothing above the screen subscribes, so letting it
+        bubble on would only cost a dispatch.
+
+        Args:
+            event: The composer's draft-change notification.
+        """
+        event.stop()
+        self._sync_console_workbench_actions_from_draft()
+        if event.is_insertion:
             self._dismiss_console_guidance()
-            event.stop()
-            event.prevent_default()
 
     def _recover_stuck_console_send_stash(
         self, stash: "ConsoleDraftStash | None"

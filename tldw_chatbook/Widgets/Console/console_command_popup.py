@@ -62,7 +62,18 @@ class ConsoleCommandPopup(Widget):
         return self.display
 
     def show_suggestions(self, suggestions: list[CommandSuggestion]) -> None:
-        """Replace rows, reset the highlight, reposition, and show."""
+        """Replace rows, reset the highlight, reposition, and show.
+
+        Idempotent when already open with the SAME suggestions: the rows and
+        highlight are left alone (only the anchor is refreshed). Without
+        this, the deferred `DraftChanged` sync arriving after a same-read
+        `/`+Down pair would rebuild identical rows and yank the highlight
+        the Down just moved back to 0 (task-3790). `CommandSuggestion` is a
+        frozen dataclass, so `==` here is value equality.
+        """
+        if self.is_open and list(suggestions) == self._suggestions:
+            self.reposition()
+            return
         self._suggestions = list(suggestions)
         self._desired_height = min(len(self._suggestions), MAX_VISIBLE_ROWS)
         self.styles.height = self._desired_height
