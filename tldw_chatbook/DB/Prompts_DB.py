@@ -2607,9 +2607,13 @@ class PromptsDatabase:
         if not isinstance(query, str):
             raise TypeError("query must be a string.")
         if collection_id is not None and (
-            type(collection_id) is not int or collection_id <= 0
+            type(collection_id) is not int
+            or collection_id <= 0
+            or collection_id > self._SQLITE_SIGNED_INTEGER_MAX
         ):
-            raise ValueError("collection_id must be a positive integer or None.")
+            raise ValueError(
+                "collection_id must be a positive signed 64-bit integer or None."
+            )
         if not isinstance(sort_by, str):
             raise TypeError("sort_by must be a string.")
         normalized_sort = sort_by.strip().lower()
@@ -2643,14 +2647,33 @@ class PromptsDatabase:
         if normalized_query:
             like_pattern = f"%{self._escape_library_prompt_like(normalized_query)}%"
             conditions.append(
-                "(LOWER(p.name) LIKE LOWER(?) ESCAPE '\\' "
-                "OR LOWER(coalesce(p.details, '')) LIKE LOWER(?) ESCAPE '\\')"
+                "(prompt_browse_lower(p.name) LIKE prompt_browse_lower(?) ESCAPE '\\' "
+                "OR prompt_browse_lower(coalesce(p.details, '')) "
+                "LIKE prompt_browse_lower(?) ESCAPE '\\')"
             )
             params.extend((like_pattern, like_pattern))
 
         where_sql = " AND ".join(conditions)
         try:
             with self.transaction() as conn:
+                if collection_id is not None:
+                    collection_table_count = conn.execute(
+                        """
+                        SELECT COUNT(*)
+                        FROM sqlite_master
+                        WHERE type = 'table' AND name IN (?, ?)
+                        """,
+                        (
+                            "LocalPromptCollections",
+                            "LocalPromptCollectionItems",
+                        ),
+                    ).fetchone()[0]
+                    if collection_table_count != 2:
+                        return [], 0, 1, 0
+                if normalized_query:
+                    conn.create_function(
+                        "prompt_browse_lower", 1, str.lower, deterministic=True
+                    )
                 total_items = int(
                     conn.execute(
                         f"SELECT COUNT(*) FROM Prompts AS p {join_sql} "

@@ -167,6 +167,65 @@ def test_browse_prompts_combines_collection_and_literal_text_search(database):
     assert other_field_total == 0
 
 
+@pytest.mark.parametrize(
+    ("query", "expected_name"),
+    [
+        ("éclair", "Éclair"),
+        ("éClAiR", "Éclair"),
+        ("détail", "Details holder"),
+        ("déTaIl", "Details holder"),
+    ],
+)
+def test_browse_prompts_uses_python_lower_for_unicode_substrings(
+    database, query, expected_name
+):
+    _insert_prompt(database, name="Éclair")
+    _insert_prompt(database, name="Details holder", details="A DÉTAIL précis")
+    _insert_prompt(database, name="Straße")
+
+    items, total_pages, current_page, total_items = database.browse_prompts(query=query)
+
+    assert [item["name"] for item in items] == [expected_name]
+    assert (total_pages, current_page, total_items) == (1, 1, 1)
+    casefold_only, _, _, casefold_total = database.browse_prompts(query="STRASSE")
+    assert casefold_only == []
+    assert casefold_total == 0
+
+
+@pytest.mark.parametrize("collection_id", [1, (2**63) - 1])
+def test_browse_prompts_missing_collection_schema_is_empty_and_not_created(
+    database, collection_id
+):
+    connection = database.get_connection()
+    table_names = ("LocalPromptCollections", "LocalPromptCollectionItems")
+
+    assert (
+        connection.execute(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name IN (?, ?)",
+            table_names,
+        ).fetchone()[0]
+        == 0
+    )
+
+    result = database.browse_prompts(collection_id=collection_id, page=9)
+
+    assert result == ([], 0, 1, 0)
+    assert (
+        connection.execute(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name IN (?, ?)",
+            table_names,
+        ).fetchone()[0]
+        == 0
+    )
+
+
+def test_browse_prompts_rejects_collection_id_above_sqlite_integer(database):
+    LocalPromptService(database).list_prompt_collections()
+
+    with pytest.raises(ValueError, match="collection_id"):
+        database.browse_prompts(collection_id=2**63)
+
+
 def test_browse_prompts_treats_missing_and_inactive_collections_as_empty(database):
     prompt_id = _insert_prompt(database, name="Collected")
     service = LocalPromptService(database)
