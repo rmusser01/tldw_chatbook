@@ -10,7 +10,7 @@ from typing import Any
 import pytest
 
 import tldw_chatbook.DB.Prompts_DB as prompts_db_module
-from tldw_chatbook.DB.Prompts_DB import InputError, PromptsDatabase
+from tldw_chatbook.DB.Prompts_DB import DatabaseError, InputError, PromptsDatabase
 
 
 HISTORY_INDEX = "idx_sync_log_prompt_history"
@@ -18,7 +18,9 @@ TARGET_UUID = "00000000-0000-4000-8000-000000000196"
 OTHER_UUID = "00000000-0000-4000-8000-000000000197"
 
 
-def _seed_v3_database(database_path: Any) -> list[tuple[Any, ...]]:
+def _seed_v3_database(
+    database_path: Any, *, create_wrong_history_index: bool = False
+) -> list[tuple[Any, ...]]:
     """Create a real v3 database with retained rows but no history index."""
     conn = sqlite3.connect(database_path)
     try:
@@ -40,6 +42,7 @@ def _seed_v3_database(database_path: Any) -> list[tuple[Any, ...]]:
         )
         rows = [
             (
+                7,
                 "Prompts",
                 TARGET_UUID,
                 "create",
@@ -49,6 +52,7 @@ def _seed_v3_database(database_path: Any) -> list[tuple[Any, ...]]:
                 '{"name":"Retained v1","version":1}',
             ),
             (
+                21,
                 "Prompts",
                 TARGET_UUID,
                 "update",
@@ -58,6 +62,7 @@ def _seed_v3_database(database_path: Any) -> list[tuple[Any, ...]]:
                 '{"name":"Retained v2","version":2}',
             ),
             (
+                42,
                 "Prompts",
                 TARGET_UUID,
                 "delete",
@@ -70,11 +75,16 @@ def _seed_v3_database(database_path: Any) -> list[tuple[Any, ...]]:
         conn.executemany(
             """
             INSERT INTO sync_log (
-                entity, entity_uuid, operation, timestamp, client_id, version, payload
-            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                change_id, entity, entity_uuid, operation, timestamp, client_id,
+                version, payload
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
             rows,
         )
+        if create_wrong_history_index:
+            conn.execute(
+                f"CREATE INDEX {HISTORY_INDEX} ON sync_log(timestamp)"
+            )
         conn.commit()
         return rows
     finally:
@@ -169,6 +179,56 @@ def _index_sql(conn: sqlite3.Connection) -> str:
     return str(row[0])
 
 
+def _normalized_index_predicate(conn: sqlite3.Connection) -> str:
+    normalized_sql = " ".join(_index_sql(conn).lower().split())
+    _prefix, separator, predicate = normalized_sql.partition(" where ")
+    assert separator
+    return predicate
+
+
+def _trace_prompt_history_query_plans(
+    database: PromptsDatabase, *, page_size: int = 10
+) -> dict[str, list[str]]:
+    traced: list[str] = []
+    conn = database.get_connection()
+    conn.set_trace_callback(traced.append)
+    database.get_prompt_history_entries(TARGET_UUID, page_size=page_size)
+    conn.set_trace_callback(None)
+
+    production_queries = [
+        statement
+        for statement in traced
+        if statement.lstrip().upper().startswith("SELECT")
+        and "FROM sync_log" in statement
+    ]
+    assert len(production_queries) == 2
+    return {
+        "count": [
+            row[3]
+            for row in conn.execute("EXPLAIN QUERY PLAN " + production_queries[0])
+        ],
+        "rows": [
+            row[3]
+            for row in conn.execute("EXPLAIN QUERY PLAN " + production_queries[1])
+        ],
+    }
+
+
+def _assert_prompt_history_query_plans_use_index(
+    plans: dict[str, list[str]],
+) -> None:
+    assert any(
+        f"USING COVERING INDEX {HISTORY_INDEX}" in detail
+        for detail in plans["count"]
+    )
+    assert any(f"USING INDEX {HISTORY_INDEX}" in detail for detail in plans["rows"])
+    assert all(
+        "SCAN sync_log" not in detail and "USE TEMP B-TREE" not in detail
+        for plan in plans.values()
+        for detail in plan
+    )
+
+
 def test_fresh_v4_schema_has_partial_covering_prompt_history_index():
     database = PromptsDatabase(":memory:", client_id="fresh-v4")
     try:
@@ -179,9 +239,9 @@ def test_fresh_v4_schema_has_partial_covering_prompt_history_index():
             row[2] for row in conn.execute(f"PRAGMA index_info({HISTORY_INDEX})")
         ] == ["entity", "entity_uuid", "change_id", "operation"]
 
-        normalized_sql = " ".join(_index_sql(conn).lower().split())
-        assert "where entity = 'prompts'" in normalized_sql
-        assert "operation in ('create', 'update')" in normalized_sql
+        assert _normalized_index_predicate(conn) == (
+            "entity = 'prompts' and operation in ('create', 'update')"
+        )
     finally:
         database.close_connection()
 
@@ -197,8 +257,8 @@ def test_v3_to_v4_migration_preserves_every_retained_sync_row(tmp_path):
             tuple(row)
             for row in conn.execute(
                 """
-                SELECT entity, entity_uuid, operation, CAST(timestamp AS TEXT), client_id,
-                       version, payload
+                SELECT change_id, entity, entity_uuid, operation,
+                       CAST(timestamp AS TEXT), client_id, version, payload
                 FROM sync_log
                 ORDER BY change_id
                 """
@@ -210,6 +270,70 @@ def test_v3_to_v4_migration_preserves_every_retained_sync_row(tmp_path):
         assert HISTORY_INDEX in _index_sql(conn)
     finally:
         database.close_connection()
+
+
+def test_v3_to_v4_migration_replaces_wrong_reserved_index(tmp_path):
+    database_path = tmp_path / "prompts-v3-wrong-index.db"
+    _seed_v3_database(database_path, create_wrong_history_index=True)
+
+    database = PromptsDatabase(database_path, client_id="replace-wrong-index")
+    try:
+        conn = database.get_connection()
+
+        assert database._get_db_version(conn) == 4
+        assert [
+            row[2] for row in conn.execute(f"PRAGMA index_info({HISTORY_INDEX})")
+        ] == ["entity", "entity_uuid", "change_id", "operation"]
+        assert _normalized_index_predicate(conn) == (
+            "entity = 'prompts' and operation in ('create', 'update')"
+        )
+        _assert_prompt_history_query_plans_use_index(
+            _trace_prompt_history_query_plans(database)
+        )
+    finally:
+        database.close_connection()
+
+
+@pytest.mark.parametrize(
+    "bad_index_sql",
+    [
+        f"CREATE INDEX {HISTORY_INDEX} ON sync_log(timestamp)",
+        f"""
+        CREATE INDEX {HISTORY_INDEX}
+        ON sync_log(entity, entity_uuid, change_id ASC, operation)
+        WHERE entity = 'Prompts' AND operation IN ('create', 'update')
+        """,
+        f"""
+        CREATE INDEX {HISTORY_INDEX}
+        ON sync_log(entity, entity_uuid, change_id DESC, operation)
+        WHERE entity = 'Prompts' AND operation = 'create'
+        """,
+    ],
+    ids=["wrong-columns", "wrong-sort-order", "wrong-partial-predicate"],
+)
+def test_v3_to_v4_migration_rolls_back_index_when_validation_fails(
+    tmp_path, monkeypatch, bad_index_sql
+):
+    database_path = tmp_path / "prompts-v3-invalid-created-index.db"
+    _seed_v3_database(database_path)
+    monkeypatch.setattr(
+        PromptsDatabase,
+        "_PROMPT_HISTORY_INDEX_SQL",
+        bad_index_sql,
+    )
+
+    with pytest.raises(DatabaseError, match="initialization"):
+        PromptsDatabase(database_path, client_id="invalid-created-index")
+
+    conn = sqlite3.connect(database_path)
+    try:
+        assert conn.execute("SELECT version FROM schema_version").fetchone()[0] == 3
+        assert conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = ?",
+            (HISTORY_INDEX,),
+        ).fetchone() is None
+    finally:
+        conn.close()
 
 
 def test_prompt_history_count_is_exact_and_decodes_no_payload(monkeypatch):
@@ -352,7 +476,7 @@ def test_prompt_history_rejects_invalid_entity_uuid(entity_uuid):
 
 @pytest.mark.parametrize(
     "page_size",
-    [None, True, False, 0, -1, 1.0, math.inf, "2"],
+    [None, True, False, 0, -1, 1.0, math.inf, "2", 101, 10**100],
 )
 def test_prompt_history_rejects_non_positive_or_non_integer_page_size(page_size):
     database = PromptsDatabase(":memory:", client_id="history-validation")
@@ -363,9 +487,23 @@ def test_prompt_history_rejects_non_positive_or_non_integer_page_size(page_size)
         database.close_connection()
 
 
+def test_prompt_history_accepts_maximum_page_size():
+    database = PromptsDatabase(":memory:", client_id="history-validation")
+    try:
+        assert database.get_prompt_history_entries(TARGET_UUID, page_size=100) == {
+            "items": [],
+            "predecessor": None,
+            "total_count": 0,
+            "has_more": False,
+            "next_before_change_id": None,
+        }
+    finally:
+        database.close_connection()
+
+
 @pytest.mark.parametrize(
     "before_change_id",
-    [True, False, 0, -1, 1.0, math.inf, "2"],
+    [True, False, 0, -1, 1.0, math.inf, "2", 2**63, 10**100],
 )
 def test_prompt_history_rejects_invalid_before_change_id(before_change_id):
     database = PromptsDatabase(":memory:", client_id="history-validation")
@@ -376,6 +514,22 @@ def test_prompt_history_rejects_invalid_before_change_id(before_change_id):
                 page_size=1,
                 before_change_id=before_change_id,
             )
+    finally:
+        database.close_connection()
+
+
+def test_prompt_history_accepts_largest_sqlite_change_id():
+    database = PromptsDatabase(":memory:", client_id="history-validation")
+    try:
+        _seed_history_rows(database)
+
+        page = database.get_prompt_history_entries(
+            TARGET_UUID,
+            page_size=1,
+            before_change_id=(2**63) - 1,
+        )
+
+        assert page["items"]
     finally:
         database.close_connection()
 
@@ -400,46 +554,8 @@ def test_prompt_history_production_queries_use_index_without_scan_or_temp_sort()
                 payload=json.dumps({"name": "target", "version": 1}),
             )
 
-        traced: list[str] = []
-        conn = database.get_connection()
-        conn.set_trace_callback(traced.append)
-        database.get_prompt_history_entries(TARGET_UUID, page_size=10)
-        conn.set_trace_callback(None)
-
-        production_queries = [
-            statement
-            for statement in traced
-            if statement.lstrip().upper().startswith("SELECT")
-            and "FROM sync_log" in statement
-        ]
-        assert len(production_queries) == 2
-
-        plans = {
-            "count": [
-                row[3]
-                for row in conn.execute(
-                    "EXPLAIN QUERY PLAN " + production_queries[0]
-                )
-            ],
-            "rows": [
-                row[3]
-                for row in conn.execute(
-                    "EXPLAIN QUERY PLAN " + production_queries[1]
-                )
-            ],
-        }
-
-        assert any(
-            f"USING COVERING INDEX {HISTORY_INDEX}" in detail
-            for detail in plans["count"]
-        )
-        assert any(
-            f"USING INDEX {HISTORY_INDEX}" in detail for detail in plans["rows"]
-        )
-        assert all(
-            "SCAN sync_log" not in detail and "USE TEMP B-TREE" not in detail
-            for plan in plans.values()
-            for detail in plan
+        _assert_prompt_history_query_plans_use_index(
+            _trace_prompt_history_query_plans(database)
         )
     finally:
         database.close_connection()

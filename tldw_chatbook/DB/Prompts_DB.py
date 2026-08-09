@@ -104,6 +104,28 @@ class ConflictError(DatabaseError):
 class PromptsDatabase:
     _CURRENT_SCHEMA_VERSION = 4
     _PROMPT_HISTORY_INDEX_NAME = "idx_sync_log_prompt_history"
+    _PROMPT_HISTORY_INDEX_COLUMNS = (
+        ("entity", False),
+        ("entity_uuid", False),
+        ("change_id", True),
+        ("operation", False),
+    )
+    _PROMPT_HISTORY_INDEX_PREDICATE = (
+        "entity = 'prompts' and operation in ('create', 'update')"
+    )
+    _PROMPT_HISTORY_INDEX_SQL = """
+        CREATE INDEX idx_sync_log_prompt_history
+        ON sync_log (
+            entity,
+            entity_uuid,
+            change_id DESC,
+            operation
+        )
+        WHERE entity = 'Prompts'
+          AND operation IN ('create', 'update')
+    """
+    _PROMPT_HISTORY_MAX_PAGE_SIZE = 100
+    _SQLITE_SIGNED_INTEGER_MAX = (2**63) - 1
     _PROMPT_HISTORY_COUNT_SQL = """
         SELECT COUNT(*)
         FROM sync_log
@@ -784,23 +806,13 @@ class PromptsDatabase:
         try:
             with self.transaction():
                 conn.execute(
-                    f"""
-                    CREATE INDEX IF NOT EXISTS {self._PROMPT_HISTORY_INDEX_NAME}
-                    ON sync_log (
-                        entity,
-                        entity_uuid,
-                        change_id DESC,
-                        operation
-                    )
-                    WHERE entity = 'Prompts'
-                      AND operation IN ('create', 'update')
-                    """
+                    f"DROP INDEX IF EXISTS {self._PROMPT_HISTORY_INDEX_NAME}"
                 )
-                conn.execute("UPDATE schema_version SET version = 4 WHERE version = 3")
+                conn.execute(self._PROMPT_HISTORY_INDEX_SQL)
 
                 index_row = conn.execute(
                     """
-                    SELECT 1
+                    SELECT sql
                     FROM sqlite_master
                     WHERE type = 'index' AND name = ?
                     """,
@@ -810,6 +822,34 @@ class PromptsDatabase:
                     raise SchemaError(
                         "Validation Error: retained Prompt history index is missing."
                     )
+
+                actual_columns = tuple(
+                    (row["name"], bool(row["desc"]))
+                    for row in conn.execute(
+                        f"PRAGMA index_xinfo({self._PROMPT_HISTORY_INDEX_NAME})"
+                    )
+                    if row["key"]
+                )
+                if actual_columns != self._PROMPT_HISTORY_INDEX_COLUMNS:
+                    raise SchemaError(
+                        "Validation Error: retained Prompt history index columns "
+                        "do not match the required order."
+                    )
+
+                normalized_sql = " ".join(str(index_row["sql"]).lower().split())
+                _prefix, separator, actual_predicate = normalized_sql.partition(
+                    " where "
+                )
+                if (
+                    not separator
+                    or actual_predicate != self._PROMPT_HISTORY_INDEX_PREDICATE
+                ):
+                    raise SchemaError(
+                        "Validation Error: retained Prompt history index predicate "
+                        "does not match the required filter."
+                    )
+
+                conn.execute("UPDATE schema_version SET version = 4 WHERE version = 3")
 
                 version_in_tx = conn.execute(
                     "SELECT version FROM schema_version LIMIT 1"
@@ -3114,9 +3154,18 @@ class PromptsDatabase:
         return entity_uuid
 
     @staticmethod
-    def _validate_prompt_history_positive_int(value: int, *, name: str) -> int:
-        if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
-            raise InputError(f"{name} must be a positive integer.")
+    def _validate_prompt_history_positive_int(
+        value: int, *, name: str, maximum: int
+    ) -> int:
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, int)
+            or value <= 0
+            or value > maximum
+        ):
+            raise InputError(
+                f"{name} must be a positive integer no greater than {maximum}."
+            )
         return value
 
     @staticmethod
@@ -3158,11 +3207,15 @@ class PromptsDatabase:
         """Read one bounded retained Prompt history page and its predecessor."""
         validated_uuid = self._validate_prompt_history_entity_uuid(entity_uuid)
         validated_page_size = self._validate_prompt_history_positive_int(
-            page_size, name="page_size"
+            page_size,
+            name="page_size",
+            maximum=self._PROMPT_HISTORY_MAX_PAGE_SIZE,
         )
         if before_change_id is not None:
             before_change_id = self._validate_prompt_history_positive_int(
-                before_change_id, name="before_change_id"
+                before_change_id,
+                name="before_change_id",
+                maximum=self._SQLITE_SIGNED_INTEGER_MAX,
             )
 
         row_query = """
