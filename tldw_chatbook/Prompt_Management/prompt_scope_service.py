@@ -1202,6 +1202,13 @@ class PromptScopeService:
     ) -> dict[str, int | tuple[int, ...] | bool]:
         if not isinstance(response, Mapping):
             raise ValueError("Local Prompt membership response must be a mapping.")
+        response_prompt_id = _positive_signed_id(
+            response.get("prompt_id"), field_name="response prompt_id"
+        )
+        if response_prompt_id != prompt_id:
+            raise ValueError(
+                "Local Prompt membership response prompt_id does not match the request."
+            )
         collection_ids = tuple(
             sorted(
                 _unique_positive_signed_ids(
@@ -1812,7 +1819,12 @@ class PromptScopeService:
                 resolved_prompt_id, resolved_collection_ids
             )
         )
-        return self._membership_outcome(response, prompt_id=resolved_prompt_id)
+        outcome = self._membership_outcome(response, prompt_id=resolved_prompt_id)
+        if outcome["collection_ids"] != resolved_collection_ids:
+            raise ValueError(
+                "Local Prompt membership response collection_ids do not match the request."
+            )
+        return outcome
 
 
 def _build_server_prompt_service_from_config(

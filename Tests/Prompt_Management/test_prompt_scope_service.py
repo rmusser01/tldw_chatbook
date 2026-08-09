@@ -1476,6 +1476,51 @@ async def test_prompt_scope_routes_local_prompt_memberships_with_bounded_outcome
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "response",
+    [
+        {"collection_ids": (3, 8), "changed": False},
+        {"prompt_id": 8, "collection_ids": (3, 8), "changed": False},
+    ],
+)
+async def test_prompt_scope_membership_list_rejects_missing_or_mismatched_response_id(
+    response,
+):
+    policy = FakePolicyEnforcer()
+    local = FakeLocalPromptService()
+    local.list_prompt_collection_memberships = Mock(return_value=response)
+    service = PromptScopeService(local, FakeServerPromptService(), policy)
+
+    with pytest.raises(ValueError, match="response prompt_id"):
+        await service.list_prompt_collection_memberships(mode="local", prompt_id=7)
+
+    assert policy.actions == ["prompts.collections.detail.local"]
+    local.list_prompt_collection_memberships.assert_called_once_with(7)
+
+
+@pytest.mark.asyncio
+async def test_prompt_scope_membership_replace_rejects_different_response_collection_ids():
+    policy = FakePolicyEnforcer()
+    local = FakeLocalPromptService()
+    local.replace_prompt_collection_memberships = Mock(
+        return_value={
+            "prompt_id": 7,
+            "collection_ids": (3, 9),
+            "changed": True,
+        }
+    )
+    service = PromptScopeService(local, FakeServerPromptService(), policy)
+
+    with pytest.raises(ValueError, match="response collection_ids"):
+        await service.replace_prompt_collection_memberships(
+            mode="local", prompt_id=7, collection_ids=[8, 3]
+        )
+
+    assert policy.actions == ["prompts.collections.update.local"]
+    local.replace_prompt_collection_memberships.assert_called_once_with(7, (3, 8))
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("mode", ["server", "all", "mixed", None])
 async def test_prompt_scope_rejects_non_local_membership_modes_before_policy_or_adapter(
     mode,
