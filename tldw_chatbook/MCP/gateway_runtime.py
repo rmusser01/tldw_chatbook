@@ -670,10 +670,16 @@ class ChatbookGatewayRuntime:
         handler_names = set(self._tool_handlers) | set(self._local_tool_handlers)
         if set(self._tool_descriptors) != handler_names:
             raise ValueError("tool descriptor and handler names must match exactly")
-        if self._resource_handlers and set(self._resource_handlers) != set(
-            _RESOURCE_TEMPLATE_VARIABLES
+        resource_surface_present = bool(
+            self._resource_handlers or self._resource_list_handler
+        )
+        if resource_surface_present and (
+            set(self._resource_handlers) != set(_RESOURCE_TEMPLATE_VARIABLES)
+            or self._resource_list_handler is None
         ):
-            raise ValueError("resource template registrations must match exactly")
+            raise ValueError(
+                "resource templates and dynamic resource catalog must be registered together"
+            )
         self._finalized = True
 
     def _require_finalized(self) -> None:

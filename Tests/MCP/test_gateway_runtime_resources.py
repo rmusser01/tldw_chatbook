@@ -108,6 +108,11 @@ def _ready_runtime(
 ) -> ChatbookGatewayRuntime:
     runtime = _runtime()
     _register_resources(runtime, content=content, metadata=metadata, calls=calls)
+
+    @runtime.list_resources()
+    async def list_resources() -> list[dict[str, Any]]:
+        return []
+
     runtime.finalize()
     return runtime
 
@@ -229,6 +234,25 @@ def test_partial_resource_template_set_fails_finalization() -> None:
         runtime.finalize()
 
 
+def test_all_resource_templates_without_dynamic_catalog_fail_finalization() -> None:
+    runtime = _runtime()
+    _register_resources(runtime)
+
+    with pytest.raises(ValueError, match="resource.*catalog|catalog.*resource"):
+        runtime.finalize()
+
+
+def test_dynamic_catalog_without_resource_templates_fails_finalization() -> None:
+    runtime = _runtime()
+
+    @runtime.list_resources()
+    async def list_resources() -> list[dict[str, Any]]:
+        return []
+
+    with pytest.raises(ValueError, match="resource.*template|template.*resource"):
+        runtime.finalize()
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "uri",
@@ -267,6 +291,7 @@ async def test_invalid_uri_is_rejected_before_handler_invocation(uri: str) -> No
 @pytest.mark.asyncio
 async def test_dynamic_catalog_preserves_fields_order_and_defensive_copies() -> None:
     runtime = _runtime()
+    _register_resources(runtime)
     source = [
         {
             "uri": "conversation://first",
@@ -291,6 +316,9 @@ async def test_dynamic_catalog_preserves_fields_order_and_defensive_copies() -> 
     first = await runtime.list_resources(_context())
     first[0]["name"] = "mutated"
     templates = await runtime.list_resource_templates(_context())
+    original_templates = copy.deepcopy(templates)
+    templates[0]["name"] = "mutated"
+    templates[0]["description"] = "mutated"
     templates.append({"uriTemplate": "bad://{id}", "name": "bad"})
 
     assert await runtime.list_resources(_context()) == [
@@ -306,7 +334,7 @@ async def test_dynamic_catalog_preserves_fields_order_and_defensive_copies() -> 
             "mimeType": "text/plain",
         },
     ]
-    assert await runtime.list_resource_templates(_context()) == []
+    assert await runtime.list_resource_templates(_context()) == original_templates
     assert source[0]["name"] == "First"
 
 
@@ -488,14 +516,17 @@ async def test_out_of_range_continuation_fails_closed() -> None:
 
 
 @pytest.mark.asyncio
-async def test_non_integer_continuation_version_fails_closed() -> None:
+@pytest.mark.parametrize("unsupported_version", [1.0, 2])
+async def test_unsupported_continuation_version_fails_closed(
+    unsupported_version: object,
+) -> None:
     text = "a" * (MAX_RESOURCE_CHUNK_BYTES + 2)
     runtime = _ready_runtime(content={"conversation": text})
     first = await runtime.read_resource("conversation://one", _context())
     payload = _decode_token(
         _token(first["_meta"]["tldw.chatbook/continuation"]["nextUri"])
     )
-    payload["v"] = 1.0
+    payload["v"] = unsupported_version
 
     with pytest.raises(GatewayApplicationError) as exc_info:
         await runtime.read_resource(
