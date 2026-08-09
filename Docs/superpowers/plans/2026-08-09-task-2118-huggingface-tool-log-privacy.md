@@ -19,7 +19,7 @@
 - ADR required: no new ADR
 - ADR path: `backlog/decisions/029-local-private-data-boundary.md`
 - Reason: ADR-029 already excludes provider payloads and tool definitions from persistent logs while permitting bounded metadata such as tool names. This task applies that accepted contract.
-- Latest-dev reconciliation: the completed branch was finally rebased onto `origin/dev` at `575d4cd8d`; the intervening dev commits did not change the scoped production, test, or `LLM_Calls` files, so the reviewed defect/helper contract and sweep counts remain applicable. The pre-implementation baselines were 68 passing privacy tests and 8 passing HuggingFace chat-function tests. The identifier-filtered high-risk logger inventory remains 35 candidates across four modules; it is not the exhaustive AC 4 proof. The exhaustive source proof is the complete 763-call logger review plus the outbound-body/tool-structure correlation in Task 2. Ruff lint and compilation are green. Both complete Python files have pre-existing formatter drift, while the three ranges this task edits are formatter-clean; use range checks to avoid an unrelated whole-file rewrite.
+- Latest-dev reconciliation: the completed branch was finally rebased onto `origin/dev` at `fccb3af6b`; the intervening dev commits did not change the scoped production, test, or `LLM_Calls` files, so the reviewed defect/helper contract and sweep counts remain applicable. The pre-implementation baselines were 68 passing privacy tests and 8 passing HuggingFace chat-function tests. The identifier-filtered high-risk logger inventory remains 35 candidates across four modules; it is not the exhaustive AC 4 proof. The exhaustive source proof is the complete 763-call logger review plus the outbound-body/tool-structure correlation in Task 2. Ruff lint and compilation are green. Both complete Python files have pre-existing formatter drift, while the three ranges this task edits are formatter-clean; use range checks to avoid an unrelated whole-file rewrite.
 
 ## File map
 
@@ -592,7 +592,7 @@ Expected: the production/test diff is empty and the working tree is clean; neith
 - Modify: `backlog/tasks/task-2118 - HuggingFace-tools-debug-log-dumps-full-tool-schemas.md`
 - Verify: repository-wide tests and edited Python files
 
-- [ ] **Step 1: Run the affected-module and full-project gates**
+- [ ] **Step 1: Run the touched-file and affected-functionality gates**
 
 Run in the foreground and retain exact counts:
 
@@ -600,7 +600,6 @@ Run in the foreground and retain exact counts:
 ../../.venv/bin/python -m pytest Tests/Chat/test_sensitive_llm_logging.py -q
 ../../.venv/bin/python -m pytest Tests/Chat/test_chat_functions.py -q -k huggingface
 ../../.venv/bin/python -m pytest Tests/LLM_Calls/test_debug_log_fstring_hygiene.py -q
-../../.venv/bin/python -m pytest -q
 ../../.venv/bin/python -m ruff check tldw_chatbook/LLM_Calls/LLM_API_Calls.py Tests/Chat/test_sensitive_llm_logging.py
 ../../.venv/bin/python -m ruff format --check --range=4341-4365 tldw_chatbook/LLM_Calls/LLM_API_Calls.py
 ../../.venv/bin/python -m ruff format --check --range=40-70 Tests/Chat/test_sensitive_llm_logging.py
@@ -609,22 +608,7 @@ Run in the foreground and retain exact counts:
 git diff --check
 ```
 
-Expected: all gates exit 0. If the full suite is red, reproduce only its exact failing node IDs in a detached temporary worktree at current `origin/dev`; never check out `origin/dev` inside the active task worktree. Use this procedure after replacing the sample array entries with the exact node IDs from the branch run:
-
-```bash
-baseline_worktree="$(mktemp -d /tmp/task2118-origin-dev.XXXXXX)"
-git worktree add --detach "$baseline_worktree" origin/dev
-failing_nodes=(
-  "Tests/exact_path.py::exact_test_name"
-)
-(
-  cd "$baseline_worktree"
-  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -B -m pytest "${failing_nodes[@]}" -q
-)
-git worktree remove "$baseline_worktree"
-```
-
-Require identical node names and failure causes before classifying anything as baseline. If setup or collection fails instead of reproducing the branch assertion, that is not baseline evidence. Remove the temporary worktree through `git worktree remove` after the comparison.
+Expected: all gates exit 0. Per the user's explicit closeout scope, only tests related to the edited files and affected HuggingFace/logging functionality are completion gates. Do not run a repository-wide test suite, compose a test or simplified application, or perform detached-baseline replay for unrelated failures.
 
 - [ ] **Step 2: Complete Backlog evidence and status through the CLI**
 
@@ -672,7 +656,7 @@ Run:
 ../../.venv/bin/python -m ruff format --check --range=675-820 Tests/Chat/test_sensitive_llm_logging.py
 git diff --check
 git status --short --branch
-git merge-base --is-ancestor 575d4cd8d HEAD
+git merge-base --is-ancestor fccb3af6b HEAD
 ```
 
-Expected: all focused/static gates pass, the worktree is clean, and the reviewed dev baseline `575d4cd8d` is an ancestor of `HEAD`. A later PR integration pass must fetch/rebase current `origin/dev` again rather than treating this recorded commit as permanently latest.
+Expected: all focused/static gates pass, the worktree is clean, and the reviewed dev baseline `fccb3af6b` is an ancestor of `HEAD`. A later PR integration pass must fetch/rebase current `origin/dev` again rather than treating this recorded commit as permanently latest.
