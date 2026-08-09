@@ -804,15 +804,12 @@ class TldwMCPServer:
         ``get_user_data_dir() / "mcp_permissions.json"`` so Console
         "Always allow" grants apply here.
 
-        FastMCP derives input schemas from Python type annotations (not
-        JSON schema), so each tool is bound with a generic
-        ``arguments: dict`` signature; the provider's JSON schema travels
-        on the registration for introspection/future SDK use.
+        The provider's exact JSON schemas and ``ToolResult`` handlers are
+        staged together and published only after the full set validates.
         """
         from ..config import get_user_data_dir
         from .local_server_tools import (
             _local_agent_tool_registrations,
-            _parameter_summary,
             build_server_local_provider,
             local_tools_exposure_enabled,
             resolve_server_workspace_root,
@@ -828,30 +825,18 @@ class TldwMCPServer:
         # operator the built-in tools — log and start without local tools.
         try:
             workspace_root = resolve_server_workspace_root()
-            store = MCPPermissionStore(
-                get_user_data_dir() / "mcp_permissions.json"
-            )
+            store = MCPPermissionStore(get_user_data_dir() / "mcp_permissions.json")
             provider = build_server_local_provider(workspace_root, store)
 
             registrations = _local_agent_tool_registrations(provider)
-            for registration in registrations:
-                # The handler's signature IS the generic `arguments: dict`
-                # surface; invoke() is sync and worker-thread safe. FastMCP
-                # can't consume the JSON schema, so append a compact
-                # parameter summary to the description — otherwise external
-                # clients get zero parameter documentation.
-                description = registration.description + _parameter_summary(
-                    registration.parameters
-                )
-                self.mcp.tool(
-                    name=registration.name,
-                    description=description,
-                )(registration.handler)
-            logger.info(
-                f"Registered {len(registrations)} local agent tools (permission-gated)"
-            )
+            self.mcp.register_local_tools(registrations)
         except Exception:  # noqa: BLE001 — never sink the whole server for this
-            logger.exception("Failed to register local agent tools; continuing without them")
+            import sys
+
+            print(
+                "Local MCP tools unavailable; continuing with built-in tools.",
+                file=sys.stderr,
+            )
 
     async def run(self, transport: str = "stdio"):
         """Run the MCP server.

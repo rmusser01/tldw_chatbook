@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import copy
 from functools import partial
+import threading
 from typing import Any
 
 import pytest
+from loguru import logger
 
 gateway = pytest.importorskip(
     "mcp_unified.gateway", reason="mcp-unified extra not installed"
@@ -15,6 +18,23 @@ GatewayRequestContext = gateway.GatewayRequestContext
 GatewayToolExecutionError = gateway.GatewayToolExecutionError
 
 from tldw_chatbook.MCP.gateway_runtime import ChatbookGatewayRuntime  # noqa: E402
+from tldw_chatbook.Agents.agent_models import ToolResult  # noqa: E402
+from tldw_chatbook.Agents.local_tool_provider import (  # noqa: E402
+    LOCAL_DENY_REFUSAL,
+    LOCAL_GATE_ERROR_REFUSAL,
+    LOCAL_KILL_SWITCH_REFUSAL,
+    LOCAL_TIMEOUT_REFUSAL,
+)
+from tldw_chatbook.MCP.local_server_tools import (  # noqa: E402
+    EXTERNAL_NO_CALLBACK_REFUSAL,
+    LocalToolRegistration,
+    _local_agent_tool_registrations,
+    build_server_local_provider,
+)
+from tldw_chatbook.MCP.permission_store import (  # noqa: E402
+    MCPPermissionStore,
+    definition_hash,
+)
 from tldw_chatbook.MCP.server import (  # noqa: E402
     TldwMCPServer,
     _describe_local_tools,
@@ -65,6 +85,41 @@ def _register_real_builtins(runtime):
     server.mcp = runtime
     server._register_tools()
     return server
+
+
+def _runtime_with_builtins() -> ChatbookGatewayRuntime:
+    runtime = _runtime(*_describe_local_tools())
+    _register_real_builtins(runtime)
+    return runtime
+
+
+def _local_registration(
+    name: str = "local_echo",
+    *,
+    parameters: object | None = None,
+    handler: object | None = None,
+    description: object = "Local echo tool",
+) -> LocalToolRegistration:
+    schema = (
+        {
+            "type": "object",
+            "properties": {"value": {"type": "string"}},
+            "required": ["value"],
+        }
+        if parameters is None
+        else parameters
+    )
+    local_handler = (
+        (lambda arguments: ToolResult(ok=True, content=arguments["value"]))
+        if handler is None
+        else handler
+    )
+    return LocalToolRegistration(
+        name=name,
+        description=description,  # type: ignore[arg-type]
+        parameters=schema,  # type: ignore[arg-type]
+        handler=local_handler,  # type: ignore[arg-type]
+    )
 
 
 def test_runtime_requires_one_handler_for_every_expected_builtin() -> None:
@@ -401,3 +456,314 @@ def test_decorator_captured_before_finalization_cannot_register_afterward() -> N
         @captured_decorator
         async def late() -> None:
             return None
+
+
+LOCAL_FAILURES = [
+    pytest.param(
+        EXTERNAL_NO_CALLBACK_REFUSAL,
+        "operator_approval_required",
+        "Operator approval is required for this local tool.",
+        id="external-ask",
+    ),
+    pytest.param(
+        LOCAL_TIMEOUT_REFUSAL,
+        "operator_approval_required",
+        "Operator approval is required for this local tool.",
+        id="approval-timeout",
+    ),
+    pytest.param(
+        LOCAL_DENY_REFUSAL,
+        "tool_permission_denied",
+        "This local tool is disabled by operator policy.",
+        id="operator-deny",
+    ),
+    pytest.param(
+        LOCAL_KILL_SWITCH_REFUSAL,
+        "local_tools_disabled",
+        "Local tools are disabled.",
+        id="kill-switch",
+    ),
+    pytest.param(
+        LOCAL_GATE_ERROR_REFUSAL,
+        "permission_state_unavailable",
+        "Local tool permission state is unavailable.",
+        id="permission-store-error",
+    ),
+    pytest.param(
+        "SENTINEL /private/path API_KEY=secret",
+        "local_tool_failed",
+        "Local tool execution failed.",
+        id="provider-failure",
+    ),
+]
+
+
+@pytest.mark.parametrize("provider_error,reason_code,public_message", LOCAL_FAILURES)
+@pytest.mark.asyncio
+async def test_local_failure_mapping_is_exact_and_payload_free(
+    provider_error: str,
+    reason_code: str,
+    public_message: str,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    runtime = _runtime_with_builtins()
+    runtime.register_local_tools(
+        [
+            _local_registration(
+                handler=lambda _arguments: ToolResult(ok=False, error=provider_error)
+            )
+        ]
+    )
+    runtime.finalize()
+    log_records: list[str] = []
+    sink_id = logger.add(lambda message: log_records.append(str(message)))
+
+    try:
+        with pytest.raises(GatewayToolExecutionError) as exc_info:
+            await runtime.call_tool("local_echo", {"value": "raw argument"}, _context())
+    finally:
+        logger.remove(sink_id)
+
+    error = exc_info.value
+    assert error.kind == "tool"
+    assert error.reason_code == reason_code
+    assert error.public_message == public_message
+    public_exception = " ".join((str(error), repr(error), repr(vars(error))))
+    captured = capsys.readouterr()
+    private_values = {
+        provider_error,
+        "SENTINEL",
+        "/private/path",
+        "API_KEY=secret",
+        "raw argument",
+    }
+    for private_value in private_values:
+        assert private_value not in public_exception
+        assert private_value not in captured.out
+        assert private_value not in captured.err
+        assert all(private_value not in record for record in log_records)
+
+
+@pytest.mark.asyncio
+async def test_raised_local_provider_exception_maps_to_fixed_payload_free_error(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    sentinel = "SENTINEL /private/path API_KEY=secret"
+
+    def raise_private_exception(_arguments: dict[str, Any]) -> ToolResult:
+        raise RuntimeError(sentinel)
+
+    runtime = _runtime_with_builtins()
+    runtime.register_local_tools([_local_registration(handler=raise_private_exception)])
+    runtime.finalize()
+    log_records: list[str] = []
+    sink_id = logger.add(lambda message: log_records.append(str(message)))
+
+    try:
+        with pytest.raises(GatewayToolExecutionError) as exc_info:
+            await runtime.call_tool("local_echo", {"value": sentinel}, _context())
+    finally:
+        logger.remove(sink_id)
+
+    error = exc_info.value
+    assert error.reason_code == "local_tool_failed"
+    assert error.public_message == "Local tool execution failed."
+    assert error.__context__ is None
+    assert error.__cause__ is None
+    captured = capsys.readouterr()
+    assert sentinel not in " ".join((str(error), repr(error), repr(vars(error))))
+    assert sentinel not in captured.out
+    assert sentinel not in captured.err
+    assert all(sentinel not in record for record in log_records)
+
+
+@pytest.mark.asyncio
+async def test_real_provider_schemas_are_published_unchanged(tmp_path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    provider = build_server_local_provider(
+        workspace, MCPPermissionStore(tmp_path / "mcp_permissions.json")
+    )
+    registrations = _local_agent_tool_registrations(provider)
+    expected_schemas = {
+        registration.name: copy.deepcopy(registration.parameters)
+        for registration in registrations
+    }
+    runtime = _runtime_with_builtins()
+    runtime.register_local_tools(registrations)
+    runtime.finalize()
+
+    published = await runtime.list_tools(_context())
+    published_locals = {
+        descriptor["name"]: descriptor["inputSchema"]
+        for descriptor in published[len(BUILTIN_TOOL_NAMES) :]
+    }
+
+    assert published_locals == expected_schemas
+    assert "todo_write" not in published_locals
+
+
+@pytest.mark.asyncio
+async def test_successful_local_tool_result_content_is_returned_raw() -> None:
+    content = "provider content"
+    runtime = _runtime_with_builtins()
+    runtime.register_local_tools(
+        [
+            _local_registration(
+                handler=lambda _arguments: ToolResult(ok=True, content=content)
+            )
+        ]
+    )
+    runtime.finalize()
+
+    result = await runtime.call_tool("local_echo", {"value": "ignored"}, _context())
+
+    assert result is content
+
+
+@pytest.mark.parametrize(
+    "registrations",
+    [
+        pytest.param(
+            [_local_registration("duplicate"), _local_registration("duplicate")],
+            id="duplicate-local-name",
+        ),
+        pytest.param(
+            [_local_registration(BUILTIN_TOOL_NAMES[0])],
+            id="built-in-collision",
+        ),
+        pytest.param(
+            [_local_registration(parameters={"type": "array"})],
+            id="non-object-schema",
+        ),
+        pytest.param(
+            [_local_registration(handler="not callable")],
+            id="non-callable-handler",
+        ),
+        pytest.param(
+            [
+                _local_registration("valid_first"),
+                _local_registration("invalid_second", parameters={"type": "array"}),
+            ],
+            id="mid-list-invalid",
+        ),
+        pytest.param(
+            [_local_registration(description="")],
+            id="invalid-description",
+        ),
+    ],
+)
+@pytest.mark.asyncio
+async def test_invalid_local_registration_is_atomic(
+    registrations: list[LocalToolRegistration],
+) -> None:
+    runtime = _runtime_with_builtins()
+
+    with pytest.raises(ValueError):
+        runtime.register_local_tools(registrations)
+
+    assert list(runtime._tool_descriptors) == BUILTIN_TOOL_NAMES
+    assert list(runtime._tool_handlers) == BUILTIN_TOOL_NAMES
+    runtime.finalize()
+    assert [
+        descriptor["name"] for descriptor in await runtime.list_tools(_context())
+    ] == BUILTIN_TOOL_NAMES
+
+
+@pytest.mark.asyncio
+async def test_blocking_local_handler_runs_off_event_loop() -> None:
+    entered = threading.Event()
+    release = threading.Event()
+
+    def blocking_handler(_arguments: dict[str, Any]) -> ToolResult:
+        entered.set()
+        assert release.wait(timeout=2)
+        return ToolResult(ok=True, content="done")
+
+    runtime = _runtime_with_builtins()
+    runtime.register_local_tools([_local_registration(handler=blocking_handler)])
+    runtime.finalize()
+    heartbeat = 0
+
+    async def beat() -> None:
+        nonlocal heartbeat
+        while not release.is_set():
+            heartbeat += 1
+            await asyncio.sleep(0)
+
+    heartbeat_task = asyncio.create_task(beat())
+    call_task = asyncio.create_task(
+        runtime.call_tool("local_echo", {"value": "ignored"}, _context())
+    )
+    try:
+        assert await asyncio.to_thread(entered.wait, 1)
+        await asyncio.sleep(0.02)
+        assert heartbeat > 1
+    finally:
+        release.set()
+
+    assert await call_task == "done"
+    await heartbeat_task
+
+
+def _grant_local_tool(
+    store: MCPPermissionStore, provider: Any, name: str = "fs_read"
+) -> None:
+    hub = provider.hub_tool_for(name)
+    store.set_tool_state(
+        hub.server_key,
+        hub.name,
+        "allow",
+        definition_hash=definition_hash(hub.description, hub.input_schema),
+    )
+
+
+async def _assert_local_refusal(
+    runtime: ChatbookGatewayRuntime, reason_code: str
+) -> None:
+    with pytest.raises(GatewayToolExecutionError) as exc_info:
+        await runtime.call_tool("fs_read", {"path": "hello.txt"}, _context())
+    assert exc_info.value.reason_code == reason_code
+
+
+@pytest.mark.asyncio
+async def test_running_adapter_reloads_permissions_and_kill_switch_each_call(
+    tmp_path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / "hello.txt").write_text("hello world\n", encoding="utf-8")
+    store = MCPPermissionStore(tmp_path / "mcp_permissions.json")
+    provider = build_server_local_provider(workspace, store)
+    runtime = _runtime_with_builtins()
+    runtime.register_local_tools(_local_agent_tool_registrations(provider))
+    runtime.finalize()
+
+    await _assert_local_refusal(runtime, "operator_approval_required")
+    _grant_local_tool(store, provider)
+    assert "hello world" in await runtime.call_tool(
+        "fs_read", {"path": "hello.txt"}, _context()
+    )
+
+    hub = provider.hub_tool_for("fs_read")
+    store.set_tool_state(hub.server_key, hub.name, "deny")
+    await _assert_local_refusal(runtime, "tool_permission_denied")
+    _grant_local_tool(store, provider)
+    assert "hello world" in await runtime.call_tool(
+        "fs_read", {"path": "hello.txt"}, _context()
+    )
+
+    store.set_tool_state(hub.server_key, hub.name, None)
+    await _assert_local_refusal(runtime, "operator_approval_required")
+    _grant_local_tool(store, provider)
+
+    store.set_kill_switch(False)
+    assert "hello world" in await runtime.call_tool(
+        "fs_read", {"path": "hello.txt"}, _context()
+    )
+    store.set_kill_switch(True)
+    await _assert_local_refusal(runtime, "local_tools_disabled")
+    store.set_kill_switch(False)
+    assert "hello world" in await runtime.call_tool(
+        "fs_read", {"path": "hello.txt"}, _context()
+    )

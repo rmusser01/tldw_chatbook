@@ -28,7 +28,7 @@ here record nothing for now.
 
 ``_local_agent_tool_registrations`` turns a composed provider's catalog
 into binding-ready ``LocalToolRegistration`` entries (name, description,
-JSON parameters, handler); ``MCP/server.py`` binds them onto FastMCP when
+JSON parameters, handler); ``MCP/server.py`` stages them on the gateway when
 ``[mcp] expose_local_tools`` is enabled.
 """
 
@@ -39,6 +39,7 @@ from typing import Any, Callable, NamedTuple
 
 from loguru import logger
 
+from tldw_chatbook.Agents.agent_models import ToolResult
 from tldw_chatbook.Agents.local_tool_provider import LocalToolProvider
 from tldw_chatbook.MCP.permission_store import resolve_effective_state
 
@@ -77,15 +78,22 @@ def build_server_local_provider(
         # mirroring _compose_local_provider's compose-time discipline.
         try:
             return bool(permission_store.get_kill_switch())
-        except Exception as exc:  # noqa: BLE001 -- fail closed on a store read failure
+        except Exception:  # noqa: BLE001 -- fail closed on a store read failure
             logger.warning(
-                f"local_server_tools: kill-switch read failed (treating as engaged): {exc}"
+                "Local MCP tool kill-switch state unavailable; failing closed."
             )
             return True
 
+    def _resolve_state(hub: Any) -> Any:
+        try:
+            payload = permission_store.load()
+            return resolve_effective_state(payload, hub)
+        except Exception:  # noqa: BLE001 -- provider maps the fixed failure safely
+            raise RuntimeError("permission state unavailable") from None
+
     return LocalToolProvider(
         workspace_root=Path(workspace_root).resolve(),
-        resolve_state=lambda hub: resolve_effective_state(permission_store.load(), hub),
+        resolve_state=_resolve_state,
         kill_switch=_kill_switch,
         approval_callback=None,
         no_callback_refusal=EXTERNAL_NO_CALLBACK_REFUSAL,
@@ -93,59 +101,23 @@ def build_server_local_provider(
 
 
 class LocalToolRegistration(NamedTuple):
-    """One local tool ready to bind onto a FastMCP server.
-
-    ``description``/``parameters`` come from the provider's ``load_schema``
-    and are kept for introspection and future SDK versions -- FastMCP
-    derives input schemas from Python type annotations, not JSON schema,
-    so the binding layer registers each tool with a generic
-    ``arguments: dict`` signature today.
-    """
+    """One local tool ready for all-or-none gateway publication."""
 
     name: str
     description: str
-    parameters: dict
-    handler: Callable[[dict], Any]
+    parameters: dict[str, Any]
+    handler: Callable[[dict[str, Any]], ToolResult]
 
 
 def _make_registration_handler(
     provider: LocalToolProvider, tool_id: str
-) -> Callable[[dict], Any]:
-    """Build one tool handler with a clean ``handler(arguments: dict)`` signature.
+) -> Callable[[dict[str, Any]], ToolResult]:
+    """Return a handler that preserves the provider's canonical result."""
 
-    A factory (not a closure default-arg) keeps the signature free of
-    extra parameters so FastMCP's annotation-derived schema sees only
-    ``arguments``. Fail-safe: ``invoke()`` never raises, so a malformed
-    (non-dict) arguments payload becomes an error dict, not an exception.
-    """
-
-    def handler(arguments: dict) -> Any:
-        result = provider.invoke(tool_id, arguments)
-        if result.ok:
-            return result.content
-        # server.py error-dict convention (server.py:187/:209).
-        return {"error": result.error}
+    def handler(arguments: dict[str, Any]) -> ToolResult:
+        return provider.invoke(tool_id, arguments)
 
     return handler
-
-
-def _parameter_summary(parameters: dict) -> str:
-    """Render a compact parameter summary for appending to a tool description.
-
-    FastMCP derives schemas from type annotations, so the generic
-    ``arguments: dict`` binding leaves external clients with no parameter
-    documentation; this carries the essentials (names, required, types) in
-    the description instead. Returns "" when there are no properties.
-    """
-    properties = parameters.get("properties") or {}
-    if not properties:
-        return ""
-    required = set(parameters.get("required") or ())
-    parts = [
-        f"{name}{' (required)' if name in required else ''}: {spec.get('type', 'any')}"
-        for name, spec in properties.items()
-    ]
-    return " Parameters: " + "; ".join(parts) + "."
 
 
 def _local_agent_tool_registrations(
@@ -154,9 +126,8 @@ def _local_agent_tool_registrations(
     """Build the binding-ready registration list for a provider's catalog.
 
     One registration per catalog entry (``todo_write`` is already absent
-    from the server composition's catalog). Each handler calls
-    ``provider.invoke`` and returns ``result.content`` on success or
-    ``{"error": result.error}`` on refusal/failure.
+    from the server composition's catalog). Each handler returns the exact
+    ``ToolResult`` from ``provider.invoke`` for the gateway to classify.
     """
     registrations: list[LocalToolRegistration] = []
     for entry in provider.list_catalog():

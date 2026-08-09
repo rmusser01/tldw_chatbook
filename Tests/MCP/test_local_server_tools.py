@@ -8,18 +8,30 @@ approvals, persistence).
 """
 
 import pytest
+from loguru import logger
 
+from tldw_chatbook.Agents.agent_models import ToolResult
 from tldw_chatbook.Agents.local_tool_provider import (
     LOCAL_DENY_REFUSAL,
+    LOCAL_GATE_ERROR_REFUSAL,
     LOCAL_KILL_SWITCH_REFUSAL,
 )
 from tldw_chatbook.MCP.local_server_tools import (
     EXTERNAL_NO_CALLBACK_REFUSAL,
+    LocalToolRegistration,
     _local_agent_tool_registrations,
     build_server_local_provider,
 )
 from tldw_chatbook.MCP.permission_store import MCPPermissionStore, definition_hash
-from tldw_chatbook.MCP.server import MCP_AVAILABLE
+from tldw_chatbook.MCP.server import TldwMCPServer, _describe_local_tools
+
+
+BUILTIN_TOOL_NAMES = [descriptor["name"] for descriptor in _describe_local_tools()]
+
+
+def _context():
+    gateway = pytest.importorskip("mcp_unified.gateway")
+    return gateway.GatewayRequestContext(request_id="test-request")
 
 
 @pytest.fixture
@@ -77,16 +89,53 @@ def test_kill_switch_refuses_even_granted_tools(workspace, store):
 
 
 def test_kill_switch_read_failure_fails_closed(workspace):
+    sentinel = "SENTINEL /private/path API_KEY=secret"
+
     class RaisingStore:
         def load(self):
             return {}
 
         def get_kill_switch(self):
-            raise RuntimeError("disk gone")
+            raise RuntimeError(sentinel)
 
     provider = build_server_local_provider(workspace, RaisingStore())
-    r = provider.invoke("local:fs_read", {"path": "hello.txt"})
+    records: list[str] = []
+    sink_id = logger.add(lambda message: records.append(str(message)))
+    try:
+        r = provider.invoke("local:fs_read", {"path": "hello.txt"})
+    finally:
+        logger.remove(sink_id)
     assert not r.ok and r.error == LOCAL_KILL_SWITCH_REFUSAL
+    assert all(sentinel not in record for record in records)
+
+
+@pytest.mark.parametrize("failure_stage", ["load", "resolution"])
+def test_permission_store_read_failure_is_payload_free(workspace, failure_stage):
+    sentinel = "SENTINEL /private/path API_KEY=secret"
+
+    class RaisingPayload(dict):
+        def get(self, _key, _default=None):
+            raise RuntimeError(sentinel)
+
+    class RaisingStore:
+        def load(self):
+            if failure_stage == "load":
+                raise RuntimeError(sentinel)
+            return RaisingPayload()
+
+        def get_kill_switch(self):
+            return False
+
+    provider = build_server_local_provider(workspace, RaisingStore())
+    records: list[str] = []
+    sink_id = logger.add(lambda message: records.append(str(message)))
+    try:
+        result = provider.invoke("local:fs_read", {"path": sentinel})
+    finally:
+        logger.remove(sink_id)
+
+    assert not result.ok and result.error == LOCAL_GATE_ERROR_REFUSAL
+    assert all(sentinel not in record for record in records)
 
 
 def test_deny_state_refuses(workspace, store):
@@ -134,33 +183,34 @@ def test_granted_tool_registration_handler_executes(workspace, store):
     # Introspection fields come from the provider's load_schema.
     assert reg.description
     assert reg.parameters.get("type") == "object"
-    assert "hello world" in reg.handler({"path": "hello.txt"})
+    result = reg.handler({"path": "hello.txt"})
+    assert isinstance(result, ToolResult)
+    assert result.ok and "hello world" in result.content
 
 
-def test_ask_state_handler_returns_error_dict(workspace, store):
-    # fs_write with nothing granted -> ask default -> external refusal,
-    # shaped per the server.py {"error": str} convention.
+def test_ask_state_handler_returns_tool_result(workspace, store):
+    # fs_write with nothing granted -> ask default -> external refusal.
     provider = build_server_local_provider(workspace, store)
     result = _registrations(provider)["fs_write"].handler(
         {"path": "x.txt", "content": "y"}
     )
-    assert result == {"error": EXTERNAL_NO_CALLBACK_REFUSAL}
+    assert result == ToolResult(ok=False, error=EXTERNAL_NO_CALLBACK_REFUSAL)
 
 
-def test_deny_state_handler_returns_error_dict(workspace, store):
+def test_deny_state_handler_returns_tool_result(workspace, store):
     provider = build_server_local_provider(workspace, store)
     hub = provider.hub_tool_for("fs_glob")
     store.set_tool_state(hub.server_key, hub.name, "deny")
     result = _registrations(provider)["fs_glob"].handler({"pattern": "*.py"})
-    assert result == {"error": LOCAL_DENY_REFUSAL}
+    assert result == ToolResult(ok=False, error=LOCAL_DENY_REFUSAL)
 
 
-def test_kill_switch_handler_returns_error_dict(workspace, store):
+def test_kill_switch_handler_returns_tool_result(workspace, store):
     provider = build_server_local_provider(workspace, store)
     _grant(store, provider, "fs_read")
     store.set_kill_switch(True)
     result = _registrations(provider)["fs_read"].handler({"path": "hello.txt"})
-    assert result == {"error": LOCAL_KILL_SWITCH_REFUSAL}
+    assert result == ToolResult(ok=False, error=LOCAL_KILL_SWITCH_REFUSAL)
 
 
 def test_todo_write_absent_from_registrations(workspace, store):
@@ -173,27 +223,23 @@ def test_todo_write_absent_from_registrations(workspace, store):
     assert "web_fetch" in regs
 
 
-# -- FastMCP binding layer (skip when the mcp package is unavailable) --------
-
-
-def _fastmcp_tool_names(mcp):
-    return {t.name for t in mcp._tool_manager.list_tools()}
-
-
-@pytest.fixture
-def bare_server():
-    """A TldwMCPServer with only its FastMCP instance (no DB init)."""
-    from mcp.server.fastmcp import FastMCP
-
-    from tldw_chatbook.MCP.server import TldwMCPServer
+def _bare_server() -> TldwMCPServer:
+    """Return a DB-free server with the real gateway registration seam."""
+    pytest.importorskip("mcp_unified.gateway")
+    from tldw_chatbook.MCP.gateway_runtime import ChatbookGatewayRuntime
 
     server = TldwMCPServer.__new__(TldwMCPServer)
-    server.mcp = FastMCP("test")
+    server.mcp = ChatbookGatewayRuntime(
+        name="test",
+        version="0.1.0",
+        tool_descriptors=_describe_local_tools(),
+    )
+    server._register_tools()
     return server
 
 
-@pytest.mark.skipif(not MCP_AVAILABLE, reason="mcp package not installed")
-def test_flag_on_registers_local_tool_names(bare_server, monkeypatch, tmp_path):
+@pytest.mark.asyncio
+async def test_flag_on_registers_local_tool_names(monkeypatch, tmp_path):
     import tldw_chatbook.config as config
 
     def fake_get_cli_setting(section, key, default=None):
@@ -204,9 +250,13 @@ def test_flag_on_registers_local_tool_names(bare_server, monkeypatch, tmp_path):
     monkeypatch.setattr(config, "get_cli_setting", fake_get_cli_setting)
     monkeypatch.setattr(config, "get_user_data_dir", lambda: tmp_path)
 
-    bare_server._register_local_agent_tools()
+    server = _bare_server()
+    server._register_local_agent_tools()
+    server.mcp.finalize()
 
-    names = _fastmcp_tool_names(bare_server.mcp)
+    names = {
+        descriptor["name"] for descriptor in await server.mcp.list_tools(_context())
+    }
     assert "fs_read" in names
     assert "fs_write" in names
     assert "git_status" in names
@@ -214,83 +264,90 @@ def test_flag_on_registers_local_tool_names(bare_server, monkeypatch, tmp_path):
     assert "todo_write" not in names
 
 
-@pytest.mark.skipif(not MCP_AVAILABLE, reason="mcp package not installed")
-def test_flag_off_registers_nothing(bare_server, monkeypatch, tmp_path):
+@pytest.mark.asyncio
+async def test_flag_off_registers_nothing(monkeypatch, tmp_path):
     import tldw_chatbook.config as config
-
-    @bare_server.mcp.tool()
-    async def existing_tool() -> str:
-        """Pre-existing server tool."""
-        return "ok"
 
     monkeypatch.setattr(
         config, "get_cli_setting", lambda section, key, default=None: default
     )
     monkeypatch.setattr(config, "get_user_data_dir", lambda: tmp_path)
 
-    bare_server._register_local_agent_tools()
+    server = _bare_server()
+    server._register_local_agent_tools()
+    server.mcp.finalize()
 
-    # Default flag (False) -> no-op; pre-existing tools untouched.
-    assert _fastmcp_tool_names(bare_server.mcp) == {"existing_tool"}
-
-
-def test_parameter_summary_renders_required_and_types():
-    from tldw_chatbook.MCP.local_server_tools import _parameter_summary
-
-    schema = {
-        "type": "object",
-        "properties": {
-            "path": {"type": "string"},
-            "limit": {"type": "integer"},
-        },
-        "required": ["path"],
-    }
-    out = _parameter_summary(schema)
-    assert "path (required): string" in out
-    assert "limit: integer" in out
-    assert _parameter_summary({"type": "object"}) == ""
+    assert [
+        descriptor["name"] for descriptor in await server.mcp.list_tools(_context())
+    ] == BUILTIN_TOOL_NAMES
 
 
-def test_registration_failure_does_not_sink_server_init(monkeypatch, tmp_path):
-    """An exception in the flag-on body logs and continues (no local tools)."""
-    import tldw_chatbook.MCP.server as server_mod
+@pytest.mark.parametrize("failure_stage", ["construction", "staging"])
+@pytest.mark.asyncio
+async def test_registration_failure_keeps_builtins_and_emits_fixed_stderr_once(
+    failure_stage, monkeypatch, tmp_path, capsys
+):
+    import tldw_chatbook.config as config
+    import tldw_chatbook.MCP.local_server_tools as local_server_tools
 
-    monkeypatch.setattr(
-        server_mod, "MCP_AVAILABLE", True, raising=False
-    )
-    called = []
+    sentinel = "SENTINEL /private/path API_KEY=secret"
 
-    class _FakeFastMCP:
-        def tool(self, **_kwargs):
-            def deco(fn):
-                called.append(fn)
-                return fn
+    def fake_get_cli_setting(section, key, default=None):
+        if (section, key) == ("mcp", "expose_local_tools"):
+            return True
+        return default
 
-            return deco
-
-    server = server_mod.TldwMCPServer.__new__(server_mod.TldwMCPServer)
-    server.mcp = _FakeFastMCP()
-
-    import tldw_chatbook.MCP.local_server_tools as lst
-
-    monkeypatch.setattr(
-        "tldw_chatbook.MCP.server.get_cli_setting"
-        if hasattr(server_mod, "get_cli_setting")
-        else "tldw_chatbook.config.get_cli_setting",
-        lambda section, key, default=None: True
-        if (section, key) == ("mcp", "expose_local_tools")
-        else default,
-    )
+    monkeypatch.setattr(config, "get_cli_setting", fake_get_cli_setting)
+    monkeypatch.setattr(config, "get_user_data_dir", lambda: tmp_path)
 
     def boom(*_a, **_k):
-        raise RuntimeError("store exploded")
+        raise RuntimeError(sentinel)
 
-    monkeypatch.setattr(lst, "build_server_local_provider", boom)
-    monkeypatch.setattr(
-        "tldw_chatbook.MCP.server.build_server_local_provider",
-        boom,
-        raising=False,
+    if failure_stage == "construction":
+        monkeypatch.setattr(local_server_tools, "build_server_local_provider", boom)
+    else:
+        monkeypatch.setattr(
+            local_server_tools,
+            "_local_agent_tool_registrations",
+            lambda _provider: [
+                LocalToolRegistration(
+                    "valid_first",
+                    "valid",
+                    {"type": "object", "properties": {}},
+                    lambda _arguments: ToolResult(ok=True, content="ok"),
+                ),
+                LocalToolRegistration(
+                    "invalid_second",
+                    "invalid",
+                    {"type": "array"},
+                    lambda _arguments: ToolResult(ok=True, content="ok"),
+                ),
+            ],
+        )
+
+    server = _bare_server()
+    records: list[str] = []
+    sink_id = logger.add(lambda message: records.append(str(message)))
+    try:
+        server._register_local_agent_tools()
+    finally:
+        logger.remove(sink_id)
+    server.mcp.finalize()
+
+    captured = capsys.readouterr()
+    assert all("Local registration failed" not in record for record in records)
+    assert all(sentinel not in record for record in records)
+    assert captured.out == ""
+    assert captured.err == (
+        "Local MCP tools unavailable; continuing with built-in tools.\n"
     )
-    # Must not raise — server init survives without local tools.
-    server._register_local_agent_tools()
-    assert called == []
+    assert sentinel not in captured.err
+    assert [
+        descriptor["name"] for descriptor in await server.mcp.list_tools(_context())
+    ] == BUILTIN_TOOL_NAMES
+
+
+def test_fastmcp_parameter_summary_workaround_is_removed() -> None:
+    import tldw_chatbook.MCP.local_server_tools as local_server_tools
+
+    assert not hasattr(local_server_tools, "_parameter_summary")
