@@ -1,13 +1,55 @@
 # test_optional_deps.py
 # Test cases for optional dependency handling
 #
-import pytest
+import subprocess
 import sys
+import textwrap
 import tomllib
 from pathlib import Path
 
+import pytest
+
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
+def test_mcp_contract_module_loads_without_optional_extra() -> None:
+    """Default test collection must not require the optional MCP runtime."""
+    contract_path = REPO_ROOT / "Tests/MCP/test_mcp_unified_public_contract.py"
+    probe = textwrap.dedent(
+        f"""
+        import runpy
+        import sys
+
+        class BlockMcpUnified:
+            def find_spec(self, fullname, path=None, target=None):
+                if fullname == "mcp_unified" or fullname.startswith("mcp_unified."):
+                    raise ModuleNotFoundError(
+                        "simulated missing mcp_unified", name=fullname
+                    )
+                return None
+
+        sys.meta_path.insert(0, BlockMcpUnified())
+        namespace = runpy.run_path(
+            {str(contract_path)!r}, run_name="mcp_contract_collection_probe"
+        )
+        assert namespace["MCP_UNIFIED_AVAILABLE"] is False
+        assert not any(
+            name == "mcp_unified" or name.startswith("mcp_unified.")
+            for name in sys.modules
+        )
+        """
+    )
+
+    completed = subprocess.run(
+        [sys.executable, "-c", probe],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr or completed.stdout
 
 
 def test_optional_deps_import():
@@ -439,10 +481,24 @@ def test_mcp_deps():
     assert "mcp" in DEPENDENCIES_AVAILABLE
 
 
-def test_mcp_deps_probes_mcp_unified_under_the_mcp_feature_key(monkeypatch):
+@pytest.mark.parametrize(
+    "initial_mcp_state", [False, pytest.param(None, id="initially-absent")]
+)
+def test_mcp_deps_probes_mcp_unified_under_the_mcp_feature_key(
+    monkeypatch, initial_mcp_state
+):
     """The distribution and its import name remain distinct at the live gate."""
     from tldw_chatbook.Utils import optional_deps
 
+    if initial_mcp_state is None:
+        monkeypatch.delitem(optional_deps.DEPENDENCIES_AVAILABLE, "mcp", raising=False)
+    else:
+        monkeypatch.setitem(
+            optional_deps.DEPENDENCIES_AVAILABLE, "mcp", initial_mcp_state
+        )
+
+    missing = object()
+    original_mcp_state = optional_deps.DEPENDENCIES_AVAILABLE.get("mcp", missing)
     calls = []
 
     def fake_check_dependency(module_name, feature_name=None):
@@ -451,8 +507,19 @@ def test_mcp_deps_probes_mcp_unified_under_the_mcp_feature_key(monkeypatch):
 
     monkeypatch.setattr(optional_deps, "check_dependency", fake_check_dependency)
 
-    assert optional_deps.check_mcp_deps() is True
-    assert calls == [("mcp_unified", "mcp")]
+    try:
+        assert optional_deps.check_mcp_deps() is True
+        assert calls == [("mcp_unified", "mcp")]
+    finally:
+        if original_mcp_state is missing:
+            optional_deps.DEPENDENCIES_AVAILABLE.pop("mcp", None)
+        else:
+            optional_deps.DEPENDENCIES_AVAILABLE["mcp"] = original_mcp_state
+
+    if original_mcp_state is missing:
+        assert "mcp" not in optional_deps.DEPENDENCIES_AVAILABLE
+    else:
+        assert optional_deps.DEPENDENCIES_AVAILABLE["mcp"] is original_mcp_state
 
 
 def test_mcp_optional_feature_names_the_mcp_unified_distribution():

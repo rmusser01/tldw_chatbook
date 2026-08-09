@@ -4,28 +4,36 @@ from __future__ import annotations
 
 import inspect
 from importlib.metadata import version
+from importlib.util import find_spec
 from pathlib import Path
 import subprocess
 import sys
 import textwrap
 import tomllib
 
-from mcp_unified.gateway import (
-    GatewayApplicationError,
-    GatewayCoreRuntime,
-    GatewayLimits,
-    GatewayRequestContext,
-    GatewayResourceTemplateRuntime,
-    GatewayToolExecutionError,
-    serve_stdio,
-)
+import pytest
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 MCP_DEPENDENCY = "mcp-unified==0.2.1"
+try:
+    MCP_UNIFIED_AVAILABLE = find_spec("mcp_unified") is not None
+except (ImportError, ValueError):
+    MCP_UNIFIED_AVAILABLE = False
 
 
+@pytest.mark.skipif(not MCP_UNIFIED_AVAILABLE, reason="mcp-unified extra not installed")
 def test_mcp_unified_public_contract_is_exact_release() -> None:
+    from mcp_unified.gateway import (
+        GatewayApplicationError,
+        GatewayCoreRuntime,
+        GatewayLimits,
+        GatewayRequestContext,
+        GatewayResourceTemplateRuntime,
+        GatewayToolExecutionError,
+        serve_stdio,
+    )
+
     assert version("mcp-unified") == "0.2.1"
     assert GatewayCoreRuntime
     assert GatewayResourceTemplateRuntime
@@ -47,7 +55,15 @@ def test_mcp_unified_public_contract_is_exact_release() -> None:
     assert callable(GatewayResourceTemplateRuntime.list_resource_templates)
 
 
+@pytest.mark.skipif(not MCP_UNIFIED_AVAILABLE, reason="mcp-unified extra not installed")
 def test_mcp_unified_public_signatures_match_the_released_runtime() -> None:
+    from mcp_unified.gateway import (
+        GatewayApplicationError,
+        GatewayLimits,
+        GatewayToolExecutionError,
+        serve_stdio,
+    )
+
     serve_parameters = list(inspect.signature(serve_stdio).parameters.values())
     assert [(parameter.name, parameter.kind) for parameter in serve_parameters] == [
         ("runtime", inspect.Parameter.POSITIONAL_OR_KEYWORD),
