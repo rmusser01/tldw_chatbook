@@ -1576,7 +1576,7 @@ def test_start_disabled_when_every_staged_file_is_unsupported():
     """(task-2015) Pre-flight just promised every file will fail; Start must
     be disabled with the gate line explaining why."""
     preflight = PreflightResult(
-        type_groups={"unsupported": ["/tmp/x.json", "/tmp/y.jpg"]},
+        type_groups={"unsupported": ["/tmp/x.json", "/tmp/y.srt"]},
         warnings=[],
         errors=[],
         total_size=51,
@@ -1839,7 +1839,7 @@ def test_unsupported_line_names_files_and_matches_gate():
         (),
         form=LibraryIngestFormState(path="/tmp/folder"),
         preflight=PreflightResult(
-            type_groups={"unsupported": ["/tmp/x.json", "/tmp/y.jpg"]},
+            type_groups={"unsupported": ["/tmp/x.json", "/tmp/y.srt"]},
             warnings=[],
             errors=[],
             total_size=50,
@@ -1849,9 +1849,9 @@ def test_unsupported_line_names_files_and_matches_gate():
     )
     assert blocked.start_enabled is False
     assert blocked.unsupported_line == (
-        "Unsupported: x.json, y.jpg."
+        "Unsupported: x.json, y.srt."
         " Supported: PDF documents, Word/Office documents, audio/video files,"
-        " e-books, plain text files, web pages (by URL)."
+        " e-books, images, plain text files, web pages (by URL)."
     )
 
     many = build_library_ingest_state(
@@ -2183,8 +2183,8 @@ def test_skipped_jobs_render_neutral_and_count_separately():
     skipped = _job(
         job_id="ingest-job-1",
         state=IngestJobState.SKIPPED,
-        source_path="/tmp/photo.jpg",
-        error="Unsupported file type: .jpg.",
+        source_path="/tmp/photo.xyz",
+        error="Unsupported file type: .xyz.",
     )
     done = _job(job_id="ingest-job-2", state=IngestJobState.DONE)
     state = build_library_ingest_state(
@@ -2194,7 +2194,7 @@ def test_skipped_jobs_render_neutral_and_count_separately():
     )
     row = next(r for r in state.queue_rows if r.job_id == "ingest-job-1")
     assert row.glyph == "○"
-    assert row.line.startswith("○ skipped · photo.jpg")
+    assert row.line.startswith("○ skipped · photo.xyz")
     assert row.can_retry is False
     assert row.can_dismiss is True
     assert state.queue_counts_line == "This queue: 1 done · 1 skipped"
@@ -2216,7 +2216,7 @@ def test_commit_summary_splits_skip_from_fail():
         preflight=PreflightResult(
             type_groups={
                 "generic": ["/tmp/a.txt", "/tmp/b.txt"],
-                "unsupported": ["/tmp/pic.jpg"],
+                "unsupported": ["/tmp/pic.srt"],
             },
             warnings=[],
             errors=[],
@@ -2229,7 +2229,7 @@ def test_commit_summary_splits_skip_from_fail():
     assert state.commit_summary_line == (
         "2 will import · 1 will skip · 1 will fail"
     )
-    assert "will be skipped: pic.jpg." in state.unsupported_line
+    assert "will be skipped: pic.srt." in state.unsupported_line
 
 
 def test_skips_only_queue_still_offers_clear_finished():
@@ -2464,7 +2464,7 @@ def test_consent_line_requires_every_importable_file_to_match() -> None:
         preflight=PreflightResult(
             type_groups={
                 "generic": ["/tmp/a.txt", "/tmp/b.txt"],
-                "unsupported": ["/tmp/pic.jpg"],
+                "unsupported": ["/tmp/pic.srt"],
             },
             warnings=[],
             errors=[],
@@ -2797,3 +2797,28 @@ def test_xml_in_a_mixed_selection_renders_the_will_skip_line():
         "1 unsupported file will be skipped: feed.xml."
     )
     assert "1 will skip" in state.commit_summary_line
+
+
+# --- task-3307: images join the supported set --------------------------------
+
+
+def test_breakdown_line_counts_images_task_3307():
+    from tldw_chatbook.Library.library_ingest_state import build_type_breakdown_line
+
+    assert build_type_breakdown_line({"image": ["/tmp/a.png"]}) == "1 image"
+    assert (
+        build_type_breakdown_line({"image": ["/tmp/a.png", "/tmp/b.jpg"]})
+        == "2 images"
+    )
+
+
+def test_intro_line_promises_images_task_3307():
+    from tldw_chatbook.Library.library_ingest_state import build_intro_lines
+
+    assert "images" in build_intro_lines()[0]
+
+
+def test_supported_copy_names_images_task_3307():
+    from tldw_chatbook.Library.library_ingest_state import SUPPORTED_FORMATS_COPY
+
+    assert "images" in SUPPORTED_FORMATS_COPY

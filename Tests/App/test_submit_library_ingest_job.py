@@ -1539,3 +1539,64 @@ def test_invalid_audio_request_allows_next_job_to_dispatch(
     assert invalid.job_id in routing_warnings[0]
     assert "detected_type=audio" in routing_warnings[0]
     assert error_fragment in routing_warnings[0]
+
+
+# --- task-3307: image group branch in _ingest_job_options --------------------
+
+
+class TestImageIngestJobOptions:
+    def test_image_group_options_travel(self) -> None:
+        """The image branch feeds ``process_image``'s OCR knobs."""
+        app = _minimal_app()
+        job = _make_job(
+            source_path="/tmp/scan.png",
+            ingest_options={
+                "generic": {"chunk": True, "chunk_size": 800, "chunk_overlap": 80},
+                "image": {
+                    "ocr": True,
+                    "ocr_language": "de",
+                    "ocr_backend": "tesseract",
+                },
+            },
+        )
+
+        options = app._ingest_job_options(job)
+
+        assert options["ocr"] is True
+        assert options["ocr_language"] == "de"
+        assert options["ocr_backend"] == "tesseract"
+        # The generic base still applies (task-3301 layering), and the
+        # chunk method is the explicit words unit the size hint promises
+        # (task-3303 F12) -- process_image chunks the OCR text itself via
+        # improved_chunking_process.
+        assert options["chunk_options"] == {
+            "size": 800,
+            "max_size": 800,
+            "overlap": 80,
+            "method": "words",
+        }
+
+    def test_image_group_defaults_without_snapshot(self) -> None:
+        """An untouched form mirrors the schema/processor defaults: OCR on
+        (the extracted text IS the imported content), auto backend, en."""
+        app = _minimal_app()
+        job = _make_job(source_path="/tmp/scan.jpg")
+
+        options = app._ingest_job_options(job)
+
+        assert options["ocr"] is True
+        assert options["ocr_language"] == "en"
+        assert options["ocr_backend"] == "auto"
+
+    def test_image_ocr_off_travels(self) -> None:
+        """OCR off must reach the processor as False -- the parse then
+        extracts nothing and the persist seam fails the job honestly."""
+        app = _minimal_app()
+        job = _make_job(
+            source_path="/tmp/scan.png",
+            ingest_options={"image": {"ocr": False}},
+        )
+
+        options = app._ingest_job_options(job)
+
+        assert options["ocr"] is False

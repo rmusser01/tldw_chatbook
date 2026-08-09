@@ -188,7 +188,7 @@ async def test_unsupported_files_summary_renders():
         assert str(summary.renderable) == (
             "Unsupported: weird.xyz."
             " Supported: PDF documents, Word/Office documents, audio/video"
-            " files, e-books, plain text files, web pages (by URL)."
+            " files, e-books, images, plain text files, web pages (by URL)."
         )
 
 
@@ -1334,7 +1334,7 @@ async def test_unsupported_files_summary_pluralizes_correctly():
         assert str(summary.renderable) == (
             "Unsupported: a.xyz, b.xyz."
             " Supported: PDF documents, Word/Office documents, audio/video"
-            " files, e-books, plain text files, web pages (by URL)."
+            " files, e-books, images, plain text files, web pages (by URL)."
         )
 
 

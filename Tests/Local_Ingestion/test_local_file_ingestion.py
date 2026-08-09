@@ -323,3 +323,49 @@ def test_ebook_split_chapters_false_records_warning(tmp_path: Path, monkeypatch)
 
     assert payload["content"] == "Ebook text"
     assert payload["warnings"] == ["split_chapters=False"]
+
+
+# --- task-3307: image extension mapping --------------------------------------
+
+
+def test_detect_file_type_maps_image_extensions_task_3307() -> None:
+    """The raster formats process_image's PIL loader opens map to 'image'."""
+    from tldw_chatbook.Local_Ingestion.local_file_ingestion import detect_file_type
+
+    for ext in (".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".tiff", ".tif"):
+        assert detect_file_type(f"/tmp/picture{ext}") == "image", ext
+        assert detect_file_type(f"/tmp/PICTURE{ext.upper()}") == "image", ext
+
+
+def test_detect_file_type_image_lookalikes_unsupported_task_3307() -> None:
+    """svg (vector), ico (icon container), heic/heif (need the absent
+    pillow_heif opener) stay unsupported -- and the error copy still names
+    the supported set."""
+    import pytest as _pytest
+
+    from tldw_chatbook.Local_Ingestion.local_file_ingestion import (
+        FileIngestionError,
+        detect_file_type,
+    )
+
+    for ext in (".svg", ".ico", ".heic", ".heif"):
+        with _pytest.raises(FileIngestionError, match="Unsupported file type"):
+            detect_file_type(f"/tmp/picture{ext}")
+
+
+def test_get_supported_extensions_includes_image_task_3307() -> None:
+    from tldw_chatbook.Local_Ingestion.local_file_ingestion import (
+        get_supported_extensions,
+    )
+
+    extensions = get_supported_extensions()
+    assert extensions["image"] == [
+        ".png",
+        ".jpg",
+        ".jpeg",
+        ".gif",
+        ".webp",
+        ".bmp",
+        ".tiff",
+        ".tif",
+    ]

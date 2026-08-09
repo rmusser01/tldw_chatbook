@@ -422,20 +422,21 @@ async def test_directory_unsupported_file_is_skipped_alone(tmp_path: Path) -> No
     folder = tmp_path / "mixed"
     folder.mkdir()
     _write_text_file(folder, "good.txt", "A perfectly ingestible document.")
-    (folder / "cover.jpg").write_bytes(b"not really a jpeg")
+    # (task-3307: was cover.jpg -- images are a supported group now)
+    (folder / "cover.xyz").write_bytes(b"no handler for this")
     app = _IngestRunnerHarness(db, worker_count=2)
 
     async with app.run_test() as pilot:
         app.submit_library_ingest_job(source_path=str(folder))
 
         jobs = {Path(j.source_path).name: j for j in app.library_ingest_jobs.jobs()}
-        assert set(jobs) == {"good.txt", "cover.jpg"}
+        assert set(jobs) == {"good.txt", "cover.xyz"}
 
         await _wait_for_job_state(
             app, pilot, jobs["good.txt"].job_id, IngestJobState.DONE
         )
         skipped = await _wait_for_job_state(
-            app, pilot, jobs["cover.jpg"].job_id, IngestJobState.SKIPPED
+            app, pilot, jobs["cover.xyz"].job_id, IngestJobState.SKIPPED
         )
         assert "Unsupported file type" in skipped.error
 

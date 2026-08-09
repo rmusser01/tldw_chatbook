@@ -1894,3 +1894,295 @@ class TestAdaptiveChunkingStaysRejected:
         )
         assert "use_adaptive_chunking" not in single_audio_source
         assert "use_multi_level_chunking" not in single_audio_source
+
+
+# ---------------------------------------------------------------------------
+# task-3307: image ingestion wiring (ship ruling recorded in task-3310)
+# ---------------------------------------------------------------------------
+
+
+def _real_process_image():
+    from tldw_chatbook.Local_Ingestion.Image_Processing_Lib import process_image
+
+    return process_image
+
+
+def _real_extract_text_from_image():
+    from tldw_chatbook.Local_Ingestion.Image_Processing_Lib import (
+        extract_text_from_image,
+    )
+
+    return extract_text_from_image
+
+
+def _write_tiny_png(path: Path) -> None:
+    """A real 2x2 PNG -- Pillow is present in this venv (checked up front)."""
+    from PIL import Image
+
+    Image.new("RGB", (2, 2), (255, 255, 255)).save(path, "PNG")
+
+
+def _install_ocr_stub(monkeypatch, text: str | None):
+    """Stand in for ``extract_text_from_image`` at the OCR boundary.
+
+    Signature-checked against the real function so the stub can never
+    accept a call shape the real seam would reject. ``text=None`` models
+    OCR failure / no backend installed (the real function returns None).
+    """
+    from types import SimpleNamespace
+
+    real = _real_extract_text_from_image()
+    calls: list[Dict[str, Any]] = []
+
+    def fake_extract(image_path, **kwargs):
+        _assert_kwargs_accepted(real, kwargs)
+        calls.append({"image_path": image_path, **kwargs})
+        if text is None:
+            return None
+        return SimpleNamespace(
+            text=text,
+            confidence=0.93,
+            language=kwargs.get("language", "en"),
+            backend="stub-backend",
+            processing_time=0.01,
+        )
+
+    monkeypatch.setattr(
+        "tldw_chatbook.Local_Ingestion.Image_Processing_Lib.extract_text_from_image",
+        fake_extract,
+    )
+    return calls
+
+
+class TestImageWiring:
+    def test_image_options_reach_process_image(self, tmp_path: Path, monkeypatch):
+        """The parse branch forwards the panel's OCR knobs to the REAL
+        ``process_image`` parameter names, keeps visual features off (their
+        output is dropped by the persist path -- see the task notes), and
+        keeps the processor's own analysis path off in favor of the arc's
+        chat tail."""
+        source = tmp_path / "scan.png"
+        _write_tiny_png(source)
+
+        real = _real_process_image()
+        captured: Dict[str, Any] = {}
+
+        def fake_process_image(file_path, **kwargs):
+            _assert_kwargs_accepted(real, kwargs)
+            captured.update({"file_path": file_path, **kwargs})
+            return {
+                "status": "Success",
+                "content": "OCR TEXT",
+                "title": "scan",
+                "author": "Unknown",
+                "keywords": [],
+                "chunks": [{"text": "OCR TEXT", "metadata": {"chunk_num": 0}}],
+                "analysis": "",
+                "metadata": {},
+                "error": None,
+                "warnings": [],
+            }
+
+        monkeypatch.setattr(
+            "tldw_chatbook.Local_Ingestion.local_file_ingestion.process_image",
+            fake_process_image,
+        )
+
+        payload = parse_local_file_for_ingest(
+            str(source),
+            {
+                "ocr": True,
+                "ocr_language": "de",
+                "ocr_backend": "tesseract",
+                "chunk_options": {"size": 500, "max_size": 500, "overlap": 50},
+            },
+        )
+
+        assert captured["enable_ocr"] is True
+        assert captured["ocr_language"] == "de"
+        assert captured["ocr_backend"] == "tesseract"
+        assert captured["extract_features"] is False
+        assert captured["perform_analysis"] is False
+        assert captured["chunk_options"] == {
+            "size": 500,
+            "max_size": 500,
+            "overlap": 50,
+        }
+        assert payload["media_type"] == "image"
+        assert payload["content"] == "OCR TEXT"
+
+    def test_image_defaults_match_the_real_signature(
+        self, tmp_path: Path, monkeypatch
+    ):
+        """The parse branch's fallbacks mirror ``process_image``'s own
+        declared defaults, pinned against ``inspect.signature`` so a
+        processor default change fails here instead of drifting."""
+        source = tmp_path / "scan.png"
+        _write_tiny_png(source)
+
+        real = _real_process_image()
+        sig = inspect.signature(real)
+        captured: Dict[str, Any] = {}
+
+        def fake_process_image(file_path, **kwargs):
+            _assert_kwargs_accepted(real, kwargs)
+            captured.update(kwargs)
+            return {
+                "status": "Success",
+                "content": "x",
+                "title": "scan",
+                "author": "Unknown",
+                "keywords": [],
+                "chunks": [],
+                "analysis": "",
+                "metadata": {},
+                "error": None,
+                "warnings": [],
+            }
+
+        monkeypatch.setattr(
+            "tldw_chatbook.Local_Ingestion.local_file_ingestion.process_image",
+            fake_process_image,
+        )
+
+        parse_local_file_for_ingest(str(source), {})
+
+        assert captured["enable_ocr"] == sig.parameters["enable_ocr"].default
+        assert captured["ocr_language"] == sig.parameters["ocr_language"].default
+        assert captured["ocr_backend"] == sig.parameters["ocr_backend"].default
+
+    def test_image_end_to_end_real_png_persists(
+        self, tmp_path: Path, monkeypatch, media_db: MediaDatabase
+    ):
+        """REAL ``process_image`` over a real 2x2 PNG (only the OCR boundary
+        stubbed -- no backend is installed in this venv), persisted through
+        the real ``persist_parsed_media`` into a real ``MediaDatabase``."""
+        source = tmp_path / "receipt.png"
+        _write_tiny_png(source)
+        ocr_calls = _install_ocr_stub(monkeypatch, "TOTAL 12.50 EUR thank you")
+
+        payload = parse_local_file_for_ingest(
+            str(source),
+            {
+                "ocr": True,
+                "ocr_language": "en",
+                "ocr_backend": "auto",
+                "chunk_options": {"size": 500, "max_size": 500, "overlap": 50},
+            },
+        )
+
+        assert ocr_calls, "the OCR boundary was never reached"
+        assert payload["media_type"] == "image"
+        assert payload["content"] == "TOTAL 12.50 EUR thank you"
+        # PIL metadata must survive: Pillow is installed here, and its
+        # availability must not be hostage to the absent pillow_heif
+        # (the coupled import guard this task decoupled).
+        assert payload["metadata"]["width"] == 2
+        assert payload["metadata"]["height"] == 2
+
+        media_id, _uuid, _msg = persist_parsed_media(payload, media_db)
+        assert media_id is not None
+
+        cursor = media_db.execute_query(
+            "SELECT type, content FROM Media WHERE id = ?", (media_id,)
+        )
+        row = cursor.fetchone()
+        assert row["type"] == "image"
+        assert row["content"] == "TOTAL 12.50 EUR thank you"
+        assert _chunk_rows(media_db, media_id), "chunk ON stored no chunks"
+
+    def test_image_chunk_off_stores_no_chunks(
+        self, tmp_path: Path, monkeypatch, media_db: MediaDatabase
+    ):
+        source = tmp_path / "receipt.png"
+        _write_tiny_png(source)
+        _install_ocr_stub(monkeypatch, "some text")
+
+        payload = parse_local_file_for_ingest(
+            str(source), {"ocr": True, "chunk_options": None}
+        )
+
+        assert payload["chunks"] is None
+        media_id, _uuid, _msg = persist_parsed_media(payload, media_db)
+        assert _chunk_rows(media_db, media_id) == []
+
+    def test_image_without_ocr_text_fails_honestly(
+        self, tmp_path: Path, monkeypatch, media_db: MediaDatabase
+    ):
+        """No OCR text (no backend installed, or OCR off) must fail the job
+        with a reason that names OCR -- never a 'done' row whose content is
+        empty and silently unfindable in search/RAG."""
+        source = tmp_path / "photo.png"
+        _write_tiny_png(source)
+        _install_ocr_stub(monkeypatch, None)  # OCR failed / no backend
+
+        payload = parse_local_file_for_ingest(str(source), {"ocr": True})
+        with pytest.raises(Exception, match="OCR"):
+            persist_parsed_media(payload, media_db)
+
+        cursor = media_db.execute_query("SELECT COUNT(*) AS n FROM Media", ())
+        assert cursor.fetchone()["n"] == 0
+
+    def test_image_ocr_off_also_fails_honestly(
+        self, tmp_path: Path, monkeypatch, media_db: MediaDatabase
+    ):
+        source = tmp_path / "photo.png"
+        _write_tiny_png(source)
+        ocr_calls = _install_ocr_stub(monkeypatch, "never reached")
+
+        payload = parse_local_file_for_ingest(str(source), {"ocr": False})
+
+        assert not ocr_calls, "OCR ran despite the toggle being off"
+        with pytest.raises(Exception, match="OCR"):
+            persist_parsed_media(payload, media_db)
+
+    def test_image_analysis_dispatches_via_chat_tail(
+        self, tmp_path: Path, monkeypatch
+    ):
+        """Analysis over the OCR text runs through the arc's chat_api_call
+        tail (full [analysis_defaults] shape, keyless support) -- NOT
+        ``process_image``'s own analyze() path, whose direct dispatch is
+        the dead branch task-3301 documented."""
+        source = tmp_path / "note.png"
+        _write_tiny_png(source)
+        _install_ocr_stub(monkeypatch, "OCR text worth analyzing.")
+
+        real_chat = _real_chat_api_call()
+        calls: list[Dict[str, Any]] = []
+
+        def fake_chat_api_call(**kwargs):
+            _assert_kwargs_accepted(real_chat, kwargs)
+            calls.append(kwargs)
+            return "IMAGE ANALYSIS."
+
+        monkeypatch.setattr(
+            "tldw_chatbook.Chat.Chat_Functions.chat_api_call",
+            fake_chat_api_call,
+        )
+
+        def exploding_analyze(*args, **kwargs):
+            raise AssertionError(
+                "image analysis went through Summarization analyze(); it "
+                "must dispatch through chat_api_call"
+            )
+
+        monkeypatch.setattr(
+            "tldw_chatbook.LLM_Calls.Summarization_General_Lib.analyze",
+            exploding_analyze,
+        )
+
+        payload = parse_local_file_for_ingest(
+            str(source),
+            {
+                "ocr": True,
+                "perform_analysis": True,
+                "api_name": "openai",
+                "api_key": "sk-test-not-real",
+            },
+        )
+
+        assert payload["analysis_content"] == "IMAGE ANALYSIS."
+        assert calls, "no dispatch reached the chat_api_call boundary"
+        assert "OCR text worth analyzing." in (
+            calls[0]["messages_payload"][0]["content"]
+        )

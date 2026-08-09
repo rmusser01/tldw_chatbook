@@ -664,7 +664,10 @@ def test_ingestible_file_filters_separate_importable_from_the_rest() -> None:
 
     assert importable(Path("/tmp/notes.txt")) is True
     assert importable(Path("/tmp/paper.pdf")) is True
-    assert importable(Path("/tmp/cover.jpg")) is False
+    # (task-3307) Images are a supported group now, so the picker offers
+    # them; a truly handler-less extension stays filtered out.
+    assert importable(Path("/tmp/cover.jpg")) is True
+    assert importable(Path("/tmp/subtitles.srt")) is False
 
 
 def test_backend_switch_flips_and_persists_the_target(monkeypatch) -> None:
@@ -723,3 +726,53 @@ def test_switch_is_not_offered_when_the_server_seam_cannot_submit() -> None:
     state = screen._build_library_ingest_state()
 
     assert state.show_backend_switch is False
+
+
+def test_task_3307_image_options_round_trip_persisted_config(monkeypatch) -> None:
+    """(task-3307) The image group's options persist on submit and load
+    back on a fresh screen -- same two real seams the task-3303 round-trip
+    drives, with only config I/O stubbed."""
+    screen = _minimal_ingest_screen()
+    screen.app_instance = MagicMock()
+    screen.app_instance.submit_library_ingest_job = MagicMock()
+    screen.refresh = MagicMock()
+
+    form = screen._library_ingest_form
+    form.path = "/tmp/scan.png"
+    submitted = {
+        "image": {"ocr": True, "ocr_language": "de", "ocr_backend": "tesseract"},
+    }
+    form.type_options = {g: dict(v) for g, v in submitted.items()}
+
+    saved_sections: dict[str, dict] = {}
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.library_screen.save_settings_to_cli_config",
+        lambda section_values: saved_sections.update(
+            {s: dict(v) for s, v in section_values.items()}
+        )
+        or True,
+    )
+
+    screen._do_submit_ingest("/tmp/scan.png")
+
+    section = saved_sections.get("library.ingest_options.image", {})
+    for name, value in submitted["image"].items():
+        assert section.get(name) == value, f"image.{name} did not persist"
+
+    loader = _minimal_ingest_screen()
+
+    def fake_get_cli_setting(section: str, key: str = None, default: object = None):
+        return saved_sections.get(section, {}).get(key, default)
+
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.library_screen.get_cli_setting",
+        fake_get_cli_setting,
+    )
+
+    loader._load_library_ingest_options_from_config()
+
+    restored = loader._library_ingest_form.type_options
+    for name, value in submitted["image"].items():
+        assert restored.get("image", {}).get(name) == value, (
+            f"image.{name} did not load back"
+        )

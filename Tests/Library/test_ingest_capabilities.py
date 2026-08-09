@@ -934,3 +934,135 @@ def test_get_type_group_xml_is_unsupported_task_3308() -> None:
     purpose: retire it together with the deferral."""
     assert get_type_group("/tmp/feed.xml") == "unsupported"
     assert get_type_group("/tmp/FEED.XML") == "unsupported"
+
+
+# --- task-3307: image ingestion (ship ruling, task-3310 notes) --------------
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/tmp/photo.png",
+        "/tmp/photo.PNG",
+        "/tmp/photo.jpg",
+        "/tmp/photo.jpeg",
+        "/tmp/animation.gif",
+        "/tmp/photo.webp",
+        "/tmp/scan.bmp",
+        "/tmp/scan.tiff",
+        "/tmp/scan.tif",
+    ],
+)
+def test_get_type_group_maps_image_extensions_task_3307(path: str) -> None:
+    """Raster formats the image processor's PIL loader opens get the new
+    ``image`` group -- they used to pre-flight as unsupported while
+    ``Image_Processing_Lib.process_image`` sat unreachable."""
+    assert get_type_group(path) == "image"
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        # Not PIL-loadable raster content: SVG is a vector document.
+        "/tmp/diagram.svg",
+        # An icon container is not a content document to import.
+        "/tmp/favicon.ico",
+        # HEIC/HEIF need pillow_heif, which no install extra provides.
+        "/tmp/photo.heic",
+        "/tmp/photo.heif",
+    ],
+)
+def test_image_lookalikes_stay_unsupported_task_3307(path: str) -> None:
+    """Formats ``process_image``'s own SUPPORTED_IMAGE_FORMATS table lists
+    but the PIL loader cannot actually rasterize (svg), or that need the
+    absent pillow_heif opener (heic/heif), or that are icon containers
+    rather than content (ico), stay honestly unsupported."""
+    assert get_type_group(path) == "unsupported"
+
+
+def test_image_url_extension_wins_over_web_task_3307() -> None:
+    """An image extension on a URL says what the target IS -- same rule as
+    pdf/ebook/document (the branch sits before the URL check)."""
+    assert get_type_group("https://example.com/diagram.png") == "image"
+
+
+def test_get_capabilities_image_task_3307() -> None:
+    caps = get_capabilities("image")
+
+    assert caps.group == "image"
+    assert caps.noun_singular == "image"
+    assert caps.noun_plural == "images"
+    # Without at least one OCR backend the group cannot produce content at
+    # all (the extracted text IS what gets imported), so the backend
+    # umbrella is REQUIRED, not optional.
+    assert caps.required_features == ("image_ocr",)
+
+    assert caps.field_names == ("ocr", "ocr_language", "ocr_backend")
+    fields = {f.name: f for f in caps.fields}
+
+    ocr = fields["ocr"]
+    assert ocr.type == "checkbox"
+    # Mirrors process_image's own enable_ocr=True default -- and with OCR
+    # off there is nothing to import.
+    assert ocr.default is True
+    assert ocr.hint, "the OCR toggle must say the text IS the content"
+
+    lang = fields["ocr_language"]
+    assert lang.enabled_when == "ocr"
+    assert lang.default == "en"
+    assert lang.disabled_reason
+
+    backend = fields["ocr_backend"]
+    assert backend.type == "select"
+    assert backend.default == "auto"
+    # The OCR manager's registered backends (OCR_Backends), plus auto.
+    assert backend.options == (
+        "auto",
+        "docext",
+        "docling",
+        "tesseract",
+        "easyocr",
+        "paddleocr",
+    )
+    assert backend.enabled_when == "ocr"
+    assert backend.disabled_reason
+
+
+def test_image_ocr_warning_names_text_extraction_task_3307() -> None:
+    """The missing-backend warning must say what it costs (text extraction
+    from images), with a real install command."""
+    with patch(
+        "tldw_chatbook.Library.ingest_capabilities._is_installed",
+        return_value=False,
+    ):
+        warnings = get_tooling_warnings("image")
+
+    assert [w["feature"] for w in warnings] == ["image_ocr"]
+    assert "text" in warnings[0]["hint"].lower()
+    assert warnings[0]["command"].startswith("pip install")
+
+
+def test_image_ocr_probe_is_any_of_task_3307(monkeypatch) -> None:
+    """``image_ocr`` is an ANY-OF umbrella: one importable backend package
+    makes the feature installed; none makes it missing. (The all-of
+    ``_FEATURE_REQUIRED_PACKAGES`` grammar would demand every backend at
+    once, which no real install has.)"""
+
+    def only_easyocr(name: str):
+        return object() if name == "easyocr" else None
+
+    monkeypatch.setattr(
+        tldw_chatbook.Library.ingest_capabilities.importlib.util,
+        "find_spec",
+        only_easyocr,
+    )
+    tldw_chatbook.Library.ingest_capabilities.reset_installed_probe_cache()
+    assert _is_installed("image_ocr") is True
+
+    monkeypatch.setattr(
+        tldw_chatbook.Library.ingest_capabilities.importlib.util,
+        "find_spec",
+        lambda name: None,
+    )
+    tldw_chatbook.Library.ingest_capabilities.reset_installed_probe_cache()
+    assert _is_installed("image_ocr") is False

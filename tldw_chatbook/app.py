@@ -2630,6 +2630,21 @@ class LibraryIngestQueueMixin:
                     if isinstance(configured_path, str) and configured_path
                     else None
                 )
+        elif group == "image":
+            # (task-3307) The image panel's OCR knobs travel under the
+            # names the parse branch reads; fallbacks mirror
+            # ``process_image``'s own declared defaults. OCR defaults ON:
+            # the extracted text IS the imported content, and a no-text
+            # parse fails honestly at the persist seam.
+            if options["chunk_options"] is not None:
+                # (F12 parity) ``process_image`` chunks the OCR text via
+                # ``improved_chunking_process``; an explicit words method
+                # keeps the generic "words · 100-5000" size hint true here
+                # too.
+                options["chunk_options"]["method"] = "words"
+            options["ocr"] = flat_opts.get("ocr", flat_opts.get("enable_ocr", True))
+            options["ocr_language"] = flat_opts.get("ocr_language") or "en"
+            options["ocr_backend"] = flat_opts.get("ocr_backend") or "auto"
         elif group == "ebook":
             options["extraction_method"] = (
                 flat_opts.get("extraction_method")

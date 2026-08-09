@@ -179,6 +179,11 @@ _FEATURE_TO_EXTRA: dict[str, str] = {
     "lxml": "ebook",
     "parakeet_onnx": "transcription_parakeet",
     "parakeet_mlx": "mlx_whisper",
+    # (task-3307) The OCR-backend umbrella recovers via the one extra that
+    # is explicitly OCR-purposed. Docling (via [pdf]) or a bare
+    # `pip install pytesseract` work just as well -- the failure detail
+    # names the alternatives; an install COMMAND can only name one extra.
+    "image_ocr": "ocr_docext",
     "pdf_processing": "pdf",
     "pymupdf": "pdf",
     "pymupdf4llm": "pdf",
@@ -197,6 +202,9 @@ _GROUP_EXTRAS: dict[str, tuple[str, ...]] = {
     # Document ingestion's one flagged optional feature (docling) installs
     # via the pdf extra; nothing document-specific has an extra of its own.
     "document": (),
+    # (task-3307) The OCR extra is the image group's one install route
+    # with a pyproject name.
+    "image": ("ocr_docext",),
     "generic": (),
 }
 
@@ -215,6 +223,9 @@ _FEATURE_LABELS: dict[str, str] = {
     "ebooklib": "ebooklib",
     "faster_whisper": "Faster Whisper",
     "html2text": "html2text",
+    # (task-3307) Named so the image group's warning reads "OCR backend
+    # isn't installed" rather than the ocr_docext extra's own label.
+    "image_ocr": "OCR backend",
     "lightning_whisper_mlx": "Lightning Whisper MLX",
     "lxml": "lxml",
     "parakeet_onnx": "Parakeet ONNX",
@@ -245,6 +256,19 @@ _FEATURE_REQUIRED_PACKAGES: dict[str, tuple[str, ...]] = {
     # Video reuses the audio stack; ``check_video_processing_deps`` sets it
     # straight from ``audio_processing``.
     "video_processing": ("soundfile", "scipy"),
+}
+
+#: (task-3307) ANY-OF umbrella features: installed when at least one of the
+#: listed packages imports. The all-of grammar above cannot express "one
+#: OCR backend, whichever": image ingestion needs SOME backend the OCR
+#: manager registers (``OCR_Backends._register_backends``), and no real
+#: install carries all five. Import names, not PyPI names (tesseract's
+#: package is pytesseract). Deliberately NOT the ``ocr_processing`` flag
+#: from ``optional_deps``: ``check_ocr_deps`` reports available when bare
+#: ``openai``/``gradio_client`` import -- true for docext's API mode,
+#: a lie as "an OCR backend exists".
+_FEATURE_ANY_PACKAGES: dict[str, tuple[str, ...]] = {
+    "image_ocr": ("docext", "docling", "pytesseract", "easyocr", "paddleocr"),
 }
 
 #: Memoised results of the ``find_spec`` fallback in :func:`_is_installed`.
@@ -279,8 +303,13 @@ def _probe_installed(feature_id: str) -> bool:
         return cached
 
     required = _FEATURE_REQUIRED_PACKAGES.get(feature_id)
+    any_of = _FEATURE_ANY_PACKAGES.get(feature_id)
     if required is not None:
         result = all(_module_present(package) for package in required)
+    elif any_of is not None:
+        # (task-3307) An any-of umbrella: one importable alternative makes
+        # the feature real.
+        result = any(_module_present(package) for package in any_of)
     else:
         # A feature is installed only when every package it depends on imports.
         info = OPTIONAL_FEATURES.get(feature_id)
@@ -367,6 +396,11 @@ def _install_hint(feature_id: str) -> dict[str, str]:
 #: ``(group, feature)``; absent pairs keep the extra's own wording.
 _GROUP_FEATURE_HINTS: dict[tuple[str, str], str] = {
     ("document", "docling"): "scanned-document OCR",
+    # (task-3307) ``_install_hint`` resolves image_ocr through the
+    # ocr_docext extra, whose blurb names docext's own toolkit; what the
+    # user is actually missing is the ability to get any text out of an
+    # image at all.
+    ("image", "image_ocr"): "extracting text from images",
 }
 
 #: Sentinel group returned by :func:`get_type_group` for files this app has no
@@ -827,6 +861,76 @@ _TYPE_GROUPS: dict[str, TypeGroupCapabilities] = {
             ),
         ),
     ),
+    # (task-3307, ship ruling recorded in task-3310) Raster images: the
+    # imported content IS the text OCR extracts (``process_image``), so the
+    # whole panel is the OCR story. Visual features are deliberately not
+    # offered: ``persist_parsed_media`` forwards no metadata, so the toggle
+    # would compute a dict the pipeline drops (rejected-with-note in the
+    # task).
+    "image": TypeGroupCapabilities(
+        group="image",
+        label="Images",
+        noun_singular="image",
+        noun_plural="images",
+        # Without at least one OCR backend no image can produce content --
+        # the import always fails -- so the any-of umbrella is REQUIRED,
+        # not merely nice to have (contrast the document group, whose
+        # native parsers stand in for docling).
+        required_features=("image_ocr",),
+        optional_features=(),
+        fields=(
+            OptionField(
+                name="ocr",
+                label="Extract text (OCR)",
+                type="checkbox",
+                # Mirrors ``process_image``'s own enable_ocr=True -- and
+                # with OCR off there is nothing to import: the job fails
+                # honestly at the persist seam.
+                default=True,
+                depends_on="image_ocr",
+                hint="the extracted text is what gets imported",
+            ),
+            OptionField(
+                name="ocr_language",
+                label="OCR language",
+                type="text",
+                default="en",
+                depends_on="image_ocr",
+                enabled_when="ocr",
+                hint="e.g. en, de, fr",
+                disabled_reason="needs Extract text (OCR) on",
+            ),
+            OptionField(
+                name="ocr_backend",
+                label="OCR backend",
+                type="select",
+                default="auto",
+                # The OCR manager's registered backends
+                # (``OCR_Backends._register_backends``), ordered by its own
+                # default-selection priority; "auto" lets it pick the best
+                # installed one.
+                options=(
+                    "auto",
+                    "docext",
+                    "docling",
+                    "tesseract",
+                    "easyocr",
+                    "paddleocr",
+                ),
+                option_labels=(
+                    ("auto", "Auto (best installed backend)"),
+                    ("docext", "Docext (vision model)"),
+                    ("docling", "Docling"),
+                    ("tesseract", "Tesseract"),
+                    ("easyocr", "EasyOCR"),
+                    ("paddleocr", "PaddleOCR"),
+                ),
+                depends_on="image_ocr",
+                enabled_when="ocr",
+                disabled_reason="needs Extract text (OCR) on",
+            ),
+        ),
+    ),
     "generic": TypeGroupCapabilities(
         group="generic",
         label="Plain text & HTML",
@@ -986,9 +1090,10 @@ def get_type_group(path_or_url: str) -> str:
         path_or_url: Local path, or an http(s) URL.
 
     Returns:
-        One of ``pdf``, ``document``, ``audio_video``, ``ebook``, ``web``,
-        ``generic``, or ``unsupported``. Unsupported file types are mapped to
-        ``unsupported`` so the pre-flight summary can surface them separately.
+        One of ``pdf``, ``document``, ``image``, ``audio_video``, ``ebook``,
+        ``web``, ``generic``, or ``unsupported``. Unsupported file types are
+        mapped to ``unsupported`` so the pre-flight summary can surface them
+        separately.
     """
     try:
         file_type = detect_file_type(path_or_url)
@@ -1011,6 +1116,11 @@ def get_type_group(path_or_url: str) -> str:
         # options. Placed before the URL check for the same reason pdf/
         # ebook are: an extension on a URL still says what the target IS.
         return "document"
+    if file_type == "image":
+        # (task-3307) Raster images get their own group; before the URL
+        # check like pdf/ebook/document -- a ``.png`` URL is an image to
+        # OCR, not a page to scrape.
+        return "image"
     if _is_http_url(path_or_url) and file_type in ("plaintext", "html", "xml"):
         # A bare ".html"/".htm" URL is a page to fetch, not a local file to
         # read; the extension says how it is written, not where it lives.

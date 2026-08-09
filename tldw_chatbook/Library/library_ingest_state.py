@@ -74,7 +74,7 @@ QUEUE_EMPTY_AFTER_ACTIVITY_COPY = "Queue is empty."
 START_QUIET_LINE_COPY = "Enter a file path or URL to start."
 SUPPORTED_FORMATS_COPY = (
     "Supported: PDF documents, Word/Office documents, audio/video files, "
-    "e-books, plain text files, web pages (by URL)."
+    "e-books, images, plain text files, web pages (by URL)."
 )
 
 
@@ -390,6 +390,9 @@ _TYPE_GROUP_LABELS: dict[str, tuple[str, str]] = {
     "document": ("Word/Office document", "Word/Office documents"),
     "audio_video": ("audio/video file", "audio/video files"),
     "ebook": ("e-book", "e-books"),
+    # (task-3307) Raster images have their own group now -- the pre-flight
+    # used to drop them in the unsupported bucket.
+    "image": ("image", "images"),
     "generic": ("plain text file", "plain text files"),
     # (task-3305, MI-18) The fallback pluralised the group id -- a URL
     # selection read "1 web".
