@@ -531,3 +531,30 @@ def test_tool_gate_breadcrumb_names_the_off_count(monkeypatch):
     assert text is not None
     assert "9" in text
     assert "Servers mode" in text
+
+
+def test_gate_key_pairs_and_all_tool_gates_can_never_drift(monkeypatch):
+    """Qodo PR #1453: the count path (`_gate_key_pairs`) and the full
+    enumerator (`all_tool_gates`) hand-build the same key set in two
+    places — this pin makes silent divergence impossible."""
+    from tldw_chatbook.Agents.builtin_tool_gate import _gate_key_pairs, all_tool_gates
+
+    assert [(g.section, g.key) for g in all_tool_gates()] == _gate_key_pairs()
+
+
+def test_count_off_tool_gates_constructs_no_tools(monkeypatch):
+    """The breadcrumb's count-only path must never instantiate a Tool
+    (it runs on every Permissions-mode resync; construction also spams
+    warnings for optional tools missing on this system)."""
+    from tldw_chatbook.Agents import builtin_tool_gate, tool_catalog
+
+    def explode(entry):
+        raise AssertionError(f"count path constructed a tool: {entry}")
+
+    monkeypatch.setattr(tool_catalog, "build_gateable_tool", explode)
+    monkeypatch.setattr(
+        "tldw_chatbook.config.get_cli_setting", lambda s, k, d=None: d
+    )
+    assert builtin_tool_gate.count_off_tool_gates() == 9
+    assert builtin_tool_gate.tool_gate_breadcrumb() is not None
+    assert "9 tool gate(s)" in builtin_tool_gate.tool_gate_breadcrumb()

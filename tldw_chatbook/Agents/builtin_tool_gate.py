@@ -547,6 +547,36 @@ def all_tool_gates() -> list[ToolGate]:
     return gates
 
 
+def _gate_key_pairs() -> list[tuple[str, str]]:
+    """Every gate's (section, key), in enumeration order, WITHOUT
+    constructing any Tool — the cheap skeleton `all_tool_gates()` and the
+    count path share so the key set can never drift between them."""
+    from .local_tool_provider import WEB_DEEP_SEARCH_GATE_KEY
+    from .tool_catalog import _GATEABLE_BUILTINS
+
+    pairs: list[tuple[str, str]] = [
+        ("tools", entry.gate_key) for entry in _GATEABLE_BUILTINS
+    ]
+    pairs.append(("console", LOCAL_TOOLS_MASTER_KEY))
+    pairs.append(("tools", WEB_DEEP_SEARCH_GATE_KEY))
+    return pairs
+
+
+def count_off_tool_gates() -> int:
+    """How many registration gates are currently OFF — coerced config reads
+    only, NO Tool construction (Qodo PR #1453: the breadcrumb runs on every
+    Permissions-mode resync, and `all_tool_gates()` builds every gateable
+    Tool just to read descriptions — needless work plus repeated warning
+    logs for optional tools that cannot construct on this system)."""
+    from ..config import coerce_bool_setting, get_cli_setting
+
+    return sum(
+        1
+        for section, key in _gate_key_pairs()
+        if not coerce_bool_setting(get_cli_setting(section, key, False), False)
+    )
+
+
 def tool_gate_breadcrumb(gates: list[ToolGate] | None = None) -> str | None:
     """A one-line "N tool gate(s) are off" sentence, or ``None`` if none are.
 
@@ -565,8 +595,10 @@ def tool_gate_breadcrumb(gates: list[ToolGate] | None = None) -> str | None:
         The sentence, or ``None`` when every gate is on.
     """
     if gates is None:
-        gates = all_tool_gates()
-    off = sum(1 for gate in gates if not gate.enabled)
+        # Count-only path: no Tool construction (see count_off_tool_gates).
+        off = count_off_tool_gates()
+    else:
+        off = sum(1 for gate in gates if not gate.enabled)
     if off == 0:
         return None
     return (
