@@ -15,7 +15,11 @@ from textual.message import Message
 from textual.widget import Widget
 from textual.widgets import Button, Checkbox, DataTable, Static
 
-from tldw_chatbook.Agents.builtin_tool_gate import ToolGate, all_tool_gates
+from tldw_chatbook.Agents.builtin_tool_gate import (
+    LOCAL_TOOLS_MASTER_KEY,
+    ToolGate,
+    all_tool_gates,
+)
 from tldw_chatbook.MCP.readiness import (
     STATE_CSS_CLASSES,
     STATE_GLYPHS,
@@ -203,6 +207,23 @@ _TOOL_GATE_ID_PREFIX = "mcp-gate-"
 _TOOL_GATE_NOTE_TEXT = (
     "Applies on next app restart — tool providers build their catalogs "
     "at startup."
+)
+
+# task-3240 fix round 1 (Important 1c): the master switch's raw config key
+# ("local_tools_enabled") is unreadable as a checkbox label -- humanized
+# here, display-only. The Checkbox's `id` is still built from `gate.key`
+# (LOCAL_TOOLS_MASTER_KEY), never from this label, so the save/reload path
+# is untouched.
+_LOCAL_TOOLS_MASTER_LABEL = "Local workspace tools (master switch)"
+
+# task-3240 fix round 1 (Important 1a): shown under the "Local workspace
+# tools" subheading whenever the master switch is off -- without it, an
+# enabled web_deep_search with the master off LOOKS live (both checkboxes
+# read as independent toggles) but stays unreachable until the master is
+# also turned on.
+_LOCAL_TOOLS_MASTER_OFF_NOTE_TEXT = (
+    "Master switch is off — these tools stay unavailable regardless of "
+    "their own gates."
 )
 
 
@@ -1153,13 +1174,30 @@ class MCPServersMode(DataTableClickSelectMixin, Vertical):
         if widgets:
             await container.mount_all(widgets)
 
-    def _gate_checkbox(self, gate: ToolGate) -> Checkbox:
+    def _gate_checkbox(self, gate: ToolGate, *, disabled: bool = False) -> Checkbox:
+        """Build one gate's Checkbox.
+
+        task-3240 fix round 1: `disabled` (Important 1b) is True for a
+        LOCAL-group gate other than the master switch itself while that
+        master is off -- re-evaluated fresh on every rebuild, so switching
+        the master back on re-enables its dependents the very next resync
+        with no separate wiring. The master row's own label is humanized
+        (Important 1c) via `_LOCAL_TOOLS_MASTER_LABEL`; its `id` still
+        comes from `gate.key`, never from the label, so the save/reload
+        path is unaffected.
+        """
+        label = (
+            _LOCAL_TOOLS_MASTER_LABEL
+            if gate.key == LOCAL_TOOLS_MASTER_KEY
+            else gate.tool_name
+        )
         return Checkbox(
-            gate.tool_name,
+            label,
             value=gate.enabled,
             id=f"{_TOOL_GATE_ID_PREFIX}{gate.key}",
             compact=True,
             tooltip=gate.description,
+            disabled=disabled,
         )
 
     def _tool_gate_widgets(self) -> list[Widget]:
@@ -1218,7 +1256,33 @@ class MCPServersMode(DataTableClickSelectMixin, Vertical):
                     markup=False,
                 )
             )
-            widgets.extend(self._gate_checkbox(gate) for gate in local_gates)
+            # task-3240 fix round 1 (Important 1): the master switch is
+            # always enabled itself (only ITS OWN checkbox toggles it) --
+            # every OTHER local-group gate is disabled while it's off, and
+            # a dependency note explains why rather than leaving two
+            # apparently-independent checkboxes with no visible link.
+            master_gate = next(
+                (g for g in local_gates if g.key == LOCAL_TOOLS_MASTER_KEY), None
+            )
+            master_enabled = master_gate.enabled if master_gate is not None else True
+            if not master_enabled:
+                widgets.append(
+                    Static(
+                        _LOCAL_TOOLS_MASTER_OFF_NOTE_TEXT,
+                        id="mcp-gate-local-master-off-note",
+                        classes="ds-field-row",
+                        markup=False,
+                    )
+                )
+            widgets.extend(
+                self._gate_checkbox(
+                    gate,
+                    disabled=(
+                        not master_enabled and gate.key != LOCAL_TOOLS_MASTER_KEY
+                    ),
+                )
+                for gate in local_gates
+            )
         widgets.append(
             Static(
                 _TOOL_GATE_NOTE_TEXT,

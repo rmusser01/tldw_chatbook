@@ -32,10 +32,20 @@ into two subheadings:
 
 - **Agent built-ins** — the app's own file/note tools (read/list/write a
   file, glob/grep the workspace, create/update a note).
-- **Local workspace tools** — a master switch, **local_tools_enabled**,
-  that turns the whole local-tool group on or off, plus **web_deep_search**
-  (multi-query web research; costs real money on paid providers), gated
-  individually underneath it.
+- **Local workspace tools** — a master switch, labeled **Local workspace
+  tools (master switch)**, that turns the whole local-tool group on or off
+  for the Console/agent path, plus **web_deep_search** (multi-query web
+  research; costs real money on paid providers), gated individually
+  underneath it. While the master is off, every OTHER checkbox in this
+  group renders disabled — with its own gate still shown truthfully, but
+  greyed out — and a note explains why: "Master switch is off — these
+  tools stay unavailable regardless of their own gates." Turning the
+  master back on re-enables its dependents on the next resync.
+
+The master switch governs the **Console/agent path only**. It does *not*
+control whether an enabled tool (e.g. `web_deep_search`) is exposed to
+*external* MCP clients connecting to chatbook's own server — that is a
+separate switch, `[mcp] expose_local_tools`, unrelated to this pane.
 
 Every checkbox here saves immediately and reads back the real config value
 after saving — never an optimistic guess. **These gates need an app

@@ -868,6 +868,14 @@ async def test_tool_gate_checkbox_toggle_saves_setting_and_reloads_catalog(monke
     stopping after the first flip, so a fix that only round-trips ONE
     direction (e.g. an inverted default somewhere in the reload path)
     cannot pass by accident.
+
+    Fix round 1 (Important 1) reorders this test: web_deep_search is a
+    LOCAL-group dependent, so its checkbox renders `disabled=True` (a
+    click is a no-op) while the master switch is off -- which it is by
+    this test's own `flags` default. The master is toggled ON first here
+    specifically to exercise web_deep_search's own click/toggle; it is
+    toggled back off at the end, mirroring the original bidirectional
+    coverage for the master switch itself.
     """
     import tldw_chatbook.config as config_module
     from tldw_chatbook.Agents.local_tool_provider import WEB_DEEP_SEARCH_GATE_KEY
@@ -893,9 +901,26 @@ async def test_tool_gate_checkbox_toggle_saves_setting_and_reloads_catalog(monke
         await pilot.pause()
         await pilot.click(f"#{MCP_RAIL_ROW_PREFIX}1")  # builtin row
         await pilot.pause()
+
+        # The [console]-section master switch must save under ITS OWN
+        # section too -- not "tools", proving `section` really is threaded
+        # through end to end rather than hardcoded anywhere on the path.
+        # Turned ON first (Important 1): web_deep_search is disabled below
+        # it until this happens.
+        master_checkbox = app.query_one("#mcp-gate-local_tools_enabled", Checkbox)
+        assert master_checkbox.value is False
+        await pilot.click("#mcp-gate-local_tools_enabled")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert ("console", "local_tools_enabled", True) in save_calls
+        master_checkbox = app.query_one("#mcp-gate-local_tools_enabled", Checkbox)
+        assert master_checkbox.value is True
+
         checkbox_id = f"#mcp-gate-{WEB_DEEP_SEARCH_GATE_KEY}"
         checkbox = app.query_one(checkbox_id, Checkbox)
         assert checkbox.value is False  # nothing overridden yet -> default off
+        assert checkbox.disabled is False  # master is now on
 
         await pilot.click(checkbox_id)
         await pilot.pause()
@@ -915,17 +940,6 @@ async def test_tool_gate_checkbox_toggle_saves_setting_and_reloads_catalog(monke
         assert ("tools", WEB_DEEP_SEARCH_GATE_KEY, False) in save_calls
         reloaded_again = app.query_one(checkbox_id, Checkbox)
         assert reloaded_again.value is False
-
-        # The [console]-section master switch must save under ITS OWN
-        # section too -- not "tools", proving `section` really is threaded
-        # through end to end rather than hardcoded anywhere on the path.
-        await pilot.click("#mcp-gate-local_tools_enabled")
-        await pilot.pause()
-        await app.workers.wait_for_complete()
-        await pilot.pause()
-        assert ("console", "local_tools_enabled", True) in save_calls
-        master_checkbox = app.query_one("#mcp-gate-local_tools_enabled", Checkbox)
-        assert master_checkbox.value is True
 
         # Bidirectional for the master switch too.
         await pilot.click("#mcp-gate-local_tools_enabled")
@@ -2996,6 +3010,15 @@ async def test_empty_diagnosis_no_servers_shows_add_server_and_button_opens_form
         # default off) -- startswith isolates this test's own concern from
         # that unrelated, separately-tested addition.
         assert message.startswith("No servers configured — add one to see its tools.")
+
+        # Fix round 1 (Minor 1): this test's own NAME promises the
+        # click-opens-form behavior -- restored here (it had drifted onto
+        # a differently-named breadcrumb test below when the message
+        # assertion above was loosened to `.startswith`).
+        await pilot.click("#mcp-tools-empty-action")
+        await pilot.pause()
+        form = app.query_one(MCPProfileForm)
+        assert not form.is_edit
 
 
 @pytest.mark.asyncio

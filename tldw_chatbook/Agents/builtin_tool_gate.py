@@ -438,13 +438,28 @@ class ToolGate:
     group: str
 
 
+#: The local group's master-switch config key, named so it isn't re-typed
+#: as a literal at every call/comparison site (the enumerator itself, and
+#: the Servers-mode UI's master-vs-dependent branching).
+LOCAL_TOOLS_MASTER_KEY = "local_tools_enabled"
+
 #: Hand-written description for the local group's master switch -- it has
 #: no corresponding Tool instance to read a description off of (it gates a
 #: GROUP of tools, not one), unlike every _GATEABLE_BUILTINS row.
+#:
+#: task-3240 fix round 1 (Important 2): scoped to the Console/agent path
+#: ONLY -- `MCP/local_server_tools.py`'s `build_server_local_provider()`
+#: (external MCP-client serving, gated by `[mcp] expose_local_tools`)
+#: never reads this key at all, so an enabled `web_deep_search` with this
+#: master OFF is still live to external MCP clients. Wording-only fix;
+#: making this switch also govern MCP exposure is a separate, out-of-scope
+#: behavior change.
 _LOCAL_TOOLS_MASTER_DESCRIPTION = (
-    "Master switch for the local workspace tool group (fs_*/web_*/todo_* "
-    "tools plus web_deep_search). Off by default; the group's individual "
-    "gates still apply once this is on."
+    "Master switch for the local workspace tool group in the Console/agent "
+    "path (fs_*/web_*/todo_* tools plus web_deep_search). Off by default; "
+    "the group's individual gates still apply once this is on. Does NOT "
+    "govern exposure to external MCP clients -- that's the separate "
+    "[mcp] expose_local_tools switch."
 )
 
 #: Hand-written description for web_deep_search -- also has no Tool
@@ -508,11 +523,11 @@ def all_tool_gates() -> list[ToolGate]:
     gates.append(
         ToolGate(
             section="console",
-            key="local_tools_enabled",
-            tool_name="local_tools_enabled",
+            key=LOCAL_TOOLS_MASTER_KEY,
+            tool_name=LOCAL_TOOLS_MASTER_KEY,
             description=_LOCAL_TOOLS_MASTER_DESCRIPTION,
             enabled=coerce_bool_setting(
-                get_cli_setting("console", "local_tools_enabled", False), False
+                get_cli_setting("console", LOCAL_TOOLS_MASTER_KEY, False), False
             ),
             group="local",
         )
