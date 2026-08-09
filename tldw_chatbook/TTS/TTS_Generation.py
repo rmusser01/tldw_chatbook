@@ -7,6 +7,7 @@ from collections.abc import (
     AsyncIterator,
     Awaitable,
     Callable,
+    Collection,
     Coroutine,
     Iterable,
     Mapping,
@@ -53,6 +54,7 @@ from tldw_chatbook.TTS.audio_cpp_supervisor import (
     AudioCppProcessAdmissionSnapshot,
     AudioCppProcessSnapshot,
     AudioCppSupervisor,
+    AudioCppTTSCapability,
     _AudioCppGenerationChanged,
 )
 from tldw_chatbook.TTS.legacy_bridge import resolve_legacy_route
@@ -106,11 +108,13 @@ class AudioCppRuntimeObservation:
     catalog_revision: int | None
     catalog_fresh: bool
     catalog_observed_at: datetime | None
+    tts_capability: AudioCppTTSCapability
     service_closed: bool
     saved_managed_binary_path: str | None = field(repr=False)
     saved_managed_server_json_path: str | None = field(repr=False)
     applied_managed_binary_path: str | None = field(repr=False)
     applied_managed_server_json_path: str | None = field(repr=False)
+    active_endpoint: str | None = field(default=None, repr=False)
 
 
 @dataclass(frozen=True, slots=True)
@@ -149,6 +153,7 @@ class TTSSettingsPublication:
     provider_statuses: Mapping[str, TTSSettingsProviderStatus]
     provider_revisions: Mapping[str, int]
     published: bool
+    staged_provider_ids: frozenset[str] = frozenset()
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -161,6 +166,17 @@ class TTSSettingsPublication:
             "provider_revisions",
             MappingProxyType(dict(self.provider_revisions)),
         )
+        staged_provider_ids = frozenset(self.staged_provider_ids)
+        if not staged_provider_ids.issubset(self.provider_statuses):
+            raise ValueError("Staged TTS providers require publication statuses")
+        if any(
+            self.provider_statuses[provider_id] != "pending"
+            for provider_id in staged_provider_ids
+        ):
+            raise ValueError(
+                "Staged TTS providers require pending publication statuses"
+            )
+        object.__setattr__(self, "staged_provider_ids", staged_provider_ids)
 
 
 @dataclass(frozen=True, slots=True)
@@ -556,6 +572,7 @@ class TTSService:
         self._native_catalog_request_generations: dict[str, int] = {}
         self._native_voice_request_generations: dict[tuple[str, str], int] = {}
         self._audio_cpp_catalog_process_generation: int | None = None
+        self._audio_cpp_catalog_observation_version: int | None = None
         candidate_preferences = (
             TTSPreferencesSnapshot.from_settings({})
             if preferences_snapshot is None
@@ -738,8 +755,16 @@ class TTSService:
         preparation = self._audio_cpp_preparation.get()
         if preparation is not None and lease.provider_id == "audio_cpp":
             try:
+                configuration_revision = self.configuration_revision("audio_cpp")
                 with _adapter_admission_scope(lease.adapter, preparation):
                     await lease.adapter.ensure_ready()
+                    catalog = await lease.adapter.get_catalog(refresh=False)
+                self._publish_native_catalog(
+                    "audio_cpp",
+                    configuration_revision,
+                    catalog,
+                    audio_cpp_adapter=lease.adapter,
+                )
                 supervisor = self._audio_cpp_supervisor
                 if supervisor is not None:
                     admission = supervisor.admission_snapshot()
@@ -903,6 +928,8 @@ class TTSService:
         provider_id: str,
         configuration_revision: int,
         catalog: TTSProviderCatalog,
+        *,
+        audio_cpp_adapter: object | None = None,
     ) -> None:
         """Publish a catalog and retain only voices from its exact revision."""
         if catalog.provider_id != provider_id:
@@ -913,6 +940,32 @@ class TTSService:
             return
         if current_revision != configuration_revision:
             return
+
+        audio_cpp_evidence: tuple[int | None, int | None] | None = None
+        if provider_id == "audio_cpp" and audio_cpp_adapter is not None:
+            evidence_reader = getattr(
+                audio_cpp_adapter,
+                "catalog_publication_evidence",
+                None,
+            )
+            if callable(evidence_reader):
+                audio_cpp_evidence = evidence_reader(catalog)
+                if audio_cpp_evidence is None:
+                    return
+                process_generation, observation_version = audio_cpp_evidence
+                if process_generation is not None or observation_version is not None:
+                    if process_generation is None or observation_version is None:
+                        return
+                    supervisor = self._audio_cpp_supervisor
+                    process = None if supervisor is None else supervisor.snapshot()
+                    if not (
+                        process is not None
+                        and process.state in {"running", "draining"}
+                        and process.tts_capability in {"available", "not_configured"}
+                        and process.process_generation == process_generation
+                        and process.observation_version == observation_version
+                    ):
+                        return
 
         retained_voices: Mapping[str, TTSVoiceDiscoveryResult] = {}
         previous = self._native_capability_observations.get(provider_id)
@@ -936,13 +989,27 @@ class TTSService:
             return
         self._publish_native_capability_snapshot(snapshot)
         if provider_id == "audio_cpp":
+            if audio_cpp_evidence is not None:
+                (
+                    self._audio_cpp_catalog_process_generation,
+                    self._audio_cpp_catalog_observation_version,
+                ) = audio_cpp_evidence
+                return
             supervisor = self._audio_cpp_supervisor
             process = None if supervisor is None else supervisor.snapshot()
+            process_has_fresh_evidence = bool(
+                process is not None
+                and process.state in {"running", "draining"}
+                and process.tts_capability in {"available", "not_configured"}
+            )
             self._audio_cpp_catalog_process_generation = (
                 process.process_generation
-                if process is not None
-                and process.state in {"running", "draining"}
-                and process.tts_capability == "available"
+                if process_has_fresh_evidence and process is not None
+                else None
+            )
+            self._audio_cpp_catalog_observation_version = (
+                process.observation_version
+                if process_has_fresh_evidence and process is not None
                 else None
             )
 
@@ -1041,6 +1108,7 @@ class TTSService:
             for model_id in model_ids
         }
         primary_error: BaseException | None = None
+        publication_adapter: object | None = None
         preparation = self._audio_cpp_preparation.get()
         process_fence_required = False
         process_fence: (
@@ -1066,6 +1134,7 @@ class TTSService:
                     ) = await self._request_admission.acquire_native_capability_lease(
                         provider_id
                     )
+                publication_adapter = lease.adapter
                 with _adapter_admission_scope(
                     lease.adapter,
                     preparation,
@@ -1187,6 +1256,7 @@ class TTSService:
                 finalized,
                 catalog_request_generation=catalog_request_generation,
                 voice_request_generations=voice_request_generations,
+                audio_cpp_adapter=publication_adapter,
             )
             return finalized
 
@@ -1201,6 +1271,7 @@ class TTSService:
         *,
         catalog_request_generation: int,
         voice_request_generations: Mapping[str, int],
+        audio_cpp_adapter: object | None = None,
     ) -> None:
         """Merge only still-current catalog and model-scoped observations."""
         catalog = snapshot.catalog
@@ -1212,6 +1283,7 @@ class TTSService:
                 snapshot.provider_id,
                 snapshot.configuration_revision,
                 catalog,
+                audio_cpp_adapter=audio_cpp_adapter,
             )
         for model_id, result in snapshot.voice_results.items():
             request_generation = voice_request_generations.get(model_id)
@@ -1578,6 +1650,18 @@ class TTSService:
         refresh: bool = False,
     ) -> TTSProviderCatalog:
         """Read a catalog while the caller owns the shared admission side."""
+        catalog, _adapter = await self._get_catalog_and_adapter_already_prepared(
+            provider_id,
+            refresh=refresh,
+        )
+        return catalog
+
+    async def _get_catalog_and_adapter_already_prepared(
+        self,
+        provider_id: str,
+        refresh: bool = False,
+    ) -> tuple[TTSProviderCatalog, object]:
+        """Read a catalog and retain its adapter identity for fenced publication."""
         lease = await self.registry.acquire(provider_id)
         try:
             preparation = self._audio_cpp_preparation.get()
@@ -1587,7 +1671,8 @@ class TTSService:
             ):
                 if provider_id == "audio_cpp" and preparation is not None:
                     await lease.adapter.ensure_ready()
-                return await lease.adapter.get_catalog(refresh=refresh)
+                catalog = await lease.adapter.get_catalog(refresh=refresh)
+                return catalog, lease.adapter
         finally:
             await lease.release()
 
@@ -1616,6 +1701,7 @@ class TTSService:
         )
         while True:
             lease: TTSAdapterLease | None = None
+            publication_adapter: object | None = None
             try:
                 async with self._prepared_provider_read(
                     provider_id,
@@ -1627,6 +1713,7 @@ class TTSService:
                         else None
                     )
                     lease = await self.registry.acquire(provider_id)
+                    publication_adapter = lease.adapter
                     with _adapter_admission_scope(lease.adapter, preparation):
                         catalog = await lease.adapter.get_catalog(refresh=refresh)
             except _AudioCppGenerationChanged:
@@ -1647,6 +1734,7 @@ class TTSService:
                 provider_id,
                 configuration_revision,
                 catalog,
+                audio_cpp_adapter=publication_adapter,
             )
         return catalog
 
@@ -1809,10 +1897,20 @@ class TTSService:
                     catalog_fresh = bool(
                         catalog_fresh
                         and process.state in {"running", "draining"}
-                        and process.tts_capability == "available"
+                        and process.tts_capability in {"available", "not_configured"}
                         and self._audio_cpp_catalog_process_generation
                         == process.process_generation
+                        and self._audio_cpp_catalog_observation_version
+                        == process.observation_version
                     )
+                tts_capability: AudioCppTTSCapability = process.tts_capability
+                if applied.mode == "external":
+                    tts_capability = "unknown"
+                    if catalog_fresh and catalog is not None:
+                        if catalog.health.state == "available":
+                            tts_capability = "available"
+                        elif catalog.health.state == "not_configured":
+                            tts_capability = "not_configured"
 
                 return AudioCppRuntimeObservation(
                     saved_mode=saved.mode,
@@ -1829,6 +1927,7 @@ class TTSService:
                     catalog_observed_at=(
                         None if capability is None else capability.observed_at
                     ),
+                    tts_capability=tts_capability,
                     service_closed=service_closed,
                     saved_managed_binary_path=(
                         saved.managed_binary_path if saved.mode == "managed" else None
@@ -1847,6 +1946,11 @@ class TTSService:
                         applied.managed_server_json_path
                         if applied.mode == "managed"
                         else None
+                    ),
+                    active_endpoint=(
+                        process.endpoint
+                        if applied.mode == "managed"
+                        else applied.base_url
                     ),
                 )
 
@@ -1913,7 +2017,10 @@ class TTSService:
                     preparation = _AudioCppPreparation(require_existing=None)
                     token = self._audio_cpp_preparation.set(preparation)
                     try:
-                        catalog = await self._get_catalog_already_prepared(
+                        (
+                            catalog,
+                            publication_adapter,
+                        ) = await self._get_catalog_and_adapter_already_prepared(
                             "audio_cpp",
                             refresh=True,
                         )
@@ -1927,6 +2034,7 @@ class TTSService:
                     "audio_cpp",
                     configuration_revision,
                     catalog,
+                    audio_cpp_adapter=publication_adapter,
                 )
             return catalog
 
@@ -2057,6 +2165,7 @@ class TTSService:
         tickets: dict[str, TTSReconfigurationTicket] = {}
         provider_statuses: dict[str, TTSSettingsProviderStatus] = {}
         provider_revisions: dict[str, int] = {}
+        staged_provider_ids: set[str] = set()
         persistence_outcome = TTSSettingsPersistenceOutcome(
             file_replaced=False,
             caches_reloaded=False,
@@ -2106,9 +2215,10 @@ class TTSService:
                         self._settings_persisted_provider_generations[provider_id] = (
                             generation
                         )
-                        self._settings_persisted_provider_configs[provider_id] = (
-                            deepcopy(dict(provider_configs[provider_id]))
-                        )
+                        if provider_id == "audio_cpp":
+                            self._settings_persisted_provider_configs[provider_id] = (
+                                deepcopy(dict(provider_configs[provider_id]))
+                            )
                 transition_failed = False
                 for provider_id, config in provider_configs.items():
                     try:
@@ -2119,6 +2229,8 @@ class TTSService:
                         )
                         if staged_status is not None:
                             provider_statuses[provider_id] = staged_status
+                            if staged_status == "pending":
+                                staged_provider_ids.add(provider_id)
                             continue
                         ticket = await self.registry.begin_reconfigure_provider(
                             provider_id,
@@ -2135,6 +2247,7 @@ class TTSService:
                     provider_statuses.update(
                         {provider_id: "unavailable" for provider_id in provider_configs}
                     )
+                    staged_provider_ids.clear()
                 else:
                     provider_statuses.update(
                         await self._bounded_reconfiguration_statuses(
@@ -2157,6 +2270,7 @@ class TTSService:
                     provider_statuses=provider_statuses,
                     provider_revisions=provider_revisions,
                     published=True,
+                    staged_provider_ids=staged_provider_ids,
                 )
                 self._resolve_settings_foreground(foreground, foreground_result)
 
@@ -2180,6 +2294,7 @@ class TTSService:
             provider_statuses=final_statuses,
             provider_revisions=final_revisions,
             published=True,
+            staged_provider_ids=staged_provider_ids,
         )
 
     async def _stage_managed_boundary(
@@ -2292,6 +2407,7 @@ class TTSService:
         provider_statuses: Mapping[str, TTSSettingsProviderStatus],
         provider_revisions: Mapping[str, int],
         published: bool,
+        staged_provider_ids: Collection[str] = (),
     ) -> TTSSettingsPublication:
         return TTSSettingsPublication(
             generation=generation,
@@ -2300,6 +2416,7 @@ class TTSService:
             provider_statuses=provider_statuses,
             provider_revisions=provider_revisions,
             published=published,
+            staged_provider_ids=frozenset(staged_provider_ids),
         )
 
     @staticmethod

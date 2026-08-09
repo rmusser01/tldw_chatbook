@@ -475,6 +475,13 @@
     color: $ds-text-muted;
 }
 
+.audio-cpp-diagnostics-lines:focus {
+    outline: heavy $ds-action-focus;
+    background: $ds-focus-bg;
+    color: $ds-text-primary;
+    scrollbar-color-active: $ds-action-focus;
+}
+
 #audio-cpp-runtime-actions {
     height: 1;
     min-height: 1;

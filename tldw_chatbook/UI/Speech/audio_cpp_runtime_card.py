@@ -8,7 +8,7 @@ from typing import Literal
 from textual.app import ComposeResult
 from textual.containers import Vertical
 from textual.css.query import NoMatches
-from textual.widgets import Button, Collapsible, Static
+from textual.widgets import Button, Collapsible, RichLog, Static
 
 from tldw_chatbook.TTS import AudioCppRuntimeObservation
 
@@ -78,7 +78,7 @@ def _primary_status(observation: AudioCppRuntimeObservation) -> str:
         "stopped",
         "unavailable",
     }:
-        return "[EXTERNAL] Chatbook will connect to the saved external server."
+        return "[EXTERNAL] Chatbook will connect to the active external server."
     if process.state == "running":
         if process.tts_capability == "available":
             return "[RUNNING] Managed audio.cpp is ready."
@@ -170,10 +170,20 @@ def _runtime_actions(
     else:
         primary = _action("test", "Test Connection", True)
 
+    duplicate_restart = live_managed and primary.operation == "restart"
     restart_reason = (
-        external_reason if observation.applied_mode == "external" else no_child_reason
+        "Use the primary action above to restart the managed server."
+        if duplicate_restart
+        else external_reason
+        if observation.applied_mode == "external"
+        else no_child_reason
     )
-    restart = _action("restart", "Restart", live_managed, restart_reason)
+    restart = _action(
+        "restart",
+        "Restart",
+        live_managed and not duplicate_restart,
+        restart_reason,
+    )
     shutdown = _action(
         "shutdown",
         "Shut down server",
@@ -219,8 +229,12 @@ def project_audio_cpp_runtime_card(
             f"Process: {process.state.title()} · generation "
             f"{process.process_generation}"
         ),
-        endpoint_copy=f"Active endpoint: {process.endpoint or 'None'}",
-        capability_copy=f"TTS capability: {process.tts_capability.replace('_', ' ').title()}",
+        endpoint_copy=(
+            f"Active endpoint: {observation.active_endpoint or process.endpoint or 'None'}"
+        ),
+        capability_copy=(
+            f"TTS capability: {observation.tts_capability.replace('_', ' ').title()}"
+        ),
         catalog_copy=catalog_copy,
         primary_action=primary,
         restart_action=restart,
@@ -250,6 +264,7 @@ class AudioCppRuntimeCard(Vertical):
         classes = str(kwargs.pop("classes", ""))
         super().__init__(classes=f"audio-cpp-runtime-card {classes}".strip(), **kwargs)
         self.observation = observation
+        self._rendered_diagnostic_lines: tuple[str, ...] | None = None
 
     def compose(self) -> ComposeResult:
         yield Static(
@@ -339,7 +354,8 @@ class AudioCppRuntimeCard(Vertical):
         yield Collapsible(
             Static(
                 "Potentially sensitive: child output may contain model or request "
-                "details. Review before copying. The next managed start clears it.",
+                "details. Focus the log and use Arrow or Page Up/Page Down to review "
+                "all lines. The next managed start clears it.",
                 id="audio-cpp-diagnostics-warning",
                 classes="audio-cpp-diagnostics-warning",
                 markup=False,
@@ -349,11 +365,15 @@ class AudioCppRuntimeCard(Vertical):
                 id="audio-cpp-diagnostics-generation",
                 markup=False,
             ),
-            Static(
-                "No recent managed diagnostics.",
+            RichLog(
+                max_lines=200,
+                min_width=0,
+                wrap=True,
+                highlight=False,
+                markup=False,
+                auto_scroll=True,
                 id="audio-cpp-diagnostics-lines",
                 classes="audio-cpp-diagnostics-lines",
-                markup=False,
             ),
             Static(
                 "No diagnostic lines were dropped.",
@@ -403,15 +423,19 @@ class AudioCppRuntimeCard(Vertical):
             "#audio-cpp-diagnostics-generation": (
                 projection.diagnostics_generation_copy
             ),
-            "#audio-cpp-diagnostics-lines": (
-                "\n".join(projection.diagnostic_lines)
-                if projection.diagnostic_lines
-                else "No recent managed diagnostics."
-            ),
             "#audio-cpp-diagnostics-dropped": (projection.dropped_diagnostics_copy),
         }
         for selector, copy in copies.items():
             self.query_one(selector, Static).update(copy)
+        diagnostic_lines = projection.diagnostic_lines or (
+            "No recent managed diagnostics.",
+        )
+        if diagnostic_lines != self._rendered_diagnostic_lines:
+            diagnostic_log = self.query_one("#audio-cpp-diagnostics-lines", RichLog)
+            diagnostic_log.clear()
+            for line in diagnostic_lines:
+                diagnostic_log.write(line)
+            self._rendered_diagnostic_lines = diagnostic_lines
         self._apply_action("#audio-cpp-runtime-restart", projection.restart_action)
         self._apply_action("#audio-cpp-runtime-shutdown", projection.shutdown_action)
         reasons = tuple(

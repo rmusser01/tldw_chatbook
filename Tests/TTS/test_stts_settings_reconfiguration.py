@@ -1189,11 +1189,167 @@ async def test_managed_save_while_running_finishes_as_pending_without_stopping_c
         snapshot = await registry.provider_configuration_snapshot("audio_cpp")
 
         assert result.provider_statuses == {"audio_cpp": "pending"}
+        assert result.staged_provider_ids == frozenset({"audio_cpp"})
         assert active_adapter.close_calls == 0
         assert registry._slots["audio_cpp"].active is not None
         assert dict(snapshot.applied_config) == external
         assert dict(snapshot.staged_config or {}) == managed
         assert snapshot.revision == 1
+    finally:
+        await service.close()
+        await service.wait_closed()
+
+
+def test_settings_publication_rejects_staged_non_pending_provider() -> None:
+    with pytest.raises(
+        ValueError,
+        match="Staged TTS providers require pending publication statuses",
+    ):
+        TTSSettingsPublication(
+            generation=1,
+            preferences=_audio_cpp_preferences(),
+            persistence=_mutation_outcome(),
+            provider_statuses={"audio_cpp": "unavailable"},
+            provider_revisions={"audio_cpp": 1},
+            published=True,
+            staged_provider_ids=frozenset({"audio_cpp"}),
+        )
+
+
+@pytest.mark.asyncio
+async def test_later_transition_failure_clears_earlier_managed_staged_marker(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    external = AudioCppConfig().to_mapping()
+    managed = _managed_audio_cpp_config("mixed-transition-failure")
+    registry = TTSAdapterRegistry(
+        specs=(
+            provider_spec(
+                "audio_cpp",
+                RecordingFactory("audio_cpp"),
+                external,
+                exclusive=True,
+            ),
+            provider_spec("openai", RecordingFactory("openai"), {}),
+        ),
+        aliases={},
+    )
+    service = TTSService(registry, preferences_snapshot=_audio_cpp_preferences())
+    monkeypatch.setattr(
+        registry,
+        "begin_reconfigure_provider",
+        AsyncMock(side_effect=RuntimeError("simulated later transition failure")),
+    )
+
+    try:
+        ticket = service.begin_preferences_publication(
+            _audio_cpp_preferences(),
+            {"audio_cpp": managed, "openai": {"api_key": "saved"}},
+            _mutation_outcome,
+            foreground_timeout_seconds=0,
+        )
+        result = await asyncio.wait_for(ticket.completion, timeout=1)
+
+        assert result.provider_statuses == {
+            "audio_cpp": "unavailable",
+            "openai": "unavailable",
+        }
+        assert result.staged_provider_ids == frozenset()
+        assert await ticket.foreground == result
+    finally:
+        await service.close()
+        await service.wait_closed()
+
+
+@pytest.mark.asyncio
+async def test_saved_config_snapshot_does_not_duplicate_legacy_credentials() -> None:
+    external = AudioCppConfig().to_mapping()
+    registry = TTSAdapterRegistry(
+        specs=(
+            provider_spec(
+                "audio_cpp",
+                RecordingFactory("audio_cpp"),
+                external,
+                exclusive=True,
+            ),
+            provider_spec("openai", RecordingFactory("openai"), {}),
+        ),
+        aliases={},
+    )
+    service = TTSService(registry, preferences_snapshot=_audio_cpp_preferences())
+
+    try:
+        ticket = service.begin_preferences_publication(
+            _audio_cpp_preferences(),
+            {
+                "audio_cpp": external,
+                "openai": {"api_key": "private-credential"},
+            },
+            _mutation_outcome,
+            foreground_timeout_seconds=1,
+        )
+        await asyncio.wait_for(ticket.completion, timeout=1)
+
+        assert service._settings_persisted_provider_configs == {"audio_cpp": external}
+    finally:
+        await service.close()
+        await service.wait_closed()
+
+
+@pytest.mark.asyncio
+async def test_managed_save_event_remains_pending_for_deliberate_lab_apply(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tldw_chatbook import config as config_module
+
+    external = AudioCppConfig().to_mapping()
+    managed = _managed_audio_cpp_config("event-pending")
+    registry = TTSAdapterRegistry(
+        specs=(
+            provider_spec(
+                "audio_cpp",
+                RecordingFactory("audio_cpp"),
+                external,
+                exclusive=True,
+            ),
+        ),
+        aliases={},
+    )
+    service = TTSService(registry, preferences_snapshot=_audio_cpp_preferences())
+    app = RecordingApp()
+    handler = STTSEventHandler(app)
+    handler._stts_service = service
+    recorder = SettingsResultRecorder()
+    monkeypatch.setattr(
+        config_module,
+        "settings",
+        {"COMPREHENSIVE_CONFIG_RAW": {"app_tts": {"audio_cpp": external}}},
+    )
+    monkeypatch.setattr(
+        config_module,
+        "apply_settings_mutation_to_cli_config",
+        Mock(return_value=_mutation_outcome()),
+    )
+
+    try:
+        await handler.handle_settings_save(
+            STTSSettingsSaveEvent(
+                {"audio_cpp": managed},
+                preferences=_audio_cpp_preferences(),
+                request_id=18,
+                reply_to=recorder,
+            )
+        )
+        if handler._active_tasks:
+            await asyncio.gather(*tuple(handler._active_tasks))
+
+        assert app.notifications == [
+            ("Saved — open Speech Lab to apply audio.cpp settings", "information")
+        ]
+        assert recorder.results[0].provider_statuses == {"audio_cpp": "pending"}
+        assert recorder.results[0].staged_provider_ids == frozenset({"audio_cpp"})
+        assert recorder.runtime_results == []
+        assert app.messages == []
     finally:
         await service.close()
         await service.wait_closed()

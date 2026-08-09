@@ -2284,7 +2284,12 @@ class SpeechTTSSettingsPanel(Vertical):
         except QueryError:
             pass
         try:
-            self.query_one(selector).focus()
+            field = self.query_one(selector)
+            for ancestor in field.ancestors:
+                if isinstance(ancestor, Collapsible):
+                    ancestor.collapsed = False
+            field.focus()
+            field.scroll_visible(animate=False)
         except QueryError:
             pass
         self._set_result(str(error), severity="error")
@@ -2620,10 +2625,18 @@ class SpeechTTSSettingsPanel(Vertical):
             else:
                 self._provider_runtime_revisions[provider_id] = runtime_revision
             publication_state = result.provider_statuses.get(provider_id)
+            staged_pending = (
+                publication_state == "pending"
+                and provider_id in result.staged_provider_ids
+            )
             if result.failure_phase == "cache_reload":
                 runtime_state = SpeechTTSRuntimeState.UNAVAILABLE
                 category = SpeechTTSDiagnosticCategory.CONFIGURATION
                 recovery = SpeechTTSNavigationIntent.CONFIGURE
+            elif staged_pending:
+                runtime_state = SpeechTTSRuntimeState.NOT_CHECKED
+                category = SpeechTTSDiagnosticCategory.CONFIGURATION
+                recovery = SpeechTTSNavigationIntent.TEST
             elif publication_state == "pending":
                 runtime_state = SpeechTTSRuntimeState.RECONFIGURING
                 category = SpeechTTSDiagnosticCategory.CONFIGURATION
@@ -2653,7 +2666,7 @@ class SpeechTTSSettingsPanel(Vertical):
                 diagnostic_category=category,
                 recovery_action=recovery,
             )
-            if publication_state != "pending":
+            if publication_state != "pending" or staged_pending:
                 self._provider_runtime_request_observed_at.pop(
                     observation_key,
                     None,
@@ -2753,7 +2766,10 @@ class SpeechTTSSettingsPanel(Vertical):
             saved_provider_id=saved_provider_id,
         )
         for provider_id in result.provider_statuses:
-            self._provider_runtime_request_ids[provider_id] = result.request_id
+            if provider_id in result.staged_provider_ids:
+                self._provider_runtime_request_ids.pop(provider_id, None)
+            else:
+                self._provider_runtime_request_ids[provider_id] = result.request_id
         if saved_provider_id == "audio_cpp":
             self._audio_cpp_runtime_revision = self._provider_runtime_revisions.get(
                 "audio_cpp"
@@ -2775,6 +2791,7 @@ class SpeechTTSSettingsPanel(Vertical):
         elif (
             saved_provider_id == "audio_cpp"
             and result.provider_statuses.get("audio_cpp") == "pending"
+            and "audio_cpp" in result.staged_provider_ids
         ):
             desired_mode = (
                 saved_provider_values.get("mode", "external")
@@ -2782,7 +2799,7 @@ class SpeechTTSSettingsPanel(Vertical):
                 else "external"
             )
             handoff_copy = (
-                "Open Speech Lab to restart and apply the saved Managed settings."
+                "Open Speech Lab to apply the saved Managed settings."
                 if desired_mode == "managed"
                 else "Open Speech Lab to apply External mode and stop any active "
                 "managed server."
@@ -3283,11 +3300,6 @@ class SpeechTTSSettingsPanel(Vertical):
     @on(Button.Pressed, "#settings-speech-audio-cpp-open-lab")
     def handle_open_lab(self, event: Button.Pressed) -> None:
         event.stop()
-        intent = (
-            SpeechTTSNavigationIntent.REFRESH_MODELS
-            if event.button.id == "settings-speech-audio-cpp-open-lab"
-            else SpeechTTSNavigationIntent.TEST
-        )
         provider_id = (
             "audio_cpp"
             if event.button.id == "settings-speech-audio-cpp-open-lab"
@@ -3295,7 +3307,10 @@ class SpeechTTSSettingsPanel(Vertical):
         )
         self.run_worker(
             self._open_lab(
-                SpeechTTSNavigationTarget(provider_id, intent),
+                SpeechTTSNavigationTarget(
+                    provider_id,
+                    SpeechTTSNavigationIntent.TEST,
+                ),
             ),
             group="settings-speech-open-lab",
             exclusive=True,

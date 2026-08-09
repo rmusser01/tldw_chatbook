@@ -556,13 +556,14 @@ class SpeechPlaygroundPane(
             return False
         observation = self._audio_cpp_runtime_observation
         if observation is None:
-            return False
+            self._request_audio_cpp_lifecycle("test", from_primary=True)
+            return True
         action = project_audio_cpp_runtime_card(observation).primary_action
         if not action.enabled:
             if action.disabled_reason:
                 self.app.notify(action.disabled_reason, severity="warning")
             return True
-        self._request_audio_cpp_lifecycle(action.operation)
+        self._request_audio_cpp_lifecycle(action.operation, from_primary=True)
         return True
 
     @on(Switch.Changed)
@@ -1229,16 +1230,71 @@ class SpeechPlaygroundPane(
         if selected:
             if self._audio_cpp_lifecycle_busy is not None:
                 self._render_audio_cpp_lifecycle_busy(self._audio_cpp_lifecycle_busy)
+            else:
+                self._audio_cpp_runtime_observation = None
+                loading_reason = (
+                    "Runtime status is loading; Test Connection starts a fresh "
+                    "audio.cpp check."
+                )
+                try:
+                    self.query_one("#audio-cpp-runtime-status", Static).update(
+                        "[CHECKING] Reading audio.cpp runtime status."
+                    )
+                    self.query_one(
+                        "#audio-cpp-runtime-action-reason",
+                        Static,
+                    ).update(loading_reason)
+                    primary = self.query_one("#tts-test-connection-btn", Button)
+                    primary.label = "Test Connection"
+                    primary.disabled = False
+                    primary.tooltip = loading_reason
+                    primary.refresh(layout=True)
+                    for selector in (
+                        "#audio-cpp-runtime-restart",
+                        "#audio-cpp-runtime-shutdown",
+                    ):
+                        action = self.query_one(selector, Button)
+                        action.disabled = True
+                        action.tooltip = "Wait for the runtime status check to finish."
+                except NoMatches:
+                    pass
+                self._sync_audio_cpp_probe_label(None)
             self._request_audio_cpp_runtime_observation()
             return
         self._audio_cpp_runtime_request_generation += 1
+        self._sync_audio_cpp_probe_label(None)
         try:
             primary = self.query_one("#tts-test-connection-btn", Button)
             primary.label = "Test"
             primary.disabled = False
             primary.tooltip = "Test the selected provider connection"
+            primary.refresh(layout=True)
         except NoMatches:
             pass
+
+    def _sync_audio_cpp_probe_label(
+        self,
+        observation: AudioCppRuntimeObservation | None,
+    ) -> None:
+        """Label catalog refresh as the explicit probe required for Unhealthy."""
+
+        is_unhealthy_probe = bool(
+            observation is not None
+            and observation.applied_mode == "managed"
+            and observation.process.state == "unhealthy"
+            and not observation.pending_configuration
+        )
+        try:
+            probe = self.query_one("#tts-refresh-catalog-btn", Button)
+        except NoMatches:
+            return
+        probe.label = "Test Connection" if is_unhealthy_probe else "Refresh"
+        probe.tooltip = (
+            "Probe the unhealthy managed server without restarting it"
+            if is_unhealthy_probe
+            else "Re-read available models and voices"
+        )
+        probe.refresh(layout=True)
 
     def _poll_audio_cpp_runtime_observation(self) -> None:
         """Poll only the passive service seam while audio.cpp is selected."""
@@ -1249,6 +1305,8 @@ class SpeechPlaygroundPane(
     def _request_audio_cpp_lifecycle(
         self,
         operation: AudioCppRuntimeOperation,
+        *,
+        from_primary: bool = False,
     ) -> None:
         """Accept one non-overlapping deliberate lifecycle action."""
 
@@ -1263,11 +1321,15 @@ class SpeechPlaygroundPane(
         observation = self._audio_cpp_runtime_observation
         if observation is not None:
             projection = project_audio_cpp_runtime_card(observation)
-            action = {
-                "test": projection.primary_action,
-                "restart": projection.restart_action,
-                "shutdown": projection.shutdown_action,
-            }[operation]
+            action = (
+                projection.primary_action
+                if from_primary
+                else {
+                    "test": projection.primary_action,
+                    "restart": projection.restart_action,
+                    "shutdown": projection.shutdown_action,
+                }[operation]
+            )
             if operation != "test" and not action.enabled:
                 if action.disabled_reason:
                     self.app.notify(action.disabled_reason, severity="warning")
@@ -1288,6 +1350,7 @@ class SpeechPlaygroundPane(
     ) -> None:
         """Render immediate busy state without replacing focused controls."""
 
+        busy_reason = "An audio.cpp operation is in progress."
         observation = self._audio_cpp_runtime_observation
         if observation is not None and observation.applied_mode == "managed":
             busy_state = {
@@ -1332,9 +1395,17 @@ class SpeechPlaygroundPane(
                 self.query_one(
                     "#audio-cpp-runtime-action-reason",
                     Static,
-                ).update("An audio.cpp operation is in progress.")
+                ).update(busy_reason)
             except NoMatches:
                 pass
+
+        try:
+            self.query_one(
+                "#audio-cpp-runtime-action-reason",
+                Static,
+            ).update(busy_reason)
+        except NoMatches:
+            pass
 
         for selector in (
             "#tts-test-connection-btn",
@@ -1344,13 +1415,16 @@ class SpeechPlaygroundPane(
             "#audio-cpp-runtime-shutdown",
         ):
             try:
-                self.query_one(selector, Button).disabled = True
+                action = self.query_one(selector, Button)
+                action.disabled = True
+                action.tooltip = busy_reason
             except NoMatches:
                 continue
         try:
             primary = self.query_one("#tts-test-connection-btn", Button)
             primary.label = primary_label
-            primary.tooltip = "An audio.cpp operation is in progress."
+            primary.tooltip = busy_reason
+            primary.refresh(layout=True)
         except NoMatches:
             pass
 
@@ -1382,23 +1456,29 @@ class SpeechPlaygroundPane(
 
         if not self.is_mounted:
             return
+        audio_cpp_selected = self._selected_runtime_provider() == "audio_cpp"
         if failure_copy is not None:
             self.app.notify(failure_copy, severity="error")
-            try:
-                self.query_one("#tts-refresh-catalog-btn", Button).disabled = False
-            except NoMatches:
-                pass
-            self._sync_generate_enabled()
-        elif catalog is not None and self._selected_runtime_provider() == "audio_cpp":
-            self._load_provider_catalog("audio_cpp", refresh=False)
+            if audio_cpp_selected:
+                try:
+                    self.query_one("#tts-refresh-catalog-btn", Button).disabled = False
+                except NoMatches:
+                    pass
+                self._sync_generate_enabled()
+        elif catalog is not None:
+            if audio_cpp_selected:
+                self._load_provider_catalog("audio_cpp", refresh=False)
+            else:
+                self._stale_providers.add("audio_cpp")
         else:
             self._stale_providers.add("audio_cpp")
-            self._catalog_generation_allowed = False
-            self._sync_generate_enabled()
-            try:
-                self.query_one("#tts-refresh-catalog-btn", Button).disabled = False
-            except NoMatches:
-                pass
+            if audio_cpp_selected:
+                self._catalog_generation_allowed = False
+                self._sync_generate_enabled()
+                try:
+                    self.query_one("#tts-refresh-catalog-btn", Button).disabled = False
+                except NoMatches:
+                    pass
         self._request_audio_cpp_runtime_observation()
 
     def _request_audio_cpp_runtime_observation(self) -> None:
@@ -1456,6 +1536,8 @@ class SpeechPlaygroundPane(
         primary.tooltip = (
             projection.primary_action.disabled_reason or projection.primary_action.label
         )
+        primary.refresh(layout=True)
+        self._sync_audio_cpp_probe_label(observation)
 
     def _audio_cpp_runtime_result_is_current(self, request_generation: int) -> bool:
         return (
@@ -1492,13 +1574,40 @@ class SpeechPlaygroundPane(
     def _render_audio_cpp_runtime_observation_failure(self) -> None:
         """Show a fixed passive-read failure without exposing exception details."""
 
+        if self._audio_cpp_lifecycle_busy is not None:
+            return
+        retry_reason = "Runtime status could not be read. Test the connection to retry."
+        unchecked_reason = (
+            "Runtime status must be checked before this action is available."
+        )
+        self._stale_providers.add("audio_cpp")
+        self._catalog_generation_allowed = False
+        self._audio_cpp_runtime_observation = None
         try:
             self.query_one("#audio-cpp-runtime-status", Static).update(
                 "[UNAVAILABLE] Runtime status could not be read."
             )
             self.query_one("#audio-cpp-runtime-action-reason", Static).update(
-                "Retrying the passive runtime status check."
+                retry_reason
             )
+            primary = self.query_one("#tts-test-connection-btn", Button)
+            primary.label = "Test Connection"
+            primary.disabled = False
+            primary.tooltip = retry_reason
+            primary.refresh(layout=True)
+            refresh = self.query_one("#tts-refresh-catalog-btn", Button)
+            refresh.disabled = False
+            refresh.tooltip = retry_reason
+            generate = self.query_one("#tts-generate-btn", Button)
+            generate.disabled = True
+            generate.tooltip = unchecked_reason
+            for selector in (
+                "#audio-cpp-runtime-restart",
+                "#audio-cpp-runtime-shutdown",
+            ):
+                action = self.query_one(selector, Button)
+                action.disabled = True
+                action.tooltip = unchecked_reason
         except NoMatches:
             return
 

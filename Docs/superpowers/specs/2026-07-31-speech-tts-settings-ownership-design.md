@@ -58,9 +58,12 @@ Character profiles remain separately stored and win over global defaults for
 roleplay. A character/profile preview loaded into Studio does not change Studio
 preferences until the user explicitly adopts and saves it.
 
-Managed audio.cpp binary or `server.json` launching and supervision is
-deferred. This program configures and uses an independently running external
-audio.cpp server only.
+The managed-lifecycle amendment adds an optional app-owned audio.cpp process
+using a user-provided prebuilt binary and existing `server.json`. External mode
+remains the default and continues to connect to a user-owned server. Settings
+owns passive configuration and validation; deliberate launch, test, restart,
+shutdown, catalog, diagnostics, and generation actions belong to Speech Lab or
+the speech call sites described by the amendment.
 
 ## Background and current-state audit
 
@@ -1335,5 +1338,5 @@ the latest code, but must return for product approval before changing:
 - credential mutation boundaries;
 - no-hidden-network behavior;
 - exact-choice fail-closed behavior;
-- the external-only audio.cpp boundary; or
+- the managed audio.cpp ownership and Settings-versus-Lab action boundary; or
 - the release requirement for audible manual UAT.

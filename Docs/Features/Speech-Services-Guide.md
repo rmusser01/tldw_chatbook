@@ -212,10 +212,11 @@ starting another one. A later deliberate Start/Test, catalog refresh, or
 generation request starts it lazily again. Merely opening Settings, mounting
 the Playground, expanding details, or reading diagnostics never launches it.
 
-If a managed child exits unexpectedly or becomes unhealthy, Chatbook marks its
-endpoint and catalog evidence unavailable and does not restart it in a loop.
-Correct the binary/configuration or port problem if needed, then use **Start &
-Test Connection** or **Restart**. The collapsed **Recent managed diagnostics**
+If a managed child exits unexpectedly, Chatbook marks its endpoint unavailable.
+If the live child becomes unhealthy, Chatbook keeps its endpoint visible but
+marks its catalog evidence stale. Neither case triggers a restart loop. Correct
+the binary/configuration or port problem if needed, then use **Start & Test
+Connection** or **Restart**. The collapsed **Recent managed diagnostics**
 section contains only bounded, best-effort-sanitized in-memory child output.
 Treat it as potentially sensitive; it is cleared when a new process generation
 starts and is never saved to provider settings.

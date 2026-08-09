@@ -525,8 +525,10 @@ do not expose submitted text, configured origins or values, credentials, raw
 remote bodies, or unsafe remote identifiers.
 
 Slice 3 connects only to an existing externally managed `audiocpp_server`.
-Slice 4 adds the dormant managed runtime described above; Managed Settings and
-Speech Lab controls remain deferred to Slice 5.
+Slice 4 adds the managed runtime core described above. Slice 5 exposes its
+passive configuration in global Settings and its deliberate lifecycle,
+capability, catalog, diagnostics, generation, and playback controls in Speech
+Lab.
 
 #### 3. Audio Service (`audio_service.py`)
 Handles audio format conversion with:

@@ -813,7 +813,7 @@ async def test_audio_cpp_recovery_opens_speech_lab_playground_without_provider_w
     assert app.navigation[0].screen_context == {
         "view": "playground",
         "provider": "audio_cpp",
-        "intent": "refresh-models",
+        "intent": "test",
     }
 
 
@@ -1119,7 +1119,9 @@ async def test_settings_dismissal_cancel_preserves_dirty_speech_owner() -> None:
 
 
 @pytest.mark.asyncio
-async def test_saved_but_unavailable_and_reconfiguring_are_not_rendered_ready() -> None:
+async def test_saved_but_unavailable_and_transient_reconfiguration_are_not_ready() -> (
+    None
+):
     app = _PanelHarness(
         configure_provider="audio_cpp",
         state=_audio_cpp_state(),
@@ -1154,9 +1156,8 @@ async def test_saved_but_unavailable_and_reconfiguring_are_not_rendered_ready() 
         pending_copy = str(
             app.query_one("#settings-speech-save-result", Static).render()
         )
-        assert "active audio.cpp configuration remains unchanged" in pending_copy
-        assert "Open Speech Lab" in pending_copy
-        assert "apply External mode" in pending_copy
+        assert "Runtime reconfiguration" in pending_copy
+        assert "audio.cpp: pending" in pending_copy
 
         panel.receive_stts_settings_runtime_result(
             STTSSettingsSaveResult(
@@ -1211,6 +1212,55 @@ async def test_saved_but_unavailable_and_reconfiguring_are_not_rendered_ready() 
         assert "Unavailable" in str(
             app.query_one("#settings-speech-status-provider-runtime").render()
         )
+
+
+@pytest.mark.asyncio
+async def test_staged_managed_save_is_pending_apply_not_reconfiguring() -> None:
+    state = _audio_cpp_state()
+    state.providers["audio_cpp"].update(
+        AudioCppConfig(
+            mode="managed",
+            managed_binary_path="/private/test/audiocpp_server",
+            managed_server_json_path="/private/test/server.json",
+        ).to_mapping()
+    )
+    app = _PanelHarness(
+        configure_provider="audio_cpp",
+        state=state,
+        current_configuration_revision=4,
+    )
+
+    async with app.run_test(size=(150, 80)) as pilot:
+        panel = app.query_one("#panel", SpeechTTSSettingsPanel)
+        app.query_one("#settings-speech-audio_cpp-mode", Select).value = "external"
+        await pilot.pause()
+        panel.request_save()
+        await pilot.pause()
+
+        panel.receive_stts_settings_save_result(
+            STTSSettingsSaveResult(
+                request_id=1,
+                persisted=True,
+                provider_statuses={"audio_cpp": "pending"},
+                provider_configuration_revisions={"audio_cpp": 5},
+                provider_runtime_revisions={"audio_cpp": 9},
+                staged_provider_ids=frozenset({"audio_cpp"}),
+            )
+        )
+        await pilot.pause()
+
+        runtime = str(
+            app.query_one("#settings-speech-status-provider-runtime").render()
+        )
+        assert "Not checked" in runtime
+        assert "Reconfiguring" not in runtime
+        pending_copy = str(
+            app.query_one("#settings-speech-save-result", Static).render()
+        )
+        assert "active audio.cpp configuration remains unchanged" in pending_copy
+        assert "Open Speech Lab" in pending_copy
+        assert "apply External mode" in pending_copy
+        assert ("audio_cpp", 1) not in panel._provider_runtime_request_observed_at
 
 
 @pytest.mark.asyncio
@@ -1670,6 +1720,7 @@ async def test_managed_save_validates_files_without_starting_or_contacting_tts(
                 provider_statuses={"audio_cpp": "pending"},
                 provider_configuration_revisions={"audio_cpp": 2},
                 provider_runtime_revisions={"audio_cpp": 1},
+                staged_provider_ids=frozenset({"audio_cpp"}),
             )
         )
         await pilot.pause()
@@ -1677,7 +1728,8 @@ async def test_managed_save_validates_files_without_starting_or_contacting_tts(
             app.query_one("#settings-speech-save-result", Static).render()
         )
         assert "active audio.cpp configuration remains unchanged" in pending_copy
-        assert "restart and apply the saved Managed settings" in pending_copy
+        assert "apply the saved Managed settings" in pending_copy
+        assert "restart and apply" not in pending_copy
 
 
 @pytest.mark.asyncio
@@ -2256,6 +2308,41 @@ async def test_revert_clears_local_validation_errors() -> None:
             "#settings-speech-audio_cpp-base-url-error",
             Static,
         ).renderable
+
+
+@pytest.mark.asyncio
+async def test_managed_validation_expands_advanced_field_before_focusing() -> None:
+    state = _audio_cpp_state()
+    state.providers["audio_cpp"].update(
+        {
+            "managed_binary_path": "/private/test/audiocpp_server",
+            "managed_server_json_path": "/private/test/server.json",
+            "managed_health_check_interval_seconds": 1.0,
+        }
+    )
+    app = _PanelHarness(configure_provider="audio_cpp", state=state)
+
+    async with app.run_test(size=(150, 80)) as pilot:
+        panel = app.query_one("#panel", SpeechTTSSettingsPanel)
+        advanced = app.query_one("#settings-speech-audio-cpp-advanced", Collapsible)
+        assert advanced.collapsed is True
+
+        app.query_one("#settings-speech-audio_cpp-mode", Select).value = "managed"
+        await pilot.pause()
+        assert panel.request_save() is None
+        await pilot.pause()
+
+        field = app.query_one(
+            "#settings-speech-audio_cpp-managed-health-check-interval-seconds",
+            Input,
+        )
+        error = app.query_one(
+            "#settings-speech-audio_cpp-managed-health-check-interval-seconds-error",
+            Static,
+        )
+        assert advanced.collapsed is False
+        assert app.focused is field
+        assert error.renderable
 
 
 @pytest.mark.asyncio

@@ -21,6 +21,8 @@ references:
 documentation:
   - Docs/superpowers/specs/2026-08-02-audio-cpp-managed-lifecycle-design.md
   - Docs/superpowers/specs/2026-08-02-speech-lab-current-result-ux-design.md
+  - Docs/superpowers/plans/2026-08-08-task-3795-audio-cpp-managed-settings-speech-lab.md
+  - Docs/superpowers/qa/audio-cpp-managed-settings-speech-lab-2026-08-08/live-uat.md
 priority: high
 ---
 
@@ -58,6 +60,24 @@ ADR required: no new ADR.
 ADR path: backlog/decisions/023-tts-adapter-registry-and-audio-cpp-runtime-boundary.md; backlog/decisions/039-global-and-studio-tts-settings-ownership.md; backlog/decisions/040-speech-lab-current-result-and-auto-play.md.
 Reason: the accepted ADRs and managed-lifecycle spec already decide ownership, persistence, lifecycle behavior, diagnostics, and complete-WAV UX; this task implements approved Slice 5.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Implemented the approved Slice 5 UI over the existing managed audio.cpp runtime. Global Settings now owns the durable External/Managed configuration, safe artifact validation, dormant-field preservation, lifecycle/safety controls, and validation-only saves. Speech Lab consumes one coherent passive runtime observation and presents saved/applied/process truth, state-specific asynchronous lifecycle actions, safe bounded diagnostics, a Global Settings handoff, and current-result preservation.
+
+The implementation extends the existing TTS service boundary instead of adding a second runtime owner. External mode remains process-free, Managed mode remains lazy until a deliberate Speech action, and one app-scoped supervisor retains sole ownership of any launched child. Tests cover passive-mount fences, saved/applied handoffs, lifecycle busy states, crash recovery, privacy, narrow layouts, keyboard/focus behavior, Windows qualification, and unchanged complete-WAV behavior.
+
+Automated verification completed on the rebased branch:
+
+- Affected managed audio.cpp, Settings, and Speech Lab suite: 549 passed.
+- Full TTS suite: 2,509 passed and 16 optional/live cases skipped before one release-evidence metadata correction; the corrected evidence suite then passed 2/2.
+- Broader Settings, Console, Roleplay, application-ownership, and UI coverage passed except one UI test whose identical stale-fake failure was reproduced on clean `origin/dev`.
+- Ruff check, Ruff format check, compileall, CSS generation, privacy/boundary tests, and cumulative diff checks passed. Repository-wide mypy retained the identical 178-error `origin/dev` baseline and introduced no new errors.
+- An interim audio.cpp 0.4 UAT exercised the objective setup and lifecycle journeys and exposed the dynamic primary-action width defect that string-only tests had missed. The required supported-release rerun, exact application-commit evidence, configured-External-origin proof, and user-audible confirmation remain pending in the linked sanitized evidence.
+
+ADR required: no new ADR. ADR-023, ADR-039, and ADR-040 continue to govern the runtime boundary, global-versus-Studio ownership, and current-result behavior. No plan deviation was required. The live label-reflow incident is recorded in `backlog/docs/lessons-testing-evidence.md`.
+<!-- SECTION:NOTES:END -->
 
 ## Definition of Done
 <!-- DOD:BEGIN -->
