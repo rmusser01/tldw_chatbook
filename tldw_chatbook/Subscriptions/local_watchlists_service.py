@@ -411,11 +411,11 @@ class LocalWatchlistsService:
             is_flagged: Restrict to starred rows (`True`) or unstarred rows
                 (`False`), or `None` -- the default -- to not filter by the
                 flag at all (TASK-3072).
-            search: Full-text terms over title/content/author (TASK-3603 --
+            search: Full-text terms over title/content/author (TASK-3791 --
                 the reader's `/`), or `None`/blank for no search predicate.
                 Forwarded verbatim to `get_new_items`, which owns the
                 FTS5-or-LIKE mechanics.
-            since: Effective-date floor (TASK-3603 -- the Today feed), or
+            since: Effective-date floor (TASK-3791 -- the Today feed), or
                 `None` for no floor.
 
         Returns:
@@ -707,9 +707,9 @@ class LocalWatchlistsService:
         wanted = str(name).strip()
         if not wanted:
             raise ValueError("watchlist name cannot be empty or whitespace-only")
-        for watchlist in bundle.list_watchlists(limit=10000):
-            if str(watchlist.get("name") or "").strip().lower() == wanted.lower():
-                return dict(watchlist), False
+        watchlist = bundle.get_watchlist_by_name_ci(wanted)
+        if watchlist is not None:
+            return watchlist, False
         return bundle.create(wanted), True
 
     async def add_source_to_watchlist(self, *, watchlist_id: Any, source_id: Any) -> None:

@@ -2,7 +2,7 @@
 
 **Spec**: `Docs/superpowers/specs/2026-08-05-watchlists-reader-first-design.md` §Phasing ("Phase 4 — round-trip and polish", :334-335).
 **ADR**: ADR-042 covers the re-IA; the OPML folder↔watchlist mapping is an **interchange-policy** decision (see Task 1).
-**Phases 1–3 shipped**: PRs #1383 / #1430 / #1443 (TASK-2513 line, TASK-3072, TASK-3603). This plan assumes that tree.
+**Phases 1–3 shipped**: PRs #1383 / #1430 / #1443 (TASK-2513 line, TASK-3072, TASK-3791). This plan assumes that tree.
 
 **Scope finding (recorded here so the phase boundary is honest):** the spec names polish tasks 2308/2310/2312/2313 for this phase — all four are already **Done** (2308 was additionally absorbed into `Subscriptions/item_dates.py` per the spec's own note). What remains of phase 4 is the OPML round-trip: **watchlists map to OPML folders on BOTH import and export**, so moving between this app and another reader never flattens the user's structure.
 

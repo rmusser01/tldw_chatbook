@@ -485,7 +485,7 @@ async def test_items_reload_scopes_to_starred():
         }
 
 
-# --- TASK-3603 plan task 4: All Unread + Today scopes --------------------------
+# --- TASK-3791 plan task 4: All Unread + Today scopes --------------------------
 
 
 @pytest.mark.asyncio
@@ -2544,6 +2544,12 @@ def test_every_watchlist_bundle_service_method_has_a_production_caller():
                 and node.func.attr == "_watchlist_bundle_service"
             ):
                 return True
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id == "WatchlistBundleService"
+            ):
+                return True
             if isinstance(node, ast.Attribute) and node.attr == "watchlist_bundle_service":
                 return True
             return isinstance(node, ast.Name) and node.id in self.aliases
@@ -2635,7 +2641,7 @@ async def test_a_failed_tree_write_start_does_not_wedge_later_writes():
         assert ran, "the next write must still be able to start"
 
 
-# --- TASK-3603 plan task 3: `/` and the corpus-wide search --------------------
+# --- TASK-3791 plan task 3: `/` and the corpus-wide search --------------------
 
 
 @pytest.mark.asyncio
@@ -2820,7 +2826,7 @@ async def test_search_keeps_the_open_item_pinned():
         assert any("aaa" in t for t in titles), "the open item stays pinned"
 
 
-# --- TASK-3603 plan task 5: `r` refresh-all ------------------------------------
+# --- TASK-3791 plan task 5: `r` refresh-all ------------------------------------
 
 
 def _seed_checkable_sources(app):
@@ -3047,7 +3053,7 @@ async def test_r_names_a_failed_source_and_finishes_the_batch():
         )
 
 
-# --- TASK-3603 plan task 6: the hostile-search end-to-end pin ------------------
+# --- TASK-3791 plan task 6: the hostile-search end-to-end pin ------------------
 
 
 @pytest.mark.asyncio
@@ -3140,6 +3146,18 @@ def test_opml_import_summary_text_tells_the_whole_story():
     assert "12 new" in text and "3 already present" in text
     assert "13 into 3 watchlists, 2 new" in text
     assert "2 unassigned" in text
+
+    shared = _opml_import_summary_text({
+        "created": 2,
+        "existing": 0,
+        "watchlists_created": ["News", "Tech"],
+        "watchlists_reused": [],
+        "assignments": 2,
+        "unassigned": 1,
+    })
+    assert "1 unassigned" in shared, (
+        "membership edges cannot be subtracted from unique source count"
+    )
 
     assert _opml_import_summary_text({
         "created": 5, "existing": 0,

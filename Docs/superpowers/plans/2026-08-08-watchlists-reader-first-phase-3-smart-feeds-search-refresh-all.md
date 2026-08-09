@@ -24,7 +24,7 @@ Phase 3 adds: **All Unread + Today** rail nodes beside Starred, a corpus-wide **
 
 ### Task 1: Task bookkeeping + docs commit
 
-- [ ] Create the backlog task (ACs from the spec's done-when), status In Progress, plan link; commit this plan + task file. Message: `docs(watchlists): phase 3 plan — smart feeds, search, refresh-all (task-3603)`
+- [ ] Create the backlog task (ACs from the spec's done-when), status In Progress, plan link; commit this plan + task file. Message: `docs(watchlists): phase 3 plan — smart feeds, search, refresh-all (task-3791)`
 
 ### Task 2: `search` + `since` predicates in `get_new_items`
 
@@ -35,7 +35,7 @@ Phase 3 adds: **All Unread + Today** rail nodes beside Starred, a corpus-wide **
 
 - [ ] **Step 1: failing tests.** `search="foo"` returns only rows whose title/content/author match (FTS); a hostile query string (`"`, `[`, `NEAR/1`, bare `AND`) never raises an FTS5 syntax error (escaping pinned against a real table); when the FTS read raises `OperationalError` the LIKE fallback answers instead (forced by monkeypatching the FTS probe); `since=<ISO>` restricts to `COALESCE(published_date, created_at) >= ?`; both compose with `status`/`is_flagged`/membership; both forward verbatim through the two service layers (kwargs-assertion tests, the phase-2 `is_flagged` pattern). `get_unread_items_count_since(since)` counts `status='new'` rows at/after the floor — the Today badge's query.
 - [ ] **Step 2: implement.** Escape by double-quoting each whitespace-separated token (the Library precedent), JOIN `subscription_items_fts` on `rowid = i.id` with `subscription_items_fts MATCH ?`, fall back to `(i.title LIKE ? OR i.content LIKE ? OR i.author LIKE ?)` with `%`-wrapped escaped terms on `OperationalError`. All values bound parameters; only fixed predicate TEXT is assembled (the :1864-1869 rule).
-- [ ] **Step 3: run + commit** `feat(watchlists): search/since predicates for get_new_items (task-3603)`
+- [ ] **Step 3: run + commit** `feat(watchlists): search/since predicates for get_new_items (task-3791)`
 
 ### Task 3: `/` — corpus-wide search from the reader
 
@@ -46,7 +46,7 @@ Phase 3 adds: **All Unread + Today** rail nodes beside Starred, a corpus-wide **
 
 - [ ] **Step 1: failing tests.** `/` on the Read tab focuses `#items-search-input` (and does nothing while another Input has focus); typing debounce-dispatches ONE `_load_items` whose service call carries the search term (spy assertion, the `test_tree_move_triggers_items_reload_on_read_tab` shape); a search result NOT in the newest-100 page can surface (seed 101+ items, search for the oldest's unique token); clearing the box restores the unsearched page; search composes with the open-item pin and the Unread/All filter; the pane's instant client-side filter still narrows the loaded page while the query is in flight.
 - [ ] **Step 2: implement.** `("/", "focus_items_search", "Search")` binding gated by `_reader_verb_blocked`; the screen keeps a `_items_search_query` mirror (it already mirrors the pane's — reuse it), debounce timer (the `_request_tree_counts_refresh` shape, :8662-8691) → `_load_items(search=...)`. Empty string passes no predicate at all.
-- [ ] **Step 3: run + commit** `feat(watchlists): / focuses search; corpus-wide FTS query path (task-3603)`
+- [ ] **Step 3: run + commit** `feat(watchlists): / focuses search; corpus-wide FTS query path (task-3791)`
 
 ### Task 4: All Unread + Today rail nodes
 
@@ -57,7 +57,7 @@ Phase 3 adds: **All Unread + Today** rail nodes beside Starred, a corpus-wide **
 
 - [ ] **Step 1: failing tests.** `TreeScope` accepts `"unread"` and `"today"`; the rail renders both nodes in the smart-feed cluster (order: All sources, Unassigned, **All Unread, Today**, Starred — the smart feeds group together, matching how the spec lists them); clicking posts the matching scope; `_items_scope_query` maps `unread` → `{"status": "new"}` and `today` → `{"since": <local midnight ISO>}` (spy or DB-backed assertions, the phase-2 starred tests' shapes); All Unread's badge reuses `ALL_SOURCES_BUCKET`'s unread (no new query); Today's badge is `get_unread_items_count_since(local_midnight)` inserted as a new `TODAY_BUCKET` in `_load_tree_data` beside STARRED_BUCKET; both refresh through the existing debounced counts path; `_tree_scope_label` names them "All Unread"/"Today"; `_scoped_loaded_sources` treats both like `all`.
 - [ ] **Step 2: implement.** Local-midnight boundary from `item_dates`' day-bucket logic (naive-local vs UTC is ALREADY resolved there — reuse, never re-derive in the screen). The `today` scope composes with the Unread/All filter: under Unread it intersects (`status=new` AND `since=…`), under All it is `since` alone over the reader statuses — the screen merges scope kwargs with `_items_status_kwargs()`, and that merge is where the predicates meet; no special-casing in the DB layer.
-- [ ] **Step 3: run + commit** `feat(watchlists): All Unread + Today smart feeds in the rail (task-3603)`
+- [ ] **Step 3: run + commit** `feat(watchlists): All Unread + Today smart feeds in the rail (task-3791)`
 
 ### Task 5: `r` — refresh-all with guardrails, aggregated notification, new-items pill
 
@@ -69,7 +69,7 @@ Phase 3 adds: **All Unread + Today** rail nodes beside Starred, a corpus-wide **
 
 - [ ] **Step 1: failing tests.** `r` on the Read tab launches a check for every ACTIVE, non-paused source and skips paused/inactive ones (stub `check_now` per source, the rail-counts test's stub shape); one aggregated notification at the END ("Checked N sources — M new items", M the ALL_SOURCES_BUCKET unread delta across the batch), never N toasts; an empty/eligible-none roster notifies "nothing to check" and dispatches nothing; a source whose check raises fails the batch softly (named in the aggregate, others continue); the tree counts refresh once at the end; the pill appears with "M new items" when M > 0 and clicking it reloads the items list and dismisses itself; `r` while a batch is in flight is a no-op (guard flag), matching `exclusive=True` worker discipline.
 - [ ] **Step 2: implement.** `check_all` on the controller iterates the screen-supplied eligible source ids sequentially through the existing `check_now` chain (the local executor serializes runs already; concurrency is NOT this task's risk to take — guardrails are eligibility + one-batch-at-a-time + soft-failure). The screen worker snapshots the unread count before, launches each, then forces the terminal `_load_tree_data`, computes the delta, notifies once, and pushes the pill. The pill is a compact `Static` with a click handler (Button styled as a pill is NOT used — Buttons on that strip are verbs; this is a notice you can act on, and the `Static` + `on_click` shape keeps the strip's verb grammar clean) — hidden when empty, set from the screen, never from the pane itself.
-- [ ] **Step 3: run + commit** `feat(watchlists): r refresh-all with guardrails, aggregate toast, new-items pill (task-3603)`
+- [ ] **Step 3: run + commit** `feat(watchlists): r refresh-all with guardrails, aggregate toast, new-items pill (task-3791)`
 
 ### Task 6: Help text, pins, docs
 
@@ -77,7 +77,7 @@ Phase 3 adds: **All Unread + Today** rail nodes beside Starred, a corpus-wide **
 - [ ] End-to-end pin: a hostile-named source + hostile search query through `/` (FTS syntax injection attempt) renders inert and raises nothing; a refresh-all over a roster containing a failing source still aggregates.
 - [ ] Full suite: `Tests/Watchlists/` + `Tests/Subscriptions/` + coupled `Tests/UI/` green; ruff clean on every touched file.
 - [ ] Task Implementation Notes (decisions: FTS-escape + LIKE fallback rule, pill-as-notice grammar, unread-delta as the honest "new items" number, sequential batch rationale) + backlog `-s Done` via CLI.
-- [ ] Commit `docs(watchlists): help text for / and r; task-3603 implementation notes`
+- [ ] Commit `docs(watchlists): help text for / and r; task-3791 implementation notes`
 
 ## Definition of done (phase 3)
 

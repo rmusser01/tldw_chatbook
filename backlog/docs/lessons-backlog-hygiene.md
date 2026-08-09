@@ -15,12 +15,19 @@ known, expensive to rediscover. Every entry states the incident that produced it
 - The backlog CLI auto-assigned **703** — already taken **on dev itself**.
 - An earlier ID collided with dev's own task of the same number, filed by another agent
   mid-session.
+- PR #1448 exposed a duplicate already merged to `dev`: QwenCloud had claimed
+  `TASK-3603` first, then the Watchlists phase-3 task reused it the next day. The
+  branch that finally tripped Backlog Guard did not introduce either side of the
+  collision; fixing the gate required tracing both files' add commits and renumbering
+  the later task to `TASK-3791` across its code, tests, plan, and task record.
 
 Checking `origin/dev` *feels* like diligence. It is not: parallel agents hold IDs on
 unmerged branches.
 
 **What to do.** Before filing, sweep **every remote ref** plus every worktree, and
 re-check at merge time — dev moves under you. Never trust the CLI's auto-assignment.
+When a collision is found after both tasks have started, use add-commit provenance:
+the later claimant moves, and every reference in its shipped slice moves with it.
 
 ```bash
 git for-each-ref --format='%(refname)' refs/remotes/ | while read -r b; do

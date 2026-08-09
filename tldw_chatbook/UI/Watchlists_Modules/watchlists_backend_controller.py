@@ -162,7 +162,7 @@ class WatchlistsBackendController:
         return dict(result)
 
     async def check_all(self, *, runtime_backend: str | None = None, source_ids: list[Any]) -> dict[str, Any]:
-        """Check each given source in turn (TASK-3603 plan task 5).
+        """Check each given source in turn (TASK-3791 plan task 5).
 
         The refresh-half of `r`: the screen supplies the ELIGIBLE ids (it
         owns the active/paused call), and this iterates them sequentially --

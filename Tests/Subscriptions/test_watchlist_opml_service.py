@@ -310,6 +310,67 @@ def test_export_with_no_watchlists_is_flat():
 
 
 @pytest.mark.asyncio
+async def test_import_counts_a_repeated_url_once_and_reports_unassigned_sources(
+    tmp_path,
+):
+    """A shared exported feed is one source, not an "already present" one.
+
+    Removing the in-import URL memo makes ``existing`` become 1 on a fresh
+    database; deriving Unassigned from membership-edge count makes it become
+    0 even though the loose feed is still top-level.
+    """
+    from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
+    from tldw_chatbook.Subscriptions.local_watchlists_service import (
+        LocalWatchlistsService,
+    )
+    from tldw_chatbook.Subscriptions.watchlist_scope_service import (
+        WatchlistBackend,
+        WatchlistScopeService,
+    )
+
+    document = WatchlistOpmlService().export(
+        [
+            {
+                "name": "News",
+                "sources": [
+                    {
+                        "name": "Shared",
+                        "url": "http://x.com/shared",
+                        "source_type": "rss",
+                    }
+                ],
+            },
+            {
+                "name": "Tech",
+                "sources": [
+                    {
+                        "name": "Shared",
+                        "url": "http://x.com/shared",
+                        "source_type": "rss",
+                    }
+                ],
+            },
+        ],
+        [{"name": "Loose", "url": "http://x.com/loose", "source_type": "rss"}],
+    )
+    db = SubscriptionsDB(str(tmp_path / "subs.db"), client_id="test")
+    scope = WatchlistScopeService(
+        local_service=LocalWatchlistsService(db_factory=lambda: db),
+        server_service=None,
+    )
+
+    result = await scope.import_opml(
+        runtime_backend=WatchlistBackend.LOCAL, xml_text=document
+    )
+
+    assert result["created"] == 2
+    assert result["existing"] == 0
+    assert result["assignments"] == 2
+    assert result["unassigned"] == 1
+    assert db.conn.execute("SELECT COUNT(*) FROM subscriptions").fetchone()[0] == 2
+
+
+@pytest.mark.asyncio
 async def test_export_then_import_round_trips_the_structure(tmp_path):
     """The phase's done-when, machine-checked (ADR-043): exporting a
     structured profile and importing the document into a FRESH database

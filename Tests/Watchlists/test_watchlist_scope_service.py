@@ -297,7 +297,7 @@ async def test_set_item_flagged_server_backend_rejected():
 
 @pytest.mark.asyncio
 async def test_list_items_forwards_search_and_since():
-    """TASK-3603 plan task 2: the reader's search/since terms reach the local
+    """TASK-3791 plan task 2: the reader's search/since terms reach the local
     service untouched, the same contract as every other list_items kwarg."""
     scope_service, local_service, _ = make_scope_service()
     local_service.list_items = AsyncMock(return_value=[])

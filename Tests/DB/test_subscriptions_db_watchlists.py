@@ -979,7 +979,7 @@ def test_get_new_items_falls_back_to_created_at_when_unpublished(db):
     ]
 
 
-# --- TASK-3603: search/since predicates on get_new_items -----------------------
+# --- TASK-3791: search/since predicates on get_new_items -----------------------
 
 
 def test_get_new_items_search_matches_title_content_and_author(db):

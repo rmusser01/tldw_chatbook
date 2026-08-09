@@ -19,6 +19,16 @@ class WatchlistOpmlService:
         A structural parser, not a sanitizer: names surface as literal
         strings (the C1-control test above pins that contract), and
         malformed XML raises `ET.ParseError` into the caller's handler.
+
+        Args:
+            xml_text: Raw OPML XML text.
+
+        Returns:
+            Source-create payloads carrying ``name``, ``url``,
+            ``source_type``, and the nearest ``folder`` name or ``None``.
+
+        Raises:
+            xml.etree.ElementTree.ParseError: If ``xml_text`` is malformed.
         """
         root = ET.fromstring(xml_text)
         items: list[dict[str, Any]] = []

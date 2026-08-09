@@ -506,7 +506,7 @@ async def test_update_item_starred_cell_toggles_the_glyph_in_place():
 
 
 async def test_the_client_side_filter_reads_content_and_author_too():
-    """TASK-3603 plan task 3: the instant pre-filter's haystack must cover
+    """TASK-3791 plan task 3: the instant pre-filter's haystack must cover
     the same columns the FTS path indexes (title/content/author) -- a
     content-matched corpus result must not be filtered OUT of the loaded
     page it just arrived on."""
@@ -531,7 +531,7 @@ async def test_the_client_side_filter_reads_content_and_author_too():
 
 
 async def test_the_new_items_pill_shows_and_click_dismisses_and_reloads():
-    """TASK-3603 plan task 5: the pill is a notice you can act on, not a
+    """TASK-3791 plan task 5: the pill is a notice you can act on, not a
     verb -- it appears with the count a refresh produced, and clicking it
     asks for a reload (the strip's existing RefreshItemsRequested) while
     dismissing itself."""

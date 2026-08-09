@@ -1928,13 +1928,13 @@ class SubscriptionsDB(BaseDB):
                 (`False`), or `None` to not filter by the flag at all
                 (TASK-3072 -- the Starred feed's page). Composes with every
                 other predicate, the same as the membership scopes.
-            search: Full-text terms over title/content/author (TASK-3603 --
+            search: Full-text terms over title/content/author (TASK-3791 --
                 the reader's `/`). Whitespace-separated terms are ANDed, each
                 matched literally (FTS5 operator syntax in the input is
                 neutralized by quoting); the FTS table is used when it reads,
                 with a LIKE fallback when it does not. `None` or blank passes
                 no predicate at all.
-            since: Effective-date floor (TASK-3603 -- the Today feed's page):
+            since: Effective-date floor (TASK-3791 -- the Today feed's page):
                 only rows at/after `since` (inclusive). Both sides go through
                 SQLite `datetime()` -- the stored columns are mixed-format
                 (CURRENT_TIMESTAMP's space shape and ingest's ISO `T`+offset)
@@ -2285,7 +2285,7 @@ class SubscriptionsDB(BaseDB):
     def get_unread_items_count_since(self, since: str) -> int:
         """How many unread items fall at/after `since` -- the Today badge.
 
-        TASK-3603. The floor compares the EFFECTIVE date (``published_date``,
+        TASK-3791. The floor compares the EFFECTIVE date (``published_date``,
         falling back to ``created_at``), the same COALESCE `get_new_items`
         orders by and its `since` predicate filters on, so the badge and the
         node's page answer the same question.

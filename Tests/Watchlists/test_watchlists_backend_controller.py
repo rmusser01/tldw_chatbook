@@ -230,7 +230,7 @@ async def test_an_unwired_scope_service_reports_its_own_status_not_no_runs_yet()
 
 @pytest.mark.asyncio
 async def test_check_all_checks_each_source_and_soft_fails():
-    """TASK-3603 plan task 5: refresh-all iterates the eligible ids in
+    """TASK-3791 plan task 5: refresh-all iterates the eligible ids in
     order, a failing source never stops the batch, and the result carries
     the per-source outcome for the aggregate toast."""
     ctrl = WatchlistsBackendController(

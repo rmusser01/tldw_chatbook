@@ -249,9 +249,9 @@ class WatchlistScopeService:
             is_flagged: Restrict to starred rows (``True``) or unstarred
                 rows (``False``), or ``None`` to not filter by the flag
                 (TASK-3072 -- the Starred feed's scope).
-            search: Full-text terms over title/content/author (TASK-3603 --
+            search: Full-text terms over title/content/author (TASK-3791 --
                 the reader's `/`), or ``None`` for no search predicate.
-            since: Effective-date floor (TASK-3603 -- the Today feed's
+            since: Effective-date floor (TASK-3791 -- the Today feed's
                 scope), or ``None`` for no floor.
 
         Returns:
@@ -915,7 +915,7 @@ class WatchlistScopeService:
             Summary dict: ``created``/``existing`` source counts, the new
             ``sources`` records, ``watchlists_created`` /
             ``watchlists_reused`` name lists, and the membership
-            ``assignments`` count.
+            ``assignments`` and unique top-level ``unassigned`` counts.
 
         Raises:
             ValueError: If the server backend is requested; OPML import is local-only.
@@ -931,26 +931,37 @@ class WatchlistScopeService:
         assignments = 0
         watchlists_created: list[str] = []
         watchlists_reused: list[str] = []
+        source_ids_by_url: dict[str, int] = {}
+        seen_source_keys: set[str] = set()
+        assigned_source_keys: set[str] = set()
+        assigned_edges: set[tuple[int, int]] = set()
         # Per-folder memo: one resolve per unique folder name (normalized),
         # so a 40-feed folder costs one lookup, and the summary's
         # created/reused lists name each watchlist once.
         resolved_folders: dict[str, dict[str, Any]] = {}
-        for payload in payloads:
+        for payload_index, payload in enumerate(payloads):
             # ADR-043 rule 6 (additive only): a feed URL already in the
             # roster is reused, never duplicated.
             url = str(payload.get("url") or "")
-            existing_id = None
-            if url:
-                existing_id = await self._maybe_await(
-                    service.find_source_id_by_url(url)
-                )
-            if existing_id is not None:
-                source_id = int(existing_id)
-                existing_count += 1
+            source_key = f"url:{url}" if url else f"payload:{payload_index}"
+            seen_source_keys.add(source_key)
+            if url in source_ids_by_url:
+                source_id = source_ids_by_url[url]
             else:
-                source = await self._maybe_await(service.create_source(payload))
-                created.append(dict(source))
-                source_id = source.get("source_id")
+                existing_id = None
+                if url:
+                    existing_id = await self._maybe_await(
+                        service.find_source_id_by_url(url)
+                    )
+                if existing_id is not None:
+                    source_id = int(existing_id)
+                    existing_count += 1
+                else:
+                    source = await self._maybe_await(service.create_source(payload))
+                    created.append(dict(source))
+                    source_id = source.get("source_id")
+                if url and source_id is not None:
+                    source_ids_by_url[url] = int(source_id)
             folder = str(payload.get("folder") or "").strip()
             if not folder or source_id is None:
                 continue
@@ -965,12 +976,18 @@ class WatchlistScopeService:
                     watchlists_created.append(name)
                 else:
                     watchlists_reused.append(name)
-            await self._maybe_await(
-                service.add_source_to_watchlist(
-                    watchlist_id=resolved_folders[key]["id"], source_id=source_id
+            watchlist_id = int(resolved_folders[key]["id"])
+            source_id = int(source_id)
+            edge = (watchlist_id, source_id)
+            if edge not in assigned_edges:
+                await self._maybe_await(
+                    service.add_source_to_watchlist(
+                        watchlist_id=watchlist_id, source_id=source_id
+                    )
                 )
-            )
-            assignments += 1
+                assigned_edges.add(edge)
+                assignments += 1
+            assigned_source_keys.add(source_key)
         return {
             "created": len(created),
             "existing": existing_count,
@@ -978,6 +995,7 @@ class WatchlistScopeService:
             "watchlists_created": watchlists_created,
             "watchlists_reused": watchlists_reused,
             "assignments": assignments,
+            "unassigned": len(seen_source_keys - assigned_source_keys),
         }
 
     async def export_opml(

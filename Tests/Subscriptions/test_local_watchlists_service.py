@@ -1566,3 +1566,55 @@ async def test_list_items_filters_by_is_flagged(tmp_path):
     assert [item["item_id"] for item in starred] == [starred_id]
     assert starred[0]["is_flagged"] is True
     assert len(everything) == 3, "falsey is_flagged must not filter at all"
+
+
+@pytest.mark.asyncio
+async def test_resolve_watchlist_name_is_not_limited_to_the_first_10000_rows(
+    tmp_path,
+):
+    """ADR-043 reuse remains correct beyond the old list-scan cap.
+
+    Replacing the direct lookup with ``list_watchlists(limit=10000)`` makes
+    this create ``Target (2)`` instead of returning the existing final row.
+    """
+    db = SubscriptionsDB(tmp_path / "subscriptions.db", "test")
+    with db.transaction() as conn:
+        conn.executemany(
+            "INSERT INTO watchlists (name) VALUES (?)",
+            [(f"Filler {index:05d}",) for index in range(10001)]
+            + [("Target",)],
+        )
+        target_id = conn.execute(
+            "SELECT id FROM watchlists WHERE name = ?", ("Target",)
+        ).fetchone()[0]
+    service = LocalWatchlistsService(db_factory=lambda: db)
+
+    resolved, created = await service.resolve_or_create_watchlist("  TARGET  ")
+
+    assert created is False
+    assert resolved["id"] == target_id
+    assert resolved["name"] == "Target"
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM watchlists WHERE LOWER(TRIM(name)) = LOWER(TRIM(?))",
+        ("Target",),
+    ).fetchone()[0] == 1
+
+
+@pytest.mark.asyncio
+async def test_resolve_watchlist_name_keeps_unicode_case_insensitive_reuse(tmp_path):
+    """The direct SQL lookup preserves the former Python ``lower`` rule.
+
+    SQLite's built-in ``LOWER`` is ASCII-only, so using it directly misses
+    this row and creates a visually duplicate watchlist.
+    """
+    db = SubscriptionsDB(tmp_path / "subscriptions.db", "test")
+    existing = WatchlistBundleService(db).create("ÄI")
+    service = LocalWatchlistsService(db_factory=lambda: db)
+
+    resolved, created = await service.resolve_or_create_watchlist("äi")
+
+    assert created is False
+    assert resolved["id"] == existing["id"]
+    assert [row["name"] for row in WatchlistBundleService(db).list_watchlists()] == [
+        "ÄI"
+    ]

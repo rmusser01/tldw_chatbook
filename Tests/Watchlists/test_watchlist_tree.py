@@ -674,7 +674,7 @@ async def test_active_scope_starred_marks_the_starred_root_active():
         assert not app.query_one("#wl-tree-node-all", Button).has_class("is-active")
 
 
-# --- TASK-3603 plan task 4: All Unread + Today smart feeds ---------------------
+# --- TASK-3791 plan task 4: All Unread + Today smart feeds ---------------------
 
 
 def _phase3_data(today: int = 2):

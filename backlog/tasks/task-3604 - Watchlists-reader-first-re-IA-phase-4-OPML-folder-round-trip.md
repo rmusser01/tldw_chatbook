@@ -48,5 +48,18 @@ Phase 4 executed TDD per the plan (Docs/superpowers/plans/2026-08-08-watchlists-
 - The pre-round-trip toast ("Imported N source(s)") read identically for a structured import and a no-op re-import; `_opml_import_summary_text` now names new/existing sources, watchlists created/reused, and the Unassigned remainder.
 - Branch-hygiene note: p4 was initially cut from a stale local origin/dev (phase 3 unfetched); caught by a missing phase-3 method and fixed by rebase before any phase-4 commit landed.
 
+**PR #1448 review follow-up:** repeated URLs in one document now reuse an
+in-import memo, so a shared feed exported under several watchlists counts once
+and never reads as pre-existing on a fresh import. The summary carries an
+explicit unique-source Unassigned count instead of subtracting membership edges.
+Case-insensitive watchlist reuse is a direct database lookup with no 10,000-row
+correctness cap and a deterministic Python-normalization SQL function preserves
+Unicode case matching that SQLite `LOWER()` cannot provide; the two modified
+export reads use the shared transaction seam;
+and the public parser docstring records its arguments, return shape, and parse
+error. Backlog Guard also exposed a pre-existing `TASK-3603` collision on `dev`;
+the later Watchlists phase-3 task and all of its references were renumbered to
+`TASK-3791` after a full remote/worktree sweep.
+
 **Files:** `Subscriptions/watchlist_opml_service.py` (recursive folder-walk parse; structured export), `Subscriptions/watchlist_scope_service.py` (import dedupe + membership + summary; export assembly), `Subscriptions/local_watchlists_service.py` (+5 delegates), `Subscriptions/watchlist_bundle_service.py` (row queries gain url), `DB/Subscriptions_DB.py` (get_subscription_id_by_source), `UI/Screens/watchlists_collections_screen.py` (summary toast), `Tests/Subscriptions/test_watchlist_opml_service.py`, `Tests/Watchlists/test_watchlist_scope_service.py`, `Tests/Watchlists/test_watchlists_collections_screen.py`, `backlog/decisions/043-opml-watchlist-folder-mapping.md`.
 <!-- SECTION:NOTES:END -->
