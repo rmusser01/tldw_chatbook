@@ -1646,6 +1646,30 @@ def test_robots_allows_for_scrape_allowed_path_proceeds(fetch_env):
     assert robots_allows_for_scrape("http://example.com/public/page") is True
 
 
+def test_robots_allows_for_scrape_client_disables_trust_env(fetch_env, monkeypatch):
+    # Same ratchet as test_fetch_client_disables_trust_env above: with
+    # HTTP(S)_PROXY set, trust_env=True would let the proxy do its own DNS
+    # and connect anywhere, silently defeating validate_outbound_url's SSRF
+    # check on the robots.txt URL. robots_allows_for_scrape (task-3260)
+    # builds its OWN httpx.Client, a separate construction site from
+    # _new_web_fetch_client -- this is its own, independent ratchet.
+    monkeypatch.setenv("HTTP_PROXY", "http://127.0.0.1:8888")
+    monkeypatch.setenv("HTTPS_PROXY", "http://127.0.0.1:8888")
+    captured: dict = {}
+    real_client = httpx.Client
+
+    def recording_client(*args, **kwargs):
+        captured.update(kwargs)
+        return real_client(*args, **kwargs)
+
+    monkeypatch.setattr(web_tool_impls.httpx, "Client", recording_client)
+    fetch_env.routes["http://example.com/robots.txt"] = _text_page(
+        b"User-agent: *\nAllow: /\n"
+    )
+    assert robots_allows_for_scrape("http://example.com/page") is True
+    assert captured.get("trust_env") is False
+
+
 def test_robots_allows_for_scrape_uses_own_truthful_user_agent(fetch_env):
     """Ruling 3: robots.txt is checked with _DEEP_SEARCH_ROBOTS_UA, distinct
     from _USER_AGENT (web_fetch) and _CRAWL_USER_AGENT (web_crawl) -- a

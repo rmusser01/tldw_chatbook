@@ -918,18 +918,44 @@ _DNS_GUARD_EXECUTOR_LOCK = threading.Lock()
 """Guards creation of the module-level DNS-guard executor below."""
 
 _DNS_GUARD_EXECUTOR: Optional[concurrent.futures.ThreadPoolExecutor] = None
-"""Dedicated, lazily-created, bounded executor for the pre-scrape SSRF DNS
-guard (`is_public_http_url`) offload in `search_result_relevance` (task-3220).
+"""Dedicated, lazily-created, bounded executor for TWO guard-class,
+synchronous-network-I/O offloads in `search_result_relevance`, both wrapped
+in `asyncio.wait_for(..., timeout=scrape_timeout_s)`: the pre-scrape SSRF
+DNS guard (`is_public_http_url`, task-3220) and the pre-scrape robots.txt
+check (`robots_allows_for_scrape`, task-3260). Both do synchronous network
+I/O (`socket.getaddrinfo` / a blocking `httpx.Client` request respectively)
+that cannot be cancelled once started -- when the caller's `wait_for` times
+out, the abandoned thread keeps occupying its executor slot until the
+underlying call itself gives up, not until the caller stopped waiting.
+Routing either through `asyncio.to_thread` would put it on the DEFAULT
+executor, the same one this loop's other offloads (the relevance/
+summarization `chat_api_call` calls, `aggregate_results`) share -- so a
+result set full of slow-DNS/slow-robots hosts could queue paid LLM calls
+behind dead resolvers/fetches. A small, separate pool isolates the
+abandoned threads so they can never crowd out those offloads.
 
-Constraint: that guard does synchronous `socket.getaddrinfo` and is wrapped
-in `asyncio.wait_for`; when the timeout fires, the abandoned resolver thread
-keeps occupying its executor slot until the OS resolver itself gives up --
-which can far outlast `scrape_timeout_s`. Routing it through
-`asyncio.to_thread` would put it on the DEFAULT executor, the same one this
-loop's other offloads (the relevance/summarization `chat_api_call` calls,
-`aggregate_results`) share -- so a result set full of slow-DNS hosts could
-queue paid LLM calls behind dead resolvers. A small, separate pool isolates
-the abandoned threads so they can never crowd out those offloads."""
+The two consumers fail in OPPOSITE directions once `wait_for` gives up on
+them (task-3260 design doc ruling 5, deliberate): the SSRF guard fails
+CLOSED (treated as non-public -> the scrape is refused) while the robots
+check fails OPEN (treated as allowed -> the scrape proceeds, matching
+`_fetch_robots_parser`'s existing fail-open for web_fetch/web_crawl).
+Sharing one pool between opposite-failing consumers has a real interaction
+under saturation: a hung robots check can hold its slot far longer than
+`scrape_timeout_s` -- `robots_allows_for_scrape`'s own client can chase up
+to `FETCH_MAX_REDIRECTS + 1` (6) hops, each independently bounded by
+`FETCH_TIMEOUT_SECONDS` (30s), so a host that hangs at every hop's timeout
+boundary can occupy a slot for ~180s even though the caller's own
+`wait_for` gave up after 30s. With only `_DNS_GUARD_EXECUTOR_MAX_WORKERS`
+(4) slots, roughly 4 such hung hosts saturate the whole pool; every guard
+call submitted after that -- SSRF AND robots alike, since they share this
+one pool -- queues UNSTARTED behind them. A queued robots check that never
+gets to run before its OWN `wait_for` elapses times out and fails OPEN
+(robots enforcement goes silently off for it), while a queued SSRF check
+queued the same way times out and fails CLOSED (still refuses) -- so a
+burst of slow/hung hosts degrades robots enforcement specifically, without
+weakening the SSRF guard. Spec-sanctioned, recorded here rather than fixed
+(the alternative -- separate pools per consumer, or a circuit breaker -- is
+out of scope for task-3260)."""
 
 
 def _get_dns_guard_executor() -> concurrent.futures.ThreadPoolExecutor:

@@ -743,6 +743,10 @@ async def test_relevance_robots_disallowed_skips_scrape_others_proceed(monkeypat
     monkeypatch.setattr(
         socket, "getaddrinfo", lambda *a, **k: [(2, 1, 6, "", ("93.184.216.34", 80))]
     )
+    # Minor 8-style: skip the real 0.2-0.6s pacing jitter search_result_relevance
+    # inserts before every LLM call (precedent: test_deep_search_pipeline.py's
+    # own DNS-guard saturation test, and task-3060's searx test).
+    monkeypatch.setattr(WebSearch_APIs.random, "uniform", lambda a, b: 0.0)
 
     def robots_handler(request: httpx.Request) -> httpx.Response:
         if "disallowed.example" in str(request.url):
@@ -780,7 +784,14 @@ async def test_relevance_robots_disallowed_skips_scrape_others_proceed(monkeypat
     assert len(out) == 2  # both results kept -- disallowed is a fallback, not a discard
     disallowed_entry = next(v for v in out.values() if v["url"] == "https://disallowed.example/page")
     assert "REAL SCRAPED CONTENT" not in disallowed_entry["content"]
-    assert "disallowed snippet" in disallowed_entry["content"] or "Disallowed" in disallowed_entry["content"]
+    # Pin the ACTUAL _build_result_fallback_content shape (Minor 5) rather
+    # than a loose "either field" OR -- the disallowed result's summary
+    # step deterministically falls back to source_content unmodified (no
+    # real LLM configured in this test), so this is an exact match, not a
+    # heuristic one.
+    assert disallowed_entry["content"] == WebSearch_APIs._build_result_fallback_content(
+        results[0]
+    )
     allowed_entry = next(v for v in out.values() if v["url"] == "https://allowed.example/page")
     assert "REAL SCRAPED CONTENT" in allowed_entry["content"]
 
@@ -798,6 +809,7 @@ async def test_relevance_robots_off_by_default_makes_no_robots_fetch(monkeypatch
     monkeypatch.setattr(
         socket, "getaddrinfo", lambda *a, **k: [(2, 1, 6, "", ("93.184.216.34", 80))]
     )
+    monkeypatch.setattr(WebSearch_APIs.random, "uniform", lambda a, b: 0.0)
 
     transport_calls = []
 
@@ -838,6 +850,7 @@ async def test_relevance_robots_unreachable_fails_open_and_scrapes(monkeypatch):
     monkeypatch.setattr(
         socket, "getaddrinfo", lambda *a, **k: [(2, 1, 6, "", ("93.184.216.34", 80))]
     )
+    monkeypatch.setattr(WebSearch_APIs.random, "uniform", lambda a, b: 0.0)
 
     def robots_handler(request: httpx.Request) -> httpx.Response:
         raise httpx.ConnectError("simulated robots.txt fetch failure", request=request)
@@ -1123,3 +1136,53 @@ async def test_analyze_and_aggregate_forwards_nondefault_relevance_llm_timeout(m
 
     await WebSearch_APIs.analyze_and_aggregate(wsr, sqd, params)
     assert captured["llm_timeout_s"] == 45
+
+
+@pytest.mark.asyncio
+async def test_analyze_and_aggregate_forwards_respect_robots_txt_true(monkeypatch):
+    """task-3260's ONLY production link is this forwarding, and nothing
+    previously exercised it: every other robots test either pins the
+    tool's search_params write (test_web_deep_search.py) or calls
+    search_result_relevance directly WITH the kwarg already supplied
+    (test_deep_search_pipeline.py's own robots tests above) -- so deleting
+    the forwarding at analyze_and_aggregate's call site left the full
+    suite green (fix-round mutation finding). This calls the REAL
+    analyze_and_aggregate with a spy on search_result_relevance."""
+    captured = {}
+
+    async def fake_relevance(*args, **kwargs):
+        captured["respect_robots_txt"] = kwargs.get("respect_robots_txt")
+        return {}
+
+    monkeypatch.setattr(WebSearch_APIs, "search_result_relevance", fake_relevance)
+
+    wsr = {"results": [], "warnings": []}
+    sqd = {"main_goal": "q", "sub_questions": []}
+    params = {"relevance_analysis_llm": "openai", "final_answer_llm": "openai",
+              "respect_robots_txt": True}
+
+    await WebSearch_APIs.analyze_and_aggregate(wsr, sqd, params)
+    assert captured["respect_robots_txt"] is True
+
+
+@pytest.mark.asyncio
+async def test_analyze_and_aggregate_forwards_respect_robots_txt_false_when_absent(monkeypatch):
+    """Companion case: an absent key must forward False (not None, not
+    missing), proving the forwarding isn't hardcoded True and the
+    documented default really does reach search_result_relevance -- parity
+    with the dead-wired research-service caller that never sets this key."""
+    captured = {}
+
+    async def fake_relevance(*args, **kwargs):
+        captured["respect_robots_txt"] = kwargs.get("respect_robots_txt")
+        return {}
+
+    monkeypatch.setattr(WebSearch_APIs, "search_result_relevance", fake_relevance)
+
+    wsr = {"results": [], "warnings": []}
+    sqd = {"main_goal": "q", "sub_questions": []}
+    params = {"relevance_analysis_llm": "openai", "final_answer_llm": "openai"}
+    # respect_robots_txt intentionally OMITTED.
+
+    await WebSearch_APIs.analyze_and_aggregate(wsr, sqd, params)
+    assert captured["respect_robots_txt"] is False
