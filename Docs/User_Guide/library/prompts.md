@@ -110,10 +110,12 @@ immediate predecessor, the summary says `Earlier baseline unavailable` rather
 than guessing what changed.
 
 Some retained rows are preview-only. Malformed, mismatched, unknown, future,
-or unsupported structured records show the exact compatibility reason and
-cannot be restored. You can still inspect history while the current editor is
-dirty or compatibility-only, but **Restore selected version…** remains disabled
-until the working copy is clean and the current editor is compatible.
+unsupported, or over-limit structured records show the exact compatibility
+reason and cannot be restored. Legacy Recipe snapshots are preview-only too;
+legacy Prompt snapshots remain supported. You can still inspect history while
+the current editor is dirty or compatibility-only, but **Restore selected
+version…** remains disabled until the working copy is clean and the current
+editor is compatible.
 
 Restore always asks for confirmation and creates a new current version; it
 does not rewrite the retained row. The confirmation also calls out a
