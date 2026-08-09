@@ -821,22 +821,78 @@ async def test_periodic_interval_does_not_drag_the_focused_button_out_of_view():
         )
 
 
+class _IntervalSuppressibleNavBar(MainNavigationBar):
+    """`MainNavigationBar` whose 0.5s settle interval can be switched off
+    mid-test (review round 4, task-3225).
+
+    `set_interval(0.5, self._update_overflow_hints)` captures a BOUND
+    method at mount, so patching the instance attribute afterwards does
+    nothing -- the suppression has to be a branch inside an override.
+
+    Why suppress it at all: the interval is the deliberate *backstop* for
+    every settle trigger, and it is focus-aware since round 2, so it heals
+    an `on_resize` that stranded the focused button within <= 0.5s. That
+    makes it impossible to tell a WORKING `on_resize` from a BROKEN one by
+    looking at the strip a few hundred ms later -- which is exactly how
+    the shipped version of this test came to be vacuous (round 3 takeover
+    finding: reverting `on_resize`'s `_recenter_strip` wiring did not turn
+    it red). Suppressing the backstop for the duration of the resize
+    isolates the property actually under test: `on_resize`'s OWN settle
+    pass must leave the deliberately-focused button fully visible, without
+    waiting on the interval to clean up after it.
+    """
+
+    suppress_interval = False
+
+    def _update_overflow_hints(self) -> None:
+        if self.suppress_interval:
+            return
+        super()._update_overflow_hints()
+
+
 @pytest.mark.asyncio
 async def test_resize_does_not_strand_the_focused_button():
     """Review round 3 finding: `on_resize` used to route straight through
     the plain, active-only `_scroll_active_destination_into_view`,
     indifferent to keyboard focus -- the exact defect class round 2 fixed
     for the periodic interval, independently reproduced through this
-    OTHER trigger. Live-reproduced: `active="schedules"`, Tab to
-    `nav-settings` (forces a scroll), then a resize (80 -> 90 cols)
-    dragged the strip back toward `schedules`, leaving `nav-settings`
-    straddling (`Region(x=66, width=15)` against `strip.region.right ==
-    80`), un-ghosted, enabled, and still focused.
+    OTHER trigger.
+
+    Round 4 rewrite (task-3225). The originally-shipped version of this
+    test (`active="schedules"`, Tab to `nav-settings`, GROW 80 -> 90) was
+    vacuous twice over and is replaced rather than tweaked:
+
+    1. Growing the terminal never produced a genuine straddle in this
+       harness in the first place -- `nav-settings` sat flush at the
+       boundary either way, so the assertion could not fail.
+    2. Even in a scenario that DOES strand, two other mechanisms heal it
+       before any wall-clock assertion can see it: the periodic interval
+       (focus-aware since round 2) and `_ghost_clipped_buttons`'s
+       best-effort `scroll_to_widget(focused)` nudge, which fires whenever
+       the focused button STRADDLES. Directly traced: with `on_resize`
+       reverted, `scroll_x` went 86 -> 75 (dragged toward active) -> 96
+       (nudged back) inside 40ms.
+
+    So this version (a) makes the resize strand the focused button FULLY
+    off-screen rather than straddling -- `active="home"` at the far left,
+    focus on `nav-settings` at the far right -- which is the case the
+    ghost-pass nudge cannot rescue (it only nudges a straddler), and
+    (b) suppresses the interval backstop for the duration of the resize
+    (see `_IntervalSuppressibleNavBar`). What is left is `on_resize`'s own
+    pass, and the assertion is the honest user-facing invariant: the
+    button you Tab-focused is still FULLY visible after the resize, not
+    merely "not straddling" (a button dragged entirely off-screen is not
+    straddling either, and is strictly worse -- invisible, yet still
+    focused and Enter-navigable).
+
+    Mutation-tested both ways: reverting `on_resize` to
+    `_scroll_active_destination_into_view` fails this at every checkpoint;
+    restoring `_recenter_strip` passes it at every checkpoint.
     """
 
     class TestApp(App):
         def compose(self):
-            yield MainNavigationBar(active="schedules")
+            yield _IntervalSuppressibleNavBar(active="home")
 
     app = TestApp()
 
@@ -851,20 +907,110 @@ async def test_resize_does_not_strand_the_focused_button():
             "test premise: expected to Tab-focus nav-settings"
         )
 
-        await pilot.resize_terminal(90, 24)
-        await pilot.pause(0.3)
-
+        nav = app.query_one(_IntervalSuppressibleNavBar)
         strip = app.query_one("#nav-destination-strip", Horizontal)
         settings = app.query_one("#nav-settings", Button)
-        assert app.focused is settings, (
-            "nav-settings should still hold focus after the resize"
+        assert settings.region.x >= strip.region.x, (
+            "test premise: the focused button starts fully visible"
         )
-        assert not _straddles_viewport(settings.region, strip.region), (
-            f"nav-settings straddles after a resize while focused: "
-            f"{settings.region} vs strip {strip.region}"
+
+        nav.suppress_interval = True
+        await pilot.resize_terminal(90, 24)
+
+        # Several checkpoints, not one: the round-3 takeover's other
+        # finding was that the (then-shipped) fix corrected the geometry
+        # transiently and drifted back ~0.3s later, so a single
+        # post-resize assertion could not have caught it. The drift-back's
+        # root cause (a ghost pass that reflowed the strip) is fixed in
+        # `MainNavigationBar.DEFAULT_CSS`; this sweep is what keeps it
+        # fixed.
+        for step in range(8):
+            await pilot.pause(0.1)
+            assert app.focused is settings, (
+                f"nav-settings should still hold focus after the resize "
+                f"(checkpoint {step})"
+            )
+            assert (
+                settings.region.x >= strip.region.x
+                and settings.region.right <= strip.region.right
+            ), (
+                f"the focused button is not fully visible after a resize "
+                f"(checkpoint {step}): {settings.region} vs strip "
+                f"{strip.region}"
+            )
+            assert not _straddles_viewport(settings.region, strip.region)
+            assert not settings.has_class("nav-button-clip-ghost")
+            assert not settings.disabled
+
+
+@pytest.mark.asyncio
+async def test_ghosting_a_button_never_reflows_the_strip():
+    """Review round 4 (task-3225): ghosting must be geometry-neutral.
+
+    The whole reason task-3200 ghosts a clipped button with CSS instead of
+    `display: none` is that hiding it changes the strip's layout, which
+    cascades into new straddlers and breaks the "More ›" pager's reach.
+    The shipped ghost rule quietly broke that invariant anyway: it
+    declared `border: solid $background !important`, replacing Textual's
+    `Button.-style-default` border (`border-top`/`border-bottom` only --
+    ZERO horizontal cells) with a four-edge border, so a ghosted button
+    measured 2 cells WIDER than the same button un-ghosted and shoved
+    every button after it 2 cells right. That reflow is what produced the
+    "~0.3s drift-back" filed as task-3225: a settle pass would scroll the
+    focused button into view, then its own trailing ghost pass reflowed
+    the strip and put it back into a straddling position, with nothing
+    scheduled to re-check.
+
+    Deterministic geometry assertion, no timing: ghost one button by hand
+    and require every other button's region -- and its own -- to be
+    unchanged. Goes red if any box-model property (border, padding,
+    width, visibility) is ever reintroduced into the ghost rule.
+    """
+
+    class _NoAutoGhostBar(MainNavigationBar):
+        """Ghosting is applied by hand here, so the widget's own settle
+        passes must not race the assertion by re-deciding it."""
+
+        def _ghost_clipped_buttons(self) -> None:
+            return
+
+    class TestApp(App):
+        def compose(self):
+            yield _NoAutoGhostBar(active="home")
+
+    app = TestApp()
+
+    async with app.run_test(size=(200, 24)) as pilot:
+        await pilot.pause(0.4)
+
+        strip = app.query_one("#nav-destination-strip", Horizontal)
+        buttons = list(strip.query(Button))
+        assert len(buttons) > 3, "test premise: several destinations present"
+        before = {button.id: button.region for button in buttons}
+        virtual_before = strip.virtual_size
+
+        victim = app.query_one("#nav-workflows", Button)
+        victim.add_class("nav-button-clip-ghost")
+        victim.disabled = True
+        await pilot.pause(0.3)
+
+        after = {button.id: button.region for button in strip.query(Button)}
+        assert after == before, (
+            "ghosting a nav button reflowed the strip -- the ghost rule is "
+            "not geometry-neutral. Changed: "
+            + repr(
+                {
+                    button_id: (before[button_id], after[button_id])
+                    for button_id in before
+                    if before[button_id] != after.get(button_id)
+                }
+            )
         )
-        assert not settings.has_class("nav-button-clip-ghost")
-        assert not settings.disabled
+        assert strip.virtual_size == virtual_before, (
+            "ghosting a nav button changed the strip's virtual size "
+            f"({virtual_before} -> {strip.virtual_size}), which moves "
+            "max_scroll_x and the 'More ›' pager's reach"
+        )
 
 
 @pytest.mark.asyncio

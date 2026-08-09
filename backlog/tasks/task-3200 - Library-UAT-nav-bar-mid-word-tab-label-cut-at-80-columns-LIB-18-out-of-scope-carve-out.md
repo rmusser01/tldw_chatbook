@@ -418,4 +418,103 @@ Tests (round-3-takeover, independently re-run): `test_master_shell_navigation.py
 sweep 328 passed / 6 failed (5 known + 1 newly-characterized, task-3224) / 1
 skipped x1 (RED/GREEN mutation-tested for `restore_active`; `on_resize`'s own
 test found vacuous, follow-up task-3225 filed).
+
+## Review round 4 (escalated): the drift-back root cause, and both open items closed
+
+**Root cause of task-3225's drift-back: the ghost rule was not geometry-neutral.**
+`MainNavigationBar.DEFAULT_CSS`'s `.nav-button-clip-ghost` rule declared
+`border: solid $background !important`. Textual's own `Button.-style-default`
+gives a nav button `border: none; border-top: tall ...; border-bottom: tall ...`
+— i.e. ZERO horizontal border cells — so replacing that with a four-edge `solid`
+border made a ghosted button **2 cells wider** than the same button un-ghosted
+(directly measured, `#nav-workflows` 14 -> 16, by toggling the class/`disabled`
+in isolation). Because the strip is a horizontal layout, that reflowed every
+button after the ghosted one 2 cells to the right — which could push a
+previously fully-visible button (including the deliberately-focused one) into a
+straddling position AFTER the corrective scroll had already landed. Nothing
+re-checks after a ghost pass, precisely because the entire reason this design
+was chosen over `display: none` is that ghosting is supposed to leave geometry
+untouched. Timeline instrumentation of the shrink repro (per-button
+region/width dumps at 50ms intervals plus enter/exit logs on `on_resize`,
+`_recenter_strip`, `_scroll_active_destination_into_view`,
+`_ghost_clipped_buttons`, `_update_overflow_hints`): corrective scroll lands at
+~40ms with `nav-settings` at x=45 (visible); the trailing ghost pass ghosts
+`nav-workflows` (x=-2, straddling the left edge); one layout pass later
+`nav-workflows` measures w16 and `nav-settings` has moved to x=47 — straddling.
+Round 3's hypothesis (a second `on_resize` firing with stale geometry) was
+wrong: `on_resize` fires exactly once.
+
+**Fix:** the ghost rule now declares no box-model property at all — colors and
+text style only — so the ghosted box is identical to the un-ghosted box in
+whichever CSS tier is winning. `visibility: hidden` was tried first (it is the
+Textual primitive for "invisible but still occupies space") and rejected with
+evidence: `Widget.region` returns an EMPTY region for an invisible widget
+(`outer_size` stays 14, `region.width` drops to 0), and `_ghost_clipped_buttons`
+skips any button with `region.width <= 0` — a once-ghosted button could never be
+measured again, so it could never be un-ghosted.
+
+**Scope of the drift-back (task-3225 AC #3), stated honestly:** it is a
+bare-widget-harness-only defect. Under the real bundled stylesheet the ghost's
+`border` declaration never applied at all — `components/_buttons.tcss`'s
+`Button { border: none; }` is in the `CSS_PATH` tier, which outranks widget
+`DEFAULT_CSS` regardless of `!important` — measured both ways: ghosted width 14
+before and after this fix with `CSS_PATH` loaded. So no shipped user ever saw
+the drift-back. It is still fixed rather than documented-and-left, because (a)
+the design's core invariant is geometry-neutrality and this rule silently broke
+it, (b) it made the bare-widget harness — which is the entire deterministic
+regression suite for this feature — model a different layout regime than
+production, and (c) it survived only by accident of an unrelated app-wide rule.
+
+**task-3225 AC #2 (a genuinely non-vacuous test).**
+`test_resize_does_not_strand_the_focused_button` was rewritten, not tweaked. The
+shipped version was vacuous twice over: growing 80 -> 90 with
+`active="schedules"` never produced a straddle at all, and even in a scenario
+that DOES strand, two mechanisms heal it before any wall-clock assertion can
+see it — the focus-aware periodic interval, and `_ghost_clipped_buttons`'s
+best-effort `scroll_to_widget(focused)` nudge (traced: with `on_resize` reverted,
+`scroll_x` went 86 -> 75 -> 96 inside 40ms because the nudge read a stale region
+that still measured as straddling). The rewrite (a) uses `active="home"` so a
+recenter-on-active drags the focused button FULLY off-screen rather than into a
+straddle — the one case the nudge cannot rescue, and strictly the worse
+outcome — and (b) suppresses the interval backstop for the duration of the
+resize via a test-local subclass, isolating the property actually under test:
+`on_resize`'s OWN pass must leave the focused button fully visible without the
+interval cleaning up after it. It asserts full visibility (not merely
+"not straddling") at 8 checkpoints spanning 0.8s. Mutation-tested: reverting
+`on_resize` to `_scroll_active_destination_into_view` fails 3/3 with
+`Region(x=141) vs strip Region(x=3, width=77)`; restoring passes 3/3.
+
+New `test_ghosting_a_button_never_reflows_the_strip` pins the root cause
+directly and without timing: ghost one button by hand, require every button's
+region and the strip's `virtual_size` to be unchanged. Mutation-tested: restoring
+`border: solid $background !important` fails it 3/3 with the exact +2 reflow.
+
+**task-3224 closed test-side.** `test_clean_first_run_launches_home_and_exposes_
+setup_orientation` pressed `#nav-settings` by id at 140 cols with the strip at
+its default scroll position; round 1's ghosting made that a no-op and the test
+timed out (reproduced 4/5 at this HEAD). The test's contract is "every one of
+these destinations is reachable from the nav bar and renders its copy", not "a
+programmatic press works on an off-screen widget" — and a real mouse click could
+never reach that button — so the fix is test-side: a `_click_nav_destination`
+helper reveals the target with the product's own affordance ("More ›") and only
+presses once the button is genuinely inside the strip's viewport. The ghosting
+contract is untouched (production code unchanged for this item). Verified 5/5
+passing at ~3.3s (was a 13s timeout), and instrumented to confirm the reveal
+branch actually fires (exactly once per run — the helper is load-bearing, not
+decorative).
+
+Tests (round 4): `test_master_shell_navigation.py` **32/32 x5**;
+`test_product_maturity_phase6_focus_visual_sweep.py` **5/5 x3**;
+`test_clean_first_run_launches_home_and_exposes_setup_orientation` **5/5**;
+13-file nav sweep **330 passed / 5 failed / 1 skipped** — the 5 are the same
+known pre-existing schedules/MCP failures, and the 6th (task-3224) is gone;
+`Tests/Library --collect-only -q` 1118 collected; `check_bundle_sync.py` clean
+(no bundle change: the fix is widget `DEFAULT_CSS`).
+
+Live (tmux, 80 -> 90 cols, `active=home`, `⌃9 MCP` deliberately Tab-focused):
+the focused non-active button stayed fully spelled out with its focus ring
+(`[4m` + fg 233;236;238 on bg 88;109;130) at +0.3s, +1.2s, +2.5s and +6.5s, and
+again after shrinking back to 80; both straddlers (`ts`, the tail of
+"⌃4 Artifacts", and ` F`, the head of "F7 Lab") rendered fg 18;18;18 on
+bg 18;18;18 — pixel-exact invisible.
 <!-- SECTION:NOTES:END -->

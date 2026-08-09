@@ -1646,3 +1646,71 @@ rather than shipped in that state.
    DO reliably discriminate (the direct-construction geometry/rendered-text ones, in
    this case) and rely on documented, reproducible LIVE verification (tmux, before vs.
    after) for the part that genuinely can't be pinned by a fast unit test.
+
+## A mutation test can stay green because a *second* self-healing mechanism rescued the mutated code (2026-08-09)
+
+**Incident (task-3200 round 4 / task-3225).** `MainNavigationBar.on_resize` was
+wired to a focus-aware recenter, with `test_resize_does_not_strand_the_focused_
+button` as its regression guard. Reverting the wiring did not turn the test red.
+The first diagnosis (round 3) was "the scenario never strands" -- true, but only
+half of it. A hand-built scenario that DOES strand *still* passed against the
+reverted code, because two independent backstops healed it faster than any
+wall-clock assertion could look: the widget's own 0.5s settle interval, and --
+the one nobody had accounted for -- a "best-effort nudge"
+(`scroll_to_widget(focused)`) buried inside the ghost pass, which fired off a
+*stale* region that still measured as straddling. Traced: with the fix reverted,
+`scroll_x` went 86 -> 75 (wrong) -> 96 (rescued) inside 40ms.
+
+**The rule.** When a mutation test refuses to go red, "the scenario is wrong" is
+only the first hypothesis. The second is "something else fixed it for me."
+Before trusting any timing-sensitive guard, enumerate every mechanism in the
+system that could reach the same end state -- periodic intervals, deferred
+re-checks, best-effort nudges -- and either suppress them for the duration of
+the assertion (isolating the unit actually under test) or pick a scenario they
+provably cannot reach. Here: suppress the interval via a test-local subclass
+(patching the instance attribute does nothing -- `set_interval` captured a bound
+method at mount), and choose a case that drags the button *fully off-screen*
+rather than into a straddle, since the nudge only rescues straddlers. Result:
+3/3 red on revert, 3/3 green on restore.
+
+**Corollary on assertions.** "not straddling" was also too weak an invariant to
+distinguish the good state from the worst one: a button dragged entirely
+off-screen is not straddling either, and it is strictly worse (invisible, yet
+still focused and Enter-navigable). Assert the property a user would name
+("still fully visible"), not the negation of the specific bug you last fixed.
+
+## An "invisible" CSS class that touches the box model is a layout change -- and a different CSS tier can hide that from your tests (2026-08-09)
+
+**Incident (task-3200 round 4 / task-3225).** The nav bar makes a clipped tab
+invisible with a CSS class instead of `display: none`, specifically so that
+geometry never changes (hiding a tab reflows the strip, breaks `max_scroll_x`,
+and cascades into new clipped tabs). The rule declared
+`border: solid $background !important` -- and Textual's `Button.-style-default`
+default is `border: none` plus `border-top`/`border-bottom: tall`, i.e. **zero
+horizontal border cells**. So "make it invisible" silently made every ghosted
+button **2 cells wider** (measured: 14 -> 16), reflowing every later button and
+pushing an already-corrected, focused tab back into a clipped position one
+layout pass after the correction landed. That was the whole "mysterious ~0.3s
+drift-back": a settle pass's own trailing invisibility pass undoing the settle.
+
+**Two generalisable traps.**
+
+1. Invisibility rules must declare colors only. `border`, `padding`, `width` and
+   `visibility` all move the box. If you want the Textual primitive for
+   "invisible but still occupies space", note that `visibility: hidden` makes
+   `Widget.region` return an EMPTY region (`outer_size` keeps its real value,
+   `region.width` drops to 0) -- so any code that reads `.region` to decide
+   whether to *un*-hide it can never see the widget again. Measured, and the
+   reason that approach was rejected here.
+2. **A widget-level `DEFAULT_CSS` bug can be invisible in the real app and live
+   only in your tests.** This one never bit production: the bundle's
+   `Button { border: none; }` sits in the `CSS_PATH` tier, which outranks widget
+   `DEFAULT_CSS` regardless of `!important`, so the bad declaration was silently
+   discarded in the running app -- and *only* applied in the bare `App()` test
+   harness, which is where the entire deterministic suite for this feature runs.
+   The harness was modelling a different layout regime than production. When a
+   geometry finding comes out of a bare-widget test, re-measure it under a
+   bundled-CSS harness (`CSS_PATH = tldw_cli_modular.tcss`, as
+   `test_mcp_inspector.py`'s `InspectorAppWithBundledCSS` does) before deciding
+   what it means -- in both directions: a bug the harness shows may not exist
+   live, and a bug live may not show in the harness.

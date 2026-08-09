@@ -232,7 +232,45 @@ class MainNavigationBar(Container):
        the MCP inspector's identical fix). This `!important` block stays
        as defense-in-depth for the `DEFAULT_CSS` tier itself (e.g.
        against some future widget-level rule), not as the actual fix for
-       the app-wide `Button:disabled` opacity. */
+       the app-wide `Button:disabled` opacity.
+
+       REVIEW ROUND 4 (task-3225), THE GEOMETRY BUG THIS RULE USED TO HAVE:
+       this rule declared `border: solid $background !important`, which was
+       NOT geometry-neutral. Textual's own `Button.-style-default` gives a
+       nav button `border: none; border-top: tall ...; border-bottom: tall
+       ...` -- i.e. ZERO horizontal border cells -- so switching it to a
+       four-edge `solid` border added one cell of border on the left AND the
+       right: a ghosted button measured 2 cells WIDER than the same button
+       un-ghosted (directly measured: `#nav-workflows` 14 -> 16). Because
+       the strip is a horizontal layout, that reflowed every button after
+       it 2 cells to the right, which could push a previously fully-visible
+       button (including the deliberately-focused one) into a straddling
+       position AFTER the ghost pass that was supposed to settle the strip
+       -- and nothing re-checks after a ghost pass, because the whole point
+       of ghosting over `display: none` is that it is supposed to leave
+       geometry untouched. That is what produced the ~0.3s "drift-back"
+       task-3225 filed: the corrective scroll landed, then the ghost pass's
+       own reflow undid it one layout pass later.
+
+       The fix is that this rule now declares NO box-model property at all
+       -- colors and text style only -- so a ghosted button's box is,
+       by construction, byte-identical to its un-ghosted box in whichever
+       CSS tier is actually winning (bare widget harness: `border-top/
+       bottom: tall`, zero horizontal cells; the real app: `Button {
+       border: none }` from `components/_buttons.tcss`, also zero). A
+       ghosted button therefore cannot reflow its neighbours, which is the
+       invariant this whole approach was chosen over `display: none` for
+       in the first place.
+
+       `visibility: hidden` was tried first (it is the Textual primitive
+       that means "invisible but still occupies space") and REJECTED:
+       `Widget.region` returns an EMPTY region for an invisible widget
+       (measured: `outer_size` stays 14, `region.width` drops to 0), and
+       `_ghost_clipped_buttons` decides straddle from `button.region` and
+       skips any button with `region.width <= 0` -- so a once-ghosted
+       button could never be measured again, i.e. never un-ghosted. Left
+       out rather than reworking every geometry read onto a different
+       property. */
     .nav-button.nav-button-clip-ghost,
     .nav-button.nav-button-clip-ghost:hover,
     .nav-button.nav-button-clip-ghost:focus,
@@ -240,7 +278,6 @@ class MainNavigationBar(Container):
     .nav-button.nav-button-clip-ghost.is-active:focus,
     .nav-button.nav-button-clip-ghost:disabled {
         background: $background !important;
-        border: solid $background !important;
         color: $background !important;
         text-style: none;
         opacity: 100% !important;
