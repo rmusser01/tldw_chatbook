@@ -49,6 +49,8 @@ The fifth, `test_mcp_forced_loading_state_stays_inside_workbench`, is a
 42` -- an MCP workbench-geometry overflow, nothing to do with a media DB) that a
 task-3200 fix-round report had folded into "this task's territory" by mistake. It
 does not belong to this task's AC and is not fixed by anything this task's scope
-covers; it is currently untracked by any open backlog task. Left untouched here --
-out of task-3200's scope to fix, and out of this task's stated scope (schedules/
-media-DB only) to adopt without widening the AC.
+covers. Correction (final review round of `fix/library-polish-batch`, 2026-08-09):
+this test is NOT untracked -- task-2960 ("MCP forced-loading parity regression from
+the PR-1385 tall-section change", To Do) names this exact test and already covers
+it. Left untouched here regardless -- out of task-3200's scope to fix, and out of
+this task's stated scope (schedules/media-DB only) to adopt without widening the AC.

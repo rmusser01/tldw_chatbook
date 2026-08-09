@@ -3,6 +3,7 @@
 from types import SimpleNamespace
 
 import pytest
+from textual import events
 from textual.app import App
 from textual.containers import Horizontal
 from textual.widgets import Button
@@ -754,6 +755,95 @@ async def test_press_on_a_ghosted_nav_button_is_a_no_op():
         assert events == []
         assert nav.active_destination_id == "settings"
         assert target.has_class("nav-button-clip-ghost")
+
+
+@pytest.mark.asyncio
+async def test_click_on_ghosted_nav_button_via_border_route_is_a_no_op():
+    """Review finding (round 5): `on_click` routes a click that resolves
+    to the bar/strip itself (not directly to a specific widget) to ANY
+    `NavigationButton` whose `region.contains_point` matches the click,
+    then calls `_activate_navigation_button` directly -- bypassing
+    `Button.press()`'s built-in `disabled` no-op entirely (the guard the
+    sibling `test_press_on_a_ghosted_nav_button_is_a_no_op` above
+    exercises). Ghosting (task-3200/3225) is purely cosmetic and
+    geometry-neutral -- a ghosted button keeps its real screen region and
+    stays part of the widget tree -- so its region still intersects real
+    click coordinates; only its paint is blanked.
+
+    This drives the natural (not mocked) resolution path: at row y=2 --
+    the bar's own `border-bottom` row, height=3 total (rows 0/1 are
+    content, row 2 is the border) -- `get_widget_at` resolves to the
+    `MainNavigationBar` itself rather than to any child button, because
+    those border pixels are drawn as part of the bar's own box, not
+    attributed to a child's compositor region (confirmed directly:
+    `get_widget_at(x, 2)` returns the bar for every x across the ghosted
+    button's width, while rows 0/1 at the same x correctly return the
+    button). That is exactly the "clicked the border, not a widget" case
+    `on_click`'s own guard clause exists to route into the loop below --
+    i.e. this is the real bug path, not a synthetic bypass of it.
+    `active="artifacts"` at 80 cols reliably straddles/ghosts
+    `nav-watchlists_collections` (`Region(x=64, y=0, width=15,
+    height=3)`), the same defect class as the review's own probe
+    (`nav-watchlists_collections`, `x=62-71, y=2`, a different active
+    destination).
+    """
+    events_seen = []
+
+    class TestApp(App):
+        def compose(self):
+            yield MainNavigationBar(active="artifacts")
+
+        def on_navigate_to_screen(self, message):
+            events_seen.append(message.screen_name)
+
+    app = TestApp()
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause(0.6)
+
+        nav = app.query_one(MainNavigationBar)
+        ghosted = [
+            button
+            for button in app.query(".nav-button")
+            if button.has_class("nav-button-clip-ghost")
+        ]
+        assert ghosted, "test premise: expected a straddling destination at 80 cols"
+        target = next(
+            (b for b in ghosted if b.id == "nav-watchlists_collections"), ghosted[0]
+        )
+        assert target.disabled
+        region = target.region
+
+        # A cell inside the ghosted button's own region, on the bar's
+        # border-bottom row -- naturally resolves to the bar itself (see
+        # docstring above), not the button, which is the exact case
+        # `on_click`'s border router exists to handle.
+        click_x = region.x
+        click_y = 2
+        assert app.get_widget_at(click_x, click_y)[0] is nav, (
+            "test premise: this coordinate must resolve to the bar itself"
+        )
+
+        click_event = events.Click(
+            nav,
+            click_x,
+            click_y,
+            0,
+            0,
+            1,
+            False,
+            False,
+            False,
+            screen_x=click_x,
+            screen_y=click_y,
+        )
+        nav.on_click(click_event)
+        await pilot.pause(0.1)
+
+        assert events_seen == []
+        assert nav.active_destination_id == "artifacts"
+        assert target.has_class("nav-button-clip-ghost")
+        assert target.disabled
 
 
 @pytest.mark.asyncio

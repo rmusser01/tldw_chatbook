@@ -27,9 +27,17 @@ class AppFooterStatus(Widget):
     """Per-screen footer: screen hint context + protected global hints.
 
     Layout contract (see the UX critique, UX-006/UX-041):
-    * The app-global hints (F1 help, F6 panes, Ctrl+P palette, Ctrl+Q quit)
-      are ALWAYS present — a screen's shortcut context may prepend its own
-      hints but never replaces the globals.
+    * Every app-global key (F1 help, F6 panes, Ctrl+P palette, Ctrl+Q quit)
+      is ALWAYS represented somewhere in the footer, but not always by the
+      generic global label: a screen's shortcut context renders UNFILTERED,
+      and the global cluster then excludes whichever of those four keys the
+      screen's own context already covers (task-2860's per-key dedup, see
+      `_remaining_global_text`) so the same key never shows twice. A key
+      the screen doesn't mention still gets its generic global hint; a key
+      the screen DOES mention shows only the screen's own (more specific)
+      copy, never both -- so a screen's context routinely supersedes a
+      global key's generic label, it just can never make the key vanish
+      from the footer entirely.
     * When width runs out, the screen-context hints drop first (leaving an
       ellipsis marker), then the right cluster (token/word/DB sizes) hides
       progressively; nothing ever clips mid-word.

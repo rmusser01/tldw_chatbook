@@ -11856,8 +11856,6 @@ class LibraryScreen(BaseAppScreen):
                 )
 
             self._library_media_confirming_bulk_delete = False
-            # Only a FULL success exits Select mode.
-            exited_select_mode = False
             if failed:
                 # task-3020 AC6: pluralize off the denominator (``media_
                 # ids``, the whole confirmed batch) rather than a bare
@@ -11869,9 +11867,9 @@ class LibraryScreen(BaseAppScreen):
                     f"selected media {item_word}."
                 )
             else:
+                # Only a FULL success exits Select mode.
                 self._library_media_select_mode = False
                 self._library_media_row_selection.clear()
-                exited_select_mode = True
 
             if self.is_mounted:
                 # A full screen recompose, not the canvas-scoped

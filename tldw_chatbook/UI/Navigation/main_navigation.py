@@ -803,8 +803,10 @@ class MainNavigationBar(Container):
         stays) non-straddling comes from `on_descendant_focus` (fires once
         per real focus change, always followed by its OWN `call_after_
         refresh`-deferred re-scroll-then-ghost-check) and `_recenter_
-        periodic` (the interval, re-affirming it every 0.5s) -- both
-        already correctly deferred, unlike a synchronous retry here could
+        strip` (the interval, via `_update_overflow_hints`, re-affirming it
+        every 0.5s -- `_recenter_strip` was named `_recenter_periodic`
+        before review round 3 generalized it to every settle trigger) --
+        both already correctly deferred, unlike a synchronous retry here could
         ever be. A focused button stuck straddling despite both of those
         is the same already-acknowledged, out-of-scope degenerate case
         (wider than the entire viewport) the active exemption already
@@ -884,7 +886,24 @@ class MainNavigationBar(Container):
                 return
 
     def _activate_navigation_button(self, button: Button) -> bool:
-        """Activate a navigation button and return whether navigation was requested."""
+        """Activate a navigation button and return whether navigation was requested.
+
+        Guards `button.disabled` here, at the one shared entry point, rather
+        than only in a caller: `handle_navigation` (via `Button.Pressed`)
+        already can't reach a disabled button -- `Button.press()` no-ops on
+        `disabled` before the event ever posts -- but `on_click`'s
+        border-click router (below) resolves a click landing on the bar's
+        own chrome to ANY `NavigationButton` whose `region.contains_point`
+        matches, then used to call this method directly, bypassing `Button.
+        press()`'s disabled check entirely (task-3200 review round 5). A
+        ghosted (task-3200/3225) button's region is real, unshrunk geometry
+        -- ghosting is purely cosmetic -- so a click on the blank-looking
+        chrome over a ghosted tab silently navigated to an invisible
+        destination. Guarding the shared method, not just `on_click`,
+        also covers any future direct caller of this method for free.
+        """
+        if button.disabled:
+            return False
         button_id = button.id
         if not button_id:
             return False
