@@ -25,6 +25,8 @@ from tldw_chatbook.Model_Artifacts.service import (
     ModelArtifactService,
 )
 from tldw_chatbook.Model_Artifacts.store import managed_service
+from tldw_chatbook.Local_Ingestion.parakeet_v2_artifact import parakeet_reference
+from tldw_chatbook.STT.parakeet_sources import ParakeetSourceKey
 from tldw_chatbook.UI.Screens.model_browser_state import provenance_label
 from tldw_chatbook.Widgets.ModelArtifacts import ModelInstallProgress
 
@@ -106,6 +108,13 @@ class CuratedView(Widget):
             self.registry = registry
             self.sources = sources
 
+    class UseFromDiskRequested(Message):
+        """Posted with the exact curated Parakeet root reference."""
+
+        def __init__(self, reference: ArtifactRef) -> None:
+            self.reference = reference
+            super().__init__()
+
     DEFAULT_CSS = """
     CuratedView {
         height: 100%;
@@ -136,6 +145,16 @@ class CuratedView(Widget):
 
     CuratedView .curated-model-muted {
         color: $text-muted;
+    }
+
+    CuratedView .curated-actions {
+        height: 3;
+        margin-top: 1;
+    }
+
+    CuratedView .curated-actions Button {
+        width: auto;
+        margin-right: 1;
     }
     """
 
@@ -196,6 +215,16 @@ class CuratedView(Widget):
             disabled=row.installed or self._operation_reference is not None,
         )
         install.reference = descriptor.reference
+        actions = [install]
+        if self._external_key(descriptor.reference) is not None:
+            use_from_disk = Button(
+                "Use from disk…",
+                classes="curated-use-from-disk",
+                variant="default",
+                disabled=self._operation_reference is not None,
+            )
+            use_from_disk.reference = descriptor.reference
+            actions.append(use_from_disk)
         return Vertical(
             Static(descriptor.model_id, classes="curated-model-title", markup=False),
             Static(
@@ -214,9 +243,18 @@ class CuratedView(Widget):
                 classes="curated-model-muted",
                 markup=False,
             ),
-            install,
+            Horizontal(*actions, classes="curated-actions"),
             classes="curated-model-row",
         )
+
+    @staticmethod
+    def _external_key(reference: ArtifactRef) -> ParakeetSourceKey | None:
+        """Map only exact catalog-known Parakeet root references."""
+
+        for key in ParakeetSourceKey:
+            if reference == parakeet_reference(key.model_id, key.precision):
+                return key
+        return None
 
     def _service_for_worker(self) -> ModelArtifactService:
         """Return the lazily created managed service."""
@@ -301,6 +339,17 @@ class CuratedView(Widget):
                 sources=self._source_map(),
             )
         )
+
+    @on(Button.Pressed, ".curated-use-from-disk")
+    def _use_from_disk_pressed(self, event: Button.Pressed) -> None:
+        """Post the exact catalog reference; the screen owns the picker."""
+
+        event.stop()
+        reference = getattr(event.button, "reference", None)
+        if not isinstance(reference, ArtifactRef):
+            return
+        if self._external_key(reference) is not None:
+            self.post_message(self.UseFromDiskRequested(reference))
 
     def _source_map(self) -> dict[ArtifactRef, dict[str, str]]:
         """Return sources for every descriptor in the curated registry."""

@@ -1,0 +1,191 @@
+"""Lab Models coverage for configured user-owned Parakeet sources."""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+from textual import on
+from textual.app import App, ComposeResult
+from textual.widgets import Button, Static
+
+from tldw_chatbook.Local_Ingestion.stt_batch_routing import PARAKEET_V2_MODEL
+from tldw_chatbook.STT.parakeet_sources import (
+    ParakeetSourceKey,
+    ParakeetSourcePreference,
+    ParakeetSourceRecord,
+)
+from tldw_chatbook.UI.Screens.model_external_view import ExternalModelView
+
+
+_BUNDLED_STYLESHEET = (
+    Path(__file__).resolve().parents[2] / "tldw_chatbook/css/tldw_cli_modular.tcss"
+)
+
+
+class _SourceService:
+    def __init__(self, records):
+        self._records = dict(records)
+
+    def records(self):
+        return dict(self._records)
+
+
+class _ViewApp(App[None]):
+    CSS_PATH = str(_BUNDLED_STYLESHEET)
+
+    def __init__(self, service: _SourceService) -> None:
+        self.requests: list[object] = []
+        self.view = ExternalModelView(service, id="external-models-view")
+        super().__init__()
+
+    def compose(self) -> ComposeResult:
+        yield self.view
+
+    @on(ExternalModelView.ChangeRequested)
+    @on(ExternalModelView.StopRequested)
+    @on(ExternalModelView.CopyRequested)
+    def _capture(self, event) -> None:
+        self.requests.append(event)
+
+
+def _text(app: App) -> str:
+    return "\n".join(str(item.renderable) for item in app.query(Static))
+
+
+@pytest.mark.asyncio
+async def test_external_view_lists_only_records_with_user_owned_directories(
+    tmp_path: Path,
+) -> None:
+    v2_root = (tmp_path / "v2-int8").absolute()
+    remembered_root = (tmp_path / "v2-f32").absolute()
+    service = _SourceService(
+        {
+            ParakeetSourceKey.V2_INT8: ParakeetSourceRecord(
+                model_id=PARAKEET_V2_MODEL,
+                precision="int8",
+                directory=v2_root,
+                preferred_source=ParakeetSourcePreference.EXTERNAL,
+            ),
+            ParakeetSourceKey.V2_F32: ParakeetSourceRecord(
+                model_id=PARAKEET_V2_MODEL,
+                precision="f32",
+                directory=remembered_root,
+                preferred_source=ParakeetSourcePreference.MANAGED,
+            ),
+            ParakeetSourceKey.V3_INT8: ParakeetSourceRecord(
+                model_id=ParakeetSourceKey.V3_INT8.model_id,
+                precision="int8",
+                preferred_source=ParakeetSourcePreference.MANAGED,
+            ),
+        }
+    )
+    app = _ViewApp(service)
+
+    async with app.run_test(size=(80, 30)) as pilot:
+        await pilot.pause()
+        text = _text(app)
+
+        assert "External source · descriptor verified" in text
+        assert str(v2_root) in text
+        assert str(remembered_root) in text
+        assert "Parakeet v3" not in text
+        assert len(app.query(".external-model-row")) == 2
+        assert len(app.query(".external-model-path")) == 2
+
+
+@pytest.mark.asyncio
+async def test_external_view_emits_exact_change_stop_and_copy_actions(
+    tmp_path: Path,
+) -> None:
+    service = _SourceService(
+        {
+            ParakeetSourceKey.V2_INT8: ParakeetSourceRecord(
+                model_id=PARAKEET_V2_MODEL,
+                precision="int8",
+                directory=(tmp_path / "model").absolute(),
+                preferred_source=ParakeetSourcePreference.EXTERNAL,
+            )
+        }
+    )
+    app = _ViewApp(service)
+
+    async with app.run_test(size=(80, 30)) as pilot:
+        await pilot.pause()
+        for action in ("change", "stop", "copy"):
+            app.query_one(f"#external-model-{action}-v2_int8", Button).press()
+            await pilot.pause()
+
+    assert [type(event) for event in app.requests] == [
+        ExternalModelView.ChangeRequested,
+        ExternalModelView.StopRequested,
+        ExternalModelView.CopyRequested,
+    ]
+    assert all(event.key is ParakeetSourceKey.V2_INT8 for event in app.requests)
+
+
+@pytest.mark.asyncio
+async def test_external_view_keeps_actions_and_status_reachable_at_80_columns(
+    tmp_path: Path,
+) -> None:
+    selected = (tmp_path / ("long-model-directory-" * 4)).absolute()
+    service = _SourceService(
+        {
+            ParakeetSourceKey.V2_INT8: ParakeetSourceRecord(
+                model_id=PARAKEET_V2_MODEL,
+                precision="int8",
+                directory=selected,
+                preferred_source=ParakeetSourcePreference.EXTERNAL,
+            )
+        }
+    )
+    app = _ViewApp(service)
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        app.view.apply_operation_status("Verifying model files · 4 / 8 bytes")
+        await pilot.pause()
+
+        status = app.query_one("#external-model-operation-status", Static)
+        assert "4 / 8 bytes" in str(status.renderable)
+        assert status.region.width > 0 and status.region.height > 0
+        for action in ("change", "stop", "copy"):
+            button = app.query_one(f"#external-model-{action}-v2_int8", Button)
+            assert button.region.width > 0 and button.region.height > 0
+            assert button.region.x + button.region.width <= 80
+        assert str(selected) in str(
+            app.query_one(".external-model-path", Static).renderable
+        )
+
+
+@pytest.mark.asyncio
+async def test_external_operation_error_is_path_safe_and_does_not_replace_edit_path(
+    tmp_path: Path,
+) -> None:
+    selected = (tmp_path / "private-model-root").absolute()
+    service = _SourceService(
+        {
+            ParakeetSourceKey.V2_INT8: ParakeetSourceRecord(
+                model_id=PARAKEET_V2_MODEL,
+                precision="int8",
+                directory=selected,
+                preferred_source=ParakeetSourcePreference.EXTERNAL,
+            )
+        }
+    )
+    app = _ViewApp(service)
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        app.view.apply_operation_status(
+            "The selected model could not be verified. Choose the directory again.",
+            error=True,
+        )
+        await pilot.pause()
+
+        status = str(
+            app.query_one("#external-model-operation-status", Static).renderable
+        )
+        assert str(selected) not in status
+        assert str(selected) in str(
+            app.query_one(".external-model-path", Static).renderable
+        )

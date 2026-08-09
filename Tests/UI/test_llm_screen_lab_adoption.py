@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 
+from unittest.mock import MagicMock
+
 import pytest
 from textual.widgets import Button, Static
 
@@ -75,6 +77,7 @@ async def test_all_provider_and_model_rows_live_in_the_rail():
             "mlx-lm",
             "curated",
             "installed",
+            "external",
             "remote",
             "download-models",
         ]
@@ -1139,8 +1142,6 @@ def test_curated_install_requested_refuses_an_invalid_payload_without_starting_a
         registry: A stand-in for ``event.registry``, same rationale.
         sources: A stand-in for ``event.sources``, same rationale.
     """
-    from unittest.mock import MagicMock
-
     from tldw_chatbook.UI.Screens import llm_screen as module
     from tldw_chatbook.UI.Screens.model_curated_view import CuratedView
 
@@ -1365,13 +1366,19 @@ def test_apply_curated_provision_result_notifies_mirrors_and_resets_state(
     """
     from unittest.mock import MagicMock
 
-    from tldw_chatbook.Model_Artifacts.service import ArtifactRef
+    from tldw_chatbook.Local_Ingestion.parakeet_v2_artifact import (
+        parakeet_reference,
+    )
+    from tldw_chatbook.Local_Ingestion.stt_batch_routing import PARAKEET_V2_MODEL
+    from tldw_chatbook.STT.parakeet_sources import ParakeetSourceKey
     from tldw_chatbook.UI.Screens import llm_screen as module
 
     fake_app = MagicMock()
+    source_service = MagicMock()
+    fake_app._ensure_parakeet_source_service.return_value = source_service
     monkeypatch.setattr(module.LLMScreen, "app", property(lambda self: fake_app))
 
-    reference = ArtifactRef("model-a", "a" * 40, "int8")
+    reference = parakeet_reference(PARAKEET_V2_MODEL, "int8")
     screen = module.LLMScreen.__new__(module.LLMScreen)
     screen.notify = MagicMock()
     screen._deliver_curated = MagicMock()
@@ -1402,6 +1409,10 @@ def test_apply_curated_provision_result_notifies_mirrors_and_resets_state(
     assert delivered.succeeded == (error is None)
 
     view.finish_install.assert_called_once_with()
+    if error is None:
+        source_service.prefer_managed.assert_called_once_with(ParakeetSourceKey.V2_INT8)
+    else:
+        source_service.prefer_managed.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -2487,8 +2498,6 @@ async def test_preflight_remote_receives_exact_catalog_sources_and_credential_re
     catalog_sources_and_fresh_resolver``, now against ``LLMScreen.
     _preflight_remote``.
     """
-    from unittest.mock import MagicMock
-
     from tldw_chatbook.UI.Screens import llm_screen as module
 
     catalog = _remote_catalog()
@@ -2592,3 +2601,395 @@ async def test_provision_remote_reuses_exact_preflight_values_without_activation
     assert sources is catalog.sources
     assert callable(progress)
     assert activate is False
+
+
+class _FakeExternalSourceService:
+    """Complete fake for the exact production service surface Lab consumes."""
+
+    def __init__(self, *, records=None, block_verification: bool = False) -> None:
+        import threading
+
+        self._records = dict(records or {})
+        self.block_verification = block_verification
+        self.progress_seen = threading.Event()
+        self.release_verification = threading.Event()
+        self.vad_ready = True
+        self.prepare_threads: list[int] = []
+        self.prepare_calls = []
+        self.commit_attempts = []
+        self.committed = []
+        self.stopped = []
+        self.copy_plans = []
+        self.copied = []
+
+    def records(self):
+        return dict(self._records)
+
+    def close(self) -> None:
+        pass
+
+    def may_delete(self, _reference):
+        return None
+
+    def on_root_activated(self, _reference):
+        return None
+
+    def prefer_managed(self, _key):
+        return None
+
+    def prepare_external(
+        self,
+        key,
+        directory,
+        *,
+        owner=None,
+        cancelled=lambda: False,
+        progress=None,
+    ):
+        import threading
+        from types import SimpleNamespace
+
+        from tldw_chatbook.Local_Ingestion.parakeet_v2_artifact import (
+            parakeet_reference,
+        )
+
+        self.prepare_threads.append(threading.get_ident())
+        self.prepare_calls.append((key, directory, owner))
+        if progress is not None:
+            progress(4, 8)
+        self.progress_seen.set()
+        if self.block_verification:
+            self.release_verification.wait(3)
+        if cancelled():
+            raise RuntimeError("cancelled")
+        verified = SimpleNamespace(
+            directory=directory,
+            reference=parakeet_reference(key.model_id, key.precision),
+        )
+        return SimpleNamespace(key=key, verified=verified)
+
+    def commit_external(self, prepared):
+        from tldw_chatbook.STT.parakeet_sources import (
+            ParakeetSourceError,
+            ParakeetSourceErrorCode,
+        )
+
+        self.commit_attempts.append(prepared)
+        if not self.vad_ready:
+            raise ParakeetSourceError(ParakeetSourceErrorCode.VAD_UNAVAILABLE)
+        self.committed.append(prepared)
+
+    def stop_using_external(self, key):
+        self.stopped.append(key)
+
+    def plan_managed_copy(self, verified):
+        from tldw_chatbook.STT.parakeet_sources import ManagedCopyPlan
+
+        self.copy_plans.append(verified)
+        return ManagedCopyPlan(
+            reference=verified.reference,
+            additional_bytes=1024,
+            destination=verified.directory.parent / "managed-store",
+            free_bytes=4096,
+            already_installed=False,
+        )
+
+    def copy_into_managed(self, verified, consent):
+        self.copied.append((verified, consent))
+        return verified.reference
+
+
+async def _wait_for(condition, pilot, *, attempts: int = 120) -> bool:
+    for _ in range(attempts):
+        if condition():
+            return True
+        await pilot.pause()
+    return condition()
+
+
+@pytest.mark.asyncio
+async def test_external_rail_mounts_through_the_existing_deferred_view_pattern():
+    from tldw_chatbook.UI.Screens.model_external_view import ExternalModelView
+
+    app = _app()
+    app._parakeet_source_service = _FakeExternalSourceService()
+    async with app.run_test(size=(120, 40)) as pilot:
+        screen = await _models_screen(app)
+        assert await _wait_for(lambda: bool(screen.query("#llm-view-external")), pilot)
+        window = screen.query_one(LLMManagementWindow)
+        assert window.query_one("#external-models-view", ExternalModelView)
+
+        external_row = next(
+            row for row in _rail_rows(screen) if row.lab_view_key == "external"
+        )
+        external_row.press()
+        await pilot.pause()
+        assert window.active_view == "external"
+        assert "-active" in window.query_one("#llm-view-external").classes
+
+
+@pytest.mark.asyncio
+async def test_real_picker_verifies_off_loop_reports_bytes_and_commits_after_success(
+    tmp_path, monkeypatch
+):
+    import threading
+
+    from tldw_chatbook.Local_Ingestion.parakeet_v2_artifact import (
+        parakeet_reference,
+    )
+    from tldw_chatbook.Local_Ingestion.stt_batch_routing import PARAKEET_V2_MODEL
+    from tldw_chatbook.Third_Party.textual_fspicker import SelectDirectory
+    from tldw_chatbook.Third_Party.textual_fspicker.parts import DirectoryNavigation
+    from tldw_chatbook.UI.Screens.model_curated_view import CuratedView
+    from tldw_chatbook.UI.Screens.model_external_view import ExternalModelView
+
+    service = _FakeExternalSourceService(block_verification=True)
+    app = _app()
+    app._parakeet_source_service = service
+    async with app.run_test(size=(120, 40)) as pilot:
+        screen = await _models_screen(app)
+        screen.notify = MagicMock()
+        assert await _wait_for(
+            lambda: bool(screen.query("#external-models-view")), pilot
+        )
+        reference = parakeet_reference(PARAKEET_V2_MODEL, "int8")
+        screen.post_message(CuratedView.UseFromDiskRequested(reference))
+        assert await _wait_for(lambda: isinstance(app.screen, SelectDirectory), pilot)
+
+        picker = app.screen
+        picker.query_one(DirectoryNavigation).location = tmp_path
+        picker.query_one("#select", Button).press()
+        assert await _wait_for(service.progress_seen.is_set, pilot)
+
+        external = screen.query_one(ExternalModelView)
+        status = external.query_one("#external-model-operation-status", Static)
+        assert "4 / 8 bytes" in str(status.renderable)
+        assert service.prepare_threads == [service.prepare_threads[0]]
+        assert service.prepare_threads[0] != threading.get_ident()
+
+        service.release_verification.set()
+        assert await _wait_for(lambda: len(service.committed) == 1, pilot)
+        status = external.query_one("#external-model-operation-status", Static)
+        assert "External source ready" in str(status.renderable)
+        assert all(
+            str(tmp_path) not in str(call) for call in screen.notify.call_args_list
+        )
+
+
+@pytest.mark.asyncio
+async def test_stale_picker_result_and_cancel_leave_the_prior_source_unchanged(
+    tmp_path, monkeypatch
+):
+    from unittest.mock import MagicMock
+
+    from tldw_chatbook.Local_Ingestion.parakeet_v2_artifact import (
+        parakeet_reference,
+    )
+    from tldw_chatbook.Local_Ingestion.stt_batch_routing import (
+        PARAKEET_V2_MODEL,
+        PARAKEET_V3_MODEL,
+    )
+
+    service = _FakeExternalSourceService()
+    app = _app()
+    app._parakeet_source_service = service
+    async with app.run_test(size=(120, 40)) as pilot:
+        screen = await _models_screen(app)
+        assert await _wait_for(
+            lambda: bool(screen.query("#external-models-view")), pilot
+        )
+        pushes = MagicMock()
+        monkeypatch.setattr(app, "push_screen", pushes)
+
+        screen._begin_external_selection(parakeet_reference(PARAKEET_V2_MODEL, "int8"))
+        stale_callback = pushes.call_args.args[1]
+        screen._begin_external_selection(parakeet_reference(PARAKEET_V3_MODEL, "f32"))
+        current_callback = pushes.call_args.args[1]
+
+        stale_callback(tmp_path)
+        current_callback(None)
+        await pilot.pause()
+
+        assert service.prepare_calls == []
+        assert service.commit_attempts == []
+
+
+@pytest.mark.asyncio
+async def test_missing_vad_shows_vad_only_consent_and_commits_only_after_provision(
+    tmp_path, monkeypatch
+):
+    from dataclasses import replace
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Local_Ingestion import parakeet_v2_artifact as artifact
+    from tldw_chatbook.Local_Ingestion.parakeet_v2_artifact import (
+        parakeet_reference,
+        parakeet_vad_descriptor,
+        parakeet_vad_reference,
+    )
+    from tldw_chatbook.Local_Ingestion.stt_batch_routing import PARAKEET_V2_MODEL
+    from tldw_chatbook.Model_Artifacts.acquisition import (
+        ArtifactPreflightEntry,
+        PreflightReport,
+    )
+    from tldw_chatbook.Third_Party.textual_fspicker import SelectDirectory
+    from tldw_chatbook.Third_Party.textual_fspicker.parts import DirectoryNavigation
+    from tldw_chatbook.UI.Screens.model_curated_view import CuratedView
+    from tldw_chatbook.Widgets.ModelArtifacts import ModelInstallModal
+
+    service = _FakeExternalSourceService()
+    service.vad_ready = False
+    descriptor = parakeet_vad_descriptor()
+    report = PreflightReport(
+        root=parakeet_vad_reference(),
+        closure_fingerprint="f" * 64,
+        entries=(
+            ArtifactPreflightEntry(
+                ref=descriptor.reference,
+                source_url=descriptor.source_url,
+                repository=descriptor.upstream_repository,
+                revision=descriptor.upstream_revision,
+                license_id=descriptor.license_id,
+                license_url=descriptor.license_url,
+                precision=descriptor.precision,
+                total_bytes=descriptor.expected_installed_bytes,
+                file_count=len(descriptor.files),
+                already_installed=False,
+                provenance=descriptor.provenance,
+            ),
+        ),
+        download_bytes=descriptor.expected_installed_bytes,
+        already_staged_bytes=0,
+        staging_overhead_bytes=0,
+        retained_bytes=0,
+        destination=tmp_path / "managed-vad",
+        free_bytes=descriptor.expected_installed_bytes + 1,
+        required_bytes=descriptor.expected_installed_bytes,
+        sufficient_space=True,
+        gating_errors=(),
+    )
+    calls = []
+
+    async def fake_preflight(**_kwargs):
+        calls.append("preflight")
+        return report
+
+    async def fake_provision(received, **_kwargs):
+        calls.append(("provision", received))
+        service.vad_ready = True
+        return tmp_path / "managed-vad"
+
+    monkeypatch.setattr(artifact, "run_parakeet_vad_preflight", fake_preflight)
+    monkeypatch.setattr(artifact, "run_parakeet_vad_provision", fake_provision)
+    app = _app()
+    app._parakeet_source_service = service
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        screen = await _models_screen(app)
+        assert await _wait_for(
+            lambda: bool(screen.query("#external-models-view")), pilot
+        )
+        reference = parakeet_reference(PARAKEET_V2_MODEL, "int8")
+        bad_report = replace(
+            report,
+            entries=(
+                replace(
+                    report.entries[0],
+                    source_url=(
+                        "https://huggingface.co/nvidia/"
+                        "parakeet-tdt-0.6b-v2/resolve/main/model.onnx"
+                    ),
+                ),
+            ),
+        )
+        bad_token = screen._next_external_token()
+        screen._apply_external_vad_preflight_result(
+            bad_token,
+            SimpleNamespace(),
+            bad_report,
+            None,
+        )
+        await pilot.pause()
+        assert not isinstance(app.screen, ModelInstallModal)
+
+        screen.post_message(CuratedView.UseFromDiskRequested(reference))
+        assert await _wait_for(lambda: isinstance(app.screen, SelectDirectory), pilot)
+        picker = app.screen
+        picker.query_one(DirectoryNavigation).location = tmp_path
+        picker.query_one("#select", Button).press()
+        assert await _wait_for(lambda: isinstance(app.screen, ModelInstallModal), pilot)
+
+        modal = app.screen
+        assert modal.report.root == parakeet_vad_reference()
+        assert {entry.ref for entry in modal.report.entries} == {
+            parakeet_vad_reference()
+        }
+        plan_text = "\n".join(str(item.renderable) for item in modal.query(Static))
+        assert "parakeet-tdt" not in plan_text.lower()
+        assert "nvidia/parakeet" not in plan_text.lower()
+        modal.query_one("#model-install-cancel", Button).press()
+        await pilot.pause()
+        assert service.committed == []
+
+        screen.post_message(CuratedView.UseFromDiskRequested(reference))
+        assert await _wait_for(lambda: isinstance(app.screen, SelectDirectory), pilot)
+        picker = app.screen
+        picker.query_one(DirectoryNavigation).location = tmp_path
+        picker.query_one("#select", Button).press()
+        assert await _wait_for(lambda: isinstance(app.screen, ModelInstallModal), pilot)
+        app.screen.query_one("#model-install-confirm", Button).press()
+        assert await _wait_for(lambda: len(service.committed) == 1, pilot)
+
+    assert calls.count("preflight") == 2
+    assert calls[-1] == ("provision", report)
+
+
+@pytest.mark.asyncio
+async def test_external_copy_uses_task6_plan_and_stop_uses_the_shared_service(
+    tmp_path,
+):
+    from tldw_chatbook.Local_Ingestion.stt_batch_routing import PARAKEET_V2_MODEL
+    from tldw_chatbook.STT.parakeet_sources import (
+        ParakeetSourceKey,
+        ParakeetSourcePreference,
+        ParakeetSourceRecord,
+    )
+    from tldw_chatbook.UI.Screens.model_external_view import ExternalModelView
+    from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
+
+    root = tmp_path / "external-root"
+    root.mkdir()
+    key = ParakeetSourceKey.V2_INT8
+    service = _FakeExternalSourceService(
+        records={
+            key: ParakeetSourceRecord(
+                model_id=PARAKEET_V2_MODEL,
+                precision="int8",
+                directory=root,
+                preferred_source=ParakeetSourcePreference.EXTERNAL,
+            )
+        }
+    )
+    app = _app()
+    app._parakeet_source_service = service
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        screen = await _models_screen(app)
+        screen.notify = MagicMock()
+        assert await _wait_for(
+            lambda: bool(screen.query("#external-models-view")), pilot
+        )
+        screen.post_message(ExternalModelView.CopyRequested(key))
+        assert await _wait_for(
+            lambda: isinstance(app.screen, ConfirmationDialog), pilot
+        )
+        dialog = app.screen
+        assert str(root) not in dialog.message
+        assert "1.0 KiB" in dialog.message
+        dialog.query_one("#confirm-button", Button).press()
+        assert await _wait_for(lambda: len(service.copied) == 1, pilot)
+
+        screen.post_message(ExternalModelView.StopRequested(key))
+        await pilot.pause()
+        assert service.stopped == [key]
+        assert all(str(root) not in str(call) for call in screen.notify.call_args_list)
