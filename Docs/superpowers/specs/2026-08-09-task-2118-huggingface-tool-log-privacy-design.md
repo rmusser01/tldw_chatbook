@@ -1,7 +1,7 @@
 # TASK-2118 — HuggingFace tool-log privacy design
 
 - Date: 2026-08-09
-- Status: approved design, pending implementation plan
+- Status: implemented and verified
 - Backlog: TASK-2118
 - Existing decision: `backlog/decisions/029-local-private-data-boundary.md`
 - ADR required: no

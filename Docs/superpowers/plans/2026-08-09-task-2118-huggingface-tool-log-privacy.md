@@ -590,7 +590,7 @@ Expected: the production/test diff is empty and the working tree is clean; neith
 
 **Files:**
 - Modify: `backlog/tasks/task-2118 - HuggingFace-tools-debug-log-dumps-full-tool-schemas.md`
-- Verify: repository-wide tests and edited Python files
+- Verify: touched-file and affected-functionality tests plus edited Python static checks
 
 - [ ] **Step 1: Run the touched-file and affected-functionality gates**
 
