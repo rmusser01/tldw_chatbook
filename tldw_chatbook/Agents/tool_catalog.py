@@ -926,29 +926,63 @@ class ToolCatalogRegistry:
         # from this map resolves to `None`, which that gate treats as
         # "unknown source" and refuses — the fail-toward-not-writing default.
         self._source_cache: dict[str, str] | None = None
-        # Guards the three caches above. RLock, not Lock: rebuilding calls
-        # out to each provider's list_catalog() (see _build_owner_cache())
-        # WHILE the lock is held, and the provider interface is a plugin
-        # seam (MCP/Skills register here, per the module docstring, and
-        # more will). None of the three providers shipped today --
-        # BuiltinToolProvider, MCPToolProvider, LocalToolProvider -- call
-        # back into this registry from list_catalog() (each just returns an
-        # already-built in-memory list), but a future provider that DOES
-        # re-enter -- e.g. resolving another tool's schema while composing
-        # its own catalog, on the same thread -- would deadlock a plain
-        # Lock. RLock makes same-thread reentrance safe while still
-        # serializing distinct threads, which is the property this cache
-        # actually needs, and correctness (no deadlock) outranks closing
-        # every last theoretical reentrant-lock hole.
+        # Guards the three caches above. RLock, not Lock -- and NOT because
+        # same-thread reentrance is actually safe here. A live probe (task-4
+        # review) built a deliberately re-entrant provider (one whose
+        # list_catalog() calls back into this registry) and measured both
+        # primitives against it:
+        #   - Lock: the reentrant call blocks forever on a lock its own
+        #     thread already holds -- a PERMANENT hang. Because this one
+        #     lock is shared by the whole registry, that stalls every other
+        #     fleet child's tool lookups too, forever.
+        #   - RLock: the reentrant call is let through (same thread), but it
+        #     re-enters _ensure_catalog_cache() BEFORE _build_owner_cache()
+        #     has returned, so `_owner_cache` is still `None` (the publish
+        #     below hasn't run yet) and it recurses into ANOTHER
+        #     _build_owner_cache() call, which calls the re-entrant
+        #     provider's list_catalog() again, forever -- until Python's
+        #     recursion limit ends it with a RecursionError (measured at 73
+        #     nested calls). The `with self._cache_lock:` blocks still
+        #     unwind correctly through that exception (each nested `with`
+        #     releases its RLock count as the stack pops), so the lock is
+        #     NOT left held: the crash is confined to the one thread that
+        #     owned the misbehaving provider, and every other fleet child
+        #     keeps running and can still acquire the lock once that
+        #     thread's stack finishes unwinding.
+        # RLock is still the right choice, but for THAT reason -- it turns
+        # an unbounded, fleet-wide hang into a fail-fast crash confined to
+        # one thread -- not because this class means to support reentrant
+        # callers.
+        #
+        # Atomic publish: _build_owner_cache() builds `owner`/`name_to_id`/
+        # `source_by_id` as fresh LOCAL dicts and returns them only once
+        # fully populated; _ensure_catalog_cache() assigns all three
+        # instance attributes together, still holding the lock, before
+        # returning. A thread blocked on the lock can therefore only ever
+        # observe the caches in one of two states -- the previous complete
+        # generation, or the next complete one -- never a partially-built
+        # map with some providers swept and others not.
+        #
+        # Provider contract this all depends on: list_catalog() must NOT
+        # re-enter this registry (see above) and must NOT block. Today that
+        # holds only by convention -- BuiltinToolProvider, MCPToolProvider,
+        # and LocalToolProvider each return an already-built in-memory
+        # list/dict with no I/O -- but nothing enforces it. A future
+        # provider that does network I/O inside list_catalog() would run
+        # that I/O WHILE `_cache_lock` is held, stalling every other fleet
+        # child's tool lookup for however long the call takes.
         self._cache_lock = threading.RLock()
 
     def register_provider(self, provider: ToolProvider) -> None:
-        self._providers.append(provider)
-        # A newly registered provider's tools aren't reflected in any
-        # cache already built — invalidate so the next lookup rebuilds it.
-        # Locked so a concurrent reader can't observe one store already
-        # cleared while another still holds the previous generation.
+        # The append lives inside the lock too, alongside the three
+        # invalidations: a concurrent reader must never be able to observe
+        # the new provider in `self._providers` while still holding a
+        # cache built before it was appended (or vice versa).
         with self._cache_lock:
+            self._providers.append(provider)
+            # A newly registered provider's tools aren't reflected in any
+            # cache already built — invalidate so the next lookup rebuilds
+            # it.
             self._owner_cache = None
             self._name_to_id_cache = None
             self._source_cache = None
@@ -1128,10 +1162,14 @@ class ToolCatalogRegistry:
         Returns:
             A positive seconds value, or None to use the run default.
         """
-        tool_id = self.resolve_name(name)
+        # One locked snapshot, like invoke_by_name() -- this was the last
+        # unlocked two-read pair left in the class (resolve_name() then
+        # _owner_and_id(), each its own _ensure_catalog_cache() call).
+        owner, name_to_id, _source = self._ensure_catalog_cache()
+        tool_id = name_to_id.get(name)
         if tool_id is None:
             return None
-        provider = self._owner_and_id(tool_id)
+        provider = owner.get(tool_id)
         getter = getattr(provider, "timeout_for", None)
         return getter(tool_id) if getter is not None else None
 
