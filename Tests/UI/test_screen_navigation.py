@@ -1649,6 +1649,7 @@ def test_check_action_gates_notes_files_back_to_active_files_mode():
     # Files mode genuinely owns the Notes canvas -- active.
     screen._library_selected_row_id = LIBRARY_ROW_BROWSE_NOTES
     assert screen.check_action("library_notes_files_back", ()) is True
+    assert screen.check_action("library_notes_escape", ()) is False
 
     # Back to Database Notes -- inactive again.
     screen._library_notes_source = "database"

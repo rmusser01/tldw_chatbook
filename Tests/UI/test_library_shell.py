@@ -22030,8 +22030,8 @@ async def test_library_note_stage_visibility_skips_redundant_class_work() -> Non
 
 
 @pytest.mark.asyncio
-async def test_library_note_media_route_switch_preserves_shell_surfaces() -> None:
-    """Notes/Media route changes replace only the active canvas subtree."""
+async def test_library_note_media_route_switch_updates_contextual_chrome() -> None:
+    """Notes-only chrome follows the route while compatible swaps stay targeted."""
     app = _build_test_app()
     _seed_conversations(app, _two_conversations(), notes=_two_notes())
     host = LibraryHarness(app)
@@ -22041,27 +22041,30 @@ async def test_library_note_media_route_switch_preserves_shell_surfaces() -> Non
         await _wait_for_library_shell(screen, pilot)
         await _wait_for_library_notes_compact(screen, pilot, False)
         await _task10_open_notes_navigator(screen, pilot)
+        assert bool(screen.query("#library-notes-source-strip"))
         await _task10_activate_with_keyboard(screen, pilot, "#library-notes-row-0")
         await _wait_for_selector(screen, pilot, "#library-note-body")
 
-        header = screen.query_one("#library-header-line")
-        shell = screen.query_one("#library-shell-grid")
-        rail = screen.query_one("#library-rail")
-        canvas_host = screen.query_one("#library-canvas")
-
-        await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_MEDIA)
-        await _wait_for_selector(screen, pilot, "#library-media-list")
-        assert screen.query_one("#library-header-line") is header
-        assert screen.query_one("#library-shell-grid") is shell
-        assert screen.query_one("#library-rail") is rail
-        assert screen.query_one("#library-canvas") is canvas_host
+        notes_header = screen.query_one("#library-header-line")
+        notes_shell = screen.query_one("#library-shell-grid")
+        notes_rail = screen.query_one("#library-rail")
+        notes_canvas_host = screen.query_one("#library-canvas")
 
         await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_NOTES)
         await _wait_for_selector(screen, pilot, "#library-notes-filter")
-        assert screen.query_one("#library-header-line") is header
-        assert screen.query_one("#library-shell-grid") is shell
-        assert screen.query_one("#library-rail") is rail
-        assert screen.query_one("#library-canvas") is canvas_host
+        assert screen.query_one("#library-header-line") is notes_header
+        assert screen.query_one("#library-shell-grid") is notes_shell
+        assert screen.query_one("#library-rail") is notes_rail
+        assert screen.query_one("#library-canvas") is notes_canvas_host
+        assert bool(screen.query("#library-notes-source-strip"))
+
+        await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_MEDIA)
+        await _wait_for_selector(screen, pilot, "#library-media-list")
+        assert not screen.query("#library-notes-source-strip")
+
+        await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_NOTES)
+        await _wait_for_selector(screen, pilot, "#library-notes-filter")
+        assert bool(screen.query("#library-notes-source-strip"))
         assert screen.query_one("#library-row-browse-notes").has_class(
             "library-rail-row-selected"
         )

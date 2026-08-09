@@ -3253,10 +3253,14 @@ class LibraryScreen(BaseAppScreen):
 
     def _library_notes_workflow_active(self) -> bool:
         """Return whether the current Library route is owned by Database Notes."""
-        return self._library_selected_row_id in {
-            LIBRARY_ROW_BROWSE_NOTES,
-            LIBRARY_ROW_CREATE_NOTE,
-        }
+        return (
+            self._library_notes_source == "database"
+            and self._library_selected_row_id
+            in {
+                LIBRARY_ROW_BROWSE_NOTES,
+                LIBRARY_ROW_CREATE_NOTE,
+            }
+        )
 
     def _library_notes_focus_region(
         self,
@@ -11099,6 +11103,8 @@ class LibraryScreen(BaseAppScreen):
         await self._flush_library_note_save()
         if self._library_note_dirty:
             return
+        self._supersede_library_notes_navigation()
+        self._reset_library_note_editor_state()
         if self._library_file_notes_workspace is None:
             self._library_file_notes_workspace = (
                 self._library_file_notes_workspace_factory()
@@ -11189,7 +11195,10 @@ class LibraryScreen(BaseAppScreen):
         Notes and Media are the high-frequency browse routes exercised by the
         adaptive Notes workflow. Their list canvases can be rebuilt in the
         existing canvas host while the header, rail, and workbench grid retain
-        identity. Other routes keep the central whole-screen recompose seam.
+        identity when the destination uses the same contextual chrome already
+        mounted around that host. Crossing the Notes boundary must use the
+        central whole-screen recompose seam so its Database/Files source strip
+        is added or removed with the rest of the route-owned structure.
 
         Args:
             shell: Latest normalized Library shell state.
@@ -11199,8 +11208,16 @@ class LibraryScreen(BaseAppScreen):
             should use the whole-screen fallback.
         """
         try:
+            notes_source_strip_mounted = bool(self.query("#library-notes-source-strip"))
+            destination_uses_notes_source_strip = shell.canvas_kind == "notes"
+            if notes_source_strip_mounted != destination_uses_notes_source_strip:
+                return False
+
             if shell.canvas_kind == "notes":
-                if self._library_notes_view != "list":
+                if (
+                    self._library_notes_view != "list"
+                    or self._library_notes_source != "database"
+                ):
                     return False
                 canvas: Widget = LibraryNotesCanvas(
                     self._build_library_notes_state(),
@@ -11238,12 +11255,14 @@ class LibraryScreen(BaseAppScreen):
             # compositor may still hold the previous geometry for one frame;
             # without this guard a removed TextArea can be asked to render
             # after its component-style context has already been released.
+            # Detach before mounting because same-route replacements reuse
+            # their stable canvas ID and Textual rejects duplicate siblings.
             outgoing = tuple(canvas_host.children)
             for child in outgoing:
                 child.display = False
-            await canvas_host.mount(canvas)
             if outgoing:
                 await canvas_host.remove_children(outgoing)
+            await canvas_host.mount(canvas)
             self._apply_library_notes_stage_visibility()
             self._apply_library_notes_footer_context()
             return True
@@ -11395,7 +11414,7 @@ class LibraryScreen(BaseAppScreen):
         )
         self._library_selected_row_id = shell.selected_row_id
         if not await self._replace_library_browse_canvas(shell):
-            self.refresh(recompose=True)
+            await self.recompose()
         # task-2856 AC1: a rail-row press landing on one of the four list
         # canvases focuses its primary list's first row -- the entry-point
         # half of the same seam ``_exit_library_skill_editor_guarded`` /
