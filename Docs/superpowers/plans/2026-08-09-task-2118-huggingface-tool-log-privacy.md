@@ -19,7 +19,7 @@
 - ADR required: no new ADR
 - ADR path: `backlog/decisions/029-local-private-data-boundary.md`
 - Reason: ADR-029 already excludes provider payloads and tool definitions from persistent logs while permitting bounded metadata such as tool names. This task applies that accepted contract.
-- Latest-dev reconciliation: rebased onto `origin/dev` at `727565e73`; the two unsafe HuggingFace log calls and existing helper contract are unchanged. Fresh baselines are 68 passing privacy tests and 8 passing HuggingFace chat-function tests. The expanded logger inventory remains 35 candidates across four modules. Ruff lint and compilation are green. Both complete Python files have pre-existing formatter drift, while the three ranges this task will edit are formatter-clean; use range checks to avoid an unrelated whole-file rewrite.
+- Latest-dev reconciliation: rebased onto `origin/dev` at `727565e73`; the two unsafe HuggingFace log calls and existing helper contract are unchanged. Fresh baselines are 68 passing privacy tests and 8 passing HuggingFace chat-function tests. The identifier-filtered high-risk logger inventory remains 35 candidates across four modules; it is not the exhaustive AC 4 proof. The exhaustive source proof is the complete 763-call logger review plus the outbound-body/tool-structure correlation in Task 2. Ruff lint and compilation are green. Both complete Python files have pre-existing formatter drift, while the three ranges this task will edit are formatter-clean; use range checks to avoid an unrelated whole-file rewrite.
 
 ## File map
 
@@ -215,7 +215,7 @@ git commit -m "fix(llm): redact HuggingFace tool logs"
 - Temporarily modify and restore: `tldw_chatbook/LLM_Calls/LLM_API_Calls.py:4350-4360`
 - Test: `Tests/Chat/test_sensitive_llm_logging.py::test_huggingface_tool_logs_are_names_only`
 
-- [ ] **Step 1: Run the AST-assisted raw-payload/tool logger inventory**
+- [ ] **Step 1: Run the identifier-filtered high-risk candidate inventory**
 
 Run this read-only inventory from the repository root:
 
@@ -263,11 +263,276 @@ for path in sorted(root.rglob("*.py")):
 PY
 ```
 
-Expected after the repair: 35 candidates across four modules, all inspected. Eleven request/tool candidates in `LLM_API_Calls.py` route through `safe_llm_request_payload_summary()` (the nine existing provider summaries plus the two corrected HuggingFace summaries). Fourteen are safe metadata-only calls: two HuggingFace model/stream/count/byte calls, one `LLM_API_Calls_Local.py` payload-**keys** call, and eleven `type(data)` calls. The remaining ten calls in `Local_Summarization_Lib.py` and `Summarization_General_Lib.py` log full or 500-character input data. They are confirmed privacy exposures but are individual content diagnostics, not AC 4 raw provider request-payload dictionaries/tool definitions; the separately filed task owns them, while TASK-2118 notes record only the exact sites/classification and no later ID. There must be zero raw request-payload dictionary or raw tool-definition logs.
+Expected after the repair: exactly 35 high-risk candidates across four modules: `LLM_API_Calls.py` 13, `LLM_API_Calls_Local.py` 1, `Local_Summarization_Lib.py` 15, and `Summarization_General_Lib.py` 6. Eleven request/tool candidates in `LLM_API_Calls.py` route through `safe_llm_request_payload_summary()` (the nine existing provider summaries plus the two corrected HuggingFace summaries). Fourteen are safe metadata-only calls: two HuggingFace model/stream/count/byte calls, one `LLM_API_Calls_Local.py` payload-**keys** call, and eleven `type(data)` calls. The remaining ten calls in `Local_Summarization_Lib.py` and `Summarization_General_Lib.py` log full or 500-character input data. They are confirmed privacy exposures but are individual content diagnostics, not AC 4 raw provider request-payload dictionaries/tool definitions; the separately filed task owns them, while TASK-2118 notes record only the exact sites/classification and no later ID.
 
-Inspect every result in context. Record the classification in TASK-2118 Implementation Notes. If an additional AC 4 match exists, add a failing sentinel test and route it through the helper before continuing.
+This 35-site list is deliberately only a high-risk candidate inventory. Its identifier spelling filter can miss a body called `request_data`, `data2`, `retry_payload`, or an unrelated alias, so it must not be presented as exhaustive or authoritative AC 4 evidence. Inspect every result in context, retain its classification, and then complete Steps 2 and 3.
 
-- [ ] **Step 2: Verify the separate privacy follow-up is committed before mutation checks**
+- [ ] **Step 2: Enumerate and review every logger call in `LLM_Calls`**
+
+Run this syntax-complete enumeration for calls rooted at the repository's `logger` or `logging` owners. `owner_root()` follows attribute and call chains, so `logger.opt(...).error(...)` and `logging.getLogger(...).debug(...)` are included:
+
+```bash
+../../.venv/bin/python -B - <<'PY'
+import ast
+from collections import Counter
+from pathlib import Path
+
+root = Path("tldw_chatbook/LLM_Calls")
+methods = {"trace", "debug", "info", "warning", "error", "critical", "exception"}
+owners = {"logger", "logging"}
+
+
+def owner_root(expr: ast.AST) -> str | None:
+    if isinstance(expr, ast.Name):
+        return expr.id
+    if isinstance(expr, ast.Attribute):
+        return owner_root(expr.value)
+    if isinstance(expr, ast.Call):
+        return owner_root(expr.func)
+    return None
+
+
+rows: list[tuple[str, int, str, str]] = []
+for path in sorted(root.rglob("*.py")):
+    source = path.read_text(encoding="utf-8")
+    tree = ast.parse(source, filename=str(path))
+    for call in ast.walk(tree):
+        if not isinstance(call, ast.Call) or not isinstance(call.func, ast.Attribute):
+            continue
+        if call.func.attr not in methods or owner_root(call.func.value) not in owners:
+            continue
+        segment = " ".join((ast.get_source_segment(source, call) or "").split())
+        rows.append((str(path), call.lineno, call.func.attr, segment))
+
+for path, line, method, segment in sorted(rows):
+    print(f"{path}:{line}:{method}: {segment}")
+counts = Counter(path for path, *_ in rows)
+for path, count in sorted(counts.items()):
+    print(f"COUNT {path}: {count}")
+print(f"TOTAL: {len(rows)}")
+PY
+```
+
+Expected reviewed inventory: 763 calls across eight modules:
+
+- `LLM_API_Calls.py`: 171
+- `LLM_API_Calls_Local.py`: 41
+- `Local_Summarization_Lib.py`: 242
+- `Summarization_General_Lib.py`: 281
+- `huggingface_api.py`: 9
+- `pricing_catalog.py`: 4
+- `realtime/openai_session.py`: 13
+- `realtime/transport.py`: 2
+
+Review every printed source expression at its printed location, including the logger calls that do not contain conventional payload/tool identifiers. Classify whether it can render a provider request body, a tool/schema/definition structure, bounded metadata, response/error data, or unrelated diagnostics. The reviewed result after Task 1 is no additional raw provider request-body dictionary or raw tool/schema/definition structure. Existing raw summarization input/prompt/response diagnostics are not evidence that this narrower AC 4 boundary is clean; preserve their separate ownership and do not silently classify them as safe.
+
+- [ ] **Step 3: Correlate outbound bodies and tool/schema expressions independently of the 35-site filter**
+
+Run this function-scoped correlation. It discovers outbound `json=`, `data=`, and `content=` expressions on request/post/put/patch/stream/send-like calls without filtering their identifier spellings. It prints every logger call in each request-containing function, marks exact body-expression name overlap, and follows only simple same-scope `alias = name` and `alias = name.copy()` relationships. That alias pass is deliberately flow-insensitive and conservative; manual review must resolve reassignments and it must not be described as general data-flow proof.
+
+```bash
+../../.venv/bin/python -B - <<'PY'
+import ast
+from collections import Counter, defaultdict
+from pathlib import Path
+
+root = Path("tldw_chatbook/LLM_Calls")
+log_methods = {"trace", "debug", "info", "warning", "error", "critical", "exception"}
+http_methods = {"request", "post", "put", "patch", "stream", "send"}
+body_keys = {"json", "data", "content"}
+
+
+def owner_root(expr: ast.AST) -> str | None:
+    if isinstance(expr, ast.Name):
+        return expr.id
+    if isinstance(expr, ast.Attribute):
+        return owner_root(expr.value)
+    if isinstance(expr, ast.Call):
+        return owner_root(expr.func)
+    return None
+
+
+def is_log_call(node: ast.AST) -> bool:
+    return (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr in log_methods
+        and owner_root(node.func.value) in {"logger", "logging"}
+    )
+
+
+def call_leaf(call: ast.Call) -> str:
+    if isinstance(call.func, ast.Attribute):
+        return call.func.attr
+    if isinstance(call.func, ast.Name):
+        return call.func.id
+    return ""
+
+
+def names(node: ast.AST) -> set[str]:
+    return {item.id for item in ast.walk(node) if isinstance(item, ast.Name)}
+
+
+def target_names(node: ast.AST) -> set[str]:
+    if isinstance(node, ast.Name):
+        return {node.id}
+    if isinstance(node, ast.Starred):
+        return target_names(node.value)
+    if isinstance(node, (ast.Tuple, ast.List)):
+        return set().union(*(target_names(item) for item in node.elts))
+    return set()
+
+
+body_calls = request_scopes = logs_in_request_scopes = 0
+keyword_counts: Counter[str] = Counter()
+correlated: set[tuple[str, int]] = set()
+exact: set[tuple[str, int]] = set()
+alias_only: set[tuple[str, int]] = set()
+
+for path in sorted(root.rglob("*.py")):
+    source = path.read_text(encoding="utf-8")
+    tree = ast.parse(source, filename=str(path))
+    parents: dict[ast.AST, ast.AST] = {}
+    for parent in ast.walk(tree):
+        for child in ast.iter_child_nodes(parent):
+            parents[child] = parent
+
+    def scope_of(node: ast.AST) -> str:
+        parts: list[str] = []
+        parent = parents.get(node)
+        while parent is not None:
+            if isinstance(parent, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                parts.append(parent.name)
+            parent = parents.get(parent)
+        return ".".join(reversed(parts)) or "<module>"
+
+    scopes: defaultdict[str, list[ast.AST]] = defaultdict(list)
+    for node in ast.walk(tree):
+        scopes[scope_of(node)].append(node)
+
+    for scope, nodes in sorted(scopes.items()):
+        bodies: list[tuple[ast.Call, list[ast.keyword]]] = []
+        alias_edges: list[tuple[str, str]] = []
+        for node in nodes:
+            if isinstance(node, ast.Call) and call_leaf(node) in http_methods:
+                keywords = [kw for kw in node.keywords if kw.arg in body_keys]
+                if keywords:
+                    bodies.append((node, keywords))
+                    keyword_counts.update(kw.arg for kw in keywords if kw.arg)
+            if isinstance(node, ast.Assign):
+                targets = set().union(*(target_names(item) for item in node.targets))
+                direct_name = isinstance(node.value, ast.Name)
+                copied_name = (
+                    isinstance(node.value, ast.Call)
+                    and isinstance(node.value.func, ast.Attribute)
+                    and node.value.func.attr in {"copy", "deepcopy"}
+                )
+                if direct_name or copied_name:
+                    alias_edges.extend((left, right) for left in targets for right in names(node.value))
+
+        if not bodies:
+            continue
+        request_scopes += 1
+        body_calls += len(bodies)
+        body_names = set().union(
+            *(names(keyword.value) for _, keywords in bodies for keyword in keywords)
+        )
+        aliases = set(body_names)
+        changed = True
+        while changed:
+            before = len(aliases)
+            for left, right in alias_edges:
+                if left in aliases or right in aliases:
+                    aliases.update((left, right))
+            changed = len(aliases) != before
+
+        print(f"SCOPE {path}::{scope}")
+        for call, keywords in sorted(bodies, key=lambda row: row[0].lineno):
+            rendered = ", ".join(
+                f"{keyword.arg}={ast.unparse(keyword.value)}" for keyword in keywords
+            )
+            print(f"  BODY {call.lineno}: {ast.unparse(call.func)} {rendered}")
+        print(f"  BODY_NAMES={sorted(body_names)} SIMPLE_ALIASES={sorted(aliases)}")
+        for call in sorted((node for node in nodes if is_log_call(node)), key=lambda node: node.lineno):
+            logs_in_request_scopes += 1
+            overlap = names(call) & aliases
+            exact_overlap = names(call) & body_names
+            site = (str(path), call.lineno)
+            if overlap:
+                correlated.add(site)
+                (exact if exact_overlap else alias_only).add(site)
+            segment = " ".join((ast.get_source_segment(source, call) or "").split())
+            print(
+                f"  LOG {call.lineno}: exact={sorted(exact_overlap)} "
+                f"alias={sorted(overlap - body_names)} :: {segment}"
+            )
+
+print(f"BODY_CALLS: {body_calls}")
+print(f"REQUEST_SCOPES: {request_scopes}")
+print(f"BODY_KEYWORDS: {dict(sorted(keyword_counts.items()))}")
+print(f"LOGS_IN_REQUEST_SCOPES: {logs_in_request_scopes}")
+print(f"CORRELATED_LOGS: {len(correlated)}")
+print(f"EXACT_LOGS: {len(exact)}")
+print(f"SIMPLE_ALIAS_ONLY_LOGS: {len(alias_only)}")
+PY
+```
+
+Expected result: 57 outbound body-bearing calls across 33 function scopes, with 55 `json=` bodies, two `data=` bodies, and zero `content=` bodies. The script prints all 554 logger calls in those scopes. Forty-one unique log sites correlate with an exact body-expression name or the limited simple-alias set: 27 exact and 14 alias-only, distributed as `LLM_API_Calls.py` 9, `LLM_API_Calls_Local.py` 1, `Local_Summarization_Lib.py` 20, and `Summarization_General_Lib.py` 11. Manually inspect all 554 source expressions, the body construction/reassignment order, and every one of the 41 marked sites. The nine cloud request-body matches use the safe allowlist helper; the local adapter match logs keys only. The remaining marked summarization sites are type/model/path metadata or input/prompt previews emitted before the same generic variable name is reassigned to the outbound dictionary; none renders the constructed provider request dictionary.
+
+Run a separate lexical tool/schema/definition scan over every logging expression:
+
+```bash
+../../.venv/bin/python -B - <<'PY'
+import ast
+from pathlib import Path
+
+root = Path("tldw_chatbook/LLM_Calls")
+methods = {"trace", "debug", "info", "warning", "error", "critical", "exception"}
+tokens = {"tool", "schema", "definition"}
+
+
+def owner_root(expr: ast.AST) -> str | None:
+    if isinstance(expr, ast.Name):
+        return expr.id
+    if isinstance(expr, ast.Attribute):
+        return owner_root(expr.value)
+    if isinstance(expr, ast.Call):
+        return owner_root(expr.func)
+    return None
+
+
+rows: list[tuple[str, int, list[str], str]] = []
+for path in sorted(root.rglob("*.py")):
+    source = path.read_text(encoding="utf-8")
+    for call in ast.walk(ast.parse(source, filename=str(path))):
+        if not isinstance(call, ast.Call) or not isinstance(call.func, ast.Attribute):
+            continue
+        if call.func.attr not in methods or owner_root(call.func.value) not in {"logger", "logging"}:
+            continue
+        values: list[str] = []
+        for node in ast.walk(call):
+            if isinstance(node, ast.Name):
+                values.append(node.id)
+            elif isinstance(node, ast.Attribute):
+                values.append(node.attr)
+            elif isinstance(node, ast.Constant) and isinstance(node.value, str):
+                values.append(node.value)
+        matched = sorted(token for token in tokens if any(token in value.lower() for value in values))
+        if matched:
+            segment = " ".join((ast.get_source_segment(source, call) or "").split())
+            rows.append((str(path), call.lineno, matched, segment))
+
+for path, line, matched, segment in sorted(rows):
+    print(f"{path}:{line}: terms={matched} :: {segment}")
+print(f"TOTAL: {len(rows)}")
+PY
+```
+
+Expected: ten expressions, all in `LLM_API_Calls.py`: eight constant validation/event warnings, one Google diagnostic containing only a `tool_call_id`, and the corrected HuggingFace tool summary containing names only. There are zero lexical `schema` or `definition` matches and zero raw tool/schema/definition structures. This lexical scan can still miss a generically named runtime value, which is why it supplements rather than replaces the complete 763-call source review and request-body correlation.
+
+These scripts prove the reviewed Python syntax under `LLM_Calls` for calls rooted at `logger`/`logging` and for the listed HTTP method/keyword shapes. They do not prove dynamic runtime values, custom logger aliases, positional/custom transport bodies, or generated code. Record this boundary exactly; the AC 4 conclusion is the combined result of the complete logger review, body/tool correlation, real-function sentinel, and independent mutations—not any single heuristic scan. If an additional AC 4 match exists, add a failing sentinel test and route it through the helper before continuing.
+
+- [ ] **Step 4: Verify the separate privacy follow-up is committed before mutation checks**
 
 Run:
 
@@ -279,7 +544,7 @@ git status --short
 
 Expected: the title search returns exactly one generated task file, the log command shows the dedicated planning/follow-up commit, and the working tree is clean. The follow-up's description points backward to TASK-2118; TASK-2118 does not point forward to its later ID.
 
-- [ ] **Step 3: Mutation-check the tool-definition guard**
+- [ ] **Step 5: Mutation-check the tool-definition guard**
 
 Temporarily replace only the corrected `HuggingFace Tools` summary with the old line:
 
@@ -295,7 +560,7 @@ Run:
 
 Expected: `1 failed, 1 passed`; inspect the traceback and require the ordinary (`sensitive=False`) case to fail on the planted description/schema or exact names-only assertion. Restore the helper-based implementation with `apply_patch` immediately and rerun the same cache-disabled command for `2 passed`.
 
-- [ ] **Step 4: Mutation-check the Final Payload allowlist**
+- [ ] **Step 6: Mutation-check the Final Payload allowlist**
 
 With the tools fix restored, temporarily replace only the corrected Final Payload summary with the prior denylist expression:
 
@@ -309,7 +574,7 @@ Run the same `python -B ... -vv` targeted command.
 
 Expected: `1 failed, 1 passed`; inspect the traceback and require the ordinary (`sensitive=False`) case to fail because `HUGGINGFACE-USER-CANARY` reappears. Restore the helper-based implementation with `apply_patch` immediately and rerun the same cache-disabled command for `2 passed`.
 
-- [ ] **Step 5: Confirm no temporary mutation remains**
+- [ ] **Step 7: Confirm no temporary mutation remains**
 
 Run:
 
