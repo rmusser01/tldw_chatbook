@@ -116,6 +116,7 @@ from ...Chat.console_chat_models import (
 )
 from ...Chat.console_display_state import evidence_bundle_from_launch
 from ...Chat.console_live_work import ConsoleLiveWorkLaunch
+from ...Chat.console_roleplay_metadata import parse_console_roleplay_context
 from ...Chat.rag_scope import RagScope
 from ...Widgets.confirmation_dialog import ConfirmationDialog
 from ...Widgets.Console import (
@@ -1314,6 +1315,13 @@ class ConsoleWorkspaceController:
             assistant_id=assistant_id,
             assistant_authority_id=assistant_authority_id,
             character_id=character_id,
+        )
+        roleplay_context = parse_console_roleplay_context(
+            conversation.get("metadata")
+        )
+        session.user_display_name_override = roleplay_context.user_name_override
+        session.character_system_template = (
+            roleplay_context.character_system_template
         )
         # Re-derive display-only agent TOOL markers from AgentRunsDB and overlay
         # them onto the restored active-path VIEW (markers are never tree nodes;

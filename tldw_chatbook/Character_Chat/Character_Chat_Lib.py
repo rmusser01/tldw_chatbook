@@ -531,7 +531,7 @@ def replace_placeholders(
     return processed_text
 
 
-def compose_character_card_text(
+def compose_character_card_template(
     *,
     name: str,
     system_prompt: str = "",
@@ -540,9 +540,8 @@ def compose_character_card_text(
     scenario: str = "",
     message_example: str = "",
     post_history_instructions: str = "",
-    user_name: str = "User",
 ) -> str:
-    """Join a character card's prompt-bearing fields into one macro-resolved block.
+    """Join a character card's prompt-bearing fields without resolving macros.
 
     task-1744: this is the ONE card->prompt joiner. It is shared by the
     character-probe eval engine
@@ -560,9 +559,8 @@ def compose_character_card_text(
     are prefixed with a label so a model can tell persona description from
     an in-character instruction. Fields are joined with a blank line
     between them, in that fixed order, and macros (``{{char}}``/``{{user}}``
-    and their aliases -- see :func:`replace_placeholders`) are resolved
-    once over the JOINED text rather than per-field, since prose can carry
-    a macro across what would otherwise be a field boundary.
+    and their aliases -- see :func:`replace_placeholders`) remain byte-exact
+    for trusted template provenance.
 
     Args:
         name: The character's already-resolved display name (the caller
@@ -575,10 +573,8 @@ def compose_character_card_text(
         scenario: The card's scenario field.
         message_example: The card's example dialogue.
         post_history_instructions: The card's post-history instructions.
-        user_name: What ``{{user}}`` (and its aliases) resolve to.
-
     Returns:
-        str: The macro-resolved, joined card text, or ``""`` if every field
+        str: The raw joined card text, or ``""`` if every field
         is empty or whitespace-only. What an empty result MEANS is left to
         the caller: the character-probe engine treats it as "no card text
         at all" and may still emit steering alone, while Console substitutes
@@ -600,10 +596,31 @@ def compose_character_card_text(
         f"Example dialogue:\n{message_example}" if message_example.strip() else "",
         post_history_instructions if post_history_instructions.strip() else "",
     ]
-    text = "\n\n".join(part.strip() for part in parts if part and part.strip())
-    if not text:
-        return ""
-    return replace_placeholders(text, name, user_name)
+    return "\n\n".join(part.strip() for part in parts if part and part.strip())
+
+
+def compose_character_card_text(
+    *,
+    name: str,
+    system_prompt: str = "",
+    personality: str = "",
+    description: str = "",
+    scenario: str = "",
+    message_example: str = "",
+    post_history_instructions: str = "",
+    user_name: str = "User",
+) -> str:
+    """Join and resolve a character card's prompt-bearing fields."""
+    template = compose_character_card_template(
+        name=name,
+        system_prompt=system_prompt,
+        personality=personality,
+        description=description,
+        scenario=scenario,
+        message_example=message_example,
+        post_history_instructions=post_history_instructions,
+    )
+    return replace_placeholders(template, name, user_name)
 
 
 def replace_user_placeholder(

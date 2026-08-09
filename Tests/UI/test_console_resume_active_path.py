@@ -11,10 +11,16 @@ Real DB round-trips: a real ``CharactersRAGDB`` behind the real
 full-tree flatten -- no hand-rolled fakes for the pieces under test.
 """
 
+from unittest.mock import AsyncMock
+
+import pytest
+
 from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
 from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
-from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+from tldw_chatbook.Chat.console_chat_store import ConsoleChatSession, ConsoleChatStore
+from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+from tldw_chatbook.UI.Console_Modules.session import ConsoleSessionController
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
 from Tests.UI.test_destination_shells import _build_test_app
@@ -885,3 +891,142 @@ def test_screen_state_round_trip_tolerates_missing_and_broken_metadata():
     )
     broken["metadata_json"] = "{nope"
     assert ChatScreen._restore_console_message(broken).metadata is None
+
+
+def test_character_screen_state_round_trips_roleplay_identity_fields_exactly():
+    """Omitting an explicit field silently drops it during screen navigation."""
+    original = ConsoleChatSession(
+        settings=ConsoleSessionSettings(
+            provider="openai",
+            model="gpt-4.1",
+            system_prompt="Speak with Captain Rowan.",
+        ),
+        assistant_kind="character",
+        character_name="Alraune",
+        user_display_name_override="Captain Rowan",
+        character_system_template="Speak with {{user}}.",
+        identity_revision=7,
+    )
+    controller = ConsoleSessionController.__new__(ConsoleSessionController)
+
+    payload = controller._console_session_to_state(original)
+    restored = controller._console_session_from_state(payload)
+
+    assert payload["user_display_name_override"] == "Captain Rowan"
+    assert payload["character_system_template"] == "Speak with {{user}}."
+    assert payload["identity_revision"] == 7
+    assert restored.user_display_name_override == "Captain Rowan"
+    assert restored.character_system_template == "Speak with {{user}}."
+    assert restored.identity_revision == original.identity_revision
+
+
+@pytest.mark.asyncio
+async def test_durable_resume_restores_only_guarded_v1_roleplay_context():
+    """Absent, invalid, and future metadata must never invent template provenance."""
+    from Tests.UI.test_console_native_chat_flow import (
+        StaticConversationTreeService,
+        _configure_native_ready_console,
+    )
+    from Tests.UI.test_destination_shells import _wait_for_selector
+    from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
+        ConsoleHarness,
+    )
+
+    conversations = {
+        "valid-roleplay": {
+            "conversation": {
+                "id": "valid-roleplay",
+                "title": "Valid roleplay",
+                "system_prompt": "Speak with Captain Rowan.",
+                "metadata": {
+                    "console_roleplay_context": {
+                        "version": 1,
+                        "user_name_override": "Captain Rowan",
+                        "character_system_template": "Speak with {{user}}.",
+                    }
+                },
+            },
+            "root_threads": [],
+        },
+        "invalid-roleplay": {
+            "conversation": {
+                "id": "invalid-roleplay",
+                "title": "Invalid roleplay",
+                "system_prompt": "Ordinary safe invalid fallback.",
+                "metadata": {
+                    "console_roleplay_context": {
+                        "version": 1,
+                        "user_name_override": "bad\nname",
+                        "character_system_template": "Ignored {{user}}.",
+                    }
+                },
+            },
+            "root_threads": [],
+        },
+        "absent-roleplay": {
+            "conversation": {
+                "id": "absent-roleplay",
+                "title": "Absent roleplay",
+                "system_prompt": "Ordinary safe absent fallback.",
+                "metadata": {"unrelated": "keep"},
+            },
+            "root_threads": [],
+        },
+        "future-roleplay": {
+            "conversation": {
+                "id": "future-roleplay",
+                "title": "Future roleplay",
+                "system_prompt": "Ordinary safe future fallback.",
+                "metadata": {
+                    "console_roleplay_context": {
+                        "version": 2,
+                        "user_name_override": "Future Name",
+                        "character_system_template": "Future {{user}}.",
+                    }
+                },
+            },
+            "root_threads": [],
+        },
+    }
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    app.chat_conversation_scope_service = StaticConversationTreeService(conversations)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        console._refresh_active_dictionaries_summary_if_scope_changed = AsyncMock()
+        store = console._ensure_console_chat_store()
+
+        assert await console._workspace._resume_console_workspace_conversation(
+            "valid-roleplay"
+        )
+        valid = store.switch_session(store.active_session_id)
+        assert valid.user_display_name_override == "Captain Rowan"
+        assert valid.character_system_template == "Speak with {{user}}."
+        assert valid.settings.system_prompt == "Speak with Captain Rowan."
+
+        assert await console._workspace._resume_console_workspace_conversation(
+            "invalid-roleplay"
+        )
+        invalid = store.switch_session(store.active_session_id)
+        assert invalid.user_display_name_override is None
+        assert invalid.character_system_template is None
+        assert invalid.settings.system_prompt == "Ordinary safe invalid fallback."
+
+        assert await console._workspace._resume_console_workspace_conversation(
+            "absent-roleplay"
+        )
+        absent = store.switch_session(store.active_session_id)
+        assert absent.user_display_name_override is None
+        assert absent.character_system_template is None
+        assert absent.settings.system_prompt == "Ordinary safe absent fallback."
+
+        assert await console._workspace._resume_console_workspace_conversation(
+            "future-roleplay"
+        )
+        future = store.switch_session(store.active_session_id)
+        assert future.user_display_name_override is None
+        assert future.character_system_template is None
+        assert future.settings.system_prompt == "Ordinary safe future fallback."

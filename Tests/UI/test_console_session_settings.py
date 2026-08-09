@@ -3081,6 +3081,88 @@ async def test_console_settings_modal_save_updates_active_summary_only() -> None
 
 
 @pytest.mark.asyncio
+async def test_console_settings_system_prompt_clears_character_template_source() -> None:
+    """Replacing settings directly would leave a manual prompt marked dynamic."""
+    app = _build_test_app()
+    app.chat_api_provider_value = "llama_cpp"
+    app.chat_api_model_value = "model-a"
+    app.app_config["chat_defaults"] = {
+        "provider": "llama_cpp",
+        "model": "model-a",
+    }
+    app.app_config["api_settings"] = {
+        "llama_cpp": {"api_url": "http://127.0.0.1:9099", "model": "model-a"},
+    }
+    app.providers_models = {"llama_cpp": ["model-a"]}
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-settings-summary")
+        store = console._ensure_console_chat_store()
+        session = store.ensure_session()
+        session.assistant_kind = "character"
+        session.character_name = "Alraune"
+        store.replace_session_settings(
+            session.id,
+            ConsoleSessionSettings(provider="llama_cpp", model="model-a"),
+        )
+        store.seed_character_roleplay(
+            session.id,
+            system_template="Protect {{user}}.",
+            greeting_template="",
+            global_default="User",
+        )
+        assert session.character_system_template == "Protect {{user}}."
+
+        settings_button = await _visible_console_settings_button(console, pilot)
+        settings_button.press()
+        modal_screen = await _wait_for_console_settings_modal(host, pilot)
+        modal_screen.dismiss(
+            ConsoleSessionSettings(
+                provider="llama_cpp",
+                model="model-a",
+                system_prompt="Manual prompt.",
+            )
+        )
+        await _wait_for_console_top_screen(host, console, pilot)
+        await pilot.pause()
+
+        assert store.session_settings(session.id).system_prompt == "Manual prompt."
+        assert session.character_system_template is None
+
+
+def test_system_prompt_command_clears_character_template_through_store(
+    monkeypatch,
+) -> None:
+    """The `/system` apply path must retain the store's provenance revocation."""
+    app = _build_test_app()
+    console = ChatScreen(app)
+    store = console._ensure_console_chat_store()
+    session = store.ensure_session()
+    session.assistant_kind = "character"
+    session.character_name = "Alraune"
+    store.replace_session_settings(
+        session.id,
+        ConsoleSessionSettings(provider="openai", model="gpt-4.1"),
+    )
+    store.seed_character_roleplay(
+        session.id,
+        system_template="Protect {{user}}.",
+        greeting_template="",
+        global_default="User",
+    )
+    monkeypatch.setattr(console, "_sync_console_chat_core_state", lambda: None)
+    monkeypatch.setattr(console, "_sync_console_settings_summary", lambda: None)
+    monkeypatch.setattr(console, "_sync_console_control_bar", lambda: None)
+
+    console._session._apply_console_session_system_prompt("Manual slash prompt.")
+
+    assert store.session_settings(session.id).system_prompt == "Manual slash prompt."
+    assert session.character_system_template is None
+
+
+@pytest.mark.asyncio
 async def test_console_settings_are_isolated_between_native_tabs() -> None:
     app = _build_test_app()
     app.chat_api_provider_value = "llama_cpp"

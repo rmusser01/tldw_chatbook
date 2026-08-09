@@ -76,6 +76,7 @@ from ..Console_Modules.transcript import (
 from ..Console_Modules.wiring import build_console_controllers
 from ..Console_Modules.session import (
     _canonical_card_character_id,
+    _console_global_user_display_name,
     _character_session_prompt_seed,
     _has_selected_text,
     _is_empty_select_value,
@@ -1876,8 +1877,21 @@ class ChatScreen(BaseAppScreen):
                 return
             # Modal results are explicit user selections; mark them so stale
             # default refresh never overrides them.
+            current_settings = self._session._active_console_session_settings()
+            current_system_prompt = (
+                current_settings.system_prompt
+                if current_settings is not None
+                else None
+            )
             self._session._replace_active_console_session_settings(
-                replace(result, source="user")
+                replace(
+                    result,
+                    source="user",
+                    system_prompt=current_system_prompt,
+                )
+            )
+            self._session._apply_console_session_system_prompt(
+                result.system_prompt
             )
             self.run_worker(
                 self._sync_native_console_chat_ui(),
@@ -8252,23 +8266,35 @@ class ChatScreen(BaseAppScreen):
         if card is None:
             self.app.notify(f"Could not load {choice.name}.", severity="error")
             return
-        name, system_prompt, greeting = _character_session_prompt_seed(
-            card, choice.name
-        )
         # cubic PR #1153 P1: the store lives on the SCREEN behind a lazy
         # accessor -- `app_instance.console_chat_store` is always None, so
         # the whole feature silently did nothing.
         store = self._ensure_console_chat_store()
+        global_name = _console_global_user_display_name(
+            self._provider_readiness_app_config()
+        )
+        if choice.placement == "new" or store.active_session_id is None:
+            effective_name = global_name
+        else:
+            effective_name = store.presentation_context(
+                store.active_session_id,
+                global_name,
+            ).user_name
+        seed = _character_session_prompt_seed(
+            card,
+            choice.name,
+            user_name=effective_name,
+        )
         if choice.placement == "new":
             # cubic PR #1153 P1: the card's system prompt was computed and
             # discarded, leaving the new chat on the default prompt. Mirror
             # the Start-Chat path, which seeds it into the session settings.
             settings = replace(
                 self._session._default_console_session_settings(),
-                system_prompt=system_prompt,
+                system_prompt=seed.system_prompt,
             )
             session = store.create_session(
-                title=f"Chat with {name}",
+                title=f"Chat with {seed.name}",
                 workspace_id=CONSOLE_GLOBAL_WORKSPACE_ID,
                 settings=settings,
                 runtime_backend="local",
@@ -8276,33 +8302,35 @@ class ChatScreen(BaseAppScreen):
                 assistant_id=str(choice.character_id),
                 assistant_authority_id=None,
                 character_id=choice.character_id,
-                character_name=name,
+                character_name=seed.name,
             )
-            if greeting:
-                try:
-                    store.append_message(
-                        session.id,
-                        role=ConsoleMessageRole.ASSISTANT,
-                        content=greeting,
-                        persist=True,
-                    )
-                except Exception:
-                    logger.opt(exception=True).warning(
-                        "Character picker: greeting seed failed; continuing."
-                    )
+            try:
+                store.seed_character_roleplay(
+                    session.id,
+                    system_template=seed.system_template,
+                    greeting_template=seed.greeting_template,
+                    global_default=global_name,
+                )
+            except Exception:
+                logger.opt(exception=True).warning(
+                    "Character picker: roleplay template seed failed; continuing."
+                )
             store.switch_session(session.id)
             # task-7 review: a new (never-ephemeral) session may be
             # replacing a temporary one as the active tab; the awaited
             # `_sync_native_console_chat_ui()` below never touches the
             # temporary chip (see `_sync_console_temporary_chip`).
             self._sync_console_temporary_chip()
-            self.app.notify(f"Started a new chat with {name}.")
+            self.app.notify(f"Started a new chat with {seed.name}.")
         else:
             if not self._session._swap_console_session_character(
-                store, choice.character_id, name, system_prompt, greeting
+                store,
+                choice.character_id,
+                seed,
+                global_default=global_name,
             ):
                 return
-            self.app.notify(f"This chat now uses {name}.")
+            self.app.notify(f"This chat now uses {seed.name}.")
         # cubic PR #1153 P2: this refresher is async -- calling it without
         # awaiting produced a never-run coroutine (and a RuntimeWarning).
         await self._sync_native_console_chat_ui()
