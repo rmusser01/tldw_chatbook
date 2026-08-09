@@ -9,11 +9,26 @@ import pytest
 from tldw_chatbook.DB.Prompts_DB import ConflictError
 from tldw_chatbook.Library.library_prompts_state import (
     PromptArtifactDraft,
+    PromptHistoryRestoreOutcome,
     PromptListRow,
+    apply_prompt_history_count,
+    apply_prompt_history_page,
+    apply_prompt_history_preview,
+    apply_prompt_history_restore,
+    begin_prompt_history_count,
+    begin_prompt_history_page,
+    begin_prompt_history_preview,
+    begin_prompt_history_restore,
+    build_prompt_history_page,
+    build_prompt_history_state,
+    close_prompt_history,
     prepare_prompt_artifact_save,
     build_prompt_editor_state,
     build_prompts_list_state,
     classify_prompt_save_error,
+    format_prompt_history_restore_outcome,
+    history_restore_gate,
+    prompt_history_count_label,
     prompt_editor_meta_line,
     require_artifact_save_supported,
 )
@@ -384,6 +399,427 @@ def test_require_artifact_save_supported_guards_update_version_and_capability():
         require_artifact_save_supported(
             _draft(), local_prompt_capabilities(), update_original=True
         )
+
+
+HISTORY_UUID = "history-prompt-uuid"
+
+
+def _history_row(
+    *,
+    change_id: int,
+    version: int,
+    prompt_uuid: str = HISTORY_UUID,
+    restore_eligible: bool = True,
+    compatibility_reason: str = "",
+    system_preview: str = "exact system\n",
+    user_preview: str = "exact user\n",
+    keywords_captured: bool = True,
+) -> dict[str, object]:
+    return {
+        "prompt_uuid": prompt_uuid,
+        "change_id": change_id,
+        "version": version,
+        "timestamp": f"2026-08-08T12:00:0{version}+00:00",
+        "artifact_type": "prompt",
+        "name": f"Version {version}",
+        "author": "Author",
+        "details": "Literal metadata",
+        "compiled_system_prompt": system_preview,
+        "compiled_user_prompt": user_preview,
+        "keywords": ["alpha", "beta"],
+        "keywords_captured": keywords_captured,
+        "compatibility_state": "compatible" if restore_eligible else "foreign_v1",
+        "compatibility_reason": compatibility_reason,
+        "restore_eligible": restore_eligible,
+        "changed_fields": ["system_prompt"],
+        "change_summary": "System prompt",
+    }
+
+
+def _history_page(
+    *items: dict[str, object],
+    total_count: int,
+    has_more: bool,
+    next_before_change_id: int | None,
+) -> dict[str, object]:
+    return {
+        "items": list(items),
+        "total_count": total_count,
+        "has_more": has_more,
+        "next_before_change_id": next_before_change_id,
+    }
+
+
+def test_history_state_starts_closed_then_counts_and_loads_first_page():
+    state = build_prompt_history_state(
+        prompt_uuid=HISTORY_UUID, current_version=4, scope_token=10
+    )
+
+    assert state.page_status == "closed"
+    assert state.count_status == "idle"
+    assert prompt_history_count_label(state) == "Retained history (…)"
+
+    state, count_request = begin_prompt_history_count(state, request_token=11)
+    assert state.count_status == "loading"
+    assert count_request.prompt_uuid == HISTORY_UUID
+    state = apply_prompt_history_count(state, count_request, total_count=7)
+
+    assert state.count_status == "loaded"
+    assert state.retained_count == 7
+    assert prompt_history_count_label(state) == "Retained history (7)"
+
+    state, page_request = begin_prompt_history_page(state, request_token=12)
+    assert state.is_open is True
+    assert state.page_status == "loading"
+    state = apply_prompt_history_page(
+        state,
+        page_request,
+        build_prompt_history_page(
+            _history_page(
+                _history_row(change_id=40, version=4),
+                _history_row(change_id=30, version=3),
+                total_count=7,
+                has_more=True,
+                next_before_change_id=30,
+            )
+        ),
+    )
+
+    assert state.page_status == "loaded"
+    assert [row.version for row in state.rows] == [4, 3]
+    assert state.retained_count == 7
+
+
+def test_history_page_error_can_retry_without_discarding_identity_or_count():
+    state = build_prompt_history_state(
+        prompt_uuid=HISTORY_UUID, current_version=4, scope_token=10
+    )
+    state, request = begin_prompt_history_page(state, request_token=11)
+    state = apply_prompt_history_page(state, request, None, error="Network unavailable")
+
+    assert state.page_status == "error"
+    assert state.error == "Network unavailable"
+    assert state.prompt_uuid == HISTORY_UUID
+    state, retry = begin_prompt_history_page(state, request_token=12)
+
+    assert state.page_status == "loading"
+    assert retry.before_change_id is None
+
+
+def test_closing_history_returns_to_closed_state_and_rejects_its_late_page():
+    state = build_prompt_history_state(
+        prompt_uuid=HISTORY_UUID, current_version=4, scope_token=10
+    )
+    state, request = begin_prompt_history_page(state, request_token=11)
+    closed = close_prompt_history(state)
+
+    assert closed.is_open is False
+    assert closed.page_status == "closed"
+    assert (
+        apply_prompt_history_page(
+            closed,
+            request,
+            build_prompt_history_page(
+                _history_page(
+                    _history_row(change_id=40, version=4),
+                    total_count=1,
+                    has_more=False,
+                    next_before_change_id=None,
+                )
+            ),
+        )
+        == closed
+    )
+
+
+def test_newer_count_request_is_not_replaced_by_an_older_page_result():
+    state = build_prompt_history_state(
+        prompt_uuid=HISTORY_UUID, current_version=4, scope_token=10
+    )
+    state, page_request = begin_prompt_history_page(state, request_token=11)
+    state, count_request = begin_prompt_history_count(state, request_token=12)
+
+    state = apply_prompt_history_page(
+        state,
+        page_request,
+        build_prompt_history_page(
+            _history_page(
+                _history_row(change_id=40, version=4),
+                total_count=4,
+                has_more=False,
+                next_before_change_id=None,
+            )
+        ),
+    )
+
+    assert state.count_status == "loading"
+    assert state.count_request == count_request
+    state = apply_prompt_history_count(state, count_request, total_count=7)
+    assert state.retained_count == 7
+
+
+def test_history_older_pages_append_in_order_and_reject_duplicate_rows():
+    state = build_prompt_history_state(
+        prompt_uuid=HISTORY_UUID, current_version=4, scope_token=10
+    )
+    state, newest_request = begin_prompt_history_page(state, request_token=11)
+    state = apply_prompt_history_page(
+        state,
+        newest_request,
+        build_prompt_history_page(
+            _history_page(
+                _history_row(change_id=40, version=4),
+                _history_row(change_id=30, version=3),
+                total_count=4,
+                has_more=True,
+                next_before_change_id=30,
+            )
+        ),
+    )
+    state, older_request = begin_prompt_history_page(state, request_token=12)
+    assert older_request.before_change_id == 30
+    state = apply_prompt_history_page(
+        state,
+        older_request,
+        build_prompt_history_page(
+            _history_page(
+                _history_row(change_id=20, version=2),
+                _history_row(change_id=10, version=1),
+                total_count=4,
+                has_more=False,
+                next_before_change_id=None,
+            )
+        ),
+    )
+
+    assert [row.change_id for row in state.rows] == [40, 30, 20, 10]
+    assert state.next_before_change_id is None
+
+    with pytest.raises(ValueError, match="No older retained history pages"):
+        begin_prompt_history_page(state, request_token=13)
+    with pytest.raises(ValueError, match="duplicate change IDs"):
+        build_prompt_history_page(
+            _history_page(
+                _history_row(change_id=10, version=1),
+                _history_row(change_id=10, version=1),
+                total_count=4,
+                has_more=False,
+                next_before_change_id=None,
+            )
+        )
+
+
+def test_history_preview_selection_preserves_literal_preview_and_explicit_source_version():
+    state = build_prompt_history_state(
+        prompt_uuid=HISTORY_UUID, current_version=4, scope_token=10
+    )
+    state, page_request = begin_prompt_history_page(state, request_token=11)
+    state = apply_prompt_history_page(
+        state,
+        page_request,
+        build_prompt_history_page(
+            _history_page(
+                _history_row(
+                    change_id=30,
+                    version=3,
+                    system_preview="  literal system\n",
+                    user_preview="literal user\n\n",
+                ),
+                total_count=1,
+                has_more=False,
+                next_before_change_id=None,
+            )
+        ),
+    )
+    state, preview_request = begin_prompt_history_preview(
+        state, change_id=30, source_version=3, request_token=12
+    )
+    state = apply_prompt_history_preview(state, preview_request)
+
+    assert state.selected is not None
+    assert state.selected.prompt_uuid == HISTORY_UUID
+    assert state.selected.change_id == 30
+    assert state.selected.source_version == 3
+    assert state.selected.row.system_preview == "  literal system\n"
+    assert state.selected.row.user_preview == "literal user\n\n"
+
+
+def test_history_restore_gate_captures_identity_versions_and_dirty_compatibility_reasons():
+    state = build_prompt_history_state(
+        prompt_uuid=HISTORY_UUID, current_version=4, scope_token=10
+    )
+    state, page_request = begin_prompt_history_page(state, request_token=11)
+    state = apply_prompt_history_page(
+        state,
+        page_request,
+        build_prompt_history_page(
+            _history_page(
+                _history_row(change_id=30, version=3),
+                total_count=1,
+                has_more=False,
+                next_before_change_id=None,
+            )
+        ),
+    )
+    state, preview_request = begin_prompt_history_preview(
+        state, change_id=30, source_version=3, request_token=12
+    )
+    state = apply_prompt_history_preview(state, preview_request)
+
+    dirty_gate = history_restore_gate(state, dirty=True)
+    assert dirty_gate.enabled is False
+    assert (
+        dirty_gate.reason
+        == "Save or discard unsaved changes before restoring retained history."
+    )
+
+    gate = history_restore_gate(state, dirty=False)
+    assert gate.enabled is True
+    assert gate.target is not None
+    assert (
+        gate.target.prompt_uuid,
+        gate.target.change_id,
+        gate.target.source_version,
+        gate.target.expected_current_version,
+    ) == (HISTORY_UUID, 30, 3, 4)
+
+    incompatible = build_prompt_history_state(
+        prompt_uuid=HISTORY_UUID, current_version=4, scope_token=20
+    )
+    incompatible, request = begin_prompt_history_page(incompatible, request_token=21)
+    incompatible = apply_prompt_history_page(
+        incompatible,
+        request,
+        build_prompt_history_page(
+            _history_page(
+                _history_row(
+                    change_id=20,
+                    version=2,
+                    restore_eligible=False,
+                    compatibility_reason="Foreign v1 retained artifacts are preview-only.",
+                ),
+                total_count=1,
+                has_more=False,
+                next_before_change_id=None,
+            )
+        ),
+    )
+    incompatible, request = begin_prompt_history_preview(
+        incompatible, change_id=20, source_version=2, request_token=22
+    )
+    incompatible = apply_prompt_history_preview(incompatible, request)
+
+    compatibility_gate = history_restore_gate(incompatible, dirty=False)
+    assert compatibility_gate.enabled is False
+    assert (
+        compatibility_gate.reason == "Foreign v1 retained artifacts are preview-only."
+    )
+
+
+def test_history_restore_outcomes_have_stable_copy_and_keyword_disclosure():
+    restored = format_prompt_history_restore_outcome(
+        {
+            "outcome": "restored",
+            "source_version": 2,
+            "current_version": 4,
+            "new_version": 5,
+            "retained_current_keywords": True,
+        }
+    )
+    assert restored == PromptHistoryRestoreOutcome(
+        kind="restored",
+        message="Restored v2 as current v5.",
+        reload_required=False,
+        keyword_disclosure=(
+            "Current keywords were retained because this older retained version "
+            "did not capture keywords."
+        ),
+    )
+    assert (
+        format_prompt_history_restore_outcome(
+            {
+                "outcome": "no_change",
+                "source_version": 2,
+                "current_version": 4,
+                "new_version": 4,
+                "retained_current_keywords": False,
+            }
+        ).message
+        == "Retained v2 already matches current v4; no new version was created."
+    )
+    assert (
+        format_prompt_history_restore_outcome(
+            {"outcome": "snapshot_unavailable", "source_version": 2}
+        ).reload_required
+        is True
+    )
+    assert (
+        format_prompt_history_restore_outcome(
+            {"outcome": "current_unavailable", "source_version": 2}
+        ).kind
+        == "current_unavailable"
+    )
+    assert format_prompt_history_restore_outcome(
+        error=ConflictError("stale", "Prompts", 1)
+    ).message == ("This Prompt changed elsewhere. Reload before restoring.")
+    assert (
+        format_prompt_history_restore_outcome(error=ValueError("Invalid artifact")).kind
+        == "validation_error"
+    )
+
+
+def test_stale_history_count_page_selection_and_restore_outcomes_are_ignored():
+    state = build_prompt_history_state(
+        prompt_uuid=HISTORY_UUID, current_version=4, scope_token=10
+    )
+    state, old_count = begin_prompt_history_count(state, request_token=11)
+    state, new_count = begin_prompt_history_count(state, request_token=12)
+    assert apply_prompt_history_count(state, old_count, total_count=99) == state
+    state = apply_prompt_history_count(state, new_count, total_count=4)
+
+    state, page_request = begin_prompt_history_page(state, request_token=13)
+    page = build_prompt_history_page(
+        _history_page(
+            _history_row(change_id=30, version=3),
+            total_count=4,
+            has_more=False,
+            next_before_change_id=None,
+        )
+    )
+    stale_scope = build_prompt_history_state(
+        prompt_uuid=HISTORY_UUID, current_version=4, scope_token=20
+    )
+    assert apply_prompt_history_page(stale_scope, page_request, page) == stale_scope
+    state = apply_prompt_history_page(state, page_request, page)
+    state, old_preview = begin_prompt_history_preview(
+        state, change_id=30, source_version=3, request_token=14
+    )
+    state, current_preview = begin_prompt_history_preview(
+        state, change_id=30, source_version=3, request_token=15
+    )
+    assert apply_prompt_history_preview(state, old_preview) == state
+    state = apply_prompt_history_preview(state, current_preview)
+    state, restore_request, gate = begin_prompt_history_restore(
+        state, request_token=16, dirty=False
+    )
+    assert gate.enabled is True
+    assert restore_request is not None
+    state, newer_restore_request, _ = begin_prompt_history_restore(
+        state, request_token=17, dirty=False
+    )
+    assert newer_restore_request is not None
+    stale_outcome = format_prompt_history_restore_outcome(
+        {
+            "outcome": "restored",
+            "source_version": 3,
+            "current_version": 4,
+            "new_version": 5,
+            "retained_current_keywords": False,
+        }
+    )
+    assert apply_prompt_history_restore(state, restore_request, stale_outcome) == state
+    settled = apply_prompt_history_restore(state, newer_restore_request, stale_outcome)
+    assert settled.restore_outcome == stale_outcome
 
 
 def test_prepare_recipe_save_defaults_to_empty_content_and_preserves_structure():
