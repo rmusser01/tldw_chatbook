@@ -16,6 +16,8 @@ from pathlib import Path, PurePosixPath
 from time import monotonic as _monotonic
 from typing import Any
 
+from tldw_chatbook.Utils.path_validation import validate_path_simple
+
 from .audio_cpp_recipes import (
     AUDIO_CPP_RECIPE_REGISTRY,
     AudioCppFileKind,
@@ -67,6 +69,7 @@ class AudioCppScanIssueCode(StrEnum):
     SYMLINK_SKIPPED = "symlink_skipped"
     REPARSE_SKIPPED = "reparse_skipped"
     SPECIAL_FILE_SKIPPED = "special_file_skipped"
+    NO_FOLLOW_UNAVAILABLE = "no_follow_unavailable"
 
 
 def _positive_integer(value: object, label: str, *, allow_zero: bool = False) -> int:
@@ -207,13 +210,16 @@ def _same_source(first: os.stat_result, second: os.stat_result) -> bool:
     )
 
 
-def _read_only_no_follow_flags() -> int:
+def _read_only_no_follow_flags() -> int | None:
+    no_follow = getattr(os, "O_NOFOLLOW", 0)
+    if not no_follow:
+        return None
     return (
         os.O_RDONLY
         | getattr(os, "O_CLOEXEC", 0)
         | getattr(os, "O_BINARY", 0)
         | getattr(os, "O_NONBLOCK", 0)
-        | getattr(os, "O_NOFOLLOW", 0)
+        | no_follow
     )
 
 
@@ -312,6 +318,20 @@ def _inspect_file(
     readable = True
     valid = info.st_size >= signal.minimum_size_bytes
     identity = _filesystem_identity(info)
+    open_flags = _read_only_no_follow_flags()
+    if open_flags is None:
+        state.add_incomplete(
+            AudioCppScanIssueCode.NO_FOLLOW_UNAVAILABLE,
+            relative_parts,
+            path.name,
+        )
+        return AudioCppPackageFileEvidence(
+            relative_path=signal.relative_path,
+            size_bytes=info.st_size,
+            identity=identity,
+            readable=False,
+            metadata_valid=False,
+        )
     if required_bytes > state.limits.max_metadata_bytes_per_file:
         state.add_limit(AudioCppScanLimit.METADATA_PER_FILE)
         valid = False
@@ -326,7 +346,7 @@ def _inspect_file(
 
     descriptor: int | None = None
     try:
-        descriptor = os.open(path, _read_only_no_follow_flags())
+        descriptor = os.open(path, open_flags)
         opened_info = os.fstat(descriptor)
         if not stat.S_ISREG(opened_info.st_mode) or not _same_source(info, opened_info):
             readable = False
@@ -383,20 +403,10 @@ def _inspect_file(
 def _signal_index(
     registry: AudioCppRecipeRegistry,
 ) -> tuple[tuple[tuple[str, ...], AudioCppFileSignal], ...]:
-    unique: dict[
-        tuple[str, AudioCppFileKind, str, int],
-        AudioCppFileSignal,
-    ] = {}
+    unique: dict[str, AudioCppFileSignal] = {}
     for recipe in registry.recipes:
         for signal in recipe.required_files:
-            unique[
-                (
-                    signal.relative_path,
-                    signal.kind,
-                    signal.role.value,
-                    signal.minimum_size_bytes,
-                )
-            ] = signal
+            unique.setdefault(signal.relative_path, signal)
     return tuple(
         sorted(
             (
@@ -445,7 +455,11 @@ def _resolve_selected_root(
     allow_root_symlink: bool,
 ) -> tuple[Path, os.stat_result, bool]:
     try:
-        selected = Path(root)
+        selected = validate_path_simple(
+            root,
+            require_exists=False,
+            probe_existing=False,
+        )
         selected_info = os.lstat(selected)
     except (OSError, TypeError, ValueError):
         raise AudioCppPackageScanError(
@@ -514,7 +528,26 @@ def scan_audio_cpp_package_root(
     allow_root_symlink: bool = False,
     request_revision: int = 0,
 ) -> AudioCppPackageScanResult:
-    """Inspect exactly one user-selected root with finite no-follow budgets."""
+    """Inspect exactly one user-selected root with finite no-follow budgets.
+
+    Args:
+        root: User-selected package directory. The scanner never searches a
+            parent or sibling automatically.
+        registry: Sealed recipe registry used for exact matching.
+        limits: Optional finite scanner budgets; defaults are used when absent.
+        cancellation_event: Optional cross-thread cancellation signal.
+        allow_root_symlink: Whether to resolve a disclosed top-level symlink.
+            Nested links and reparse points are always skipped.
+        request_revision: Non-negative caller revision copied into the result.
+
+    Returns:
+        One immutable, bounded scan result with sanitized retained evidence.
+
+    Raises:
+        AudioCppPackageScanError: If the selected root is invalid or unusable.
+        TypeError: If the registry, limits, or cancellation signal is invalid.
+        ValueError: If the request revision is invalid.
+    """
     if not isinstance(registry, AudioCppRecipeRegistry):
         raise TypeError("audio.cpp recipe registry is required")
     if type(request_revision) is not int or request_revision < 0:
@@ -813,7 +846,25 @@ async def scan_audio_cpp_package_root_async(
     allow_root_symlink: bool = False,
     request_revision: int = 0,
 ) -> AudioCppPackageScanResult:
-    """Run one scan in a worker thread and signal it if the caller cancels."""
+    """Run one package scan off-loop and propagate caller cancellation.
+
+    Args:
+        root: User-selected package directory.
+        registry: Sealed recipe registry used for exact matching.
+        limits: Optional finite scanner budgets; defaults are used when absent.
+        cancellation_event: Optional cross-thread cancellation signal.
+        allow_root_symlink: Whether to resolve a disclosed top-level symlink.
+        request_revision: Non-negative caller revision copied into the result.
+
+    Returns:
+        The immutable result produced by :func:`scan_audio_cpp_package_root`.
+
+    Raises:
+        asyncio.CancelledError: If the awaiting caller cancels the scan.
+        AudioCppPackageScanError: If the selected root is invalid or unusable.
+        TypeError: If the registry, limits, or cancellation signal is invalid.
+        ValueError: If the request revision is invalid.
+    """
     cancellation = cancellation_event or threading.Event()
     work = asyncio.create_task(
         asyncio.to_thread(

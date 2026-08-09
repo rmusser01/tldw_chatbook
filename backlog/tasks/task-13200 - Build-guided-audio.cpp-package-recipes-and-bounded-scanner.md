@@ -61,12 +61,13 @@ Implemented the guided audio.cpp foundation without changing the existing runtim
 - Added a sealed release-0.5.1 registry for all 4 Supertonic and 11 PocketTTS packages, exact fail-closed matching, accepted-snapshot validation, tuple-scoped evidence, and complete 21-family/67-package accounting (15 Approved, 52 explicit Open gaps, no unsupported claims).
 - Added an explicit-root scanner with finite depth/entry/candidate/result/metadata/time/detail budgets, cancellation/off-loop execution, canonical identities, path-safe evidence, per-candidate permission/partial truth, and symlink/reparse race fencing.
 - Added pure positive, negative, mutation-style, privacy, and joined side-effect regressions. Recorded the queued-directory symlink-race lesson in `backlog/docs/lessons-testing-evidence.md`.
+- PR review hardened the scanner to validate selected-root syntax before filesystem access, fail closed before file open when no-follow support is unavailable, and reject conflicting same-path recipe validation contracts. Public APIs now carry complete Google-style parameter/result/error documentation.
 
 ADR required: no new ADR. This task directly implements the structured-settings, sealed-recipe, accepted-snapshot, and explicit-root scanner boundaries in `backlog/decisions/050-audio-cpp-generated-model-setup-ownership.md`.
 
 Verification:
 
-- `pytest` foundation set: 93 passed.
+- `pytest` foundation set: 96 passed.
 - `pytest Tests/TTS` excluding six sandbox-blocked loopback cases: 2,597 passed, 16 skipped, 6 deselected.
 - The six deselected real-socket/process cases rerun outside the sandbox: 6 passed.
 - Ruff check and format check passed for every changed Python file; compileall and `git diff --cached --check` passed.

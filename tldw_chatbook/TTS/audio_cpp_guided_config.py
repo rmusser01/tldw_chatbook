@@ -548,7 +548,18 @@ class AudioCppSettingsConfig(_FrozenModel):
 
     @classmethod
     def from_mapping(cls, values: Mapping[str, Any]) -> AudioCppSettingsConfig:
-        """Copy approved full-settings fields from one configuration mapping."""
+        """Copy approved full-settings fields from one configuration mapping.
+
+        Args:
+            values: Mapping containing current, dormant, or unrelated settings.
+
+        Returns:
+            A validated immutable copy of approved audio.cpp settings fields.
+
+        Raises:
+            ValueError: If the input is not a mapping or an approved value is
+                invalid.
+        """
         if not isinstance(values, Mapping):
             raise ValueError("audio.cpp settings configuration must be a mapping")
         projected = {
@@ -557,7 +568,11 @@ class AudioCppSettingsConfig(_FrozenModel):
         return cls(**projected)
 
     def to_mapping(self) -> dict[str, object]:
-        """Return one defensive JSON-compatible mapping of approved fields."""
+        """Return one defensive JSON-compatible mapping of approved fields.
+
+        Returns:
+            A deep-copied mapping suitable for durable JSON/TOML projection.
+        """
         return deepcopy(self.model_dump(mode="json"))
 
 

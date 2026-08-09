@@ -1731,3 +1731,9 @@ and immediately after opening the iterator; close without iterating if either
 observation differs or becomes a symlink/reparse point. For files, combine a
 no-follow open with `fstat` identity/type comparison before reading metadata.
 Static fixtures prove policy for stable trees, not race safety.
+
+PR #1463 review exposed a second portability trap: treating a missing
+`O_NOFOLLOW` as flag value zero silently removed the primary file-open fence
+while leaving the post-open identity check looking reassuring. Add an explicit
+missing-capability mutation test. If the platform cannot guarantee no-follow,
+fail closed before `open()` instead of opening first and rejecting afterward.

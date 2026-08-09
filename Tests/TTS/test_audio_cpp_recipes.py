@@ -160,6 +160,26 @@ def test_registry_collection_cannot_be_replaced_after_construction() -> None:
         registry.recipes = ()
 
 
+def test_registry_rejects_conflicting_validation_contracts_for_one_path() -> None:
+    api = _api()
+    registry = api["AUDIO_CPP_RECIPE_REGISTRY"]
+    recipe = registry.for_package("supertonic_3_orig")
+    conflicting_signal = replace(
+        recipe.required_files[0],
+        kind=api["AudioCppFileKind"].JSON,
+    )
+    conflicting_recipe = replace(
+        recipe,
+        recipe_id="audio-cpp-0.5.1.supertonic.conflicting-path-contract",
+        package_variant="conflicting_path_contract",
+        default_public_model_id="conflicting-path-contract",
+        required_files=(conflicting_signal,),
+    )
+
+    with pytest.raises(ValueError, match="conflicting file validation contracts"):
+        api["AudioCppRecipeRegistry"]((recipe, conflicting_recipe))
+
+
 @pytest.mark.parametrize("package_variant", sorted(EXPECTED_INITIAL_PACKAGES))
 def test_recipe_has_exact_reviewed_layout_and_safe_projection(
     package_variant: str,

@@ -382,7 +382,17 @@ class AudioCppPackageCandidate:
     evidence_relative_paths: tuple[str, ...]
 
     def accept(self, *, public_model_id: str | None = None) -> AudioCppAcceptedPackage:
-        """Freeze this exact match into a durable accepted snapshot."""
+        """Freeze this exact match into a durable accepted snapshot.
+
+        Args:
+            public_model_id: Optional user-facing model ID override.
+
+        Returns:
+            A new immutable accepted-package snapshot with a durable UUID.
+
+        Raises:
+            ValueError: If the requested public model ID is invalid.
+        """
         return AudioCppAcceptedPackage(
             package_uuid=str(uuid4()),
             recipe_id=self.recipe.recipe_id,
@@ -434,6 +444,15 @@ class AudioCppRecipeRegistry:
             raise ValueError("audio.cpp recipe IDs must be unique")
         if len({recipe.package_variant for recipe in ordered}) != len(ordered):
             raise ValueError("audio.cpp package variants must be unique")
+        path_contracts: dict[str, tuple[AudioCppFileKind, int]] = {}
+        for recipe in ordered:
+            for signal in recipe.required_files:
+                contract = (signal.kind, signal.minimum_size_bytes)
+                previous = path_contracts.setdefault(signal.relative_path, contract)
+                if previous != contract:
+                    raise ValueError(
+                        "audio.cpp recipes have conflicting file validation contracts"
+                    )
         object.__setattr__(self, "_recipes", ordered)
         object.__setattr__(
             self,
@@ -451,11 +470,25 @@ class AudioCppRecipeRegistry:
 
     @property
     def recipes(self) -> tuple[AudioCppPackageRecipe, ...]:
-        """Return the immutable ordered recipe collection."""
+        """Return the immutable ordered recipe collection.
+
+        Returns:
+            Every installed recipe ordered by recipe ID.
+        """
         return self._recipes
 
     def for_package(self, package_variant: str) -> AudioCppPackageRecipe:
-        """Return one exact package recipe or raise a stable lookup error."""
+        """Return one exact package recipe or raise a stable lookup error.
+
+        Args:
+            package_variant: Exact pinned package variant identifier.
+
+        Returns:
+            The reviewed recipe for the requested package variant.
+
+        Raises:
+            ValueError: If the package variant has no installed recipe.
+        """
         try:
             return self._by_package[package_variant]
         except (KeyError, TypeError):
@@ -490,7 +523,18 @@ class AudioCppRecipeRegistry:
         )
 
     def match(self, description: AudioCppPackageDescription) -> AudioCppMatchResult:
-        """Match one bounded description without fuzzy or closest selection."""
+        """Match one bounded description without fuzzy or closest selection.
+
+        Args:
+            description: Pre-scanned, bounded evidence for one candidate root.
+
+        Returns:
+            An exact, ambiguous, incomplete, permission-limited, or unknown
+            match result.
+
+        Raises:
+            TypeError: If ``description`` is not package evidence.
+        """
         if not isinstance(description, AudioCppPackageDescription):
             raise TypeError("audio.cpp package description is required")
         evidence = {item.relative_path: item for item in description.files}
@@ -551,7 +595,17 @@ class AudioCppRecipeRegistry:
         self,
         accepted: AudioCppAcceptedPackage,
     ) -> AudioCppPackageRecipe:
-        """Require an accepted snapshot to equal the installed recipe exactly."""
+        """Require an accepted snapshot to equal the installed recipe exactly.
+
+        Args:
+            accepted: Durable package snapshot to validate.
+
+        Returns:
+            The exact currently installed recipe.
+
+        Raises:
+            ValueError: If the recipe is absent or its frozen projection changed.
+        """
         try:
             recipe = self._by_id[accepted.recipe_id]
         except (AttributeError, KeyError, TypeError):
@@ -567,7 +621,11 @@ class AudioCppRecipeRegistry:
         return recipe
 
     def verified_support_claims(self) -> tuple[AudioCppVerifiedSupportClaim, ...]:
-        """Return only exact tuples carrying retained Verified evidence."""
+        """Return only exact tuples carrying retained Verified evidence.
+
+        Returns:
+            Sorted support claims whose backend evidence is explicitly verified.
+        """
         claims = [
             AudioCppVerifiedSupportClaim(
                 recipe_id=recipe.recipe_id,

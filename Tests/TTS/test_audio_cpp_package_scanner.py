@@ -115,6 +115,67 @@ def test_bad_gguf_version_is_recognizable_but_never_selected(tmp_path: Path) -> 
     assert result.discoveries[0].match.candidates == ()
 
 
+def test_selected_root_is_validated_before_any_filesystem_probe(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import tldw_chatbook.TTS.audio_cpp_package_scanner as scanner
+
+    calls: list[str] = []
+
+    def reject_path(*_args, **_kwargs) -> Path:
+        calls.append("validate")
+        raise ValueError("private validator detail")
+
+    def reject_probe(*_args, **_kwargs):
+        calls.append("lstat")
+        raise OSError("private filesystem detail")
+
+    monkeypatch.setattr(scanner, "validate_path_simple", reject_path, raising=False)
+    monkeypatch.setattr(scanner.os, "lstat", reject_probe)
+
+    with pytest.raises(
+        scanner.AudioCppPackageScanError,
+        match="Selected audio.cpp package root is unavailable",
+    ):
+        scanner.scan_audio_cpp_package_root(tmp_path / "selected")
+
+    assert calls == ["validate"]
+
+
+def test_missing_no_follow_open_support_fails_closed_without_opening_model(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import tldw_chatbook.TTS.audio_cpp_package_scanner as scanner
+    from tldw_chatbook.TTS.audio_cpp_recipes import AudioCppMatchState
+
+    root = tmp_path / "selected"
+    root.mkdir()
+    _write_gguf(root / "supertonic-3-orig.gguf")
+    real_open = scanner.os.open
+    opened: list[Path] = []
+
+    def recording_open(path, flags, mode=0o777, *, dir_fd=None):
+        opened.append(Path(path))
+        return real_open(path, flags, mode, dir_fd=dir_fd)
+
+    monkeypatch.delattr(scanner.os, "O_NOFOLLOW", raising=False)
+    monkeypatch.setattr(scanner.os, "open", recording_open)
+
+    result = scanner.scan_audio_cpp_package_root(root)
+
+    assert opened == []
+    assert result.outcome is scanner.AudioCppScanOutcome.PARTIAL
+    assert result.discoveries[0].match.state is AudioCppMatchState.INCOMPLETE
+    assert result.issues == (
+        scanner.AudioCppScanIssue(
+            scanner.AudioCppScanIssueCode.NO_FOLLOW_UNAVAILABLE,
+            "supertonic-3-orig.gguf",
+        ),
+    )
+
+
 def test_multifile_safetensors_layout_requires_every_companion(tmp_path: Path) -> None:
     api = _api()
     root = tmp_path / "supertonic-3"
