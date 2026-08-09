@@ -713,6 +713,204 @@ async def test_nav_strip_never_renders_a_partial_destination_label(width, active
             assert ghosted, "test premise: expected a straddling destination at 100 cols"
 
 
+# --- task-4020: re-critique RC-02 -- ghosting effectiveness under the real,
+# BUNDLED stylesheet (the tier that actually governs what a user sees), not
+# just `MainNavigationBar.DEFAULT_CSS` ------------------------------------
+#
+# Root cause: the 2026-08-09 re-critique's mechanical probe captured the nav
+# bar with a COLORLESS text dump (`tmux capture-pane -p`, no `-e`/ANSI). That
+# cannot distinguish a genuinely-rendered mid-word-clipped label (foreground
+# != background, actually legible) from a correctly ghosted one (`.nav-
+# button-clip-ghost:disabled` pins foreground EXACTLY equal to background --
+# see the rule's own extensive docstring above): the underlying characters
+# are still present in the compositor's cell buffer either way, so a tool
+# that only reads characters (not their color) reports the SAME "Watc"/"M"
+# fragment for both cases. Direct ANSI decoding of the real running app
+# (`capture-pane -p -e`) at 80 and 120 cols, both for the exact fragments the
+# re-critique quoted and for a left-edge scroll straddle, showed foreground
+# RGB == background RGB for every one of them -- i.e. pixel-invisible in any
+# color-aware terminal. The re-critique's OWN corroborating check (a click on
+# the "blank" cell did not navigate) is further evidence FOR ghosting: a
+# genuinely un-ghosted button is never `disabled`, so that click would have
+# navigated. `_straddles_viewport`/`_ghost_clipped_buttons` are unaffected by
+# the `NavOverflowMenu` rework; nothing here needed a behavior fix.
+#
+# The real, fixable gap (AC#4): every geometry/readable-text test above runs
+# under a bare `App()` with ONLY `MainNavigationBar.DEFAULT_CSS` loaded --
+# never `css/components/_navigation.tcss`'s separately-maintained override,
+# which is the copy that actually wins in the shipped app (`App.CSS_PATH`
+# always outranks widget `DEFAULT_CSS`, `!important` or not -- see the ghost
+# rule's own docstring, and `test_ghost_rule_is_width_neutral_under_the_
+# bundled_stylesheet` above, which already made exactly this point for
+# geometry but never for the color/legibility invariant). A regression that
+# broke `_navigation.tcss`'s color override (e.g. reverting it, or a bundle
+# rebuild dropping it) would leave every test above GREEN while the real app
+# regressed to genuinely-legible ghosted text -- the "test passes against
+# broken code" failure mode AC#4 warns about, just one CSS tier removed from
+# where task-3200 originally looked. The tests below close that gap.
+
+
+def _plain_nav_text(app: App) -> str:
+    """Every character the compositor painted, WITHOUT filtering by color --
+    i.e. exactly what a colorless capture (`tmux capture-pane -p`, no `-e`)
+    would show. Deliberately the naive counterpart to `_readable_nav_text`
+    above: contrasting the two on the same render is what proves the
+    re-critique's "mid-word cut" finding was a capture-tool artifact, not a
+    rendering defect -- ghosted text is still IN the buffer (color-matched,
+    not removed), so a colorless reader cannot tell it apart from a real
+    legible label.
+    """
+    strips = app.screen._compositor.render_strips()
+    return "\n".join(
+        "".join(segment.text for segment in strip) for strip in strips
+    )
+
+
+@pytest.mark.asyncio
+async def test_naive_colorless_capture_false_positives_on_ghosted_labels():
+    """RED-documentation for task-4020 AC#2: reproduces the re-critique's
+    exact observed effect (a colorless capture "sees" a mid-word-clipped
+    label) under the REAL bundled stylesheet, at the REAL width, with the
+    REAL destination the re-critique quoted -- then contrasts it with the
+    color-aware check that proves the label is not actually legible.
+
+    80 cols, active="home": `nav-watchlists_collections` ("Watchlists")
+    straddles the "More ▾" edge exactly as task-3200's own DEFAULT_CSS-tier
+    test already established at 100 cols for a different destination --
+    this test's job is specifically the BUNDLED CSS tier and the exact
+    "Watc" fragment the re-critique reported, not new geometry.
+    """
+
+    class TestApp(App):
+        CSS_PATH = _BUNDLED_CSS_PATH
+
+        def compose(self):
+            yield MainNavigationBar(active="home")
+
+    app = TestApp()
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause(0.6)
+
+        watchlists = app.query_one("#nav-watchlists_collections", Button)
+        assert watchlists.has_class("nav-button-clip-ghost"), (
+            "test premise: Watchlists straddles and is ghosted at 80 cols "
+            "under the bundled stylesheet, matching the re-critique's setup"
+        )
+
+        naive_text = _plain_nav_text(app)
+        # This is the re-critique's own reported fragment, reproduced
+        # exactly: a colorless read of the buffer DOES contain it, even
+        # though the button is ghosted (fg == bg) and disabled.
+        assert "Watc" in naive_text, (
+            "expected the colorless capture to reproduce the re-critique's "
+            "'⌃6 Watc' finding -- if this ever fails, the fragment itself "
+            "moved and this test's premise needs updating, not the "
+            "conclusion below"
+        )
+
+        # The color-aware check (already established by task-3200, reused
+        # here against the SAME render) shows the fragment is not actually
+        # readable: this is the correction to the re-critique's conclusion.
+        readable_text = _readable_nav_text(app)
+        assert "Watc" not in readable_text, (
+            "Watchlists' ghosted fragment IS color-distinguishable from its "
+            "background -- a real regression, not a measurement artifact"
+        )
+        assert watchlists.disabled, (
+            "a ghosted button must stay disabled -- consistent with the "
+            "re-critique's own click-test finding that the blank cell did "
+            "not navigate"
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "width,active",
+    [
+        (80, "home"),  # early destination: right-edge straddle, no scroll
+        (80, "settings"),  # late destination: forces a scroll (left-edge too)
+        (100, "home"),
+        (100, "settings"),
+        (120, "home"),
+        (120, "mcp"),  # the re-critique's other quoted fragment ("⌃9 M")
+        (120, "settings"),
+    ],
+)
+async def test_nav_strip_never_renders_a_partial_destination_label_under_bundled_css(
+    width, active
+):
+    """task-4020 AC#1/#4: the SAME invariant as
+    `test_nav_strip_never_renders_a_partial_destination_label` above, now
+    proven under the REAL bundled stylesheet (`App.CSS_PATH`) instead of
+    only `MainNavigationBar.DEFAULT_CSS` -- see the section docstring above
+    for why that tier distinction is exactly what the re-critique's
+    "no ghosting observed" finding turned out to hinge on. Widths and
+    active destinations mirror the re-critique's own 80/100/120 sweep with
+    an early (home) and late (settings, and 120's mcp -- the re-critique's
+    own second example) active tab, so this also stands as this task's
+    live-verification-equivalent, deterministic regression coverage.
+    """
+
+    class TestApp(App):
+        CSS_PATH = _BUNDLED_CSS_PATH
+
+        def compose(self):
+            yield MainNavigationBar(active=active)
+
+    app = TestApp()
+
+    async with app.run_test(size=(width, 24)) as pilot:
+        await pilot.pause(0.6)
+
+        strip = app.query_one("#nav-destination-strip", Horizontal)
+
+        # Geometry: nothing straddles the viewport edge with real content.
+        assert _straddling_buttons(app, strip) == []
+
+        # The active destination is always fully, genuinely visible.
+        active_button = app.query_one(f"#nav-{active}", Button)
+        assert active_button.display
+        assert not active_button.has_class("nav-button-clip-ghost")
+        assert active_button.region.width > 0
+        assert active_button.region.x >= strip.region.x
+        assert active_button.region.right <= strip.region.right
+
+        # Color-aware rendered-text pin, under the tier that actually wins
+        # live: every ghosted button's label contributes NO readable
+        # fragment to the painted screen.
+        painted = _readable_nav_text(app)
+        ghosted = [
+            button
+            for button in app.query(".nav-button")
+            if button.has_class("nav-button-clip-ghost")
+        ]
+        for button in ghosted:
+            label_text = str(button.label).strip()
+            word = label_text.split(" ", 1)[-1]
+            fragment = word[:4]
+            assert fragment not in painted, (
+                f"{button.id} is ghosted but '{fragment}' is still readable "
+                "under the bundled stylesheet"
+            )
+            assert button.disabled, f"{button.id} is ghosted but not disabled"
+            assert not button.focusable, f"{button.id} is ghosted but still focusable"
+
+        # AC#3: rule out the OTHER shape the re-critique's fragments could
+        # have meant -- an ellipsis-truncation artifact (`…`) distinct from
+        # ghosting (e.g. Rich's own text-overflow indicator, if some future
+        # change ever let a button's box shrink below its label's natural
+        # width). Live verification never reproduced a literal `…` glyph;
+        # this pins that absence as a regression guard rather than leaving
+        # it as an unverified assumption.
+        assert "…" not in painted, (
+            "an ellipsis-truncation artifact appeared in the nav strip -- "
+            "this is a DIFFERENT mechanism than clip-ghosting (Rich's own "
+            "text-overflow indicator on an under-sized button box) and "
+            "would need its own fix, not a ghosting one"
+        )
+
+
 @pytest.mark.asyncio
 async def test_tab_cycling_never_focuses_a_ghosted_nav_button():
     """Review finding: a ghosted (invisible) button was still Tab-reachable
