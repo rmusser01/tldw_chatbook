@@ -1,0 +1,652 @@
+# RAG eval harness — fixture corpus (48 documents)
+#
+# Read this before editing. The corpus is a measuring instrument, not sample
+# data: each document is planted to make one retrieval capability observable
+# with a clear relevance margin. Ranking metrics are rank-based, so near-ties
+# between a target and a decoy would make baselines jitter for reasons that
+# have nothing to do with a retrieval change.
+#
+# Schema (exact — the loader rejects missing/unknown keys):
+#   slug         stable fixture identifier, unique, never a DB id
+#   source_type  "note" | "media" | "conversation" (singular; matches the
+#                app's ITEM_TYPE_* ingestion contract)
+#   title        indexed alongside content by the real writers — treat it as
+#                part of the document when reasoning about token overlap
+#   content      >= 3 sentences, self-contained, timeless (no wall-clock
+#                dates, no randomness, nothing that decays)
+#
+# Capability groups (marked by the section comments below; the group is NOT a
+# parsed field — golden.toml's `category` is the machine-readable side):
+#   keyword-exact       a rare literal token the query repeats verbatim
+#                       (FTS advantage)
+#   paraphrase          target states the fact in vocabulary the query never
+#                       uses — ZERO content-word overlap with its query, so
+#                       keyword retrieval cannot reach it (vector advantage)
+#   vocabulary-mismatch target uses only the domain term ("myocardial
+#                       infarction") for the query's common term ("heart
+#                       attack"), with no other shared content word either —
+#                       unreachable today, the expansion-advantage cases P2
+#                       is expected to move (the harness proves they are NOT
+#                       retrieved now)
+#   multi-chunk         a keyword target long enough to split into several
+#                       chunks, with its identifier in every chunk window, so
+#                       document-level canonicalization has something to dedup
+#   distractor          shares the *generic* surface tokens of some query
+#                       (torque, limiter, slipping) but never the rare
+#                       identifier that resolves it; is nobody's
+#                       relevant_slugs entry
+#
+# Invariants the always-on tests enforce (Tests/RAG_Eval/test_goldenset_integrity.py):
+#   - every paraphrase / vocabulary-mismatch query shares no content word
+#     (stem-level) with its target's title+content;
+#   - every keyword query owns at least one content token that occurs only in
+#     its target documents;
+#   - every negative query's distinctive terms are absent corpus-wide;
+#   - every document has >= 3 sentences.
+# Adding a document that mentions another group's query term (e.g. writing
+# "heart attack" anywhere) silently destroys the case it was planted for.
+
+# ===========================================================================
+# NOTES (13 here + 1 long) — keyword 4, paraphrase 4, vocabulary-mismatch 3,
+# distractor 2; the 14th note is in the multi-chunk section at the end
+# ===========================================================================
+
+# --- notes / keyword-exact ---
+
+[[doc]]
+slug = "note-zephyr-flywheel"
+source_type = "note"
+title = "Zephyr-9 flywheel assembly balance log"
+content = """
+The Zephyr-9 flywheel assembly was balanced on the vertical rig at three hundred revolutions per minute.
+Residual imbalance measured four grams at the outer rim, which sits inside the tolerance band printed on the build sheet.
+Asset tag QX-8842 was stamped on the hub before the unit went back to the staging bay.
+"""
+
+[[doc]]
+slug = "note-halcyon-ledger"
+source_type = "note"
+title = "Halcyon-4 ledger reconciliation batch abort"
+content = """
+The Halcyon-4 ledger reconciliation batch aborted partway through its second pass and left twelve journal lines unmatched.
+Operators cleared the lock table by hand and restarted the batch from its last checkpoint.
+Nothing downstream was affected because the posting window had not yet opened.
+"""
+
+[[doc]]
+slug = "note-marlstone-kiln"
+source_type = "note"
+title = "Marlstone kiln refractory lining replacement"
+content = """
+The refractory lining in the Marlstone kiln was stripped back to the shell after spalling appeared along the arch.
+A castable replacement was poured in two lifts and cured slowly to avoid steam damage.
+The Marlstone kiln went back into service at reduced throughput until the lining had fully dried.
+"""
+
+[[doc]]
+slug = "note-nimbus-postmortem"
+source_type = "note"
+title = "Nimbus-14 firmware rollback postmortem"
+content = """
+The Nimbus-14 firmware rollback was triggered after the promoted image left two gateways unable to negotiate link speed.
+Engineers restored the earlier image from the golden partition and confirmed both gateways rejoined the ring.
+This postmortem records the absent hardware revision check as the single root cause.
+"""
+
+# --- notes / paraphrase (query vocabulary is disjoint from this text) ---
+
+[[doc]]
+slug = "note-revenue-growth"
+source_type = "note"
+title = "Annual revenue trend, tooling division"
+content = """
+Annual revenue for the tooling division grew forty percent over the prior reporting period.
+The gain came almost entirely from the aftermarket parts line rather than from fresh machine orders.
+Margins held steady because the extra volume ran through capacity the division already owned.
+"""
+
+[[doc]]
+slug = "note-depot-move"
+source_type = "note"
+title = "Distribution depot shifted to the freight terminal"
+content = """
+The distribution depot shifted from the river yard to a roomier site beside the freight terminal.
+Racking was rebuilt to a taller profile, so the same stock now occupies far less floor.
+Pick times fell once the fresh layout settled and the aisles were re-signed.
+"""
+
+[[doc]]
+slug = "note-commissioning-delay"
+source_type = "note"
+title = "Commissioning target pushed back"
+content = """
+The commissioning target for the enclosure redesign was pushed back by about four and a half weeks.
+The cause traces to a single long-lead connector that the supplier could not release on time.
+Acceptance testing keeps its original duration and simply begins further along.
+"""
+
+[[doc]]
+slug = "note-requisition-freeze"
+source_type = "note"
+title = "Headcount freeze on open requisitions"
+content = """
+The board put a freeze on every open requisition until the next capital review.
+Managers may still backfill a departure inside the same team, but any addition to headcount needs written approval.
+The freeze leaves contractors already working under an active statement of work untouched.
+"""
+
+# --- notes / vocabulary-mismatch (domain term only; query says the common term) ---
+
+[[doc]]
+slug = "note-hypertension-followup"
+source_type = "note"
+title = "Hypertension follow-up note"
+content = """
+Hypertension left unmanaged over years thickens arterial walls and strains the left ventricle.
+Clinic policy is to recheck a patient with two consecutive elevated systolic readings within a fortnight.
+Sodium restriction and steady aerobic activity remain the first interventions offered before any prescription.
+"""
+
+[[doc]]
+slug = "note-intestacy-succession"
+source_type = "note"
+title = "Intestacy note for the file"
+content = """
+An intestate estate passes under the statutory succession table rather than by any written instrument.
+The surviving spouse takes the first tranche, and the remainder divides among issue by representation.
+A personal representative is appointed by the probate registry when no executor has been named.
+"""
+
+[[doc]]
+slug = "note-gingivitis-recall"
+source_type = "note"
+title = "Gingivitis recall note"
+content = """
+Gingivitis presents as marginal inflammation with bleeding on gentle probing and no attachment loss.
+Scaling plus a two-week course of chlorhexidine rinse usually resolves the inflammation entirely.
+Patients are recalled at three months to confirm the tissue has firmed and that probing depths stay shallow.
+"""
+
+# --- notes / distractors (generic tokens of a keyword query, never its identifier) ---
+
+[[doc]]
+slug = "note-balance-practice"
+source_type = "note"
+title = "General rotating assembly balance practice"
+content = """
+Any rotating assembly is balanced on the vertical rig before it leaves the shop, and residual imbalance is recorded on the build sheet.
+The tolerance band depends on service speed rather than on mass alone, so a slow flywheel and a fast impeller are judged differently.
+Correction weights are added at the outer rim and re-checked over two consecutive runs.
+"""
+
+[[doc]]
+slug = "note-ledger-controls"
+source_type = "note"
+title = "Ledger reconciliation controls"
+content = """
+Every reconciliation batch is expected to clear before the posting window opens, and unmatched journal lines are escalated in the same session.
+Operators may restart a batch from its last checkpoint only after the lock table has been verified as clear.
+Two reviewers sign the ledger control sheet at period close.
+"""
+
+# ===========================================================================
+# MEDIA (19 here + 1 long) — keyword 5, paraphrase 5, vocabulary-mismatch 4,
+# distractor 5; the 20th media doc is in the multi-chunk section at the end
+# ===========================================================================
+
+# --- media / keyword-exact ---
+
+[[doc]]
+slug = "media-calyx-torque"
+source_type = "media"
+title = "Calyx-77 torque limiter service bulletin"
+content = """
+This bulletin covers the Calyx-77 torque limiter fitted to the second-stage drive.
+The friction pack loses grip once the spring stack relaxes below its stamped preload, and the limiter then slips under normal load.
+Replace the spring stack as a set and record the preload figure on the service card.
+"""
+
+[[doc]]
+slug = "media-obsidian-lathe"
+source_type = "media"
+title = "Obsidian-3 lathe spindle teardown"
+content = """
+The Obsidian-3 lathe spindle was pulled after chatter appeared in fine finishing passes.
+Its front bearing showed brinelling on the inner race, consistent with a shock load rather than gradual wear.
+A matched bearing pair was fitted and the spindle re-trued to under two microns of runout.
+"""
+
+[[doc]]
+slug = "media-quillon-antenna"
+source_type = "media"
+title = "Quillon-6 antenna mast survey"
+content = """
+The Quillon-6 antenna mast stands on a rock outcrop above the access track and carries three sector panels.
+Guy tensions were re-set after the second winter because the anchors had crept slightly.
+Climbing access to the Quillon-6 remains restricted to crews holding current rescue certification.
+"""
+
+[[doc]]
+slug = "media-verdigris-coating"
+source_type = "media"
+title = "Verdigris-8 anti-corrosion coating trial"
+content = """
+The Verdigris-8 anti-corrosion coating was applied to six test coupons and exposed in the salt cabinet.
+After the full exposure cycle the coated coupons showed no undercutting at the scribe lines, while bare controls bloomed rust within days.
+Adhesion after exposure stayed at the top of the tape-test scale.
+"""
+
+[[doc]]
+slug = "media-pellucid-gauge"
+source_type = "media"
+title = "Pellucid-12 vacuum gauge calibration record"
+content = """
+The Pellucid-12 vacuum gauge was calibrated against the reference standard at five decade points.
+Readings tracked within two percent at every point except the lowest decade, where the sensor lagged until the chamber stabilised.
+A correction table was written into the Pellucid-12 and its calibration sticker updated.
+"""
+
+# --- media / paraphrase (query vocabulary is disjoint from this text) ---
+
+[[doc]]
+slug = "media-aircraft-touchdown"
+source_type = "media"
+title = "Broadcast segment: aircraft returns on one engine"
+content = """
+The aircraft made a shallow approach and touched down on the long runway with emergency crews standing by.
+One engine had shut itself down at cruise altitude after an oil warning illuminated, and the crew feathered the propeller before turning around.
+Every passenger walked off unharmed and the airframe showed no damage at all.
+"""
+
+[[doc]]
+slug = "media-maize-shortfall"
+source_type = "media"
+title = "Field report: rainfall shortfall and the maize crop"
+content = """
+Rainfall stayed far below the seasonal average for three consecutive growing periods across the plateau.
+The maize crop came in at roughly half its usual weight per hectare, and farmers sold breeding stock to cover input bills.
+Irrigation wells that once ran all through the warm months now recover only overnight.
+"""
+
+[[doc]]
+slug = "media-gallery-burglary"
+source_type = "media"
+title = "News segment: night burglary at the civic gallery"
+content = """
+Two burglars entered the civic gallery through a service door shortly before midnight and left with a single oil painting.
+The alarm loop on that wing had been bypassed during renovation, and nobody noticed until the morning round.
+Investigators recovered the empty frame in a canal two streets away.
+"""
+
+[[doc]]
+slug = "media-span-resurfacing"
+source_type = "media"
+title = "Transport bulletin: river span closed for deck resurfacing"
+content = """
+The river span is closed to traffic while its deck is resurfaced and the expansion joints are replaced.
+Detour signage routes freight around the ring and adds roughly ten minutes at peak.
+Access over the footway on the upstream side stays open throughout.
+"""
+
+[[doc]]
+slug = "media-photovoltaic-roof"
+source_type = "media"
+title = "Segment: photovoltaic modules on the workshop roof"
+content = """
+Photovoltaic modules were mounted across the south-facing workshop roof and tied into the existing switchboard.
+The monthly electricity charge fell by rather more than half once the inverter came online.
+Payback on the capital outlay is reckoned at seven years under current tariffs.
+"""
+
+# --- media / vocabulary-mismatch (domain term only; query says the common term) ---
+
+[[doc]]
+slug = "media-myocardial-infarction"
+source_type = "media"
+title = "Cardiology lecture: the myocardial infarction pathway"
+content = """
+Myocardial infarction begins when a coronary plaque ruptures and a clot occludes the vessel supplying that territory.
+Chest discomfort radiating to the jaw or the left arm, sweating, and sudden breathlessness are the classic presenting complaints.
+Door-to-balloon time drives survival more than any drug given in the ambulance.
+"""
+
+[[doc]]
+slug = "media-renal-calculi"
+source_type = "media"
+title = "Nephrology teaching tape: renal calculi management"
+content = """
+Renal calculi under five millimetres usually pass unaided once fluid intake rises.
+Larger obstructing concretions in the ureter are fragmented by extracorporeal shock wave lithotripsy or retrieved ureteroscopically with a basket.
+Recurrence falls markedly under citrate therapy when the underlying metabolic profile shows a low urinary citrate.
+"""
+
+[[doc]]
+slug = "media-empennage-primer"
+source_type = "media"
+title = "Aeronautics primer: what the empennage does"
+content = """
+The empennage carries the horizontal and vertical stabilising surfaces at the rear of the fuselage.
+Its horizontal surface trims pitch against a shifting centre of gravity, while the vertical fin resists yaw and houses the rudder.
+A T configuration lifts the horizontal surface clear of the wing wake at large angles.
+"""
+
+[[doc]]
+slug = "media-temblor-bulletin"
+source_type = "media"
+title = "Seismology bulletin: temblor beneath the strait"
+content = """
+The temblor beneath the strait registered magnitude six point two, with an epicentre eleven kilometres down.
+Rupture propagated north along the fault for roughly thirty kilometres before arresting at a bend.
+Aftershocks above magnitude four continued for nine days.
+"""
+
+# --- media / distractors (generic tokens of a keyword query, never its identifier) ---
+
+[[doc]]
+slug = "media-torque-limiter-training"
+source_type = "media"
+title = "Training module: torque limiters in drive trains"
+content = """
+A torque limiter protects a drive train by slipping once transmitted torque passes its set point.
+Friction packs are the common construction, and their set point depends on spring preload, disc count, and facing material.
+Any limiter that slips during normal operation is a maintenance item rather than a nuisance to be tightened away.
+"""
+
+[[doc]]
+slug = "media-lathe-spindle-care"
+source_type = "media"
+title = "Shop training: lathe spindle care"
+content = """
+Spindle bearings on any lathe are preloaded at build and should never be disturbed in the field.
+Chatter in a finishing pass usually points at bearing condition, tool overhang, or an unbalanced workpiece.
+Runout is measured at the nose with a lever indicator before and after any bearing change.
+"""
+
+[[doc]]
+slug = "media-mast-siting-guidance"
+source_type = "media"
+title = "Guidance: antenna mast siting and guying"
+content = """
+An antenna mast should stand clear of the fall line of any structure and keep its guy anchors on stable ground.
+Guy tension is checked seasonally because anchors creep after repeated freeze and thaw cycles.
+Sector panels are mounted with their downtilt taken from the coverage plan, never set by eye.
+"""
+
+[[doc]]
+slug = "media-coating-inspection"
+source_type = "media"
+title = "Inspection method: anti-corrosion coating checks"
+content = """
+An anti-corrosion coating is judged by film thickness, adhesion, and behaviour at deliberate scribe lines.
+Salt cabinet exposure accelerates undercutting, so a poor coating fails within days rather than seasons.
+Tape tests after exposure separate a coating that merely survives from one that stays bonded.
+"""
+
+[[doc]]
+slug = "media-calibration-intervals"
+source_type = "media"
+title = "Metrology policy: instrument calibration intervals"
+content = """
+Every vacuum gauge on the floor carries a calibration sticker naming its due month and its reference standard.
+Instruments that drift more than two percent between visits move onto a shorter interval.
+A correction table may be written into an instrument only when the sensor response is monotonic.
+"""
+
+# ===========================================================================
+# CONVERSATIONS (13 here + 1 long) — keyword 4, paraphrase 4,
+# vocabulary-mismatch 2, distractor 3; the 14th is in the multi-chunk section
+# ===========================================================================
+
+# --- conversations / keyword-exact ---
+
+[[doc]]
+slug = "conv-thimble-relay"
+source_type = "conversation"
+title = "Chat: swapping the Thimble-5 relay board"
+content = """
+Ops asked whether the Thimble-5 relay board could be swapped without dropping the whole cabinet.
+The answer was yes, provided the interlock is proved open and the board is seated before the bus is re-energised.
+Spares for the Thimble-5 sit on the second shelf of the controlled store.
+"""
+
+[[doc]]
+slug = "conv-ashgrove-pump"
+source_type = "conversation"
+title = "Chat: the Ashgrove-2 coolant pump seal"
+content = """
+The Ashgrove-2 coolant pump was weeping at its mechanical seal and left a small puddle each shift.
+Maintenance fitted a cartridge seal instead of the component set, so future changes need no shimming.
+Flow readings on the Ashgrove-2 returned to the expected band once the pump had been vented.
+"""
+
+[[doc]]
+slug = "conv-nimbus-rollback"
+source_type = "conversation"
+title = "Chat: rolling Nimbus-14 firmware back overnight"
+content = """
+Someone flagged that the Nimbus-14 firmware image had broken link negotiation on two gateways overnight.
+The on-call engineer rolled back to the earlier image from the golden partition and watched both gateways rejoin.
+Everyone agreed the release checklist needs a hardware revision check before the next attempt.
+"""
+
+[[doc]]
+slug = "conv-calyx-field-report"
+source_type = "conversation"
+title = "Chat: Calyx-77 field report from the north line"
+content = """
+A fitter reported that the Calyx-77 on the north line slips under load whenever the shift starts cold.
+Measurements showed its spring stack sitting well under the stamped preload figure.
+A replacement spring set was raised against the same service card the bulletin references.
+"""
+
+# --- conversations / paraphrase (query vocabulary is disjoint from this text) ---
+
+[[doc]]
+slug = "conv-parcel-refund"
+source_type = "conversation"
+title = "Chat: customer asking about a damaged parcel"
+content = """
+A customer wrote in asking for a refund after the parcel arrived with a crushed corner and a cracked bezel.
+Support confirmed the courier photograph and issued the credit without requiring the item at all.
+The claim was logged against the courier for recovery at the end of the cycle.
+"""
+
+[[doc]]
+slug = "conv-standup-slot"
+source_type = "conversation"
+title = "Chat: standup slot change"
+content = """
+The team agreed to shift the morning standup from Tuesday to Thursday afternoon so the fabrication crew can attend.
+Notes go into the shared channel for anyone who cannot make the fresh slot.
+Nobody objected, and the calendar invitation was updated within the hour.
+"""
+
+[[doc]]
+slug = "conv-platform-offline"
+source_type = "conversation"
+title = "Chat: platform offline overnight"
+content = """
+The public platform stayed offline for about two hours during the night after the rack lost its mains feed.
+The generator turned over but the transfer switch never closed, so the battery reserve simply ran out.
+Everything came back on its own once utility service was restored.
+"""
+
+[[doc]]
+slug = "conv-workout-time"
+source_type = "conversation"
+title = "Chat: switching my workout time"
+content = """
+I switched my workout to the first hour after the doors open, because the evening classes were always full.
+The rowing machines are free at that hour and the queue for the rack disappears entirely.
+Sleep suffered for a fortnight and then settled down.
+"""
+
+# --- conversations / vocabulary-mismatch (domain term only; query says the common term) ---
+
+[[doc]]
+slug = "conv-analgesic-choice"
+source_type = "conversation"
+title = "Chat: what the pharmacist suggested"
+content = """
+The pharmacist suggested a plain analgesic rather than the branded combination pack behind the till.
+Paracetamol at the labelled dose is gentler on the gut lining than the anti-inflammatory options for most adults.
+She noted that the branded pack holds the same analgesic with caffeine added at a premium.
+"""
+
+[[doc]]
+slug = "conv-myopia-visit"
+source_type = "conversation"
+title = "Chat: optometry appointment about myopia"
+content = """
+The optometrist explained that myopia usually progresses through the school years and then stabilises in the early twenties.
+Atropine drops at low concentration and more daylight hours are the two measures with real evidence behind them.
+A fresh prescription was written for concave lenses half a dioptre stronger than the last pair.
+"""
+
+# --- conversations / distractors (generic tokens of a keyword query, never its identifier) ---
+
+[[doc]]
+slug = "conv-relay-stock"
+source_type = "conversation"
+title = "Chat: relay board stock check"
+content = """
+Stores confirmed that relay boards for the cabinet family are held on the second shelf of the controlled store.
+Any board drawn for a swap needs its serial logged so the rotation stays traceable.
+Two of the older boards are marked for return because their contacts are pitted.
+"""
+
+[[doc]]
+slug = "conv-pump-quotes"
+source_type = "conversation"
+title = "Chat: coolant pump quotes from two vendors"
+content = """
+Purchasing circulated quotes for coolant pumps from two vendors with very different seal options.
+The cheaper unit ships with a component seal, while the other includes a cartridge seal and a longer warranty.
+Engineering asked for the cartridge variant on every future pump order.
+"""
+
+[[doc]]
+slug = "conv-firmware-policy"
+source_type = "conversation"
+title = "Chat: firmware release and rollback policy"
+content = """
+The team wrote down when a firmware rollback is allowed and who may authorise one outside working hours.
+Any image promoted to the fleet must pass a hardware revision check and sit on the golden partition first.
+Rollback is expected to be boring, so it is rehearsed once a quarter.
+"""
+
+# ===========================================================================
+# MULTI-CHUNK KEYWORD TARGETS (3) — one per source type
+# ===========================================================================
+#
+# Every other document here is three sentences and lands in a single chunk,
+# which leaves the retrieved-id canonicalization contract untested by the
+# fixtures: seam rows are chunk-level, metrics are document-level, and
+# duplicate chunks of one document must dedup to their first-hit rank or a
+# multi-chunk hit pollutes P@k with self-duplicates.
+#
+# These three documents are sized to split under the DEFAULT chunking config
+# (RAG_Search/simplified/config.py ChunkingConfig: chunk_size 400 words,
+# chunk_overlap 100 -> step 300; Chunk_Lib._chunk_text_by_words iterates
+# range(0, len(words), step), so chunks = ceil(words / step)). At ~850 words
+# each that is 3 chunks under the default, and still 2+ for any overlap from
+# 0 to 300 — the property does not hinge on the exact default.
+#
+# Each one is a keyword target whose rare identifier is repeated at spread
+# positions (roughly words 5, 185, 510, 640, 800), so the identifier lands in
+# EVERY chunk window and several chunks match one query — which is what makes
+# the dedup path actually fire rather than merely exist.
+
+[[doc]]
+slug = "note-fennimore-changeover"
+source_type = "note"
+title = "Fennimore-3 packaging line changeover and acceptance log"
+content = """
+The Fennimore-3 packaging line was taken out of service for a full format changeover and a fresh acceptance run. Since installation the line had folded a single carton style, and the second style had never been proved on it end to end. This log records what was set, what had to be moved, and what the acceptance run actually showed.
+
+Work opened with a survey of the frame. Each station was checked for square against a wire strung down the machine centre, and three stations sat out by more than a millimetre. The infeed table had crept the furthest, which accounts for the intermittent skew operators keep reporting at the transfer. Frame feet were slackened, the stations pulled true, and every foot re-shimmed and locked before anything else was touched.
+
+The Fennimore-3 drives its infeed and its folding section from one common shaft, so a correction at either end shows up as a timing error at the other. Timing was therefore re-established from the folding section outward, with the infeed brought to it rather than the reverse. Both index marks were witnessed by a second fitter and stamped on the timing plate.
+
+Change parts came out of the store as a kit and were checked against the drawing list before a single one went on the machine. Two forming shoes in the kit carried the older profile and were rejected at that check, which saved a full strip-down later. Replacements were drawn from the second kit and marked so the older pair cannot re-enter circulation. The rejected shoes went to the workshop for scrapping with their identity plates removed.
+
+Infeed setting took most of the second shift. The side guides were set to the carton width with a feeler at four points along their length, because setting them at the ends alone leaves a bow in the middle that only shows at speed. Suction cups were renewed as a set rather than singly, since a mixed set of old and fresh cups gives uneven pick timing. Vacuum at the pick point was recorded on the sheet at rest and again under load.
+
+The folding section needed its plough bars re-profiled to suit the shorter flap. A trial bar was made from soft stock and run against the carton by hand until the fold sat cleanly, and only then was the finished bar cut. Both bars were made to that trial and are interchangeable side to side, which halves the spares holding. The trial bar itself is kept with the change kit as the reference.
+
+The adhesive system was flushed and its nozzles cleared before any carton ran. Nozzle open time was reduced to suit the shorter flap, and the pattern was proved on scrap board against a lamp so the bead could be seen end to end. A bead that runs past the flap edge shows up as fouling on the compression belts within a few hundred cartons, so the pattern was deliberately set short of the edge.
+
+Guarding on the Fennimore-3 was re-fitted with the interlocks proved individually. Each gate was opened in turn with the line in a running state, and the stop was witnessed and recorded against the gate identity. One interlock proved slow to break and its actuator was replaced on the spot. The guard drawing was marked up where the opening had been altered to clear the fresh change parts.
+
+A dry cycle followed, with the line run empty at slow speed for a full hour while a fitter walked it continuously. Two nips were found where the re-fitted guarding sat closer than before, and both were packed out and proved again. Nothing in the drive train ran warm, and the folding section made no contact through a complete revolution of the main shaft.
+
+The acceptance run on the Fennimore-3 began with three hundred cartons at half speed. Every carton was inspected and eleven were set aside, all of them showing a light fold on the same corner. That corner traces to the second plough bar sitting proud by a fraction, which was corrected between runs and witnessed on the following fifty cartons.
+
+The second acceptance run took the line to full speed for a thousand cartons. Reject rate settled well inside the agreed figure and no single defect repeated more than twice. Compression belt tension was checked warm at the end of the run rather than cold, because these belts relax noticeably as they come up to working temperature and a cold setting always reads tight.
+
+Transfer to the case packer needed rework that nobody had planned for. The shorter carton tipped at the dead plate on roughly one occasion in forty, and no adjustment within the existing parts held it. A short filler plate was made and fitted, after which the tipping stopped entirely across the remaining run. That plate is a permanent modification and has been drawn up as such.
+
+Sign-off criteria for the Fennimore-3 were met on the second attempt, and the line is released for the second carton style at full speed. Outstanding items are the drawing update for the filler plate and a spare set of plough bars, neither of which restricts running. The change kit is complete and stored with its reference trial bar, so the next changeover starts from a known state rather than from memory.
+"""
+
+[[doc]]
+slug = "media-larkspur-turbine"
+source_type = "media"
+title = "Larkspur-11 turbine commissioning walkthrough"
+content = """
+This walkthrough covers the commissioning of the Larkspur-11 turbine from the delivery of the nacelle through to the first hours on grid. It is recorded as a teaching piece for crews who have erected towers but never taken a machine through acceptance. Nothing in it is site specific beyond the anchor detail noted at the end.
+
+Erection began once the foundation had cured to the full figure and the anchor cage had been surveyed for level. A foundation out of level by even a small angle costs far more in yaw wear over the life of a machine than it costs to correct at the outset, so the correction was made with grout rather than accepted with a note. The tower flange was cleaned to bright metal before the first section went up.
+
+Bolt tension in the tower flanges was taken in three passes with a hydraulic tensioner, working diagonally rather than around. Each pass was recorded against bolt identity so that the settling pass has something to be compared against. Bolts are re-checked after the first running hours because a flange always relaxes as the joint beds in, and a joint that has never been re-checked is the usual explanation for a flange that later works loose.
+
+The nacelle was landed in a calm window with two tag lines and a spotter who could see both the crane and the deck. The Larkspur-11 nacelle carries its own lifting frame, which must be removed before the cover panels go back on, and the frame was returned to the ground on the same lift rather than being left aloft. Slings were inspected and logged before and after.
+
+Rotor assembly on the ground is the safer method where space allows, and it was used here. Each blade root was checked for stud protrusion and the studs were tensioned in the pattern the manual gives, not in the pattern that seems obvious. Blade serial numbers were recorded against hub positions because a blade set is matched and must not be mixed between machines.
+
+The pitch system was proved before the rotor ever turned. Each blade was driven to feather and back under its own drive, and the accumulator charge was verified so that a blade can still be feathered with the main supply lost. Emergency feather was then proved from the panel, from the local control, and from the deliberate removal of supply, because a function that has only been proved one way has only been proved for that way.
+
+Yaw was exercised through a full revolution in both directions with the cable loop watched at the top and the bottom. Cable twist counters were zeroed at the neutral position and the untwist function was proved deliberately rather than left for the controller to discover. The yaw brake was checked for even release across all callipers.
+
+Lubrication was the least glamorous part of the Larkspur-11 commissioning and the part most often rushed. Every automatic lubricator was primed until fresh grease showed at the labyrinth, the reservoirs were filled to their marks, and the delivery lines were traced end to end against the schematic. One line had been run to the wrong point at the factory and would have starved a bearing indefinitely had it not been traced.
+
+The drive train was aligned cold and then checked again after a thermal soak at part load. Alignment that is only ever taken cold ignores the growth that occurs as the machine warms, and it is that hot figure the couplings actually live with. The flexible element was inspected for even loading once the hot figure had been recorded.
+
+Electrical commissioning took the converter through its own routine before the machine was allowed to make torque. Insulation figures were taken on the generator windings and recorded as the reference for future comparison, since an absolute number means little without a first value to trend from. Earthing continuity was proved from the nacelle back to the earth mat.
+
+First rotation was made with the rotor locked out and the drive train barred by hand to confirm nothing fouled. The lock was then released and the rotor allowed to turn in a light wind with the brake modulated, while a crew member watched for contact at every guard and shroud. Two shrouds were adjusted at that stage.
+
+Grid connection followed a witnessed protection test in which each trip was injected and the breaker watched. Overspeed was proved by lowering the setting temporarily rather than by driving the machine fast, which is the safe method and gives the same evidence. Every temporary setting change was recorded on the front sheet and restored under a second signature.
+
+The Larkspur-11 completed its acceptance hours without an unplanned stop, and vibration on the drive train settled below the alarm band once the bearings had bedded. Remaining items are the settling pass on the tower bolts and a permanent guard for the untwist limit, neither of which prevents running. The anchor detail noted at the outset should be carried into any machine erected on the same foundation design.
+"""
+
+[[doc]]
+slug = "conv-drayton-conveyor"
+source_type = "conversation"
+title = "Chat: Drayton-6 conveyor belt tracking thread"
+content = """
+Ops opened the thread asking why the Drayton-6 conveyor keeps running its belt off to the drive side, since two shifts had spent time on it and neither correction held for long. Maintenance answered that a belt which walks the same way every time is almost never a belt fault. The thread that followed is worth keeping because it ended with the actual cause rather than another adjustment.
+
+The first suggestion was to crank the take-up on the drive side, which is what both shifts had already done. Maintenance pushed back on that immediately, pointing out that skewing the take-up steers the belt but also cocks the pulley, and that the fix therefore trades a tracking problem for a bearing problem. A belt that has been steered straight by a cocked pulley runs true and quietly destroys the bearing over months.
+
+Somebody asked for the actual method rather than a warning. Maintenance gave it in order: check the structure first, then the pulleys, then the idlers, then the loading point, and only then touch the belt. The order matters because every step further down the list is influenced by everything above it, so correcting an idler on a twisted frame simply hides the twist.
+
+The structure check on the Drayton-6 came first. Both stringers were measured for level across the width at every third stand, and a twist of a few millimetres was found across the middle third of the run. That twist had almost certainly been there since installation, which fits the history because the belt has never tracked properly on this machine rather than having gone off recently.
+
+Ops asked whether a twist that small could really move a belt that far. Maintenance explained that a belt behaves like a very long, very compliant shaft and always climbs toward the side that reaches it first, so a small persistent geometric error accumulates over the length of the run into a large steady-state offset. The belt is not wandering; it is obediently following the frame it has been given.
+
+The pulleys were checked next. The head pulley was square within tolerance, the tail pulley was out by a noticeable amount, and its lagging had worn into a shallow taper on one side. A tapered pulley steers the belt continuously, and a crowned pulley that has worn flat steers it in the other direction, which explains why corrections at the tail seemed to work briefly and then reverse.
+
+Idler alignment on the Drayton-6 was measured with a string line rather than by eye. Four carrying idlers sat forward of square, all of them in the section where the frame twist had been found, which is the pattern you would expect from fitters correcting a symptom locally over several years. Two return rollers had also been knocked out during a previous belt change.
+
+The loading point turned out to matter more than anyone had assumed. Material was being delivered off centre by roughly a hand's width, and an off-centre load steers a belt as effectively as any mechanical fault because the loaded side sags and slows. Ops confirmed the chute liner had been replaced with a slightly different profile and never re-aimed afterwards.
+
+At that point the thread reached agreement on a sequence rather than on a single fix. The frame twist would be corrected first with shims at the affected stands, then the tail pulley re-lagged and set square, then the idlers strung true from a fresh reference, then the chute liner re-aimed, and only after all of that would anyone judge the tracking.
+
+Maintenance added one further caution, which is that the belt itself should be inspected for a splice run out of square before any of this is judged a success. A splice cut a degree or two off square produces a periodic wander that repeats once per belt revolution, and it is easy to mistake for a tracking fault right up until somebody times it. The Drayton-6 splice was checked and found square, which ruled that out early.
+
+Ops asked how the result should be recorded so the next crew does not start over. Maintenance suggested marking the belt edge position at four fixed points along the run with the belt empty and again loaded, and writing those figures on the machine sheet as the reference. Without a recorded reference, every future crew judges tracking by memory and reaches a different conclusion.
+
+The work was carried out across a planned outage and the Drayton-6 has run true since, empty and loaded, with the edge positions holding within a few millimetres of the recorded reference. The lesson everyone took from the thread is that the belt was never the problem and that three earlier corrections had each made the underlying geometry harder to see.
+"""

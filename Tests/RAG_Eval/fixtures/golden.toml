@@ -1,0 +1,317 @@
+# RAG eval harness — golden query set (44 queries)
+#
+# Schema (exact — the loader rejects missing/unknown keys):
+#   id              stable query identifier, unique
+#   query           the text handed to the retrieval seam verbatim
+#   category        "keyword" | "paraphrase" | "vocabulary_mismatch" | "negative"
+#   relevant_slugs  corpus slugs (never DB ids — the real writers assign
+#                   autoincrement ids per run; ingestion maps slug -> runtime
+#                   id). Empty ONLY for `negative`.
+#
+# Categories are what make a P2 delta legible per capability ("HyDE:
+# paraphrase recall +0.12, keyword unchanged"), so a query's category must
+# describe how its target has to be *found*, not what it is about:
+#   keyword              the query repeats a rare literal token of the target
+#   paraphrase           the query states the target's fact in entirely
+#                        different words (zero content-word overlap) — a
+#                        single shared noun would turn it into a keyword case
+#   vocabulary_mismatch  the query uses the common term where the target uses
+#                        only the domain term; nothing else is shared either.
+#                        These are expected to MISS today — the harness
+#                        records that miss so P2's expansion work has a
+#                        before-number.
+#   negative             topic genuinely absent from the corpus; scored by
+#                        results-returned@k (keyword) / top similarity
+#                        (semantic, hybrid), never by P/R/MRR/NDCG.
+
+# ===========================================================================
+# keyword (15) — rare literal token, FTS advantage
+# (the last three are the multi-chunk targets; see the note above them)
+# ===========================================================================
+
+[[query]]
+id = "kw-zephyr-flywheel"
+query = "Zephyr-9 flywheel assembly balance tolerance"
+category = "keyword"
+relevant_slugs = ["note-zephyr-flywheel"]
+
+[[query]]
+id = "kw-zephyr-asset-tag"
+query = "asset tag QX-8842"
+category = "keyword"
+relevant_slugs = ["note-zephyr-flywheel"]
+
+[[query]]
+id = "kw-halcyon-ledger"
+query = "Halcyon-4 ledger reconciliation batch abort"
+category = "keyword"
+relevant_slugs = ["note-halcyon-ledger"]
+
+[[query]]
+id = "kw-marlstone-kiln"
+query = "Marlstone kiln refractory lining"
+category = "keyword"
+relevant_slugs = ["note-marlstone-kiln"]
+
+# Two-target: the same rare token was planted in a note and a conversation,
+# so recall@k has something to discriminate beyond found/not-found.
+[[query]]
+id = "kw-nimbus-rollback"
+query = "Nimbus-14 firmware rollback"
+category = "keyword"
+relevant_slugs = ["note-nimbus-postmortem", "conv-nimbus-rollback"]
+
+# Two-target across media + conversation.
+[[query]]
+id = "kw-calyx-limiter"
+query = "Calyx-77 torque limiter slipping"
+category = "keyword"
+relevant_slugs = ["media-calyx-torque", "conv-calyx-field-report"]
+
+[[query]]
+id = "kw-obsidian-spindle"
+query = "Obsidian-3 lathe spindle bearing"
+category = "keyword"
+relevant_slugs = ["media-obsidian-lathe"]
+
+[[query]]
+id = "kw-quillon-mast"
+query = "Quillon-6 antenna mast guy tension"
+category = "keyword"
+relevant_slugs = ["media-quillon-antenna"]
+
+[[query]]
+id = "kw-verdigris-coating"
+query = "Verdigris-8 anti-corrosion coating salt cabinet"
+category = "keyword"
+relevant_slugs = ["media-verdigris-coating"]
+
+[[query]]
+id = "kw-pellucid-gauge"
+query = "Pellucid-12 vacuum gauge calibration"
+category = "keyword"
+relevant_slugs = ["media-pellucid-gauge"]
+
+[[query]]
+id = "kw-thimble-relay"
+query = "Thimble-5 relay board swap"
+category = "keyword"
+relevant_slugs = ["conv-thimble-relay"]
+
+[[query]]
+id = "kw-ashgrove-pump"
+query = "Ashgrove-2 coolant pump seal"
+category = "keyword"
+relevant_slugs = ["conv-ashgrove-pump"]
+
+# --- multi-chunk targets: each of these documents splits into 3 chunks under
+# the default chunking config and repeats its identifier in every chunk
+# window, so one query hits the same document several times. That is the only
+# place the fixtures exercise document-level canonicalization (duplicate
+# chunks of one document dedup to their first-hit rank); without them a
+# multi-chunk hit polluting P@k with self-duplicates would be invisible here.
+
+[[query]]
+id = "kw-fennimore-changeover"
+query = "Fennimore-3 packaging line changeover acceptance run"
+category = "keyword"
+relevant_slugs = ["note-fennimore-changeover"]
+
+[[query]]
+id = "kw-larkspur-turbine"
+query = "Larkspur-11 turbine commissioning walkthrough"
+category = "keyword"
+relevant_slugs = ["media-larkspur-turbine"]
+
+[[query]]
+id = "kw-drayton-conveyor"
+query = "Drayton-6 conveyor belt tracking"
+category = "keyword"
+relevant_slugs = ["conv-drayton-conveyor"]
+
+# ===========================================================================
+# paraphrase (13) — zero content-word overlap with the target, vector advantage
+# ===========================================================================
+
+[[query]]
+id = "pr-revenue-growth"
+query = "yearly sales increased sharply"
+category = "paraphrase"
+relevant_slugs = ["note-revenue-growth"]
+
+[[query]]
+id = "pr-depot-move"
+query = "the warehouse relocated into a bigger building"
+category = "paraphrase"
+relevant_slugs = ["note-depot-move"]
+
+[[query]]
+id = "pr-commissioning-delay"
+query = "the project deadline was delayed by roughly a month"
+category = "paraphrase"
+relevant_slugs = ["note-commissioning-delay"]
+
+[[query]]
+id = "pr-requisition-freeze"
+query = "hiring was stopped across the company"
+category = "paraphrase"
+relevant_slugs = ["note-requisition-freeze"]
+
+[[query]]
+id = "pr-aircraft-touchdown"
+query = "the plane landed without injury after the motor quit"
+category = "paraphrase"
+relevant_slugs = ["media-aircraft-touchdown"]
+
+[[query]]
+id = "pr-maize-shortfall"
+query = "a lengthy drought reduced corn yields"
+category = "paraphrase"
+relevant_slugs = ["media-maize-shortfall"]
+
+[[query]]
+id = "pr-gallery-burglary"
+query = "thieves took artwork from the museum after dark"
+category = "paraphrase"
+relevant_slugs = ["media-gallery-burglary"]
+
+[[query]]
+id = "pr-span-resurfacing"
+query = "the bridge shut for road repaving"
+category = "paraphrase"
+relevant_slugs = ["media-span-resurfacing"]
+
+[[query]]
+id = "pr-photovoltaic-roof"
+query = "a solar array installed to lower power bills"
+category = "paraphrase"
+relevant_slugs = ["media-photovoltaic-roof"]
+
+[[query]]
+id = "pr-parcel-refund"
+query = "a buyer wanted money returned because the package showed up broken"
+category = "paraphrase"
+relevant_slugs = ["conv-parcel-refund"]
+
+[[query]]
+id = "pr-standup-slot"
+query = "the daily sync moved to later in the week"
+category = "paraphrase"
+relevant_slugs = ["conv-standup-slot"]
+
+[[query]]
+id = "pr-platform-offline"
+query = "the website was unreachable after an electricity failure"
+category = "paraphrase"
+relevant_slugs = ["conv-platform-offline"]
+
+[[query]]
+id = "pr-workout-time"
+query = "moved my exercise sessions to sunrise because the late slots were crowded"
+category = "paraphrase"
+relevant_slugs = ["conv-workout-time"]
+
+# ===========================================================================
+# vocabulary_mismatch (9) — common term vs domain term; expected to MISS today
+# ===========================================================================
+
+[[query]]
+id = "vm-heart-attack"
+query = "warning signs of a heart attack"
+category = "vocabulary_mismatch"
+relevant_slugs = ["media-myocardial-infarction"]
+
+[[query]]
+id = "vm-kidney-stones"
+query = "how are kidney stones removed"
+category = "vocabulary_mismatch"
+relevant_slugs = ["media-renal-calculi"]
+
+[[query]]
+id = "vm-airplane-tail"
+query = "what the tail of an airplane does"
+category = "vocabulary_mismatch"
+relevant_slugs = ["media-empennage-primer"]
+
+[[query]]
+id = "vm-earthquake-strength"
+query = "how strong was the earthquake"
+category = "vocabulary_mismatch"
+relevant_slugs = ["media-temblor-bulletin"]
+
+[[query]]
+id = "vm-blood-pressure"
+query = "how dangerous is high blood pressure"
+category = "vocabulary_mismatch"
+relevant_slugs = ["note-hypertension-followup"]
+
+[[query]]
+id = "vm-no-will"
+query = "who inherits when someone leaves no will"
+category = "vocabulary_mismatch"
+relevant_slugs = ["note-intestacy-succession"]
+
+[[query]]
+id = "vm-gum-disease"
+query = "gum disease treatment"
+category = "vocabulary_mismatch"
+relevant_slugs = ["note-gingivitis-recall"]
+
+[[query]]
+id = "vm-painkiller"
+query = "which painkiller is easier on the stomach"
+category = "vocabulary_mismatch"
+relevant_slugs = ["conv-analgesic-choice"]
+
+[[query]]
+id = "vm-nearsightedness"
+query = "does nearsightedness worsen in children"
+category = "vocabulary_mismatch"
+relevant_slugs = ["conv-myopia-visit"]
+
+# ===========================================================================
+# negative (7) — genuinely absent topics; empty relevant_slugs is legal here
+# and ONLY here
+# ===========================================================================
+
+[[query]]
+id = "neg-sourdough"
+query = "sourdough starter hydration ratio"
+category = "negative"
+relevant_slugs = []
+
+[[query]]
+id = "neg-antarctic-permits"
+query = "visa paperwork for antarctic research bases"
+category = "negative"
+relevant_slugs = []
+
+[[query]]
+id = "neg-mandolin"
+query = "tuning a mandolin by ear"
+category = "negative"
+relevant_slugs = []
+
+[[query]]
+id = "neg-swimming-lanes"
+query = "olympic swimming pool lane dimensions"
+category = "negative"
+relevant_slugs = []
+
+[[query]]
+id = "neg-castle-siege"
+query = "medieval castle siege tactics"
+category = "negative"
+relevant_slugs = []
+
+[[query]]
+id = "neg-honeybee-colony"
+query = "why honeybee colonies collapse"
+category = "negative"
+relevant_slugs = []
+
+[[query]]
+id = "neg-chess-endgame"
+query = "chess endgame tablebases"
+category = "negative"
+relevant_slugs = []
