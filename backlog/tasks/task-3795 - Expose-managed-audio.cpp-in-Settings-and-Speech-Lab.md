@@ -1,11 +1,11 @@
 ---
 id: TASK-3795
 title: Expose managed audio.cpp in Settings and Speech Lab
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-08-09 02:38'
-updated_date: '2026-08-09 02:49'
+updated_date: '2026-08-09 14:03'
 labels:
   - tts
   - audio-cpp
@@ -21,8 +21,10 @@ references:
 documentation:
   - Docs/superpowers/specs/2026-08-02-audio-cpp-managed-lifecycle-design.md
   - Docs/superpowers/specs/2026-08-02-speech-lab-current-result-ux-design.md
-  - Docs/superpowers/plans/2026-08-08-task-3795-audio-cpp-managed-settings-speech-lab.md
-  - Docs/superpowers/qa/audio-cpp-managed-settings-speech-lab-2026-08-08/live-uat.md
+  - >-
+    Docs/superpowers/plans/2026-08-08-task-3795-audio-cpp-managed-settings-speech-lab.md
+  - >-
+    Docs/superpowers/qa/audio-cpp-managed-settings-speech-lab-2026-08-08/live-uat.md
 priority: high
 ---
 
@@ -34,16 +36,16 @@ Make the completed managed audio.cpp runtime usable through the canonical Global
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Global Settings exposes explicit External server and Managed local server modes, shows only the selected mode primary fields, and keeps advanced lifecycle and common safety limits discoverable.
-- [ ] #2 A user can detect or pick a prebuilt audiocpp_server binary and pick an existing server.json, receives field-specific safe validation and trust/loopback/working-directory guidance, and saving performs no launch, probe, catalog refresh, or synthesis.
-- [ ] #3 Saving changed Managed settings or External mode while a managed child is active preserves that child and truthfully presents saved, applied, and pending state with a clear handoff to Speech Lab.
-- [ ] #4 Speech Lab presents one audio.cpp runtime card with truthful saved/applied/process generations, process and capability state, active endpoint, catalog freshness, pending relation, and a link to Global Settings without duplicating durable fields or launching on mount.
-- [ ] #5 Speech Lab exposes the specified state-specific Start/Test, Restart/Apply, Shutdown, Refresh, and Generate behavior asynchronously, keeps incompatible actions visibly disabled with reasons, and clearly distinguishes playback Stop from server Shutdown.
-- [ ] #6 Recent managed diagnostics remain collapsed by default, bounded and sanitized, identify process generation and stream, warn that output may be sensitive and clears on restart, and cannot launch, persist, or alter lifecycle state.
-- [ ] #7 The managed Settings and Speech Lab surfaces preserve focus, non-color status cues, keyboard accessibility, and the status/primary-action/current-result hierarchy at narrow terminal widths.
-- [ ] #8 User setup and recovery documentation covers binary/server.json ownership, lazy start, saved-versus-active behavior, diagnostics privacy, restart, shutdown, crash recovery, and switching back to External mode.
-- [ ] #9 A real-binary first-time-user UAT saves without launching, starts exactly one managed process, discovers the configured multi-model catalog, generates and audibly plays a character-roleplay WAV, proves restart/apply, unexpected-exit recovery, explicit shutdown/lazy restart, External apply, and final app cleanup without modifying user-provided artifacts.
-- [ ] #10 External audio.cpp behavior and complete-WAV playback remain unchanged, and normal automated tests require no audio.cpp binary, models, downloads, external network, or audio hardware.
+- [x] #1 Global Settings exposes explicit External server and Managed local server modes, shows only the selected mode primary fields, and keeps advanced lifecycle and common safety limits discoverable.
+- [x] #2 A user can detect or pick a prebuilt audiocpp_server binary and pick an existing server.json, receives field-specific safe validation and trust/loopback/working-directory guidance, and saving performs no launch, probe, catalog refresh, or synthesis.
+- [x] #3 Saving changed Managed settings or External mode while a managed child is active preserves that child and truthfully presents saved, applied, and pending state with a clear handoff to Speech Lab.
+- [x] #4 Speech Lab presents one audio.cpp runtime card with truthful saved/applied/process generations, process and capability state, active endpoint, catalog freshness, pending relation, and a link to Global Settings without duplicating durable fields or launching on mount.
+- [x] #5 Speech Lab exposes the specified state-specific Start/Test, Restart/Apply, Shutdown, Refresh, and Generate behavior asynchronously, keeps incompatible actions visibly disabled with reasons, and clearly distinguishes playback Stop from server Shutdown.
+- [x] #6 Recent managed diagnostics remain collapsed by default, bounded and sanitized, identify process generation and stream, warn that output may be sensitive and clears on restart, and cannot launch, persist, or alter lifecycle state.
+- [x] #7 The managed Settings and Speech Lab surfaces preserve focus, non-color status cues, keyboard accessibility, and the status/primary-action/current-result hierarchy at narrow terminal widths.
+- [x] #8 User setup and recovery documentation covers binary/server.json ownership, lazy start, saved-versus-active behavior, diagnostics privacy, restart, shutdown, crash recovery, and switching back to External mode.
+- [x] #9 A real-binary first-time-user UAT saves without launching, starts exactly one managed process, discovers the configured multi-model catalog, generates and audibly plays a character-roleplay WAV, proves restart/apply, unexpected-exit recovery, explicit shutdown/lazy restart, External apply, and final app cleanup without modifying user-provided artifacts.
+- [x] #10 External audio.cpp behavior and complete-WAV playback remain unchanged, and normal automated tests require no audio.cpp binary, models, downloads, external network, or audio hardware.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -70,20 +72,20 @@ The implementation extends the existing TTS service boundary instead of adding a
 
 Automated verification completed on the rebased branch:
 
-- Affected managed audio.cpp, Settings, and Speech Lab suite: 549 passed.
+- Final changed-module rerun: 722 passed in the sandbox; the five real-child cases blocked only by sandbox loopback permissions then passed 5/5 outside it (727 total).
 - Full TTS suite: 2,509 passed and 16 optional/live cases skipped before one release-evidence metadata correction; the corrected evidence suite then passed 2/2.
 - Broader Settings, Console, Roleplay, application-ownership, and UI coverage passed except one UI test whose identical stale-fake failure was reproduced on clean `origin/dev`.
 - Ruff check, Ruff format check, compileall, CSS generation, privacy/boundary tests, and cumulative diff checks passed. Repository-wide mypy retained the identical 178-error `origin/dev` baseline and introduced no new errors.
-- An interim audio.cpp 0.4 UAT exercised the objective setup and lifecycle journeys and exposed the dynamic primary-action width defect that string-only tests had missed. The required supported-release rerun, exact application-commit evidence, configured-External-origin proof, and user-audible confirmation remain pending in the linked sanitized evidence.
+- The final supported-release UAT ran Homebrew audio.cpp 0.5.1 at application commit `2d9fe9401a6182e113102d903a6483553bcc8fde`. It verified validation-only first save, two-model discovery, complete-WAV character-roleplay generation and audible playback, saved/applied truth, restart/apply, unexpected-exit recovery, explicit shutdown/lazy restart, Managed↔External handoff, configured-External-origin Test/Generate, dormant Managed values, exact child ownership, unchanged user artifacts, and final cleanup. The linked evidence remains sanitized.
 
 ADR required: no new ADR. ADR-023, ADR-039, and ADR-040 continue to govern the runtime boundary, global-versus-Studio ownership, and current-result behavior. No plan deviation was required. The live label-reflow incident is recorded in `backlog/docs/lessons-testing-evidence.md`.
 <!-- SECTION:NOTES:END -->
 
 ## Definition of Done
 <!-- DOD:BEGIN -->
-- [ ] #1 Focused Settings, Speech Lab, lifecycle, diagnostics, responsive, accessibility, and no-passive-launch tests pass and mutation checks prove the new guards can fail.
-- [ ] #2 Affected broader TTS, Settings, Console, Roleplay, and application-ownership suites pass or exact unchanged dev failures are documented from identical commands.
-- [ ] #3 Ruff, formatting, mypy, compileall, boundary/privacy scans, and cumulative branch diff checks pass.
-- [ ] #4 The real-binary UAT evidence records only sanitized binary/version, capability, generation, WAV metadata, process-cleanup facts, and the user audible-playback confirmation.
-- [ ] #5 ADR-023, ADR-039, ADR-040, the managed-lifecycle spec, user documentation, and task implementation notes remain traceable and current.
+- [x] #1 Focused Settings, Speech Lab, lifecycle, diagnostics, responsive, accessibility, and no-passive-launch tests pass and mutation checks prove the new guards can fail.
+- [x] #2 Affected broader TTS, Settings, Console, Roleplay, and application-ownership suites pass or exact unchanged dev failures are documented from identical commands.
+- [x] #3 Ruff, formatting, mypy, compileall, boundary/privacy scans, and cumulative branch diff checks pass.
+- [x] #4 The real-binary UAT evidence records only sanitized binary/version, capability, generation, WAV metadata, process-cleanup facts, and the user audible-playback confirmation.
+- [x] #5 ADR-023, ADR-039, ADR-040, the managed-lifecycle spec, user documentation, and task implementation notes remain traceable and current.
 <!-- DOD:END -->
