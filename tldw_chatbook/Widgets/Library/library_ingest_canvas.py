@@ -608,6 +608,17 @@ class LibraryIngestCanvas(VerticalScroll):
     for all state changes so the screen can persist them.
     """
 
+    # (task-3314) The two-press Start confirm rides the gate line; while
+    # armed it carries the warning treatment. Theme tokens only (the same
+    # rule the retired guardrail modal's CSS was pinned to); the "⚠" glyph
+    # in the copy keeps the state legible in monochrome.
+    DEFAULT_CSS = """
+    LibraryIngestCanvas .-ingest-start-confirm {
+        color: $warning;
+        text-style: bold;
+    }
+    """
+
     class OptionValueChanged(Message):
         """A per-type option value changed."""
 
@@ -1025,6 +1036,12 @@ class LibraryIngestCanvas(VerticalScroll):
             markup=False,
         )
         start_quiet_line.styles.height = 1
+        # (task-3314) The confirm treatment is state-keyed at compose time
+        # too, so a full recompose while armed keeps copy and styling in
+        # agreement; the gate updater owns the in-place toggle.
+        start_quiet_line.set_class(
+            state.start_confirm_armed, "-ingest-start-confirm"
+        )
         yield start_quiet_line
         # (task-3301) Analyze-readiness hint: says BEFORE Start that
         # "Analyze after import" cannot actually run (no provider / missing
@@ -1056,6 +1073,20 @@ class LibraryIngestCanvas(VerticalScroll):
         # Queue block lives in its own render-from-state child so registry
         # job ticks recompose ONLY it (task-2042).
         yield LibraryIngestQueuePanel(state, id="library-ingest-queue-panel")
+        # (task-3313) "Retry this batch": re-stages the last submission's
+        # source + options + metadata into the form. Lives with the queue's
+        # outcome area but deliberately OUTSIDE the recomposing queue panel
+        # -- always mounted, display-managed by the screen's dynamic-region
+        # updater (never conditionally composed, the four-incident lesson),
+        # so it keeps object identity across job ticks.
+        retry_last = Button(
+            "Retry this batch",
+            id="library-ingest-retry-last",
+            classes="library-canvas-action",
+            compact=True,
+        )
+        retry_last.display = state.show_retry_last
+        yield retry_last
         # (task-3304, MI-08) Fold indicator, task-1623 convention: docked
         # chrome (a docked child of a scroll container never scrolls with
         # the content), always mounted, display-managed by

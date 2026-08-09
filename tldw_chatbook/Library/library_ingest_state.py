@@ -541,6 +541,75 @@ def preflight_install_commands(warnings: list[dict[str, Any]]) -> tuple[str, ...
     return tuple(commands)
 
 
+def count_warning_affected_files(preflight: PreflightResult | None) -> int:
+    """Distinct staged files whose type group depends on a warned feature.
+
+    (task-3314) Feeds the inline consent line's blast radius ("N files may
+    fail") — the successor to the retired guardrail modal's per-feature
+    ``_affected_counts``. A file lives in exactly one type group, so
+    summing the affected groups' file counts is a distinct-file count.
+
+    Args:
+        preflight: The active pre-flight result, or ``None``.
+
+    Returns:
+        The number of staged (supported-group) files whose group's
+        required or optional features include any warned feature. ``0``
+        when there is no result, no warnings, or no feature-resolvable
+        warnings.
+    """
+    if preflight is None:
+        return 0
+    warned = {
+        str(warning.get("feature") or "").strip()
+        for warning in preflight.warnings
+        if isinstance(warning, Mapping)
+    } - {""}
+    if not warned:
+        return 0
+    affected = 0
+    for group, files in preflight.type_groups.items():
+        if group == "unsupported":
+            continue
+        cap = get_capabilities(group)
+        features = set(cap.required_features) | set(cap.optional_features)
+        if warned & features:
+            affected += len(files)
+    return affected
+
+
+@dataclass(frozen=True)
+class LibraryIngestLastSubmission:
+    """Snapshot of the last submitted ingest batch (task-3313).
+
+    Captured by the screen at submit time, BEFORE the form auto-clears, so
+    "Retry this batch" can re-stage the exact same source with its options
+    and metadata. Session-scoped by design (recorded in task-3313's notes):
+    the jobs DB persists sources but not the form's staged options, so a
+    restart starts with no snapshot and the affordance simply stays hidden.
+
+    Attributes:
+        source: The RESOLVED source path/URL that was submitted (not the
+            raw typed text — restoring the canonical form is deliberate).
+        title: The title field's raw text at submit time.
+        author: The author field's raw text at submit time.
+        keywords: The keywords field's raw comma-separated text.
+        analyze: The "Analyze after import" toggle at submit time.
+        chunk: The "Chunk content" toggle at submit time.
+        chunk_size: The chunk-size field's raw display text.
+        type_options: A per-group COPY of the form's option values.
+    """
+
+    source: str
+    title: str = ""
+    author: str = ""
+    keywords: str = ""
+    analyze: bool = False
+    chunk: bool = False
+    chunk_size: str = str(DEFAULT_CHUNK_SIZE)
+    type_options: Mapping[str, Mapping[str, Any]] = field(default_factory=dict)
+
+
 @dataclass
 class LibraryIngestFormState:
     """Mutable form echo for the ingest canvas.
@@ -809,6 +878,19 @@ class LibraryIngestCanvasState:
     #: one compact "Copy install command" button per entry so the command
     #: is recoverable AT the warning, not only inside the guardrail modal.
     warning_commands: tuple[str, ...] = ()
+    #: (task-3314) Whether the gate line is currently the two-press Start
+    #: confirm ("⚠ Press Start again to import anyway — N files may
+    #: fail."). Only ever ``True`` when the screen's armed flag holds AND
+    #: the gate is open AND tooling warnings are active, so a stale armed
+    #: flag can never paint consent copy the forecast doesn't justify. The
+    #: canvas/gate updater key the warning treatment (the
+    #: ``-ingest-start-confirm`` class) off this flag.
+    start_confirm_armed: bool = False
+    #: (task-3313) Whether the "Retry this batch" affordance is visible:
+    #: a last-submission snapshot exists AND the queue has settled (no
+    #: queued/parsing/writing job). Canvas-level, always-mounted,
+    #: display-managed chrome.
+    show_retry_last: bool = False
 
 
 def _basename(source_path: str) -> str:
@@ -1415,6 +1497,8 @@ def build_library_ingest_state(
     clear_finished_armed: bool = False,
     expanded_details: frozenset[str] | set[str] = frozenset(),
     analysis_unready_hint: str = "",
+    start_confirm_armed: bool = False,
+    last_submission_available: bool = False,
 ) -> LibraryIngestCanvasState:
     """Build the ingest canvas's full display state.
 
@@ -1715,6 +1799,44 @@ def build_library_ingest_state(
                 "starting will re-check and match, not re-import."
             )
 
+    # (task-3314) Inline two-press consent: while the screen's armed flag
+    # holds, the gate is open, and tooling warnings are active, the gate
+    # line becomes the explicit confirm naming the blast radius. Applied
+    # LAST among the quiet-line writers on purpose — a pending consent is
+    # the acute state and outranks the informational lines above (the
+    # unavailable/blocked branches can never coincide with it, since they
+    # all imply ``start_enabled`` is False). The armed flag is gated here,
+    # not trusted: a stale carrier with no active warnings renders the
+    # ordinary gate line and reports ``start_confirm_armed=False``.
+    start_confirm_active = bool(
+        start_confirm_armed and start_enabled and warning_lines
+    )
+    if start_confirm_active:
+        affected = count_warning_affected_files(active_preflight)
+        if affected:
+            noun = "file" if affected == 1 else "files"
+            start_quiet_line = (
+                "⚠ Press Start again to import anyway — "
+                f"{affected} {noun} may fail."
+            )
+        else:
+            # Defensive: warnings whose features no staged group claims.
+            start_quiet_line = "⚠ Press Start again to import anyway."
+
+    # (task-3313) "Retry this batch" appears once a last submission exists
+    # AND the queue has settled — an active job means that submission has
+    # not reached a terminal state yet, and re-staging mid-run invites a
+    # duplicate batch.
+    show_retry_last = bool(last_submission_available) and not any(
+        job.state
+        in (
+            IngestJobState.QUEUED,
+            IngestJobState.PARSING,
+            IngestJobState.WRITING,
+        )
+        for job in jobs
+    )
+
     # (task-2100) Name the unsupported files -- a count alone forces a
     # submit-and-read-the-rows round trip to learn WHICH files. When the
     # gate has already blocked the whole selection, the gate line carries
@@ -1843,6 +1965,8 @@ def build_library_ingest_state(
         # provider it isn't going to use.
         analysis_hint_line=(analysis_unready_hint if form.analyze else ""),
         warning_commands=tuple(warning_commands),
+        start_confirm_armed=start_confirm_active,
+        show_retry_last=show_retry_last,
     )
 
 

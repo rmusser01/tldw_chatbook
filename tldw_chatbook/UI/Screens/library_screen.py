@@ -25,7 +25,6 @@ from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.events import DescendantFocus, Key
 from textual.css.query import NoMatches, QueryError
 from textual.geometry import Region
-from textual.screen import ModalScreen
 from textual.timer import Timer
 from textual.widget import Widget
 from textual.worker import Worker
@@ -103,6 +102,7 @@ from ...Library.library_ingest_state import (
     INGEST_UNAVAILABLE_COPY,
     LibraryIngestCanvasState,
     LibraryIngestFormState,
+    LibraryIngestLastSubmission,
     build_library_ingest_state,
     clamp_chunk_size,
     parse_keywords,
@@ -1238,155 +1238,6 @@ def _sync_library_canvas(screen: "LibraryScreen", kind: str) -> None:
         screen.refresh(recompose=True)
 
 
-class IngestGuardrailModal(ModalScreen[bool]):
-    """Confirmation modal for starting an ingest with tooling warnings."""
-
-    DEFAULT_CSS = """
-    IngestGuardrailModal {
-        align: center middle;
-    }
-
-    #ingest-guardrail-modal {
-        width: 60;
-        height: auto;
-        max-height: 90%;
-        border: thick $primary;
-        background: $surface;
-        padding: 1 2;
-    }
-
-    /* task-3300 xhigh review round 2 (F3): the warning list is the ONLY
-       part of the modal allowed to give way -- it hugs its content while
-       everything fits, and scrolls once it doesn't, so Cancel / "Start
-       import anyway" stay reachable at any warning count. Before this,
-       5+ warnings grew the plain Vertical past the screen and clipped
-       the action row off the bottom. The row budget (screen cap minus
-       the pinned title/action chrome) is computed in ``on_mount``:
-       ``max-height: 1fr`` here resolves against the modal's FULL inner
-       height without subtracting the pinned siblings (measured -- a
-       7-warning list took all 17 inner rows and pushed the actions off
-       a 24-row screen). */
-    #ingest-guardrail-warnings {
-        height: auto;
-    }
-
-    /* task-3300: a bare ``Vertical()`` defaults to ``height: 1fr``, which
-       inside this ``height: auto`` modal starved every warning Static to
-       zero rendered height (the DESIGN.md section 7 "bare Container starving
-       its sibling" defect -- live capture showed an empty full-height
-       column). Each warning block must hug its content. */
-    .ingest-guardrail-warning {
-        height: auto;
-        margin-top: 1;
-    }
-
-    #ingest-guardrail-actions {
-        height: auto;
-        min-height: 3;
-        margin: 1 0 0 0;
-        align-horizontal: right;
-    }
-
-    #ingest-guardrail-cancel,
-    #ingest-guardrail-confirm {
-        width: auto;
-        min-width: 10;
-        height: 3;
-        min-height: 3;
-        margin-left: 1;
-    }
-    """
-
-    BINDINGS = [("escape", "dismiss(False)", "Close")]
-
-    def __init__(self, warnings: list[dict], affected_counts: dict[str, int]) -> None:
-        self.warnings = warnings
-        self.affected_counts = affected_counts
-        super().__init__()
-
-    def compose(self) -> ComposeResult:
-        with Vertical(id="ingest-guardrail-modal"):
-            yield Static("Some files may fail to import:")
-            # (F3) Warnings scroll; the title above and the action row
-            # below stay pinned, so the actions are reachable at any
-            # warning count.
-            with VerticalScroll(id="ingest-guardrail-warnings"):
-                for i, w in enumerate(self.warnings):
-                    count = self.affected_counts.get(w["feature"], 0)
-                    files_word = "file" if count == 1 else "files"
-                    with Vertical(classes="ingest-guardrail-warning"):
-                        # (task-3312 #3) Suppress the hint when it merely
-                        # repeats the label ("- Audio processing (1 file):
-                        # Audio processing" -- live 2026-08-08), the same
-                        # echo rule the inline pre-flight builder applies
-                        # (``build_warning_lines``). NOTE: task-3314
-                        # retires this modal wholesale; this stays a
-                        # minimal line-level fix, not a shared refactor.
-                        label = str(w.get("label") or "").strip()
-                        hint = str(w.get("hint") or "").strip()
-                        line = f"- {label} ({count} {files_word})"
-                        if hint and hint.casefold() != label.casefold():
-                            line += f": {hint}"
-                        yield Static(line)
-                        if w.get("command"):
-                            yield Button(
-                                "Copy install command",
-                                id=f"ingest-guardrail-copy-command-{i}",
-                                classes="copy-command",
-                            )
-            with Horizontal(id="ingest-guardrail-actions"):
-                # Cancel is the safe action -- repo convention keeps it
-                # ``default``; the confirm carries the emphasis (task-3300).
-                yield Button("Cancel", id="ingest-guardrail-cancel", variant="default")
-                yield Button(
-                    "Start import anyway",
-                    id="ingest-guardrail-confirm",
-                    variant="primary",
-                )
-
-    def on_mount(self) -> None:
-        """Cap the warning list to the rows left after the pinned chrome.
-
-        (F3) The scroll region's budget is 90% of the screen (the modal
-        container's own ``max-height``) minus the fixed rows around it:
-        border 2 + padding 2 + title 1 + action row 3 + action margin 1.
-        Computed here because no CSS scalar expresses "remaining height
-        after my siblings" inside a ``height: auto`` container --
-        ``max-height: 1fr`` resolves against the container's full inner
-        height and pushes the action row off-screen (measured on a
-        24-row screen with 7 warnings). ``max-height`` only ever caps:
-        short lists still hug their content exactly as before.
-        """
-        chrome_rows = 9
-        budget = max(3, int(self.app.size.height * 0.9) - chrome_rows)
-        self.query_one("#ingest-guardrail-warnings").styles.max_height = budget
-
-    @on(Button.Pressed, "#ingest-guardrail-confirm")
-    def _confirm(self) -> None:
-        self.dismiss(True)
-
-    @on(Button.Pressed, "#ingest-guardrail-cancel")
-    def _cancel(self) -> None:
-        self.dismiss(False)
-
-    @on(Button.Pressed, ".copy-command")
-    def _copy_command(self, event: Button.Pressed) -> None:
-        button_id = event.button.id
-        if not button_id or not button_id.startswith("ingest-guardrail-copy-command-"):
-            return
-        index = int(button_id.split("-")[-1])
-        command = self.warnings[index].get("command", "")
-        copy_fn = getattr(self.app, "copy_to_clipboard", None)
-        if callable(copy_fn):
-            try:
-                copy_fn(command)
-                self.notify("Install command copied to clipboard")
-            except Exception:
-                self.notify("Failed to copy command", severity="error")
-        else:
-            self.notify("Clipboard not available", severity="warning")
-
-
 def _canonical_shortcut_key(key: str) -> str:
     """Fold a shortcut key label to its canonical dedupe form.
 
@@ -1407,20 +1258,6 @@ def _canonical_shortcut_key(key: str) -> str:
 
 class _ParakeetV2NoPendingReportError(RuntimeError):
     """Raised when confirmation has no retained preflight report."""
-
-
-def _affected_counts(preflight: PreflightResult) -> dict[str, int]:
-    """Map each tooling feature to the number of files that depend on it."""
-    counts: dict[str, int] = {}
-    for group, files in preflight.type_groups.items():
-        if group == "unsupported":
-            # Unsupported files have no capability schema; they are surfaced
-            # separately in the pre-flight summary, not via tooling warnings.
-            continue
-        cap = get_capabilities(group)
-        for feat in cap.required_features + cap.optional_features:
-            counts[feat] = counts.get(feat, 0) + len(files)
-    return counts
 
 
 class LibraryScreen(BaseAppScreen):
@@ -1493,6 +1330,15 @@ class LibraryScreen(BaseAppScreen):
             "enter", "library_rag_result_card_select", "Select evidence", show=False
         ),
         Binding("o", "library_rag_result_card_open", "Open evidence", show=False),
+        # task-3313: "Retry this batch" accelerator. ``check_action`` gates
+        # it to the Ingest canvas WITH a last-submission snapshot; a
+        # focused Input/TextArea consumes the printable key before any
+        # screen binding sees it, so `r` still types normally in the form
+        # fields. Advertised via ``LIBRARY_INGEST_SHORTCUTS`` (footer+F1),
+        # so ``show=False`` like the other contextual keys.
+        Binding(
+            "r", "library_ingest_retry_last", "Retry this batch", show=False
+        ),
     ]
 
     #: Whether the media item open in the viewer lives on the SERVER. Set only
@@ -1624,10 +1470,15 @@ class LibraryScreen(BaseAppScreen):
     #: landing (``action_library_ingest_back``). Shared by the footer and
     #: F1 via ``_library_footer_shortcuts_for_current_state``, the
     #: task-2858 single-source rule.
+    #: task-3313 adds ``r`` -- re-stage the last submission ("Retry this
+    #: batch"); the binding itself is snapshot-gated, the advertisement is
+    #: static like the rest of this set (the footer already advertises
+    #: Enter while the gate is closed -- same precedent).
     LIBRARY_INGEST_SHORTCUTS = (
         ("/", "focus search"),
         ("F6", "next pane"),
         ("enter", "start import"),
+        ("r", "retry last batch"),
         ("esc", "back to hub"),
     )
 
@@ -2834,6 +2685,25 @@ class LibraryScreen(BaseAppScreen):
         # clears; any registry mutation disarms.
         self._library_ingest_clear_finished_armed: bool = False
         self._library_ingest_clear_finished_armed_at: float = 0.0
+        # (task-3314) Two-press inline Start consent, mirroring the
+        # Clear-finished carrier: first Start with active tooling warnings
+        # arms (the gate line becomes the confirm copy), the second press
+        # submits. ``_warnings`` snapshots what the consent was armed
+        # against so a fresh pre-flight carrying DIFFERENT warnings
+        # disarms, while the Enter-in-path re-trigger landing an identical
+        # forecast does not steal the pending confirm.
+        self._library_ingest_start_confirm_armed: bool = False
+        self._library_ingest_start_confirm_armed_at: float = 0.0
+        self._library_ingest_start_confirm_warnings: list[dict] = []
+        # (task-3313) Session-scoped snapshot of the last submitted batch,
+        # captured at submit time before the form auto-clears; feeds the
+        # "Retry this batch" affordance. Deliberately NOT persisted (the
+        # jobs DB has sources but not staged options) and deliberately NOT
+        # cleared by rail re-entry -- it is submission history, not form
+        # state.
+        self._library_ingest_last_submission: (
+            LibraryIngestLastSubmission | None
+        ) = None
         # (task-2130) Durable session ledger: terminal jobs snapshotted at
         # Clear-finished time so Recent imports (incl. failure records)
         # survives the registry removal.
@@ -8496,6 +8366,9 @@ class LibraryScreen(BaseAppScreen):
         self._library_ingest_preflight_generation += 1
         self._cancel_library_ingest_preflight()
         self._library_ingest_clear_finished_armed = False
+        # (task-3314) Same hygiene for the pending Start consent: changing
+        # canvases mid-consent is not a "yes".
+        self._disarm_library_ingest_start_confirm()
 
     # ----- Export canvas -------------------------------------------------
 
@@ -9660,6 +9533,13 @@ class LibraryScreen(BaseAppScreen):
         except (NoMatches, QueryError):
             return
         quiet_line.update(new_state.start_quiet_line)
+        # (task-3314) The two-press confirm lives in this updater's domain:
+        # copy (above) and warning treatment (here) ride the SAME in-place
+        # update, so the confirm text and its styling can never disagree
+        # -- and the widget keeps identity across the hot path.
+        quiet_line.set_class(
+            new_state.start_confirm_armed, "-ingest-start-confirm"
+        )
         # (task-3305, MI-16) The commit forecast rides the SAME update as
         # the gate: a text/number option edit takes the in-place path, and
         # syncing the gate but not the forecast left "1 will import"
@@ -9771,6 +9651,16 @@ class LibraryScreen(BaseAppScreen):
             pass
         else:
             clear_button.display = new_state.show_clear_path
+        # (task-3313) "Retry this batch" is canvas-level, always-mounted,
+        # display-managed chrome; job ticks land here, so its visibility
+        # tracks the settled-queue rule in place -- the widget itself is
+        # never remounted (object identity across ticks).
+        try:
+            retry_last = canvas.query_one("#library-ingest-retry-last", Button)
+        except (NoMatches, QueryError):
+            pass
+        else:
+            retry_last.display = new_state.show_retry_last
         # (task-2042 review) Scope labels depend on per-group file counts,
         # which change WITHOUT the group set changing (generic is always
         # present) -- update them in place so a panel never claims files it
@@ -9885,6 +9775,17 @@ class LibraryScreen(BaseAppScreen):
             recent_ledger=tuple(self._library_ingest_recent_ledger),
             expanded_details=self._library_ingest_expanded_details,
             analysis_unready_hint=analysis_unready_hint,
+            # (task-3314/3313) ``getattr`` quiet-degrade: several test
+            # suites build this screen via ``object.__new__`` and seed only
+            # the fields they exercise (the Clear-finished armed_at read
+            # below in the queue handler set this precedent).
+            start_confirm_armed=getattr(
+                self, "_library_ingest_start_confirm_armed", False
+            ),
+            last_submission_available=(
+                getattr(self, "_library_ingest_last_submission", None)
+                is not None
+            ),
         )
 
     def _ensure_library_notes_sync_config_loaded(self) -> None:
@@ -13689,6 +13590,15 @@ class LibraryScreen(BaseAppScreen):
             # showing), so declaration order is what keeps this one
             # exclusive, not this predicate.
             return self._library_media_confirming_bulk_delete
+        if action == "library_ingest_retry_last":
+            # task-3313: only on the Ingest canvas AND once a submission
+            # exists this session -- the same predicate that shows the
+            # button, so key and affordance appear together.
+            return (
+                self._library_selected_row_id == LIBRARY_ROW_INGEST_MEDIA
+                and getattr(self, "_library_ingest_last_submission", None)
+                is not None
+            )
         if action == "library_list_focus_rail":
             return self._library_list_canvas_showing_list()
         if action == "library_rag_use_in_console":
@@ -13900,6 +13810,14 @@ class LibraryScreen(BaseAppScreen):
         task-2043) applies exactly as a rail press would.
         """
         if self._library_selected_row_id != LIBRARY_ROW_INGEST_MEDIA:
+            return
+        if self._library_ingest_start_confirm_armed:
+            # (task-3314 AC#4) Esc is the consent "no": drop the pending
+            # two-press confirm and STAY on the canvas -- the user asked
+            # to back out of the confirm, not out of the form. A second
+            # Esc leaves for the hub as before.
+            self._disarm_library_ingest_start_confirm()
+            self._update_library_ingest_gate(self._build_library_ingest_state())
             return
         await self._select_library_rail_row("")
         if self.is_mounted:
@@ -18355,6 +18273,10 @@ class LibraryScreen(BaseAppScreen):
             # family as the canvas's ``_reported_option_values`` guard).
             return
         self._library_ingest_form.path = event.value
+        # (task-3314) A genuine path edit invalidates the forecast a
+        # pending Start consent was armed against; the trailing gate
+        # update below re-renders the line out of its confirm state.
+        self._disarm_library_ingest_start_confirm()
         # (task-2015 review) Fence off any in-flight pre-flight the moment
         # the text genuinely changes: its result describes a path this
         # field no longer shows, and generation equality alone would
@@ -18407,8 +18329,19 @@ class LibraryScreen(BaseAppScreen):
 
     @on(Input.Blurred, "#library-ingest-path")
     def handle_library_ingest_path_blurred(self, event: Input.Blurred) -> None:
-        """Trigger pre-flight when the user leaves the path field."""
+        """Trigger pre-flight when the user leaves the path field.
+
+        (task-3314 AC#4) Blur also parks a pending Start consent: focus
+        travelling away from the commit area between the two presses means
+        the confirm copy may no longer be in view, so consent must be
+        re-affirmed. Harmless for the mouse flow -- the first Start click
+        blurs BEFORE the press handler arms -- and the Enter,Enter flow
+        never blurs at all.
+        """
         event.stop()
+        if self._library_ingest_start_confirm_armed:
+            self._disarm_library_ingest_start_confirm()
+            self._update_library_ingest_gate(self._build_library_ingest_state())
         path = self._library_ingest_form.path.strip()
         if path:
             self._trigger_library_ingest_preflight(path)
@@ -18492,6 +18425,58 @@ class LibraryScreen(BaseAppScreen):
             # round-trips ``#library-ingest-path`` deterministically.
             self.set_focus(path_input)
         self._update_library_ingest_dynamic_regions()
+
+    @on(Button.Pressed, "#library-ingest-retry-last")
+    def handle_library_ingest_retry_last(self, event: Button.Pressed) -> None:
+        """Re-stage the last submitted batch into the form (task-3313).
+
+        Args:
+            event: Button press event emitted by the "Retry this batch"
+                action.
+        """
+        event.stop()
+        self._restage_library_ingest_last_submission()
+
+    def action_library_ingest_retry_last(self) -> None:
+        """``r``: keyboard route to "Retry this batch" (task-3313 AC#2).
+
+        Gated by ``check_action`` to the Ingest canvas with a snapshot
+        present; a printable key is only ever seen here when no
+        Input/TextArea holds focus (text fields consume it first), so
+        typing an ``r`` into the path field never re-stages.
+        """
+        self._restage_library_ingest_last_submission()
+
+    def _restage_library_ingest_last_submission(self) -> None:
+        """Restore the last submission's source/options/metadata (task-3313).
+
+        The old forecast must never be reused (AC#3): the stale pre-flight
+        echo is invalidated first, then a FRESH pre-flight runs through
+        the same trigger the typing path uses -- so tooling installed (or
+        removed) since the last run changes the forecast and the gate.
+        The context-preserving recompose re-renders the form widgets from
+        the restored echo; focus lands in the path field, matching entry
+        focus (the staged path is what the user acts on next).
+        """
+        snapshot = self._library_ingest_last_submission
+        if snapshot is None:
+            return
+        form = self._library_ingest_form
+        form.path = snapshot.source
+        form.title = snapshot.title
+        form.author = snapshot.author
+        form.keywords = snapshot.keywords
+        form.analyze = snapshot.analyze
+        form.chunk = snapshot.chunk
+        form.chunk_size = snapshot.chunk_size
+        form.type_options = {
+            group: dict(values)
+            for group, values in snapshot.type_options.items()
+        }
+        self._invalidate_library_ingest_preflight()
+        self._refresh_library_ingest_canvas_preserving_context()
+        self._trigger_library_ingest_preflight(snapshot.source)
+        self.call_after_refresh(self._focus_library_ingest_path)
 
     @on(Button.Pressed, "#ingest-preflight-choose")
     @on(Button.Pressed, "#library-ingest-browse")
@@ -18607,6 +18592,10 @@ class LibraryScreen(BaseAppScreen):
         would remount the Input and lose cursor position mid-typing).
         """
         event.stop()
+        # (task-3314) An option edit changes what the submission will do --
+        # a pending Start consent no longer covers it. Both downstream
+        # paths (recompose / in-place gate update) re-render the line.
+        self._disarm_library_ingest_start_confirm()
         group_options = self._library_ingest_form.type_options.setdefault(
             event.group, {}
         )
@@ -18997,6 +18986,9 @@ class LibraryScreen(BaseAppScreen):
         self._cancel_library_ingest_preflight()
         self._library_ingest_form.preflight = None
         self._library_ingest_form.preflight_checking = False
+        # (task-3314) A consent armed against a forecast that no longer
+        # exists must not survive it -- submit/Clear/reset all route here.
+        self._disarm_library_ingest_start_confirm()
 
     def _trigger_library_ingest_preflight(self, path: str) -> None:
         """Start (or restart) the pre-flight worker for ``path``.
@@ -19059,6 +19051,17 @@ class LibraryScreen(BaseAppScreen):
         """
         if generation != self._library_ingest_preflight_generation:
             return
+        # (task-3314) A fresh forecast carrying DIFFERENT warnings
+        # invalidates a pending Start consent (the Clear-finished "the
+        # queue you armed against changed" rule). An IDENTICAL warnings
+        # set keeps it -- the Enter-in-path re-trigger lands an equal
+        # forecast between the two presses, and stealing the consent there
+        # would make Enter,Enter unable to ever submit.
+        if self._library_ingest_start_confirm_armed and (
+            list(result.warnings)
+            != self._library_ingest_start_confirm_warnings
+        ):
+            self._disarm_library_ingest_start_confirm()
         self._library_ingest_form.preflight = result
         self._library_ingest_form.preflight_checking = False
         # (task-2042) In-place for the same reason as the trigger: the
@@ -19150,6 +19153,25 @@ class LibraryScreen(BaseAppScreen):
             return None
         return str(validated_path)
 
+    #: (task-3314) Presses landing this soon after the arming press are the
+    #: same physical gesture (a double-click / key repeat), not a decision
+    #: -- the Clear-finished rule (task-2160), mirrored. Its own constant
+    #: so the two dead zones stay independently tunable.
+    _START_CONFIRM_DEAD_ZONE_SECONDS = 0.3
+
+    def _disarm_library_ingest_start_confirm(self) -> None:
+        """Drop a pending two-press Start consent (task-3314).
+
+        Called wherever the forecast the consent was armed against stops
+        being current: a genuine path edit, a fresh pre-flight result with
+        different warnings, pre-flight invalidation (submit/Clear/reset),
+        rail-switch hygiene, an option edit, Esc, and path-field blur.
+        State only -- callers that can re-render do so themselves (the
+        gate updater owns the line).
+        """
+        self._library_ingest_start_confirm_armed = False
+        self._library_ingest_start_confirm_warnings = []
+
     def _submit_library_ingest_form(self) -> None:
         """Validate the ingest form and submit a new Library ingest job.
 
@@ -19157,13 +19179,18 @@ class LibraryScreen(BaseAppScreen):
         invalid/missing path is a quiet warning notice, matching every
         other Library form failure path in this screen; a missing
         ``submit_library_ingest_job`` seam (registry absent) gets the same
-        treatment. When pre-flight tooling warnings are present, a
-        confirmation modal quantifies the affected files before the user
-        proceeds. On success, the path AND title fields clear (L3b AB
-        wave, A1) -- title is per-file, so it must not silently reapply to
-        the next file in a batch -- while author/keywords/advanced options
-        persist, since those are batch metadata a user submitting several
-        files in a row shouldn't have to retype for every submission.
+        treatment. When pre-flight tooling warnings are present, consent
+        is the inline two-press grammar (task-3314; the guardrail modal is
+        retired): the FIRST press arms -- the gate line becomes "⚠ Press
+        Start again to import anyway — N files may fail." via an in-place
+        gate update -- and the SECOND press (outside the double-press dead
+        zone) submits. Enter in the path field routes through this same
+        method, so Enter,Enter carries identical semantics. On success,
+        the path AND title fields clear (L3b AB wave, A1) -- title is
+        per-file, so it must not silently reapply to the next file in a
+        batch -- while author/keywords/advanced options persist, since
+        those are batch metadata a user submitting several files in a row
+        shouldn't have to retype for every submission.
         """
         form = self._library_ingest_form
         submitted_source = self._resolve_ingest_source(form.path.strip())
@@ -19174,23 +19201,38 @@ class LibraryScreen(BaseAppScreen):
             self._notify_library_ingest_warning(INGEST_UNAVAILABLE_COPY)
             return
         if form.preflight is not None and form.preflight.warnings:
-            counts = _affected_counts(form.preflight)
-            self.app.push_screen(
-                IngestGuardrailModal(form.preflight.warnings, counts),
-                partial(self._do_submit_ingest, submitted_source),
+            # (task-3314) Mirrors the queue's Clear-finished two-press
+            # mechanism (task-2015/2160): arm in place, never submit on
+            # the arming press.
+            if not self._library_ingest_start_confirm_armed:
+                self._library_ingest_start_confirm_armed = True
+                self._library_ingest_start_confirm_armed_at = time.monotonic()
+                self._library_ingest_start_confirm_warnings = [
+                    dict(warning) for warning in form.preflight.warnings
+                ]
+                # Arming changes ONLY the gate line, in place -- the same
+                # no-recompose discipline the armed Clear-finished label
+                # uses, so the confirm appears under the finger/caret that
+                # armed it without disturbing layout or focus.
+                self._update_library_ingest_gate(
+                    self._build_library_ingest_state()
+                )
+                return
+            armed_at = getattr(
+                self, "_library_ingest_start_confirm_armed_at", 0.0
             )
-        else:
-            self._do_submit_ingest(submitted_source)
+            if (
+                time.monotonic() - armed_at
+                < self._START_CONFIRM_DEAD_ZONE_SECONDS
+            ):
+                # A press inside the dead zone is the arming gesture
+                # repeating, not consent -- ignore it (stays armed).
+                return
+            self._disarm_library_ingest_start_confirm()
+        self._do_submit_ingest(submitted_source)
 
-    def _do_submit_ingest(self, submitted_source: str, confirmed: bool = True) -> None:
-        """Perform the actual Library ingest job submission.
-
-        The ``confirmed`` parameter lets this method be used directly as the
-        guardrail modal callback: the modal dismisses with ``True``/``False``
-        and the partial binding already supplies ``submitted_source``.
-        """
-        if not confirmed:
-            return
+    def _do_submit_ingest(self, submitted_source: str) -> None:
+        """Perform the actual Library ingest job submission."""
         submit = getattr(self.app_instance, "submit_library_ingest_job", None)
         if not callable(submit):
             self._notify_library_ingest_warning(INGEST_UNAVAILABLE_COPY)
@@ -19218,6 +19260,24 @@ class LibraryScreen(BaseAppScreen):
         }
         if option_settings:
             save_settings_to_cli_config(option_settings)
+        # (task-3313) Session-scoped snapshot of what was just submitted,
+        # captured BEFORE the form clears, so "Retry this batch" can
+        # re-stage the exact same source with its options and metadata.
+        # Values are copied (not aliased) so later form edits never mutate
+        # the record of what actually ran.
+        self._library_ingest_last_submission = LibraryIngestLastSubmission(
+            source=submitted_source,
+            title=form.title,
+            author=form.author,
+            keywords=form.keywords,
+            analyze=form.analyze,
+            chunk=form.chunk,
+            chunk_size=str(form.chunk_size),
+            type_options={
+                group: dict(values)
+                for group, values in form.type_options.items()
+            },
+        )
         form.path = ""
         form.title = ""
         # The summary described the file that just left the form, so keeping

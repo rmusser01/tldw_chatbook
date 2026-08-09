@@ -98,7 +98,7 @@ the rest of the session.
 | Import control | What it does |
 |---|---|
 | "Browse…" | Opens the "Import media" file picker (remembers your last folder). The listing shows Name / Size / Modified column headers, human-readable sizes ("512 B", "2.4 MB", never a bare byte count), no size on folder rows (including ".."), and a labeled "File name:" input at the bottom. Folders and URLs are typed or pasted into the path field instead. |
-| Pre-check warnings ("⚠ …") | Name a missing optional package, what it's needed for, and the install command that fixes it. A compact "Copy install command" button sits right under the warnings — you no longer have to open the guardrail dialog to copy it (with several distinct commands, each button names its extra, e.g. "Copy install command (.[audio])"). |
+| Pre-check warnings ("⚠ …") | Name a missing optional package, what it's needed for, and the install command that fixes it. A compact "Copy install command" button sits right under the warnings (with several distinct commands, each button names its extra, e.g. "Copy install command (.[audio])"). |
 | "Choose a file…" / "Retry" | Offered under pre-check errors — pick a different path, or re-run the check after a network hiccup. |
 | Per-type options | Every dropdown shows a plain-language choice (the internal value still travels to the pipeline). PDF documents: "PDF engine" ("PyMuPDF (plain text)" / "PyMuPDF4LLM (Markdown)" / "Docling (layout-aware · OCR-capable)" / "Docext (vision-model OCR)"), "Enable OCR (docling or docext engines only)", "OCR language", "OCR backend" ("Auto (let Docext choose)" / Docext / Tesseract / EasyOCR / PaddleOCR / Docling — docext engine only). Word/Office documents: "Processing method" ("Auto (Docling when installed)" / Docling / "Native per-format parser"), "Enable OCR (docling method only)", "OCR language". Audio & video: "Transcription provider" ("Auto (faster-whisper)" / "Parakeet (ONNX)" / "Faster Whisper" / "transcribe.cpp (GGUF)"), "Local Parakeet model folder", "Transcription model" (the full faster-whisper catalog — Tiny through Large v3 including the English-only ".en" variants, the distilled "Distil" family, and the community "Large v3 Turbo" / "CrisperWhisper" builds), "Language", "Translate to English (via faster-whisper)", "Include timestamps", "Speaker diarization", "Voice activity detection (VAD) filter", "Start at" / "Stop at" (trim bounds, HH:MM:SS or seconds — blank means unbounded), "Cookies file for gated URLs" (a Netscape cookies.txt path for yt-dlp; video URLs only), "Recursive summary (map-reduce)" (with Analyze after import + chunking: summarizes each chunk, then combines the summaries). E-books: "Extraction method" ("Filtered (skips covers & front matter)" / "Markdown (keeps headings & structure)" / "Basic (every section · plain text)"), "Chunking method" ("By chapter" / "By sentence" / "By word count" / "By paragraph"), "Include table of contents". Images (.png/.jpg/.jpeg/.gif/.webp/.bmp/.tiff/.tif): "Extract text (OCR)" (on by default — the extracted text is what gets imported), "OCR language", "OCR backend" ("Auto (best installed backend)" / "Docext (vision model)" / Docling / Tesseract / EasyOCR / PaddleOCR). Plain text & HTML: "Analyze after import", "Chunk content", "Chunk size", "Chunk overlap", "Encoding". Web pages (URLs): "What to fetch" ("This page only" / "Site map" / "Pages under this URL" / "Follow links (recursive)"), "Maximum pages", "Maximum depth". |
 | PDF / document OCR | The OCR checkbox is inert under engines that cannot OCR — the label names the capable ones. "OCR language" rides the OCR toggle; the PDF "OCR backend" applies to the docext engine only. |
@@ -111,17 +111,24 @@ the rest of the session.
 | "Chunk content" | Governs every type: off means no retrieval chunks are stored at all; on chunks plain text / documents / HTML too (not just PDF/e-book/audio), using "Chunk size" and "Chunk overlap" — both measured in words. |
 | "Encoding" | How plain text and HTML files are decoded: "Auto-detect (UTF-8 first)" (strict UTF-8, then detection) or an explicit UTF-8 / UTF-16 / "Latin-1 (ISO-8859-1)" / "Windows-1252 (Western)". A wrong explicit choice shows up as replacement characters rather than failing the import. |
 | "Install verified Parakeet v2 INT8 (630.6 MiB)…" | In the Audio & video fold, enabled when the provider is parakeet-onnx (under any other provider the button is inert and its label ends "— needs the parakeet-onnx provider"). Opens a consent dialog listing Source, Revision, License, Download size, and Destination, ending "All four files are checked against pinned sizes and SHA-256 digests before the bundle becomes usable." Buttons: "Cancel" / "Install". |
-| "Start import" | Queues everything the pre-check found. If warnings are outstanding, the "Some files may fail to import:" dialog appears first (see below). |
+| "Start import" | Queues everything the pre-check found. If "⚠" tooling warnings are outstanding, the first press doesn't submit — the line beside Start turns into "⚠ Press Start again to import anyway — N files may fail." and a second press (or a second Enter in the path field) starts the import. See "Consent for risky imports" below. |
 | Queue rows | "● queued / parsing / writing · name" while working, "✓ done · name · 4s" on success, "✗ failed · name · reason" (plus " · retry 1" after a retry) on failure, "⊘ cancelled · name" when stopped on purpose. Server jobs carry an " · on server" suffix. |
 | Row actions | "Open in Library" (done, local) jumps to the new media item; "View on server" (done, server); "Show details" shows the full error; "Retry" re-queues a failed job; "Cancel" stops an in-flight server job; "Dismiss" removes a failed row. |
-| "Clear finished" | Removes all done and failed rows at once. |
+| "Clear finished" | Removes all done and failed rows at once (two presses: the first arms and renames the button "Press again to clear N finished…"). |
+| "Retry this batch" | Below the queue, once your last import of the session has settled: one press puts that submission's source, options, title, author, and keywords back into the form and re-runs the pre-check from scratch — install the package a warning named, press it, and the fresh forecast reflects the fix. It stages, not submits: review the forecast and press "Start import" again. Keyboard: `r` (anywhere on the Import canvas outside a text field). |
 
-The guardrail dialog — "Some files may fail to import:" — lists each
-problem as "- <package> (N files): <what needs it>" ("1 file" when only
-one is affected) with a "Copy install command" button per line, then
-"Cancel" and "Start import anyway". Starting anyway is safe: affected
-files simply fail individually and show up as ✗ rows you can retry after
-installing.
+**Consent for risky imports** — starting with "⚠" tooling warnings
+outstanding takes two presses, right at the Start button (task-3314
+retired the old "Some files may fail to import:" dialog). The first press
+converts the line beside Start into "⚠ Press Start again to import anyway
+— N files may fail." naming how many staged files depend on the missing
+tooling ("1 file" when only one). The second press — button or Enter,
+they behave identically — starts the import. Starting anyway is safe:
+affected files simply fail individually and show up as ✗ rows you can
+retry after installing. Esc backs out of the pending confirm (and stays
+on the form); editing the path, changing an option, or a pre-check that
+comes back different also cancels it. The "Copy install command" buttons
+stay under the warnings the whole time.
 
 | Export control | What it does |
 |---|---|
@@ -146,11 +153,11 @@ installing.
    under "Web pages", where "What to fetch" / "Maximum pages" / "Maximum
    depth" control how much gets scraped. Press "Start import".
 4. **Fix a "may fail to import" warning** — Press "Copy install command"
-   right under the "⚠" warning in the pre-check summary (the same button
-   also appears in the "Some files may fail to import:" dialog after
-   Start). Quit the app, run the copied command in the environment the app
-   is installed in, relaunch, and start the import again — the warning is
-   gone.
+   right under the "⚠" warning in the pre-check summary. Quit the app, run
+   the copied command in the environment the app is installed in,
+   relaunch, then press "Retry this batch" (or `r`) below the queue — the
+   same source and options come back staged, the pre-check re-runs against
+   the fixed environment, and the warning is gone.
 5. **Export your notes as a bundle** — In the rail click Browse ▸ Notes,
    press "Export…" above the list. On the "Export bundle (.zip)" form
    confirm the scope line says "Notes · N items", adjust the name, press
@@ -172,13 +179,18 @@ Library screen (not just the landing — though never while you're typing in
 a text field, where `i` stays a letter), and entering the form always
 parks the caret in the path field, so you can type or paste a path
 immediately. **Enter** in the path field starts the import once the gate
-line clears; **Escape** returns you to the Library landing (a half-filled
-form is kept, same as switching rail rows). The footer and F1 list the
-same set while the form is open: `enter start import`, `esc back to hub`.
+line clears — with "⚠" warnings outstanding, Enter,Enter carries the same
+two-press consent as the Start button. **r** re-stages your last import
+of the session ("Retry this batch") when the queue has settled — inside a
+text field it stays a letter. **Escape** first backs out of a pending
+"Press Start again" confirm (staying on the form), otherwise returns you
+to the Library landing (a half-filled form is kept, same as switching
+rail rows). The footer and F1 list the same set while the form is open:
+`enter start import`, `r retry last batch`, `esc back to hub`.
 
 The Export form has no screen-specific shortcuts. **Escape** also closes
-the "Some files may fail to import:" and Parakeet install dialogs. Global
-keys live in the [guide index](../index.md).
+the Parakeet install dialog. Global keys live in the
+[guide index](../index.md).
 
 ## Related settings & docs
 
@@ -217,8 +229,8 @@ imported items afterwards.
   trigger unasked. Chunking is local and cheap, and without it imported
   documents never show up properly in search and RAG — leave it on.
 - **Transcription may need optional extras.** The default audio/video
-  provider needs its packages installed; the pre-check warns you and the
-  guardrail dialog hands you the install command. The curated Parakeet
+  provider needs its packages installed; the pre-check warns you and its
+  "Copy install command" button hands you the fix. The curated Parakeet
   model is a separate one-press download from the options fold.
 - **Export is local-only.** In server mode the rail's Export row is
   disabled ("Export packages local content only.") — switch the Library
@@ -368,3 +380,15 @@ and analyzable like any text import; a no-text image fails its queue row
 honestly instead of storing an empty entry; images stay local-only (the
 server ingest API accepts no image type); .svg/.ico/.heic/.heif remain
 honestly unsupported)*
+
+*Verified against feat/media-ingest-followups — 2026-08-09 (tasks
+3313/3314, owner rulings in task-3310: consent is now one grammar — the
+"Some files may fail to import:" dialog is retired, and starting with "⚠"
+warnings outstanding is an inline two-press at the Start button ("⚠ Press
+Start again to import anyway — N files may fail.", second press or second
+Enter submits; Esc/edits/a changed pre-check cancel the pending confirm;
+no-warning starts stay single-press); "Copy install command" lives under
+the warnings; a "Retry this batch" button below the queue (key: `r`)
+re-stages the session's last submission — source, options, and metadata
+— and re-runs the pre-check fresh, so tooling installed since the last
+run changes the forecast)*
