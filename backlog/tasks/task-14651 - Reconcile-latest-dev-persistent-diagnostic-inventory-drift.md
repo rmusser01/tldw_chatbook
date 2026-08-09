@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-08-09 21:05'
-updated_date: '2026-08-09 22:27'
+updated_date: '2026-08-09 22:39'
 labels:
   - testing
   - baseline
@@ -46,10 +46,10 @@ Reason: ADR-029 already defines the persistent-log privacy boundary and the perm
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-- Reviewed all 16 generated-versus-stored owner deltas from the recorded incident baseline and their introducing commits under ADR-029. The MCP delta removed a raw exception diagnostic; safe provider/backend/config-key/count/type metadata was accepted.
-- Replaced private IDs, paths, filenames, style identifiers, exception messages, and implicit traceback capture in 28 reviewed diagnostic call shapes with fixed operational text plus permitted counts, backend names, or exception types. Functional control flow and user-facing error reporting were unchanged.
-- Added a source-level architecture regression over the real production modules. It failed before the repair and now enforces the precise metadata fields while rejecting `logger.exception` and `logger.opt(exception=True)`; it constructs no application or simplified substitute.
-- Regenerated and hand-reviewed the manifest: 482 owner files, 1,158 TASK-492 calls, 6,940 TASK-494 calls, and 6 persistent-sink files. Persistent-sink topology is unchanged.
-- Verification: 114 focused TASK-14651 architecture/affected-function tests passed; TASK-2118 remained green at 70 privacy tests, 8 HuggingFace tests (60 deselected), and 2 debug-log hygiene tests. All 16 edited Python files compiled, changed-line Ruff lint had zero violations, every edited range passed Ruff format, the inventory checker passed, and `git diff --check` passed. Full-file Ruff still reports 28 pre-existing `chat_screen.py` issues outside the edited ranges; none intersects this task's changes.
+- Reviewed all 16 generated-versus-stored owner deltas from the recorded incident baseline and their introducing commits under ADR-029. The MCP delta removed a raw exception diagnostic; safe provider/backend/config-key/count/type metadata was accepted. The final rebase onto `origin/dev` `60fa4859f` exposed one additional, newer `rag_service.py` owner delta, which was reviewed before its manifest entry was accepted.
+- Replaced private IDs, search queries, paths, filenames, style identifiers, exception messages, and implicit traceback capture in 39 reviewed diagnostic call shapes with fixed operational text plus permitted counts, backend names, or exception types. Functional control flow and user-facing error reporting were unchanged. The related RAG degradation test now requires its operational warning while proving the private database filename is absent.
+- Added a source-level architecture regression over the real production modules. It failed before both repair waves and now enforces the precise metadata fields for 40 reviewed call shapes while rejecting `logger.exception` and `logger.opt(exception=True)`; it constructs no application or simplified substitute.
+- Regenerated and hand-reviewed the manifest: 482 owner files, 1,158 TASK-492 calls, 6,949 TASK-494 calls, and 6 persistent-sink files. Persistent-sink topology is unchanged.
+- Final post-rebase verification: 144 focused TASK-14651 architecture/RAG/affected-function tests passed; TASK-2118 remained green at 70 privacy tests, 8 HuggingFace tests (60 deselected), and 2 debug-log hygiene tests. All currently edited Python files pass full-file Ruff lint and compilation, every edited range passed Ruff format, the inventory checker passed, and `git diff --check` passed. The earlier repair wave also compiled all 16 edited Python files and had zero changed-line Ruff violations; the 28 full-file `chat_screen.py` findings were pre-existing and outside the edited ranges.
 - ADR decision: no new ADR. `backlog/decisions/029-local-private-data-boundary.md` directly governs the repair. Added the formatter-before-manifest incident to `backlog/docs/lessons-testing-evidence.md`.
 <!-- SECTION:NOTES:END -->

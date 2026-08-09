@@ -19,6 +19,20 @@ REVIEWED_METADATA_ONLY_DIAGNOSTICS = {
     "tldw_chatbook/RAG_Search/eval/regression.py": {
         "Saved metric baseline": ("len(metrics)",),
     },
+    "tldw_chatbook/RAG_Search/simplified/rag_service.py": {
+        "has no FTS5-searchable": (),
+        "Keyword search found": ("len(results)", "len(rankings)"),
+        "Media keyword sub-leg found": ("len(results)",),
+        "Media keyword sub-leg failed": ("type(e).__name__",),
+        "ChaChaNotes keyword sub-legs failed": ("type(e).__name__",),
+        "Could not resolve the ChaChaNotes database path": ("type(e).__name__",),
+        "Rejected chachanotes_db_path from config": ("type(e).__name__",),
+        "ChaChaNotes database not found": (),
+        "Could not open the ChaChaNotes database": ("type(e).__name__",),
+        "Notes keyword sub-leg failed": ("type(e).__name__",),
+        "Conversations keyword sub-leg failed": ("type(e).__name__",),
+        "Query truncated": ("len(query)", "MAX_QUERY_LENGTH"),
+    },
     "tldw_chatbook/UI/Screens/chat_screen.py": {
         "retention sweep failed": (),
         "Video generation raised": ("type(exc).__name__",),

@@ -900,9 +900,8 @@ class RAGService:
         # path or acquiring a connection -- no FTS5 call, no DB touch.
         if not self._escape_fts5_query(query):
             logger.debug(
-                f"Keyword search query {query!r} has no FTS5-searchable "
-                "tokens after escaping; returning no results without a "
-                "database lookup."
+                "Keyword search query has no FTS5-searchable tokens after "
+                "escaping; returning no results without a database lookup."
             )
             return []
 
@@ -925,8 +924,9 @@ class RAGService:
         # document that somehow appears in two sub-legs occupies one slot.
         results = interleave_rankings(rankings, key=_fusion_doc_key)[:top_k]
         logger.info(
-            f"Keyword search found {len(results)} results for query: '{query}' "
-            f"across {len(rankings)} sub-leg(s)"
+            "Keyword search found {} results across {} sub-leg(s)",
+            len(results),
+            len(rankings),
         )
         return results
 
@@ -1040,15 +1040,13 @@ class RAGService:
                     search_results, filter_metadata, top_k
                 )
 
-            logger.debug(
-                f"Media keyword sub-leg found {len(results)} results for "
-                f"query: '{query}'"
-            )
+            logger.debug("Media keyword sub-leg found {} results", len(results))
             return results
 
         except Exception as e:
-            logger.opt(exception=True).error(
-                f"Media keyword sub-leg failed for query '{query}': {e}"
+            logger.error(
+                "Media keyword sub-leg failed (error_type={})",
+                type(e).__name__,
             )
             # Log additional context for debugging
             logger.debug(
@@ -1113,9 +1111,10 @@ class RAGService:
                     rankings.append(rows)
             return rankings
         except Exception as e:
-            logger.opt(exception=True).warning(
-                f"ChaChaNotes keyword sub-legs failed for query '{query}': {e}; "
-                "the media sub-leg is unaffected."
+            logger.warning(
+                "ChaChaNotes keyword sub-legs failed; the media sub-leg is "
+                "unaffected (error_type={})",
+                type(e).__name__,
             )
             return []
 
@@ -1147,8 +1146,10 @@ class RAGService:
             )
         except Exception as e:
             logger.warning(
-                f"Could not resolve the ChaChaNotes database path: {e}; the "
-                "notes and conversation keyword sub-legs return no results."
+                "Could not resolve the ChaChaNotes database path; the notes "
+                "and conversation keyword sub-legs return no results "
+                "(error_type={})",
+                type(e).__name__,
             )
             return None
 
@@ -1162,9 +1163,10 @@ class RAGService:
             )
         except ValueError as e:
             logger.warning(
-                f"Rejected chachanotes_db_path from config ({db_path_raw!r}): "
-                f"{e}; the notes and conversation keyword sub-legs return no "
-                "results (a search never creates a database)."
+                "Rejected chachanotes_db_path from config; the notes and "
+                "conversation keyword sub-legs return no results "
+                "(error_type={})",
+                type(e).__name__,
             )
             return None
 
@@ -1177,9 +1179,9 @@ class RAGService:
         # reported as such instead of as an open failure.
         if not db_path.exists() or not db_path.is_file():
             logger.warning(
-                f"ChaChaNotes database not found at {db_path}; the notes and "
-                "conversation keyword sub-legs return no results (a search "
-                "never creates a database)."
+                "ChaChaNotes database not found; the notes and conversation "
+                "keyword sub-legs return no results (a search never creates "
+                "a database)."
             )
             return None
 
@@ -1265,9 +1267,10 @@ class RAGService:
             # (symlinked component, untrusted parent) lands here alongside a
             # genuinely unopenable file -- both degrade this sub-leg only.
             logger.warning(
-                f"Could not open the ChaChaNotes database at {db_path} "
-                f"read-only: {e}; the notes and conversation keyword "
-                "sub-legs return no results."
+                "Could not open the ChaChaNotes database read-only; the notes "
+                "and conversation keyword sub-legs return no results "
+                "(error_type={})",
+                type(e).__name__,
             )
             return rows
 
@@ -1329,7 +1332,8 @@ class RAGService:
                 ]
         except sqlite3.Error as e:
             logger.warning(
-                f"Notes keyword sub-leg failed: {e}; returning no note rows."
+                "Notes keyword sub-leg failed; returning no note rows (error_type={})",
+                type(e).__name__,
             )
             return []
 
@@ -1438,8 +1442,9 @@ class RAGService:
             ]
         except sqlite3.Error as e:
             logger.warning(
-                f"Conversations keyword sub-leg failed: {e}; returning no "
-                "conversation rows."
+                "Conversations keyword sub-leg failed; returning no conversation "
+                "rows (error_type={})",
+                type(e).__name__,
             )
             return []
 
