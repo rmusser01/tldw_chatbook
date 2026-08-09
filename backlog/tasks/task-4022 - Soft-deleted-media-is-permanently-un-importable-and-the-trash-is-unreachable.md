@@ -91,17 +91,41 @@ row with `is_trash=1` is now routed through the SAME full-update code path
 `overwrite=True` uses (`if overwrite or restoring_from_trash:`), regardless
 of the caller's `overwrite` flag -- a trashed row isn't an active duplicate
 to protect from being clobbered. The content-identical sub-path (metadata-
-only update) didn't previously touch `is_trash`/`trash_date` at all (only
-the full-content-update path did, via `_media_payload()`'s unconditional
-reset), so it now also writes `is_trash=0, trash_date=NULL` and is forced
-to run even when nothing else changed, instead of taking the pre-existing
-"already up-to-date" no-op shortcut. Both success paths now return a
-"restored from trash" message. Because `add_media_with_keywords` already
-dispatches post-ingest callbacks off `media_id is not None`, and the app's
-own `was_duplicate = media_id is None` check already drives the ingest
-row's "done"/"matched" copy, no changes were needed in `app.py` or the
-ingest UI at all -- the DB-layer fix alone makes the re-import report as a
-normal, successful import.
+only update) didn't previously touch `is_trash`/`trash_date`/`url` at all
+(only the full-content-update path did, via `_media_payload()`'s
+unconditional reset), so it now also writes `is_trash=0, trash_date=NULL`
+and is forced to run even when nothing else changed, instead of taking the
+pre-existing "already up-to-date" no-op shortcut. Both success paths now
+return a "restored from trash" message. Because `add_media_with_keywords`
+already dispatches post-ingest callbacks off `media_id is not None`, and
+the app's own `was_duplicate = media_id is None` check already drives the
+ingest row's "done"/"matched" copy, no changes were needed in `app.py` or
+the ingest UI at all -- the DB-layer fix alone makes the re-import report
+as a normal, successful import.
+
+**Review round 1 correction.** The first version of this fix left the
+metadata-only (content-identical) sub-path writing `is_trash`/`trash_date`
+but NOT `url` -- and this is precisely the one case `is_canonicalisation`
+(the pre-existing `overwrite=False`-only branch that used to run for a
+non-trashed identical-content match) was written to cover, since
+`is_canonicalisation` requires `content_hash == existing_hash` by
+definition, which is exactly the condition that routes into the
+metadata-only branch, never the full-update one. My original self-review
+claimed the full-update path's unconditional `url` write made dropping
+`is_canonicalisation` "a strictly stronger form of the same
+canonicalization" -- **that was wrong**: the full-update path is never
+reached when content is identical, so nothing was canonicalizing `url` for
+a restored identical-content match. Reviewer reproduced it against a real
+DB: a row created at an auto-generated `local://...` url, trashed, then
+re-imported at a real path with identical bytes came back `is_trash=0`
+("restored from trash") but still addressed by the STALE `local://...`
+url -- `get_media_by_url(<the real path just imported>)` returned `None`
+for a live, un-trashed item. Fixed by extending the metadata-only branch's
+`UPDATE` to also write `url = ?` (and the matching sync-log payload) when
+`restoring_from_trash`, mirroring what the full-update path already did.
+New regression test: `test_reimport_identical_content_at_new_url_
+canonicalizes_url` (RED confirmed via `git apply -R` before the fix, exact
+reproduced symptom: `url` stays at the stale `local://...` value).
 
 **Defect 2 (no receipt/undo).** Both `_delete_library_media_selection`
 (bulk) and `_delete_library_media_item` (single) already went through the
@@ -126,6 +150,23 @@ restored some other way -- e.g. by re-importing -- is a safe no-op, not a
 duplicate row; verified live). A partial Undo failure narrows the receipt
 to just the still-failed ids rather than clearing it, mirroring the
 delete path's own partial-failure behavior.
+
+**Review round 1 correction (Undo focus).** `_undo_library_media_bulk_
+delete`'s completion tail called `self.refresh(recompose=True)` (needed so
+the rail's "Media N" count repaints) but never armed keyboard entry focus
+afterward, unlike `_delete_library_media_selection`'s own tail, which does
+so unconditionally specifically because `recompose=True` destroys and
+remounts the focused button -- its own comment says "now armed on EVERY
+completion path, not just full success (review round 2)". My original
+Concerns section framed the Undo gap as full-success-only; the reviewer
+correctly pointed out `recompose=True` always destroys the DOM regardless
+of outcome, so a partial Undo failure (which re-renders the narrowed
+receipt with a brand-new "Undo" button instance) loses focus exactly the
+same way. Fixed with one `self._arm_library_list_entry_focus()` call in
+the same `if self.is_mounted:` block; pinned by new assertions on both the
+full-success and partial-failure real-DB Undo tests (RED confirmed via
+`git apply -R` before the fix -- both failed on the missing
+`_entry_focus_arm_calls == [True]` assertion).
 
 **AC#3 / the Trash-view question.** Concluded a persistent, browsable Trash
 surface (a rail entry, a `type: Trash` filter value, or a dedicated canvas)

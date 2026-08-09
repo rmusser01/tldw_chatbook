@@ -3789,10 +3789,27 @@ class MediaDatabase:
                                 update_params = [new_ver, now, client_id]
 
                                 if restoring_from_trash:
+                                    # task-4022 review round 1: this branch
+                                    # (identical content) is also the ONLY
+                                    # one ``is_canonicalisation`` used to
+                                    # cover before a trashed match started
+                                    # bypassing that ``overwrite=False``-only
+                                    # branch entirely -- without also
+                                    # canonicalizing ``url`` here, a row
+                                    # restored via this path would end up
+                                    # live (``is_trash=0``) but still
+                                    # addressed by its STALE url (e.g. the
+                                    # auto-generated ``local://...`` it was
+                                    # first created under), so
+                                    # ``get_media_by_url(<the url just
+                                    # imported>)`` would return ``None`` for
+                                    # a real, un-trashed item until a LATER
+                                    # re-import happened to land on this
+                                    # same identical-content branch again.
                                     update_fields.extend(
-                                        ["is_trash = ?", "trash_date = ?"]
+                                        ["url = ?", "is_trash = ?", "trash_date = ?"]
                                     )
-                                    update_params.extend([0, None])
+                                    update_params.extend([url, 0, None])
 
                                 if metadata_changed:
                                     update_fields.extend(
@@ -3830,6 +3847,10 @@ class MediaDatabase:
                                     "version": new_ver,
                                     "client_id": client_id,
                                 }
+                                if restoring_from_trash:
+                                    sync_payload.update(
+                                        {"url": url, "is_trash": 0, "trash_date": None}
+                                    )
                                 if metadata_changed:
                                     sync_payload.update(
                                         {

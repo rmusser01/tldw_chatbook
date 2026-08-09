@@ -12339,6 +12339,16 @@ class LibraryScreen(BaseAppScreen):
                 # the canvas-scoped ``_sync_library_canvas`` deliberately
                 # skips the rail.
                 self.refresh(recompose=True)
+                # task-4022 review round 1: ``recompose=True`` unconditionally
+                # destroys and remounts the receipt row, taking the focused
+                # "Undo" button with it -- on EVERY completion path, not just
+                # full success (a partial failure still narrows the receipt
+                # and re-renders it with a brand-new "Undo" button instance).
+                # Mirrors ``_delete_library_media_selection``'s own tail,
+                # which arms this unconditionally for the identical reason
+                # (its "now armed on EVERY completion path" comment, task-3020
+                # AC3 review round 2).
+                self._arm_library_list_entry_focus()
         finally:
             self._library_media_bulk_delete_undo_in_flight = False
 

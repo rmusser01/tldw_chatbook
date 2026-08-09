@@ -974,6 +974,11 @@ async def test_undo_restores_items_via_real_db_and_updates_records_and_counts(
     assert fake._notified == []
     assert fake._refresh_calls == [{"recompose": True}]
     assert fake._library_media_bulk_delete_undo_in_flight is False
+    # Review round 1 (Important #2): ``refresh(recompose=True)`` destroys
+    # and remounts the receipt row, taking the focused "Undo" button with
+    # it -- entry focus must be re-armed the same way the delete path's own
+    # tail already does.
+    assert fake._entry_focus_arm_calls == [True]
 
     db.close_connection()
 
@@ -1013,6 +1018,11 @@ async def test_undo_partial_failure_narrows_receipt_and_warns(tmp_path):
     message, kwargs = fake._notified[0]
     assert "1" in message
     assert kwargs.get("severity") == "warning"
+    # Review round 1 (Important #2): a PARTIAL failure still recomposes
+    # (the receipt narrows and re-renders with a new "Undo" button
+    # instance), so entry focus must be armed here too, not only on full
+    # success.
+    assert fake._entry_focus_arm_calls == [True]
 
     db.close_connection()
 

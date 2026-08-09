@@ -970,6 +970,65 @@ class TestReimportAfterTrash:
         )
         assert cursor.fetchone()[0] == 1
 
+    def test_reimport_identical_content_at_new_url_canonicalizes_url(
+        self, file_db
+    ):
+        """Review round 1 (Important #1): the identical-content restore path
+        (A.1.a, metadata-only update) must ALSO canonicalize ``url`` to the
+        just-imported path, not just reset ``is_trash``/``trash_date``.
+
+        Reproduced case: a row first created with no explicit url (so it
+        gets the auto-generated ``local://<type>/<hash>``), trashed, then
+        re-imported at a REAL path with byte-identical content -- the
+        content-hash match takes the metadata-only branch. Before this fix,
+        that branch restored the row (is_trash=0) but left its url at the
+        stale ``local://...`` value, so ``get_media_by_url`` on the real
+        path the user just imported returned ``None`` for a live, un-
+        trashed item -- confirmed reproduced against this exact fixture
+        before the fix landed.
+        """
+        content = "identical bytes for the canonicalization regression"
+        media_id, media_uuid, _ = file_db.add_media_with_keywords(
+            title="auto-url.txt",
+            media_type="document",
+            content=content,
+            keywords=[],
+            # No explicit url -- add_media_with_keywords auto-generates
+            # "local://<type>/<hash>".
+        )
+        created = file_db.get_media_by_id(media_id)
+        assert created["url"].startswith("local://")
+        stale_url = created["url"]
+        assert file_db.mark_as_trash(media_id) is True
+
+        real_url = "file:///real/path.txt"
+        reimported_id, reimported_uuid, msg = file_db.add_media_with_keywords(
+            title="auto-url.txt",
+            media_type="document",
+            content=content,
+            keywords=[],
+            url=real_url,
+        )
+
+        assert reimported_id == media_id
+        assert reimported_uuid == media_uuid
+        assert "restored" in msg.lower(), msg
+
+        row = file_db.get_media_by_id(media_id, include_trash=True)
+        assert row["is_trash"] == 0
+        assert row["trash_date"] is None
+        assert row["url"] == real_url
+
+        # The regression itself: a live item must be findable by the url it
+        # was just (re-)imported at.
+        found = file_db.get_media_by_url(real_url)
+        assert found is not None and found["id"] == media_id
+        # And the stale url must no longer resolve to it (it moved).
+        assert file_db.get_media_by_url(stale_url) is None
+
+        cursor = file_db.execute_query("SELECT COUNT(*) FROM Media")
+        assert cursor.fetchone()[0] == 1
+
 
 @pytest.mark.integration
 class TestSyncLogManagement:
