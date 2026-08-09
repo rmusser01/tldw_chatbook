@@ -4269,18 +4269,20 @@ class ConsoleChatStore:
             conversation_id=conversation_id,
             sender=message.role.value,
             content=message.content,
-            # Generation messages (Task 5) pin the DB row to the SAME id as
+            # Image/video generation messages pin the DB row to the SAME id as
             # the store's own native tree-node id: ``message.id`` is already
             # a globally-unique uuid4, and ``add_message`` accepts an
             # explicit id. This makes ``persisted_message_id == message.id``
-            # for generation messages specifically, so the narrow
-            # keep/append-variant ops -- which callers address by the
-            # store's native ``message_id`` -- can pass
-            # ``message.persisted_message_id`` straight through with no
-            # separate id-translation bookkeeping. Every other message kind
-            # keeps letting the DB assign its own id (unchanged).
+            # for generation messages specifically: image variant ops can
+            # address the durable row directly, and video files saved under
+            # the preallocated native id remain resolvable after reload.
+            # Every other message kind keeps letting the DB assign its own id.
             message_id=message.id
-            if message.generation_metadata or force_stable_message_id
+            if (
+                message.generation_metadata
+                or message.video_metadata is not None
+                or force_stable_message_id
+            )
             else None,
             parent_message_id=parent_persisted_id,
             feedback=message.feedback,

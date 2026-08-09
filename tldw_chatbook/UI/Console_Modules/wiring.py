@@ -533,6 +533,12 @@ def build_console_controllers(
         invalidate_console_persisted_rows_cache=(
             lambda: screen._invalidate_console_persisted_rows_cache()
         ),
+        play_console_video=(
+            lambda message_id: screen._play_console_video(message_id)
+        ),
+        save_console_video_copy=(
+            lambda message_id: screen._save_console_video_copy(message_id)
+        ),
     )
     #: The prompt cluster -- Prompt Library modal, `/prompt` + `/system`
     #: resolution and their pickers, the system-prompt editor and its

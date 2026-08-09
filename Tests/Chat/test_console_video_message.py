@@ -8,16 +8,22 @@ never provenance keys), clobber guards on every persistence seam, and
 image-reader isolation (ADR-044).
 """
 
+from types import SimpleNamespace
+
 import pytest
 
 from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
 from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
+from tldw_chatbook.Chat.console_chat_models import (
+    ConsoleChatMessage,
+    ConsoleMessageRole,
+)
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
-from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, ConflictError
 from tldw_chatbook.UI.Console_Modules.message import ConsoleMessageController
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.Video_Generation.video_metadata import VideoGenerationMetadata
-from tldw_chatbook.Video_Generation.video_store import parse_video_marker
+from tldw_chatbook.Video_Generation.video_store import VideoStore, parse_video_marker
 
 from Tests.UI.app_factory import _build_test_app
 
@@ -33,6 +39,12 @@ def _video_meta(**overrides):
     }
     base.update(overrides)
     return VideoGenerationMetadata(**base)
+
+
+def _ttl_config():
+    return SimpleNamespace(
+        retention="ttl", retention_ttl_hours=1, max_store_mb=2048
+    )
 
 
 class FakeVideoPersistence:
@@ -85,9 +97,17 @@ def test_append_video_message_marker_and_shape(store_with_session):
 
 def test_append_video_message_persists_namespaced_payload(store_with_session):
     store, sid, persistence = store_with_session
-    msg = store.append_video_message(sid, video_metadata=_video_meta(), persist=True)
-    assert msg.persisted_message_id is not None
+    preallocated_id = "video-message-fixed-id"
+    msg = store.append_video_message(
+        sid,
+        video_metadata=_video_meta(),
+        persist=True,
+        message_id=preallocated_id,
+    )
     created = persistence.created_messages[0]
+    assert msg.id == preallocated_id
+    assert created["message_id"] == preallocated_id
+    assert msg.persisted_message_id == preallocated_id
     payload = created["metadata_json"]
     assert '"video_generation"' in payload
     # Never provenance keys, and never the v25 sidecar kwarg.
@@ -95,6 +115,40 @@ def test_append_video_message_persists_namespaced_payload(store_with_session):
     assert "generation_metadata" not in created
     # The persisted payload round-trips back to the original facts.
     assert VideoGenerationMetadata.from_json(payload) == _video_meta()
+
+
+@pytest.mark.integration
+def test_append_video_message_explicit_id_conflict_propagates_without_overwrite(
+    tmp_path,
+):
+    db = CharactersRAGDB(tmp_path / "video_id_conflict.sqlite", "test_client")
+    try:
+        persistence = ChatPersistenceService(db)
+        original_store = ConsoleChatStore(persistence=persistence)
+        original_session = original_store.create_session(title="Original")
+        message_id = "video-message-conflict-id"
+        original_store.append_video_message(
+            original_session.id,
+            video_metadata=_video_meta(),
+            persist=True,
+            message_id=message_id,
+        )
+        original_row = db.get_message_by_id(message_id)
+        assert original_row is not None
+
+        conflicting_store = ConsoleChatStore(persistence=persistence)
+        conflicting_session = conflicting_store.create_session(title="Conflict")
+        with pytest.raises(ConflictError):
+            conflicting_store.append_video_message(
+                conflicting_session.id,
+                video_metadata=_video_meta(name="different-video"),
+                persist=True,
+                message_id=message_id,
+            )
+
+        assert db.get_message_by_id(message_id) == original_row
+    finally:
+        db.close_connection()
 
 
 def test_content_update_rewrites_video_payload_not_provenance(store_with_session):
@@ -128,6 +182,30 @@ def test_screen_state_round_trip_preserves_video_metadata(store_with_session):
     assert parse_video_marker(restored.content) == "dusk-over-neon-tokyo"
 
 
+def test_video_card_uses_persisted_id_for_storage_resolution(tmp_path):
+    video_store = VideoStore(root=tmp_path / "generated_videos", config=_ttl_config())
+    persisted_id = "persisted-video-message"
+    stored_path = video_store.save(
+        persisted_id, _video_meta().name, b"video-bytes"
+    )
+    message = ConsoleChatMessage(
+        id="fresh-native-message",
+        persisted_message_id=persisted_id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="[video] dusk-over-neon-tokyo",
+        video_metadata=_video_meta(),
+    )
+    screen = ChatScreen.__new__(ChatScreen)
+    screen._console_video_store = video_store
+
+    specs = screen._build_video_card_specs([message])
+
+    assert set(specs) == {message.id}
+    assert specs[message.id].message_id == message.id
+    assert specs[message.id].status == "ready"
+    assert specs[message.id].file_path == str(stored_path)
+
+
 @pytest.mark.integration
 def test_video_message_reload_round_trip_and_image_reader_isolation(tmp_path):
     """Real-DB reload: persist a video message, drop the store, resume via
@@ -139,8 +217,17 @@ def test_video_message_reload_round_trip_and_image_reader_isolation(tmp_path):
         session = store.create_session(title="Video reload")
         store.active_session_id = session.id
 
+        preallocated_id = "persisted-video-reload-id"
+        video_root = tmp_path / "generated_videos"
+        initial_video_store = VideoStore(root=video_root, config=_ttl_config())
+        stored_path = initial_video_store.save(
+            preallocated_id, _video_meta().name, b"video-bytes"
+        )
         msg = store.append_video_message(
-            session.id, video_metadata=_video_meta(), persist=True
+            session.id,
+            video_metadata=_video_meta(),
+            persist=True,
+            message_id=preallocated_id,
         )
         conversation_id = session.persisted_conversation_id
         assert conversation_id is not None
@@ -167,8 +254,20 @@ def test_video_message_reload_round_trip_and_image_reader_isolation(tmp_path):
         reloaded = fresh_store.messages_for_session(fresh_session.id)
         video_msg = next(m for m in reloaded if m.video_metadata is not None)
 
-        # The named tombstone's facts survived the reload (the bytes' absence
-        # is expected -- the VideoStore is what reports missing, not the DB).
+        assert video_msg.id != preallocated_id
+        assert video_msg.persisted_message_id == preallocated_id
+
+        fresh_video_store = VideoStore(root=video_root, config=_ttl_config())
+        retention = fresh_video_store.enforce_retention(
+            now=stored_path.stat().st_mtime + 30 * 60
+        )
+        assert retention.removed_files == 0
+        screen._console_video_store = fresh_video_store
+        specs = screen._build_video_card_specs(reloaded)
+        assert specs[video_msg.id].status == "ready"
+        assert specs[video_msg.id].file_path == str(stored_path)
+
+        # The named card's facts and still-within-TTL bytes survive reload.
         assert video_msg.video_metadata == _video_meta()
         assert video_msg.metadata is None
         assert parse_video_marker(video_msg.content) == "dusk-over-neon-tokyo"

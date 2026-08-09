@@ -16792,7 +16792,7 @@ class ChatScreen(BaseAppScreen):
             meta = getattr(message, "video_metadata", None)
             if meta is None:
                 continue
-            path = store.resolve(message.id, meta.name)
+            path = store.resolve(self._video_storage_message_id(message), meta.name)
             specs[message.id] = ConsoleVideoCardSpec(
                 message_id=message.id,
                 meta=meta,
@@ -16800,6 +16800,11 @@ class ChatScreen(BaseAppScreen):
                 file_path=str(path) if path is not None else None,
             )
         return specs
+
+    @staticmethod
+    def _video_storage_message_id(message) -> str:
+        """Return the durable key used by the ephemeral video store."""
+        return message.persisted_message_id or message.id
 
     async def _console_command_generate_video(self, parse: CommandParse) -> None:
         """Resolve and run one ``/generate-video`` generation (task-3401.5).
@@ -16961,7 +16966,9 @@ class ChatScreen(BaseAppScreen):
         meta = getattr(message, "video_metadata", None)
         if meta is None:
             return
-        path = self._ensure_console_video_store().resolve(message.id, meta.name)
+        path = self._ensure_console_video_store().resolve(
+            self._video_storage_message_id(message), meta.name
+        )
         if path is None:
             await self._sync_native_console_chat_ui()
             self.app_instance.notify(
@@ -17020,7 +17027,9 @@ class ChatScreen(BaseAppScreen):
         meta = getattr(message, "video_metadata", None)
         if meta is None:
             return
-        path = self._ensure_console_video_store().resolve(message.id, meta.name)
+        path = self._ensure_console_video_store().resolve(
+            self._video_storage_message_id(message), meta.name
+        )
         if path is None:
             await self._sync_native_console_chat_ui()
             self.app_instance.notify(
