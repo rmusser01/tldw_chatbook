@@ -277,6 +277,24 @@ different files).
 
 ---
 
+## Do not assign zsh's special lowercase `path` variable
+
+**TASK-3401.6 closeout, 2026-08-09.** An all-ref/all-worktree collision sweep
+used `path` as the loop variable. In zsh, lowercase `path` is a special array
+tied to uppercase `PATH`, so the first assignment replaced command lookup with
+one worktree directory. The title scan had completed, but subsequent `git`,
+`tr`, `sed`, `sort`, and `tail` calls failed with `command not found`; the
+maximum-ID and worktree portions of the sweep were therefore incomplete. No
+repository file changed, and the sweep was corrected and rerun before either
+follow-up task was created.
+
+**What to do.** In zsh scripts, never assign to lowercase `path`. Use a
+task-specific variable such as `task_file` or `worktree_dir`. After shell-variable
+setup in a multi-step Backlog script, validate command lookup (for example with
+`command -v git rg sort`) before trusting later stages of the script.
+
+---
+
 ## Related
 
 - `lessons-testing-evidence.md`
