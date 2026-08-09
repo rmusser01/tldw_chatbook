@@ -167,7 +167,12 @@ def _signature_to_input_schema(fn: ast.AsyncFunctionDef | ast.FunctionDef) -> di
         else:
             required.append(arg.arg)
         properties[arg.arg] = prop
-    return {"type": "object", "properties": properties, "required": required}
+    return {
+        "type": "object",
+        "properties": properties,
+        "required": required,
+        "additionalProperties": False,
+    }
 
 
 def _extract_registered_entries(
