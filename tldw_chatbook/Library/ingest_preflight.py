@@ -7,10 +7,14 @@ estimated size, tooling warnings, and any errors that would prevent ingestion.
 
 from __future__ import annotations
 
+import socket
+import ssl
 from pathlib import Path
 from typing import Any, NamedTuple
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
+
+from loguru import logger
 
 from tldw_chatbook.Library.ingest_capabilities import (
     UNSUPPORTED_GROUP,
@@ -138,6 +142,35 @@ class UrlProbe(NamedTuple):
     note: str | None = None
 
 
+def _plain_unreachable_reason(exc: URLError) -> str:
+    """Plain-language line for a URL that produced no HTTP response.
+
+    (task-3305, MI-13) ``URLError``'s ``str`` is an exception repr
+    (``<urlopen error [Errno 8] nodename nor servname provided, or not
+    known>``) -- users were shown raw Python. The transport failure's KIND
+    is what they can act on; the raw detail goes to the debug log at the
+    call site.
+
+    Args:
+        exc: The caught ``URLError``.
+
+    Returns:
+        A complete user-facing sentence, never containing a repr.
+    """
+    reason = getattr(exc, "reason", None)
+    if isinstance(reason, socket.gaierror):
+        # DNS: [Errno 8] nodename nor servname provided / [Errno -2]
+        # Name or service not known.
+        return "URL unreachable — the server name could not be found."
+    if isinstance(reason, ConnectionRefusedError):
+        return "URL unreachable — the connection was refused."
+    if isinstance(reason, (TimeoutError, socket.timeout)):
+        return "URL unreachable — the connection timed out."
+    if isinstance(reason, ssl.SSLError):
+        return "URL unreachable — the secure connection (TLS) failed."
+    return "URL unreachable — the server could not be contacted."
+
+
 def _probe_url(url: str) -> UrlProbe:
     """Probe ``url`` with a HEAD request.
 
@@ -168,7 +201,14 @@ def _probe_url(url: str) -> UrlProbe:
     except HTTPError as exc:
         # An HTTP status means the host answered.
         if exc.code in _ABSENT_STATUSES:
-            return UrlProbe(error=f"URL unreachable: {exc}")
+            # (task-3305, MI-13) Plain language, not the exception's own
+            # "HTTP Error 404: Not Found" phrasing.
+            return UrlProbe(
+                error=(
+                    "URL unreachable — the server says this page does not "
+                    f"exist (HTTP {exc.code})."
+                )
+            )
         return UrlProbe(
             note=(
                 f"The site answered {exc.code} to our check, so it could not be "
@@ -177,9 +217,15 @@ def _probe_url(url: str) -> UrlProbe:
         )
     except URLError as exc:
         # No HTTP response at all: DNS failure, refused connection, bad TLS.
-        return UrlProbe(error=f"URL unreachable: {exc}")
+        # (task-3305, MI-13) The user-facing line names the failure's KIND;
+        # the raw exception detail is debug-log material, never UI copy.
+        logger.debug(f"URL probe failure for {url}: {exc!r}")
+        return UrlProbe(error=_plain_unreachable_reason(exc))
     except Exception as exc:
-        return UrlProbe(error=f"URL probe failed: {exc}")
+        logger.debug(f"URL probe unexpected failure for {url}: {exc!r}")
+        return UrlProbe(
+            error="URL probe failed — the address could not be checked."
+        )
 
 
 def analyze_path(path_or_url: str, scan_limit: int = 1000) -> PreflightResult:
@@ -207,8 +253,9 @@ def analyze_path(path_or_url: str, scan_limit: int = 1000) -> PreflightResult:
     truncated = False
     total_files = 0
     path_invalid = False
+    source_is_url = is_http_url(path_or_url)
 
-    if is_http_url(path_or_url):
+    if source_is_url:
         probe = _probe_url(path_or_url)
         if probe.error:
             errors.append(probe.error)
@@ -277,4 +324,5 @@ def analyze_path(path_or_url: str, scan_limit: int = 1000) -> PreflightResult:
         total_files=total_files,
         path_invalid=path_invalid,
         empty_files=tuple(empty_files),
+        source_is_url=source_is_url,
     )

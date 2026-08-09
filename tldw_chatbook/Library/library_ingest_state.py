@@ -23,7 +23,9 @@ from tldw_chatbook.Workspaces.conversation_browser_state import (
     format_console_relative_age as format_batch_relative_age,
 )
 from tldw_chatbook.Library.ingest_capabilities import (
+    MULTI_PAGE_SCRAPE_METHODS,
     _is_installed as _dependency_installed,
+    generic_option_default,
     get_capabilities,
     list_type_groups,
 )
@@ -43,12 +45,11 @@ def _generic_default(name: str, fallback: Any) -> Any:
     This form echo used to hard-code its own, which disagreed with it
     (``analyze``, ``chunk_size``) and with the other ingest surface
     (``chunk``) -- three answers to the same question, so a user's actual
-    defaults depended on which screen they happened to open.
+    defaults depended on which screen they happened to open. (task-3301)
+    Delegates to ``ingest_capabilities.generic_option_default``, the shared
+    accessor every consumer of these defaults now goes through.
     """
-    for field_spec in get_capabilities("generic").fields:
-        if field_spec.name == name:
-            return field_spec.default
-    return fallback
+    return generic_option_default(name, fallback)
 
 # Exact copy values (binding -- see the L3b plan's Global Constraints).
 INGEST_HEADER_COPY = "Import media"
@@ -69,11 +70,51 @@ QUEUE_HEADING_COPY = "Queue"
 QUEUE_EMPTY_COPY = "No import jobs yet."
 # (task-2130) After a session with activity the old line was a lie.
 QUEUE_EMPTY_AFTER_ACTIVITY_COPY = "Queue is empty."
-START_QUIET_LINE_COPY = "Enter a file path to start."
+# (task-3305, MI-12) The surface accepts URLs, so the nudge must say so.
+START_QUIET_LINE_COPY = "Enter a file path or URL to start."
 SUPPORTED_FORMATS_COPY = (
-    "Supported: PDF documents, audio/video files, e-books, plain text "
-    "files."
+    "Supported: PDF documents, Word/Office documents, audio/video files, "
+    "e-books, plain text files, web pages (by URL)."
 )
+
+
+# (task-3303 AC5) The local article extractor is single-page: the multi-page
+# scrape methods (sitemap/url_level/recursive) are honored only by the server
+# clip path, so a local "sitemap" selection used to silently import ONE page.
+WEB_LOCAL_SINGLE_PAGE_NOTE = (
+    "Multi-page fetch runs on the server — this local import fetches one "
+    "page."
+)
+
+
+def build_web_scope_note(
+    ingest_backend: str, web_options: Mapping[str, Any]
+) -> str:
+    """Return the local single-page honesty note for the web options panel.
+
+    (task-3303 AC5) ``scrape_method``/``max_pages``/``max_depth`` are honored
+    only by the server clip path; the local article path fetches exactly one
+    page. When the ingest targets the local backend and a multi-page method
+    is selected, the panel must say so at the control instead of letting the
+    run silently import a single page.
+
+    Args:
+        ingest_backend: Where a new ingest will run (``"local"``/``"server"``,
+            the canvas state's ``ingest_backend``).
+        web_options: The ``web`` group's current option values from the form
+            echo (missing keys fall back to the schema defaults).
+
+    Returns:
+        :data:`WEB_LOCAL_SINGLE_PAGE_NOTE` when the note applies, else ``""``.
+    """
+    if str(ingest_backend or "local").strip().lower() == "server":
+        return ""
+    fields = {f.name: f for f in get_capabilities("web").fields}
+    default_method = getattr(fields.get("scrape_method"), "default", "individual")
+    method = str(
+        (web_options or {}).get("scrape_method") or default_method
+    ).strip()
+    return WEB_LOCAL_SINGLE_PAGE_NOTE if method in MULTI_PAGE_SCRAPE_METHODS else ""
 
 
 def validate_ingest_option_value(field: Any, value: Any) -> str:
@@ -257,6 +298,35 @@ def unwrap_ingest_error(error: str) -> str:
         error = unwrapped
 
 
+def _strip_basename_echo(detail: str, basename: str) -> str:
+    """Drop a leading repeat of the row's own basename from its detail.
+
+    (task-3305) The pipeline's error copy often opens with the filename
+    (``"empty.txt is empty; there was nothing to ingest."``), which the
+    queue row already carries -- ``"✗ failed · empty.txt · empty.txt is
+    empty…"`` read as a stutter. Only an exact leading repeat is dropped;
+    anything else passes through whole.
+
+    Args:
+        detail: The short error text destined for the row line.
+        basename: The row's displayed basename.
+
+    Returns:
+        ``detail`` without the leading basename echo (and any separator
+        punctuation that followed it), or ``detail`` unchanged.
+    """
+    if not basename or not detail.startswith(basename):
+        return detail
+    rest = detail[len(basename):]
+    # Only a WORD-BOUNDARY echo counts: "report.txt is empty" stutters,
+    # but "report.txt.orig could not be read" names a sibling artifact and
+    # must pass through whole (xhigh review of task-3305).
+    if rest and not rest[0].isspace() and rest[0] not in ":-·—,":
+        return detail
+    trimmed = rest.lstrip().lstrip(":-·—,").lstrip()
+    return trimmed if trimmed else detail
+
+
 def _retry_suffix(job: LibraryIngestJob) -> str:
     """Return a `` · retry {n}`` suffix once a job has been requeued.
 
@@ -273,9 +343,15 @@ def _retry_suffix(job: LibraryIngestJob) -> str:
 # consulted, so it is intentionally absent here.
 _TYPE_GROUP_LABELS: dict[str, tuple[str, str]] = {
     "pdf": ("PDF document", "PDF documents"),
+    # (task-3303) .doc/.docx/.odt/.rtf have their own group now -- the
+    # pre-flight used to count them as "plain text files".
+    "document": ("Word/Office document", "Word/Office documents"),
     "audio_video": ("audio/video file", "audio/video files"),
     "ebook": ("e-book", "e-books"),
     "generic": ("plain text file", "plain text files"),
+    # (task-3305, MI-18) The fallback pluralised the group id -- a URL
+    # selection read "1 web".
+    "web": ("web page", "web pages"),
 }
 
 
@@ -394,6 +470,30 @@ def build_warning_lines(warnings: list[dict[str, Any]]) -> list[str]:
             sentence += f" Install it with: {command}"
         lines.append(sentence)
     return lines
+
+
+def preflight_install_commands(warnings: list[dict[str, Any]]) -> tuple[str, ...]:
+    """The distinct install commands behind a pre-flight's warnings, in order.
+
+    (task-3304, MI-17) Feeds the summary's copy affordance: the composed
+    warning prose embeds the command mid-sentence, which is unreadable at
+    a canvas edge and uncopyable everywhere -- the guardrail modal used to
+    be the only place with a copy button. Several features can resolve to
+    the same extra (e.g. soundfile + scipy -> ``.[audio]``), so commands
+    are de-duplicated while keeping first-seen order.
+
+    Args:
+        warnings: Pre-flight warning dicts (``PreflightResult.warnings``).
+
+    Returns:
+        Unique, non-empty ``command`` strings in first-appearance order.
+    """
+    commands: dict[str, None] = {}
+    for warning in warnings:
+        command = str(warning.get("command") or "").strip()
+        if command:
+            commands.setdefault(command, None)
+    return tuple(commands)
 
 
 @dataclass
@@ -652,6 +752,18 @@ class LibraryIngestCanvasState:
     #: server is actually configured.
     show_backend_switch: bool = False
     transcribe_cpp_configured: bool = False
+    #: (task-3301) Rendered beside the Start gate when "Analyze after
+    #: import" is ON but the configured analysis provider cannot actually
+    #: be called (no provider configured / missing key). Informational
+    #: only -- analysis is optional, so it never disables Start; the same
+    #: resolution stamps the job's "analysis skipped" reason, so the
+    #: promise made here and the record left on the done row agree.
+    analysis_hint_line: str = ""
+    #: (task-3304, MI-17) The distinct install commands behind
+    #: ``warning_lines``, in first-appearance order -- the summary renders
+    #: one compact "Copy install command" button per entry so the command
+    #: is recoverable AT the warning, not only inside the guardrail modal.
+    warning_commands: tuple[str, ...] = ()
 
 
 def _basename(source_path: str) -> str:
@@ -814,14 +926,15 @@ def _build_queue_row_for_state(job: LibraryIngestJob, *, now: float) -> IngestQu
             error_detail=job.error_detail,
         )
     # FAILED -- the only remaining IngestJobState member.
-    short_error = short_ingest_error(job.error)
+    # (task-3305) The detail never repeats the basename the row leads with.
+    short_error = _strip_basename_echo(short_ingest_error(job.error), basename)
     if job.state == IngestJobState.CANCELLED:
         # Neither ✓ nor ✗: the user stopped this on purpose, so it is not an
         # error they caused. Retry is withheld because ``requeue`` is
         # FAILED-only and would no-op; dismissing the row is still offered.
         line = f"{_GLYPH_CANCELLED} cancelled · {basename}"
         if job.error:
-            line += f" · {short_ingest_error(job.error)}"
+            line += f" · {short_error}"
         return IngestQueueRow(
             job_id=job.job_id,
             glyph=_GLYPH_CANCELLED,
@@ -841,7 +954,7 @@ def _build_queue_row_for_state(job: LibraryIngestJob, *, now: float) -> IngestQu
         # file. No Retry (requeue is FAILED-only); dismiss offered.
         line = f"{_GLYPH_SKIPPED} skipped · {basename}"
         if job.error:
-            line += f" · {short_ingest_error(job.error)}"
+            line += f" · {short_error}"
         return IngestQueueRow(
             job_id=job.job_id,
             glyph=_GLYPH_SKIPPED,
@@ -933,7 +1046,22 @@ def _queue_counts_line(jobs: Sequence[LibraryIngestJob]) -> str:
     # clears finished rows, while Recent imports keeps the real history.
     # Saying "all ingests" over a number that shrinks was a lie the label
     # itself denied.
-    return f"{joined} — in queue" if joined else ""
+    # (task-3305, MI-14) But "1 done — in queue" over a FINISHED run reads
+    # as a contradiction: the suffix stays only while something is still
+    # actually queued or working; a fully terminal tally sits under the
+    # "Queue" heading, which already scopes it.
+    if not joined:
+        return ""
+    any_active = any(
+        job.state
+        in (
+            IngestJobState.QUEUED,
+            IngestJobState.PARSING,
+            IngestJobState.WRITING,
+        )
+        for job in jobs
+    )
+    return f"{joined} — in queue" if any_active else joined
 
 
 #: Suffix appended to a queue row for a job that runs on the server. Local is
@@ -1248,6 +1376,7 @@ def build_library_ingest_state(
     recent_ledger: Sequence[LibraryIngestJob] = (),
     clear_finished_armed: bool = False,
     expanded_details: frozenset[str] | set[str] = frozenset(),
+    analysis_unready_hint: str = "",
 ) -> LibraryIngestCanvasState:
     """Build the ingest canvas's full display state.
 
@@ -1375,12 +1504,19 @@ def build_library_ingest_state(
             estimate_line = ""
         else:
             type_breakdown_line = build_type_breakdown_line(type_groups)
-            estimate_line = build_estimate_line(
-                active_preflight.total_files,
-                active_preflight.total_size,
-                active_preflight.truncated,
-            )
+            # (task-3305, MI-19) A URL is not a 0-byte file: the probe
+            # cannot know its size, so "1 file · 0 B" was a fabrication.
+            # The breakdown line above already names what the URL is.
+            if getattr(active_preflight, "source_is_url", False):
+                estimate_line = ""
+            else:
+                estimate_line = build_estimate_line(
+                    active_preflight.total_files,
+                    active_preflight.total_size,
+                    active_preflight.truncated,
+                )
         warning_lines = build_warning_lines(active_preflight.warnings)
+        warning_commands = preflight_install_commands(active_preflight.warnings)
         already = getattr(active_preflight, "already_in_library", 0) or 0
         already_capped = bool(
             getattr(active_preflight, "already_in_library_capped", False)
@@ -1416,6 +1552,7 @@ def build_library_ingest_state(
         estimate_line = ""
         duplicate_line = ""
         warning_lines = []
+        warning_commands = ()
         type_groups_list = []
 
     # Always expose the generic panel so global options (analyze, chunk) are
@@ -1662,6 +1799,12 @@ def build_library_ingest_state(
         queue_groups=queue_groups,
         latest_batch_line=latest_batch_line,
         transcribe_cpp_configured=transcribe_cpp_configured,
+        # (task-3301) Only meaningful while the Analyze toggle is ON; the
+        # caller supplies the resolved-unready sentence, this builder
+        # gates it on the toggle so an OFF form never nags about a
+        # provider it isn't going to use.
+        analysis_hint_line=(analysis_unready_hint if form.analyze else ""),
+        warning_commands=tuple(warning_commands),
     )
 
 

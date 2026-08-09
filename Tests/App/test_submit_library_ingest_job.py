@@ -84,10 +84,14 @@ class TestIngestJobOptions:
         assert options["author"] is None
         assert options["keywords"] is None
         assert options["perform_analysis"] is True
+        # task-3301: overlap default is the generic schema default (100, the
+        # value the UI shows), not the old hardcoded 50; ``max_size`` mirrors
+        # ``size`` because ``improved_chunking_process`` reads that spelling;
+        # no ``method`` is forced -- each consumer applies its own default.
         assert options["chunk_options"] == {
-            "method": "sentences",
             "size": 1234,
-            "overlap": 50,
+            "max_size": 1234,
+            "overlap": 100,
         }
 
     def test_generic_ingest_options_override_deprecated_fields(self) -> None:
@@ -110,8 +114,8 @@ class TestIngestJobOptions:
 
         assert options["perform_analysis"] is True
         assert options["chunk_options"] == {
-            "method": "sentences",
             "size": 2048,
+            "max_size": 2048,
             "overlap": 100,
         }
 
@@ -267,6 +271,283 @@ class TestIngestJobOptions:
         assert options["language"] == "fr"
         assert options["transcription_precision"] == "int8"
         assert options["transcription_local_files_only"] is True
+
+    def test_document_group_options(self) -> None:
+        """(task-3303 AC1) The document branch feeds ``process_document``."""
+        app = _minimal_app()
+        job = _make_job(
+            source_path="/tmp/report.docx",
+            ingest_options={
+                "generic": {"chunk": True, "chunk_size": 800, "chunk_overlap": 80},
+                "document": {
+                    "processing_method": "docling",
+                    "ocr": True,
+                    "ocr_language": "de",
+                },
+            },
+        )
+        options = app._ingest_job_options(job)
+
+        assert options["processing_method"] == "docling"
+        assert options["enable_ocr"] is True
+        assert options["ocr_language"] == "de"
+        # The generic base group still applies to document files: analyze/
+        # chunk/size travel exactly as they did when documents rode the
+        # generic panel (task-3301's layering).
+        assert options["chunk_options"] == {
+            "size": 800,
+            "max_size": 800,
+            "overlap": 80,
+        }
+
+    def test_document_group_defaults_without_snapshot(self) -> None:
+        app = _minimal_app()
+        job = _make_job(source_path="/tmp/report.odt")
+
+        options = app._ingest_job_options(job)
+
+        assert options["processing_method"] == "auto"
+        assert options["enable_ocr"] is False
+        assert options["ocr_language"] == "en"
+
+    def test_pdf_ocr_language_and_backend_travel(self) -> None:
+        """(task-3303 AC2) OCR language/backend reach the pdf options."""
+        app = _minimal_app()
+        job = _make_job(
+            source_path="/tmp/test.pdf",
+            ingest_options={
+                "pdf": {
+                    "pdf_engine": "docext",
+                    "ocr": True,
+                    "ocr_language": "fr",
+                    "ocr_backend": "tesseract",
+                },
+            },
+        )
+        options = app._ingest_job_options(job)
+
+        assert options["pdf_engine"] == "docext"
+        assert options["ocr"] is True
+        assert options["ocr_language"] == "fr"
+        assert options["ocr_backend"] == "tesseract"
+
+    def test_pdf_ocr_detail_defaults(self) -> None:
+        app = _minimal_app()
+        job = _make_job(source_path="/tmp/test.pdf")
+
+        options = app._ingest_job_options(job)
+
+        assert options["ocr_language"] == "en"
+        assert options["ocr_backend"] == "auto"
+
+    def test_ebook_chapters_choice_maps_to_ebook_chapters_method(self) -> None:
+        """(task-3303 AC3) The human "chapters" choice becomes the real method."""
+        app = _minimal_app()
+        job = _make_job(
+            source_path="/tmp/book.epub",
+            ingest_options={
+                "generic": {"chunk": True, "chunk_size": 1000},
+                "ebook": {"chunk_method": "chapters"},
+            },
+        )
+        options = app._ingest_job_options(job)
+
+        assert options["chunk_options"]["method"] == "ebook_chapters"
+
+    def test_ebook_sentences_choice_travels_verbatim(self) -> None:
+        app = _minimal_app()
+        job = _make_job(
+            source_path="/tmp/book.epub",
+            ingest_options={
+                "generic": {"chunk": True},
+                "ebook": {"chunk_method": "sentences"},
+            },
+        )
+        options = app._ingest_job_options(job)
+
+        assert options["chunk_options"]["method"] == "sentences"
+
+    def test_ebook_legacy_snapshot_without_chunk_method_keeps_sentences(
+        self,
+    ) -> None:
+        """(task-3303 xhigh review round 2, F11) A persisted job whose
+        snapshot predates the ebook ``chunk_method`` field must keep the
+        pre-branch chunking scheme on retry/requeue: the old builder forced
+        ``method='sentences'`` for every group, so falling through to
+        ``process_epub``'s chapters default silently switched a legacy
+        job's scheme. Post-branch snapshots always carry the field (the
+        submit-time snapshot seeds the schema default), so absence IS the
+        legacy marker."""
+        app = _minimal_app()
+        job = _make_job(
+            source_path="/tmp/book.epub",
+            ingest_options={"generic": {"chunk": True}},
+        )
+        options = app._ingest_job_options(job)
+
+        assert options["chunk_options"] is not None
+        assert options["chunk_options"]["method"] == "sentences"
+
+    def test_fresh_untouched_form_snapshot_maps_to_ebook_chapters(self) -> None:
+        """(F11) A FRESH untouched submission still chunks e-books by
+        chapter: the submit-time snapshot carries the schema default
+        ("chapters"), which the builder maps to the chunker's real
+        ``ebook_chapters`` -- distinguishing it from a legacy snapshot
+        where the field is absent."""
+        screen = object.__new__(LibraryScreen)
+        screen._library_ingest_form = LibraryIngestFormState()
+        snapshot = screen._build_ingest_options_snapshot()
+
+        assert snapshot["ebook"]["chunk_method"] == "chapters"
+
+        app = _minimal_app()
+        job = _make_job(source_path="/tmp/book.epub", ingest_options=snapshot)
+        options = app._ingest_job_options(job)
+
+        assert options["chunk_options"]["method"] == "ebook_chapters"
+
+    def test_ebook_method_ignored_when_chunking_off(self) -> None:
+        app = _minimal_app()
+        job = _make_job(
+            source_path="/tmp/book.epub",
+            ingest_options={
+                "generic": {"chunk": False},
+                "ebook": {"chunk_method": "chapters"},
+            },
+        )
+        options = app._ingest_job_options(job)
+
+        assert options["chunk_options"] is None
+
+    def test_translate_to_english_maps_to_target_language(self) -> None:
+        """(task-3303 AC4) The translate toggle becomes target_language=en."""
+        app = _minimal_app()
+        job = _make_job(
+            source_path="/tmp/test.mp3",
+            ingest_options={
+                "audio_video": {
+                    "transcription_provider": "faster-whisper",
+                    "translate_to_english": True,
+                },
+            },
+        )
+        options = app._ingest_job_options(job)
+
+        assert options["translation_target_language"] == "en"
+        assert options["transcription_provider"] == "faster-whisper"
+
+    def test_translate_under_default_provider_routes_to_faster_whisper(
+        self,
+    ) -> None:
+        """Only faster-whisper translates; the semantic default must route
+        there rather than to Parakeet when translation is requested."""
+        app = _minimal_app()
+        job = _make_job(
+            source_path="/tmp/test.mp3",
+            ingest_options={
+                "audio_video": {"translate_to_english": True},
+            },
+        )
+        options = app._ingest_job_options(job)
+
+        assert options["transcription_provider"] == "faster-whisper"
+        assert options["translation_target_language"] == "en"
+
+    def test_translate_off_sets_no_target_language(self) -> None:
+        app = _minimal_app()
+        job = _make_job(
+            source_path="/tmp/test.mp3",
+            ingest_options={
+                "audio_video": {"translate_to_english": False},
+            },
+        )
+        options = app._ingest_job_options(job)
+
+        assert options["translation_target_language"] is None
+
+    def test_explicit_target_language_wins_over_translate_checkbox(self) -> None:
+        """An explicit target (retry overrides, older snapshots) stays
+        authoritative; the checkbox only fills the gap."""
+        app = _minimal_app()
+        job = _make_job(
+            source_path="/tmp/test.mp3",
+            ingest_options={
+                "audio_video": {
+                    "transcription_provider": "faster-whisper",
+                    "translation_target_language": "en",
+                    "translate_to_english": False,
+                },
+            },
+        )
+        options = app._ingest_job_options(job)
+
+        assert options["translation_target_language"] == "en"
+
+    def test_stale_translate_under_transcribe_cpp_is_ignored_not_fatal(
+        self,
+    ) -> None:
+        """(task-3303 xhigh review round 2, F9) The translate checkbox is
+        gated in the FORM to the default/faster-whisper providers
+        (``enabled_when_values``), but a value checked under one provider
+        and left stale after switching to transcribe-cpp used to be
+        forwarded anyway -- ``resolve_batch_stt_route`` then raised
+        ``BatchSTTRoutingError`` and every audio/video job in the batch
+        FAILED at dispatch. The builder must consult the same schema gate
+        the form does."""
+        app = _minimal_app()
+        job = _make_job(
+            source_path="/tmp/test.mp3",
+            ingest_options={
+                "audio_video": {
+                    "transcription_provider": "transcribe-cpp",
+                    "translate_to_english": True,
+                },
+            },
+        )
+
+        options = app._ingest_job_options(job)  # must not raise
+
+        assert options["transcription_provider"] == "transcribe-cpp"
+        assert options["translation_target_language"] is None
+
+    def test_stale_translate_under_parakeet_is_ignored_not_fatal(self) -> None:
+        """(F9) Same stale-checkbox hazard under parakeet-onnx, which
+        rejects translation outright in ``_parakeet_route``."""
+        app = _minimal_app()
+        job = _make_job(
+            source_path="/tmp/test.mp3",
+            ingest_options={
+                "audio_video": {
+                    "transcription_provider": "parakeet-onnx",
+                    "language": "en",
+                    "translate_to_english": True,
+                },
+            },
+        )
+
+        options = app._ingest_job_options(job)  # must not raise
+
+        assert options["transcription_provider"] == "parakeet-onnx"
+        assert options["translation_target_language"] is None
+
+    def test_vad_filter_travels(self) -> None:
+        """(task-3303 AC4) The VAD toggle reaches the transcription options."""
+        app = _minimal_app()
+        job = _make_job(
+            source_path="/tmp/test.mp3",
+            ingest_options={"audio_video": {"vad_filter": True}},
+        )
+        options = app._ingest_job_options(job)
+
+        assert options["vad_filter"] is True
+
+    def test_vad_filter_defaults_off(self) -> None:
+        app = _minimal_app()
+        job = _make_job(source_path="/tmp/test.mp3")
+
+        options = app._ingest_job_options(job)
+
+        assert options["vad_filter"] is False
 
     def test_faster_whisper_preserves_normalized_translation_target(self) -> None:
         app = _minimal_app()
@@ -437,6 +718,92 @@ class TestIngestJobOptions:
         assert options["extraction_method"] == "markdown"
         assert options["include_toc"] is True
 
+    def test_pdf_chunk_options_carry_explicit_words_method(self) -> None:
+        """(task-3301/3303 xhigh review round 2, F12) The generic chunk-size
+        hint promises WORDS ('words · 100–5000'), but ``process_pdf``
+        setdefaults ``method='sentences'`` when none travels -- a ~10-30x
+        unit lie (500 SENTENCES is roughly one chunk per document). The
+        builder now makes the hint true by always sending the words
+        method for the pdf group."""
+        app = _minimal_app()
+        job = _make_job(
+            source_path="/tmp/test.pdf",
+            ingest_options={"generic": {"chunk": True, "chunk_size": 500}},
+        )
+        options = app._ingest_job_options(job)
+
+        assert options["chunk_options"]["method"] == "words"
+
+    def test_audio_video_chunk_options_carry_explicit_words_method(self) -> None:
+        """(F12) Same unit contract for the audio/video branch, whose
+        processor defaults to sentences as well."""
+        app = _minimal_app()
+        job = _make_job(
+            source_path="/tmp/test.mp3",
+            ingest_options={"generic": {"chunk": True, "chunk_size": 500}},
+        )
+        options = app._ingest_job_options(job)
+
+        assert options["chunk_options"]["method"] == "words"
+
+    def test_pdf_chunk_size_governs_word_budget_through_processor_tail(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """(F12) GOVERNANCE, not kwargs-arrival: the builder's pdf
+        chunk_options drive ``process_pdf``'s REAL chunking tail (its own
+        sentences-setdefault seam plus the real chunking service), and a
+        size of 120 must mean ~120 WORDS per chunk. Only the
+        pymupdf-backed extraction/metadata seams are stubbed (pymupdf is
+        absent in this venv); the chunker is never stubbed
+        (kwargs-arrival-vs-governance lesson). With the method injection
+        dropped, the processor's sentences default makes this word-soup
+        content ONE chunk and the test goes RED."""
+        from tldw_chatbook.Local_Ingestion import PDF_Processing_Lib
+
+        content = " ".join(f"word{i}" for i in range(600))
+        monkeypatch.setattr(
+            PDF_Processing_Lib,
+            "pymupdf4llm_parse_pdf",
+            lambda *args, **kwargs: content,
+        )
+
+        class _FakePyMuPDF:
+            class FileDataError(Exception):
+                pass
+
+            class EmptyFileError(Exception):
+                pass
+
+            @staticmethod
+            def open(*args, **kwargs):
+                raise RuntimeError("pymupdf absent in this test venv")
+
+        monkeypatch.setattr(PDF_Processing_Lib, "pymupdf", _FakePyMuPDF)
+
+        app = _minimal_app()
+        job = _make_job(
+            source_path="/tmp/budget.pdf",
+            ingest_options={
+                "generic": {"chunk": True, "chunk_size": 120, "chunk_overlap": 0}
+            },
+        )
+        options = app._ingest_job_options(job)
+
+        result = PDF_Processing_Lib.process_pdf(
+            file_input=b"%PDF-1.4 fake bytes",
+            filename="budget.pdf",
+            perform_chunking=True,
+            chunk_options=options["chunk_options"],
+        )
+
+        chunks = result["chunks"]
+        assert chunks and len(chunks) >= 4, (
+            f"size 120 produced {len(chunks or [])} chunk(s) from 600 words "
+            "-- the size unit is not words"
+        )
+        for chunk in chunks:
+            assert len(chunk["text"].split()) <= 120
+
     def test_type_specific_overrides_generic(self) -> None:
         app = _minimal_app()
         job = _make_job(
@@ -457,6 +824,321 @@ class TestIngestJobOptions:
         options = app._ingest_job_options(job)
 
         assert options["chunk_options"] is None
+
+
+class TestIngestJobOptionsWiring:
+    """task-3301: the dead controls resolve to real option values."""
+
+    def test_untouched_overlap_default_is_schema_default(self) -> None:
+        """Local fallback overlap == the generic schema default (100), the
+        value the UI displays -- it used to be a hardcoded 50."""
+        from tldw_chatbook.Library.ingest_capabilities import get_capabilities
+
+        schema_overlap = next(
+            f.default
+            for f in get_capabilities("generic").fields
+            if f.name == "chunk_overlap"
+        )
+        app = _minimal_app()
+        job = _make_job(
+            source_path="/tmp/test.txt",
+            ingest_options={"generic": {"chunk": True, "chunk_size": 1000}},
+        )
+
+        options = app._ingest_job_options(job)
+
+        assert options["chunk_options"]["overlap"] == schema_overlap == 100
+
+    def test_untouched_form_local_and_server_paths_agree_on_overlap(self) -> None:
+        from tldw_chatbook.Library.server_ingest_request import (
+            build_server_ingest_kwargs,
+        )
+
+        screen = object.__new__(LibraryScreen)
+        screen._library_ingest_form = LibraryIngestFormState()
+        snapshot = screen._build_ingest_options_snapshot()
+
+        app = _minimal_app()
+        job = _make_job(source_path="/tmp/test.txt", ingest_options=snapshot)
+        local_options = app._ingest_job_options(job)
+        server_kwargs = build_server_ingest_kwargs(
+            "/tmp/test.txt", options=snapshot
+        )
+
+        assert local_options["chunk_options"] is not None
+        assert (
+            local_options["chunk_options"]["overlap"]
+            == server_kwargs["chunk_overlap"]
+        )
+        assert (
+            local_options["chunk_options"]["size"] == server_kwargs["chunk_size"]
+        )
+
+    def test_display_string_sizes_are_coerced_to_int(self) -> None:
+        """The panel Inputs hand back display text; processors get ints."""
+        app = _minimal_app()
+        job = _make_job(
+            source_path="/tmp/test.txt",
+            ingest_options={
+                "generic": {
+                    "chunk": True,
+                    "chunk_size": "1000",
+                    "chunk_overlap": "150",
+                }
+            },
+        )
+
+        options = app._ingest_job_options(job)
+
+        assert options["chunk_options"]["size"] == 1000
+        assert options["chunk_options"]["overlap"] == 150
+        assert isinstance(options["chunk_options"]["size"], int)
+        assert isinstance(options["chunk_options"]["overlap"], int)
+
+    def test_chunk_options_carry_max_size_for_chunking_service(self) -> None:
+        """``improved_chunking_process`` reads ``max_size``; the legacy
+        audio/video option map reads ``size``. Both spellings must travel."""
+        app = _minimal_app()
+        job = _make_job(
+            source_path="/tmp/test.txt",
+            ingest_options={"generic": {"chunk": True, "chunk_size": 777}},
+        )
+
+        options = app._ingest_job_options(job)
+
+        assert options["chunk_options"]["size"] == 777
+        assert options["chunk_options"]["max_size"] == 777
+
+    def test_encoding_selection_reaches_options(self) -> None:
+        app = _minimal_app()
+        job = _make_job(
+            source_path="/tmp/test.txt",
+            ingest_options={"generic": {"encoding": "latin-1"}},
+        )
+
+        options = app._ingest_job_options(job)
+
+        assert options["encoding"] == "latin-1"
+
+    def test_analysis_provider_resolved_from_config(self) -> None:
+        app = _minimal_app()
+        app.app_config = {
+            "analysis_defaults": {"provider": "OpenAI"},
+            "api_settings": {"openai": {"api_key": "sk-test-configured"}},
+        }
+        job = _make_job(
+            source_path="/tmp/test.txt",
+            ingest_options={"generic": {"analyze": True}},
+        )
+
+        options = app._ingest_job_options(job)
+
+        assert options["perform_analysis"] is True
+        # (task-3301 xhigh review round) The NORMALIZED dispatch name
+        # travels -- it is what `chat_api_call` (and the summarizer's
+        # alias map) accept; the display spelling only ever fed logs.
+        assert options["api_name"] == "openai"
+        assert options["api_key"] == "sk-test-configured"
+        assert "analysis_skipped_reason" not in options
+
+    def test_analysis_provider_resolved_from_env(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-test-env")
+        app = _minimal_app()
+        app.app_config = {"analysis_defaults": {"provider": "OpenAI"}}
+        job = _make_job(
+            source_path="/tmp/test.txt",
+            ingest_options={"generic": {"analyze": True}},
+        )
+
+        options = app._ingest_job_options(job)
+
+        assert options["api_name"] == "openai"
+        assert options["api_key"] == "sk-test-env"
+
+    def test_unready_analysis_records_skip_reason(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+        app = _minimal_app()
+        app.app_config = {"analysis_defaults": {"provider": "OpenAI"}}
+        job = _make_job(
+            source_path="/tmp/test.txt",
+            ingest_options={"generic": {"analyze": True}},
+        )
+
+        options = app._ingest_job_options(job)
+
+        assert options.get("api_key") is None
+        assert options["analysis_skipped_reason"]
+        assert "OpenAI" in options["analysis_skipped_reason"]
+
+    def test_no_provider_configured_records_skip_reason(self) -> None:
+        app = _minimal_app()
+        app.app_config = {}
+        job = _make_job(
+            source_path="/tmp/test.txt",
+            ingest_options={"generic": {"analyze": True}},
+        )
+
+        options = app._ingest_job_options(job)
+
+        assert options["analysis_skipped_reason"]
+        assert "provider" in options["analysis_skipped_reason"]
+
+    def test_analyze_off_skips_provider_resolution_entirely(self) -> None:
+        app = _minimal_app()
+        app.app_config = {
+            "analysis_defaults": {"provider": "OpenAI"},
+            "api_settings": {"openai": {"api_key": "sk-test-configured"}},
+        }
+        job = _make_job(
+            source_path="/tmp/test.txt",
+            ingest_options={"generic": {"analyze": False}},
+        )
+
+        options = app._ingest_job_options(job)
+
+        assert options["perform_analysis"] is False
+        assert "api_name" not in options
+        assert "api_key" not in options
+        assert "analysis_skipped_reason" not in options
+
+    def test_analysis_call_settings_travel(self) -> None:
+        """(task-3301 xhigh review round, F10) The full [analysis_defaults]
+        call shape travels to the worker, not just the provider name."""
+        app = _minimal_app()
+        app.app_config = {
+            "analysis_defaults": {
+                "provider": "OpenAI",
+                "model": "gpt-4o-mini",
+                "temperature": 0.2,
+                "top_p": 0.9,
+                "min_p": 0.01,
+                "max_tokens": 512,
+                "system_prompt": "Analyze thoroughly.",
+            },
+            "api_settings": {"openai": {"api_key": "sk-test-configured"}},
+        }
+        job = _make_job(
+            source_path="/tmp/test.txt",
+            ingest_options={"generic": {"analyze": True}},
+        )
+
+        options = app._ingest_job_options(job)
+
+        assert options["analysis_call"] == {
+            "model": "gpt-4o-mini",
+            "temperature": 0.2,
+            "top_p": 0.9,
+            "min_p": 0.01,
+            "max_tokens": 512,
+        }
+        assert options["system_prompt"] == "Analyze thoroughly."
+
+    def test_keyless_provider_sets_explicit_opt_in(self) -> None:
+        """(task-3301 xhigh review round, F8) Keyless-ready providers get
+        the explicit opt-in flag; keyed providers never do."""
+        app = _minimal_app()
+        app.app_config = {"analysis_defaults": {"provider": "Ollama"}}
+        job = _make_job(
+            source_path="/tmp/test.txt",
+            ingest_options={"generic": {"analyze": True}},
+        )
+
+        options = app._ingest_job_options(job)
+
+        assert options["api_name"] == "ollama"
+        assert options.get("api_key") is None
+        assert options["analysis_keyless_ok"] is True
+
+    def test_keyed_provider_does_not_set_keyless_opt_in(self) -> None:
+        app = _minimal_app()
+        app.app_config = {
+            "analysis_defaults": {"provider": "OpenAI"},
+            "api_settings": {"openai": {"api_key": "sk-test-configured"}},
+        }
+        job = _make_job(
+            source_path="/tmp/test.txt",
+            ingest_options={"generic": {"analyze": True}},
+        )
+
+        options = app._ingest_job_options(job)
+
+        assert "analysis_keyless_ok" not in options
+
+    def test_undispatchable_provider_records_skip_reason(self) -> None:
+        """(task-3301 xhigh review round, F5) A readiness-ready provider
+        with no chat dispatch handler must skip with a reason, not error
+        at analysis time."""
+        app = _minimal_app()
+        app.app_config = {"analysis_defaults": {"provider": "custom"}}
+        job = _make_job(
+            source_path="/tmp/test.txt",
+            ingest_options={"generic": {"analyze": True}},
+        )
+
+        options = app._ingest_job_options(job)
+
+        assert "api_name" not in options
+        assert "not supported for ingest analysis" in (
+            options["analysis_skipped_reason"]
+        )
+
+
+class TestIngestDoneProgress:
+    """task-3301: the done row records analysis skipped-with-reason."""
+
+    def test_plain_import_message(self) -> None:
+        progress = app_module._library_ingest_done_progress(
+            "/tmp/notes.txt", was_duplicate=False, payload={}
+        )
+        assert progress == {"message": "Imported notes.txt"}
+
+    def test_analysis_skip_reason_appended(self) -> None:
+        progress = app_module._library_ingest_done_progress(
+            "/tmp/notes.txt",
+            was_duplicate=False,
+            payload={
+                "analysis_skipped_reason": "OpenAI is not ready (Missing API key)"
+            },
+        )
+        assert (
+            progress["message"]
+            == "Imported notes.txt — analysis skipped: OpenAI is not ready "
+            "(Missing API key)"
+        )
+        assert (
+            progress["analysis_skipped"]
+            == "OpenAI is not ready (Missing API key)"
+        )
+
+    def test_analysis_failed_reason_appended(self) -> None:
+        """(task-3301 xhigh review round, F4) A failed analysis annotates
+        the done row the same way a skipped one does -- never silence."""
+        progress = app_module._library_ingest_done_progress(
+            "/tmp/notes.txt",
+            was_duplicate=False,
+            payload={"analysis_failed_reason": "Invalid API Name 'custom'"},
+        )
+        assert (
+            progress["message"]
+            == "Imported notes.txt — analysis failed: Invalid API Name 'custom'"
+        )
+        assert progress["analysis_failed"] == "Invalid API Name 'custom'"
+
+    def test_duplicate_message_keeps_matched_prefix(self) -> None:
+        from tldw_chatbook.Library.library_ingest_jobs import (
+            INGEST_DUPLICATE_PROGRESS_PREFIX,
+        )
+
+        progress = app_module._library_ingest_done_progress(
+            "/tmp/notes.txt",
+            was_duplicate=True,
+            payload={"analysis_skipped_reason": "whatever"},
+        )
+        assert progress["message"].startswith(INGEST_DUPLICATE_PROGRESS_PREFIX)
 
 
 class TestSubmitLibraryIngestJob:

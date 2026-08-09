@@ -187,7 +187,8 @@ async def test_unsupported_files_summary_renders():
         # blocked submit never records.
         assert str(summary.renderable) == (
             "Unsupported: weird.xyz."
-            " Supported: PDF documents, audio/video files, e-books, plain text files."
+            " Supported: PDF documents, Word/Office documents, audio/video"
+            " files, e-books, plain text files, web pages (by URL)."
         )
 
 
@@ -346,12 +347,14 @@ async def test_type_group_panels_render_for_detected_groups():
         pdf_panel = pilot.app.query_one("#type-group-pdf", Collapsible)
         generic_panel = pilot.app.query_one("#type-group-generic", Collapsible)
         assert "PDF documents" in str(pdf_panel.title)
-        assert "PDF engine: pymupdf4llm" in str(pdf_panel.title)
+        # (task-3305) The receipt shows the display label, never the token.
+        assert "PDF engine: PyMuPDF4LLM (Markdown)" in str(pdf_panel.title)
+        assert "pymupdf4llm" not in str(pdf_panel.title)
         assert "Plain text & HTML" in str(generic_panel.title)
         assert "Chunk size: 1000" in str(generic_panel.title)
 
         scope = pilot.app.query_one("#type-group-pdf .type-group-scope", Static)
-        assert "Applies to all PDF documents in this import." in str(
+        assert "Applies to every PDF document in this import." in str(
             scope.renderable
         )
 
@@ -1156,7 +1159,8 @@ async def test_option_panel_title_reads_as_plain_language():
 
     assert "pdf_engine=" not in title
     assert "ocr=False" not in title
-    assert "PDF engine: pymupdf4llm" in title
+    assert "PDF engine: PyMuPDF4LLM (Markdown)" in title
+    assert "pymupdf4llm" not in title
     assert "Enable OCR: off" in title
 
 
@@ -1329,7 +1333,8 @@ async def test_unsupported_files_summary_pluralizes_correctly():
         # (task-2100) Gate-blocked (nothing importable): names only.
         assert str(summary.renderable) == (
             "Unsupported: a.xyz, b.xyz."
-            " Supported: PDF documents, audio/video files, e-books, plain text files."
+            " Supported: PDF documents, Word/Office documents, audio/video"
+            " files, e-books, plain text files, web pages (by URL)."
         )
 
 
@@ -1403,7 +1408,7 @@ async def test_generic_scope_line_reworded_when_no_generic_files_staged():
             str(w.renderable)
             for w in pilot.app.query(".type-group-scope").results(Static)
         ]
-        generic_scope = [s for s in scopes if "Plain text" in s]
+        generic_scope = [s for s in scopes if "plain text" in s.lower()]
         assert generic_scope, f"generic scope line missing: {scopes}"
         assert "if this import contains any" in generic_scope[0]
         assert "in this import." not in generic_scope[0]
@@ -1469,7 +1474,15 @@ async def test_select_fields_carry_visible_labels():
         ]
         assert select_labels, "pdf group unexpectedly has no selects"
         for label in select_labels:
-            assert label in labels, f"select {label!r} has no visible label"
+            # (task-3304) A schema-disabled select's label carries a
+            # " — <reason>" annotation, and whether one applies here
+            # depends on which optional packages THIS environment has --
+            # so accept the label with or without the suffix, pinned to
+            # the exact separator so a missing label still fails.
+            assert any(
+                text == label or text.startswith(f"{label} — ")
+                for text in labels
+            ), f"select {label!r} has no visible label; rendered: {labels!r}"
 
 
 @pytest.mark.asyncio
@@ -1581,3 +1594,388 @@ async def test_severity_colour_supplements_glyphs_and_invalid_field_marked() -> 
             "an invalid field must stay marked without focus"
         )
         assert pilot.app.focused is not invalid
+
+
+@pytest.mark.asyncio
+async def test_analysis_hint_renders_when_state_carries_one():
+    """task-3301: the Analyze-readiness hint renders beside the Start gate."""
+    form = LibraryIngestFormState(path="/tmp/test", analyze=True)
+    state = build_library_ingest_state(
+        (),
+        form=form,
+        analysis_unready_hint=(
+            "Analyze after import is on, but OpenAI is not ready: Missing "
+            "API key. Imports will run without analysis."
+        ),
+    )
+    app = _CanvasHost(state)
+    async with app.run_test() as pilot:
+        hint = pilot.app.query_one("#library-ingest-analysis-hint", Static)
+        assert hint.display is True
+        assert "OpenAI" in str(hint.renderable)
+        assert "without analysis" in str(hint.renderable)
+
+
+@pytest.mark.asyncio
+async def test_analysis_hint_hidden_when_state_has_none():
+    state = build_library_ingest_state((), form=_default_form())
+    app = _CanvasHost(state)
+    async with app.run_test() as pilot:
+        hint = pilot.app.query_one("#library-ingest-analysis-hint", Static)
+        assert hint.display is False
+
+
+# ---------------------------------------------------------------------------
+# task-3303: document panel, PDF OCR gating, AV translate gating, web honesty
+# ---------------------------------------------------------------------------
+
+
+def _preflight_for(groups: dict[str, list[str]]) -> PreflightResult:
+    return PreflightResult(
+        type_groups=groups,
+        warnings=[],
+        errors=[],
+        total_size=0,
+        truncated=False,
+        total_files=sum(len(v) for v in groups.values()),
+    )
+
+
+@pytest.mark.asyncio
+async def test_document_panel_renders_with_processing_and_ocr_controls():
+    """(task-3303 AC1) A .docx selection gets its own options panel."""
+    state = build_library_ingest_state(
+        (),
+        form=_default_form(),
+        preflight=_preflight_for({"document": ["/tmp/report.docx"]}),
+    )
+    app = _CanvasHost(state)
+    with patch(
+        "tldw_chatbook.Widgets.Library.library_ingest_canvas._is_installed",
+        return_value=True,
+    ):
+        async with app.run_test() as pilot:
+            panel = pilot.app.query_one("#type-group-document", Collapsible)
+            assert "Word/Office documents" in str(panel.title)
+            method = pilot.app.query_one(
+                "#opt-document-processing_method", Select
+            )
+            assert method.value == "auto"
+            ocr = pilot.app.query_one("#opt-document-ocr", Checkbox)
+            # Under the default "auto" method OCR is offerable (docling is
+            # "installed" in this test), and the label carries its scope.
+            assert ocr.disabled is False
+            assert "docling" in str(ocr.label)
+            language = pilot.app.query_one("#opt-document-ocr_language", Input)
+            # OCR is off, so the language field rides the gate.
+            assert language.disabled is True
+
+
+@pytest.mark.asyncio
+async def test_pdf_ocr_checkbox_inert_under_pymupdf_engine_with_reason():
+    """(task-3303 AC2) OCR under a non-OCR engine is inert, with the reason."""
+    state = build_library_ingest_state(
+        (),
+        form=_default_form(),
+        preflight=_preflight_for({"pdf": ["/tmp/a.pdf"]}),
+    )
+    app = _CanvasHost(state)
+    with patch(
+        "tldw_chatbook.Widgets.Library.library_ingest_canvas._is_installed",
+        return_value=True,
+    ):
+        async with app.run_test() as pilot:
+            ocr = pilot.app.query_one("#opt-pdf-ocr", Checkbox)
+            # Default engine is pymupdf4llm, which cannot OCR.
+            assert ocr.disabled is True
+            assert "docling or docext engines only" in str(ocr.label)
+
+
+@pytest.mark.asyncio
+async def test_pdf_ocr_checkbox_enabled_under_docling_engine():
+    form = _default_form()
+    form.type_options = {"pdf": {"pdf_engine": "docling"}}
+    state = build_library_ingest_state(
+        (),
+        form=form,
+        preflight=_preflight_for({"pdf": ["/tmp/a.pdf"]}),
+    )
+    app = _CanvasHost(state)
+    with patch(
+        "tldw_chatbook.Widgets.Library.library_ingest_canvas._is_installed",
+        return_value=True,
+    ):
+        async with app.run_test() as pilot:
+            ocr = pilot.app.query_one("#opt-pdf-ocr", Checkbox)
+            assert ocr.disabled is False
+            backend = pilot.app.query_one("#opt-pdf-ocr_backend", Select)
+            # Backend selection applies to the docext engine only.
+            assert backend.disabled is True
+
+
+@pytest.mark.asyncio
+async def test_translate_checkbox_inert_under_parakeet_provider():
+    """(task-3303 AC4) Only faster-whisper translates; parakeet renders it inert."""
+    form = _default_form()
+    form.type_options = {
+        "audio_video": {"transcription_provider": "parakeet-onnx"}
+    }
+    state = build_library_ingest_state(
+        (),
+        form=form,
+        preflight=_preflight_for({"audio_video": ["/tmp/talk.mp3"]}),
+    )
+    app = _CanvasHost(state)
+    with patch(
+        "tldw_chatbook.Widgets.Library.library_ingest_canvas._is_installed",
+        return_value=True,
+    ):
+        async with app.run_test() as pilot:
+            translate = pilot.app.query_one(
+                "#opt-audio_video-translate_to_english", Checkbox
+            )
+            assert translate.disabled is True
+            assert "faster-whisper" in str(translate.label)
+            vad = pilot.app.query_one("#opt-audio_video-vad_filter", Checkbox)
+            assert vad.disabled is False
+
+
+@pytest.mark.asyncio
+async def test_web_local_multi_page_note_visible_when_sitemap_selected():
+    """(task-3303 AC5) A local sitemap selection says it fetches one page."""
+    form = _default_form()
+    form.type_options = {"web": {"scrape_method": "sitemap"}}
+    state = build_library_ingest_state(
+        (),
+        form=form,
+        preflight=_preflight_for({"web": ["https://example.com/post"]}),
+    )
+    app = _CanvasHost(state)
+    async with app.run_test() as pilot:
+        note = pilot.app.query_one("#web-local-scope-note", Static)
+        assert note.display is True
+        assert "one page" in str(note.renderable)
+        assert "server" in str(note.renderable)
+
+
+@pytest.mark.asyncio
+async def test_web_note_hidden_for_single_page_selection():
+    form = _default_form()
+    form.type_options = {"web": {"scrape_method": "individual"}}
+    state = build_library_ingest_state(
+        (),
+        form=form,
+        preflight=_preflight_for({"web": ["https://example.com/post"]}),
+    )
+    app = _CanvasHost(state)
+    async with app.run_test() as pilot:
+        note = pilot.app.query_one("#web-local-scope-note", Static)
+        assert note.display is False
+
+
+@pytest.mark.asyncio
+async def test_web_note_hidden_when_targeting_the_server():
+    """Server behavior is unchanged: the clip path honors multi-page methods."""
+    form = _default_form()
+    form.type_options = {"web": {"scrape_method": "sitemap"}}
+    state = build_library_ingest_state(
+        (),
+        form=form,
+        runtime_source="server",
+        server_ingest_available=True,
+        ingest_backend="server",
+        preflight=_preflight_for({"web": ["https://example.com/post"]}),
+    )
+    app = _CanvasHost(state)
+    async with app.run_test() as pilot:
+        note = pilot.app.query_one("#web-local-scope-note", Static)
+        assert note.display is False
+
+
+# --- task-3305: copy & labels batch -----------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_every_select_renders_human_labels_never_raw_tokens():
+    """(task-3305, MI-09) Every option select shows human display copy while
+    persisting the internal value: no rendered option prompt may be the raw
+    schema token (``pymupdf4llm``, ``url_level``, ``recursive_scraping``…)."""
+    from tldw_chatbook.Library.ingest_capabilities import get_capabilities
+
+    state = build_library_ingest_state(
+        (),
+        form=_default_form(),
+        preflight=PreflightResult(
+            type_groups={
+                "pdf": ["/tmp/a.pdf"],
+                "document": ["/tmp/b.docx"],
+                "audio_video": ["/tmp/c.mp3"],
+                "ebook": ["/tmp/d.epub"],
+                "web": ["https://example.com/article"],
+            },
+            warnings=[],
+            errors=[],
+            total_size=10,
+            truncated=False,
+            total_files=5,
+        ),
+    )
+    app = _CanvasHost(state)
+    with patch(
+        "tldw_chatbook.Widgets.Library.library_ingest_canvas._is_installed",
+        return_value=True,
+    ):
+        async with app.run_test() as pilot:
+            selects = list(pilot.app.query(Select))
+            assert selects, "no selects rendered -- panel sweep is broken"
+            seen_groups: set[str] = set()
+            for select in selects:
+                widget_id = select.id or ""
+                assert widget_id.startswith("opt-")
+                _, group, name = widget_id.split("-", 2)
+                seen_groups.add(group)
+                cap = get_capabilities(group)
+                field = next(f for f in cap.fields if f.name == name)
+                rendered = [
+                    (str(prompt), value)
+                    for prompt, value in select._options
+                    if value is not Select.BLANK
+                ]
+                assert {value for _prompt, value in rendered} == set(
+                    field.options
+                ), f"{group}.{name}: persisted values must stay the tokens"
+                for prompt, value in rendered:
+                    assert prompt != value, (
+                        f"{group}.{name}: option {value!r} renders its raw "
+                        "internal token"
+                    )
+                # The persisted selection is still an internal token.
+                assert select.value in field.options
+            # Every group with a select was actually swept.
+            assert {"pdf", "document", "audio_video", "ebook", "web",
+                    "generic"} <= seen_groups
+
+
+@pytest.mark.asyncio
+async def test_recent_import_bracket_filename_renders_clean():
+    """(task-3305, MI-14) escape_markup on a ``markup=False`` Static is
+    double defense: the escape backslashes render literally. A bracketed
+    filename must come out byte-identical."""
+    done = LibraryIngestJob(
+        job_id="ingest-job-1",
+        source_path="/tmp/[draft] notes.txt",
+        state=IngestJobState.DONE,
+        media_id=1,
+    )
+    state = build_library_ingest_state((done,), form=_default_form())
+    app = _CanvasHost(state)
+    async with app.run_test() as pilot:
+        items = [
+            str(item.renderable)
+            for item in pilot.app.query(".library-ingest-recent-item")
+        ]
+        assert any("[draft] notes.txt" in text for text in items), items
+        assert not any("\\[" in text for text in items), items
+        paths = [
+            str(item.renderable)
+            for item in pilot.app.query(".library-ingest-recent-path")
+        ]
+        assert any("/tmp/[draft] notes.txt" == text for text in paths), paths
+        assert not any("\\[" in text for text in paths), paths
+
+
+@pytest.mark.asyncio
+async def test_collapsed_title_caps_pairs_and_skips_empty_values():
+    """(task-3305, MI-16) The audio panel title was a ~140-char run-on with
+    a dangling empty value ("Local Parakeet model folder: ,"). The title
+    caps at the most salient pairs and never renders an empty value."""
+    state = build_library_ingest_state(
+        (),
+        form=_default_form(),
+        preflight=PreflightResult(
+            type_groups={"audio_video": ["/tmp/c.mp3"]},
+            warnings=[],
+            errors=[],
+            total_size=10,
+            truncated=False,
+            total_files=1,
+        ),
+    )
+    app = _CanvasHost(state)
+    with patch(
+        "tldw_chatbook.Widgets.Library.library_ingest_canvas._is_installed",
+        return_value=True,
+    ):
+        async with app.run_test() as pilot:
+            title = str(
+                pilot.app.query_one("#type-group-audio_video", Collapsible).title
+            )
+    assert "Local Parakeet model folder" not in title, (
+        "empty value must be skipped, not rendered dangling"
+    )
+    assert ": ," not in title
+    label, _, pairs_text = title.partition(" — ")
+    assert label == "Audio & video"
+    parts = pairs_text.split(", ")
+    assert parts[-1] == "…", f"omitted pairs need an ellipsis: {title!r}"
+    assert len(parts) <= 4, f"more than 3 pairs rendered: {title!r}"
+
+
+@pytest.mark.asyncio
+async def test_collapsed_title_promotes_changed_values_first():
+    """A changed option is what the user cares to see in the receipt; it
+    must outrank untouched defaults when the cap bites."""
+    form = _default_form()
+    form.type_options["audio_video"] = {"diarization": True}
+    state = build_library_ingest_state(
+        (),
+        form=form,
+        preflight=PreflightResult(
+            type_groups={"audio_video": ["/tmp/c.mp3"]},
+            warnings=[],
+            errors=[],
+            total_size=10,
+            truncated=False,
+            total_files=1,
+        ),
+    )
+    app = _CanvasHost(state)
+    with patch(
+        "tldw_chatbook.Widgets.Library.library_ingest_canvas._is_installed",
+        return_value=True,
+    ):
+        async with app.run_test() as pilot:
+            title = str(
+                pilot.app.query_one("#type-group-audio_video", Collapsible).title
+            )
+    _, _, pairs_text = title.partition(" — ")
+    assert pairs_text.startswith("Speaker diarization: on"), title
+
+
+@pytest.mark.asyncio
+async def test_parakeet_folder_placeholder_is_an_example_not_the_label():
+    """(task-3305, MI-16) The empty model-folder Input showed its own label
+    as placeholder -- pure stutter. The placeholder is example content."""
+    state = build_library_ingest_state(
+        (),
+        form=_default_form(),
+        preflight=PreflightResult(
+            type_groups={"audio_video": ["/tmp/c.mp3"]},
+            warnings=[],
+            errors=[],
+            total_size=10,
+            truncated=False,
+            total_files=1,
+        ),
+    )
+    app = _CanvasHost(state)
+    with patch(
+        "tldw_chatbook.Widgets.Library.library_ingest_canvas._is_installed",
+        return_value=True,
+    ):
+        async with app.run_test() as pilot:
+            model_dir = pilot.app.query_one(
+                "#opt-audio_video-transcription_model_dir", Input
+            )
+            assert model_dir.placeholder == "/path/to/parakeet-model"
+            assert model_dir.placeholder != "Local Parakeet model folder"

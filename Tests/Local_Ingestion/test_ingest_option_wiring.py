@@ -1,0 +1,1542 @@
+"""End-to-end wiring tests for the advertised Library ingest options (task-3301).
+
+Three ingest-canvas options were silent no-ops on the local path:
+
+* **Analyze after import** — ``_ingest_job_options`` never supplied
+  ``api_name``/``api_key``, and plaintext/html/article hardcoded
+  ``analysis: ""``.
+* **Chunk content** — OFF was overridden by hardcoded
+  ``perform_chunking=True`` for pdf/ebook/audio/video; ON never chunked
+  text types because the DB layer ignores ``chunk_options``.
+* **Encoding** — consumed nowhere; utf-8 hardcoded for plaintext/html.
+
+These tests drive the REAL seams: ``parse_local_file_for_ingest`` with real
+fixture files, ``persist_parsed_media`` against a real ``MediaDatabase`` on
+disk (tmp_path), and processor stubs whose keyword arguments are validated
+against the real processors' ``inspect.signature`` so a fake can never
+drift from the seam it stands in for.
+"""
+
+from __future__ import annotations
+
+import inspect
+from pathlib import Path
+from typing import Any, Dict
+
+import pytest
+
+from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
+from tldw_chatbook.Local_Ingestion.local_file_ingestion import (
+    parse_local_file_for_ingest,
+    persist_parsed_media,
+)
+
+
+# ---------------------------------------------------------------------------
+# Signature guards: the stubs below must only ever be called with keyword
+# arguments the REAL processor accepts. A stub that silently accepts a
+# kwarg the real function would reject is a fake matching our own call.
+# ---------------------------------------------------------------------------
+
+
+def _assert_kwargs_accepted(real_func: Any, kwargs: Dict[str, Any]) -> None:
+    """Fail when ``kwargs`` contains a name the real callable rejects."""
+    sig = inspect.signature(real_func)
+    accepts_var_kw = any(
+        p.kind is inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
+    )
+    if accepts_var_kw:
+        return
+    unknown = set(kwargs) - set(sig.parameters)
+    assert not unknown, (
+        f"call would crash against the real seam: unknown kwargs {sorted(unknown)}"
+    )
+
+
+def _real_process_pdf():
+    from tldw_chatbook.Local_Ingestion.PDF_Processing_Lib import process_pdf
+
+    return process_pdf
+
+
+def _real_process_ebook():
+    from tldw_chatbook.Local_Ingestion.Book_Ingestion_Lib import process_ebook
+
+    return process_ebook
+
+
+def _real_analyze():
+    from tldw_chatbook.LLM_Calls.Summarization_General_Lib import analyze
+
+    return analyze
+
+
+def _real_chat_api_call():
+    from tldw_chatbook.Chat.Chat_Functions import chat_api_call
+
+    return chat_api_call
+
+
+@pytest.fixture()
+def media_db(tmp_path: Path) -> MediaDatabase:
+    db = MediaDatabase(tmp_path / "media.db", client_id="test-ingest-wiring")
+    yield db
+    db.close_connection()
+
+
+def _chunk_rows(db: MediaDatabase, media_id: int) -> list[str]:
+    cursor = db.execute_query(
+        "SELECT chunk_text FROM UnvectorizedMediaChunks WHERE media_id = ? "
+        "ORDER BY chunk_index",
+        (media_id,),
+    )
+    return [row["chunk_text"] for row in cursor.fetchall()]
+
+
+def _chunking_status(db: MediaDatabase, media_id: int) -> str:
+    cursor = db.execute_query(
+        "SELECT chunking_status FROM Media WHERE id = ?", (media_id,)
+    )
+    return cursor.fetchone()["chunking_status"]
+
+
+_MANY_SENTENCES = " ".join(
+    f"Sentence number {i} carries a bit of body text for chunking." for i in range(40)
+)
+
+
+# ---------------------------------------------------------------------------
+# Encoding (AC #3)
+# ---------------------------------------------------------------------------
+
+
+class TestEncodingSelection:
+    def test_plaintext_latin1_selection_decodes_correctly(self, tmp_path: Path):
+        source = tmp_path / "latin1.txt"
+        source.write_bytes("café résumé naïveté".encode("latin-1"))
+
+        payload = parse_local_file_for_ingest(str(source), {"encoding": "latin-1"})
+
+        assert payload["content"] == "café résumé naïveté"
+
+    def test_plaintext_cp1252_selection_decodes_correctly(self, tmp_path: Path):
+        source = tmp_path / "cp1252.txt"
+        source.write_bytes("smart “quotes” and – dashes".encode("cp1252"))
+
+        payload = parse_local_file_for_ingest(str(source), {"encoding": "cp1252"})
+
+        assert payload["content"] == "smart “quotes” and – dashes"
+
+    def test_plaintext_utf16_selection_decodes_correctly(self, tmp_path: Path):
+        source = tmp_path / "utf16.txt"
+        source.write_bytes("wide chars: äöü".encode("utf-16"))
+
+        payload = parse_local_file_for_ingest(str(source), {"encoding": "utf-16"})
+
+        assert payload["content"] == "wide chars: äöü"
+
+    def test_plaintext_auto_keeps_clean_utf8(self, tmp_path: Path):
+        source = tmp_path / "utf8.txt"
+        source.write_text("plain utf-8 with é accents", encoding="utf-8")
+
+        payload = parse_local_file_for_ingest(str(source), {"encoding": "auto"})
+
+        assert payload["content"] == "plain utf-8 with é accents"
+
+    def test_plaintext_absent_encoding_defaults_to_auto(self, tmp_path: Path):
+        source = tmp_path / "plain.txt"
+        source.write_text("no encoding option at all", encoding="utf-8")
+
+        payload = parse_local_file_for_ingest(str(source), {})
+
+        assert payload["content"] == "no encoding option at all"
+
+    def test_html_latin1_selection_decodes_correctly(self, tmp_path: Path):
+        source = tmp_path / "latin1.html"
+        source.write_bytes(
+            "<html><head><title>Résumé</title></head>"
+            "<body><p>café société</p></body></html>".encode("latin-1")
+        )
+
+        payload = parse_local_file_for_ingest(str(source), {"encoding": "latin-1"})
+
+        assert "café société" in payload["content"]
+        # NOTE: the payload title is the file stem, not the <title> tag --
+        # pre-existing behavior (the branch's title-tag extraction only
+        # fires when no title was defaulted, and the stem default always
+        # runs first). Pinned here as-is; out of task-3301's scope.
+        assert payload["title"] == "latin1"
+
+    def test_html_latin1_under_utf8_selection_does_not_crash(self, tmp_path: Path):
+        """An explicit wrong choice degrades to replacement chars, not a crash.
+
+        The pre-task code opened HTML with strict utf-8, so latin-1 bytes
+        raised ``UnicodeDecodeError`` and failed the whole job.
+        """
+        source = tmp_path / "latin1.html"
+        source.write_bytes("<html><body><p>café x</p></body></html>".encode("latin-1"))
+
+        payload = parse_local_file_for_ingest(str(source), {"encoding": "utf-8"})
+
+        assert "caf" in payload["content"]
+        assert "café" not in payload["content"]
+
+    def test_plaintext_unknown_encoding_degrades_with_warning(self, tmp_path: Path):
+        """(task-3301 xhigh review round 2, F13) An explicit encoding name
+        Python's codec registry doesn't know (``utf8-bom`` is not a codec;
+        the real name is ``utf-8-sig``) must degrade to utf-8-with-replace
+        plus a visible warning -- the documented degrade-not-fail contract.
+        Before the fix, the explicit path let ``LookupError`` escape and the
+        whole job failed while the auto path caught the same error class.
+        """
+        source = tmp_path / "bom.txt"
+        source.write_text("perfectly fine utf-8 text", encoding="utf-8")
+
+        payload = parse_local_file_for_ingest(str(source), {"encoding": "utf8-bom"})
+
+        assert payload["content"] == "perfectly fine utf-8 text"
+        encoding_warnings = [
+            w for w in payload["warnings"] if "utf8-bom" in w
+        ]
+        assert encoding_warnings, (
+            f"no warning names the unknown encoding: {payload['warnings']}"
+        )
+
+    def test_html_unknown_encoding_degrades_with_warning(self, tmp_path: Path):
+        """(F13) Same contract on the HTML branch."""
+        source = tmp_path / "bom.html"
+        source.write_bytes(b"<html><body><p>body text here</p></body></html>")
+
+        payload = parse_local_file_for_ingest(str(source), {"encoding": "utf8-bom"})
+
+        assert "body text here" in payload["content"]
+        assert any("utf8-bom" in w for w in payload["warnings"])
+
+
+# ---------------------------------------------------------------------------
+# Chunk toggle: OFF must reach the pdf/ebook/audio/video processors (AC #2)
+# ---------------------------------------------------------------------------
+
+
+class TestChunkToggleReachesProcessors:
+    def test_pdf_chunk_off_passes_perform_chunking_false(
+        self, tmp_path: Path, monkeypatch
+    ):
+        source = tmp_path / "doc.pdf"
+        source.write_bytes(b"%PDF-1.4 stub")
+        real = _real_process_pdf()
+        assert "perform_chunking" in inspect.signature(real).parameters
+        calls: list[Dict[str, Any]] = []
+
+        def fake_process_pdf(**kwargs):
+            _assert_kwargs_accepted(real, kwargs)
+            calls.append(kwargs)
+            return {
+                "content": "PDF text",
+                "title": "t",
+                "author": "a",
+                "keywords": [],
+                "chunks": [{"text": "PDF text", "metadata": {"chunk_num": 0}}],
+                "analysis": "",
+                "metadata": {},
+                "error": None,
+                "warnings": [],
+            }
+
+        monkeypatch.setattr(
+            "tldw_chatbook.Local_Ingestion.local_file_ingestion.process_pdf",
+            fake_process_pdf,
+        )
+
+        # Chunk OFF == no chunk_options in the job options.
+        payload = parse_local_file_for_ingest(str(source), {})
+
+        assert calls[0]["perform_chunking"] is False
+        # The processor's chunking-disabled single-chunk fallback must not be
+        # stored either: Chunk OFF means no chunk rows.
+        assert payload["chunks"] is None
+
+    def test_pdf_chunk_on_passes_perform_chunking_true(
+        self, tmp_path: Path, monkeypatch
+    ):
+        source = tmp_path / "doc.pdf"
+        source.write_bytes(b"%PDF-1.4 stub")
+        real = _real_process_pdf()
+        calls: list[Dict[str, Any]] = []
+
+        def fake_process_pdf(**kwargs):
+            _assert_kwargs_accepted(real, kwargs)
+            calls.append(kwargs)
+            return {
+                "content": "PDF text",
+                "title": "t",
+                "author": "a",
+                "keywords": [],
+                "chunks": [{"text": "PDF text", "metadata": {"chunk_num": 0}}],
+                "analysis": "",
+                "metadata": {},
+                "error": None,
+                "warnings": [],
+            }
+
+        monkeypatch.setattr(
+            "tldw_chatbook.Local_Ingestion.local_file_ingestion.process_pdf",
+            fake_process_pdf,
+        )
+
+        payload = parse_local_file_for_ingest(
+            str(source),
+            {"chunk_options": {"method": "sentences", "max_size": 500, "overlap": 100}},
+        )
+
+        assert calls[0]["perform_chunking"] is True
+        assert payload["chunks"] == [
+            {"text": "PDF text", "metadata": {"chunk_num": 0}}
+        ]
+
+    def test_ebook_chunk_off_passes_perform_chunking_false(
+        self, tmp_path: Path, monkeypatch
+    ):
+        source = tmp_path / "book.epub"
+        source.write_bytes(b"PK\x03\x04" + b"\x00" * 32)
+        real = _real_process_ebook()
+        assert "perform_chunking" in inspect.signature(real).parameters
+        calls: list[Dict[str, Any]] = []
+
+        def fake_process_ebook(**kwargs):
+            _assert_kwargs_accepted(real, kwargs)
+            calls.append(kwargs)
+            return {
+                "content": "Ebook text",
+                "title": "t",
+                "author": "a",
+                "keywords": [],
+                "chunks": [],
+                "analysis": "",
+                "metadata": {},
+                "error": None,
+                "warnings": [],
+            }
+
+        monkeypatch.setattr(
+            "tldw_chatbook.Local_Ingestion.local_file_ingestion.process_ebook",
+            fake_process_ebook,
+        )
+
+        parse_local_file_for_ingest(str(source), {})
+
+        assert calls[0]["perform_chunking"] is False
+
+    def test_audio_chunk_off_passes_perform_chunking_false(
+        self, tmp_path: Path, monkeypatch
+    ):
+        source = tmp_path / "sound.mp3"
+        source.write_bytes(b"ID3\x00" + b"\x00" * 32)
+        from tldw_chatbook.Local_Ingestion.audio_processing import (
+            LocalAudioProcessor as RealAudioProcessor,
+        )
+
+        real_method = RealAudioProcessor.process_audio_files
+        assert "perform_chunking" in inspect.signature(real_method).parameters
+        calls: list[Dict[str, Any]] = []
+
+        class _StubAudioProcessor:
+            def __init__(self, media_db=None):
+                self.media_db = media_db
+
+            def process_audio_files(self, **kwargs):
+                _assert_kwargs_accepted(real_method, kwargs)
+                calls.append(kwargs)
+                return {
+                    "results": [
+                        {
+                            "status": "Success",
+                            "content": "Audio transcript",
+                            "metadata": {"title": "Audio", "author": "Unknown"},
+                            "chunks": [],
+                            "analysis": "",
+                        }
+                    ]
+                }
+
+        monkeypatch.setattr(
+            "tldw_chatbook.Local_Ingestion.local_file_ingestion.LocalAudioProcessor",
+            _StubAudioProcessor,
+        )
+
+        parse_local_file_for_ingest(str(source), {})
+
+        assert calls[0]["perform_chunking"] is False
+
+    def test_video_chunk_off_passes_perform_chunking_false(
+        self, tmp_path: Path, monkeypatch
+    ):
+        source = tmp_path / "clip.mp4"
+        source.write_bytes(b"\x00\x00\x00\x20ftypisom" + b"\x00" * 32)
+        # ``process_videos`` forwards **kwargs into the audio pipeline, whose
+        # ``process_audio_files`` declares ``perform_chunking`` explicitly.
+        from tldw_chatbook.Local_Ingestion.audio_processing import (
+            LocalAudioProcessor as RealAudioProcessor,
+        )
+
+        real_sink = RealAudioProcessor.process_audio_files
+        calls: list[Dict[str, Any]] = []
+
+        class _StubVideoProcessor:
+            def __init__(self, media_db=None):
+                self.media_db = media_db
+
+            def process_videos(self, **kwargs):
+                kwargs.pop("inputs", None)
+                kwargs.pop("download_video_flag", None)
+                _assert_kwargs_accepted(real_sink, kwargs)
+                calls.append(kwargs)
+                return {
+                    "results": [
+                        {
+                            "status": "Success",
+                            "content": "Video transcript",
+                            "metadata": {"title": "Video", "author": "Unknown"},
+                            "chunks": [],
+                            "analysis": "",
+                        }
+                    ]
+                }
+
+        monkeypatch.setattr(
+            "tldw_chatbook.Local_Ingestion.local_file_ingestion.LocalVideoProcessor",
+            _StubVideoProcessor,
+        )
+
+        parse_local_file_for_ingest(str(source), {})
+
+        assert calls[0]["perform_chunking"] is False
+
+
+# ---------------------------------------------------------------------------
+# Chunk toggle: text types, end-to-end through the real DB (AC #2)
+# ---------------------------------------------------------------------------
+
+
+class TestTextTypeChunkingEndToEnd:
+    def test_plaintext_chunk_on_stores_chunks(
+        self, tmp_path: Path, media_db: MediaDatabase
+    ):
+        source = tmp_path / "many.txt"
+        source.write_text(_MANY_SENTENCES, encoding="utf-8")
+
+        # The exact shape ``_ingest_job_options`` emits for Chunk ON: no
+        # method (each consumer applies its own default -- the text tail
+        # uses the chunking service's word method), size in both
+        # spellings, overlap.
+        payload = parse_local_file_for_ingest(
+            str(source),
+            {"chunk_options": {"size": 40, "max_size": 40, "overlap": 10}},
+        )
+        assert payload["chunks"], "Chunk ON must produce chunks for plaintext"
+        assert len(payload["chunks"]) > 1
+
+        media_id, _uuid, _msg = persist_parsed_media(payload, media_db)
+        rows = _chunk_rows(media_db, media_id)
+        assert len(rows) == len(payload["chunks"])
+        assert _chunking_status(media_db, media_id) == "completed"
+
+    def test_plaintext_chunk_size_governs_chunk_count(self, tmp_path: Path):
+        source = tmp_path / "many.txt"
+        source.write_text(_MANY_SENTENCES, encoding="utf-8")
+
+        small = parse_local_file_for_ingest(
+            str(source),
+            {"chunk_options": {"size": 40, "max_size": 40, "overlap": 10}},
+        )
+        large = parse_local_file_for_ingest(
+            str(source),
+            {"chunk_options": {"size": 4000, "max_size": 4000, "overlap": 10}},
+        )
+
+        assert len(small["chunks"]) > len(large["chunks"])
+
+    def test_plaintext_chunk_overlap_governs_chunk_text(self, tmp_path: Path):
+        source = tmp_path / "many.txt"
+        source.write_text(_MANY_SENTENCES, encoding="utf-8")
+
+        no_overlap = parse_local_file_for_ingest(
+            str(source),
+            {"chunk_options": {"size": 40, "max_size": 40, "overlap": 0}},
+        )
+        with_overlap = parse_local_file_for_ingest(
+            str(source),
+            {"chunk_options": {"size": 40, "max_size": 40, "overlap": 20}},
+        )
+
+        assert len(with_overlap["chunks"]) > len(no_overlap["chunks"])
+
+    def test_plaintext_chunk_off_stores_no_chunks(
+        self, tmp_path: Path, media_db: MediaDatabase
+    ):
+        source = tmp_path / "many.txt"
+        source.write_text(_MANY_SENTENCES, encoding="utf-8")
+
+        payload = parse_local_file_for_ingest(str(source), {})
+        assert payload["chunks"] is None
+
+        media_id, _uuid, _msg = persist_parsed_media(payload, media_db)
+        assert _chunk_rows(media_db, media_id) == []
+        assert _chunking_status(media_db, media_id) == "pending"
+
+    def test_html_chunk_on_stores_chunks(
+        self, tmp_path: Path, media_db: MediaDatabase
+    ):
+        source = tmp_path / "many.html"
+        source.write_text(
+            f"<html><body><p>{_MANY_SENTENCES}</p></body></html>", encoding="utf-8"
+        )
+
+        payload = parse_local_file_for_ingest(
+            str(source),
+            {"chunk_options": {"size": 40, "max_size": 40, "overlap": 10}},
+        )
+        assert payload["chunks"]
+        assert len(payload["chunks"]) > 1
+
+        media_id, _uuid, _msg = persist_parsed_media(payload, media_db)
+        assert len(_chunk_rows(media_db, media_id)) == len(payload["chunks"])
+        assert _chunking_status(media_db, media_id) == "completed"
+
+    def test_document_chunk_on_chunks_processor_content(
+        self, tmp_path: Path, monkeypatch, media_db: MediaDatabase
+    ):
+        source = tmp_path / "report.docx"
+        source.write_bytes(b"PK\x03\x04" + b"\x00" * 32)
+        from tldw_chatbook.Local_Ingestion.Document_Processing_Lib import (
+            process_document as real_process_document,
+        )
+
+        def fake_process_document(**kwargs):
+            _assert_kwargs_accepted(real_process_document, kwargs)
+            return {
+                "content": _MANY_SENTENCES,
+                "title": "Report",
+                "author": "Author",
+                "metadata": {},
+                "extraction_successful": True,
+            }
+
+        monkeypatch.setattr(
+            "tldw_chatbook.Local_Ingestion.local_file_ingestion.process_document",
+            fake_process_document,
+        )
+
+        payload = parse_local_file_for_ingest(
+            str(source),
+            {"chunk_options": {"size": 40, "max_size": 40, "overlap": 10}},
+        )
+        assert payload["chunks"]
+        assert len(payload["chunks"]) > 1
+
+        media_id, _uuid, _msg = persist_parsed_media(payload, media_db)
+        assert len(_chunk_rows(media_db, media_id)) == len(payload["chunks"])
+
+
+# ---------------------------------------------------------------------------
+# Analyze after import: text types (AC #1)
+# ---------------------------------------------------------------------------
+
+
+class TestTextTypeAnalysis:
+    """The text tail must land on a provably-dispatching call path.
+
+    (task-3301 xhigh review round) The original tail called
+    ``Summarization_General_Lib.analyze``, whose no-chunking direct dispatch
+    sits in the dead ``else`` of ``if CHUNKER_AVAILABLE:`` -- with the chunk
+    lib importable (every normal install) it returned
+    ``'Error: Summarization failed unexpectedly.'`` WITHOUT any API call,
+    and the tail's ``str-and-strip`` success check then persisted that
+    in-band error string as the analysis. These tests therefore stub at the
+    ``chat_api_call`` boundary -- the same unified dispatcher the Media
+    viewer's analysis panel spends through -- and NEVER mock the tail's own
+    helper: a stub that records a dispatch proves a dispatch.
+    """
+
+    def _install_chat_stub(self, monkeypatch, response: Any = "DISPATCHED ANALYSIS."):
+        real = _real_chat_api_call()
+        calls: list[Dict[str, Any]] = []
+
+        def fake_chat_api_call(**kwargs):
+            _assert_kwargs_accepted(real, kwargs)
+            calls.append(kwargs)
+            if isinstance(response, Exception):
+                raise response
+            return response
+
+        monkeypatch.setattr(
+            "tldw_chatbook.Chat.Chat_Functions.chat_api_call",
+            fake_chat_api_call,
+        )
+        return calls
+
+    def _forbid_summarizer_path(self, monkeypatch):
+        """The legacy analyze() path must not be what produces the result."""
+
+        def exploding_analyze(*args, **kwargs):
+            raise AssertionError(
+                "text tail called Summarization analyze(); it must dispatch "
+                "through chat_api_call"
+            )
+
+        monkeypatch.setattr(
+            "tldw_chatbook.LLM_Calls.Summarization_General_Lib.analyze",
+            exploding_analyze,
+        )
+
+    def test_plaintext_analysis_dispatches_and_persists(
+        self, tmp_path: Path, monkeypatch, media_db: MediaDatabase
+    ):
+        source = tmp_path / "notes.txt"
+        source.write_text("Some meaningful notes to analyze.", encoding="utf-8")
+        calls = self._install_chat_stub(monkeypatch)
+        self._forbid_summarizer_path(monkeypatch)
+
+        payload = parse_local_file_for_ingest(
+            str(source),
+            {
+                "perform_analysis": True,
+                "api_name": "openai",
+                "api_key": "sk-test-not-real",
+            },
+        )
+
+        assert payload["analysis_content"] == "DISPATCHED ANALYSIS."
+        assert calls, "no dispatch reached the chat_api_call boundary"
+        assert calls[0]["api_endpoint"] == "openai"
+        assert calls[0]["api_key"] == "sk-test-not-real"
+        assert calls[0]["streaming"] is False
+        # The document content must actually travel in the payload.
+        assert "Some meaningful notes to analyze." in (
+            calls[0]["messages_payload"][0]["content"]
+        )
+
+        media_id, _uuid, _msg = persist_parsed_media(payload, media_db)
+        cursor = media_db.execute_query(
+            "SELECT analysis_content FROM DocumentVersions WHERE media_id = ?",
+            (media_id,),
+        )
+        stored = [row["analysis_content"] for row in cursor.fetchall()]
+        assert "DISPATCHED ANALYSIS." in stored
+
+    def test_analysis_call_settings_travel_to_the_dispatch(
+        self, tmp_path: Path, monkeypatch
+    ):
+        """(F10) model/temperature/max_tokens/top_p/min_p + system prompt
+        must reach the provider call, not be silently replaced."""
+        source = tmp_path / "notes.txt"
+        source.write_text("Configured analysis fidelity.", encoding="utf-8")
+        calls = self._install_chat_stub(monkeypatch)
+
+        payload = parse_local_file_for_ingest(
+            str(source),
+            {
+                "perform_analysis": True,
+                "api_name": "openai",
+                "api_key": "sk-test-not-real",
+                "system_prompt": "Analyze like the viewer would.",
+                "analysis_call": {
+                    "model": "gpt-4o-mini",
+                    "temperature": 0.2,
+                    "top_p": 0.9,
+                    "min_p": 0.01,
+                    "max_tokens": 512,
+                },
+            },
+        )
+
+        assert payload["analysis_content"] == "DISPATCHED ANALYSIS."
+        call = calls[0]
+        assert call["model"] == "gpt-4o-mini"
+        assert call["temp"] == 0.2
+        assert call["topp"] == 0.9
+        assert call["minp"] == 0.01
+        assert call["max_tokens"] == 512
+        assert call["system_message"] == "Analyze like the viewer would."
+
+    def test_html_analysis_dispatches(self, tmp_path: Path, monkeypatch):
+        source = tmp_path / "page.html"
+        source.write_text(
+            "<html><body><p>Body text worth analyzing.</p></body></html>",
+            encoding="utf-8",
+        )
+        self._install_chat_stub(monkeypatch, response="HTML ANALYSIS.")
+        self._forbid_summarizer_path(monkeypatch)
+
+        payload = parse_local_file_for_ingest(
+            str(source),
+            {"perform_analysis": True, "api_name": "openai", "api_key": "sk-x"},
+        )
+
+        assert payload["analysis_content"] == "HTML ANALYSIS."
+
+    def test_openai_shaped_dict_response_is_extracted(
+        self, tmp_path: Path, monkeypatch
+    ):
+        source = tmp_path / "notes.txt"
+        source.write_text("Dict-shaped provider response.", encoding="utf-8")
+        self._install_chat_stub(
+            monkeypatch,
+            response={"choices": [{"message": {"content": "DICT ANALYSIS."}}]},
+        )
+
+        payload = parse_local_file_for_ingest(
+            str(source),
+            {"perform_analysis": True, "api_name": "openai", "api_key": "sk-x"},
+        )
+
+        assert payload["analysis_content"] == "DICT ANALYSIS."
+
+    def test_plaintext_analysis_skipped_without_provider(
+        self, tmp_path: Path, monkeypatch
+    ):
+        source = tmp_path / "notes.txt"
+        source.write_text("Content.", encoding="utf-8")
+        calls = self._install_chat_stub(monkeypatch)
+
+        payload = parse_local_file_for_ingest(
+            str(source), {"perform_analysis": True}
+        )
+
+        assert payload["analysis_content"] == ""
+        assert calls == []
+
+    def test_api_name_without_key_skips_instead_of_spending(
+        self, tmp_path: Path, monkeypatch
+    ):
+        """(F8) Direct callers passing ``api_name`` with no credential get
+        the historical silent skip -- never a call that would fall back to
+        whatever key sits in config."""
+        source = tmp_path / "notes.txt"
+        source.write_text("Content.", encoding="utf-8")
+        calls = self._install_chat_stub(monkeypatch)
+
+        payload = parse_local_file_for_ingest(
+            str(source), {"perform_analysis": True, "api_name": "openai"}
+        )
+
+        assert payload["analysis_content"] == ""
+        assert calls == []
+
+    def test_keyless_opt_in_allows_dispatch_without_key(
+        self, tmp_path: Path, monkeypatch
+    ):
+        """(F8) The Library seam's explicit keyless opt-in -- set only after
+        readiness said the provider is keyless-ready -- re-enables the call."""
+        source = tmp_path / "notes.txt"
+        source.write_text("Content.", encoding="utf-8")
+        calls = self._install_chat_stub(monkeypatch, response="LOCAL ANALYSIS.")
+
+        payload = parse_local_file_for_ingest(
+            str(source),
+            {
+                "perform_analysis": True,
+                "api_name": "ollama",
+                "analysis_keyless_ok": True,
+            },
+        )
+
+        assert payload["analysis_content"] == "LOCAL ANALYSIS."
+        assert calls[0]["api_endpoint"] == "ollama"
+        assert calls[0].get("api_key") is None
+
+    def test_error_prefixed_response_is_failure_not_analysis(
+        self, tmp_path: Path, monkeypatch
+    ):
+        """(F4) analyze()-style in-band error strings must never persist."""
+        source = tmp_path / "notes.txt"
+        source.write_text("Content.", encoding="utf-8")
+        self._install_chat_stub(
+            monkeypatch, response="Error: Invalid API Name 'openai'"
+        )
+
+        payload = parse_local_file_for_ingest(
+            str(source),
+            {"perform_analysis": True, "api_name": "openai", "api_key": "sk-x"},
+        )
+
+        assert payload["analysis_content"] == ""
+        assert any("Analysis failed" in w for w in payload["warnings"])
+        assert "Invalid API Name" in payload["analysis_failed_reason"]
+
+    def test_plaintext_analysis_failure_is_warning_not_job_failure(
+        self, tmp_path: Path, monkeypatch
+    ):
+        source = tmp_path / "notes.txt"
+        source.write_text("Content that resists analysis.", encoding="utf-8")
+        self._install_chat_stub(
+            monkeypatch, response=RuntimeError("provider exploded")
+        )
+
+        payload = parse_local_file_for_ingest(
+            str(source),
+            {"perform_analysis": True, "api_name": "openai", "api_key": "sk-x"},
+        )
+
+        assert payload["analysis_content"] == ""
+        assert any("nalysis" in w for w in payload["warnings"])
+        assert "provider exploded" in payload["analysis_failed_reason"]
+
+    def test_analysis_skipped_reason_travels_to_payload(self, tmp_path: Path):
+        source = tmp_path / "notes.txt"
+        source.write_text("Content.", encoding="utf-8")
+
+        payload = parse_local_file_for_ingest(
+            str(source),
+            {
+                "perform_analysis": True,
+                "analysis_skipped_reason": "OpenAI is not ready (Missing API key)",
+            },
+        )
+
+        assert (
+            payload["analysis_skipped_reason"]
+            == "OpenAI is not ready (Missing API key)"
+        )
+
+    def test_no_skip_reason_key_when_not_requested(self, tmp_path: Path):
+        source = tmp_path / "notes.txt"
+        source.write_text("Content.", encoding="utf-8")
+
+        payload = parse_local_file_for_ingest(str(source), {})
+
+        assert not payload.get("analysis_skipped_reason")
+
+
+# ---------------------------------------------------------------------------
+# (task-3301 xhigh review round, F4) Processor-returned analysis/summary
+# values that are in-band error strings must never persist as analysis.
+# ---------------------------------------------------------------------------
+
+
+class TestProcessorAnalysisErrorStrings:
+    def _pdf_stub_result(self, analysis: str) -> Dict[str, Any]:
+        return {
+            "content": "PDF text",
+            "title": "t",
+            "author": "a",
+            "keywords": [],
+            "chunks": [{"text": "PDF text", "metadata": {"chunk_num": 0}}],
+            "analysis": analysis,
+            "metadata": {},
+            "error": None,
+            "warnings": [],
+        }
+
+    def test_error_string_processor_analysis_is_not_persisted(
+        self, tmp_path: Path, monkeypatch
+    ):
+        source = tmp_path / "doc.pdf"
+        source.write_bytes(b"%PDF-1.4 stub")
+        real = _real_process_pdf()
+
+        def fake_process_pdf(**kwargs):
+            _assert_kwargs_accepted(real, kwargs)
+            return self._pdf_stub_result(
+                "Error: Summarization failed unexpectedly."
+            )
+
+        monkeypatch.setattr(
+            "tldw_chatbook.Local_Ingestion.local_file_ingestion.process_pdf",
+            fake_process_pdf,
+        )
+
+        payload = parse_local_file_for_ingest(
+            str(source),
+            {"perform_analysis": True, "api_name": "openai", "api_key": "sk-x"},
+        )
+
+        assert payload["analysis_content"] == ""
+        assert any("Analysis failed" in w for w in payload["warnings"])
+        assert "Summarization failed" in payload["analysis_failed_reason"]
+
+    def test_error_string_document_summary_is_not_persisted(
+        self, tmp_path: Path, monkeypatch
+    ):
+        source = tmp_path / "report.docx"
+        source.write_bytes(b"PK\x03\x04" + b"\x00" * 32)
+        real = _real_process_document()
+
+        def fake_process_document(**kwargs):
+            _assert_kwargs_accepted(real, kwargs)
+            result = _document_stub_result()
+            result["summary"] = "Error: Invalid API Name 'koboldcpp'"
+            return result
+
+        monkeypatch.setattr(
+            "tldw_chatbook.Local_Ingestion.local_file_ingestion.process_document",
+            fake_process_document,
+        )
+
+        payload = parse_local_file_for_ingest(
+            str(source),
+            {"perform_analysis": True, "api_name": "koboldcpp", "api_key": "k"},
+        )
+
+        assert payload["analysis_content"] == ""
+        assert any("Analysis failed" in w for w in payload["warnings"])
+        assert "Invalid API Name" in payload["analysis_failed_reason"]
+
+    def test_real_document_summary_still_surfaces(
+        self, tmp_path: Path, monkeypatch
+    ):
+        source = tmp_path / "report.docx"
+        source.write_bytes(b"PK\x03\x04" + b"\x00" * 32)
+        real = _real_process_document()
+
+        def fake_process_document(**kwargs):
+            _assert_kwargs_accepted(real, kwargs)
+            result = _document_stub_result()
+            result["summary"] = "A genuine document analysis."
+            return result
+
+        monkeypatch.setattr(
+            "tldw_chatbook.Local_Ingestion.local_file_ingestion.process_document",
+            fake_process_document,
+        )
+
+        payload = parse_local_file_for_ingest(
+            str(source),
+            {"perform_analysis": True, "api_name": "openai", "api_key": "sk-x"},
+        )
+
+        assert payload["analysis_content"] == "A genuine document analysis."
+        assert not payload.get("analysis_failed_reason")
+
+
+# ---------------------------------------------------------------------------
+# (task-3301 xhigh review round, F8) The pdf/ebook analysis gates require a
+# credential OR the Library seam's explicit keyless opt-in. pymupdf/ebooklib
+# are absent from this venv, so the gates themselves cannot be executed here;
+# the shared predicate is unit-tested, its use is pinned in each gate's
+# source, and the option's travel is checked at signature-checked stub
+# boundaries.
+# ---------------------------------------------------------------------------
+
+
+class TestProcessorAnalysisCredentialGates:
+    def test_credential_predicate_truth_table(self):
+        from tldw_chatbook.Local_Ingestion.analysis_gate import (
+            analysis_credentials_ok,
+        )
+
+        assert analysis_credentials_ok("sk-x") is True
+        assert analysis_credentials_ok("sk-x", keyless_ok=True) is True
+        assert analysis_credentials_ok(None, keyless_ok=True) is True
+        assert analysis_credentials_ok(None) is False
+        assert analysis_credentials_ok("") is False
+        assert analysis_credentials_ok("", keyless_ok=False) is False
+
+    @pytest.mark.parametrize(
+        "module_name, func_name",
+        [
+            ("PDF_Processing_Lib", "process_pdf"),
+            ("Book_Ingestion_Lib", "process_epub"),
+            ("Book_Ingestion_Lib", "_process_markup_or_plain_text"),
+            ("Book_Ingestion_Lib", "process_mobi"),
+            ("Book_Ingestion_Lib", "process_fb2"),
+        ],
+    )
+    def test_gates_accept_keyless_ok_and_use_the_predicate(
+        self, module_name: str, func_name: str
+    ):
+        import importlib
+
+        module = importlib.import_module(
+            f"tldw_chatbook.Local_Ingestion.{module_name}"
+        )
+        func = getattr(module, func_name)
+        assert "keyless_ok" in inspect.signature(func).parameters
+        # The gate must consult the shared predicate -- a re-relaxed gate
+        # (perform_analysis and api_name only) turns this RED.
+        assert "analysis_credentials_ok(" in inspect.getsource(func)
+
+    def test_keyless_ok_travels_to_process_pdf(self, tmp_path: Path, monkeypatch):
+        source = tmp_path / "doc.pdf"
+        source.write_bytes(b"%PDF-1.4 stub")
+        real = _real_process_pdf()
+        calls: list[Dict[str, Any]] = []
+
+        def fake_process_pdf(**kwargs):
+            _assert_kwargs_accepted(real, kwargs)
+            calls.append(kwargs)
+            return {
+                "content": "PDF text",
+                "title": "t",
+                "author": "a",
+                "keywords": [],
+                "chunks": [],
+                "analysis": "",
+                "metadata": {},
+                "error": None,
+                "warnings": [],
+            }
+
+        monkeypatch.setattr(
+            "tldw_chatbook.Local_Ingestion.local_file_ingestion.process_pdf",
+            fake_process_pdf,
+        )
+
+        parse_local_file_for_ingest(
+            str(source),
+            {
+                "perform_analysis": True,
+                "api_name": "ollama",
+                "analysis_keyless_ok": True,
+            },
+        )
+
+        assert calls[0]["keyless_ok"] is True
+
+    def test_keyless_ok_defaults_false_for_process_ebook(
+        self, tmp_path: Path, monkeypatch
+    ):
+        source = tmp_path / "book.epub"
+        source.write_bytes(b"PK\x03\x04" + b"\x00" * 32)
+        real = _real_process_ebook()
+        calls: list[Dict[str, Any]] = []
+
+        def fake_process_ebook(**kwargs):
+            _assert_kwargs_accepted(real, kwargs)
+            calls.append(kwargs)
+            return {
+                "content": "Ebook text",
+                "title": "t",
+                "author": "a",
+                "keywords": [],
+                "chunks": [],
+                "analysis": "",
+                "metadata": {},
+                "error": None,
+                "warnings": [],
+            }
+
+        monkeypatch.setattr(
+            "tldw_chatbook.Local_Ingestion.local_file_ingestion.process_ebook",
+            fake_process_ebook,
+        )
+
+        parse_local_file_for_ingest(
+            str(source),
+            {"perform_analysis": True, "api_name": "openai", "api_key": "sk-x"},
+        )
+
+        assert calls[0]["keyless_ok"] is False
+
+
+# ---------------------------------------------------------------------------
+# task-3303 AC1: document options reach process_document
+# ---------------------------------------------------------------------------
+
+
+def _real_process_document():
+    from tldw_chatbook.Local_Ingestion.Document_Processing_Lib import (
+        process_document,
+    )
+
+    return process_document
+
+
+def _document_stub_result(content: str = "Document text") -> Dict[str, Any]:
+    return {
+        "content": content,
+        "title": "Doc",
+        "author": "Author",
+        "metadata": {},
+        "extraction_successful": True,
+    }
+
+
+class TestDocumentOptionWiring:
+    def test_processing_options_reach_process_document(
+        self, tmp_path: Path, monkeypatch
+    ):
+        source = tmp_path / "report.docx"
+        source.write_bytes(b"PK\x03\x04" + b"\x00" * 32)
+        real = _real_process_document()
+        for name in ("processing_method", "enable_ocr", "ocr_language"):
+            assert name in inspect.signature(real).parameters
+        calls: list[Dict[str, Any]] = []
+
+        def fake_process_document(**kwargs):
+            _assert_kwargs_accepted(real, kwargs)
+            calls.append(kwargs)
+            return _document_stub_result()
+
+        monkeypatch.setattr(
+            "tldw_chatbook.Local_Ingestion.local_file_ingestion.process_document",
+            fake_process_document,
+        )
+
+        parse_local_file_for_ingest(
+            str(source),
+            {
+                "processing_method": "docling",
+                "enable_ocr": True,
+                "ocr_language": "de",
+            },
+        )
+
+        assert calls[0]["processing_method"] == "docling"
+        assert calls[0]["enable_ocr"] is True
+        assert calls[0]["ocr_language"] == "de"
+
+    def test_document_defaults_match_the_real_signature(
+        self, tmp_path: Path, monkeypatch
+    ):
+        """Absent options must hand the processor its OWN declared defaults."""
+        source = tmp_path / "report.rtf"
+        source.write_bytes(b"{\\rtf1 stub}")
+        real = _real_process_document()
+        sig = inspect.signature(real)
+        calls: list[Dict[str, Any]] = []
+
+        def fake_process_document(**kwargs):
+            _assert_kwargs_accepted(real, kwargs)
+            calls.append(kwargs)
+            return _document_stub_result()
+
+        monkeypatch.setattr(
+            "tldw_chatbook.Local_Ingestion.local_file_ingestion.process_document",
+            fake_process_document,
+        )
+
+        parse_local_file_for_ingest(str(source), {})
+
+        assert (
+            calls[0]["processing_method"]
+            == sig.parameters["processing_method"].default
+        )
+        assert calls[0]["enable_ocr"] == sig.parameters["enable_ocr"].default
+        assert calls[0]["ocr_language"] == sig.parameters["ocr_language"].default
+
+    def test_document_still_gets_generic_chunking(
+        self, tmp_path: Path, monkeypatch, media_db: MediaDatabase
+    ):
+        """The document group layers ON TOP of generic: moving .docx out of
+        the generic panel must not cost it task-3301's chunking tail."""
+        source = tmp_path / "report.docx"
+        source.write_bytes(b"PK\x03\x04" + b"\x00" * 32)
+        real = _real_process_document()
+
+        def fake_process_document(**kwargs):
+            _assert_kwargs_accepted(real, kwargs)
+            return _document_stub_result(content=_MANY_SENTENCES)
+
+        monkeypatch.setattr(
+            "tldw_chatbook.Local_Ingestion.local_file_ingestion.process_document",
+            fake_process_document,
+        )
+
+        payload = parse_local_file_for_ingest(
+            str(source),
+            {
+                "processing_method": "native",
+                "chunk_options": {"size": 40, "max_size": 40, "overlap": 10},
+            },
+        )
+        assert payload["chunks"]
+        assert len(payload["chunks"]) > 1
+
+        media_id, _uuid, _msg = persist_parsed_media(payload, media_db)
+        assert len(_chunk_rows(media_db, media_id)) == len(payload["chunks"])
+
+
+# ---------------------------------------------------------------------------
+# task-3303 AC2: PDF OCR detail reaches process_pdf
+# ---------------------------------------------------------------------------
+
+
+class TestPdfOcrDetailWiring:
+    def test_ocr_language_and_backend_reach_process_pdf(
+        self, tmp_path: Path, monkeypatch
+    ):
+        source = tmp_path / "scan.pdf"
+        source.write_bytes(b"%PDF-1.4 stub")
+        real = _real_process_pdf()
+        for name in ("ocr_language", "ocr_backend"):
+            assert name in inspect.signature(real).parameters
+        calls: list[Dict[str, Any]] = []
+
+        def fake_process_pdf(**kwargs):
+            _assert_kwargs_accepted(real, kwargs)
+            calls.append(kwargs)
+            return {
+                "content": "PDF text",
+                "title": "t",
+                "author": "a",
+                "keywords": [],
+                "chunks": [],
+                "analysis": "",
+                "metadata": {},
+                "error": None,
+                "warnings": [],
+            }
+
+        monkeypatch.setattr(
+            "tldw_chatbook.Local_Ingestion.local_file_ingestion.process_pdf",
+            fake_process_pdf,
+        )
+
+        parse_local_file_for_ingest(
+            str(source),
+            {
+                "pdf_engine": "docext",
+                "ocr": True,
+                "ocr_language": "fr",
+                "ocr_backend": "tesseract",
+            },
+        )
+
+        assert calls[0]["ocr_language"] == "fr"
+        assert calls[0]["ocr_backend"] == "tesseract"
+        assert calls[0]["ocr"] is True
+        assert calls[0]["engine"] == "docext"
+
+    def test_pdf_ocr_detail_defaults_match_the_real_signature(
+        self, tmp_path: Path, monkeypatch
+    ):
+        source = tmp_path / "doc.pdf"
+        source.write_bytes(b"%PDF-1.4 stub")
+        real = _real_process_pdf()
+        sig = inspect.signature(real)
+        calls: list[Dict[str, Any]] = []
+
+        def fake_process_pdf(**kwargs):
+            _assert_kwargs_accepted(real, kwargs)
+            calls.append(kwargs)
+            return {
+                "content": "PDF text",
+                "title": "t",
+                "author": "a",
+                "keywords": [],
+                "chunks": [],
+                "analysis": "",
+                "metadata": {},
+                "error": None,
+                "warnings": [],
+            }
+
+        monkeypatch.setattr(
+            "tldw_chatbook.Local_Ingestion.local_file_ingestion.process_pdf",
+            fake_process_pdf,
+        )
+
+        parse_local_file_for_ingest(str(source), {})
+
+        assert (
+            calls[0]["ocr_language"] == sig.parameters["ocr_language"].default
+        )
+        assert calls[0]["ocr_backend"] == sig.parameters["ocr_backend"].default
+
+
+# ---------------------------------------------------------------------------
+# task-3303 AC3: the ebook chunk-method choice reaches process_ebook
+# ---------------------------------------------------------------------------
+
+
+class TestEbookChunkMethodWiring:
+    def test_chunk_method_reaches_process_ebook(self, tmp_path: Path, monkeypatch):
+        source = tmp_path / "book.epub"
+        source.write_bytes(b"PK\x03\x04" + b"\x00" * 32)
+        real = _real_process_ebook()
+        calls: list[Dict[str, Any]] = []
+
+        def fake_process_ebook(**kwargs):
+            _assert_kwargs_accepted(real, kwargs)
+            calls.append(kwargs)
+            return {
+                "content": "Ebook text",
+                "title": "t",
+                "author": "a",
+                "keywords": [],
+                "chunks": [
+                    {"text": "Chapter 1", "metadata": {"chunk_num": 0}}
+                ],
+                "analysis": "",
+                "metadata": {},
+                "error": None,
+                "warnings": [],
+            }
+
+        monkeypatch.setattr(
+            "tldw_chatbook.Local_Ingestion.local_file_ingestion.process_ebook",
+            fake_process_ebook,
+        )
+
+        parse_local_file_for_ingest(
+            str(source),
+            {
+                "chunk_options": {
+                    "method": "ebook_chapters",
+                    "size": 1000,
+                    "max_size": 1000,
+                    "overlap": 100,
+                }
+            },
+        )
+
+        assert calls[0]["perform_chunking"] is True
+        assert calls[0]["chunk_options"]["method"] == "ebook_chapters"
+
+    def test_chapter_method_is_one_the_chunker_implements(self):
+        """The mapped method name must exist in the real chunking stack --
+        asserted against Chunk_Lib's own dispatch, not a copied list."""
+        import inspect as _inspect
+
+        from tldw_chatbook.Chunking import Chunk_Lib
+
+        dispatch_source = _inspect.getsource(Chunk_Lib.Chunker.chunk_text)
+        assert '"ebook_chapters"' in dispatch_source
+
+
+# ---------------------------------------------------------------------------
+# task-3303 AC4: AV translation + VAD reach the transcription call
+# ---------------------------------------------------------------------------
+
+
+def _audio_stub_result() -> Dict[str, Any]:
+    return {
+        "results": [
+            {
+                "status": "Success",
+                "content": "Transcript",
+                "metadata": {"title": "Audio", "author": "Unknown"},
+                "chunks": [],
+                "analysis": "",
+            }
+        ]
+    }
+
+
+class TestAVTranslationAndVadWiring:
+    def test_translation_target_reaches_audio_processor(
+        self, tmp_path: Path, monkeypatch
+    ):
+        source = tmp_path / "talk.mp3"
+        source.write_bytes(b"ID3\x00" + b"\x00" * 32)
+        from tldw_chatbook.Local_Ingestion.audio_processing import (
+            LocalAudioProcessor as RealAudioProcessor,
+        )
+
+        real_method = RealAudioProcessor.process_audio_files
+        assert (
+            "translation_target_language"
+            in inspect.signature(real_method).parameters
+        )
+        calls: list[Dict[str, Any]] = []
+
+        class _StubAudioProcessor:
+            def __init__(self, media_db=None):
+                self.media_db = media_db
+
+            def process_audio_files(self, **kwargs):
+                _assert_kwargs_accepted(real_method, kwargs)
+                calls.append(kwargs)
+                return _audio_stub_result()
+
+        monkeypatch.setattr(
+            "tldw_chatbook.Local_Ingestion.local_file_ingestion.LocalAudioProcessor",
+            _StubAudioProcessor,
+        )
+
+        parse_local_file_for_ingest(
+            str(source), {"translation_target_language": "en"}
+        )
+
+        assert calls[0]["translation_target_language"] == "en"
+
+    def test_vad_filter_reaches_audio_processor_as_vad_use(
+        self, tmp_path: Path, monkeypatch
+    ):
+        source = tmp_path / "talk.mp3"
+        source.write_bytes(b"ID3\x00" + b"\x00" * 32)
+        from tldw_chatbook.Local_Ingestion.audio_processing import (
+            LocalAudioProcessor as RealAudioProcessor,
+        )
+
+        real_method = RealAudioProcessor.process_audio_files
+        assert "vad_use" in inspect.signature(real_method).parameters
+        calls: list[Dict[str, Any]] = []
+
+        class _StubAudioProcessor:
+            def __init__(self, media_db=None):
+                self.media_db = media_db
+
+            def process_audio_files(self, **kwargs):
+                _assert_kwargs_accepted(real_method, kwargs)
+                calls.append(kwargs)
+                return _audio_stub_result()
+
+        monkeypatch.setattr(
+            "tldw_chatbook.Local_Ingestion.local_file_ingestion.LocalAudioProcessor",
+            _StubAudioProcessor,
+        )
+
+        parse_local_file_for_ingest(str(source), {"vad_filter": True})
+
+        assert calls[0]["vad_use"] is True
+
+    def test_vad_filter_reaches_video_processor_as_vad_use(
+        self, tmp_path: Path, monkeypatch
+    ):
+        source = tmp_path / "clip.mp4"
+        source.write_bytes(b"\x00\x00\x00\x20ftypisom" + b"\x00" * 32)
+        from tldw_chatbook.Local_Ingestion.audio_processing import (
+            LocalAudioProcessor as RealAudioProcessor,
+        )
+
+        real_sink = RealAudioProcessor.process_audio_files
+        calls: list[Dict[str, Any]] = []
+
+        class _StubVideoProcessor:
+            def __init__(self, media_db=None):
+                self.media_db = media_db
+
+            def process_videos(self, **kwargs):
+                kwargs.pop("inputs", None)
+                kwargs.pop("download_video_flag", None)
+                _assert_kwargs_accepted(real_sink, kwargs)
+                calls.append(kwargs)
+                return {
+                    "results": [
+                        {
+                            "status": "Success",
+                            "content": "Video transcript",
+                            "metadata": {"title": "Video", "author": "Unknown"},
+                            "chunks": [],
+                            "analysis": "",
+                        }
+                    ]
+                }
+
+        monkeypatch.setattr(
+            "tldw_chatbook.Local_Ingestion.local_file_ingestion.LocalVideoProcessor",
+            _StubVideoProcessor,
+        )
+
+        parse_local_file_for_ingest(str(source), {"vad_filter": True})
+
+        assert calls[0]["vad_use"] is True
+
+    def test_vad_absent_defaults_off(self, tmp_path: Path, monkeypatch):
+        source = tmp_path / "talk.mp3"
+        source.write_bytes(b"ID3\x00" + b"\x00" * 32)
+        from tldw_chatbook.Local_Ingestion.audio_processing import (
+            LocalAudioProcessor as RealAudioProcessor,
+        )
+
+        real_method = RealAudioProcessor.process_audio_files
+        calls: list[Dict[str, Any]] = []
+
+        class _StubAudioProcessor:
+            def __init__(self, media_db=None):
+                self.media_db = media_db
+
+            def process_audio_files(self, **kwargs):
+                _assert_kwargs_accepted(real_method, kwargs)
+                calls.append(kwargs)
+                return _audio_stub_result()
+
+        monkeypatch.setattr(
+            "tldw_chatbook.Local_Ingestion.local_file_ingestion.LocalAudioProcessor",
+            _StubAudioProcessor,
+        )
+
+        parse_local_file_for_ingest(str(source), {})
+
+        assert calls[0]["vad_use"] is False
+
+
+# ---------------------------------------------------------------------------
+# (task-3301 xhigh review round 2, F7) Public wrapper chunk defaults.
+#
+# When task-3301 made ``chunk_options is None`` mean "do not chunk" at the
+# parse seam (the Library queue's Chunk-content OFF), the public wrappers
+# (``ingest_local_file``/``batch_ingest_files``/``quick_ingest``, exported
+# via ``Local_Ingestion.__init__``) silently inherited that: their
+# ``chunk_options=None`` DEFAULT now meant no chunking for every
+# out-of-tree caller that previously got default chunking. The wrappers'
+# omitted argument now means "chunk with defaults" ({}); an EXPLICIT
+# ``None`` still means "do not chunk".
+# ---------------------------------------------------------------------------
+
+#: >500 words so the text tail's default word budget (500) must split it.
+_MANY_WORDS = " ".join(
+    f"word{i} filler body text keeps flowing steadily" for i in range(200)
+)
+
+
+class TestPublicWrapperChunkDefaults:
+    def test_ingest_local_file_default_chunks_and_stores(
+        self, tmp_path: Path, media_db: MediaDatabase
+    ):
+        from tldw_chatbook.Local_Ingestion.local_file_ingestion import (
+            ingest_local_file,
+        )
+
+        source = tmp_path / "wordy.txt"
+        source.write_text(_MANY_WORDS, encoding="utf-8")
+
+        result = ingest_local_file(source, media_db)
+
+        assert result["chunks_created"] > 1, (
+            "omitting chunk_options must mean 'chunk with defaults', not "
+            "'never chunk'"
+        )
+        assert len(_chunk_rows(media_db, result["media_id"])) == (
+            result["chunks_created"]
+        )
+
+    def test_ingest_local_file_explicit_none_stores_no_chunks(
+        self, tmp_path: Path, media_db: MediaDatabase
+    ):
+        from tldw_chatbook.Local_Ingestion.local_file_ingestion import (
+            ingest_local_file,
+        )
+
+        source = tmp_path / "wordy_none.txt"
+        source.write_text(_MANY_WORDS, encoding="utf-8")
+
+        result = ingest_local_file(source, media_db, chunk_options=None)
+
+        assert result["chunks_created"] == 0
+        assert _chunk_rows(media_db, result["media_id"]) == []
+
+    def test_batch_ingest_files_default_chunks(
+        self, tmp_path: Path, media_db: MediaDatabase
+    ):
+        from tldw_chatbook.Local_Ingestion.local_file_ingestion import (
+            batch_ingest_files,
+        )
+
+        sources = []
+        for i in range(2):
+            source = tmp_path / f"batch{i}.txt"
+            source.write_text(_MANY_WORDS, encoding="utf-8")
+            sources.append(source)
+
+        results = batch_ingest_files(sources, media_db)
+
+        assert len(results) == 2
+        for result in results:
+            assert result["chunks_created"] > 1
+
+    def test_quick_ingest_default_chunks(self, tmp_path: Path, monkeypatch):
+        from tldw_chatbook.Local_Ingestion.local_file_ingestion import quick_ingest
+
+        monkeypatch.setattr(
+            "tldw_chatbook.config.get_media_db_path",
+            lambda: tmp_path / "quick.db",
+        )
+        source = tmp_path / "quick.txt"
+        source.write_text(_MANY_WORDS, encoding="utf-8")
+
+        result = quick_ingest(source)
+
+        assert result["chunks_created"] > 1

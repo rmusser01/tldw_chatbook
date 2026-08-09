@@ -1525,24 +1525,44 @@ class MediaViewerPanel(Container):
                     provider_select.value = provider_options[0][0]
                     self.update_models_for_provider(provider_options[0][0])
 
-            # Set default temperature, top_p, min_p, max_tokens
+            # Set default temperature, top_p, min_p, max_tokens. The
+            # fallbacks are the SHARED analysis defaults (task-3301 xhigh
+            # review round, F10): the Library ingest's Analyze-after-import
+            # resolution uses the same constants, so an ingest analysis and
+            # a viewer analysis can never diverge under identical config.
+            from ...Library.ingest_analysis import (
+                ANALYSIS_DEFAULT_MAX_TOKENS,
+                ANALYSIS_DEFAULT_MIN_P,
+                ANALYSIS_DEFAULT_SYSTEM_PROMPT,
+                ANALYSIS_DEFAULT_TEMPERATURE,
+                ANALYSIS_DEFAULT_TOP_P,
+            )
+
             temp_input = self.query_one("#analysis-temperature", Input)
-            temp_input.value = str(analysis_defaults.get("temperature", "0.7"))
+            temp_input.value = str(
+                analysis_defaults.get("temperature", ANALYSIS_DEFAULT_TEMPERATURE)
+            )
 
             top_p_input = self.query_one("#analysis-top-p", Input)
-            top_p_input.value = str(analysis_defaults.get("top_p", "0.95"))
+            top_p_input.value = str(
+                analysis_defaults.get("top_p", ANALYSIS_DEFAULT_TOP_P)
+            )
 
             min_p_input = self.query_one("#analysis-min-p", Input)
-            min_p_input.value = str(analysis_defaults.get("min_p", "0.05"))
+            min_p_input.value = str(
+                analysis_defaults.get("min_p", ANALYSIS_DEFAULT_MIN_P)
+            )
 
             max_tokens_input = self.query_one("#analysis-max-tokens", Input)
-            max_tokens_input.value = str(analysis_defaults.get("max_tokens", "4096"))
+            max_tokens_input.value = str(
+                analysis_defaults.get("max_tokens", ANALYSIS_DEFAULT_MAX_TOKENS)
+            )
 
             # Set default system prompt
             system_prompt_area = self.query_one("#system-prompt-area", TextArea)
             system_prompt_area.text = analysis_defaults.get(
                 "system_prompt",
-                "You are an AI assistant specialized in analyzing media content.",
+                ANALYSIS_DEFAULT_SYSTEM_PROMPT,
             )
 
         except Exception as e:

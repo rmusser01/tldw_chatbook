@@ -106,7 +106,7 @@ def test_available_seams_and_typed_path_enable_start():
 
 def test_start_quiet_line_shown_when_path_blank_and_seams_available():
     state = build_library_ingest_state((), form=LibraryIngestFormState(path=""))
-    assert state.start_quiet_line == "Enter a file path to start."
+    assert state.start_quiet_line == "Enter a file path or URL to start."
 
 
 def test_start_quiet_line_hidden_once_path_is_typed():
@@ -118,7 +118,7 @@ def test_start_quiet_line_hidden_once_path_is_typed():
 
 def test_start_quiet_line_shown_for_whitespace_only_path():
     state = build_library_ingest_state((), form=LibraryIngestFormState(path="   "))
-    assert state.start_quiet_line == "Enter a file path to start."
+    assert state.start_quiet_line == "Enter a file path or URL to start."
 
 
 def test_start_quiet_line_hidden_when_media_db_unavailable():
@@ -523,9 +523,9 @@ def test_queue_counts_line_omits_zero_states():
         ),
     )
     state = build_library_ingest_state(jobs, form=LibraryIngestFormState())
-    # (task-2043) The suffix says the totals span ALL ingests (the
-    # registry restores prior sessions from the jobs DB).
-    assert state.queue_counts_line == "2 done · 1 failed — in queue"
+    # (task-3305, MI-14) All jobs terminal: the "— in queue" suffix
+    # would read as a contradiction over a finished run.
+    assert state.queue_counts_line == "2 done · 1 failed"
 
 
 def test_queue_counts_line_hidden_with_no_jobs():
@@ -694,6 +694,57 @@ def test_build_type_breakdown_line_multiple_groups_and_counts():
 def test_build_type_breakdown_line_unknown_group_uses_key():
     line = build_type_breakdown_line({"weird": ["/tmp/x.foo"]})
     assert line == "1 weird"
+
+
+def test_build_type_breakdown_line_document_group_has_honest_noun():
+    """(task-3303 AC1) A .docx used to pre-flight as a "plain text file"."""
+    line = build_type_breakdown_line({"document": ["/tmp/report.docx"]})
+    assert line == "1 Word/Office document"
+
+
+def test_build_type_breakdown_line_document_group_pluralizes():
+    line = build_type_breakdown_line(
+        {"document": ["/tmp/a.docx", "/tmp/b.odt", "/tmp/c.rtf"]}
+    )
+    assert line == "3 Word/Office documents"
+
+
+# --- build_web_scope_note (task-3303 AC5) ----------------------------------
+
+
+def test_web_scope_note_warns_local_multi_page_selection():
+    """A local "sitemap" import silently fetched ONE page -- say so."""
+    from tldw_chatbook.Library.library_ingest_state import build_web_scope_note
+
+    note = build_web_scope_note("local", {"scrape_method": "sitemap"})
+    assert note, "a local multi-page selection must carry the reason"
+    assert "server" in note
+    assert "one page" in note
+
+
+def test_web_scope_note_covers_every_multi_page_method():
+    from tldw_chatbook.Library.ingest_capabilities import (
+        MULTI_PAGE_SCRAPE_METHODS,
+    )
+    from tldw_chatbook.Library.library_ingest_state import build_web_scope_note
+
+    for method in MULTI_PAGE_SCRAPE_METHODS:
+        assert build_web_scope_note("local", {"scrape_method": method})
+
+
+def test_web_scope_note_silent_for_single_page_local():
+    from tldw_chatbook.Library.library_ingest_state import build_web_scope_note
+
+    assert build_web_scope_note("local", {"scrape_method": "individual"}) == ""
+    # An untouched form defaults to the single-page method.
+    assert build_web_scope_note("local", {}) == ""
+
+
+def test_web_scope_note_silent_when_targeting_the_server():
+    """Server behavior is unchanged: the clip path honors multi-page options."""
+    from tldw_chatbook.Library.library_ingest_state import build_web_scope_note
+
+    assert build_web_scope_note("server", {"scrape_method": "sitemap"}) == ""
 
 
 # --- build_estimate_line ---------------------------------------------------
@@ -1728,7 +1779,8 @@ def test_unsupported_line_names_files_and_matches_gate():
     assert blocked.start_enabled is False
     assert blocked.unsupported_line == (
         "Unsupported: x.json, y.jpg."
-        " Supported: PDF documents, audio/video files, e-books, plain text files."
+        " Supported: PDF documents, Word/Office documents, audio/video files,"
+        " e-books, plain text files, web pages (by URL)."
     )
 
     many = build_library_ingest_state(
@@ -2017,7 +2069,7 @@ def test_skipped_jobs_render_neutral_and_count_separately():
     assert row.line.startswith("○ skipped · photo.jpg")
     assert row.can_retry is False
     assert row.can_dismiss is True
-    assert state.queue_counts_line == "1 done · 1 skipped — in queue"
+    assert state.queue_counts_line == "1 done · 1 skipped"
     assert state.queue_clear_finished_label == (
         "Press again to clear 2 finished"
     )
@@ -2344,7 +2396,217 @@ def test_queue_tally_and_group_header_agree_on_matched() -> None:
     state = build_library_ingest_state(
         (imported, matched), form=LibraryIngestFormState()
     )
-    assert state.queue_counts_line == "1 done · 1 matched — in queue"
+    assert state.queue_counts_line == "1 done · 1 matched"
     headed = next(g for g in state.queue_groups if g.header_line)
     assert "1 done" in headed.header_line
     assert "1 matched" in headed.header_line
+
+
+# ---------------------------------------------------------------------------
+# task-3301: Analyze-after-import readiness hint
+# ---------------------------------------------------------------------------
+
+
+def test_analysis_hint_renders_when_analyze_on_and_provider_unready() -> None:
+    form = LibraryIngestFormState(analyze=True)
+    state = build_library_ingest_state(
+        (),
+        form=form,
+        analysis_unready_hint=(
+            "Analyze after import is on, but OpenAI is not ready: Missing "
+            "API key. Imports will run without analysis."
+        ),
+    )
+    assert "OpenAI" in state.analysis_hint_line
+    assert "without analysis" in state.analysis_hint_line
+
+
+def test_analysis_hint_empty_when_analyze_off() -> None:
+    form = LibraryIngestFormState(analyze=False)
+    state = build_library_ingest_state(
+        (),
+        form=form,
+        analysis_unready_hint="Analyze after import is on, but nothing is ready.",
+    )
+    assert state.analysis_hint_line == ""
+
+
+def test_analysis_hint_empty_when_provider_ready() -> None:
+    form = LibraryIngestFormState(analyze=True)
+    state = build_library_ingest_state((), form=form, analysis_unready_hint="")
+    assert state.analysis_hint_line == ""
+
+
+def test_analysis_hint_does_not_block_start() -> None:
+    """The hint informs; analysis is optional, so Start stays available."""
+    form = LibraryIngestFormState(path="/tmp/file.txt", analyze=True)
+    state = build_library_ingest_state(
+        (),
+        form=form,
+        analysis_unready_hint="Analyze after import is on, but X is not ready.",
+    )
+    assert state.start_enabled is True
+
+
+# --- task-3304 (MI-17): install commands recoverable at the warning ----------
+
+
+def _preflight_with_warnings(warnings):
+    return PreflightResult(
+        type_groups={"audio_video": ["/tmp/talk.mp3"]},
+        warnings=warnings,
+        errors=[],
+        total_size=0,
+        truncated=False,
+        total_files=1,
+    )
+
+
+def test_state_exposes_deduped_warning_commands_in_order() -> None:
+    """The summary's copy affordance needs the commands themselves, not
+    just the composed warning prose; duplicates (several features sharing
+    one extra) collapse to one button."""
+    form = LibraryIngestFormState(path="/tmp/talk.mp3")
+    state = build_library_ingest_state(
+        (),
+        form=form,
+        preflight=_preflight_with_warnings(
+            [
+                {
+                    "feature": "faster_whisper",
+                    "label": "Faster Whisper",
+                    "hint": "audio transcription",
+                    "command": 'pip install -e ".[transcription_faster_whisper]"',
+                },
+                {
+                    "feature": "audio_processing",
+                    "label": "Audio processing",
+                    "hint": "audio ingestion",
+                    "command": 'pip install -e ".[audio]"',
+                },
+                {
+                    "feature": "scipy",
+                    "label": "SciPy",
+                    "hint": "audio ingestion",
+                    "command": 'pip install -e ".[audio]"',
+                },
+                {
+                    "feature": "commandless",
+                    "label": "No command",
+                    "hint": "whatever",
+                },
+            ]
+        ),
+    )
+    assert state.warning_commands == (
+        'pip install -e ".[transcription_faster_whisper]"',
+        'pip install -e ".[audio]"',
+    )
+
+
+def test_warning_commands_empty_without_preflight() -> None:
+    state = build_library_ingest_state((), form=LibraryIngestFormState())
+    assert state.warning_commands == ()
+
+
+# --- task-3305: copy & labels batch -----------------------------------------
+
+
+def test_counts_line_drops_in_queue_suffix_when_every_job_is_terminal():
+    """(task-3305, MI-14) "1 done — in queue" over a finished run read as a
+    contradiction; the queue-scope suffix belongs only while something is
+    still actually queued/working."""
+    jobs = (
+        _job(job_id="ingest-job-1", state=IngestJobState.DONE),
+        _job(job_id="ingest-job-2", state=IngestJobState.FAILED, error="x"),
+    )
+    state = build_library_ingest_state(jobs, form=LibraryIngestFormState())
+    assert state.queue_counts_line == "1 done · 1 failed"
+
+
+def test_counts_line_keeps_in_queue_suffix_while_any_job_is_active():
+    jobs = (
+        _job(job_id="ingest-job-1", state=IngestJobState.DONE),
+        _job(job_id="ingest-job-2", state=IngestJobState.QUEUED),
+    )
+    state = build_library_ingest_state(jobs, form=LibraryIngestFormState())
+    assert state.queue_counts_line == "1 queued · 1 done — in queue"
+
+
+def test_type_breakdown_names_web_pages():
+    """(task-3305, MI-18) A URL selection used to read "1 web" -- the label
+    table had no ``web`` entry, so the fallback pluralised the group id."""
+    assert build_type_breakdown_line({"web": ["https://a.example"]}) == "1 web page"
+    assert (
+        build_type_breakdown_line({"web": ["https://a.example", "https://b.example"]})
+        == "2 web pages"
+    )
+
+
+def test_intro_line_promises_web_pages():
+    from tldw_chatbook.Library.library_ingest_state import build_intro_lines
+
+    what_line = build_intro_lines()[0]
+    assert "web pages" in what_line
+
+
+def test_supported_copy_and_start_gate_name_urls():
+    """(task-3305, MI-12) The surface accepts URLs, so the supported list
+    and the blank-path nudge must say so."""
+    from tldw_chatbook.Library.library_ingest_state import (
+        START_QUIET_LINE_COPY,
+        SUPPORTED_FORMATS_COPY,
+    )
+
+    assert "web pages (by URL)" in SUPPORTED_FORMATS_COPY
+    assert START_QUIET_LINE_COPY == "Enter a file path or URL to start."
+
+
+def test_estimate_line_omitted_for_url_sources():
+    """(task-3305, MI-19) A URL is not a 0-byte file: the estimate line
+    ("1 file · 0 B") is dropped for URL sources -- the breakdown line
+    already names what the URL is."""
+    preflight = PreflightResult(
+        type_groups={"web": ["https://example.com/article"]},
+        warnings=[],
+        errors=[],
+        total_size=0,
+        truncated=False,
+        total_files=1,
+        source_is_url=True,
+    )
+    state = build_library_ingest_state(
+        (), form=LibraryIngestFormState(path="https://example.com/article"),
+        preflight=preflight,
+    )
+    assert state.estimate_line == ""
+    assert state.type_breakdown_line == "1 web page"
+
+
+def test_failed_row_detail_drops_leading_basename_echo():
+    """(task-3305) "✗ failed · empty.txt · empty.txt is empty…" repeated the
+    name; the detail drops the echo when it starts with the row's own
+    basename."""
+    job = _job(
+        job_id="ingest-job-9",
+        source_path="/tmp/empty.txt",
+        state=IngestJobState.FAILED,
+        error="empty.txt is empty; there was nothing to ingest.",
+    )
+    state = build_library_ingest_state((job,), form=LibraryIngestFormState())
+    assert state.queue_rows[0].line == (
+        "✗ failed · empty.txt · is empty; there was nothing to ingest."
+    )
+
+
+def test_failed_row_detail_without_basename_echo_passes_through():
+    job = _job(
+        job_id="ingest-job-9",
+        source_path="/tmp/broken.pdf",
+        state=IngestJobState.FAILED,
+        error="PDF Extraction Error.",
+    )
+    state = build_library_ingest_state((job,), form=LibraryIngestFormState())
+    assert state.queue_rows[0].line == (
+        "✗ failed · broken.pdf · PDF Extraction Error."
+    )

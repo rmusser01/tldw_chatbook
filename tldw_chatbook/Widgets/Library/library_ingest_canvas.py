@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from datetime import datetime, timezone
 from pathlib import PurePath
 from typing import Any
@@ -10,23 +11,40 @@ from rich.markup import escape as escape_markup
 from textual import on
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.css.query import NoMatches
 from textual.message import Message
 from textual.widgets import Button, Checkbox, Collapsible, Input, Select, Static
 
 from tldw_chatbook.Library.ingest_capabilities import (
     TypeGroupCapabilities,
     _is_installed,
+    field_disabled_state,
     get_capabilities,
+    select_option_label,
 )
 from tldw_chatbook.Library.library_ingest_jobs import IngestJobState
 from tldw_chatbook.Workspaces.conversation_browser_state import (
     format_console_relative_age,
 )
 from tldw_chatbook.Library.library_ingest_state import (
+    WEB_LOCAL_SINGLE_PAGE_NOTE,
     validate_ingest_option_value,
     LibraryIngestCanvasState,
     build_intro_lines,
+    build_web_scope_note,
 )
+
+
+def _command_short_name(command: str) -> str:
+    """A compact identifier for an install command's copy button.
+
+    Prefers the pyproject extra (``pip install -e ".[audio]"`` -> ``.[audio]``)
+    because that is the part users recognise; anything else truncates.
+    """
+    match = re.search(r"\[[^\]]+\]", command)
+    if match:
+        return f".{match.group(0)}"
+    return command if len(command) <= 24 else f"{command[:23]}…"
 
 
 class LibraryIngestPreflightSummary(Vertical):
@@ -83,6 +101,26 @@ class LibraryIngestPreflightSummary(Vertical):
                     f"⚠ {escape_markup(warning)}",
                     id=f"ingest-preflight-warning-{index}",
                     classes="library-ingest-quiet-line",
+                )
+            # (task-3304, MI-17) The pip command must be recoverable AT the
+            # warning -- the guardrail modal used to hold the only copy
+            # button, and a command read off a wrapped prose line is a
+            # transcription exercise. One compact button per DISTINCT
+            # command (several features often share one extra); with more
+            # than one, each is disambiguated by its extra name rather
+            # than the full command (compact buttons cannot afford it).
+            for index, command in enumerate(state.warning_commands):
+                if len(state.warning_commands) == 1:
+                    label = "Copy install command"
+                else:
+                    label = f"Copy install command ({_command_short_name(command)})"
+                yield Button(
+                    label,
+                    id=f"ingest-preflight-copy-command-{index}",
+                    classes=(
+                        "library-canvas-action ingest-preflight-copy-command"
+                    ),
+                    compact=True,
                 )
         if state.type_breakdown_line:
             yield Static(
@@ -389,14 +427,17 @@ class LibraryIngestQueuePanel(Vertical):
                         else ""
                     )
                     age_suffix = f" · {age}" if age else ""
+                    # (task-3305, MI-14) ``markup=False`` already renders
+                    # these literally -- escaping on top of it painted the
+                    # escape backslashes into bracketed filenames.
                     yield Static(
-                        f"{escape_markup(name)} — "
+                        f"{name} — "
                         f"{job.state.value}{dismissed_suffix}{age_suffix}",
                         classes="library-ingest-recent-item",
                         markup=False,
                     )
                     yield Static(
-                        escape_markup(str(job.source_path)),
+                        str(job.source_path),
                         classes="library-ingest-recent-path",
                         markup=False,
                     )
@@ -425,11 +466,69 @@ def _summarise_option(field: Any, value: Any) -> str:
 
     The title used to be a dump of internal field names and repr'd values
     (``analyze=False, chunk=False, chunk_size=500, chunk_overlap=100``), which
-    told a first-time user nothing about what any of it does.
+    told a first-time user nothing about what any of it does. (task-3305)
+    Select values resolve through their display labels -- the raw token
+    (``pymupdf4llm``) must not leak into the title either.
     """
     if field.type == "checkbox":
         return f"{field.label}: {'on' if value else 'off'}"
+    if field.type == "select":
+        return f"{field.label}: {select_option_label(field, value)}"
     return f"{field.label}: {value}"
+
+
+def _option_is_default(field: Any, value: Any) -> bool:
+    """Whether ``value`` is (semantically) the field's schema default.
+
+    Form echoes hold display text, so a number field's ``"1000"`` must
+    compare equal to its schema default ``1000``.
+    """
+    if field.type == "checkbox":
+        return bool(value) == bool(field.default)
+    return str(value) == str(field.default)
+
+
+#: (task-3305, MI-16) Collapsed titles cap at this many name:value pairs --
+#: the audio panel's full dump ran ~140 characters with a dangling empty
+#: value; a receipt nobody can scan is not a receipt.
+_TITLE_MAX_PAIRS = 3
+
+
+def build_type_group_title(cap: TypeGroupCapabilities, values: dict[str, Any]) -> str:
+    """Collapsed-panel title: group label + the few most salient pairs.
+
+    (task-3305, MI-16) Shared by ``_compose_type_group`` and the screen's
+    in-place receipt update so the two renders can never drift. Rules:
+    empty values are skipped outright (never ``"…folder: ,"``);
+    changed-from-default pairs outrank untouched defaults (a receipt is
+    about what the user chose); at most :data:`_TITLE_MAX_PAIRS` pairs
+    render, with a trailing ``…`` naming the omission.
+
+    Args:
+        cap: The group's capability schema.
+        values: Current per-group option values (missing keys fall back to
+            schema defaults).
+
+    Returns:
+        The full title string, e.g.
+        ``"Audio & video — Transcription provider: Auto (faster-whisper),
+        Transcription model: Base (fast), Language: en, …"``.
+    """
+    changed: list[str] = []
+    untouched: list[str] = []
+    for field in cap.fields:
+        value = values.get(field.name, field.default)
+        if value is None or str(value).strip() == "":
+            continue
+        bucket = untouched if _option_is_default(field, value) else changed
+        bucket.append(_summarise_option(field, value))
+    pairs = changed + untouched
+    shown = pairs[:_TITLE_MAX_PAIRS]
+    if len(pairs) > len(shown):
+        shown.append("…")
+    if not shown:
+        return cap.label
+    return f"{cap.label} — {', '.join(shown)}"
 
 
 def ingest_scope_label(cap: TypeGroupCapabilities, has_files: bool) -> str:
@@ -445,12 +544,16 @@ def ingest_scope_label(cap: TypeGroupCapabilities, has_files: bool) -> str:
         has_files: Whether the current pre-flight staged files for it.
 
     Returns:
-        The scope sentence for the panel.
+        The scope sentence for the panel. (task-3305, MI-16) Composed from
+        the group's noun phrases, not its category label -- "Applies to all
+        Plain text & HTML in this import." was not a sentence.
     """
+    singular = cap.noun_singular or cap.label
+    plural = cap.noun_plural or cap.label
     return (
-        f"Applies to all {cap.label} in this import."
+        f"Applies to every {singular} in this import."
         if has_files
-        else f"Applies to {cap.label} if this import contains any."
+        else f"Applies to {plural} if this import contains any."
     )
 
 
@@ -476,6 +579,12 @@ def _toggle_label(*, enabled: bool, text: str) -> str:
     """Return a toggle Button's visible label, ``✓``/``○`` convention."""
     marker = "✓" if enabled else "○"
     return f"{marker} {text}"
+
+
+#: (task-3304, MI-08) The task-1623 fold-indicator convention: a reserved
+#: bottom row saying more content exists, shown only while the canvas
+#: actually overflows -- a mid-sentence clip must never be the only signal.
+INGEST_FOLD_HINT_COPY = "▼ more — scroll for the rest"
 
 
 class LibraryIngestCanvas(VerticalScroll):
@@ -536,52 +645,72 @@ class LibraryIngestCanvas(VerticalScroll):
         # with zero such files staged was a false statement.
         scope_label = ingest_scope_label(cap, has_files)
         children: list[Any] = [Static(scope_label, classes="type-group-scope")]
-        summary_parts: list[str] = []
         cap_fields_by_name = {f.name: f for f in cap.fields}
 
         for field in cap.fields:
             value = values.get(field.name, field.default)
-            summary_parts.append(_summarise_option(field, value))
             # Two independent reasons a field can be uneditable: its tooling
             # is not installed, or the sibling field that gates it is off.
-            disabled = field.depends_on is not None and not _is_installed(
-                field.depends_on
+            # (task-3304, MI-07) One shared computation returns BOTH the
+            # disabled flag and the reason annotation, so the inert state
+            # and its explanation can never disagree. ``_is_installed`` is
+            # passed as this module's own global on purpose: tests patch
+            # ``library_ingest_canvas._is_installed`` and the late lookup
+            # keeps that seam working.
+            disabled, disabled_note = field_disabled_state(
+                field, cap, values, is_installed=_is_installed
             )
-            if not disabled and field.enabled_when is not None:
-                gate = cap_fields_by_name.get(field.enabled_when)
-                gate_value = values.get(
-                    field.enabled_when,
-                    gate.default if gate is not None else False,
-                )
-                if field.enabled_when_values:
-                    # A select gate: every non-empty choice is truthy, so the
-                    # field must name the choices that actually enable it.
-                    disabled = gate_value not in field.enabled_when_values
-                else:
-                    disabled = not bool(gate_value)
             widget_id = f"opt-{group}-{field.name}"
 
             if field.type == "checkbox":
                 self._reported_option_values[(group, field.name)] = bool(value)
+                # (task-3303) A gated checkbox must carry its reason at the
+                # control: the label absorbs the schema hint ("Enable OCR
+                # (docling or docext engines only)"), so the inert state is
+                # explained where the user is looking, not somewhere else.
+                checkbox_label = (
+                    f"{field.label} ({field.hint})"
+                    if getattr(field, "hint", "")
+                    else field.label
+                )
+                # (task-3304, MI-07) Disabled-state annotation: the WHY at
+                # the control while the gate is closed. Empty for fields
+                # whose static hint above already names the gate, so
+                # labels never double-annotate.
+                if disabled and disabled_note:
+                    checkbox_label = f"{checkbox_label} — {disabled_note}"
                 children.append(
                     StateGlyphCheckbox(
-                        field.label,
+                        checkbox_label,
                         value=bool(value),
                         id=widget_id,
                         disabled=disabled,
                     )
                 )
             elif field.type == "select":
-                select_options = [(opt, opt) for opt in field.options]
+                # (task-3305, MI-09) Human display labels; the VALUE side
+                # (and everything persisted/submitted) stays the internal
+                # token.
+                select_options = [
+                    (select_option_label(field, opt), opt)
+                    for opt in field.options
+                ]
                 select_value = value if value in field.options else field.default
                 if select_value not in field.options and field.options:
                     select_value = field.options[0]
                 self._reported_option_values[(group, field.name)] = select_value
                 # (task-2043) Selects missed task-2012's labeling pass: a
                 # bare "pymupdf4llm" carries no meaning on its own.
+                # (task-3304, MI-07) While schema-disabled, the label
+                # carries the reason -- selects re-compose on every gate
+                # flip (checkbox/select changes recompose the canvas), so
+                # compose-time is the single point of truth.
+                select_label = field.label
+                if disabled and disabled_note:
+                    select_label = f"{select_label} — {disabled_note}"
                 children.append(
                     Static(
-                        field.label,
+                        select_label,
                         classes="type-group-field-label",
                         markup=False,
                     )
@@ -595,6 +724,23 @@ class LibraryIngestCanvas(VerticalScroll):
                         allow_blank=False,
                     )
                 )
+                if group == "web" and field.name == "scrape_method":
+                    # (task-3303 AC5) Local single-page honesty, right under
+                    # the control that promises otherwise: the local article
+                    # path fetches ONE page, so a multi-page method selected
+                    # while targeting this machine must say so. Always
+                    # mounted, display-managed (select changes recompose,
+                    # but the stable structure keeps in-place updates safe).
+                    scope_note = Static(
+                        WEB_LOCAL_SINGLE_PAGE_NOTE,
+                        id="web-local-scope-note",
+                        classes="type-group-scope",
+                        markup=False,
+                    )
+                    scope_note.display = bool(
+                        build_web_scope_note(self.state.ingest_backend, values)
+                    )
+                    children.append(scope_note)
             else:
                 self._reported_option_values[(group, field.name)] = str(value)
                 # A populated Input never shows its placeholder, so
@@ -606,6 +752,9 @@ class LibraryIngestCanvas(VerticalScroll):
                     if getattr(field, "hint", "")
                     else field.label
                 )
+                # (task-3304, MI-07) Disabled-state reason at the control.
+                if disabled and disabled_note:
+                    label_text = f"{field.label} — {disabled_note}"
                 children.append(
                     Static(
                         label_text,
@@ -616,7 +765,10 @@ class LibraryIngestCanvas(VerticalScroll):
                 children.append(
                     Input(
                         value=str(value),
-                        placeholder=field.label,
+                        # (task-3305) Example content when the schema
+                        # provides it; a placeholder repeating the label
+                        # line directly above is stutter.
+                        placeholder=field.placeholder or field.label,
                         id=widget_id,
                         disabled=disabled,
                     )
@@ -647,13 +799,19 @@ class LibraryIngestCanvas(VerticalScroll):
             provider_value = values.get(
                 "transcription_provider", provider.default
             )
+            install_gated = provider_value != "parakeet-onnx"
+            install_label = "Install verified Parakeet v2 INT8 (630.6 MiB)…"
+            if install_gated:
+                # (task-3304, MI-07) Inert-actions rule: a disabled button
+                # carries the WHY in its label, never dimming alone.
+                install_label += " — needs the parakeet-onnx provider"
             children.append(
                 Button(
-                    "Install verified Parakeet v2 INT8 (630.6 MiB)…",
+                    install_label,
                     id="opt-audio_video-install-parakeet-v2",
                     classes="library-canvas-action",
                     compact=True,
-                    disabled=provider_value != "parakeet-onnx",
+                    disabled=install_gated,
                 )
             )
             if provider_value == "transcribe-cpp":
@@ -687,7 +845,9 @@ class LibraryIngestCanvas(VerticalScroll):
         )
 
         panel = Vertical(*children, classes="type-group-contents")
-        title = f"{cap.label} — {', '.join(summary_parts)}"
+        # (task-3305, MI-16) Shared with the screen's in-place receipt
+        # update: capped, empty-skipping, changed-values-first.
+        title = build_type_group_title(cap, values)
         return Collapsible(
             panel,
             title=title,
@@ -855,6 +1015,20 @@ class LibraryIngestCanvas(VerticalScroll):
         )
         start_quiet_line.styles.height = 1
         yield start_quiet_line
+        # (task-3301) Analyze-readiness hint: says BEFORE Start that
+        # "Analyze after import" cannot actually run (no provider / missing
+        # key) and that imports will proceed without analysis. Always
+        # mounted, display-managed -- the screen's gate updater owns its
+        # content and visibility in place, same non-structural contract as
+        # the commit-summary line above.
+        analysis_hint = Static(
+            state.analysis_hint_line,
+            id="library-ingest-analysis-hint",
+            classes="library-ingest-quiet-line",
+            markup=False,
+        )
+        analysis_hint.display = bool(state.analysis_hint_line)
+        yield analysis_hint
         yield Button(
             "Start import",
             id="library-ingest-start",
@@ -871,7 +1045,71 @@ class LibraryIngestCanvas(VerticalScroll):
         # Queue block lives in its own render-from-state child so registry
         # job ticks recompose ONLY it (task-2042).
         yield LibraryIngestQueuePanel(state, id="library-ingest-queue-panel")
+        # (task-3304, MI-08) Fold indicator, task-1623 convention: docked
+        # chrome (a docked child of a scroll container never scrolls with
+        # the content), always mounted, display-managed by
+        # ``sync_fold_hint`` -- never conditionally composed, per the
+        # canvas's in-place-update discipline.
+        fold_hint = Static(
+            INGEST_FOLD_HINT_COPY,
+            id="library-ingest-fold-hint",
+            markup=False,
+        )
+        fold_hint.display = False
+        yield fold_hint
 
+
+    def on_mount(self) -> None:
+        """Settle the fold indicator once first layout has real sizes."""
+        self.call_after_refresh(self.sync_fold_hint)
+
+    def on_resize(self, _event: Any) -> None:
+        """A viewport change can (un)cover the fold -- re-derive the hint."""
+        self.sync_fold_hint()
+
+    def sync_fold_hint(self) -> None:
+        """Show the fold indicator only while the canvas content overflows.
+
+        (task-3304, MI-08) Mirrors Settings' task-1623 fold row: sizes are
+        read from the laid-out container, so callers route through
+        ``call_after_refresh`` when a recompose is in flight. Safe to call
+        any time; a missing hint (mid-recompose) degrades silently.
+        """
+        try:
+            hint = self.query_one("#library-ingest-fold-hint", Static)
+        except NoMatches:
+            return
+        hint.display = (
+            self.virtual_size.height > self.container_size.height
+        )
+
+    @on(Button.Pressed, ".ingest-preflight-copy-command")
+    def _copy_preflight_install_command(self, event: Button.Pressed) -> None:
+        """Copy one warning's install command from the summary (MI-17).
+
+        Mirrors the guardrail modal's copy button (same seam, same
+        notifications) so the modal is no longer the only place the
+        command can be recovered from.
+        """
+        event.stop()
+        button_id = event.button.id or ""
+        prefix = "ingest-preflight-copy-command-"
+        if not button_id.startswith(prefix):
+            return
+        try:
+            index = int(button_id[len(prefix):])
+            command = self.state.warning_commands[index]
+        except (ValueError, IndexError):
+            return
+        copy_fn = getattr(self.app, "copy_to_clipboard", None)
+        if callable(copy_fn):
+            try:
+                copy_fn(command)
+                self.notify("Install command copied to clipboard")
+            except Exception:
+                self.notify("Failed to copy command", severity="error")
+        else:
+            self.notify("Clipboard not available", severity="warning")
 
     @on(Checkbox.Changed)
     @on(Select.Changed)

@@ -427,3 +427,84 @@ def test_unstatable_files_are_not_mislabeled_empty(tmp_path, monkeypatch):
     assert [
         path for files in result.type_groups.values() for path in files
     ] == [str(victim)]
+
+
+class TestUrlProbePlainLanguage:
+    """(task-3305, MI-13) URL preflight failures must read as plain
+    language -- the probe used to surface a raw exception repr
+    (``URL unreachable: <urlopen error [Errno 8] nodename nor servname
+    provided, or not known>``) as the primary line."""
+
+    def _probe_with(self, exc: Exception) -> object:
+        with patch(
+            "tldw_chatbook.Library.ingest_preflight.urlopen",
+            side_effect=exc,
+        ):
+            return _probe_url("https://no-such-host.example/doc.pdf")
+
+    @staticmethod
+    def _assert_no_repr(message: str) -> None:
+        assert "<urlopen" not in message
+        assert "Errno" not in message
+        assert "gaierror" not in message
+
+    def test_dns_failure_names_the_unresolvable_host(self) -> None:
+        import socket
+
+        probe = self._probe_with(
+            URLError(
+                socket.gaierror(8, "nodename nor servname provided, or not known")
+            )
+        )
+        assert probe.error == (
+            "URL unreachable — the server name could not be found."
+        )
+
+    def test_connection_refused_reads_plain(self) -> None:
+        probe = self._probe_with(
+            URLError(ConnectionRefusedError(61, "Connection refused"))
+        )
+        assert probe.error == (
+            "URL unreachable — the connection was refused."
+        )
+
+    def test_timeout_inside_urlerror_reads_plain(self) -> None:
+        probe = self._probe_with(URLError(TimeoutError("timed out")))
+        assert probe.error == (
+            "URL unreachable — the connection timed out."
+        )
+
+    def test_tls_failure_reads_plain(self) -> None:
+        import ssl
+
+        probe = self._probe_with(
+            URLError(ssl.SSLError(1, "certificate verify failed"))
+        )
+        assert probe.error == (
+            "URL unreachable — the secure connection (TLS) failed."
+        )
+
+    def test_http_absent_status_reads_plain(self) -> None:
+        error = HTTPError(
+            "https://example.com/doc.pdf", 404, "Not Found", {}, None
+        )
+        probe = self._probe_with(error)
+        assert probe.error == (
+            "URL unreachable — the server says this page does not exist "
+            "(HTTP 404)."
+        )
+        self._assert_no_repr(probe.error)
+
+    def test_unmapped_url_error_never_leaks_a_repr(self) -> None:
+        probe = self._probe_with(URLError(OSError(999, "weird transport")))
+        assert probe.error == (
+            "URL unreachable — the server could not be contacted."
+        )
+        self._assert_no_repr(probe.error)
+
+    def test_unexpected_exception_never_leaks_a_repr(self) -> None:
+        probe = self._probe_with(ValueError("boom <internal>"))
+        assert probe.error is not None
+        assert "failed" in probe.error.lower()
+        assert "boom" not in probe.error
+        assert "<" not in probe.error

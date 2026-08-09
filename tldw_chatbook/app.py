@@ -188,7 +188,12 @@ from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
 from tldw_chatbook.config import CLI_APP_CLIENT_ID
 from tldw_chatbook.Chatbooks import LocalChatbookService, ServerChatbookService
 from tldw_chatbook.Library import LocalLibraryCollectionsService
-from tldw_chatbook.Library.ingest_capabilities import get_type_group
+from tldw_chatbook.Library.ingest_analysis import resolve_ingest_analysis_provider
+from tldw_chatbook.Library.ingest_capabilities import (
+    field_gate_open,
+    generic_option_default,
+    get_type_group,
+)
 from tldw_chatbook.Library.ingest_preflight import collect_directory_files
 from tldw_chatbook.Library.server_ingest_reconcile import (
     pending_remote_batches,
@@ -1699,6 +1704,55 @@ def _sanitize_library_ingest_error(exc: Exception) -> str:
     return sanitized if sanitized else exc.__class__.__name__[:200]
 
 
+def _library_ingest_done_progress(
+    source_path: str, *, was_duplicate: bool, payload: Dict[str, Any]
+) -> Dict[str, Any]:
+    """Build a done job's ``progress`` dict from its persisted payload.
+
+    (task-3301) Pure and module-level so the analysis-skipped annotation is
+    unit-testable without a writer thread. When the parse payload carries
+    ``analysis_skipped_reason`` (analysis was requested but no callable
+    provider was configured at dispatch time), the done row says so --
+    "analysis skipped: ..." on the row's progress sub-line -- instead of
+    the analysis being silently absent. Duplicate-match outcomes keep their
+    exact ``INGEST_DUPLICATE_PROGRESS_PREFIX`` message untouched: nothing
+    new was imported, so there was nothing to analyze.
+
+    Args:
+        source_path: The job's source path (basename feeds the message).
+        was_duplicate: Whether the write resolved to an existing item.
+        payload: The parse payload that was just persisted.
+
+    Returns:
+        The ``progress`` dict for ``LibraryIngestJobRegistry.mark_done``.
+    """
+    if was_duplicate:
+        return {
+            "message": (
+                f"{INGEST_DUPLICATE_PROGRESS_PREFIX} — "
+                "matched an existing item; nothing new was "
+                "imported."
+            )
+        }
+    # (task-2016) The basename, not the absolute path: the row line already
+    # identifies the file and the details surface carries the full path.
+    source_name = Path(source_path).name or source_path
+    progress: Dict[str, Any] = {"message": f"Imported {source_name}"}
+    skip_reason = str(payload.get("analysis_skipped_reason") or "").strip()
+    if skip_reason:
+        progress["message"] += f" — analysis skipped: {skip_reason}"
+        progress["analysis_skipped"] = skip_reason
+    # (task-3301 xhigh review round, F4) An analysis that RAN and failed
+    # (provider exception or an in-band "Error: ..." result) annotates the
+    # done row the same way a skipped one does -- the import succeeded,
+    # the analysis did not, and the user must be able to see which.
+    failed_reason = str(payload.get("analysis_failed_reason") or "").strip()
+    if failed_reason:
+        progress["message"] += f" — analysis failed: {failed_reason}"
+        progress["analysis_failed"] = failed_reason
+    return progress
+
+
 def _stream_fileno(stream: Any) -> int:
     """Best-effort file descriptor for a possibly-fake stream object.
 
@@ -2323,9 +2377,43 @@ class LibraryIngestQueueMixin:
         as deprecated fallbacks when ``ingest_options`` is empty or does not
         contain a value.
 
+        (task-3301) The three previously dead controls resolve here:
+
+        * ``encoding`` (generic group) travels to the plaintext/html readers.
+        * ``chunk_options`` carries the form's size/overlap as ints (the
+          snapshot boundary coerces, but restored/persisted jobs may still
+          hold display strings), in both the ``size`` spelling (audio/video
+          option maps) and the ``max_size`` spelling
+          (``improved_chunking_process``); the overlap fallback is the
+          generic schema default -- the value the UI displays -- not a
+          hardcoded constant. (task-3301/3303 xhigh review round 2,
+          F11+F12) An explicit ``method`` ALWAYS travels: pdf and
+          audio/video get ``words`` so the generic size/overlap hint
+          ("words · 100-5000") is true everywhere the processors would
+          otherwise setdefault sentences (a ~10-30x unit lie); the ebook
+          group maps its panel choice ("chapters" -> the chunker's
+          ``ebook_chapters``, other names verbatim) and falls back to the
+          pre-branch ``sentences`` when the snapshot predates the field
+          (fresh snapshots always carry the schema default -- absence IS
+          the legacy marker, so a requeued old job keeps its original
+          scheme). The text tail's own default is already words.
+        * When analysis is requested, the configured analysis provider
+          (``[analysis_defaults] provider``) is resolved through the shared
+          readiness seam, then constrained to a chat-dispatchable name
+          (task-3301 xhigh review round): ready adds ``api_name`` (the
+          normalized ``API_CALL_HANDLERS`` key), ``api_key`` (``None`` for
+          keyless local providers, paired with the explicit
+          ``analysis_keyless_ok`` opt-in the processors' credential gates
+          require), and ``analysis_call`` (model/temperature/top_p/min_p/
+          max_tokens from ``[analysis_defaults]``, viewer-parity defaults)
+          plus ``system_prompt`` when the section configures one; not ready
+          (including readiness-ready providers with no chat handler) adds
+          ``analysis_skipped_reason`` so the job records WHY analysis is
+          absent instead of silently dropping it.
+
         The Library queue never sets ``custom_prompt``/``system_prompt``/
-        ``api_name``/``api_key``/``metadata``, so they're simply absent (``None``
-        inside the worker's ``options.get(...)`` reads).
+        ``metadata``, so they're simply absent (``None`` inside the worker's
+        ``options.get(...)`` reads).
         """
         opts = job.ingest_options or {}
         group = get_type_group(job.source_path)
@@ -2335,36 +2423,133 @@ class LibraryIngestQueueMixin:
         flat_opts: dict[str, Any] = dict(opts.get("generic", {}))
         flat_opts.update(opts.get(group, {}) or {})
 
+        def _as_int(value: Any, fallback: int) -> int:
+            """Coerce a possibly-display-string number, falling back."""
+            try:
+                return int(str(value).strip())
+            except (TypeError, ValueError):
+                return fallback
+
+        perform_analysis = bool(flat_opts.get("analyze", job.perform_analysis))
+        overlap_default = _as_int(generic_option_default("chunk_overlap", 100), 100)
+        chunk_size = _as_int(
+            flat_opts.get("chunk_size", job.chunk_size), job.chunk_size
+        )
         options: dict[str, Any] = {
             "title": job.title or None,
             "author": job.author or None,
             "keywords": list(job.keywords) or None,
-            "perform_analysis": flat_opts.get("analyze", job.perform_analysis),
+            "perform_analysis": perform_analysis,
+            "encoding": flat_opts.get("encoding"),
             "chunk_options": (
                 {
-                    "method": "sentences",
-                    "size": flat_opts.get("chunk_size", job.chunk_size),
-                    "overlap": flat_opts.get("chunk_overlap", 50),
+                    "size": chunk_size,
+                    "max_size": chunk_size,
+                    "overlap": _as_int(
+                        flat_opts.get("chunk_overlap", overlap_default),
+                        overlap_default,
+                    ),
                 }
                 if flat_opts.get("chunk", job.chunk_enabled)
                 else None
             ),
         }
 
+        if perform_analysis:
+            resolution = resolve_ingest_analysis_provider(
+                getattr(self, "app_config", None)
+            )
+            if resolution.ready:
+                # (task-3301 xhigh review round) The NORMALIZED dispatch
+                # name (an `API_CALL_HANDLERS` key) travels, not the
+                # display spelling -- it is what `chat_api_call` and the
+                # summarizer's alias map accept (F5).
+                options["api_name"] = resolution.dispatch_name
+                options["api_key"] = resolution.api_key
+                if resolution.keyless:
+                    # (F8) Explicit keyless opt-in: the processors' analysis
+                    # gates only dispatch without a credential when the
+                    # readiness seam vouched for keyless operation.
+                    options["analysis_keyless_ok"] = True
+                # (F10) The full [analysis_defaults] call shape, so an
+                # ingest analysis runs with the same model/sampling the
+                # Media viewer's analysis panel would use.
+                options["analysis_call"] = {
+                    "model": resolution.model,
+                    "temperature": resolution.temperature,
+                    "top_p": resolution.top_p,
+                    "min_p": resolution.min_p,
+                    "max_tokens": resolution.max_tokens,
+                }
+                if resolution.system_prompt and not options.get("system_prompt"):
+                    options["system_prompt"] = resolution.system_prompt
+            else:
+                options["analysis_skipped_reason"] = resolution.short_reason
+
         if group == "pdf":
+            if options["chunk_options"] is not None:
+                # (F12) ``process_pdf`` setdefaults method='sentences',
+                # under which the form's "words · 100-5000" size hint is a
+                # ~10-30x unit lie (500 SENTENCES ~= one chunk per
+                # document). Words is what the hint promises.
+                options["chunk_options"]["method"] = "words"
             options["pdf_engine"] = flat_opts.get("engine") or flat_opts.get(
                 "pdf_engine"
             )
             options["page_range"] = flat_opts.get("pages")
             options["ocr"] = flat_opts.get("ocr", flat_opts.get("enable_ocr", False))
             options["extract_images"] = flat_opts.get("extract_images", False)
+            # (task-3303) OCR detail: language + backend, with the
+            # processor's own defaults as the fallbacks. The panel gates
+            # the OCR toggle to the docling/docext engines, so a silent
+            # OCR-under-pymupdf no-op can no longer be *asked for*; the
+            # values themselves always travel (process_pdf ignores them
+            # when the parser cannot OCR).
+            options["ocr_language"] = flat_opts.get("ocr_language") or "en"
+            options["ocr_backend"] = flat_opts.get("ocr_backend") or "auto"
+        elif group == "document":
+            # (task-3303) The document group layers ON TOP of generic:
+            # ``flat_opts`` already merged generic (analyze/chunk/encoding)
+            # under these, so document files keep task-3301's chunking and
+            # analysis while gaining ``process_document``'s own knobs.
+            options["processing_method"] = (
+                flat_opts.get("processing_method") or "auto"
+            )
+            options["enable_ocr"] = flat_opts.get(
+                "ocr", flat_opts.get("enable_ocr", False)
+            )
+            options["ocr_language"] = flat_opts.get("ocr_language") or "en"
         elif group == "audio_video":
+            if options["chunk_options"] is not None:
+                # (F12) The audio/video branch defaults chunk_method to
+                # sentences too -- same unit-lie fix as the pdf branch.
+                options["chunk_options"]["method"] = "words"
             provider = flat_opts.get("transcription_provider")
             if provider is None:
                 provider = "default"
             target_language = flat_opts.get("translation_target_language")
             if target_language is None:
                 target_language = flat_opts.get("target_language")
+            if (
+                target_language is None
+                and flat_opts.get("translate_to_english")
+                # (task-3303 xhigh review round 2, F9) Honor the checkbox's
+                # own schema gate: its value survives in the snapshot after
+                # the provider select moves to one that rejects translation
+                # (transcribe-cpp/parakeet raise BatchSTTRoutingError, which
+                # failed the WHOLE batch at dispatch). The normalized
+                # provider is passed so the gate sees the same value the
+                # route resolution below will use.
+                and field_gate_open(
+                    "audio_video",
+                    "translate_to_english",
+                    {**flat_opts, "transcription_provider": provider},
+                )
+            ):
+                # (task-3303) The panel's translate toggle. An explicit
+                # target (retry overrides, older snapshots) stays
+                # authoritative; the checkbox only fills the gap.
+                target_language = "en"
             route = resolve_batch_stt_route(
                 provider=provider,
                 language=flat_opts.get("language"),
@@ -2396,6 +2581,9 @@ class LibraryIngestQueueMixin:
             options["transcription_batch_route_resolved"] = True
             options["timestamps"] = flat_opts.get("timestamps", True)
             options["diarization"] = flat_opts.get("diarization", False)
+            # (task-3303) VAD filter -- travels as its own option; the
+            # parse worker hands it to the processors' ``vad_use``.
+            options["vad_filter"] = bool(flat_opts.get("vad_filter", False))
             failed_attempt = job.retry_source_failure_provenance
             options["transcription_context"] = {
                 "attempt_id": f"{job.job_id}-attempt-{job.retry_count + 1}",
@@ -2426,6 +2614,27 @@ class LibraryIngestQueueMixin:
             options["include_toc"] = flat_opts.get(
                 "include_toc", flat_opts.get("extract_toc", True)
             )
+            # (task-3303) The panel's chunk-method choice: the human
+            # "chapters" maps to the chunker's real ``ebook_chapters``
+            # method; the other names travel verbatim. Only meaningful when
+            # chunking is on.
+            ebook_chunk_method = str(flat_opts.get("chunk_method") or "").strip()
+            if options["chunk_options"] is not None:
+                if ebook_chunk_method:
+                    options["chunk_options"]["method"] = (
+                        "ebook_chapters"
+                        if ebook_chunk_method == "chapters"
+                        else ebook_chunk_method
+                    )
+                else:
+                    # (task-3303 xhigh review round 2, F11) No chunk_method
+                    # in the snapshot means the job PREDATES the field --
+                    # fresh submissions always seed the schema default (see
+                    # ``_build_ingest_options_snapshot``). The old builder
+                    # forced sentences for every group, so a requeued
+                    # legacy job must keep that scheme rather than silently
+                    # switching to the processor's chapters default.
+                    options["chunk_options"]["method"] = "sentences"
 
         return options
 
@@ -4048,20 +4257,13 @@ class LibraryIngestQueueMixin:
                             media_id = existing.get("id")
                             if content_hash is None:
                                 content_hash = existing.get("content_hash")
-                    if was_duplicate:
-                        progress = {
-                            "message": (
-                                f"{INGEST_DUPLICATE_PROGRESS_PREFIX} — "
-                                "matched an existing item; nothing new was "
-                                "imported."
-                            )
-                        }
-                    else:
-                        # (task-2016) The basename, not the absolute path:
-                        # the row line already identifies the file and the
-                        # details surface carries the full path.
-                        source_name = Path(job.source_path).name or job.source_path
-                        progress = {"message": f"Imported {source_name}"}
+                    # (task-3301) Includes the "analysis skipped: ..."
+                    # annotation when the payload carries a skip reason.
+                    progress = _library_ingest_done_progress(
+                        job.source_path,
+                        was_duplicate=was_duplicate,
+                        payload=payload,
+                    )
                     self.call_from_thread(
                         self.library_ingest_jobs.mark_done,
                         job.job_id,

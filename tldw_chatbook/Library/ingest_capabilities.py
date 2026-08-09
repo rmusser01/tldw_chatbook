@@ -48,6 +48,28 @@ class OptionField:
             non-empty choice is truthy, so a select-gated field would always
             read as editable. Naming the values that actually enable it keeps
             the form from offering an input the run will ignore.
+        disabled_reason: (task-3304, MI-07) Curated copy for the field's
+            DISABLED state -- rendered at the control while its
+            ``enabled_when`` gate is closed (e.g. "needs the parakeet-onnx
+            provider"), per the design system's Inert-actions rule: a
+            disabled control carries a text annotation for *why*, never
+            dimming alone. Empty falls back to a generic derivation from
+            the gate metadata (see :func:`field_disabled_state`); fields
+            whose static ``hint`` already names the gate (task-3303's
+            "docling or docext engines only" style) deliberately leave both
+            empty so the label is never double-annotated.
+        option_labels: (task-3305, MI-09) ``(value, display label)`` pairs
+            for ``select`` fields -- what the user reads while the raw
+            token is what persists and travels to the pipeline. Every
+            select option must be covered (meta-tested); labels state the
+            consequence where one exists ("Auto (faster-whisper)") and
+            stay comma-free because the collapsed panel titles comma-join
+            them. Resolve through :func:`select_option_label`, never by
+            indexing this tuple directly.
+        placeholder: Example content for an empty text Input (e.g.
+            ``/path/to/parakeet-model``). Empty falls back to the field
+            label -- but a placeholder that merely repeats the label is
+            stutter, so empty-by-default text fields should set one.
     """
 
     name: str
@@ -59,6 +81,9 @@ class OptionField:
     enabled_when: str | None = None
     hint: str = ""
     enabled_when_values: tuple[Any, ...] = ()
+    disabled_reason: str = ""
+    option_labels: tuple[tuple[str, str], ...] = ()
+    placeholder: str = ""
 
 
 @dataclass(frozen=True)
@@ -73,6 +98,13 @@ class TypeGroupCapabilities:
         optional_features: Feature IDs that enhance the group but are not
             strictly required.
         fields: Configurable options for this group.
+        noun_singular: (task-3305, MI-16) Singular noun phrase for one item
+            of this group ("PDF document", "web page") -- the panel scope
+            line composes sentences from it ("Applies to every PDF document
+            in this import."), which the bare category ``label`` cannot do
+            grammatically ("Applies to all Plain text & HTML in this
+            import.").
+        noun_plural: Plural counterpart of ``noun_singular``.
     """
 
     group: str
@@ -80,11 +112,35 @@ class TypeGroupCapabilities:
     required_features: tuple[str, ...]
     optional_features: tuple[str, ...]
     fields: tuple[OptionField, ...]
+    noun_singular: str = ""
+    noun_plural: str = ""
 
     @property
     def field_names(self) -> tuple[str, ...]:
         """Return the machine names of all configured fields."""
         return tuple(f.name for f in self.fields)
+
+
+def select_option_label(field: OptionField, value: Any) -> str:
+    """Display copy for one select option value.
+
+    (task-3305, MI-09) The single resolution seam between a select's
+    persisted internal token and what the user reads -- used by the canvas
+    select builder AND the collapsed-title summariser so the two can never
+    disagree. An unmapped value (a stale persisted token, a test double)
+    echoes through unchanged rather than crashing.
+
+    Args:
+        field: The select field whose ``option_labels`` to consult.
+        value: The internal option value.
+
+    Returns:
+        The curated display label, or ``str(value)`` when none is defined.
+    """
+    for candidate, label in field.option_labels:
+        if candidate == value:
+            return label
+    return str(value)
 
 
 # PyPI package names used in the UI/planning documents map to the names that
@@ -138,6 +194,9 @@ _GROUP_EXTRAS: dict[str, tuple[str, ...]] = {
     "pdf": ("pdf",),
     "audio_video": ("audio", "video", "media_processing"),
     "ebook": ("ebook",),
+    # Document ingestion's one flagged optional feature (docling) installs
+    # via the pdf extra; nothing document-specific has an extra of its own.
+    "document": (),
     "generic": (),
 }
 
@@ -146,6 +205,10 @@ _GROUP_EXTRAS: dict[str, tuple[str, ...]] = {
 _FEATURE_LABELS: dict[str, str] = {
     "audio_processing": "Audio processing",
     "beautifulsoup4": "BeautifulSoup",
+    # (task-3304) Named for the disabled-state annotation on the diarization
+    # checkbox -- without it the label falls through to the audio group's
+    # extra ("Audio ingestion and transcription"), which is not the gate.
+    "diarization": "Speaker diarization",
     "docling": "Docling",
     "docext": "Docext",
     "ebook_processing": "E-book processing",
@@ -297,6 +360,15 @@ def _install_hint(feature_id: str) -> dict[str, str]:
     }
 
 
+#: (task-3303) Group-specific overrides for a warning's "needed for" clause.
+#: ``_install_hint`` resolves docling through the pdf extra, whose
+#: ``unavailable_what`` says "PDF ingestion" -- accurate for the pdf group,
+#: a non sequitur beside a folder of Word documents. Keyed by
+#: ``(group, feature)``; absent pairs keep the extra's own wording.
+_GROUP_FEATURE_HINTS: dict[tuple[str, str], str] = {
+    ("document", "docling"): "scanned-document OCR",
+}
+
 #: Sentinel group returned by :func:`get_type_group` for files this app has no
 #: handler for. It is deliberately *not* a key of ``_TYPE_GROUPS``: it has no
 #: capabilities, options or tooling of its own. Callers group these files so
@@ -312,6 +384,8 @@ _TYPE_GROUPS: dict[str, TypeGroupCapabilities] = {
     "pdf": TypeGroupCapabilities(
         group="pdf",
         label="PDF documents",
+        noun_singular="PDF document",
+        noun_plural="PDF documents",
         required_features=("pdf_processing",),
         optional_features=("pymupdf4llm", "docling"),
         fields=(
@@ -320,7 +394,20 @@ _TYPE_GROUPS: dict[str, TypeGroupCapabilities] = {
                 label="PDF engine",
                 type="select",
                 default="pymupdf4llm",
-                options=("pymupdf", "pymupdf4llm", "docling"),
+                # (task-3303) docext joins: a valid ``process_pdf`` parser
+                # (vision-model OCR) that had no UI path.
+                options=("pymupdf", "pymupdf4llm", "docling", "docext"),
+                # (task-3305, MI-09) What each engine costs/buys, verified
+                # against ``PDF_Processing_Lib``: pymupdf extracts plain
+                # text; pymupdf4llm emits Markdown; docling is the
+                # layout-aware converter (and an OCR route); docext runs a
+                # vision-model OCR backend.
+                option_labels=(
+                    ("pymupdf", "PyMuPDF (plain text)"),
+                    ("pymupdf4llm", "PyMuPDF4LLM (Markdown)"),
+                    ("docling", "Docling (layout-aware · OCR-capable)"),
+                    ("docext", "Docext (vision-model OCR)"),
+                ),
                 depends_on="pdf_processing",
             ),
             OptionField(
@@ -329,12 +416,119 @@ _TYPE_GROUPS: dict[str, TypeGroupCapabilities] = {
                 type="checkbox",
                 default=False,
                 depends_on="pdf_processing",
+                # (task-3303) Only the docling/docext parsers OCR
+                # (``process_pdf``'s own ``ocr_supported`` flag); under the
+                # pymupdf engines the checkbox used to be an offerable
+                # silent no-op. The value gate makes it inert there, and
+                # the hint carries the reason at the control.
+                enabled_when="pdf_engine",
+                enabled_when_values=("docling", "docext"),
+                hint="docling or docext engines only",
+            ),
+            OptionField(
+                name="ocr_language",
+                label="OCR language",
+                type="text",
+                default="en",
+                depends_on="pdf_processing",
+                enabled_when="ocr",
+                hint="e.g. en, de, fr",
+                disabled_reason="needs Enable OCR on",
+            ),
+            OptionField(
+                name="ocr_backend",
+                label="OCR backend",
+                type="select",
+                default="auto",
+                # ``process_pdf`` consults this only when the parser is
+                # docext ("auto" lets it pick); the names are the OCR
+                # manager's registered backends (``OCR_Backends``).
+                options=(
+                    "auto",
+                    "docext",
+                    "tesseract",
+                    "easyocr",
+                    "paddleocr",
+                    "docling",
+                ),
+                option_labels=(
+                    ("auto", "Auto (let Docext choose)"),
+                    ("docext", "Docext (vision model)"),
+                    ("tesseract", "Tesseract"),
+                    ("easyocr", "EasyOCR"),
+                    ("paddleocr", "PaddleOCR"),
+                    ("docling", "Docling"),
+                ),
+                enabled_when="pdf_engine",
+                enabled_when_values=("docext",),
+                disabled_reason="needs the docext engine",
+            ),
+        ),
+    ),
+    # (task-3303) Word-processor formats (.doc/.docx/.odt/.rtf) used to ride
+    # the generic panel, which called them "plain text files" and offered no
+    # path to ``process_document``'s processing-method/OCR knobs. The generic
+    # group remains their base (analyze/chunk/encoding layer under this group
+    # in ``_ingest_job_options``); this group only adds what is
+    # document-specific.
+    "document": TypeGroupCapabilities(
+        group="document",
+        label="Word/Office documents",
+        noun_singular="Word/Office document",
+        noun_plural="Word/Office documents",
+        # No required features: per-format native parsers (python-docx,
+        # odfpy, striprtf) and docling are ALTERNATIVES, and docling alone
+        # can stand in for all of them -- a missing-parser failure is
+        # reported per job with the missing package named in its details.
+        required_features=(),
+        # Docling is the one feature worth flagging up front: without it the
+        # OCR toggle below is dead (scanned documents cannot be OCR'd).
+        optional_features=("docling",),
+        fields=(
+            OptionField(
+                name="processing_method",
+                label="Processing method",
+                type="select",
+                default="auto",
+                # ``process_document(processing_method=...)``: auto prefers
+                # docling when installed, else the per-format native parser.
+                options=("auto", "docling", "native"),
+                option_labels=(
+                    ("auto", "Auto (Docling when installed)"),
+                    ("docling", "Docling (layout-aware · OCR-capable)"),
+                    ("native", "Native per-format parser"),
+                ),
+            ),
+            OptionField(
+                name="ocr",
+                label="Enable OCR",
+                type="checkbox",
+                default=False,
+                # OCR only runs through docling (``process_document``:
+                # "only works with 'docling' method"); auto selects docling
+                # when it is installed, so both satisfy the gate.
+                depends_on="docling",
+                enabled_when="processing_method",
+                enabled_when_values=("auto", "docling"),
+                hint="docling method only",
+            ),
+            OptionField(
+                name="ocr_language",
+                label="OCR language",
+                type="text",
+                default="en",
+                depends_on="docling",
+                enabled_when="ocr",
+                hint="e.g. en, de, fr",
+                disabled_reason="needs Enable OCR on",
             ),
         ),
     ),
     "audio_video": TypeGroupCapabilities(
         group="audio_video",
         label="Audio & video",
+        noun_singular="audio/video file",
+        noun_plural="audio/video files",
         required_features=("audio_processing",),
         optional_features=(
             "faster_whisper",
@@ -356,6 +550,16 @@ _TYPE_GROUPS: dict[str, TypeGroupCapabilities] = {
                     "faster-whisper",
                     "transcribe-cpp",
                 ),
+                # (task-3305, MI-09) "default" is not a provider: the batch
+                # router sends it to faster-whisper on this surface
+                # (task-3301 verified the ingest call site never opens the
+                # Parakeet promotion gate) -- say so at the control.
+                option_labels=(
+                    ("default", "Auto (faster-whisper)"),
+                    ("parakeet-onnx", "Parakeet (ONNX)"),
+                    ("faster-whisper", "Faster Whisper"),
+                    ("transcribe-cpp", "transcribe.cpp (GGUF)"),
+                ),
                 depends_on="audio_processing",
             ),
             OptionField(
@@ -363,9 +567,13 @@ _TYPE_GROUPS: dict[str, TypeGroupCapabilities] = {
                 label="Local Parakeet model folder",
                 type="text",
                 default="",
+                # (task-3305) Example content, not the label repeated: an
+                # empty Input otherwise shows label-as-placeholder stutter.
+                placeholder="/path/to/parakeet-model",
                 depends_on="parakeet_onnx",
                 enabled_when="transcription_provider",
                 enabled_when_values=("parakeet-onnx",),
+                disabled_reason="needs the parakeet-onnx provider",
             ),
             OptionField(
                 name="transcription_precision",
@@ -373,9 +581,17 @@ _TYPE_GROUPS: dict[str, TypeGroupCapabilities] = {
                 type="select",
                 default="int8",
                 options=("int8", "f32"),
+                # (task-3305 meta-rule) every select option carries human
+                # copy; this field landed on dev mid-arc, so it is labeled
+                # here rather than at its introduction.
+                option_labels=(
+                    ("int8", "INT8 (smaller · faster)"),
+                    ("f32", "Float32 (full precision)"),
+                ),
                 depends_on="parakeet_onnx",
                 enabled_when="transcription_provider",
                 enabled_when_values=("parakeet-onnx",),
+                disabled_reason="needs the parakeet-onnx provider",
             ),
             OptionField(
                 name="transcription_model",
@@ -383,9 +599,17 @@ _TYPE_GROUPS: dict[str, TypeGroupCapabilities] = {
                 type="select",
                 default="base",
                 options=("tiny", "base", "small", "medium", "large"),
+                option_labels=(
+                    ("tiny", "Tiny (fastest · least accurate)"),
+                    ("base", "Base (fast)"),
+                    ("small", "Small (balanced)"),
+                    ("medium", "Medium (more accurate · slower)"),
+                    ("large", "Large (most accurate · slowest)"),
+                ),
                 depends_on="faster_whisper",
                 enabled_when="transcription_provider",
                 enabled_when_values=("faster-whisper",),
+                disabled_reason="needs the faster-whisper provider",
             ),
             OptionField(
                 name="language",
@@ -393,6 +617,22 @@ _TYPE_GROUPS: dict[str, TypeGroupCapabilities] = {
                 type="text",
                 default="en",
                 depends_on="audio_processing",
+            ),
+            OptionField(
+                # (task-3303) Maps to ``translation_target_language="en"`` in
+                # the job-option builder. Only faster-whisper translates
+                # (``resolve_batch_stt_route``), and the semantic default
+                # routes a translation request there too -- so the toggle is
+                # inert (with the reason in its hint) under the providers
+                # that would reject it outright.
+                name="translate_to_english",
+                label="Translate to English",
+                type="checkbox",
+                default=False,
+                depends_on="faster_whisper",
+                enabled_when="transcription_provider",
+                enabled_when_values=("default", "faster-whisper"),
+                hint="via faster-whisper",
             ),
             OptionField(
                 name="timestamps",
@@ -408,11 +648,22 @@ _TYPE_GROUPS: dict[str, TypeGroupCapabilities] = {
                 default=False,
                 depends_on="diarization",
             ),
+            OptionField(
+                # (task-3303) ``process_audio_files(vad_use=...)`` -- skips
+                # non-speech segments during transcription.
+                name="vad_filter",
+                label="Voice activity detection (VAD) filter",
+                type="checkbox",
+                default=False,
+                depends_on="audio_processing",
+            ),
         ),
     ),
     "ebook": TypeGroupCapabilities(
         group="ebook",
         label="E-books",
+        noun_singular="e-book",
+        noun_plural="e-books",
         required_features=("ebook_processing",),
         optional_features=("html2text", "lxml", "beautifulsoup4"),
         fields=(
@@ -422,6 +673,37 @@ _TYPE_GROUPS: dict[str, TypeGroupCapabilities] = {
                 type="select",
                 default="filtered",
                 options=("filtered", "markdown", "basic"),
+                # (task-3305, MI-09) Verified against
+                # ``Book_Ingestion_Lib``: filtered follows the spine and
+                # skips known front matter; markdown converts with TOC and
+                # heading structure; basic reads every document item as
+                # plain text.
+                option_labels=(
+                    ("filtered", "Filtered (skips covers & front matter)"),
+                    ("markdown", "Markdown (keeps headings & structure)"),
+                    ("basic", "Basic (every section · plain text)"),
+                ),
+                depends_on="ebook_processing",
+            ),
+            OptionField(
+                # (task-3303) "chapters" maps to the chunker's real
+                # ``ebook_chapters`` method in the job-option builder; the
+                # other names travel verbatim (all four are methods
+                # ``Chunk_Lib.Chunker.chunk_text`` dispatches on). Untouched,
+                # no method is forced and ``process_ebook`` applies its own
+                # chapters default -- so the schema default and the
+                # processor default agree.
+                name="chunk_method",
+                label="Chunking method",
+                type="select",
+                default="chapters",
+                options=("chapters", "sentences", "words", "paragraphs"),
+                option_labels=(
+                    ("chapters", "By chapter"),
+                    ("sentences", "By sentence"),
+                    ("words", "By word count"),
+                    ("paragraphs", "By paragraph"),
+                ),
                 depends_on="ebook_processing",
             ),
             OptionField(
@@ -436,6 +718,8 @@ _TYPE_GROUPS: dict[str, TypeGroupCapabilities] = {
     "generic": TypeGroupCapabilities(
         group="generic",
         label="Plain text & HTML",
+        noun_singular="plain text & HTML file",
+        noun_plural="plain text & HTML files",
         required_features=(),
         optional_features=(),
         fields=(
@@ -466,7 +750,14 @@ _TYPE_GROUPS: dict[str, TypeGroupCapabilities] = {
                 type="number",
                 default=1000,
                 enabled_when="chunk",
-                hint="characters · 100–5000",
+                # (task-3301) The unit is words, not characters: every
+                # chunking method in the shared service sizes by its own
+                # unit (words/sentences/paragraphs), and the ingest
+                # pipeline chunks text with the service's word method. The
+                # old "characters" hint described a pipeline that never
+                # chunked at all.
+                hint="words · 100–5000",
+                disabled_reason="needs Chunk content on",
             ),
             OptionField(
                 name="chunk_overlap",
@@ -474,7 +765,8 @@ _TYPE_GROUPS: dict[str, TypeGroupCapabilities] = {
                 type="number",
                 default=100,
                 enabled_when="chunk",
-                hint="characters · at least 0",
+                hint="words · at least 0",
+                disabled_reason="needs Chunk content on",
             ),
             OptionField(
                 name="encoding",
@@ -483,6 +775,16 @@ _TYPE_GROUPS: dict[str, TypeGroupCapabilities] = {
                 # text -- typed garbage silently degraded parsing.
                 type="select",
                 options=("auto", "utf-8", "utf-16", "latin-1", "cp1252"),
+                # (task-3305, MI-09) "auto" per ``_decode_ingest_text``:
+                # strict UTF-8 first, then chardet detection, then UTF-8
+                # with replacement characters.
+                option_labels=(
+                    ("auto", "Auto-detect (UTF-8 first)"),
+                    ("utf-8", "UTF-8"),
+                    ("utf-16", "UTF-16"),
+                    ("latin-1", "Latin-1 (ISO-8859-1)"),
+                    ("cp1252", "Windows-1252 (Western)"),
+                ),
                 default="auto",
                 depends_on=None,
             ),
@@ -491,6 +793,8 @@ _TYPE_GROUPS: dict[str, TypeGroupCapabilities] = {
     "web": TypeGroupCapabilities(
         group="web",
         label="Web pages",
+        noun_singular="web page",
+        noun_plural="web pages",
         # No local packages are required: the article extractor is part of the
         # app, and a server-backed clip runs entirely on the server.
         required_features=(),
@@ -505,6 +809,14 @@ _TYPE_GROUPS: dict[str, TypeGroupCapabilities] = {
                 # document. The local extractor only does the single-page case,
                 # which is why that is the default for both backends.
                 options=("individual", "sitemap", "url_level", "recursive_scraping"),
+                # (task-3305, MI-09) The enum tokens are server-facing; the
+                # user-facing question is scope.
+                option_labels=(
+                    ("individual", "This page only"),
+                    ("sitemap", "Site map"),
+                    ("url_level", "Pages under this URL"),
+                    ("recursive_scraping", "Follow links (recursive)"),
+                ),
                 depends_on=None,
             ),
             OptionField(
@@ -515,6 +827,9 @@ _TYPE_GROUPS: dict[str, TypeGroupCapabilities] = {
                 # Only meaningful once more than one page is being fetched.
                 enabled_when="scrape_method",
                 enabled_when_values=tuple(sorted(MULTI_PAGE_SCRAPE_METHODS)),
+                # Accurate because "individual" is the ONLY non-multi-page
+                # choice -- if that ever changes, reword to name the gate.
+                disabled_reason="single-page fetch selected",
             ),
             OptionField(
                 name="max_depth",
@@ -523,6 +838,7 @@ _TYPE_GROUPS: dict[str, TypeGroupCapabilities] = {
                 default=3,
                 enabled_when="scrape_method",
                 enabled_when_values=tuple(sorted(MULTI_PAGE_SCRAPE_METHODS)),
+                disabled_reason="single-page fetch selected",
             ),
         ),
     ),
@@ -558,9 +874,9 @@ def get_type_group(path_or_url: str) -> str:
         path_or_url: Local path, or an http(s) URL.
 
     Returns:
-        One of ``pdf``, ``audio_video``, ``ebook``, ``web``, ``generic``, or
-        ``unsupported``. Unsupported file types are mapped to ``unsupported``
-        so the pre-flight summary can surface them separately.
+        One of ``pdf``, ``document``, ``audio_video``, ``ebook``, ``web``,
+        ``generic``, or ``unsupported``. Unsupported file types are mapped to
+        ``unsupported`` so the pre-flight summary can surface them separately.
     """
     try:
         file_type = detect_file_type(path_or_url)
@@ -576,6 +892,13 @@ def get_type_group(path_or_url: str) -> str:
         return "audio_video"
     if file_type == "ebook":
         return "ebook"
+    if file_type == "document":
+        # (task-3303) Word-processor formats get their own group -- they
+        # used to fall through to ``generic``, whose panel called them
+        # "plain text files" and reached none of ``process_document``'s
+        # options. Placed before the URL check for the same reason pdf/
+        # ebook are: an extension on a URL still says what the target IS.
+        return "document"
     if _is_http_url(path_or_url) and file_type in ("plaintext", "html", "xml"):
         # A bare ".html"/".htm" URL is a page to fetch, not a local file to
         # read; the extension says how it is written, not where it lives.
@@ -601,6 +924,145 @@ def _url_type_group(url: str) -> str:
     if classified == "article":
         return "web"
     return "generic"
+
+
+def generic_option_default(name: str, fallback: Any = None) -> Any:
+    """Return the ``generic`` group's declared default for ``name``.
+
+    (task-3301) The capability schema is the single source of ingest option
+    defaults. Three consumers used to carry private copies of this lookup
+    (``library_ingest_state``, ``server_ingest_request``) while the local
+    job-option builder hardcoded its own values -- which is exactly how the
+    UI displayed a chunk overlap of 100 while an untouched local submit fell
+    back to 50. Every fallback question about a generic option goes through
+    here now.
+
+    Args:
+        name: The generic option's machine name (e.g. ``chunk_overlap``).
+        fallback: Returned when the schema has no field of that name.
+
+    Returns:
+        The schema default, or ``fallback`` for an unknown name.
+    """
+    for field_spec in _TYPE_GROUPS["generic"].fields:
+        if field_spec.name == name:
+            return field_spec.default
+    return fallback
+
+
+def field_disabled_state(
+    field: OptionField,
+    cap: TypeGroupCapabilities,
+    values: dict[str, Any],
+    *,
+    is_installed: Any = None,
+) -> tuple[bool, str]:
+    """Whether ``field`` is currently uneditable, and the reason to render.
+
+    (task-3304, MI-07) The single source for the canvas's disabled
+    computation AND the reason annotation shown at the control, so the two
+    can never disagree. Two independent gates, checked in the canvas's
+    established order:
+
+    1. ``depends_on`` -- a packaging gate. The reason names the missing
+       feature ("needs Docling installed").
+    2. ``enabled_when`` (optionally with ``enabled_when_values``) -- a
+       within-form gate. The reason is the field's curated
+       ``disabled_reason`` when present; otherwise a generic derivation
+       from the gate metadata. Fields whose static ``hint`` already names
+       the gate (task-3303's "docling or docext engines only" labels)
+       return an EMPTY reason so the label is never double-annotated --
+       the disabled state still shows, the why is already in the label.
+
+    Args:
+        field: The option field under evaluation.
+        cap: The field's owning group schema (supplies gate siblings).
+        values: Current per-group option values (missing keys fall back to
+            each gate field's schema default).
+        is_installed: Feature-availability probe; defaults to this
+            module's :func:`_is_installed`. The canvas passes its own
+            module-level reference so tests patching
+            ``library_ingest_canvas._is_installed`` keep working.
+
+    Returns:
+        ``(disabled, reason)``. ``reason`` is ``""`` whenever the field is
+        editable, and may also be ``""`` for a disabled field whose label
+        already carries the gate (see above).
+    """
+    probe = _is_installed if is_installed is None else is_installed
+    if field.depends_on is not None and not probe(field.depends_on):
+        return True, f"needs {_feature_label(field.depends_on, cap.group)} installed"
+    if field.enabled_when is None:
+        return False, ""
+    gate = next((f for f in cap.fields if f.name == field.enabled_when), None)
+    gate_value = values.get(
+        field.enabled_when, gate.default if gate is not None else False
+    )
+    if field.enabled_when_values:
+        # A select gate: every non-empty choice is truthy, so the field
+        # names the choices that actually enable it.
+        if gate_value in field.enabled_when_values:
+            return False, ""
+    elif bool(gate_value):
+        return False, ""
+    if field.disabled_reason:
+        return True, field.disabled_reason
+    if field.hint:
+        # The static hint already carries the gate at the control
+        # (task-3303's convention); a second annotation would stutter.
+        return True, ""
+    gate_label = gate.label if gate is not None else field.enabled_when
+    if field.enabled_when_values:
+        wanted = ", ".join(str(value) for value in field.enabled_when_values)
+        return True, f"needs {gate_label}: {wanted}"
+    return True, f"needs {gate_label} on"
+
+
+def field_gate_open(group: str, name: str, values: dict[str, Any]) -> bool:
+    """Whether ``name``'s within-form ``enabled_when`` gate is open.
+
+    (task-3303 xhigh review round 2, F9) The job-option builder must consult
+    the SAME sibling-field gate the form renders with before forwarding a
+    gated value: a checkbox ticked while its gate was open goes stale when
+    the gate field changes (the form disables the control but keeps the
+    value), and forwarding the stale value can change behavior downstream --
+    the concrete incident being ``translate_to_english`` checked under
+    provider=default, provider then switched to transcribe-cpp, and the
+    stale ``True`` becoming ``translation_target_language='en'`` ->
+    ``BatchSTTRoutingError`` -> every audio/video job in the batch FAILED at
+    dispatch.
+
+    Only the within-form gate is consulted -- deliberately NOT
+    ``depends_on`` (the packaging gate): a value for a field whose optional
+    package is missing is handled by the pipeline's own failure/ignore
+    paths, and suppressing it here would make a job's options depend on
+    which machine resolved them.
+
+    Args:
+        group: Type group identifier (e.g. ``audio_video``).
+        name: The gated field's machine name.
+        values: Current option values for the group (the builder's merged
+            ``flat_opts``); a missing gate value falls back to the gate
+            field's schema default, mirroring :func:`field_disabled_state`.
+
+    Returns:
+        True when the field's gate is open (or it has no gate, or the
+        group/field is unknown -- unknown never suppresses a value).
+    """
+    try:
+        cap = get_capabilities(group)
+    except KeyError:
+        return True
+    field = next((f for f in cap.fields if f.name == name), None)
+    if field is None or field.enabled_when is None:
+        return True
+    gate = next((f for f in cap.fields if f.name == field.enabled_when), None)
+    gate_value = values.get(
+        field.enabled_when, gate.default if gate is not None else False
+    )
+    if field.enabled_when_values:
+        return gate_value in field.enabled_when_values
+    return bool(gate_value)
 
 
 def get_capabilities(group: str) -> TypeGroupCapabilities:
@@ -646,7 +1108,9 @@ def get_tooling_warnings(group: str) -> list[dict[str, Any]]:
                 {
                     "feature": feature,
                     "label": _feature_label(feature, group),
-                    "hint": hint["hint"],
+                    "hint": _GROUP_FEATURE_HINTS.get(
+                        (group, feature), hint["hint"]
+                    ),
                     "command": hint["command"],
                 }
             )

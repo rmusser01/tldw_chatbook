@@ -158,7 +158,14 @@ def test_options_persist_to_config(monkeypatch):
         preflight_checking=False,
     )
     screen._cancel_library_ingest_preflight = lambda: None
+    # Seeded by ``__init__`` (bypassed by ``__new__``); ``_do_submit_ingest``
+    # bumps it to invalidate in-flight pre-flights (stale-helper repair,
+    # task-3300).
+    screen._library_ingest_preflight_generation = 0
     screen.refresh = lambda **_kwargs: None
+    # Submit schedules the scroll-receipt-into-view callback (task-3304);
+    # the real method posts a message this unmounted shortcut cannot.
+    screen.call_after_refresh = lambda *_args, **_kwargs: None
 
     library_screen_module.LibraryScreen._do_submit_ingest(screen, "doc.pdf")
 
@@ -171,8 +178,62 @@ def test_options_persist_to_config(monkeypatch):
                 "chunk": True,
                 "chunk_size": 1024,
             },
+            # (task-3303 xhigh review round 2, F11) Every NEW snapshot
+            # carries the ebook chunk-method explicitly (scheme identity):
+            # the job-option builder reads an ABSENT value as "legacy
+            # snapshot, keep the pre-branch sentences scheme", so the seed
+            # persists too.
+            "library.ingest_options.ebook": {"chunk_method": "chapters"},
         }
     ]
+
+
+def test_snapshot_coerces_display_string_chunk_numbers(monkeypatch):
+    """task-3301: the generic panel's Inputs hand back display text
+    (``"1000"``); the submitted snapshot must carry ints so processors and
+    the persisted config never see a string chunk size/overlap."""
+    monkeypatch.setattr(
+        library_screen_module,
+        "save_settings_to_cli_config",
+        lambda section_values: True,
+    )
+
+    submitted_jobs = []
+    screen = library_screen_module.LibraryScreen.__new__(
+        library_screen_module.LibraryScreen
+    )
+    screen.app_instance = SimpleNamespace(
+        submit_library_ingest_job=lambda **kwargs: submitted_jobs.append(kwargs)
+    )
+    screen._library_ingest_form = SimpleNamespace(
+        type_options={
+            "generic": {"chunk_size": "1000", "chunk_overlap": "150"}
+        },
+        analyze=False,
+        chunk=True,
+        chunk_size="1000",
+        title="",
+        author="",
+        keywords="",
+        path="notes.txt",
+        preflight=_preflight_result(type_groups={"generic": ["notes.txt"]}),
+        preflight_checking=False,
+    )
+    screen._cancel_library_ingest_preflight = lambda: None
+    screen._library_ingest_preflight_generation = 0
+    screen.refresh = lambda **_kwargs: None
+    # Submit schedules the scroll-receipt-into-view callback (task-3304);
+    # the real method posts a message this unmounted shortcut cannot.
+    screen.call_after_refresh = lambda *_args, **_kwargs: None
+
+    library_screen_module.LibraryScreen._do_submit_ingest(screen, "notes.txt")
+
+    assert len(submitted_jobs) == 1
+    generic = submitted_jobs[0]["ingest_options"]["generic"]
+    assert generic["chunk_size"] == 1000
+    assert generic["chunk_overlap"] == 150
+    assert isinstance(generic["chunk_size"], int)
+    assert isinstance(generic["chunk_overlap"], int)
 
 
 @pytest.mark.asyncio

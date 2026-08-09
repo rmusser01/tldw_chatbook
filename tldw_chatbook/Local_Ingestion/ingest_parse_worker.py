@@ -29,32 +29,44 @@ process boundary -- workers never touch the media DB):
         "perform_analysis": bool,
         "api_name": str | None,
         "api_key": str | None,
+        "analysis_keyless_ok": bool,
+        "analysis_call": dict | None,
         "chunk_options": dict | None,
         "metadata": dict | None,
+        "encoding": str | None,
+        "analysis_skipped_reason": str | None,
     }
 
-The Library ingest queue coordinator (F3 Task 4) builds this dict
-mechanically from a ``LibraryIngestJob``'s fields -- ``title``, ``author``,
-``keywords``, ``perform_analysis``, ``chunk_enabled``, ``chunk_size`` -- the
-same one-step translation ``app.py``'s (pre-F3-pool) queue-runner already
-performs for ``ingest_local_file``:
+The Library ingest queue coordinator (F3 Task 4) builds this dict from a
+``LibraryIngestJob``'s fields via ``app.py``'s ``_ingest_job_options``.
+(task-3301) Since the ingest-controls wiring, that builder also resolves
+the live option values the schema above carries:
 
-    options = {
-        "title": job.title or None,
-        "author": job.author or None,
-        "keywords": list(job.keywords) or None,
-        "perform_analysis": job.perform_analysis,
-        "chunk_options": (
-            {"method": "sentences", "size": job.chunk_size, "overlap": 100}
-            if job.chunk_enabled
-            else None
-        ),
-    }
+* ``chunk_options`` is ``None`` when Chunk content is OFF (the parse
+  pipeline treats ``None`` as "do not chunk" for every type) and
+  ``{"size": N, "max_size": N, "overlap": M}`` (ints) when ON;
+* ``encoding`` carries the generic Encoding selection for the
+  plaintext/html readers;
+* ``api_name``/``api_key`` are present when analysis was requested AND
+  the configured ``[analysis_defaults]`` provider resolves as ready
+  (``Library/ingest_analysis.py``); otherwise
+  ``analysis_skipped_reason`` says why analysis will not run, and the
+  writer surfaces it on the done row. (task-3301 xhigh review round)
+  ``api_name`` is the NORMALIZED chat dispatch name (an
+  ``API_CALL_HANDLERS`` key); ``analysis_keyless_ok`` is the explicit
+  opt-in that lets a keyless-READY provider analyze without a
+  credential (direct callers that never set it keep the historical
+  no-key => silent-skip contract); ``analysis_call`` carries the full
+  ``[analysis_defaults]`` call shape
+  (model/temperature/top_p/min_p/max_tokens) for viewer-parity
+  analysis. A failed analysis travels back as the payload's
+  ``analysis_failed_reason`` (plus a warning) and annotates the done
+  row as "analysis failed: ...".
 
-(``custom_prompt``/``system_prompt``/``api_name``/``api_key``/``metadata``
-have no ``LibraryIngestJob`` counterpart -- the Library queue never sets
-them, so they're simply absent/``None``; they exist in the schema only
-because ``ingest_local_file``'s direct programmatic callers --
+(``custom_prompt``/``system_prompt``/``metadata`` have no
+``LibraryIngestJob`` counterpart -- the Library queue never sets them, so
+they're simply absent/``None``; they exist in the schema only because
+``ingest_local_file``'s direct programmatic callers --
 ``batch_ingest_files``, ``quick_ingest``, the server ingest path -- still
 use them.)
 

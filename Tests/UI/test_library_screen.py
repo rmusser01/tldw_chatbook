@@ -53,8 +53,20 @@ def _minimal_ingest_screen() -> LibraryScreen:
     screen = object.__new__(LibraryScreen)
     screen._library_ingest_form = LibraryIngestFormState()
     screen._transcribe_cpp_configured = False
-    # Set by ``__init__``, which this shortcut bypasses.
+    # Set by ``__init__``, which this shortcut bypasses. (task-3303 branch
+    # repair: siblings 3301/3302 taught the submit/state paths to read these
+    # instance attributes, and this helper had drifted -- three tests in
+    # this file were failing at HEAD with bare AttributeErrors.)
     screen._library_ingest_preflight_worker = None
+    screen._library_ingest_preflight_generation = 0
+    screen._library_selected_row_id = ""
+    screen._library_ingest_clear_finished_armed = False
+    screen._library_ingest_clear_finished_armed_at = 0.0
+    screen._library_ingest_expanded_details = set()
+    screen._library_ingest_recent_ledger = []
+    # Submit schedules the scroll-receipt-into-view callback (task-3304);
+    # the real method posts a message this unmounted shortcut cannot.
+    screen.call_after_refresh = lambda *_args, **_kwargs: None
     return screen
 
 
@@ -209,6 +221,78 @@ def test_load_ingest_options_from_config(monkeypatch) -> None:
     }
     assert screen._transcribe_cpp_configured is True
     assert "/private/model.gguf" not in repr(screen._library_ingest_form)
+
+
+def test_task_3303_options_round_trip_persisted_config(monkeypatch) -> None:
+    """(task-3303 AC6) Every new per-type option persists and loads back.
+
+    Drives the two REAL seams -- ``_do_submit_ingest``'s batched save and
+    ``_load_library_ingest_options_from_config`` -- with only the config I/O
+    stubbed as a dict, so a field missing from the capability schema (the
+    load path iterates ``cap.field_names``) fails here.
+    """
+    screen = _minimal_ingest_screen()
+    screen.app_instance = MagicMock()
+    screen.app_instance.submit_library_ingest_job = MagicMock()
+    screen.refresh = MagicMock()
+
+    form = screen._library_ingest_form
+    form.path = "/tmp/report.docx"
+    submitted_options = {
+        "document": {
+            "processing_method": "docling",
+            "ocr": True,
+            "ocr_language": "de",
+        },
+        "pdf": {
+            "pdf_engine": "docext",
+            "ocr": True,
+            "ocr_language": "fr",
+            "ocr_backend": "tesseract",
+        },
+        "ebook": {"chunk_method": "chapters"},
+        "audio_video": {"translate_to_english": True, "vad_filter": True},
+        "web": {"scrape_method": "sitemap", "max_pages": 5},
+    }
+    form.type_options = {g: dict(v) for g, v in submitted_options.items()}
+
+    saved_sections: dict[str, dict] = {}
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.library_screen.save_settings_to_cli_config",
+        lambda section_values: saved_sections.update(
+            {s: dict(v) for s, v in section_values.items()}
+        )
+        or True,
+    )
+
+    screen._do_submit_ingest("/tmp/report.docx")
+
+    for group, values in submitted_options.items():
+        section = f"library.ingest_options.{group}"
+        for name, value in values.items():
+            assert saved_sections.get(section, {}).get(name) == value, (
+                f"{group}.{name} did not persist"
+            )
+
+    # Fresh screen, fed only what the save wrote: everything loads back.
+    loader = _minimal_ingest_screen()
+
+    def fake_get_cli_setting(section: str, key: str = None, default: object = None):
+        return saved_sections.get(section, {}).get(key, default)
+
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.library_screen.get_cli_setting",
+        fake_get_cli_setting,
+    )
+
+    loader._load_library_ingest_options_from_config()
+
+    restored = loader._library_ingest_form.type_options
+    for group, values in submitted_options.items():
+        for name, value in values.items():
+            assert restored.get(group, {}).get(name) == value, (
+                f"{group}.{name} did not load back"
+            )
 
 
 def test_transcribe_cpp_picker_filters_to_gguf() -> None:

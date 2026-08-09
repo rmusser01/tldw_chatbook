@@ -1209,8 +1209,10 @@ async def test_rail_shows_a_visible_scrollbar_when_content_overflows():
 async def test_landing_footer_advertises_the_landing_keyboard_story():
     """task-2237 (R2): the landing footer advertises every key that works
     there -- `/` focus search, the hub accelerators `i` (import content) and
-    `n` (new note), and F6 pane cycling -- instead of the bare one-key
-    hint F-012 shipped."""
+    `n` (new note) -- instead of the bare one-key hint F-012 shipped.
+    (task-3302 made the footer append the shared global hints, sourced
+    here from the footer's own constant so the two can't drift; this
+    assertion previously pinned the pre-3302 "F6 next pane" tail.)"""
     app = _build_test_app()
     _seed_conversations(app, _two_conversations())
     host = LibraryHarness(app)
@@ -1221,7 +1223,8 @@ async def test_landing_footer_advertises_the_landing_keyboard_story():
 
         footer = screen.query_one(AppFooterStatus)
         assert footer.shortcut_text == (
-            "/ focus search | i import content | n new note | F6 next pane"
+            "/ focus search | i import content | n new note | "
+            f"{AppFooterStatus.GLOBAL_HINTS}"
         )
 
 
@@ -14707,7 +14710,7 @@ async def test_library_shell_ingest_canvas_quiet_line_toggles_live_while_typing(
         await _open_library_ingest_canvas(screen, pilot)
 
         quiet_line = screen.query_one("#library-ingest-start-quiet-line", Static)
-        assert str(quiet_line.renderable) == "Enter a file path to start."
+        assert str(quiet_line.renderable) == "Enter a file path or URL to start."
         assert screen.query_one("#library-ingest-start", Button).disabled is True
 
         screen.query_one("#library-ingest-path", Input).value = str(tmp_path / "a.txt")
@@ -14729,7 +14732,7 @@ async def test_library_shell_ingest_canvas_quiet_line_toggles_live_while_typing(
         assert (
             screen.query_one("#library-ingest-start-quiet-line", Static) is quiet_line
         )
-        assert str(quiet_line.renderable) == "Enter a file path to start."
+        assert str(quiet_line.renderable) == "Enter a file path or URL to start."
         assert screen.query_one("#library-ingest-start", Button).disabled is True
 
 
@@ -14924,7 +14927,7 @@ async def test_library_ingest_canvas_start_quiet_line_renders_when_path_blank():
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
         await pilot.pause()
         line = host.query_one("#library-ingest-start-quiet-line", Static)
-        assert str(line.renderable) == "Enter a file path to start."
+        assert str(line.renderable) == "Enter a file path or URL to start."
 
 
 @pytest.mark.asyncio
@@ -18246,7 +18249,7 @@ async def test_in_place_apply_updates_panel_scope_labels(tmp_path):
         await pilot.pause()
 
         scope = screen.query_one("#type-group-generic .type-group-scope", Static)
-        assert "Applies to all" in str(scope.renderable), (
+        assert "Applies to every" in str(scope.renderable), (
             f"in-place apply left the scope label stale: {scope.renderable!r}"
         )
         # Still the in-place path: the form widgets kept identity.
@@ -22250,3 +22253,53 @@ async def test_library_note_unmount_clears_notes_timers_and_workers() -> None:
             worker.node is screen and worker.group.startswith("library_note")
             for worker in host.workers
         )
+
+@pytest.mark.asyncio
+async def test_commit_line_hides_while_option_error_gate_blocks(tmp_path):
+    """(task-3305, MI-16) "1 will import" beside "Fix the highlighted
+    options to start" is a mixed message: text/number edits take the
+    in-place path, which synced the gate but left the commit line
+    asserting the pre-error forecast."""
+    db = MediaDatabase(tmp_path / "ingest-canvas.db", client_id="t3305-commit")
+    harness = _LibraryIngestCanvasHarness(db)
+    staged = tmp_path / "report.txt"
+    staged.write_text("hello world")
+
+    async with harness.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = harness.screen_stack[-1]
+        await _wait_for_library_shell(screen, pilot)
+        await _open_library_ingest_canvas(screen, pilot)
+        await _wait_for_selector(screen, pilot, "#library-ingest-path")
+
+        path_input = screen.query_one("#library-ingest-path", Input)
+        path_input.value = str(staged)
+        for _ in range(100):
+            await pilot.pause(0.05)
+            if screen._library_ingest_form.preflight is not None:
+                break
+        else:
+            raise AssertionError("preflight never completed")
+        await pilot.pause()
+
+        summary = screen.query_one("#library-ingest-commit-summary", Static)
+        assert summary.display is True
+        assert "1 will import" in str(summary.renderable)
+
+        chunk = screen.query_one("#opt-generic-chunk_size", Input)
+        chunk.value = "abc"
+        await pilot.pause()
+        await pilot.pause()
+        quiet = screen.query_one("#library-ingest-start-quiet-line", Static)
+        assert "Fix the highlighted options" in str(quiet.renderable)
+        assert summary.display is False, (
+            "commit forecast stayed visible while the option-error gate "
+            "blocks Start (mixed message)"
+        )
+
+        chunk.value = "1500"
+        await pilot.pause()
+        await pilot.pause()
+        assert summary.display is True, (
+            "fixing the option must restore the commit forecast in place"
+        )
+        assert "1 will import" in str(summary.renderable)

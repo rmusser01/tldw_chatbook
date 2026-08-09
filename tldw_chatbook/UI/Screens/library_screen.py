@@ -85,11 +85,12 @@ from ...Library.library_export_state import (
     next_media_quality,
     normalize_export_destination,
 )
+from ...Library.ingest_analysis import resolve_ingest_analysis_provider
 from ...Library.ingest_capabilities import get_capabilities, list_type_groups
 from ...Library.ingest_preflight import analyze_path
 from ...Library.ingest_types import PreflightResult
 from ...Widgets.Library.library_ingest_canvas import (
-    _summarise_option,
+    build_type_group_title,
     ingest_scope_label,
 )
 from ...Library.library_ingest_jobs import (
@@ -1214,13 +1215,39 @@ class IngestGuardrailModal(ModalScreen[bool]):
     #ingest-guardrail-modal {
         width: 60;
         height: auto;
-        border: tall gray;
-        background: black;
+        max-height: 90%;
+        border: thick $primary;
+        background: $surface;
         padding: 1 2;
     }
 
+    /* task-3300 xhigh review round 2 (F3): the warning list is the ONLY
+       part of the modal allowed to give way -- it hugs its content while
+       everything fits, and scrolls once it doesn't, so Cancel / "Start
+       import anyway" stay reachable at any warning count. Before this,
+       5+ warnings grew the plain Vertical past the screen and clipped
+       the action row off the bottom. The row budget (screen cap minus
+       the pinned title/action chrome) is computed in ``on_mount``:
+       ``max-height: 1fr`` here resolves against the modal's FULL inner
+       height without subtracting the pinned siblings (measured -- a
+       7-warning list took all 17 inner rows and pushed the actions off
+       a 24-row screen). */
+    #ingest-guardrail-warnings {
+        height: auto;
+    }
+
+    /* task-3300: a bare ``Vertical()`` defaults to ``height: 1fr``, which
+       inside this ``height: auto`` modal starved every warning Static to
+       zero rendered height (the DESIGN.md section 7 "bare Container starving
+       its sibling" defect -- live capture showed an empty full-height
+       column). Each warning block must hug its content. */
+    .ingest-guardrail-warning {
+        height: auto;
+        margin-top: 1;
+    }
+
     #ingest-guardrail-actions {
-        height: 3;
+        height: auto;
         min-height: 3;
         margin: 1 0 0 0;
         align-horizontal: right;
@@ -1228,10 +1255,11 @@ class IngestGuardrailModal(ModalScreen[bool]):
 
     #ingest-guardrail-cancel,
     #ingest-guardrail-confirm {
-        width: 14;
-        min-width: 14;
+        width: auto;
+        min-width: 10;
         height: 3;
         min-height: 3;
+        margin-left: 1;
     }
     """
 
@@ -1245,23 +1273,49 @@ class IngestGuardrailModal(ModalScreen[bool]):
     def compose(self) -> ComposeResult:
         with Vertical(id="ingest-guardrail-modal"):
             yield Static("Some files may fail to import:")
-            for i, w in enumerate(self.warnings):
-                count = self.affected_counts.get(w["feature"], 0)
-                with Vertical():
-                    yield Static(f"- {w['label']} ({count} files): {w['hint']}")
-                    if w.get("command"):
-                        yield Button(
-                            "Copy install command",
-                            id=f"ingest-guardrail-copy-command-{i}",
-                            classes="copy-command",
+            # (F3) Warnings scroll; the title above and the action row
+            # below stay pinned, so the actions are reachable at any
+            # warning count.
+            with VerticalScroll(id="ingest-guardrail-warnings"):
+                for i, w in enumerate(self.warnings):
+                    count = self.affected_counts.get(w["feature"], 0)
+                    files_word = "file" if count == 1 else "files"
+                    with Vertical(classes="ingest-guardrail-warning"):
+                        yield Static(
+                            f"- {w['label']} ({count} {files_word}): {w['hint']}"
                         )
+                        if w.get("command"):
+                            yield Button(
+                                "Copy install command",
+                                id=f"ingest-guardrail-copy-command-{i}",
+                                classes="copy-command",
+                            )
             with Horizontal(id="ingest-guardrail-actions"):
-                yield Button("Cancel", id="ingest-guardrail-cancel", variant="error")
+                # Cancel is the safe action -- repo convention keeps it
+                # ``default``; the confirm carries the emphasis (task-3300).
+                yield Button("Cancel", id="ingest-guardrail-cancel", variant="default")
                 yield Button(
                     "Start import anyway",
                     id="ingest-guardrail-confirm",
                     variant="primary",
                 )
+
+    def on_mount(self) -> None:
+        """Cap the warning list to the rows left after the pinned chrome.
+
+        (F3) The scroll region's budget is 90% of the screen (the modal
+        container's own ``max-height``) minus the fixed rows around it:
+        border 2 + padding 2 + title 1 + action row 3 + action margin 1.
+        Computed here because no CSS scalar expresses "remaining height
+        after my siblings" inside a ``height: auto`` container --
+        ``max-height: 1fr`` resolves against the container's full inner
+        height and pushes the action row off-screen (measured on a
+        24-row screen with 7 warnings). ``max-height`` only ever caps:
+        short lists still hug their content exactly as before.
+        """
+        chrome_rows = 9
+        budget = max(3, int(self.app.size.height * 0.9) - chrome_rows)
+        self.query_one("#ingest-guardrail-warnings").styles.max_height = budget
 
     @on(Button.Pressed, "#ingest-guardrail-confirm")
     def _confirm(self) -> None:
@@ -1343,6 +1397,13 @@ class LibraryScreen(BaseAppScreen):
         ("escape", "library_media_viewer_back", "Back to media list"),
         ("escape", "library_note_editor_back", "Back to notes list"),
         ("escape", "library_prompt_editor_back", "Back to prompts list"),
+        # task-3302 (MI-04): a seventh "escape" binding, same disjoint-gate
+        # contract -- active only while the Ingest canvas owns the row
+        # (``check_action``), where every other escape gate is False, so
+        # the try-in-order chain still fires exactly one action. Returns
+        # to the hub landing; the persisted ingest form survives (the
+        # task-2043 persistence rule), so Esc is never destructive.
+        ("escape", "library_ingest_back", "Back to Library hub"),
         ("escape", "library_list_focus_rail", "Focus rail"),
         # Task 12/RAG-36: keyboard traversal of Library Search/RAG evidence
         # cards. Both actions gate on the currently FOCUSED widget being one
@@ -1455,6 +1516,19 @@ class LibraryScreen(BaseAppScreen):
         ("esc", "focus rail"),
     )
 
+    #: task-3302 (MI-04): the Ingest canvas's own keyboard story -- Enter
+    #: (in the path field) starts the import when the Start gate is open
+    #: (``handle_library_ingest_path_submitted``), Esc returns to the hub
+    #: landing (``action_library_ingest_back``). Shared by the footer and
+    #: F1 via ``_library_footer_shortcuts_for_current_state``, the
+    #: task-2858 single-source rule.
+    LIBRARY_INGEST_SHORTCUTS = (
+        ("/", "focus search"),
+        ("F6", "next pane"),
+        ("enter", "start import"),
+        ("esc", "back to hub"),
+    )
+
     #: task-2237 (R2): F6 pane-cycle targets (the app's
     #: ``focus_relative_workbench_pane`` idiom, per personas). The rail's
     #: preferred focus is its search box; the canvas's is the hub's first
@@ -1466,7 +1540,11 @@ class LibraryScreen(BaseAppScreen):
         ),
         WorkbenchPaneTarget(
             "library-canvas",
-            ("library-hub-action-import",),
+            # task-3302 (MI-03): the hub's first action exists only on the
+            # landing, so the canvas pane target was landing-only and F6
+            # skipped the Ingest canvas entirely; the path field is the
+            # canvas target there (candidates are tried in order).
+            ("library-hub-action-import", "library-ingest-path"),
         ),
     )
     LIBRARY_NOTES_NAVIGATOR_SHORTCUTS = (("Ctrl+N", "New · / Find · Esc Library"),)
@@ -2776,6 +2854,11 @@ class LibraryScreen(BaseAppScreen):
             return self.LIBRARY_SHORTCUTS
         if not self._library_selected_row_id:
             return self.LIBRARY_LANDING_SHORTCUTS
+        # task-3302 (MI-04): Ingest is its own honest context -- Enter
+        # starts the import, Esc returns to the hub. Disjoint from every
+        # gate below (they all require a different row id).
+        if self._library_selected_row_id == LIBRARY_ROW_INGEST_MEDIA:
+            return self.LIBRARY_INGEST_SHORTCUTS
         if self._file_notes_active():
             return self.LIBRARY_NOTES_FILES_SHORTCUTS
         if self._library_media_viewer_substate_active():
@@ -4264,11 +4347,12 @@ class LibraryScreen(BaseAppScreen):
         itself has focus, its own ``_on_key`` re-arms the query instead
         (see ``LibraryRailSearchInput``).
 
-        task-2237 (R2): on the LANDING only, `i` and `n` are the hub
-        next-action accelerators (import content / new note), dispatched
-        through the same guarded row-switch the hub rows use. They are
-        advertised on the landing footer and nowhere else, so they never
-        fire off the landing.
+        task-2237 (R2): `i` and `n` are the hub next-action accelerators
+        (import content / new note), dispatched through the same guarded
+        row-switch the hub rows use. task-3302 (MI-04) widened `i` to work
+        from ANY Library canvas (it opens the same Ingest canvas from
+        anywhere, and the row-switch guards still veto over dirty edits);
+        `n` stays landing-scoped because it opens a create editor.
 
         task-2856 (AC1): Up/Down move DOM focus between Library list rows
         (Media/Notes/Prompts/Skills) -- see ``_move_library_list_row_focus``,
@@ -4309,17 +4393,33 @@ class LibraryScreen(BaseAppScreen):
             event.stop()
             event.prevent_default()
             return
-        # Landing-scoped hub accelerators (task-2237).
+        # task-3302 (MI-04): `i` (import content) works from ANY Library
+        # canvas, not just the landing -- there was no keyboard route into
+        # Ingest once a row was selected. Still never fires while an
+        # Input/TextArea owns focus (the early return above), and it rides
+        # the same guarded row switch as the rail rows, so dirty
+        # note/prompt/skill edits still flush-or-veto the jump. A no-op
+        # while Ingest already owns the canvas.
+        if event.key == "i":
+            if self._library_selected_row_id == LIBRARY_ROW_INGEST_MEDIA:
+                return
+            self.run_worker(
+                self._select_library_rail_row(LIBRARY_ROW_INGEST_MEDIA),
+                exclusive=True,
+                group="library_rail_row_switch",
+            )
+            event.stop()
+            event.prevent_default()
+            return
+        # Landing-scoped hub accelerator (task-2237): `n` (new note) stays
+        # landing-only -- unlike `i`, it opens a CREATE editor, which would
+        # be a surprising context loss from a browse canvas.
         if self._library_selected_row_id:
             return
-        accelerator_row = {
-            "i": LIBRARY_ROW_INGEST_MEDIA,
-            "n": LIBRARY_ROW_CREATE_NOTE,
-        }.get(event.key)
-        if accelerator_row is None:
+        if event.key != "n":
             return
         self.run_worker(
-            self._select_library_rail_row(accelerator_row),
+            self._select_library_rail_row(LIBRARY_ROW_CREATE_NOTE),
             exclusive=True,
             group="library_rail_row_switch",
         )
@@ -9352,6 +9452,65 @@ class LibraryScreen(BaseAppScreen):
         except (NoMatches, QueryError):
             return
         quiet_line.update(new_state.start_quiet_line)
+        # (task-3305, MI-16) The commit forecast rides the SAME update as
+        # the gate: a text/number option edit takes the in-place path, and
+        # syncing the gate but not the forecast left "1 will import"
+        # beside "Fix the highlighted options to start" -- a mixed
+        # message. The state builder already empties the line whenever the
+        # gate is closed, so one sync here keeps the two agreeing.
+        try:
+            commit_summary = self.query_one(
+                "#library-ingest-commit-summary", Static
+            )
+        except (NoMatches, QueryError):
+            pass
+        else:
+            commit_summary.update(new_state.commit_summary_line)
+            commit_summary.display = bool(new_state.commit_summary_line)
+        # (task-3301) The Analyze-readiness hint shares the gate's in-place
+        # update path so toggling the option or fixing the config never
+        # needs a recompose to change the message.
+        try:
+            analysis_hint = self.query_one(
+                "#library-ingest-analysis-hint", Static
+            )
+        except (NoMatches, QueryError):
+            return
+        analysis_hint.update(new_state.analysis_hint_line)
+        analysis_hint.display = bool(new_state.analysis_hint_line)
+        # (task-3304, MI-08) Gate-line/hint changes move the fold; re-derive
+        # the indicator once the new heights have actually laid out.
+        self.call_after_refresh(self._update_library_ingest_fold_hint)
+
+    def _update_library_ingest_fold_hint(self) -> None:
+        """Re-derive the canvas fold indicator after an in-place update.
+
+        (task-3304, MI-08) The hint is canvas-owned, always-mounted,
+        display-managed chrome (never conditionally composed); this hook
+        exists because queue/summary recomposes change content height
+        WITHOUT resizing the canvas, so the canvas's own ``on_resize``
+        never fires for them.
+        """
+        try:
+            canvas = self.query_one(LibraryIngestCanvas)
+        except (NoMatches, QueryError):
+            return
+        canvas.sync_fold_hint()
+
+    def _scroll_library_ingest_queue_into_view(self) -> None:
+        """Bring the queue heading into view after a submit (MI-08).
+
+        Every submit used to land its outcome rows below the fold: the
+        acknowledgement existed but was invisible. ``top=True`` parks the
+        heading at the top of the viewport so the freshly queued rows
+        below it are what the user sees.
+        """
+        try:
+            canvas = self.query_one(LibraryIngestCanvas)
+            heading = canvas.query_one("#library-ingest-queue-heading", Static)
+        except (NoMatches, QueryError):
+            return
+        canvas.scroll_to_widget(heading, animate=False, top=True)
 
     def _update_library_ingest_dynamic_regions(self) -> None:
         """Refresh ONLY the pre-flight summary + queue children (task-2042).
@@ -9399,16 +9558,9 @@ class LibraryScreen(BaseAppScreen):
         for intro in canvas.query(".library-ingest-intro"):
             intro.display = bool(new_state.intro_lines)
         # (task-2140) The commit-summary line is canvas-level and
-        # display-managed -- update content and visibility here so a
-        # non-structural pre-flight apply (or a Clear) can never leave it
-        # unmounted or stale.
-        try:
-            commit_summary = canvas.query_one("#library-ingest-commit-summary", Static)
-        except (NoMatches, QueryError):
-            pass
-        else:
-            commit_summary.update(new_state.commit_summary_line)
-            commit_summary.display = bool(new_state.commit_summary_line)
+        # display-managed; its content/visibility sync lives in
+        # ``_update_library_ingest_gate`` (called below) so the forecast
+        # and the gate can never disagree (task-3305, MI-16).
         try:
             clear_button = canvas.query_one("#library-ingest-clear-path", Button)
         except (NoMatches, QueryError):
@@ -9508,6 +9660,14 @@ class LibraryScreen(BaseAppScreen):
             and bool(getattr(runtime_state, "server_configured", False))
             and not self._server_binding_is_shipped_placeholder()
         )
+        # (task-3301) Resolve the Analyze-after-import provider so the panel
+        # can say -- BEFORE Start -- when the option is a promise the run
+        # cannot keep. The builder gates the hint on the analyze toggle.
+        analysis_unready_hint = ""
+        if form.analyze:
+            analysis_unready_hint = resolve_ingest_analysis_provider(
+                getattr(self.app_instance, "app_config", None)
+            ).hint
         return build_library_ingest_state(
             jobs,
             form=form,
@@ -9520,6 +9680,7 @@ class LibraryScreen(BaseAppScreen):
             clear_finished_armed=self._library_ingest_clear_finished_armed,
             recent_ledger=tuple(self._library_ingest_recent_ledger),
             expanded_details=self._library_ingest_expanded_details,
+            analysis_unready_hint=analysis_unready_hint,
         )
 
     def _ensure_library_notes_sync_config_loaded(self) -> None:
@@ -11118,6 +11279,14 @@ class LibraryScreen(BaseAppScreen):
             self._arm_library_list_entry_focus()
         if self._library_selected_row_id == LIBRARY_ROW_INGEST_EXPORT:
             self._start_library_export_counts_worker()
+        if row_id == LIBRARY_ROW_INGEST_MEDIA and self.is_mounted:
+            # task-3302 AC#1 (MI-03): entering Ingest parks the caret in
+            # the path field -- the first action on this canvas is always
+            # typing/pasting a path. Previously focus stayed wherever it
+            # was (the rail search box in the live walk), so typing a path
+            # ran a Library search. Same call_after_refresh seam the
+            # CREATE_PROMPT/CREATE_SKILL entry-focus branches below use.
+            self.call_after_refresh(self._focus_library_ingest_path)
         if row_id == LIBRARY_ROW_CREATE_PROMPT and self.is_mounted:
             self.call_after_refresh(self._arm_library_prompt_editor)
         if row_id == LIBRARY_ROW_CREATE_SKILL and self.is_mounted:
@@ -13152,10 +13321,11 @@ class LibraryScreen(BaseAppScreen):
 
         Returning ``False`` deactivates the binding entirely, so Escape /
         Ctrl+S behave as if unbound anywhere else on the Library screen.
-        All six "escape" ``BINDINGS`` entries share the same key -- Textual
-        tries them in order and stops at the first whose ``check_action``
-        passes, so each one returning ``False`` outside its own context is
-        what lets the next fall through untouched.
+        All seven "escape" ``BINDINGS`` entries share the same key --
+        Textual tries them in order and stops at the first whose
+        ``check_action`` passes, so each one returning ``False`` outside
+        its own context is what lets the next fall through untouched
+        (task-3302 added the Ingest-canvas gate to the original six).
 
         task-2858 AC#2 (LIB-09): the three Search/RAG evidence-card
         actions (``u``/``enter``/``o``) had NO gate here before this task
@@ -13208,6 +13378,8 @@ class LibraryScreen(BaseAppScreen):
             return self._library_note_editor_active()
         if action == "library_prompt_editor_back":
             return self._library_prompt_editor_active()
+        if action == "library_ingest_back":
+            return self._library_selected_row_id == LIBRARY_ROW_INGEST_MEDIA
         if action == "library_list_focus_rail":
             return self._library_list_canvas_showing_list()
         if action == "library_rag_use_in_console":
@@ -13372,6 +13544,49 @@ class LibraryScreen(BaseAppScreen):
             self.query_one("#library-skill-name", Input).focus()
         except (NoMatches, QueryError):
             pass
+
+    def _focus_library_ingest_path(self) -> None:
+        """Focus the Ingest canvas's path field (task-3302 AC#1, MI-03).
+
+        The Ingest entry-focus counterpart of ``_focus_library_skill_name``
+        -- scheduled via ``call_after_refresh`` from the rail-row switch so
+        typing immediately edits the path instead of feeding whatever
+        widget happened to keep focus (the live walk: the rail search box,
+        so a pasted path ran a Library search).
+        """
+        try:
+            self.query_one("#library-ingest-path", Input).focus()
+        except (NoMatches, QueryError):
+            pass
+
+    def _focus_library_hub_entry(self) -> None:
+        """Focus the hub landing's first action (task-3302 AC#2, MI-04).
+
+        Called after Esc leaves the Ingest canvas for the landing:
+        stranding focus nowhere would recreate the invisible-focus failure
+        this task closes, while the hub's first action keeps the landing
+        accelerators (`i`/`n`) live -- focusing the SEARCH box instead
+        would swallow them as literal text.
+        """
+        try:
+            self.query_one("#library-hub-action-import", Button).focus()
+        except (NoMatches, QueryError):
+            pass
+
+    async def action_library_ingest_back(self) -> None:
+        """Escape: leave the Ingest canvas for the hub landing (task-3302).
+
+        Gated by ``check_action`` to the Ingest row, mirroring the other
+        six escape gates. Routes through the shared rail-row seam with the
+        landing's empty row id, so every switch-hygiene reset (including
+        ``_pause_library_ingest_transient_ui`` -- the form itself persists,
+        task-2043) applies exactly as a rail press would.
+        """
+        if self._library_selected_row_id != LIBRARY_ROW_INGEST_MEDIA:
+            return
+        await self._select_library_rail_row("")
+        if self.is_mounted:
+            self.call_after_refresh(self._focus_library_hub_entry)
 
     @on(Button.Pressed, "#library-skill-back")
     async def handle_library_skill_back(self, event: Button.Pressed) -> None:
@@ -18365,6 +18580,10 @@ class LibraryScreen(BaseAppScreen):
         # late result out (task-2011).
         self._invalidate_library_ingest_preflight()
         self.refresh(recompose=True)
+        # (task-3304, MI-08) The receipt must be seen, not just exist: the
+        # queue's outcome area sat below the fold on every submit. After
+        # the recompose settles, bring the queue heading into view.
+        self.call_after_refresh(self._scroll_library_ingest_queue_into_view)
 
     def _load_library_ingest_options_from_config(self) -> None:
         """Load persisted per-type ingest options into the form echo.
@@ -18431,6 +18650,38 @@ class LibraryScreen(BaseAppScreen):
         # otherwise fall back to the legacy top-level form field.
         if "chunk_size" not in generic:
             generic["chunk_size"] = clamp_chunk_size(form.chunk_size)
+        # (task-3301) The panel's number Inputs hand back display TEXT
+        # ("1000"); this snapshot is both what the job pipeline consumes
+        # and what gets persisted to config, so numbers are coerced to
+        # ints here, at the boundary, and never downstream. The values
+        # were already gate-validated (``collect_ingest_option_errors``
+        # blocks Start on a non-integer), so the clamp/fallback below is
+        # defensive, not a second validator.
+        generic["chunk_size"] = clamp_chunk_size(str(generic["chunk_size"]))
+        if "chunk_overlap" in generic:
+            try:
+                generic["chunk_overlap"] = max(
+                    0, int(str(generic["chunk_overlap"]).strip())
+                )
+            except (TypeError, ValueError):
+                generic.pop("chunk_overlap")  # fall back to the schema default
+        # (task-3303 xhigh review round 2, F11) The ebook chunk-method is
+        # scheme IDENTITY, so every NEW snapshot must carry it explicitly
+        # even when untouched: the job-option builder treats an ABSENT
+        # value as "this snapshot predates the field" and falls back to
+        # the pre-branch sentences scheme for requeue parity. Without this
+        # seed a fresh untouched submission would be indistinguishable
+        # from a legacy job and lose the chapters default.
+        ebook = snapshot.setdefault("ebook", {})
+        if not str(ebook.get("chunk_method") or "").strip():
+            ebook["chunk_method"] = next(
+                (
+                    field.default
+                    for field in get_capabilities("ebook").fields
+                    if field.name == "chunk_method"
+                ),
+                "chapters",
+            )
         return snapshot
 
     @staticmethod
@@ -18923,14 +19174,13 @@ class LibraryScreen(BaseAppScreen):
             values["analyze"] = form.analyze
             values["chunk"] = form.chunk
             values["chunk_size"] = form.chunk_size
-        summary = ", ".join(
-            _summarise_option(f, values.get(f.name, f.default)) for f in cap.fields
-        )
         try:
             panel = self.query_one(f"#type-group-{group}", Collapsible)
         except (NoMatches, QueryError):
             return
-        panel.title = f"{cap.label} — {summary}"
+        # (task-3305, MI-16) One title builder for compose-time and this
+        # in-place path: capped, empty-skipping, changed-values-first.
+        panel.title = build_type_group_title(cap, values)
 
     # ----- Export canvas: section entry points --------------------------
 

@@ -43,7 +43,13 @@ def _clear_installed_probe_cache():
         ("/tmp/notes.md", "generic"),
         ("/tmp/spreadsheet.csv", "generic"),
         ("/tmp/page.html", "generic"),
-        ("/tmp/document.docx", "generic"),
+        # (task-3303) Word-processor formats get their own group: the generic
+        # panel called a .docx a "plain text file" and had no path to
+        # ``process_document``'s OCR options.
+        ("/tmp/document.docx", "document"),
+        ("/tmp/document.doc", "document"),
+        ("/tmp/notes.odt", "document"),
+        ("/tmp/letter.rtf", "document"),
     ],
 )
 def test_get_type_group_maps_extensions(path: str, expected_group: str) -> None:
@@ -101,7 +107,11 @@ def test_the_canvas_and_the_pipeline_agree_on_what_a_url_is() -> None:
         "web": {"article"},
         "pdf": {"pdf", "article"},
         "ebook": {"ebook", "article"},
-        "generic": {"document", "plaintext", "html", "xml", "article"},
+        # A .docx URL groups as a document (the extension wins, like pdf/epub)
+        # while the pipeline fetches it as an article -- same compatibility
+        # allowance the pdf/ebook rows above already make.
+        "document": {"document", "article"},
+        "generic": {"plaintext", "html", "xml", "article"},
     }
     for url in (
         "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
@@ -122,7 +132,7 @@ def test_get_capabilities_pdf() -> None:
     assert isinstance(caps, TypeGroupCapabilities)
     assert caps.group == "pdf"
     assert caps.required_features == ("pdf_processing",)
-    assert caps.field_names == ("pdf_engine", "ocr")
+    assert caps.field_names == ("pdf_engine", "ocr", "ocr_language", "ocr_backend")
 
     engine_field = caps.fields[0]
     assert isinstance(engine_field, OptionField)
@@ -131,6 +141,98 @@ def test_get_capabilities_pdf() -> None:
     assert engine_field.default == "pymupdf4llm"
     assert "pymupdf" in engine_field.options
     assert "docling" in engine_field.options
+    # (task-3303) docext is a valid ``process_pdf`` engine with no UI path.
+    assert "docext" in engine_field.options
+
+
+def test_pdf_ocr_toggle_is_gated_to_ocr_capable_engines() -> None:
+    """(task-3303 AC2) Enable-OCR under pymupdf engines was a silent no-op.
+
+    ``process_pdf`` only OCRs under the docling/docext parsers; the checkbox
+    must be inert (with the reason in its label hint) under any other engine.
+    """
+    caps = get_capabilities("pdf")
+    ocr_field = next(f for f in caps.fields if f.name == "ocr")
+    assert ocr_field.enabled_when == "pdf_engine"
+    assert set(ocr_field.enabled_when_values) == {"docling", "docext"}
+    assert ocr_field.hint, "the inert state must carry its reason at the control"
+
+
+def test_pdf_ocr_detail_fields() -> None:
+    """(task-3303 AC2) OCR language rides the OCR toggle; backend rides docext."""
+    caps = get_capabilities("pdf")
+    language_field = next(f for f in caps.fields if f.name == "ocr_language")
+    assert language_field.type == "text"
+    assert language_field.default == "en"
+    assert language_field.enabled_when == "ocr"
+
+    backend_field = next(f for f in caps.fields if f.name == "ocr_backend")
+    assert backend_field.type == "select"
+    assert backend_field.default == "auto"
+    assert "docext" in backend_field.options
+    # ``process_pdf`` consults ocr_backend only when the parser is docext.
+    assert backend_field.enabled_when == "pdf_engine"
+    assert backend_field.enabled_when_values == ("docext",)
+
+
+def test_get_capabilities_document() -> None:
+    """(task-3303 AC1) The document group exposes ``process_document``'s knobs."""
+    caps = get_capabilities("document")
+    assert caps.group == "document"
+    assert caps.field_names == ("processing_method", "ocr", "ocr_language")
+
+    method_field = next(f for f in caps.fields if f.name == "processing_method")
+    assert method_field.type == "select"
+    assert method_field.default == "auto"
+    assert set(method_field.options) == {"auto", "docling", "native"}
+
+    ocr_field = next(f for f in caps.fields if f.name == "ocr")
+    assert ocr_field.type == "checkbox"
+    assert ocr_field.default is False
+    # OCR only works through docling (``process_document`` docstring), which
+    # the auto method selects when installed.
+    assert ocr_field.enabled_when == "processing_method"
+    assert set(ocr_field.enabled_when_values) == {"auto", "docling"}
+    assert ocr_field.depends_on == "docling"
+    assert ocr_field.hint, "the inert state must carry its reason at the control"
+
+    language_field = next(f for f in caps.fields if f.name == "ocr_language")
+    assert language_field.type == "text"
+    assert language_field.default == "en"
+    assert language_field.enabled_when == "ocr"
+
+
+def test_ebook_chunk_method_field() -> None:
+    """(task-3303 AC3) Chapter chunking is choosable from the ebook panel."""
+    caps = get_capabilities("ebook")
+    method_field = next(f for f in caps.fields if f.name == "chunk_method")
+    assert method_field.type == "select"
+    assert method_field.default == "chapters"
+    assert set(method_field.options) == {
+        "chapters",
+        "sentences",
+        "words",
+        "paragraphs",
+    }
+
+
+def test_audio_video_translation_and_vad_fields() -> None:
+    """(task-3303 AC4) Translate-to-English and VAD are real fields."""
+    caps = get_capabilities("audio_video")
+    translate_field = next(
+        f for f in caps.fields if f.name == "translate_to_english"
+    )
+    assert translate_field.type == "checkbox"
+    assert translate_field.default is False
+    # Only faster-whisper translates (``resolve_batch_stt_route``); the
+    # semantic default routes a translation request to faster-whisper too.
+    assert translate_field.enabled_when == "transcription_provider"
+    assert set(translate_field.enabled_when_values) == {"default", "faster-whisper"}
+    assert translate_field.hint
+
+    vad_field = next(f for f in caps.fields if f.name == "vad_filter")
+    assert vad_field.type == "checkbox"
+    assert vad_field.default is False
 
 
 def test_get_capabilities_audio_video() -> None:
@@ -144,8 +246,10 @@ def test_get_capabilities_audio_video() -> None:
         "transcription_precision",
         "transcription_model",
         "language",
+        "translate_to_english",
         "timestamps",
         "diarization",
+        "vad_filter",
     )
 
     provider_field = next(f for f in caps.fields if f.name == "transcription_provider")
@@ -218,7 +322,7 @@ def test_get_capabilities_ebook() -> None:
     caps = get_capabilities("ebook")
     assert caps.group == "ebook"
     assert caps.required_features == ("ebook_processing",)
-    assert caps.field_names == ("extraction_method", "include_toc")
+    assert caps.field_names == ("extraction_method", "chunk_method", "include_toc")
 
     converter_field = next(f for f in caps.fields if f.name == "extraction_method")
     assert converter_field.options == ("filtered", "markdown", "basic")
@@ -257,6 +361,21 @@ def test_get_tooling_warnings_empty_when_all_installed() -> None:
         warnings = get_tooling_warnings("audio_video")
 
     assert warnings == []
+
+
+def test_document_docling_warning_names_ocr_not_pdf_ingestion() -> None:
+    """(task-3303) Docling resolves through the pdf extra, whose blurb says
+    "PDF ingestion" -- a non sequitur beside a folder of Word documents."""
+    with patch(
+        "tldw_chatbook.Library.ingest_capabilities._is_installed",
+        return_value=False,
+    ):
+        warnings = get_tooling_warnings("document")
+
+    assert [w["feature"] for w in warnings] == ["docling"]
+    assert "PDF" not in warnings[0]["hint"]
+    assert "OCR" in warnings[0]["hint"]
+    assert warnings[0]["command"], "the recovery command must survive the override"
 
 
 def test_get_tooling_warnings_generic_never_warns() -> None:
@@ -393,18 +512,22 @@ def test_is_installed_still_false_when_package_absent(monkeypatch) -> None:
 
 
 def test_installed_feature_produces_no_tooling_warning(monkeypatch) -> None:
-    """An installed feature must not be advertised as missing tooling."""
-    from types import SimpleNamespace
+    """An installed feature must not be advertised as missing tooling.
 
+    ``pdf_processing`` has a curated ``_FEATURE_REQUIRED_PACKAGES`` entry, so
+    that is the branch the probe takes in production -- patching only
+    ``OPTIONAL_FEATURES`` would leave the outcome hostage to whether pymupdf
+    happens to be installed in the running venv.
+    """
     monkeypatch.setitem(
         tldw_chatbook.Library.ingest_capabilities.DEPENDENCIES_AVAILABLE,
         "pdf_processing",
         False,
     )
     monkeypatch.setitem(
-        tldw_chatbook.Library.ingest_capabilities.OPTIONAL_FEATURES,
+        tldw_chatbook.Library.ingest_capabilities._FEATURE_REQUIRED_PACKAGES,
         "pdf_processing",
-        SimpleNamespace(package_dependencies=["loguru"]),
+        ("loguru",),
     )
     tldw_chatbook.Library.ingest_capabilities.reset_installed_probe_cache()
 
@@ -571,3 +694,163 @@ def test_a_value_gated_field_names_values_its_gate_can_actually_take() -> None:
                 f"{caps.group}.{field.name} is gated on values {sorted(unreachable)} "
                 f"that {gate.name!r} can never hold"
             )
+
+
+# --- task-3304 (MI-07): disabled state carries a reason ----------------------
+
+
+def _field(group: str, name: str):
+    caps = _TYPE_GROUPS[group]
+    return caps, {f.name: f for f in caps.fields}[name]
+
+
+def test_field_disabled_state_reports_curated_reason_for_closed_value_gate() -> None:
+    """A value-gated field under a non-enabling gate value is disabled WITH
+    its curated reason -- the annotation the canvas renders at the control."""
+    from tldw_chatbook.Library.ingest_capabilities import field_disabled_state
+
+    caps, field = _field("audio_video", "transcription_model_dir")
+    disabled, reason = field_disabled_state(
+        field,
+        caps,
+        {"transcription_provider": "default"},
+        is_installed=lambda _f: True,
+    )
+    assert disabled is True
+    assert reason == "needs the parakeet-onnx provider"
+
+
+def test_field_disabled_state_is_clear_when_the_gate_opens() -> None:
+    from tldw_chatbook.Library.ingest_capabilities import field_disabled_state
+
+    caps, field = _field("audio_video", "transcription_model_dir")
+    disabled, reason = field_disabled_state(
+        field,
+        caps,
+        {"transcription_provider": "parakeet-onnx"},
+        is_installed=lambda _f: True,
+    )
+    assert disabled is False
+    assert reason == ""
+
+
+def test_field_disabled_state_truthy_gate_reason() -> None:
+    """Checkbox-gated fields (chunk size under Chunk content) state the
+    toggle to flip."""
+    from tldw_chatbook.Library.ingest_capabilities import field_disabled_state
+
+    caps, field = _field("generic", "chunk_size")
+    disabled, reason = field_disabled_state(
+        field, caps, {"chunk": False}, is_installed=lambda _f: True
+    )
+    assert disabled is True
+    assert reason == "needs Chunk content on"
+
+
+def test_field_disabled_state_missing_dependency_reason() -> None:
+    """A packaging gate (depends_on) names the missing feature."""
+    from tldw_chatbook.Library.ingest_capabilities import field_disabled_state
+
+    caps, field = _field("audio_video", "diarization")
+    disabled, reason = field_disabled_state(
+        field, caps, {}, is_installed=lambda _f: False
+    )
+    assert disabled is True
+    assert reason == "needs Speaker diarization installed"
+
+
+def test_field_disabled_state_suppresses_reason_when_hint_names_the_gate() -> None:
+    """task-3303 baked static gate hints into some labels ("docling or
+    docext engines only") -- those fields must not get a second, dynamic
+    annotation on top (the incumbents' no-double-annotation rule)."""
+    from tldw_chatbook.Library.ingest_capabilities import field_disabled_state
+
+    caps, field = _field("pdf", "ocr")
+    disabled, reason = field_disabled_state(
+        field,
+        caps,
+        {"pdf_engine": "pymupdf4llm"},
+        is_installed=lambda _f: True,
+    )
+    assert disabled is True
+    assert reason == ""
+
+
+def test_every_value_gated_field_carries_a_disabled_reason() -> None:
+    """Meta-guard: a select gate is invisible from inside the field, so a
+    value-gated field without curated disabled copy would silently ship
+    the MI-07 no-reason state again for the next field added."""
+    for caps in _TYPE_GROUPS.values():
+        for field in caps.fields:
+            if not field.enabled_when_values:
+                continue
+            if field.hint:
+                # A static gate hint in the label already carries the why.
+                continue
+            assert field.disabled_reason, (
+                f"{caps.group}.{field.name} is value-gated with no hint and "
+                "no disabled_reason -- its inert state would be unexplained"
+            )
+
+
+# --- task-3305 (MI-09): human display labels for every select option -------
+
+
+def test_every_select_field_labels_every_option_with_human_copy() -> None:
+    """Meta-guard: every ``select`` field must carry a display label for
+    every one of its options, and no label may be the raw internal token
+    echoed back -- ``pymupdf4llm``, ``url_level``, ``recursive_scraping``
+    et al. used to render verbatim as user-facing values (task-3305)."""
+    select_fields = 0
+    for caps in _TYPE_GROUPS.values():
+        for field in caps.fields:
+            if field.type != "select":
+                continue
+            select_fields += 1
+            labels = dict(field.option_labels)
+            assert set(labels) == set(field.options), (
+                f"{caps.group}.{field.name}: option_labels must cover exactly "
+                f"the declared options (missing: "
+                f"{set(field.options) - set(labels)}, stray: "
+                f"{set(labels) - set(field.options)})"
+            )
+            for value, label in labels.items():
+                assert label and label.strip(), (
+                    f"{caps.group}.{field.name}.{value}: blank display label"
+                )
+                assert label != value, (
+                    f"{caps.group}.{field.name}.{value}: display label is the "
+                    "raw internal token"
+                )
+                assert "," not in label, (
+                    f"{caps.group}.{field.name}.{value}: option labels feed "
+                    "comma-joined panel titles and must stay comma-free"
+                )
+    assert select_fields >= 9, "schema sweep looks broken -- too few selects"
+
+
+def test_select_option_label_resolves_labels_and_falls_back() -> None:
+    """The label helper returns the curated display copy for a mapped value
+    and echoes an unmapped value unchanged (never crashes on stale
+    persisted values)."""
+    from tldw_chatbook.Library.ingest_capabilities import select_option_label
+
+    engine = next(
+        f for f in get_capabilities("pdf").fields if f.name == "pdf_engine"
+    )
+    label = select_option_label(engine, "pymupdf4llm")
+    assert label != "pymupdf4llm"
+    assert "PyMuPDF4LLM" in label
+
+    bare = OptionField(name="x", label="X", type="select", options=("a",))
+    assert select_option_label(bare, "a") == "a"
+    assert select_option_label(engine, "no-such-engine") == "no-such-engine"
+
+
+def test_scope_nouns_exist_for_every_group() -> None:
+    """(task-3305, MI-16) Every group carries singular/plural scope nouns so
+    the panel scope line can say "every PDF document" instead of gluing the
+    category label into an unnatural sentence."""
+    for caps in _TYPE_GROUPS.values():
+        assert caps.noun_singular, f"{caps.group}: missing noun_singular"
+        assert caps.noun_plural, f"{caps.group}: missing noun_plural"
