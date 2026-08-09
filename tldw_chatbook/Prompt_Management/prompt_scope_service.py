@@ -364,7 +364,19 @@ class LocalPromptService:
         page: int = 1,
         page_size: int = 50,
     ) -> Any:
-        """Delegate one exact browse page to the local database."""
+        """Delegate one exact browse page to the local database.
+
+        Args:
+            query: Prompt search text passed to the database.
+            collection_id: Optional local collection identifier.
+            sort_by: Database browse sort field.
+            sort_order: Database browse sort direction.
+            page: Requested one-based page.
+            page_size: Requested number of rows per page.
+
+        Returns:
+            The raw response from ``prompt_db.browse_prompts``.
+        """
         return self.prompt_db.browse_prompts(
             query=query,
             collection_id=collection_id,
@@ -845,7 +857,29 @@ class PromptScopeService:
         page: int = 1,
         page_size: int = 50,
     ) -> dict[str, Any]:
-        """Browse one normalized page from the local Prompt library."""
+        """Browse one normalized page from the local Prompt library.
+
+        Args:
+            mode: Backend selection; only ``local`` is accepted.
+            query: Prompt search text; surrounding whitespace is removed.
+            collection_id: Optional positive local collection identifier.
+            sort_by: ``last_modified`` or ``name``; case and surrounding
+                whitespace are normalized.
+            sort_order: ``asc`` or ``desc``; case and surrounding whitespace
+                are normalized.
+            page: Requested positive one-based page.
+            page_size: Requested positive page size, capped at 100.
+
+        Returns:
+            A normalized page mapping containing stable local item IDs, exact
+            totals, the adapter-resolved current page, and effective page size.
+
+        Raises:
+            TypeError: If a textual scope value has the wrong type.
+            ValueError: If the backend or another scope value is invalid, or
+                the local backend is unavailable.
+            PolicyDeniedError: If runtime policy denies local Prompt listing.
+        """
         mode_value = mode.value if isinstance(mode, PromptBackend) else mode
         if not isinstance(mode_value, str) or mode_value.strip().lower() != "local":
             raise ValueError("Prompt browsing is local-only.")
