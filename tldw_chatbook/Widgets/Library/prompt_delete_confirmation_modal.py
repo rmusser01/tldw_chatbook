@@ -187,7 +187,11 @@ class PromptDeleteConfirmationModal(ModalScreen[PromptDeleteDecision]):
         self.dismiss(PromptDeleteDecision(False, self.request.fingerprint))
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
-        """Return a typed decision without invoking deletion infrastructure."""
+        """Return a typed decision without invoking deletion infrastructure.
+
+        Args:
+            event: Button press emitted by the modal's Cancel or Delete action.
+        """
         if event.button.id == "prompt-delete-cancel":
             event.stop()
             self.action_cancel()

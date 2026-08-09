@@ -479,6 +479,14 @@ class PromptBlockEditor(Vertical):
         return f"encoded-{block_id.encode('utf-8').hex()}"
 
     def compose(self) -> ComposeResult:
+        """Compose the block editor with the layout required by its host.
+
+        Embedded editors yield a natural-height body so the parent owns vertical
+        scrolling. Standalone editors yield their own vertical scroll container.
+
+        Yields:
+            Widgets for each editable Prompt or Recipe lane and block.
+        """
         body_class = Vertical if self._embedded else VerticalScroll
         body_id = "prompt-editor-body" if self._embedded else "prompt-editor-scroll"
         with body_class(id=body_id):
