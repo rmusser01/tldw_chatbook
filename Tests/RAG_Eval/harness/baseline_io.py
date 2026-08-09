@@ -5,7 +5,7 @@ One `compare_or_update` call is the whole gate: it turns an `EvalReport`
 (Task 6) into either three committed baseline files or a verdict about
 today's numbers against the committed ones.
 
-Four decisions worth knowing before reading a verdict this produces.
+Five decisions worth knowing before reading a verdict this produces.
 
 **Absolute bands, expressed through the ported detector's fractional ones.**
 The gate's intent is stated in absolute metric points — a drop of more than
@@ -44,6 +44,21 @@ keys and does not score the run at all. A different embedding model or a
 different corpus produces different numbers for reasons that have nothing to
 do with a code change; calling that a regression is how a gate teaches its
 readers to ignore it.
+
+**The compared keys are the load-bearing stack, not every installed
+package (TASK-3998).** The harness's real embedding path is
+`Embeddings_Lib._HFEmbedder` -> `transformers.AutoModel` + `torch`, with
+`chromadb` doing ANN retrieval; `current_fingerprint()`'s compared keys are
+exactly those three plus the model id, the corpus hash and the platform.
+`sentence-transformers` is not on that load path here — nothing in this
+harness imports it — so its version is recorded in
+`metadata["environment_info"]` instead of `metadata["environment"]`:
+useful for debugging, but never fed to `environment_mismatch`. Getting this
+backwards breaks the gate in both directions — comparing
+`sentence-transformers` lets an unrelated dependency force a re-baseline
+the numbers never asked for, while *not* comparing
+transformers/torch/chromadb lets a real numeric shift through with no
+fingerprint change to explain it.
 """
 from __future__ import annotations
 
@@ -222,12 +237,17 @@ def current_fingerprint(
 ) -> dict[str, str]:
     """Describe the environment a set of numbers was produced under.
 
-    Four keys, all strings so the JSON round-trip is lossless:
-    ``model`` (the embedding model string the profile uses — the exact
-    spelling that feeds the collection fingerprint, deliberately not
-    canonicalized), ``sentence_transformers`` (installed version, or
-    ``"not-installed"``), ``corpus_sha256`` (both fixture files' bytes), and
-    ``platform`` (`sys.platform`).
+    Six keys, all strings so the JSON round-trip is lossless: ``model``
+    (the embedding model string the profile uses — the exact spelling that
+    feeds the collection fingerprint, deliberately not canonicalized),
+    ``transformers``, ``torch`` and ``chromadb`` (installed versions of the
+    packages the harness's real embedding/retrieval path actually loads —
+    see the module docstring's TASK-3998 decision), ``corpus_sha256`` (both
+    fixture files' bytes), and ``platform`` (`sys.platform`).
+
+    ``sentence-transformers`` is deliberately NOT one of these keys — it is
+    not on this harness's load path, so its version lives in the
+    informational stamp (`_informational_stamp`) instead, never compared.
 
     Args:
         corpus_path: Corpus TOML to hash.
@@ -239,19 +259,41 @@ def current_fingerprint(
     """
     return {
         "model": PROFILE_EMBEDDING_MODEL,
-        "sentence_transformers": _sentence_transformers_version(),
+        "transformers": _package_version("transformers"),
+        "torch": _package_version("torch"),
+        "chromadb": _package_version("chromadb"),
         "corpus_sha256": _fixture_digest(corpus_path, golden_path),
         "platform": sys.platform,
     }
 
 
-def _sentence_transformers_version() -> str:
+def _package_version(distribution_name: str) -> str:
+    """`importlib.metadata.version`, falling back to ``"absent"``.
+
+    Never raises: the extras gate (`harness/environment.py`) already
+    guarantees these packages are installed before a gated run starts, so
+    ``"absent"`` here is a signal that something upstream is wrong, not an
+    expected value — but fingerprint construction itself must stay total,
+    including in ungated contexts (e.g. these always-on tests) where the
+    packages may genuinely be missing.
+    """
     from importlib.metadata import PackageNotFoundError, version
 
     try:
-        return version("sentence-transformers")
+        return version(distribution_name)
     except PackageNotFoundError:
-        return "not-installed"
+        return "absent"
+
+
+def _informational_stamp() -> dict[str, str]:
+    """Recorded for debugging, never compared — see the module docstring's
+    TASK-3998 decision.
+
+    ``sentence-transformers`` is not on this harness's load path (nothing
+    here imports it), so a version bump there must not force a spurious
+    ``environment_changed`` re-stamp the numbers never actually asked for.
+    """
+    return {"sentence_transformers": _package_version("sentence-transformers")}
 
 
 def _fixture_digest(corpus_path: Path | str, golden_path: Path | str) -> str:
@@ -350,6 +392,7 @@ def _metadata(
 ) -> dict[str, Any]:
     return {
         "environment": dict(fingerprint),
+        "environment_info": _informational_stamp(),
         "report_only": _report_only(report, mode_report),
     }
 

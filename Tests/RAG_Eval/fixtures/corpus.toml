@@ -1,4 +1,4 @@
-# RAG eval harness — fixture corpus (48 documents)
+# RAG eval harness — fixture corpus (49 documents)
 #
 # Read this before editing. The corpus is a measuring instrument, not sample
 # data: each document is planted to make one retrieval capability observable
@@ -35,6 +35,11 @@
 #                       (torque, limiter, slipping) but never the rare
 #                       identifier that resolves it; is nobody's
 #                       relevant_slugs entry
+#   vector-blind        a keyword target whose query tokens are all present
+#                       but whose SUBJECT is far from what the query sounds
+#                       like, so the vector leg ranks it outside the top-k
+#                       while FTS resolves it exactly (see the section at the
+#                       end of this file)
 #
 # Invariants the always-on tests enforce (Tests/RAG_Eval/test_goldenset_integrity.py):
 #   - every paraphrase / vocabulary-mismatch query shares no content word
@@ -649,4 +654,81 @@ Maintenance added one further caution, which is that the belt itself should be i
 Ops asked how the result should be recorded so the next crew does not start over. Maintenance suggested marking the belt edge position at four fixed points along the run with the belt empty and again loaded, and writing those figures on the machine sheet as the reference. Without a recorded reference, every future crew judges tracking by memory and reaches a different conclusion.
 
 The work was carried out across a planned outage and the Drayton-6 has run true since, empty and loaded, with the edge positions holding within a few millimetres of the recorded reference. The lesson everyone took from the thread is that the belt was never the problem and that three earlier corrections had each made the underlying geometry harder to see.
+"""
+
+# ===========================================================================
+# VECTOR-BLIND KEYWORD TARGET (1)
+# ===========================================================================
+#
+# Every other keyword target in this corpus is also the vector leg's rank-1
+# answer for its own query — semantic recall@10 was 1.000 across the whole
+# golden set. That made hybrid's *merge* observable (a document found by both
+# legs fuses into one row) but left hybrid's *rescue* unobservable: nothing
+# sat outside the vector leg's reach for the FTS leg to pull back in, so
+# TASK-3994's AC #2 had no evidence available to it either way.
+#
+# This document is the missing case, and building it took two attempts. The
+# first — a rare identifier ("Wexcombe-4") planted in an off-topic document,
+# queried as "Wexcombe-4 maintenance record" — came back at semantic rank 1,
+# because a token that occurs in exactly one document is a beacon for the
+# *embedder* too: MiniLM's wordpieces for a corpus-unique code have nothing
+# else to be similar to. Rarity alone does not make a document vector-blind.
+#
+# What does: query tokens that are corpus-unique but semantically MISLEADING,
+# in a body long enough to dilute them.
+#
+#   - "plant maintenance record" reads as plant-and-equipment upkeep, the
+#     shared subject of roughly twenty documents above;
+#   - "plant" occurs nowhere else in this corpus, so the FTS leg's
+#     AND-of-terms resolves the query to this document UNIQUELY — here the
+#     word is botanical (a plant list kept in a bird hide);
+#   - the three query tokens sit at word 90, 243 and 486 of a 513-word body,
+#     so the match is non-contiguous (the pre-TASK-3995 whole-query phrase
+#     form matched nothing at all) AND no single chunk contains all three
+#     (chunk_size 400 / overlap 100 -> chunks [0:400] and [300:513]).
+#
+# Measured behaviour when it was added (do not restate this from memory —
+# re-measure if you change a word of it):
+#
+#   plain     rank 1  (four-seam keyword path finds it)
+#   semantic  absent from the top-10 — the design works
+#   hybrid    absent from the top-10 — the design works and the PRODUCT does
+#             not: the engine's FTS leg returns this document at rank 1, but
+#             an FTS-only row scores (1-alpha)/(rrf_k+1) = 0.3/61 = 0.00492,
+#             below every vector row better than rank ~82, while the vector
+#             leg only ever returns 2k rows. Filed as TASK-4110; it is the
+#             half of TASK-3994's description that the id-space fix did not
+#             reach.
+#
+# So this document currently measures a GAP rather than a capability, which
+# is the honest thing for it to measure and the before-number TASK-4110 needs.
+#
+# Do not "improve" this document by making it read more like its query, and
+# do not introduce the word "plant" anywhere else in the corpus. Its whole
+# function is to be the document a vector-only retriever misses.
+
+[[doc]]
+slug = "note-saltmarsh-hide"
+source_type = "note"
+title = "Estuary bird hide, volunteer wardens' note"
+content = """
+The timber bird hide sits at the far end of the saltmarsh path, where the creek widens into open mud and the horizon is nothing but water and sky.
+Wading birds work that mud on the falling tide, moving out with the water and back again as it returns, and the whole flock lifts at once when a harrier drifts along the far bank.
+Godwits probe deep with long bills while the smaller waders take what lies on the surface, so the two feed side by side without contest.
+A plant list is kept beside the tally board inside the hide, since the shingle bank carries several uncommon flowering species that draw a different sort of visitor in the warm months.
+Sea aster holds the seaward edge, glasswort takes the bare silt below it, and a fringe of sea lavender colours the upper marsh whenever the light comes in low from the west.
+Brent geese arrive from the north and graze the eel grass through the cold months, calling continually to one another in a low rolling murmur that carries right across the flats.
+The shutters are hung so they can be raised without a sound, because a dropped shutter empties the mud in front of the hide for a quarter of an hour and everybody inside loses the morning.
+Volunteers learned that lesson early and now pack the hinges with felt, which also keeps the salt air out of the pivots.
+Routine maintenance of the hide falls to the volunteer wardens rather than to any contractor, and a single morning between tides is usually enough for the round.
+A barn owl hunts the rough grass behind the sea wall at dusk, quartering the same beat again and again with its wings held in a shallow vee.
+In the coldest weeks a merlin sometimes takes a stand on the fence line and scatters the finch flock feeding on the seed heads there.
+Ringing on the shingle happens at first light on still mornings, when the mist nets hang slack and the birds cannot see them against the grey.
+Each bird is weighed, measured across the wing, aged from its feather wear, and let go within a few minutes of being lifted from the net.
+The tally board inside the hide is where visitors add their sightings, and it fills quickly during passage when something scarce turns up on the far scrape.
+Children are given the low bench under the small window, which puts them at the right height for the near scrape without a stool.
+The two alders behind the hide hold nesting boxes that are cleared of old down and left open to dry once the young have gone.
+Bats use the same boxes later in the season, so nobody touches them between the two occupations.
+The approach boardwalk greens over quickly in shade and is brushed clear where the planks turn slippery underfoot.
+A record of each visit is left in the wardens' cabinet by the gate, so the following party knows what was already done and what was only started.
 """

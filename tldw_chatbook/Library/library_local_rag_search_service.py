@@ -78,7 +78,9 @@ ROUTE_NOTE_PLAIN_PROFILE_TEMPLATE = "{profile}: keyword search (no vectors)"
 ROUTE_NOTE_HYBRID_SCOPED = (
     "scope active — semantic only until scope-aware hybrid lands"
 )
-ROUTE_NOTE_HYBRID_MEDIA_EXCLUDED = "media excluded — semantic only"
+ROUTE_NOTE_HYBRID_NO_KEYWORD_SOURCES = (
+    "no keyword leg for the selected sources — semantic only"
+)
 ROUTE_NOTE_SEMANTIC_LEG_EMPTY = "semantic leg empty — keyword-only results"
 # Mirrors `library_rag_state`'s `_OPEN_SOURCE_TYPE_MAP` canonicalization:
 # raw provenance `source_type` values -> the scope-toggle identifiers used
@@ -107,6 +109,15 @@ _SEMANTIC_SOURCE_TYPE_MAP = {
 # `source_types` down to only what the semantic leg can structurally speak
 # to before computing coverage.
 _SEMANTICALLY_COVERABLE_SOURCE_TYPES = frozenset(_SEMANTIC_SOURCE_TYPE_MAP.values())
+# The Library scope identifiers the ENGINE's keyword (FTS5) leg can serve --
+# `media_fts` plus, since TASK-3996, `notes_fts` and `messages_fts`. Kept
+# separate from `_SEMANTICALLY_COVERABLE_SOURCE_TYPES` (currently the same
+# members) because they answer different questions and can diverge: one is
+# "does the vector index hold this type", the other "does the FTS leg query
+# it". `prompts` is in neither -- it has no engine-side seam at all, which
+# is why a prompts-only selection is the one case that still cannot use
+# hybrid.
+_FTS_SERVABLE_SOURCE_TYPES = frozenset({"media", "notes", "conversations"})
 
 
 def _validated_query(query: str) -> str:
@@ -234,19 +245,24 @@ class LibraryLocalRagSearchService:
         through the coverage-note channel rather than silently applied:
 
         - `plain` -> the Library's own four-seam, scope-aware keyword path
-          (`_search_keyword`), NOT the engine's media-only keyword leg: a
-          BM25 profile must not get a strictly worse search in `rag` mode
-          than `search` mode already gives it.
-        - `hybrid`, unscoped, media selected -> the engine's fused hybrid.
+          (`_search_keyword`), NOT the engine's keyword leg: the four-seam
+          path is scope-aware and also searches prompts, so a BM25 profile
+          must not get a strictly worse search in `rag` mode than `search`
+          mode already gives it.
+        - `hybrid`, unscoped, with at least one selected source the engine's
+          FTS leg can serve -> the engine's fused hybrid.
         - `hybrid`, scoped -> semantic. `RAGService.search` RAISES for a
           non-empty `metadata_allowlist` with any non-semantic search type
           (allowlist pushdown is semantic-only), so this is a hard engine
           constraint, not a preference. Extending allowlists to the FTS leg
           is P2.
-        - `hybrid`, media deselected -> semantic. The engine's FTS leg
-          covers media only in P0, so its rows could only be dropped by the
-          source-type post-filter -- running it would spend a query to
-          produce nothing.
+        - `hybrid`, no FTS-servable source selected (in practice: prompts
+          only) -> semantic. The engine's FTS leg covers media, notes and
+          conversations (TASK-3996 added the latter two; before it, this arm
+          fired whenever media was deselected); rows from a source outside
+          the selection could only be dropped by the source-type
+          post-filter, so running the leg would spend a query to produce
+          nothing.
         - `semantic` (and any unknown mode) -> today's exact behavior.
 
         Args:
@@ -294,7 +310,7 @@ class LibraryLocalRagSearchService:
                     rag_service=rag_service,
                     route_notes=(ROUTE_NOTE_HYBRID_SCOPED,),
                 )
-            if "media" not in source_types:
+            if not _FTS_SERVABLE_SOURCE_TYPES.intersection(source_types):
                 return await self._search_semantic(
                     query,
                     source_types,
@@ -302,7 +318,7 @@ class LibraryLocalRagSearchService:
                     kwargs,
                     scope=scope,
                     rag_service=rag_service,
-                    route_notes=(ROUTE_NOTE_HYBRID_MEDIA_EXCLUDED,),
+                    route_notes=(ROUTE_NOTE_HYBRID_NO_KEYWORD_SOURCES,),
                 )
             return await self._search_hybrid(
                 query, source_types, top_k, kwargs, rag_service=rag_service
@@ -658,13 +674,17 @@ class LibraryLocalRagSearchService:
         *,
         rag_service: Any,
     ) -> Any:
-        """Run the engine's RRF-fused hybrid search (unscoped, media selected).
+        """Run the engine's RRF-fused hybrid search (unscoped, FTS-servable).
 
         Only `_search_rag` calls this, and only once it has established the
         two conditions the engine imposes: no scope allowlist (the pushdown
-        is semantic-only) and `media` among the selected source types (the
-        FTS leg is media-only in P0, so its rows would otherwise all be
-        dropped by the source-type post-filter).
+        is semantic-only) and at least one selected source type the FTS leg
+        can actually serve (`_FTS_SERVABLE_SOURCE_TYPES`), otherwise its rows
+        would all be dropped by the source-type post-filter. That second
+        condition used to read "media selected", because the engine's FTS leg
+        was media-only; TASK-3996 gave it notes and conversation sub-legs, so
+        media-off + notes-on now runs hybrid instead of being diverted to
+        semantic in exactly the case the FTS leg was extended for.
 
         Zero-results honesty (spec Workstream A item 5): "Index empty" is a
         claim about the whole runtime, so it may only be made when the
@@ -800,7 +820,9 @@ def _resolve_profile_search_mode(rag_service: Any) -> str:
     """Map the active profile's default_search_mode to an execution route.
 
     "plain" deliberately routes to the four-seam scope-aware keyword path,
-    NOT the engine's media-only keyword leg (spec: plain-profile routing).
+    NOT the engine's keyword leg (spec: plain-profile routing) -- the
+    four-seam path is scope-aware and covers prompts, neither of which the
+    engine's leg does even now that it spans media, notes and conversations.
     Unknown values -- and any runtime without a profile config at all, which
     includes every pre-profile test fake -- fall back to "semantic", the
     behavior this path had before profiles were honored.
@@ -884,9 +906,13 @@ def _filtered_semantic_rows(
 ) -> list[dict[str, Any]]:
     """Normalize engine results and apply the source-type post-filter.
 
-    Shared by the semantic and hybrid arms: hybrid's FTS-leg rows are
-    stamped with a `media` provenance `source_type` upstream precisely so
-    they survive this same canonicalizing filter instead of vanishing.
+    Shared by the semantic and hybrid arms: hybrid's FTS-leg rows carry a
+    provenance `source_type` stamped upstream (`media`, `note` or
+    `conversation` -- the singular ingestion vocabulary, canonicalized here
+    by `_semantic_row_matches_scope`) precisely so they survive this same
+    filter instead of vanishing. A row whose type is outside the selection
+    is dropped here, which is why the routing gate only runs hybrid when the
+    selection contains something the FTS leg can serve.
     """
     rows = [_semantic_row(item) for item in raw_results or ()]
     if not source_types:
@@ -929,12 +955,16 @@ def _retrieval_payload(
     that path byte-identical (see
     `test_rag_mode_zero_results_with_populated_index_stays_generic`).
 
-    The hybrid arm shares this: only `uncovered` is ever rendered, and in
-    P0 the FTS leg is media-only, so any non-media type reported uncovered
-    is still a true statement about the semantic leg. Revisit when the
-    keyword leg goes four-seam (P2) -- at that point a type could be
-    "covered" by FTS alone and the note's "Semantic search found nothing
-    from" wording would need a hybrid-aware variant.
+    The hybrid arm shares this, and TASK-3996 is the change the old note
+    here anticipated ("revisit when the keyword leg goes four-seam"): the
+    engine's FTS leg now serves notes and conversations too, so a type CAN
+    be covered by the FTS leg alone. The coverage claim stays accurate
+    because `_semantic_scope_coverage` reads the rows that survive fusion
+    and the wording is about the semantic leg specifically -- but under a
+    hybrid profile "Semantic search found nothing from X" can now be true of
+    a type whose evidence on screen came from the keyword leg. A
+    hybrid-aware wording variant is a UI-copy follow-up, not a retrieval
+    defect; it is deliberately not bundled into the retrieval fix.
     """
     result: dict[str, Any] = {"results": rows, "runtime_backend": runtime_backend}
     if rows and source_types:

@@ -221,6 +221,16 @@ _SQLITE_OWNER_POLICIES = {
         _MEMORY,
         "Event state currently uses only an in-memory database.",
     ),
+    "rag.chachanotes_keyword_leg": SQLiteOwnerPolicy(
+        "tldw_chatbook/RAG_Search/simplified/rag_service",
+        _READ_ONLY_URI,
+        "The RAG keyword leg reads notes and conversations out of the live "
+        "ChaChaNotes database. Read-only URI only: search must never write "
+        "to, create, or migrate the user's main database, and this owner "
+        "preserves the source file's mode rather than reasserting private "
+        "permissions on a file another owner already governs.",
+        preserve_read_only_source_mode=True,
+    ),
     "research.local": SQLiteOwnerPolicy(
         "tldw_chatbook/Research_Interop/local_research_service",
         _PRIVATE_OR_MEMORY,

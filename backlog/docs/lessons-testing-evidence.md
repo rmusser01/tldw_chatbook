@@ -1757,3 +1757,40 @@ canonical full composition seam. Tests must assert both halves of the boundary:
 contextual chrome appears on entry and disappears on exit. If stable child IDs
 are reused, hide and detach the outgoing subtree before mounting its replacement
 or Textual will reject the duplicate even when the route signature matches.
+
+---
+
+## Adding a resource of a GUARDED KIND obliges you to run that kind's inventory suite, not just your feature's tests
+
+**Hybrid-fusion cluster (TASK-3996) Task 5, 2026-08-09.** The new notes/conversations
+keyword sub-legs opened SQLite directly:
+`sqlite3.connect(f"{path.as_uri()}?mode=ro", uri=True)`. The choice was deliberate and
+well-argued in the commit (read-only, never `CharactersRAGDB`, whose constructor does
+schema and client-registration work on the user's main DB), it was covered by six new
+tests, and it survived a full task review. It was also, the whole time, **already
+failing a committed repo-wide guard**: `Tests/DB/test_private_sqlite_inventory.py`
+asserts that the only production `sqlite3.connect` call sites are the private-sqlite
+seam's own, with every owner enumerated in an inventory document and pinned by a ratchet
+count. Nothing in the task's own test selection — the feature's tests, the RAG_Search
+sweep, the eval battery — includes `Tests/DB/`, so the violation was invisible to every
+run that was made. It only surfaced in a review round, from reading, not from a red
+test.
+
+This is the failure mode of targeted-test discipline (which is otherwise right: this
+repo's rule is branch-relevant files plus a `--collect-only` sweep, not routine full
+suites). Targeted selection is chosen from *the files you changed*. An inventory guard
+lives in a directory you did not touch and asserts a property of the whole repo, so
+"relevant to my change" and "relevant to the guard" are different sets, and the guard's
+whole purpose is to notice the case where the author did not think it applied.
+
+**What to do.** Before finishing a task, ask what KIND of thing it added, and whether
+that kind is under a census: a raw DB connection (`Tests/DB/test_private_sqlite_inventory.py`),
+a CSS class or token, a tool gate, a screen route, a config key. If yes, run that kind's
+inventory suite *and add the new resource's row to its inventory*, in the same commit —
+a guard you satisfy by exempting yourself is not satisfied. Name those suites in the
+dispatch when the task is known up front to add such a resource, because the agent doing
+the work is exactly the one who will not think to look for them. The fix here was to
+route the sub-legs through `connect_private_sqlite` with a registered owner
+(`rag.chachanotes_keyword_leg`, read-only URI), add the inventory row, and bump the
+ratchet — which is what the guard existed to make happen, roughly a day later than it
+should have.

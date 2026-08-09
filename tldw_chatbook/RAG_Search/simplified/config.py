@@ -334,6 +334,15 @@ class SearchConfig:
     # custom path). Only set this to point the keyword leg at a specific
     # file (e.g. tests); never guessed/derived from other paths.
     media_db_path: Optional[Path] = None
+    # Explicit override for the keyword (FTS5) leg's ChaChaNotes database
+    # path -- the source of the notes and conversation sub-legs (TASK-3996).
+    # None (the default) means "resolve via
+    # tldw_chatbook.config.get_chachanotes_db_path()", the single
+    # authoritative resolver, exactly as `media_db_path` above defers to
+    # `get_media_db_path()`. The engine opens this file READ-ONLY and never
+    # through `CharactersRAGDB` (whose constructor runs schema work); only
+    # set this to point the keyword leg at a specific file (e.g. tests).
+    chachanotes_db_path: Optional[Path] = None
 
     # Parent document inclusion settings (RAG pipeline feature)
     include_parent_docs: bool = False

@@ -19,8 +19,9 @@ throwaway but *genuine* installation of the app's retrieval stack:
   production seam — rather than by calling the engine directly.
 
 Nothing here is shared with the running app: the vector store persists under
-the caller's `tmp_path`, the keyword leg is pointed at the scratch media DB
-(`config.search.media_db_path`, P0's validated injection point), and
+the caller's `tmp_path`, the keyword leg is pointed at the scratch media and
+ChaChaNotes DBs (`config.search.media_db_path` -- P0's validated injection
+point -- and `config.search.chachanotes_db_path`, TASK-3996's), and
 `get_shared_rag_service()` is never called. A harness that measured the
 process-wide singleton would measure whatever an earlier test left in it.
 
@@ -221,7 +222,12 @@ def _write_conversation(
     return str(conversation_id), (dict(conversation), [dict(m) for m in messages])
 
 
-def _build_config(profile_name: str, persist_directory: Path, media_db_path: Path):
+def _build_config(
+    profile_name: str,
+    persist_directory: Path,
+    media_db_path: Path,
+    chachanotes_db_path: Path,
+):
     """Clone the profile's config and repoint it at this run's scratch state.
 
     A deep copy, not the profile's own object: `get_profile_manager()` hands
@@ -255,6 +261,13 @@ def _build_config(profile_name: str, persist_directory: Path, media_db_path: Pat
     # it the leg resolves the *real* user media DB and the harness would
     # measure retrieval over the developer's own library.
     config.search.media_db_path = media_db_path
+    # Same reasoning for the notes/conversation sub-legs of that leg
+    # (TASK-3996). Without this override they resolve the *real* user
+    # ChaChaNotes DB: under pytest's env isolation that path does not exist,
+    # so the FTS leg would silently measure media only (29 of the 49 fixture
+    # docs unreachable, exactly the defect being fixed); outside it, the
+    # harness would read the developer's own notes and conversations.
+    config.search.chachanotes_db_path = chachanotes_db_path
     return config
 
 
@@ -363,7 +376,9 @@ def build_eval_runtime(
             slug_to_source[doc.slug] = (doc.source_type, source_id)
             entries.append(entry)
 
-        config = _build_config(profile_name, persist_directory, media_db_path)
+        config = _build_config(
+            profile_name, persist_directory, media_db_path, chachanotes_db_path
+        )
         service = create_rag_service(profile_name, config=config)
         closers.append(service.close)
 

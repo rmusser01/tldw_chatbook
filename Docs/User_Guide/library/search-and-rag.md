@@ -104,20 +104,23 @@ follows whichever **search mode** your active RAG profile
   instead — see [Evidence rows](#evidence-rows) below).
 - **Semantic** profiles run vector retrieval, same as before.
 - **Hybrid** profiles blend keyword and vector retrieval when the query
-  is unscoped and Media is a selected source. A query narrowed by a RAG
-  scope, or one with Media toggled off, falls back to semantic-only
-  retrieval for now — scope-aware and multi-source hybrid retrieval are
-  later work — and that fallback is disclosed rather than silent.
+  is unscoped and at least one **keyword-indexed source** is selected —
+  Media, Notes or Conversations, all three of which the keyword leg now
+  searches. A query narrowed by a RAG scope falls back to semantic-only
+  retrieval for now (scope-aware hybrid retrieval is later work), as does
+  a selection of Prompts alone, which the keyword leg cannot search. Both
+  fallbacks are disclosed rather than silent.
 
 A quiet one-line disclosure can appear above the evidence rows,
 alongside the "No strong semantic matches" / "Semantic search found
 nothing from…" lines described below, when the route taken is worth
 naming: `Profile 'BM25 Only': keyword search (no vectors).`,
 `Scope active — semantic only until scope-aware hybrid lands.`,
-`Media excluded — semantic only.`, or `Semantic leg empty — keyword-only
-results.` (shown when a hybrid profile's vector leg came back empty but
-its keyword leg still found rows — the "Index empty" recovery state is
-withheld in that case, since the index genuinely isn't empty).
+`No keyword leg for the selected sources — semantic only.`, or
+`Semantic leg empty — keyword-only results.` (shown when a hybrid
+profile's vector leg came back empty but its keyword leg still found
+rows — the "Index empty" recovery state is withheld in that case, since
+the index genuinely isn't empty).
 
 RAG Answer mode still needs embeddings support installed regardless of
 which mode the active profile resolves to, and generating the answer
@@ -240,7 +243,14 @@ Each hit is one block:
     similarity, so a strong hybrid hit reads `| match: strong`, exactly as
     the same hit would in a semantic profile.
   - A hybrid row that only the keyword leg found has no similarity at all
-    and reads `| keyword match`.
+    and reads `| keyword match`. In practice you see these when the vector
+    leg comes back short or empty — for instance when the selected sources
+    have nothing in the vector index yet. When the vector leg fills the
+    result list, its rows currently crowd keyword-only rows out of a hybrid
+    result even if the keyword leg matched a document the vector leg never
+    returned; that limitation is tracked as TASK-4110. A document both legs
+    found is unaffected: it fuses into one row and is ranked on the
+    strength of both.
   - A reranked row reads `| reranked`: reranker scores are on the
     reranking model's own scale, not a 0-1 similarity, so the band is
     withheld rather than guessed.
@@ -442,3 +452,25 @@ Semantic leg empty — keyword-only results." and rendered its FTS-leg row
 as "keyword match" rather than inventing a similarity. Turning Media off
 routed the run to semantic and said so: "Media excluded — semantic
 only." Every one of those route notes rendered on zero-row outcomes too.*
+
+> **Superseded in part (TASK-3996).** The last observation above no longer
+> holds: the keyword leg now covers notes and conversations as well as
+> media, so turning Media off while Notes or Conversations stay selected
+> runs the fused hybrid path instead of falling back to semantic, and the
+> "Media excluded — semantic only." disclosure no longer exists. Semantic
+> fallback under a hybrid profile now happens only for a scoped query or a
+> Prompts-only selection, the latter disclosed as "No keyword leg for the
+> selected sources — semantic only." The rest of that walkthrough stands.
+
+*Verified against ec1ed811e — 2026-08-09 (hybrid-fusion cluster live check,
+scratch profile holding a copy of the real Library DBs and vector index,
+real provider): with **Media deselected** and Notes + Conversations in
+scope — the case that used to fall back to semantic — RAG Answer on the
+default Hybrid Basic profile returned a **note** row and a **conversation**
+row, both banded `keyword match`, for the query "worktree UAT database".
+Those three tokens appear in the note but never adjacently, so the query
+matched nothing at all before the per-token FTS quoting fix, and neither
+source type was reachable by the engine's keyword leg before it grew its
+notes and conversations sub-legs. The vector index on that profile holds
+media chunks only, which is why the keyword-only rows survived to be shown
+— see the TASK-4110 note under [Evidence rows](#evidence-rows).*
