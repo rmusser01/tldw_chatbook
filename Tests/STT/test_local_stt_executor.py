@@ -13,7 +13,11 @@ from types import SimpleNamespace
 
 import pytest
 
-from Tests.Model_Artifacts.test_service import installed_root_and_dependency
+from Tests.Model_Artifacts.test_service import (
+    install_descriptor_payload,
+    installed_root_and_dependency,
+    single_file_descriptor,
+)
 from Tests.STT.executor_test_support import (
     device_retry_executor_worker,
     fake_executor_worker,
@@ -25,7 +29,14 @@ from tldw_chatbook.Local_Ingestion.stt_batch_routing import (
     PARAKEET_V2_MODEL,
     PARAKEET_V3_MODEL,
 )
-from tldw_chatbook.Model_Artifacts import ArtifactInUseError, ModelArtifactService
+from tldw_chatbook.Model_Artifacts import (
+    ArtifactInUseError,
+    ArtifactOperationLease,
+    ArtifactRef,
+    ArtifactRole,
+    LeaseMode,
+    ModelArtifactService,
+)
 from tldw_chatbook.STT.contracts import (
     BufferAudioSource,
     DeviceFailureOrigin,
@@ -1683,6 +1694,102 @@ def test_external_load_revalidates_model_after_acquiring_vad(
     ModelArtifactService(tmp_path / "store").delete(dependency.reference)
 
 
+@pytest.mark.parametrize(
+    ("condition", "expected"),
+    (
+        ("missing", TranscriptionFailureCode.MODEL_NOT_INSTALLED),
+        ("corrupt", TranscriptionFailureCode.ARTIFACT_CORRUPT),
+        ("contended", TranscriptionFailureCode.PROVIDER_UNAVAILABLE),
+        ("wrong-role", TranscriptionFailureCode.ARTIFACT_INCOMPATIBLE),
+    ),
+)
+def test_external_dependency_failure_keeps_stable_worker_taxonomy(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    condition: str,
+    expected: TranscriptionFailureCode,
+) -> None:
+    import tldw_chatbook.Model_Artifacts as artifacts
+
+    service = ModelArtifactService(tmp_path / "store")
+    reference = ArtifactRef("silero-vad", f"{condition}-revision", "f32")
+    role = ArtifactRole.ROOT if condition == "wrong-role" else ArtifactRole.DEPENDENCY
+    dependency = single_file_descriptor(reference, role, b"dependency")
+    if condition != "missing":
+        install_descriptor_payload(service, tmp_path, dependency, b"dependency")
+    if condition == "corrupt":
+        (service.artifact_path(reference) / dependency.files[0].path).write_bytes(
+            b"x" * dependency.files[0].size_bytes
+        )
+    lease = None
+    if condition == "contended":
+        lease = ArtifactOperationLease(
+            service.locks_path,
+            reference.lease_key(),
+            LeaseMode.EXCLUSIVE,
+            timeout_seconds=0.1,
+        )
+        lease.acquire()
+        monkeypatch.setattr(
+            artifacts,
+            "ModelArtifactService",
+            lambda root: ModelArtifactService(root, lease_timeout_seconds=0.01),
+        )
+    request, _model = _external_dependency_request(
+        tmp_path,
+        dependency,
+        attempt_id=f"external-{condition}",
+    )
+
+    class _Connection:
+        def __init__(self) -> None:
+            self.commands = iter((request, ("close", 1)))
+            self.sent: list[object] = []
+
+        def send(self, value: object) -> None:
+            self.sent.append(value)
+
+        def recv(self) -> object:
+            return next(self.commands)
+
+        def close(self) -> None:
+            return None
+
+    class _Event:
+        def wait(self, _timeout: float) -> bool:
+            return True
+
+        def is_set(self) -> bool:
+            return False
+
+    connection = _Connection()
+    monkeypatch.setattr(
+        "tldw_chatbook.STT.executor_worker.enter_worker_containment",
+        lambda: SimpleNamespace(pid=1),
+    )
+    try:
+        _run_executor_worker(
+            connection,  # type: ignore[arg-type]
+            _Event(),
+            _Event(),
+            1,
+            str(tmp_path),
+            provider_builder=lambda *_args: (_ for _ in ()).throw(
+                AssertionError("invalid dependency reached native load")
+            ),
+            parse_job=lambda *_args, **_kwargs: {},
+        )
+    finally:
+        if lease is not None:
+            lease.release()
+
+    failures = [item for item in connection.sent if type(item) is ExecutorFailure]
+    assert len(failures) == 1
+    failure = failures[0]
+    assert failure.code is expected
+    assert str(tmp_path) not in repr(failure)
+
+
 def test_dependency_reference_change_rejects_reuse_and_releases_old_lease(
     tmp_path: Path,
 ) -> None:
@@ -1715,6 +1822,76 @@ def test_dependency_reference_change_rejects_reuse_and_releases_old_lease(
         resident.close()
 
     ModelArtifactService(tmp_path / "store").delete(dependency.reference)
+
+
+def test_executor_recycles_before_dispatch_when_external_vad_reference_changes(
+    tmp_path: Path,
+) -> None:
+    service, _root, first_dependency = installed_root_and_dependency(tmp_path)
+    second_reference = ArtifactRef("silero-vad", "replacement-vad-revision", "int8")
+    second_dependency = single_file_descriptor(
+        second_reference,
+        ArtifactRole.DEPENDENCY,
+        b"replacement-dependency",
+    )
+    install_descriptor_payload(
+        service,
+        tmp_path,
+        second_dependency,
+        b"replacement-dependency",
+    )
+    request, _model = _external_dependency_request(
+        tmp_path,
+        first_dependency,
+        attempt_id="first-vad",
+    )
+    executor = _resident_executor()
+    first = _Callbacks()
+    second = _Callbacks()
+
+    def submit(
+        attempt_id: str,
+        reference: ArtifactRef,
+        callbacks: _Callbacks,
+    ) -> int:
+        return executor.submit(
+            attempt_id=attempt_id,
+            job_id=f"job-{attempt_id}",
+            source=request.source,
+            identity=request.identity,
+            options={"transcription_provider": "parakeet-onnx"},
+            local_source=request.local_source,
+            managed_store_root=request.managed_store_root,
+            managed_dependency_refs=(
+                (reference.artifact_id, reference.revision, reference.variant),
+            ),
+            on_result=callbacks.on_result,
+            on_failure=callbacks.on_failure,
+        )
+
+    try:
+        first_generation = submit("first-vad", first_dependency.reference, first)
+        _wait_for_terminal(first)
+        with pytest.raises(ArtifactInUseError):
+            ModelArtifactService(tmp_path / "store", lease_timeout_seconds=0.01).delete(
+                first_dependency.reference
+            )
+
+        second_generation = submit("second-vad", second_dependency.reference, second)
+        _wait_for_terminal(second)
+
+        assert second_generation > first_generation
+        assert second.results
+        assert second.failures == []
+        ModelArtifactService(tmp_path / "store").delete(first_dependency.reference)
+        with pytest.raises(ArtifactInUseError):
+            ModelArtifactService(tmp_path / "store", lease_timeout_seconds=0.01).delete(
+                second_dependency.reference
+            )
+    finally:
+        executor.close()
+
+    ModelArtifactService(tmp_path / "store").delete(second_dependency.reference)
 
 
 def test_provider_exception_after_cancellation_is_reported_as_cancelled() -> None:

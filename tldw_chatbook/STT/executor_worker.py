@@ -206,14 +206,46 @@ def _failure_from_worker_exception(
     return _failure_from_exception(request, error)
 
 
+def _caused_by_missing_path(error: BaseException) -> bool:
+    cause = error.__cause__
+    seen: set[int] = set()
+    while cause is not None and id(cause) not in seen:
+        seen.add(id(cause))
+        if isinstance(cause, (FileNotFoundError, NotADirectoryError)):
+            return True
+        cause = cause.__cause__
+    return False
+
+
+def _dependency_failure_code(error: BaseException) -> TranscriptionFailureCode:
+    from tldw_chatbook.Model_Artifacts import (
+        ArtifactDependencyError,
+        ArtifactIntegrityError,
+        ArtifactLeaseError,
+        ArtifactStateError,
+    )
+
+    if isinstance(error, ArtifactDependencyError):
+        if _caused_by_missing_path(error):
+            return TranscriptionFailureCode.MODEL_NOT_INSTALLED
+        if error.__cause__ is not None:
+            return TranscriptionFailureCode.ARTIFACT_CORRUPT
+        return TranscriptionFailureCode.ARTIFACT_INCOMPATIBLE
+    if isinstance(error, ArtifactIntegrityError):
+        return TranscriptionFailureCode.ARTIFACT_CORRUPT
+    if isinstance(error, (ArtifactLeaseError, ArtifactStateError)):
+        return TranscriptionFailureCode.PROVIDER_UNAVAILABLE
+    return TranscriptionFailureCode.ARTIFACT_INCOMPATIBLE
+
+
 def _acquire_managed_model(request: ExecutorRequest) -> tuple[Any, Any] | None:
     if request.managed_artifact_ref is None and not request.managed_dependency_refs:
         return None
     assert request.managed_store_root is not None
     from tldw_chatbook.Model_Artifacts import ArtifactRef, ModelArtifactService
 
-    try:
-        if request.managed_artifact_ref is None:
+    if request.managed_artifact_ref is None:
+        try:
             references = tuple(
                 ArtifactRef(*reference) for reference in request.managed_dependency_refs
             )
@@ -221,6 +253,10 @@ def _acquire_managed_model(request: ExecutorRequest) -> tuple[Any, Any] | None:
                 request.managed_store_root
             ).acquire_dependencies(references)
             return leased, leased.handle
+        except Exception as error:
+            raise _ProviderLoadFailure(_dependency_failure_code(error)) from None
+
+    try:
         reference = ArtifactRef(*request.managed_artifact_ref)
         leased = ModelArtifactService(request.managed_store_root).acquire(reference)
         handle = leased.handle

@@ -13,7 +13,11 @@ from tldw_chatbook.Local_Ingestion.stt_batch_routing import (
     PARAKEET_V2_MODEL,
     PARAKEET_V3_MODEL,
 )
-from tldw_chatbook.Local_Ingestion.parakeet_v2_artifact import parakeet_reference
+from tldw_chatbook.Local_Ingestion.parakeet_v2_artifact import (
+    parakeet_reference,
+    parakeet_vad_reference,
+)
+from tldw_chatbook.Model_Artifacts.store import managed_model_artifact_root
 from tldw_chatbook.Model_Artifacts.service import (
     ArtifactDescriptor,
     ArtifactFile,
@@ -234,6 +238,11 @@ def test_explicit_override_wins_over_preferred_managed(tmp_path: Path) -> None:
 
     assert dispatch.local_source is not None
     assert dispatch.managed_artifact_ref is None
+    assert dispatch.managed_store_root == managed_model_artifact_root().absolute()
+    vad = parakeet_vad_reference()
+    assert dispatch.managed_dependency_refs == (
+        (vad.artifact_id, vad.revision, vad.variant),
+    )
     assert calls == []
     service.close()
 

@@ -27,6 +27,7 @@ from tldw_chatbook.Model_Artifacts.service import (
     ArtifactRole,
     ModelArtifactService,
 )
+from tldw_chatbook.Model_Artifacts.store import managed_model_artifact_root
 from tldw_chatbook.config import get_cli_setting, save_settings_to_cli_config
 
 from .contracts import ExecutionDevice
@@ -379,6 +380,7 @@ class ParakeetSourceService:
     def _external_dispatch(prepared: PreparedExternalSelection) -> ParakeetDispatch:
         verified = prepared.verified
         key = prepared.key
+        vad = parakeet_vad_reference()
         return ParakeetDispatch(
             identity=ModelIdentity(
                 provider_id="parakeet-onnx",
@@ -390,11 +392,12 @@ class ParakeetSourceService:
                 local_snapshot_token=verified.snapshot.token,
             ),
             local_source=verified.snapshot,
-            managed_store_root=None,
+            managed_store_root=managed_model_artifact_root().absolute(),
             managed_artifact_ref=None,
             option_updates=MappingProxyType(
                 {"transcription_model_dir": str(verified.directory)}
             ),
+            managed_dependency_refs=((vad.artifact_id, vad.revision, vad.variant),),
         )
 
     def _validate_prepared(self, prepared: PreparedExternalSelection) -> None:

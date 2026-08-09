@@ -51,6 +51,22 @@ def _require_nonempty_text(field_name: str, value: str) -> None:
         raise ValueError(f"{field_name} must be a non-empty string")
 
 
+def _canonical_dependency_refs(
+    references: tuple[tuple[str, str, str], ...],
+) -> tuple[tuple[str, str, str], ...]:
+    if type(references) is not tuple or any(
+        type(reference) is not tuple
+        or len(reference) != 3
+        or any(
+            type(component) is not str or not component.strip()
+            for component in reference
+        )
+        for reference in references
+    ):
+        raise ValueError("managed_dependency_refs must contain three-string tuples")
+    return tuple(sorted(set(references)))
+
+
 class WorkerPhase(str, Enum):
     """Stable progress phases owned by the heavy worker."""
 
@@ -255,20 +271,10 @@ class ExecutorRequest:
                 raise ValueError(
                     "managed_artifact_ref must contain three non-empty strings"
                 )
-        if type(self.managed_dependency_refs) is not tuple or any(
-            type(reference) is not tuple
-            or len(reference) != 3
-            or any(
-                type(component) is not str or not component.strip()
-                for component in reference
-            )
-            for reference in self.managed_dependency_refs
-        ):
-            raise ValueError("managed_dependency_refs must contain three-string tuples")
         object.__setattr__(
             self,
             "managed_dependency_refs",
-            tuple(sorted(set(self.managed_dependency_refs))),
+            _canonical_dependency_refs(self.managed_dependency_refs),
         )
         if self.managed_artifact_ref is not None and self.managed_dependency_refs:
             raise ValueError(
@@ -471,6 +477,7 @@ class LocalSTTExecutor:
         self._active_callbacks: _ActiveCallbacks | None = None
         self._terminal_guard: _AttemptTerminalGuard | None = None
         self._resident_identity: ModelIdentity | None = None
+        self._resident_dependency_refs: tuple[tuple[str, str, str], ...] = ()
         self._unhealthy_identity: ModelIdentity | None = None
         self._latest_phase: WorkerPhase | None = None
         self._completed_jobs = 0
@@ -530,15 +537,16 @@ class LocalSTTExecutor:
     ) -> int:
         """Dispatch one request immediately or fail without queueing it."""
 
+        canonical_dependency_refs = _canonical_dependency_refs(managed_dependency_refs)
         with self._lock:
             self._assert_dispatch_available(identity, explicit_retry=explicit_retry)
             if self._busy:
                 raise ExecutorBusyError("Local STT executor already has active work")
             if self._retiring:
                 raise ExecutorUnavailableError("Local STT executor is still stopping")
-            identity_changed = (
-                self._resident_identity is not None
-                and self._resident_identity != identity
+            identity_changed = self._resident_identity is not None and (
+                self._resident_identity != identity
+                or self._resident_dependency_refs != canonical_dependency_refs
             )
             lifetime_exhausted = self._completed_jobs >= self._completed_job_limit
             if self._process is not None and (identity_changed or lifetime_exhausted):
@@ -565,7 +573,7 @@ class LocalSTTExecutor:
                 local_source=local_source,
                 managed_store_root=managed_store_root,
                 managed_artifact_ref=managed_artifact_ref,
-                managed_dependency_refs=managed_dependency_refs,
+                managed_dependency_refs=canonical_dependency_refs,
             )
             self._active_request = request
             self._active_callbacks = _ActiveCallbacks(
@@ -670,6 +678,7 @@ class LocalSTTExecutor:
                 self._closed = True
                 self._clear_active_locked()
                 detached = self._detach_worker_locked()
+                self._resident_dependency_refs = ()
             retirement = self._retirement_thread
         if detached is not None:
             self._terminate_detached(detached, update_state=False)
@@ -759,6 +768,7 @@ class LocalSTTExecutor:
         self._tree = tree
         self._scratch_path = scratch_path
         self._resident_identity = None
+        self._resident_dependency_refs = ()
         self._completed_jobs = 0
         reader = threading.Thread(
             target=self._reader_loop,
@@ -807,6 +817,7 @@ class LocalSTTExecutor:
                 ):
                     return
                 self._resident_identity = envelope.identity
+                self._resident_dependency_refs = request.managed_dependency_refs
             elif type(envelope) in {ExecutorResult, ExecutorFailure}:
                 if not self._matches_active(envelope):
                     return
@@ -1022,6 +1033,7 @@ class LocalSTTExecutor:
         self._scratch_path = None
         self._reader_thread = None
         self._resident_identity = None
+        self._resident_dependency_refs = ()
         self._completed_jobs = 0
         return detached
 
