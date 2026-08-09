@@ -1321,3 +1321,102 @@ and still be a no-op because of unit or key-name mismatches downstream
 (`size` vs `max_size` was ALSO live here — `improved_chunking_process` reads
 only the latter). The kwargs-arrival test and the governance test catch
 disjoint bug classes; you need both.
+
+---
+
+
+---
+
+## An app-importing pytest probe outside `Tests/` bypasses the suite's own config isolation
+
+**TASK-3894 (P1 eval harness) Task 4, 2026-08-09.** Capturing real chunk-count numbers
+for a new fixture corpus, a throwaway probe was written under the scratchpad directory
+and run with plain `pytest`. It imported `tldw_chatbook` to call the real chunking path
+— and because it lived **outside `Tests/`**, `Tests/conftest.py`'s config-isolation
+fixtures (which sandbox `HOME`/`XDG_DATA_HOME` before `load_settings()` ever runs) never
+applied, because pytest only collects and applies a directory's `conftest.py` for tests
+under that directory. The probe's `load_settings()` therefore ran against the user's real
+`~/.config/tldw_cli/config.toml`. No damage this time — the file's mtime was unchanged
+afterward, confirming it was read-only — but that was luck, not design: nothing in the
+probe prevented a write path from firing, and the probe read as an ordinary pytest
+invocation the whole time it ran.
+
+**What to do.** The rule is narrower than "use pytest for anything that imports the
+app" — it is **a probe that imports the app must live under `Tests/`**, where the
+isolation fixtures are actually collected and applied. A pytest-shaped file outside that
+tree runs with none of the suite's safety and is functionally the same as a bare
+`python -c` invocation against the app. If you need a throwaway probe, put it in
+`Tests/` (even a temp file there) and delete it afterward — or better, promote whatever
+it measured into a real, permanently-checked-in test, as this incident did
+(`test_the_bare_word_will_appears_nowhere_in_the_corpus`).
+
+---
+
+## A hand-rolled normalizer used as a safety guard must be proven canonical, not just plausible
+
+**TASK-3894 (P1 eval harness) Task 4, 2026-08-09.** A fixture corpus needed a guard
+proving no keyword-category query's unique token accidentally overlapped a
+vocabulary-mismatch/paraphrase pair's vocabulary. A hand-rolled `_stem()` (strip one
+suffix, return) stood in for FTS5's real porter stemmer and looked like a deliberate,
+safe over-approximation — the guard's own comment called it "stricter than a real
+tokenizer." Review found the opposite was true for a whole class of words: because
+`_stem` stripped exactly one suffix and stopped, suffix order decided the result, so two
+spellings of the *same* word produced two different stems (`readings`→`reading` but
+`reading`→`read`; `classes`→`class` but `class`→`clas`). FTS5's porter tokenizer
+collapses every one of these pairs to one stem. The guard was therefore **weaker than
+the mechanism it stood in for, in exactly the direction that matters**: it would score a
+keyword-reachable pair as "no overlap" and let it ship silently. Two real fixtures
+already carried exactly this escape — `vm-blood-pressure`'s "reading" against
+`note-hypertension-followup`'s "readings"; a `pr-workout-time` "classes"/"class" pair
+that had only been caught by hand, not by the guard.
+
+**What to do.** When a hand-rolled normalizer stands in for a real one as a safety
+check, "it looks stricter" is not evidence — an ordering artifact made the opposite true
+here, unnoticed by the author. Fix by making the reduction a **fixed point** (re-apply
+until the word stops changing) so the result is a function of the word family rather
+than of which suffix rule fires first, then test it against the *real* mechanism's known
+collisions (the actual inflection families a porter/whatever-you're-approximating
+stemmer folds together), not only against your own corpus's current wording. This was
+caught only because review independently re-derived what a real stemmer would do on
+these words and diffed it against the guard's actual output — not by reading the
+guard's code, which reads as reasonable on its own.
+
+---
+
+## HF offline enforcement must be set before `huggingface_hub.constants` EVALUATES, not merely "before import"
+
+**TASK-3894 (P1 eval harness) Task 5, 2026-08-09.** A harness that embeds real documents
+through a real model needed a hard guarantee that a run never downloads anything, even
+on a cache miss. The first version set `HF_HUB_OFFLINE=1`/`TRANSFORMERS_OFFLINE=1` from
+a pytest autouse fixture at test setup and the code claimed downloads were blocked. They
+were not: an instrumented check showed `ENV HF_HUB_OFFLINE='1'` alongside
+`constants.HF_HUB_OFFLINE=False` and `constants.is_offline_mode()=False` in the same
+process. `huggingface_hub.constants.HF_HUB_OFFLINE` is computed **once, at import**, from
+the environment as it stood at that instant; `is_offline_mode()` (which `transformers`
+also imports directly) just returns that frozen global. An env var written from a
+fixture at test *setup* — after collection has already imported half the world — arrives
+too late to matter, and a cache miss would have silently downloaded ~87 MB into the
+user's real `~/.cache/huggingface/hub`, the very directory the harness was pointed at.
+The first fix attempt also used the wrong condition: "before `huggingface_hub` is
+imported" is not sufficient, because hf_hub loads its submodules lazily —
+`huggingface_hub` can already sit in `sys.modules` while `huggingface_hub.constants` is
+still unevaluated, confirmed directly by forcing the hard case (evaluating `constants`
+from a module that runs before the latch): the latch still worked, proving "before
+import" was never the load-bearing condition. The fix that actually closes the hole has
+two parts, and both were needed: set the env vars at **module top** of the gate module,
+guarded on the harness's own opt-in env var, so they land before `constants` is
+evaluated in the common case; and, for the case where something earlier in the same
+session already evaluated `constants` with the var unset,
+`monkeypatch.setattr(constants, "HF_HUB_OFFLINE", True)` directly on the frozen global —
+the only thing that still works at that point. Mutation-tested independently: removing
+either half alone reintroduces `is_offline_mode() == False` through a different path.
+
+**What to do.** For any library that freezes an "offline"/"safe mode" flag into a
+module-level constant at import time (huggingface_hub is one instance; do not assume any
+other library isn't), "set the env var before you need it" is insufficient — the real
+requirement is "before that constant is evaluated," which can be earlier than the import
+of the top-level package if the package lazy-loads its submodules. Assert the *resolved*
+state (`is_offline_mode()`), never the env var's string value: a `"1"` that arrived too
+late reads as success on an env-var check while the flag it was meant to control stayed
+`False`. And when closing a hole like this with a two-part fix, mutation-test each half
+independently — here, either half alone was silently insufficient.
