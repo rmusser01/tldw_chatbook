@@ -364,6 +364,35 @@ def test_foreign_v1_definition_is_preserved_without_calling_v2_decoder(
     assert item["restore_eligible"] is False
 
 
+def test_single_text_recipe_definition_kind_is_unsupported_not_malformed() -> None:
+    definition = {
+        "schema_version": 2,
+        "definition_kind": "single_text_recipe",
+        "blocks": [{"role": "system", "content": "foreign [literal] text"}],
+    }
+    definition_text = json.dumps(definition, separators=(",", ":"))
+    payload = _structured_payload(
+        artifact_type="recipe",
+        definition=definition,
+        system_prompt="foreign [system]",
+        user_prompt="foreign user",
+    )
+
+    item = _normalize(
+        _page([_row(change_id=2, version=2, payload=payload)], total_count=1)
+    )["items"][0]
+
+    assert item["definition_state"] == "unsupported"
+    assert item["compatibility_state"] == "unsupported_definition_kind"
+    assert item["compatibility_reason"] == (
+        "Structured definition kind is unsupported."
+    )
+    assert item["restore_eligible"] is False
+    assert item["prompt_definition"] == definition_text
+    assert item["system_prompt"] == "foreign [system]"
+    assert item["user_prompt"] == "foreign user"
+
+
 def test_missing_historical_keywords_are_explicit_but_do_not_block_restore() -> None:
     payload = _legacy_payload(version=1)
     del payload["keywords"]
@@ -530,3 +559,39 @@ def test_invalid_authoritative_sync_metadata_fails_closed(
 
     with pytest.raises((TypeError, ValueError), match="retained history row"):
         _normalize(_page([row], total_count=1))
+
+
+def test_mixed_visible_prompt_uuids_fail_the_page_closed() -> None:
+    other_uuid = "00000000-0000-4000-8000-000000000197"
+    page = _page(
+        [
+            _row(change_id=2, version=2, payload=_legacy_payload(version=2)),
+            _row(
+                change_id=1,
+                version=1,
+                payload=_legacy_payload(version=1),
+                entity_uuid=other_uuid,
+            ),
+        ],
+        total_count=2,
+    )
+
+    with pytest.raises(ValueError, match="one Prompt UUID"):
+        _normalize(page)
+
+
+def test_cross_prompt_predecessor_fails_before_change_summary() -> None:
+    other_uuid = "00000000-0000-4000-8000-000000000197"
+    page = _page(
+        [_row(change_id=2, version=2, payload=_legacy_payload(version=2))],
+        predecessor=_row(
+            change_id=1,
+            version=1,
+            payload=_legacy_payload(version=1),
+            entity_uuid=other_uuid,
+        ),
+        total_count=2,
+    )
+
+    with pytest.raises(ValueError, match="one Prompt UUID"):
+        _normalize(page)

@@ -187,7 +187,7 @@ def _classify_history_artifact(
             normalized, state="artifact_kind_mismatch", definition_state="mismatched"
         )
         return
-    if kind == "single_text_recipe":
+    if raw_definition.get("definition_kind") == "single_text_recipe":
         _set_history_compatibility(
             normalized,
             state="unsupported_definition_kind",
@@ -520,6 +520,13 @@ def normalize_prompt_history_page(payload: Any, *, backend: str) -> dict[str, An
     if predecessor is not None and predecessor["change_id"] >= change_ids[-1]:
         raise ValueError(
             "Invalid retained history page: predecessor must be older than visible items."
+        )
+    prompt_uuids = {item["prompt_uuid"] for item in items}
+    if predecessor is not None:
+        prompt_uuids.add(predecessor["prompt_uuid"])
+    if len(prompt_uuids) > 1:
+        raise ValueError(
+            "Invalid retained history page: all rows must share one Prompt UUID."
         )
 
     for index, item in enumerate(items):
