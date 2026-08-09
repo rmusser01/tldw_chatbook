@@ -1,19 +1,23 @@
 ---
 id: TASK-2512
 title: Migrate MCP server from FastMCP to tldw_server's mcp-unified package
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-08-06 07:18'
+updated_date: '2026-08-09 19:40'
 labels:
   - mcp
   - fastmcp
   - migration
 dependencies: []
 references:
-  - backlog/tasks/task-1337 - Add-direct-local-Library-tools-for-Console-agents-and-MCP.md
+  - >-
+    backlog/tasks/task-1337 -
+    Add-direct-local-Library-tools-for-Console-agents-and-MCP.md
   - backlog/decisions/030-local-library-agent-tool-boundary.md
   - backlog/decisions/053-mcp-unified-standalone-runtime-boundary.md
-  - Docs/superpowers/specs/2026-08-09-mcp-unified-standalone-server-migration-design.md
+  - >-
+    Docs/superpowers/specs/2026-08-09-mcp-unified-standalone-server-migration-design.md
 priority: high
 ---
 
@@ -25,6 +29,22 @@ The MCP server (tldw_chatbook/MCP/server.py) currently uses the official SDK's F
 Update (2026-08-08, via task-1337 close-out / PR #1435): (1) LANDMINE — `mcp[cli]>=1.0.0` now resolves to mcp 2.0.0, which REMOVES `mcp.server.fastmcp`; a fresh install therefore breaks the legacy standalone server (`TldwMCPServer`, `MCP/__main__.py`) today, and the current dev venv ships with NO `mcp` installed (the in-app surface is unaffected). This makes the migration time-sensitive rather than cosmetic. (2) Scope reduction — the 18 descriptor-backed `library_*` tools (task-1337) are already FastMCP-free: they ride the capability manifest (`MCP/server.py::_describe_local_library_tools`) plus the direct runtime delegate (`LocalMCPRuntimeDelegate.execute_tool` via `asyncio.to_thread`) with the shared-service factory `build_local_library_tool_service`; they need NO migration. Remaining scope is the 10 legacy built-ins + resources + prompts + the phase-4 local agent tools. (3) Contract to preserve — the in-app direct runtime now refuses raw protocol `tools/call` for every tool with typed `RawToolCallRefusedError` (execution only via the gated, logged Execute Local Tool action); the migrated server must keep an equivalent policy-gated path, and `Tests/MCP/test_library_tools.py` (legacy-name/shape pinning) must stay green throughout.
 
 Resolved design (2026-08-09): public `mcp-unified==0.2.1` supplies the required programmatic stdio, resources, resource templates, prompts, typed errors, and all required protocol revisions. ADR-053 and the linked specification select a thin `GatewayCoreRuntime` adapter, explicitly exclude the 18 in-app-only Library tools from standalone stdio, define canonical tool/resource/prompt mappings, bound long resources with continuation metadata, preserve the phase-4 permission gate, and retain the existing client command.
+
+## Implementation Plan
+
+ADR required: yes
+
+ADR path: `backlog/decisions/053-mcp-unified-standalone-runtime-boundary.md`
+
+Reason: This migration changes the standalone runtime/dependency, stdio and cross-module adapter contracts, resource continuation, permission-error projection, cancellation semantics, and external local-data privacy boundary.
+
+Detailed plan: `Docs/superpowers/plans/2026-08-09-mcp-unified-standalone-server-migration.md`
+
+1. Pin and verify the released `mcp-unified==0.2.1` public and optional-dependency contract.
+2. Implement the strict Chatbook gateway adapter for built-ins and permission-gated local tools.
+3. Add bounded canonical resource continuation and prompt argument/result mapping.
+4. Compose the real multi-revision stdio server and make the hand-written client cursor-safe.
+5. Prove wheel/sdist isolation, update public privacy/install documentation, run final gates, and close the task only after review.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
