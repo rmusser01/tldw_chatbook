@@ -53,23 +53,25 @@ The test is parameterized over ordinary and `sensitive_llm_request()` contexts a
 
 - an allowed distinctive tool name;
 - a distinctive description sentinel;
-- a separate distinctive parameter-schema/enum sentinel.
+- a separate distinctive parameter-schema/enum sentinel;
+- and the request supplies a distinctive `user` sentinel, which the current denylist-shaped Final Payload log exposes but the allowlist helper intentionally drops.
 
 Assertions:
 
 - neither secret sentinel appears anywhere in captured logs on either path;
-- the ordinary path includes the tool name and a `HuggingFace Tools` safe-summary line;
+- the unallowlisted `user` sentinel appears nowhere in captured logs;
+- the ordinary path has exactly one `HuggingFace Tools` record whose rendered value is the expected `{"tool_names": [<name>]}` projection and contains none of the keys `description`, `parameters`, or `enum`;
 - the sensitive path contains no `HuggingFace Tools` line;
 - existing message/system canaries remain absent under the sensitive path.
 
-TDD evidence must include a red run against the current raw interpolation and a green run after the call-site change. Before completion, temporarily restore the raw tool interpolation and confirm the new test becomes red, then restore the fix. This mutation check proves the test detects the actual leak rather than only exercising the helper.
+TDD evidence must include a red run against the current raw logs and a green run after both call-site changes. Before completion, perform two independent mutation checks: temporarily restore the raw tool interpolation and confirm the tool sentinel assertions become red; then restore the tool fix, temporarily restore the old denylist-shaped Final Payload expression, and confirm the `user` sentinel assertion becomes red. Restore both fixes afterward. These checks prove the test detects both leaks rather than only exercising the helper.
 
 ## Sweep boundary
 
-Sweep every Python module under `tldw_chatbook/LLM_Calls/` for logger calls that directly format request-payload or tool-definition values. Use an AST/text-assisted inventory, then inspect each candidate in context because names such as `data` also represent response events.
+Sweep every Python module under `tldw_chatbook/LLM_Calls/` for logger calls that directly format raw request-payload dictionaries or raw tool definitions, matching acceptance criterion 4. Use an AST/text-assisted inventory, then inspect each candidate in context because names such as `data` also represent response events.
 
-- Any raw request/tool log is fixed in this task by routing through the existing allowlist helper.
-- Response-status, bounded parser diagnostics, and values that are not request payloads/tool definitions are left unchanged and explicitly justified in TASK-2118 Implementation Notes.
+- Any raw request-payload dictionary or tool-definition log is fixed in this task by routing through the existing allowlist helper.
+- Response events, status metadata, bounded parser diagnostics, and individual content-preview diagnostics are not AC 4 matches and are recorded as such in TASK-2118 Implementation Notes. If contextual inspection finds one of those out-of-scope diagnostics is itself an active privacy exposure, file a separate Backlog task and reference it in the notes rather than silently expanding this atomic repair.
 - The sweep is evidence for acceptance criterion 4; a new permanent broad AST test is not required unless the sweep finds a recurring mechanically detectable contract that existing tests do not cover.
 
 ## Verification and scope
