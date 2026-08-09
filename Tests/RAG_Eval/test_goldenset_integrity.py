@@ -155,10 +155,10 @@ def test_real_fixtures_validate_clean(corpus, golden):
 
 def test_corpus_composition_matches_the_planned_design(corpus):
     counts = Counter(doc.source_type for doc in corpus)
-    assert len(corpus) == 45
-    assert counts["note"] == 13
-    assert counts["media"] == 19
-    assert counts["conversation"] == 13
+    assert len(corpus) == 48  # 45 short + 3 long multi-chunk targets
+    assert counts["note"] == 14
+    assert counts["media"] == 20
+    assert counts["conversation"] == 14
     # The brief's floors, asserted independently of the exact numbers above so
     # a future addition cannot quietly drop a source type below them.
     assert counts["note"] >= 12
@@ -168,7 +168,7 @@ def test_corpus_composition_matches_the_planned_design(corpus):
 
 def test_golden_set_category_quotas(golden):
     counts = Counter(query.category for query in golden)
-    assert len(golden) == 41
+    assert len(golden) == 44
     assert counts["keyword"] >= 10
     assert counts["paraphrase"] >= 10
     assert counts["vocabulary_mismatch"] >= 8
@@ -260,6 +260,25 @@ def test_negative_queries_are_about_topics_absent_from_the_corpus(golden, by_slu
     assert leaks == {}
 
 
+def test_the_bare_word_will_appears_nowhere_in_the_corpus(corpus):
+    """`vm-no-will` ("who inherits when someone leaves no will") depends on
+    the corpus never using "will" as a modal verb — the one query term that
+    ordinary prose emits by accident.
+
+    This is not a general style rule; it is a named dependency of one
+    vocabulary-mismatch case, and it has been violated twice during authoring
+    (both times inside a long document written in future tense). The general
+    overlap tests cannot catch it, because they only inspect a query's own
+    target.
+    """
+    offenders = {
+        doc.slug
+        for doc in corpus
+        if re.search(r"\bwill\b", f"{doc.title} {doc.content}", re.IGNORECASE)
+    }
+    assert offenders == set()
+
+
 def test_each_capability_group_spans_all_three_source_types(golden, by_slug):
     """Per-mode per-category report cells must not be empty for a source type
     — the four-seam keyword mode is measured per type."""
@@ -285,6 +304,70 @@ def test_corpus_carries_distractors_that_are_nobody_s_answer(corpus, golden):
 def test_multi_target_queries_exist_so_recall_can_discriminate(golden):
     multi = [q.id for q in golden if len(q.relevant_slugs) > 1]
     assert len(multi) >= 2
+
+
+#: Long documents and the rare identifier planted throughout each one.
+LONG_DOCS: dict[str, str] = {
+    "note-fennimore-changeover": "Fennimore-3",
+    "media-larkspur-turbine": "Larkspur-11",
+    "conv-drayton-conveyor": "Drayton-6",
+}
+
+
+def test_long_documents_are_long_enough_to_split(by_slug):
+    """Arithmetic guard, independent of the chunker being importable.
+
+    ``Chunk_Lib._chunk_text_by_words`` walks ``range(0, len(words), step)``
+    with ``step = chunk_size - chunk_overlap``, so chunks == ceil(words/step).
+    At the default 400/100 that is a 300-word step; these documents are sized
+    so the split survives any overlap from 0 (step 400) to 300 (step 100).
+    """
+    from tldw_chatbook.RAG_Search.simplified.config import ChunkingConfig
+
+    config = ChunkingConfig()
+    assert config.chunking_method == "words"
+    for slug in LONG_DOCS:
+        doc = by_slug[slug]
+        words = len(f"{doc.title} {doc.content}".split())
+        assert words >= 700, f"{slug}: {words} words is not comfortably multi-chunk"
+        # worst case for splitting is the largest possible step: no overlap
+        assert words > config.chunk_size, f"{slug}: {words} words fits one chunk"
+
+
+def test_long_documents_really_split_and_repeat_their_identifier(by_slug):
+    """The real chunker, not a re-implementation of it.
+
+    Every chunk must contain the identifier: that is what makes one query
+    produce several chunk-level hits on one document, which is the input the
+    document-level canonicalization contract (dedup to first-hit rank) has to
+    handle. If this only produced one matching chunk, the dedup path would
+    stay untested by the fixtures.
+    """
+    chunking_service = pytest.importorskip(
+        "tldw_chatbook.RAG_Search.chunking_service",
+        reason="chunking extras not installed",
+    )
+    from tldw_chatbook.RAG_Search.simplified.config import ChunkingConfig
+
+    config = ChunkingConfig()
+    service = chunking_service.ChunkingService()
+
+    for slug, identifier in LONG_DOCS.items():
+        doc = by_slug[slug]
+        chunks = service.chunk_text(
+            doc.content,
+            chunk_size=config.chunk_size,
+            chunk_overlap=config.chunk_overlap,
+            method=config.chunking_method,
+        )
+        assert len(chunks) >= 2, f"{slug} produced {len(chunks)} chunk(s)"
+        matching = [
+            chunk for chunk in chunks if identifier.lower() in chunk["text"].lower()
+        ]
+        assert len(matching) == len(chunks), (
+            f"{slug}: identifier {identifier} reaches {len(matching)} of "
+            f"{len(chunks)} chunks; it must appear in every chunk window"
+        )
 
 
 def test_fixture_files_parse_as_plain_toml_with_the_documented_shape():

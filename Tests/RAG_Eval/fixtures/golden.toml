@@ -1,4 +1,4 @@
-# RAG eval harness — golden query set (41 queries)
+# RAG eval harness — golden query set (44 queries)
 #
 # Schema (exact — the loader rejects missing/unknown keys):
 #   id              stable query identifier, unique
@@ -25,7 +25,8 @@
 #                        (semantic, hybrid), never by P/R/MRR/NDCG.
 
 # ===========================================================================
-# keyword (12) — rare literal token, FTS advantage
+# keyword (15) — rare literal token, FTS advantage
+# (the last three are the multi-chunk targets; see the note above them)
 # ===========================================================================
 
 [[query]]
@@ -102,6 +103,31 @@ id = "kw-ashgrove-pump"
 query = "Ashgrove-2 coolant pump seal"
 category = "keyword"
 relevant_slugs = ["conv-ashgrove-pump"]
+
+# --- multi-chunk targets: each of these documents splits into 3 chunks under
+# the default chunking config and repeats its identifier in every chunk
+# window, so one query hits the same document several times. That is the only
+# place the fixtures exercise document-level canonicalization (duplicate
+# chunks of one document dedup to their first-hit rank); without them a
+# multi-chunk hit polluting P@k with self-duplicates would be invisible here.
+
+[[query]]
+id = "kw-fennimore-changeover"
+query = "Fennimore-3 packaging line changeover acceptance run"
+category = "keyword"
+relevant_slugs = ["note-fennimore-changeover"]
+
+[[query]]
+id = "kw-larkspur-turbine"
+query = "Larkspur-11 turbine commissioning walkthrough"
+category = "keyword"
+relevant_slugs = ["media-larkspur-turbine"]
+
+[[query]]
+id = "kw-drayton-conveyor"
+query = "Drayton-6 conveyor belt tracking"
+category = "keyword"
+relevant_slugs = ["conv-drayton-conveyor"]
 
 # ===========================================================================
 # paraphrase (13) — zero content-word overlap with the target, vector advantage
