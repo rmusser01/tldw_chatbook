@@ -477,7 +477,7 @@ def _tool_result_collector():
     """
     results: dict = {}
 
-    def on_step(step, _agent_kind: str) -> None:
+    def on_step(step, _agent_kind: str, _run_id: str) -> None:
         if step.kind == "tool_result" and step.tool_name:
             results[step.tool_name] = step
 

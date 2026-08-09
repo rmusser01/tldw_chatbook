@@ -285,7 +285,7 @@ class AgentService:
         registry: ToolCatalogRegistry,
         chat_call: Callable | None = None,
         clock: Callable[[], float] = time.monotonic,
-        on_step: Callable[[AgentStep, str], None] | None = None,
+        on_step: Callable[[AgentStep, str, str], None] | None = None,
         skill_runner: SkillRunner | None = None,
         skill_file_bindings: SkillFileBindings | None = None,
         review_tool_calls: Callable[[list[ToolCall]], dict[str, str]] | None = None,
@@ -1377,7 +1377,7 @@ class AgentService:
             should_cancel=should_cancel,
             clock=self.clock,
             on_step=(
-                (lambda s: self._on_step(s, agent_kind))
+                (lambda s: self._on_step(s, agent_kind, run_id))
                 if self._on_step is not None
                 else (lambda s: None)
             ),

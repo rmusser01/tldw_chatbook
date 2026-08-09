@@ -1928,7 +1928,13 @@ class ConsoleAgentBridge:
         # previously cached historical (DB-derived) summary is stale.
         self._historical_cache.pop(conversation_id, None)
 
-        def on_step(step: AgentStep, agent_kind: str) -> None:
+        def on_step(step: AgentStep, agent_kind: str, run_id: str) -> None:
+            # PR 2a (task-3): AgentService now attributes every step to its
+            # run id so a fleet of concurrent children can be told apart.
+            # This bridge is still single-run-at-a-time -- `run_id` is
+            # accepted here but not yet used; PR 2b routes fleet rows by it
+            # (keying `live_steps`/`self._live` per run_id instead of per
+            # conversation_id).
             live_steps.append(
                 AgentLiveStep(step.kind, self._summarize(step), agent_kind)
             )
