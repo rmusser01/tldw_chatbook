@@ -1908,8 +1908,9 @@ query racing the finish-of-run recompose, three asserts later than first read).
 correctly documented as heuristic AC evidence, but its content-bearing subset
 was later copied into a follow-up task as though it were the complete
 summarization privacy inventory. Reviewing every logger call in the two owned
-modules found many more prompt, response/output, credential-fragment, and
-private endpoint/path diagnostics that the filter was never designed to find.
+modules found many more prompt, response/output, credential-fragment, private
+endpoint/path, and exception/error-detail diagnostics that the filter was never
+designed to find.
 
 **The rule.** Preserve the stated proof boundary when evidence crosses into a
 follow-up. Build remediation inventories from the complete owning population,
