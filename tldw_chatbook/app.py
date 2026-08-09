@@ -2073,6 +2073,8 @@ class LibraryIngestQueueMixin:
         self._local_stt_dispatch_coordinator: Optional[
             LocalSTTDispatchCoordinator
         ] = None
+        self._parakeet_source_service: Any | None = None
+        self._parakeet_source_registry_listener: Callable[[], None] | None = None
         self._ingest_local_stt_jobs: dict[str, tuple[int, str]] = {}
         self._ingest_shutdown: bool = False
 
@@ -2850,6 +2852,65 @@ class LibraryIngestQueueMixin:
                 self._local_stt_executor = executor
             return executor
 
+    def _create_parakeet_source_service(self) -> Any:
+        """Construct the shared download-free Parakeet source service lazily."""
+
+        from tldw_chatbook.STT.parakeet_sources import ParakeetSourceService
+
+        return ParakeetSourceService()
+
+    def _ensure_parakeet_source_service(self) -> Any:
+        """Return the one app-owned Parakeet source service."""
+
+        with self._local_stt_executor_lock:
+            if self._ingest_shutdown:
+                raise ExecutorUnavailableError("Local STT is shutting down")
+            service = getattr(self, "_parakeet_source_service", None)
+            if service is None:
+                service = self._create_parakeet_source_service()
+                listener = self._sync_parakeet_source_scopes
+                self._parakeet_source_service = service
+                self._parakeet_source_registry_listener = listener
+                self.library_ingest_jobs.add_listener(listener)
+                listener()
+            return service
+
+    @staticmethod
+    def _parakeet_scope_id_for_job(job: LibraryIngestJob) -> str:
+        """Return the path-free verifier owner captured for one Library job."""
+
+        audio_options = (job.ingest_options or {}).get("audio_video", {})
+        if isinstance(audio_options, dict):
+            scope_id = audio_options.get("transcription_external_scope_id")
+            if isinstance(scope_id, str) and scope_id.strip():
+                return scope_id.strip()
+        return job.batch_id or job.job_id
+
+    def _sync_parakeet_source_scopes(self) -> None:
+        """Release only source scopes the registry observed and then settled."""
+
+        service = getattr(self, "_parakeet_source_service", None)
+        if service is None:
+            return
+        active_states = {
+            IngestJobState.QUEUED,
+            IngestJobState.PARSING,
+            IngestJobState.WRITING,
+        }
+        active = {
+            self._parakeet_scope_id_for_job(job)
+            for job in self.library_ingest_jobs.jobs()
+            if job.state in active_states
+        }
+        service.release_scopes_except(active)
+
+    def _release_parakeet_source_scope(self, scope_id: str) -> None:
+        """Release a pre-enqueue scope after an abandoned submission."""
+
+        service = getattr(self, "_parakeet_source_service", None)
+        if service is not None:
+            service.release_scope(scope_id)
+
     def _ensure_local_stt_dispatch_coordinator(
         self,
     ) -> LocalSTTDispatchCoordinator:
@@ -2880,10 +2941,12 @@ class LibraryIngestQueueMixin:
             TranscriptionService,
         )
 
+        source_service = self._ensure_parakeet_source_service()
         return LazyLiveDictationService(
             **kwargs,
             transcription_service_factory=lambda: TranscriptionService(
-                local_stt_dispatcher=self._ensure_local_stt_dispatch_coordinator()
+                local_stt_dispatcher=self._ensure_local_stt_dispatch_coordinator(),
+                parakeet_source_service=source_service,
             ),
         )
 
@@ -2899,6 +2962,7 @@ class LibraryIngestQueueMixin:
         local_source = None
         managed_store_root = None
         managed_artifact_ref = None
+        managed_dependency_refs: tuple[tuple[str, str, str], ...] = ()
         root_revision = None
         closure_fingerprint = None
         device = ExecutionDevice.CPU
@@ -2922,28 +2986,12 @@ class LibraryIngestQueueMixin:
             model_id = options.get("transcription_model") or PARAKEET_V2_MODEL
             precision = options.get("transcription_precision") or "int8"
             selected_dir = options.get("transcription_model_dir")
-            if (
-                not selected_dir
-                and model_id == PARAKEET_V2_MODEL
-                and precision == "int8"
-            ):
-                configured_dir = get_cli_setting(
-                    "transcription.parakeet_onnx_model_dir"
-                )
-                selected_dir = (
-                    configured_dir
-                    if isinstance(configured_dir, str) and configured_dir.strip()
-                    else None
-                )
+            from tldw_chatbook.STT.parakeet_sources import ParakeetSourceKey
 
-            from tldw_chatbook.STT.parakeet_dispatch import (
-                resolve_parakeet_dispatch,
-            )
-
-            resolved = resolve_parakeet_dispatch(
-                model_id=model_id,
-                precision=precision,
-                model_dir=selected_dir,
+            resolved = self._ensure_parakeet_source_service().resolve(
+                ParakeetSourceKey.from_values(model_id, precision),
+                override=selected_dir,
+                scope_id=self._parakeet_scope_id_for_job(job),
             )
             options.update(resolved.option_updates)
             return {
@@ -2952,6 +3000,7 @@ class LibraryIngestQueueMixin:
                 "local_source": resolved.local_source,
                 "managed_store_root": resolved.managed_store_root,
                 "managed_artifact_ref": resolved.managed_artifact_ref,
+                "managed_dependency_refs": resolved.managed_dependency_refs,
             }
 
         identity = ModelIdentity(
@@ -2971,6 +3020,7 @@ class LibraryIngestQueueMixin:
             "local_source": local_source,
             "managed_store_root": managed_store_root,
             "managed_artifact_ref": managed_artifact_ref,
+            "managed_dependency_refs": managed_dependency_refs,
         }
 
     def _submit_local_stt_job(
@@ -2978,6 +3028,8 @@ class LibraryIngestQueueMixin:
         job: LibraryIngestJob,
         options: dict[str, Any],
     ) -> None:
+        if options.get("transcription_provider") == "parakeet-onnx":
+            self._ensure_parakeet_source_service()
         attempt_id = f"{job.job_id}-attempt-{job.retry_count + 1}"
         self._ingest_local_stt_jobs[job.job_id] = (0, attempt_id)
         thread = threading.Thread(
@@ -3014,6 +3066,7 @@ class LibraryIngestQueueMixin:
                 local_source=dispatch["local_source"],
                 managed_store_root=dispatch["managed_store_root"],
                 managed_artifact_ref=dispatch["managed_artifact_ref"],
+                managed_dependency_refs=dispatch["managed_dependency_refs"],
                 on_event=functools.partial(self._ingest_local_stt_event, job.job_id),
                 on_result=functools.partial(self._ingest_local_stt_result, job.job_id),
                 on_failure=functools.partial(
@@ -3787,8 +3840,21 @@ class LibraryIngestQueueMixin:
         """
         self._ingest_shutdown = True
         with self._local_stt_executor_lock:
+            source_service = getattr(self, "_parakeet_source_service", None)
+            source_listener = getattr(self, "_parakeet_source_registry_listener", None)
             coordinator = getattr(self, "_local_stt_dispatch_coordinator", None)
             executor = getattr(self, "_local_stt_executor", None)
+            self._parakeet_source_service = None
+            self._parakeet_source_registry_listener = None
+            if source_listener is not None:
+                self.library_ingest_jobs.remove_listener(source_listener)
+            if source_service is not None:
+                try:
+                    source_service.close()
+                except Exception:
+                    logger.opt(exception=True).error(
+                        "Error closing the Parakeet source service."
+                    )
             if coordinator is not None:
                 coordinator.close()
             self._local_stt_dispatch_coordinator = None

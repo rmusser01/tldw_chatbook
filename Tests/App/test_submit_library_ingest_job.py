@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import threading
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import patch
 
@@ -33,10 +35,16 @@ def _minimal_app(media_db: Any = None) -> TldwCli:
 
 def _minimal_stt_app() -> TldwCli:
     app = object.__new__(TldwCli)
+    app.library_ingest_jobs = LibraryIngestJobRegistry()
     app._ingest_shutdown = False
     app._local_stt_executor_lock = threading.RLock()
     app._local_stt_executor = None
     app._local_stt_dispatch_coordinator = None
+    app._parakeet_source_service = None
+    app._parakeet_source_registry_listener = None
+    app._ingest_local_stt_jobs = {}
+    app._ingest_parse_pool = None
+    app._ingest_parse_pool_stop_event = None
     app._marshal_local_stt_call = lambda callback: callback()  # type: ignore[method-assign]
     app._top_up_ingest_parse_pool = lambda: None  # type: ignore[method-assign]
     return app
@@ -81,11 +89,25 @@ def test_local_stt_accessors_share_one_executor_and_coordinator_without_deadlock
 def test_console_dictation_factory_injects_app_owned_coordinator() -> None:
     app = _minimal_stt_app()
     coordinator = object()
+    source_service = object()
+    source_threads: list[int] = []
     app._ensure_local_stt_dispatch_coordinator = lambda: coordinator  # type: ignore[method-assign]
 
+    def _source_service() -> object:
+        source_threads.append(threading.get_ident())
+        return source_service
+
+    app._ensure_parakeet_source_service = _source_service  # type: ignore[method-assign]
+
     class _FakeTranscriptionService:
-        def __init__(self, *, local_stt_dispatcher: object) -> None:
+        def __init__(
+            self,
+            *,
+            local_stt_dispatcher: object,
+            parakeet_source_service: object,
+        ) -> None:
             self.local_stt_dispatcher = local_stt_dispatcher
+            self.parakeet_source_service = parakeet_source_service
 
     class _FakeLazyService:
         def __init__(self, **kwargs: Any) -> None:
@@ -108,8 +130,400 @@ def test_console_dictation_factory_injects_app_owned_coordinator() -> None:
 
     assert service.kwargs["transcription_provider"] == "parakeet-onnx"
     assert service.kwargs["language"] == "en"
+    assert source_threads == [threading.get_ident()]
     transcription = service.kwargs["transcription_service_factory"]()
     assert transcription.local_stt_dispatcher is coordinator
+    assert transcription.parakeet_source_service is source_service
+    assert source_threads == [threading.get_ident()]
+
+
+def test_parakeet_source_accessor_constructs_one_service_and_one_listener(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = _minimal_stt_app()
+    created: list[object] = []
+
+    def create_service() -> object:
+        service = SimpleNamespace(release_scopes_except=lambda _active: None)
+        created.append(service)
+        return service
+
+    monkeypatch.setattr(
+        app, "_create_parakeet_source_service", create_service, raising=False
+    )
+    barrier = threading.Barrier(8)
+
+    def resolve() -> object:
+        barrier.wait(timeout=2.0)
+        return app._ensure_parakeet_source_service()
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        resolved = [
+            future.result(timeout=2.0)
+            for future in [pool.submit(resolve) for _ in range(8)]
+        ]
+
+    assert len(created) == 1
+    assert {id(service) for service in resolved} == {id(created[0])}
+    assert app.library_ingest_jobs._listeners == [  # noqa: SLF001
+        app._parakeet_source_registry_listener
+    ]
+
+
+def _parakeet_job(
+    *,
+    job_id: str = "ingest-job-1",
+    batch_id: str | None = None,
+    scope_id: str | None = None,
+) -> LibraryIngestJob:
+    audio_options: dict[str, object] = {
+        "transcription_provider": "parakeet-onnx",
+        "transcription_model_dir": "/user/parakeet",
+    }
+    if scope_id is not None:
+        audio_options["transcription_external_scope_id"] = scope_id
+    return LibraryIngestJob(
+        job_id=job_id,
+        source_path="/tmp/audio.wav",
+        detected_type="audio",
+        ingest_options={"audio_video": audio_options},
+        batch_id=batch_id,
+    )
+
+
+def test_build_local_stt_dispatch_uses_authoritative_source_service_and_dependencies(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tldw_chatbook.STT.parakeet_sources import ParakeetSourceKey
+
+    app = _minimal_stt_app()
+    local_source = object()
+    dispatch = SimpleNamespace(
+        identity=object(),
+        local_source=local_source,
+        managed_store_root=Path("/managed"),
+        managed_artifact_ref=None,
+        managed_dependency_refs=(("silero-vad", "rev", "onnx"),),
+        option_updates={"transcription_model_dir": "/user/parakeet"},
+    )
+    calls: list[dict[str, object]] = []
+
+    class _SourceService:
+        def resolve(self, key: object, **kwargs: object) -> object:
+            calls.append({"key": key, **kwargs})
+            return dispatch
+
+    app._ensure_parakeet_source_service = lambda: _SourceService()  # type: ignore[method-assign]
+    job = _parakeet_job(scope_id="preflight-scope")
+    options = {
+        "transcription_provider": "parakeet-onnx",
+        "transcription_model": "nemo-parakeet-tdt-0.6b-v3",
+        "transcription_precision": "f32",
+        "transcription_model_dir": "/user/parakeet",
+    }
+    monkeypatch.setattr(
+        "tldw_chatbook.STT.parakeet_dispatch.resolve_parakeet_dispatch",
+        lambda **_kwargs: pytest.fail("legacy resolver must not be consulted"),
+    )
+
+    resolved = app._build_local_stt_dispatch(job, options)
+
+    assert calls == [
+        {
+            "key": ParakeetSourceKey.V3_F32,
+            "override": "/user/parakeet",
+            "scope_id": "preflight-scope",
+        }
+    ]
+    assert resolved["local_source"] is local_source
+    assert resolved["managed_dependency_refs"] == (("silero-vad", "rev", "onnx"),)
+
+
+def test_folder_siblings_resolve_with_one_batch_scope_and_snapshot() -> None:
+    app = _minimal_stt_app()
+    local_source = object()
+    scopes: list[str | None] = []
+    dispatch = SimpleNamespace(
+        identity=object(),
+        local_source=local_source,
+        managed_store_root=Path("/managed"),
+        managed_artifact_ref=None,
+        managed_dependency_refs=(("silero-vad", "rev", "onnx"),),
+        option_updates={},
+    )
+
+    class _SourceService:
+        def resolve(self, _key: object, **kwargs: object) -> object:
+            scopes.append(kwargs.get("scope_id"))
+            return dispatch
+
+    source_service = _SourceService()
+    app._ensure_parakeet_source_service = lambda: source_service  # type: ignore[method-assign]
+    options = {
+        "transcription_provider": "parakeet-onnx",
+        "transcription_model": "nemo-parakeet-tdt-0.6b-v2",
+        "transcription_precision": "int8",
+        "transcription_model_dir": "/user/parakeet",
+    }
+    first = app._build_local_stt_dispatch(
+        _parakeet_job(job_id="one", batch_id="folder-batch"),
+        dict(options),
+    )
+    second = app._build_local_stt_dispatch(
+        _parakeet_job(job_id="two", batch_id="folder-batch"),
+        dict(options),
+    )
+
+    assert scopes == ["folder-batch", "folder-batch"]
+    assert first["local_source"] is second["local_source"] is local_source
+
+
+def test_library_submission_forwards_exact_dependency_refs_to_coordinator() -> None:
+    app = _minimal_stt_app()
+    dependency_refs = (("silero-vad", "rev", "onnx"),)
+    dispatch = {
+        "attempt_id": "job-1-attempt-1",
+        "identity": object(),
+        "local_source": object(),
+        "managed_store_root": Path("/managed"),
+        "managed_artifact_ref": None,
+        "managed_dependency_refs": dependency_refs,
+    }
+    calls: list[dict[str, object]] = []
+
+    class _Coordinator:
+        def submit_library(self, **kwargs: object) -> int:
+            calls.append(kwargs)
+            return 3
+
+    app._build_local_stt_dispatch = lambda _job, _options: dispatch  # type: ignore[method-assign]
+    app._ensure_local_stt_dispatch_coordinator = lambda: _Coordinator()  # type: ignore[method-assign]
+    app._marshal_local_stt_call = lambda callback, *args: callback(*args)  # type: ignore[method-assign]
+    app._on_ingest_local_stt_submitted = lambda *_args: None  # type: ignore[method-assign]
+    job = _parakeet_job(job_id="job-1")
+    app._ingest_local_stt_jobs[job.job_id] = (0, "job-1-attempt-1")
+
+    app._dispatch_local_stt_job(job, {}, "job-1-attempt-1")
+
+    assert calls[0]["managed_dependency_refs"] == dependency_refs
+
+
+def test_parakeet_submission_registers_source_listener_before_dispatch_thread() -> None:
+    app = _minimal_stt_app()
+    caller_thread = threading.get_ident()
+    source_threads: list[int] = []
+    dispatched = threading.Event()
+    app._ensure_parakeet_source_service = lambda: source_threads.append(  # type: ignore[method-assign]
+        threading.get_ident()
+    )
+    app._dispatch_local_stt_job = lambda *_args: dispatched.set()  # type: ignore[method-assign]
+    job = _parakeet_job()
+
+    app._submit_local_stt_job(
+        job,
+        {"transcription_provider": "parakeet-onnx"},
+    )
+
+    assert dispatched.wait(2.0)
+    assert source_threads == [caller_thread]
+
+
+def test_preferred_source_failure_is_path_private_and_does_not_fall_back(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tldw_chatbook.STT.parakeet_sources import (
+        ParakeetSourceError,
+        ParakeetSourceErrorCode,
+    )
+
+    app = _minimal_stt_app()
+    selected_path = "/private/user/parakeet"
+
+    class _SourceService:
+        def resolve(self, _key: object, **_kwargs: object) -> object:
+            raise ParakeetSourceError(ParakeetSourceErrorCode.INVALID_SELECTION)
+
+    app._ensure_parakeet_source_service = lambda: _SourceService()  # type: ignore[method-assign]
+    job = app.library_ingest_jobs.submit(
+        source_path="/tmp/audio.wav",
+        detected_type="audio",
+        ingest_options={
+            "audio_video": {
+                "transcription_provider": "parakeet-onnx",
+                "transcription_model_dir": selected_path,
+            }
+        },
+    )
+    options = {
+        "transcription_provider": "parakeet-onnx",
+        "transcription_model": "nemo-parakeet-tdt-0.6b-v2",
+        "transcription_precision": "int8",
+        "transcription_model_dir": selected_path,
+    }
+    monkeypatch.setattr(
+        "tldw_chatbook.STT.parakeet_dispatch.resolve_parakeet_dispatch",
+        lambda **_kwargs: pytest.fail("fallback resolver must not be consulted"),
+    )
+    logged: list[str] = []
+    monkeypatch.setattr(
+        "tldw_chatbook.app.logger.error", lambda message: logged.append(str(message))
+    )
+    attempt_id = f"{job.job_id}-attempt-1"
+    app._ingest_local_stt_jobs[job.job_id] = (0, attempt_id)
+    app._marshal_local_stt_call = lambda callback, *args: callback(*args)  # type: ignore[method-assign]
+
+    app._dispatch_local_stt_job(job, options, attempt_id)
+
+    failed = app.library_ingest_jobs.get_job(job.job_id)
+    assert failed is not None
+    assert failed.state is IngestJobState.FAILED
+    assert failed.error_detail is not None
+    assert failed.error_detail["category"] == "stt_failure"
+    assert failed.error_detail["code"] == "artifact_incompatible"
+    assert failed.error_detail["actions"] == ["retry_faster_whisper"]
+    assert selected_path not in str(failed.error_detail)
+    assert selected_path not in "".join(logged)
+
+
+class _ScopeTrackingSourceService:
+    def __init__(self, events: list[str] | None = None) -> None:
+        self.observed: set[str] = set()
+        self.released: list[str] = []
+        self.active_snapshots: list[set[str]] = []
+        self.events = events
+
+    def release_scopes_except(self, active_scope_ids: set[str]) -> None:
+        active = set(active_scope_ids)
+        self.active_snapshots.append(active)
+        self.released.extend(sorted(self.observed - active))
+        self.observed = active
+
+    def release_scope(self, scope_id: str) -> None:
+        self.released.append(scope_id)
+        self.observed.discard(scope_id)
+
+    def close(self) -> None:
+        if self.events is not None:
+            self.events.append("source")
+
+
+def test_registry_releases_batch_scope_only_after_last_sibling_is_terminal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = _minimal_stt_app()
+    service = _ScopeTrackingSourceService()
+    monkeypatch.setattr(
+        app, "_create_parakeet_source_service", lambda: service, raising=False
+    )
+    app._ensure_parakeet_source_service()
+    options = {
+        "audio_video": {
+            "transcription_external_scope_id": "folder-preflight",
+        }
+    }
+    first = app.library_ingest_jobs.submit(
+        source_path="/tmp/one.wav",
+        detected_type="audio",
+        ingest_options=options,
+        batch_id="folder-batch",
+    )
+    second = app.library_ingest_jobs.submit(
+        source_path="/tmp/two.wav",
+        detected_type="audio",
+        ingest_options=options,
+        batch_id="folder-batch",
+    )
+
+    app.library_ingest_jobs.mark_failed(first.job_id, error="failed")
+
+    assert "folder-preflight" not in service.released
+    assert service.active_snapshots[-1] == {"folder-preflight"}
+
+    app.library_ingest_jobs.mark_cancelled(second.job_id, reason="cancelled")
+
+    assert service.released == ["folder-preflight"]
+    assert service.active_snapshots[-1] == set()
+
+
+def test_registry_scope_falls_back_to_batch_then_job_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = _minimal_stt_app()
+    service = _ScopeTrackingSourceService()
+    monkeypatch.setattr(
+        app, "_create_parakeet_source_service", lambda: service, raising=False
+    )
+    app._ensure_parakeet_source_service()
+
+    batched = app.library_ingest_jobs.submit(
+        source_path="/tmp/one.wav",
+        detected_type="audio",
+        batch_id="headless-batch",
+    )
+    assert service.active_snapshots[-1] == {"headless-batch"}
+    app.library_ingest_jobs.mark_cancelled(batched.job_id)
+    assert service.released == ["headless-batch"]
+
+    single = app.library_ingest_jobs.submit(
+        source_path="/tmp/two.wav",
+        detected_type="audio",
+    )
+    assert service.active_snapshots[-1] == {single.job_id}
+    app.library_ingest_jobs.mark_cancelled(single.job_id)
+    assert service.released[-1] == single.job_id
+
+
+def test_unrelated_registry_mutation_does_not_release_unobserved_pre_enqueue_scope(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = _minimal_stt_app()
+    service = _ScopeTrackingSourceService()
+    monkeypatch.setattr(
+        app, "_create_parakeet_source_service", lambda: service, raising=False
+    )
+    app._ensure_parakeet_source_service()
+
+    unrelated = app.library_ingest_jobs.submit(source_path="/tmp/note.txt")
+
+    assert unrelated.job_id in service.observed
+    assert "pending-preflight" not in service.released
+
+    app._release_parakeet_source_scope("pending-preflight")
+
+    assert service.released[-1] == "pending-preflight"
+
+
+def test_shutdown_removes_listener_and_closes_source_before_coordinator_and_executor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = _minimal_stt_app()
+    events: list[str] = []
+    service = _ScopeTrackingSourceService(events)
+    monkeypatch.setattr(
+        app, "_create_parakeet_source_service", lambda: service, raising=False
+    )
+    app._ensure_parakeet_source_service()
+
+    class _Coordinator:
+        def close(self) -> None:
+            events.append("coordinator")
+
+    class _Executor:
+        def close(self) -> None:
+            events.append("executor")
+
+    app._local_stt_dispatch_coordinator = _Coordinator()
+    app._local_stt_executor = _Executor()
+
+    teardown = app._shutdown_ingest_parse_pool()
+    assert teardown is not None
+    teardown.join(timeout=2.0)
+
+    assert not teardown.is_alive()
+    assert events == ["source", "coordinator", "executor"]
+    assert app._parakeet_source_service is None
+    assert app._parakeet_source_registry_listener is None
+    assert app.library_ingest_jobs._listeners == []  # noqa: SLF001
 
 
 def _make_job(

@@ -31,6 +31,7 @@ def test_public_constructor_adds_only_a_keyword_dispatcher() -> None:
 
     assert _signature_shape(TranscriptionService) == (
         ("local_stt_dispatcher", keyword_only, None),
+        ("parakeet_source_service", keyword_only, None),
     )
 
 
@@ -310,6 +311,23 @@ class _Dispatcher:
         self.closed = True
 
 
+class _SourceService:
+    def __init__(self, dispatch: object | None = None) -> None:
+        self.dispatch = dispatch if dispatch is not None else object()
+        self.calls: list[dict[str, object]] = []
+        self.error: Exception | None = None
+        self.closed = False
+
+    def resolve(self, key: object, **kwargs: object) -> object:
+        self.calls.append({"key": key, **kwargs})
+        if self.error is not None:
+            raise self.error
+        return self.dispatch
+
+    def close(self) -> None:
+        self.closed = True
+
+
 @pytest.mark.parametrize(
     ("provider", "configured"),
     [
@@ -324,6 +342,7 @@ def test_parakeet_buffer_uses_the_shared_dispatcher_and_compatibility_result(
 ) -> None:
     dispatcher = _Dispatcher()
     dispatch = object()
+    source_service = _SourceService(dispatch)
     bridge = _Bridge()
     bridge.config["default_provider"] = configured
     monkeypatch.setattr(
@@ -331,14 +350,10 @@ def test_parakeet_buffer_uses_the_shared_dispatcher_and_compatibility_result(
         "LegacyTranscriptionBridge",
         lambda _backend_factory: bridge,
     )
-    monkeypatch.setattr(
-        service_module,
-        "resolve_parakeet_dispatch",
-        lambda **_kwargs: dispatch,
-        raising=False,
+    service = TranscriptionService(
+        local_stt_dispatcher=dispatcher,
+        parakeet_source_service=source_service,
     )
-
-    service = TranscriptionService(local_stt_dispatcher=dispatcher)
     result = service.transcribe_buffer(
         b"\x00\x01" * 4,
         24_000,
@@ -356,6 +371,7 @@ def test_parakeet_buffer_uses_the_shared_dispatcher_and_compatibility_result(
     assert source.audio == b"\x00\x01" * 4
     assert (source.sample_rate, source.channels, source.sample_width) == (24_000, 2, 1)
     assert call == {"source": source, "dispatch": dispatch, "language": "en"}
+    assert len(source_service.calls) == 1
 
 
 @pytest.mark.parametrize(
@@ -368,7 +384,7 @@ def test_parakeet_buffer_resolves_the_configured_precision_before_dispatch(
     expected: str,
 ) -> None:
     dispatcher = _Dispatcher()
-    captured: dict[str, object] = {}
+    source_service = _SourceService()
     bridge = _Bridge()
     monkeypatch.setattr(
         service_module,
@@ -385,36 +401,31 @@ def test_parakeet_buffer_resolves_the_configured_precision_before_dispatch(
         ),
     )
 
-    def _resolve(**kwargs: object) -> object:
-        captured.update(kwargs)
-        return object()
-
-    monkeypatch.setattr(
-        service_module,
-        "resolve_parakeet_dispatch",
-        _resolve,
-        raising=False,
-    )
-
-    TranscriptionService(local_stt_dispatcher=dispatcher).transcribe_buffer(
+    TranscriptionService(
+        local_stt_dispatcher=dispatcher,
+        parakeet_source_service=source_service,
+    ).transcribe_buffer(
         b"\x00\x00",
         16_000,
         provider="parakeet-onnx",
     )
 
-    assert captured == {
-        "model_id": "nemo-parakeet-tdt-0.6b-v2",
-        "precision": expected,
-        "model_dir": None,
-    }
+    from tldw_chatbook.STT.parakeet_sources import ParakeetSourceKey
+
+    assert source_service.calls == [
+        {
+            "key": ParakeetSourceKey.from_values("nemo-parakeet-tdt-0.6b-v2", expected),
+            "override": None,
+        }
+    ]
 
 
 def test_invalid_parakeet_precision_fails_before_dispatch(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     dispatcher = _Dispatcher()
+    source_service = _SourceService()
     bridge = _Bridge()
-    resolved: list[str] = []
     monkeypatch.setattr(
         service_module,
         "LegacyTranscriptionBridge",
@@ -428,25 +439,17 @@ def test_invalid_parakeet_precision_fails_before_dispatch(
         ),
     )
 
-    def _reject(**kwargs: object) -> object:
-        resolved.append(str(kwargs["precision"]))
-        raise ValueError("unsupported Parakeet precision: fp16")
-
-    monkeypatch.setattr(
-        service_module,
-        "resolve_parakeet_dispatch",
-        _reject,
-        raising=False,
-    )
-
-    with pytest.raises(ValueError, match="unsupported Parakeet precision"):
-        TranscriptionService(local_stt_dispatcher=dispatcher).transcribe_buffer(
+    with pytest.raises(ValueError, match="unsupported Parakeet model and precision"):
+        TranscriptionService(
+            local_stt_dispatcher=dispatcher,
+            parakeet_source_service=source_service,
+        ).transcribe_buffer(
             b"\x00\x00",
             16_000,
             provider="parakeet-onnx",
         )
 
-    assert resolved == ["fp16"]
+    assert source_service.calls == []
     assert dispatcher.buffer_calls == []
     assert bridge.calls == []
 
@@ -482,18 +485,48 @@ def test_facade_cleanup_does_not_close_the_app_owned_dispatcher(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     dispatcher = _Dispatcher()
+    source_service = _SourceService()
     bridge = _Bridge()
     monkeypatch.setattr(
         service_module,
         "LegacyTranscriptionBridge",
         lambda _backend_factory: bridge,
     )
-    service = TranscriptionService(local_stt_dispatcher=dispatcher)
+    service = TranscriptionService(
+        local_stt_dispatcher=dispatcher,
+        parakeet_source_service=source_service,
+    )
 
     service.cleanup()
 
     assert bridge.calls == [("cleanup", (), {})]
     assert dispatcher.closed is False
+    assert source_service.closed is False
+
+
+def test_facade_cleanup_closes_only_its_download_free_default_source_service(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bridge = _Bridge()
+    owned = _SourceService()
+    constructed: list[object] = []
+    monkeypatch.setattr(
+        service_module,
+        "LegacyTranscriptionBridge",
+        lambda _backend_factory: bridge,
+    )
+
+    def _create() -> _SourceService:
+        constructed.append(owned)
+        return owned
+
+    monkeypatch.setattr(service_module, "ParakeetSourceService", _create, raising=False)
+
+    service = TranscriptionService()
+    service.cleanup()
+
+    assert constructed == [owned]
+    assert owned.closed is True
 
 
 def test_begin_dictation_capture_forwards_the_resolved_dispatch(
@@ -502,6 +535,7 @@ def test_begin_dictation_capture_forwards_the_resolved_dispatch(
     dispatcher = _Dispatcher()
     bridge = _Bridge()
     dispatch = object()
+    source_service = _SourceService(dispatch)
 
     def callback(_sequence: int, _text: str) -> None:
         return None
@@ -511,15 +545,9 @@ def test_begin_dictation_capture_forwards_the_resolved_dispatch(
         "LegacyTranscriptionBridge",
         lambda _backend_factory: bridge,
     )
-    monkeypatch.setattr(
-        service_module,
-        "resolve_parakeet_dispatch",
-        lambda **_kwargs: dispatch,
-        raising=False,
-    )
-
     handle = TranscriptionService(
-        local_stt_dispatcher=dispatcher
+        local_stt_dispatcher=dispatcher,
+        parakeet_source_service=source_service,
     ).begin_dictation_capture(
         capture_generation=7,
         model=None,
@@ -544,14 +572,13 @@ def test_begin_dictation_capture_forwards_the_resolved_dispatch(
     ]
 
 
-def test_begin_dictation_capture_resolves_the_configured_model_dir(
+def test_begin_dictation_uses_persistent_service_resolution_not_bridge_directory(
     monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
 ) -> None:
     dispatcher = _Dispatcher()
     bridge = _Bridge()
-    bridge.config["parakeet_onnx_model_dir"] = str(tmp_path)
-    captured: dict[str, object] = {}
+    bridge.config["parakeet_onnx_model_dir"] = "/legacy/direct-path"
+    source_service = _SourceService()
 
     monkeypatch.setattr(
         service_module,
@@ -559,18 +586,10 @@ def test_begin_dictation_capture_resolves_the_configured_model_dir(
         lambda _backend_factory: bridge,
     )
 
-    def _resolve(**kwargs: object) -> object:
-        captured.update(kwargs)
-        return object()
-
-    monkeypatch.setattr(
-        service_module,
-        "resolve_parakeet_dispatch",
-        _resolve,
-        raising=False,
-    )
-
-    TranscriptionService(local_stt_dispatcher=dispatcher).begin_dictation_capture(
+    TranscriptionService(
+        local_stt_dispatcher=dispatcher,
+        parakeet_source_service=source_service,
+    ).begin_dictation_capture(
         capture_generation=7,
         model=None,
         language="en",
@@ -580,11 +599,53 @@ def test_begin_dictation_capture_resolves_the_configured_model_dir(
         on_logical_segment=lambda _sequence, _text: None,
     )
 
-    assert captured == {
-        "model_id": "nemo-parakeet-tdt-0.6b-v2",
-        "precision": "int8",
-        "model_dir": str(tmp_path),
-    }
+    from tldw_chatbook.STT.parakeet_sources import ParakeetSourceKey
+
+    assert source_service.calls == [
+        {"key": ParakeetSourceKey.V2_INT8, "override": None}
+    ]
+
+
+def test_source_failure_is_structured_path_private_and_never_uses_legacy_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tldw_chatbook.STT.parakeet_sources import (
+        ParakeetSourceError,
+        ParakeetSourceErrorCode,
+    )
+
+    dispatcher = _Dispatcher()
+    bridge = _Bridge()
+    source_service = _SourceService()
+    source_service.error = ParakeetSourceError(ParakeetSourceErrorCode.VAD_UNAVAILABLE)
+    selected_path = "/private/user/parakeet"
+    monkeypatch.setattr(
+        service_module,
+        "LegacyTranscriptionBridge",
+        lambda _backend_factory: bridge,
+    )
+    monkeypatch.setattr(
+        service_module,
+        "resolve_parakeet_dispatch",
+        lambda **_kwargs: pytest.fail("legacy fallback must not run"),
+        raising=False,
+    )
+
+    with pytest.raises(ParakeetSourceError) as caught:
+        TranscriptionService(
+            local_stt_dispatcher=dispatcher,
+            parakeet_source_service=source_service,
+        ).transcribe_buffer(
+            b"\x00\x00",
+            16_000,
+            provider="parakeet-onnx",
+            model_dir=selected_path,
+        )
+
+    assert caught.value.code is ParakeetSourceErrorCode.VAD_UNAVAILABLE
+    assert selected_path not in str(caught.value)
+    assert dispatcher.buffer_calls == []
+    assert bridge.calls == []
 
 
 @pytest.mark.parametrize(

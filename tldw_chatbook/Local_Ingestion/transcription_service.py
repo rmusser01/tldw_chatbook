@@ -44,7 +44,7 @@ from ..STT.dispatch_coordinator import (
     DictationCaptureHandle,
     LocalSTTDispatchCoordinator,
 )
-from ..STT.parakeet_dispatch import resolve_parakeet_dispatch
+from ..STT.parakeet_sources import ParakeetSourceKey, ParakeetSourceService
 from ..Utils.path_validation import validate_path_simple
 from .parakeet_v2_artifact import active_managed_parakeet_v2_dir
 from .parakeet_v2_installer import (
@@ -4109,11 +4109,18 @@ class TranscriptionService:
         self,
         *,
         local_stt_dispatcher: LocalSTTDispatchCoordinator | None = None,
+        parakeet_source_service: ParakeetSourceService | None = None,
     ) -> None:
         """Initialize the facade over retained and shared local execution."""
 
         self._bridge = LegacyTranscriptionBridge(_LegacyTranscriptionBackend)
         self._local_stt_dispatcher = local_stt_dispatcher
+        self._owns_parakeet_source_service = parakeet_source_service is None
+        self._parakeet_source_service = (
+            parakeet_source_service
+            if parakeet_source_service is not None
+            else ParakeetSourceService()
+        )
         # Preserve construction-time configuration and availability probing.
         _ = self._bridge.config
 
@@ -4138,7 +4145,11 @@ class TranscriptionService:
     def cleanup(self) -> None:
         """Clean up resources held by the retained backend."""
 
-        self._bridge.cleanup_legacy()
+        try:
+            self._bridge.cleanup_legacy()
+        finally:
+            if self._owns_parakeet_source_service:
+                self._parakeet_source_service.close()
 
     def transcribe(
         self,
@@ -4218,9 +4229,9 @@ class TranscriptionService:
                 channels,
                 sample_width,
             )
-            dispatch = resolve_parakeet_dispatch(
-                model_id=model or PARAKEET_V2_MODEL,
-                precision=str(
+            model_id = model or PARAKEET_V2_MODEL
+            precision = (
+                str(
                     kwargs.pop(
                         "precision",
                         get_cli_setting(
@@ -4231,8 +4242,11 @@ class TranscriptionService:
                     or "int8"
                 )
                 .strip()
-                .lower(),
-                model_dir=kwargs.pop("model_dir", None),
+                .lower()
+            )
+            dispatch = self._parakeet_source_service.resolve(
+                ParakeetSourceKey.from_values(model_id, precision),
+                override=kwargs.pop("model_dir", None),
             )
             return self._local_stt_dispatcher.transcribe_buffer(
                 source=source,
@@ -4266,14 +4280,15 @@ class TranscriptionService:
 
         if self._local_stt_dispatcher is None:
             raise TranscriptionError("The shared local executor is unavailable.")
-        dispatch = resolve_parakeet_dispatch(
-            model_id=model or PARAKEET_V2_MODEL,
-            precision=str(
-                get_cli_setting("transcription.default_precision", "int8") or "int8"
-            )
+        model_id = model or PARAKEET_V2_MODEL
+        precision = (
+            str(get_cli_setting("transcription.default_precision", "int8") or "int8")
             .strip()
-            .lower(),
-            model_dir=self.config.get("parakeet_onnx_model_dir") or None,
+            .lower()
+        )
+        dispatch = self._parakeet_source_service.resolve(
+            ParakeetSourceKey.from_values(model_id, precision),
+            override=None,
         )
         return self._local_stt_dispatcher.begin_dictation(
             capture_generation=capture_generation,
