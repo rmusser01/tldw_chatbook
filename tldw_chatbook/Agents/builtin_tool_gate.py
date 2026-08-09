@@ -455,11 +455,11 @@ LOCAL_TOOLS_MASTER_KEY = "local_tools_enabled"
 #: making this switch also govern MCP exposure is a separate, out-of-scope
 #: behavior change.
 _LOCAL_TOOLS_MASTER_DESCRIPTION = (
-    "Master switch for the local workspace tool group in the Console/agent "
-    "path (fs_*/web_*/todo_* tools plus web_deep_search). Off by default; "
-    "the group's individual gates still apply once this is on. Does NOT "
-    "govern exposure to external MCP clients -- that's the separate "
-    "[mcp] expose_local_tools switch."
+    "Master switch for standard web research (web_search, web_fetch, "
+    "web_crawl) and local workspace tools (fs_*/git_*/todo_*) in the "
+    "Console/agent path. Off by default; web_deep_search also needs its "
+    "individual gate. Does NOT govern exposure to external MCP clients -- "
+    "that's the separate [mcp] expose_local_tools switch."
 )
 
 #: Hand-written description for web_deep_search -- also has no Tool
@@ -562,19 +562,32 @@ def _gate_key_pairs() -> list[tuple[str, str]]:
     return pairs
 
 
-def count_off_tool_gates() -> int:
-    """How many registration gates are currently OFF — coerced config reads
-    only, NO Tool construction (Qodo PR #1453: the breadcrumb runs on every
-    Permissions-mode resync, and `all_tool_gates()` builds every gateable
-    Tool just to read descriptions — needless work plus repeated warning
-    logs for optional tools that cannot construct on this system)."""
+def _off_tool_gate_status() -> tuple[int, bool]:
+    """Read gate state once and summarize disabled registration gates.
+
+    Returns:
+        A pair of the disabled-gate count and whether the local-tools master
+        gate is disabled.
+    """
     from ..config import coerce_bool_setting, get_cli_setting
 
-    return sum(
-        1
-        for section, key in _gate_key_pairs()
-        if not coerce_bool_setting(get_cli_setting(section, key, False), False)
-    )
+    off = 0
+    local_master_off = False
+    for section, key in _gate_key_pairs():
+        enabled = coerce_bool_setting(
+            get_cli_setting(section, key, False), False
+        )
+        if enabled:
+            continue
+        off += 1
+        if section == "console" and key == LOCAL_TOOLS_MASTER_KEY:
+            local_master_off = True
+    return off, local_master_off
+
+
+def count_off_tool_gates() -> int:
+    """Count disabled registration gates without constructing Tool objects."""
+    return _off_tool_gate_status()[0]
 
 
 def tool_gate_breadcrumb(gates: list[ToolGate] | None = None) -> str | None:
@@ -596,11 +609,22 @@ def tool_gate_breadcrumb(gates: list[ToolGate] | None = None) -> str | None:
     """
     if gates is None:
         # Count-only path: no Tool construction (see count_off_tool_gates).
-        off = count_off_tool_gates()
+        off, local_master_off = _off_tool_gate_status()
     else:
         off = sum(1 for gate in gates if not gate.enabled)
+        local_master_off = any(
+            gate.key == LOCAL_TOOLS_MASTER_KEY and not gate.enabled
+            for gate in gates
+        )
     if off == 0:
         return None
+    if local_master_off:
+        return (
+            "Standard web tools (web_search, web_fetch, web_crawl) and local "
+            "workspace tools are off — enable 'Local workspace + web tools' "
+            "in the built-in server's detail (Servers mode), then restart "
+            f"the app. {off} tool gate(s) are off in total."
+        )
     return (
         f"{off} tool gate(s) are off — enable them in the built-in "
         "server's detail (Servers mode)."

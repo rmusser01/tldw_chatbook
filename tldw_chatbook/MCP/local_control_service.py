@@ -78,7 +78,6 @@ _TOOL_ACTION_IDS = {
     "list_characters": "character.persona.list.local",
     "get_conversation_history": "chat.detail.local",
     "export_conversation": "chat.detail.local",
-    "ingest_media": "media.ingestion_jobs.launch.local",
     **{
         name: _library_tool_action_id(descriptor)
         for name, descriptor in LIBRARY_TOOL_DESCRIPTORS.items()

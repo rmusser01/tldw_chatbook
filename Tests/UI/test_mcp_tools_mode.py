@@ -140,7 +140,6 @@ def test_all_builtin_tools_render_form_column():
         "list_characters",
         "get_conversation_history",
         "export_conversation",
-        "ingest_media",
     }
     assert {tool["name"] for tool in tools} == (
         legacy_tool_names | set(LIBRARY_TOOL_DESCRIPTORS)

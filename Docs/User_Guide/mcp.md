@@ -32,15 +32,15 @@ into two subheadings:
 
 - **Agent built-ins** — the app's own file/note tools (read/list/write a
   file, glob/grep the workspace, create/update a note).
-- **Local workspace tools** — a master switch, labeled **Local workspace
-  tools (master switch)**, that turns the whole local-tool group on or off
-  for the Console/agent path, plus **web_deep_search** (multi-query web
-  research; costs real money on paid providers), gated individually
-  underneath it. While the master is off, every OTHER checkbox in this
-  group renders disabled — with its own gate still shown truthfully, but
-  greyed out — and a note explains why: "Master switch is off — these
-  tools stay unavailable regardless of their own gates." Turning the
-  master back on re-enables its dependents on the next resync.
+- **Local workspace + web tools** — a master switch, labeled **Local
+  workspace + web tools (master switch)**, that registers `web_search`,
+  `web_fetch`, and `web_crawl` alongside the workspace file, Git, and
+  session-todo tools for Console agents. `web_deep_search` (multi-query web
+  research that may cost real money on paid providers) has an additional
+  individual gate underneath it. While the master is off, the standard web
+  tools do not exist in Tools, Permissions, or the Console agent catalog.
+  Turning the master on and restarting the app registers them; use
+  Permissions afterward to choose Allow, Ask, or Off per tool.
 
 The master switch governs the **Console/agent path only**. It does *not*
 control whether an enabled tool (e.g. `web_deep_search`) is exposed to
@@ -57,10 +57,23 @@ clients launch) even though these particular checkboxes control the
 in-process *agent* tool catalog — a different subsystem sharing the same
 detail pane for discoverability.
 
-If any gate is off, both the Permissions matrix's legend (always visible,
-under the marker key) and the Tools-mode empty state (when nothing else is
-showing) name how many: "N tool gate(s) are off — enable them in the
-built-in server's detail (Servers mode)."
+If the local master is off, both the Permissions matrix's legend (always
+visible, under the marker key) and the Tools-mode empty state explicitly name
+`web_search`, `web_fetch`, and `web_crawl`, point back to the built-in server
+detail, and say to restart. Other disabled gates still report the total number
+of gates that are off.
+
+### Web research is not persistent ingestion
+
+`web_search` finds result links, `web_fetch` extracts one URL, and `web_crawl`
+walks a bounded same-host site. Their results are ephemeral tool output; they
+do not add media to Library. There is no interactive-browser tool named
+`web_browse`.
+
+For persistent URL ingestion, use **Library → Import…**, paste the URL, review
+the web-page options, and press **Start import**. The old MCP `ingest_media`
+entry was an unimplemented placeholder that returned a fabricated `queued`
+response without submitting any work; it is no longer advertised.
 
 ## Testing a tool (Tools mode)
 

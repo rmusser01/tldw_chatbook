@@ -58,7 +58,8 @@ Rebase integration (2026-08-08): PR #1434 was rebased onto `origin/dev` at
 `3023578c0`. The documentation conflict retained both dev's newer testing
 lessons and this task's painted-region lesson. The task was renumbered from
 3401 to 3793, and its follow-up from 3402 to 3794, because current dev already
-owns TASK-3401 for the Console rail-label preference and claimed TASK-3771
+owns the Console rail-label preference (renumbered from TASK-3401 to
+TASK-14650 in PR #1465) and claimed TASK-3771
 during the final pre-merge refresh. ADR check remains no/N/A:
 this integration preserves the existing rendering fix and architecture.
 

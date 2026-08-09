@@ -214,7 +214,12 @@ _TOOL_GATE_NOTE_TEXT = (
 # here, display-only. The Checkbox's `id` is still built from `gate.key`
 # (LOCAL_TOOLS_MASTER_KEY), never from this label, so the save/reload path
 # is untouched.
-_LOCAL_TOOLS_MASTER_LABEL = "Local workspace tools (master switch)"
+_LOCAL_TOOLS_MASTER_LABEL = "Local workspace + web tools (master switch)"
+
+_LOCAL_TOOLS_INCLUDED_TEXT = (
+    "Includes web_search, web_fetch, and web_crawl, plus workspace file, "
+    "Git, and session todo tools. web_deep_search is separately gated."
+)
 
 # task-3240 fix round 1 (Important 1a): shown under the "Local workspace
 # tools" subheading whenever the master switch is off -- without it, an
@@ -222,8 +227,8 @@ _LOCAL_TOOLS_MASTER_LABEL = "Local workspace tools (master switch)"
 # read as independent toggles) but stays unreachable until the master is
 # also turned on.
 _LOCAL_TOOLS_MASTER_OFF_NOTE_TEXT = (
-    "Master switch is off — these tools stay unavailable regardless of "
-    "their own gates."
+    "Master switch is off — web_search, web_fetch, web_crawl, and the local "
+    "workspace tools are unavailable to Console agents."
 )
 
 
@@ -1207,7 +1212,7 @@ class MCPServersMode(DataTableClickSelectMixin, Vertical):
         widgets()` -- spec review finding 5 (branch (b)): `_collect_
         snapshots()` never produces a `local:__local__` row, so this is the
         only reachable place for ALL nine gates. Rendered under two
-        subheadings ("Agent built-ins" / "Local workspace tools") so the
+        subheadings ("Agent built-ins" / "Local workspace + web tools") so the
         accepted UX trade-off stays visible rather than papered over: this
         pane is badged as the built-in MCP SERVER, but these checkboxes
         control the in-process AGENT tool catalog -- a different subsystem.
@@ -1250,8 +1255,16 @@ class MCPServersMode(DataTableClickSelectMixin, Vertical):
         if local_gates:
             widgets.append(
                 Static(
-                    "Local workspace tools",
+                    "Local workspace + web tools",
                     id="mcp-gate-heading-local",
+                    classes="ds-field-row",
+                    markup=False,
+                )
+            )
+            widgets.append(
+                Static(
+                    _LOCAL_TOOLS_INCLUDED_TEXT,
+                    id="mcp-gate-local-includes",
                     classes="ds-field-row",
                     markup=False,
                 )

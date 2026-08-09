@@ -321,7 +321,7 @@ git commit -m "feat(settings): add Console rail label preference"
 - Modify: `Tests/UI/test_settings_configuration_hub.py` or create `Tests/UI/test_console_rail_label_setting.py`
 - Modify: `Docs/User_Guide/settings.md`
 - Modify: `Docs/User_Guide/console/chat-basics.md`
-- Modify: `backlog/tasks/task-3401 - Make-Console-rail-label-style-configurable.md`
+- Modify: `backlog/tasks/task-14650 - Make-Console-rail-label-style-configurable.md`
 
 **Interfaces:**
 - Consumes: successful Settings save updates `app.app_config`; each new `ChatScreen(app)` reads that object during composition.
@@ -376,11 +376,11 @@ If failures occur, compare the identical command and failure set against a clean
 
 - [x] **Step 9: Complete Backlog and commit**
 
-Check all acceptance criteria only after evidence is green. Add concise Implementation Notes covering approach, files, tests, visual verification, ADR decision, and deviations. Set TASK-3401 to Done through the Backlog CLI.
+Check all acceptance criteria only after evidence is green. Add concise Implementation Notes covering approach, files, tests, visual verification, ADR decision, and deviations. Set TASK-14650 to Done through the Backlog CLI.
 
 ```bash
 git add Docs/User_Guide/settings.md Docs/User_Guide/console/chat-basics.md \
-  "backlog/tasks/task-3401 - Make-Console-rail-label-style-configurable.md" \
+  "backlog/tasks/task-14650 - Make-Console-rail-label-style-configurable.md" \
   Tests/UI/test_console_rail_label_setting.py
 git commit -m "docs(console): document configurable rail labels"
 ```

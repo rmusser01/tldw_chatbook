@@ -640,15 +640,6 @@ class LocalMCPRuntimeDelegate:
             format=str(arguments.get("format") or "markdown"),
         )
 
-    async def _tool_ingest_media(self, arguments: dict[str, Any]) -> dict[str, Any]:
-        if not arguments.get("url") and not arguments.get("file_path"):
-            return {"error": "Either url or file_path must be provided"}
-        return {
-            "status": "queued",
-            "media_id": "placeholder_id",
-            "message": "Media ingestion queued",
-        }
-
     def _require_chachanotes_db(self):
         db = get_chachanotes_db_lazy()
         if db is None:

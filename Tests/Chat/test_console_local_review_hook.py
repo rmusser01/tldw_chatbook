@@ -243,6 +243,12 @@ def test_compose_local_provider_eligible(monkeypatch, tmp_path):
     assert isinstance(local_provider, LocalToolProvider)
     assert local_provider._root == tmp_path.resolve()
     assert callable(hook)
+    catalog_ids = {entry.id for entry in local_provider.list_catalog()}
+    assert {
+        "local:web_search",
+        "local:web_fetch",
+        "local:web_crawl",
+    } <= catalog_ids
     # resolve_state is the same payload source the MCP gate uses.
     gate = local_provider.pending_gate_for("fs_list", {"path": "."})
     assert gate is not None and gate.server_key == "local:__local__"
