@@ -44,6 +44,7 @@ DEFAULT_MINIMAX_VIDEO_POLL_INTERVAL_SECONDS = 10
 DEFAULT_MINIMAX_VIDEO_TIMEOUT_SECONDS = 600
 
 DEFAULT_COMFYUI_BASE_URL = "http://127.0.0.1:8188"
+DEFAULT_COMFYUI_WORKFLOW = "minimax_h3_t2v.json"
 DEFAULT_COMFYUI_TIMEOUT_SECONDS = 1800
 
 DEFAULT_SD_CPP_VIDEO_STEPS = 25
@@ -364,7 +365,10 @@ def get_video_generation_config(*, reload: bool = False) -> VideoGenerationConfi
         minimax_video_allowed_extra_params=_parse_list(section.get("minimax_video_allowed_extra_params")),
         comfyui_base_url=_get_config_value(section, "comfyui_base_url") or DEFAULT_COMFYUI_BASE_URL,
         comfyui_default_model=_get_config_value(section, "comfyui_default_model"),
-        comfyui_default_workflow=_get_config_value(section, "comfyui_default_workflow"),
+        comfyui_default_workflow=(
+            _get_config_value(section, "comfyui_default_workflow")
+            or DEFAULT_COMFYUI_WORKFLOW
+        ),
         comfyui_timeout_seconds=_coerce_int(
             section.get("comfyui_timeout_seconds"),
             DEFAULT_COMFYUI_TIMEOUT_SECONDS,

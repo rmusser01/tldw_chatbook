@@ -39,6 +39,7 @@ from tldw_chatbook.Video_Generation.adapters.base import (
 from tldw_chatbook.Video_Generation.config import (
     DEFAULT_COMFYUI_BASE_URL,
     DEFAULT_COMFYUI_TIMEOUT_SECONDS,
+    DEFAULT_COMFYUI_WORKFLOW,
     get_video_generation_config,
 )
 from tldw_chatbook.Video_Generation.exceptions import (
@@ -130,7 +131,7 @@ class ComfyUIVideoAdapter:
             raise VideoGenerationError(f"unsupported output format: {output_format}")
 
         base_url = self._base_url()
-        workflow_name = (self._config.comfyui_default_workflow or "wan22_t2v.json").strip()
+        workflow_name = (self._config.comfyui_default_workflow or DEFAULT_COMFYUI_WORKFLOW).strip()
         workflow = self._load_workflow(workflow_name)
         self._validate_reference_assets(request.reference_assets)
         self._validate_required_nodes(base_url, workflow)

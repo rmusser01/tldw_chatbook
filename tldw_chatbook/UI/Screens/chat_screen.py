@@ -176,6 +176,7 @@ from ...Chat.console_generate_video import (
     is_paid_backend,
     parse_generate_video_args,
     run_video_generation,
+    should_forward_video_style_negative_prompt,
 )
 from ...Video_Generation.config import get_video_generation_config
 from ...Video_Generation.video_store import VideoStore
@@ -15684,6 +15685,10 @@ class ChatScreen(BaseAppScreen):
                 session_id=session.id,
             )
             return
+        if negative_text and not should_forward_video_style_negative_prompt(
+            backend, cfg.comfyui_default_workflow
+        ):
+            negative_text = None
         from tldw_chatbook.Video_Generation.adapter_registry import (
             get_registry as _get_video_registry,
         )

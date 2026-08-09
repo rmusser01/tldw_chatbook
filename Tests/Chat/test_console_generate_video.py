@@ -9,6 +9,7 @@ from tldw_chatbook.Chat.console_generate_video import (
     is_paid_backend,
     parse_generate_video_args,
     run_video_generation,
+    should_forward_video_style_negative_prompt,
 )
 from tldw_chatbook.Video_Generation.video_store import VideoStore
 
@@ -55,6 +56,19 @@ def test_estimate_video_cost_text_shapes():
     assert "6s" in paid and "billed per generated second" in paid
     local = estimate_video_cost_text("comfyui", 6)
     assert "no per-clip charge" in local
+
+
+@pytest.mark.parametrize("workflow", ["minimax_h3_t2v.json", "minimax_h3_t2v_spectrum.json"])
+def test_h3_style_negative_prompt_is_not_forwarded(workflow):
+    assert not should_forward_video_style_negative_prompt("comfyui", workflow)
+
+
+def test_sd_cpp_style_negative_prompt_is_forwarded():
+    assert should_forward_video_style_negative_prompt("stable_diffusion_cpp", None)
+
+
+def test_custom_comfyui_style_negative_prompt_is_forwarded():
+    assert should_forward_video_style_negative_prompt("comfyui", "custom_workflow.json")
 
 
 # -- blocking generation --------------------------------------------------------

@@ -38,6 +38,10 @@ GENERATE_VIDEO_USAGE_TEXT = "Usage: /generate-video [:backend] <prompt>"
 #: Backends billed per generated second (for the cost-confirm gate). Local
 #: backends (comfyui, stable_diffusion_cpp) are free at the margin.
 _PAID_BACKENDS = frozenset({"minimax"})
+_H3_COMFYUI_WORKFLOWS = frozenset({
+    "minimax_h3_t2v.json",
+    "minimax_h3_t2v_spectrum.json",
+})
 
 
 @dataclass(frozen=True)
@@ -92,6 +96,14 @@ def parse_generate_video_args(args: str) -> GenerateVideoArgs:
 def is_paid_backend(backend: str) -> bool:
     """Whether the backend bills per generation (for the cost-confirm gate)."""
     return backend.strip().lower() in _PAID_BACKENDS
+
+
+def should_forward_video_style_negative_prompt(backend: str, workflow_name: str | None) -> bool:
+    """Whether a style-generated negative prompt is supported by this workflow."""
+    return not (
+        backend.strip().lower() == "comfyui"
+        and str(workflow_name or "").strip() in _H3_COMFYUI_WORKFLOWS
+    )
 
 
 def estimate_video_cost_text(backend: str, duration_seconds: int | None) -> str:
