@@ -439,6 +439,75 @@
     color: $ds-text-muted;
 }
 
+.audio-cpp-runtime-card {
+    height: auto;
+    min-height: 1;
+    margin-top: 1;
+}
+
+.audio-cpp-runtime-status {
+    height: auto;
+    min-height: 1;
+    padding: 0 1;
+    color: $ds-text-primary;
+    text-style: bold;
+}
+
+.audio-cpp-runtime-pending,
+.audio-cpp-runtime-reason {
+    height: auto;
+    min-height: 1;
+    padding: 0 1;
+    color: $ds-text-muted;
+}
+
+.audio-cpp-diagnostics-warning {
+    height: auto;
+    min-height: 1;
+    color: $ds-status-warning;
+}
+
+.audio-cpp-diagnostics-lines {
+    height: auto;
+    min-height: 1;
+    max-height: 12;
+    overflow-y: auto;
+    color: $ds-text-muted;
+}
+
+.audio-cpp-diagnostics-lines:focus {
+    outline: heavy $ds-action-focus;
+    background: $ds-focus-bg;
+    color: $ds-text-primary;
+    scrollbar-color-active: $ds-action-focus;
+}
+
+#audio-cpp-runtime-actions {
+    height: 1;
+    min-height: 1;
+}
+
+#audio-cpp-runtime-actions Button.workbench-action {
+    width: auto;
+    min-width: 0;
+    padding: 0 1;
+    margin: 0 2 0 0;
+    border: none;
+}
+
+.speech-split-stacked #audio-cpp-runtime-actions {
+    layout: vertical;
+    height: 3;
+    min-height: 3;
+}
+
+.speech-split-stacked #audio-cpp-runtime-actions Button.workbench-action {
+    width: 100%;
+    margin: 0;
+    text-align: left;
+    content-align: left middle;
+}
+
 /* Textual's Button carries a default min-width, so the shared
  * `.workbench-action { width: auto }` alone still spread six actions across
  * the full pane -- "Export" rendered as "Ex" and "Clear" fell off the right
@@ -755,7 +824,9 @@ Input.speech-axis-control {
  * diagnostics and tuning disclosures are compact workbench rows. */
 #speech-param-group,
 #speech-connection-details,
-#speech-log-group {
+#speech-log-group,
+#audio-cpp-runtime-details,
+#audio-cpp-runtime-diagnostics {
     height: auto;
     min-height: 1;
     padding: 0;
@@ -766,7 +837,9 @@ Input.speech-axis-control {
 
 #speech-param-group > CollapsibleTitle,
 #speech-connection-details > CollapsibleTitle,
-#speech-log-group > CollapsibleTitle {
+#speech-log-group > CollapsibleTitle,
+#audio-cpp-runtime-details > CollapsibleTitle,
+#audio-cpp-runtime-diagnostics > CollapsibleTitle {
     height: 1;
     min-height: 1;
     padding: 0 1;
@@ -776,7 +849,9 @@ Input.speech-axis-control {
 
 #speech-param-group > Contents,
 #speech-connection-details > Contents,
-#speech-log-group > Contents {
+#speech-log-group > Contents,
+#audio-cpp-runtime-details > Contents,
+#audio-cpp-runtime-diagnostics > Contents {
     height: auto;
 }
 

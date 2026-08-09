@@ -330,6 +330,7 @@ class AudioCppAdapter:
         self._managed_launch: AudioCppManagedLaunchConfig | None = None
         self._managed_process_generation: int | None = None
         self._managed_catalog_process_generation: int | None = None
+        self._managed_catalog_observation_version: int | None = None
         self._managed_stop_complete = False
         self._managed_required_admission: ContextVar[
             AudioCppProcessAdmissionSnapshot | None
@@ -415,6 +416,29 @@ class AudioCppAdapter:
             return self._catalog
         await self._refresh_catalog(force=refresh)
         return self._catalog
+
+    def catalog_publication_evidence(
+        self,
+        catalog: TTSProviderCatalog,
+    ) -> tuple[int | None, int | None] | None:
+        """Fence service publication to this adapter's current catalog evidence.
+
+        Args:
+            catalog: Catalog instance proposed for service-level publication.
+
+        Returns:
+            Managed process and observation generations, ``(None, None)`` for
+            External or stale evidence, or ``None`` when publication is unsafe.
+        """
+        if self._closed or catalog is not self._catalog:
+            return None
+        if self._config.mode != "managed" or not catalog.health.fresh:
+            return (None, None)
+        process_generation = self._managed_catalog_process_generation
+        observation_version = self._managed_catalog_observation_version
+        if process_generation is None or observation_version is None:
+            return None
+        return (process_generation, observation_version)
 
     async def get_voices(
         self,
@@ -881,6 +905,18 @@ class AudioCppAdapter:
                 and self._managed_catalog_process_generation
                 == endpoint.process_generation
             ):
+                self._managed_catalog_observation_version = endpoint.observation_version
+                return
+            supervisor = self._supervisor
+            process = None if supervisor is None else supervisor.snapshot()
+            if (
+                process is not None
+                and process.state == "draining"
+                and self._managed_required_admission.get() is not None
+                and self._managed_catalog_process_generation
+                == endpoint.process_generation
+                and self._catalog.health.fresh
+            ):
                 return
             bundle = self._managed_bundle
             if (
@@ -891,12 +927,35 @@ class AudioCppAdapter:
                     _CONNECTION_UNAVAILABLE,
                     uuid4().hex,
                 ) from None
-            await self._refresh_catalog_with_client(
+            capability = await self._refresh_catalog_with_client(
                 bundle.request_client,
-                force=force,
+                force=(
+                    force
+                    or self._managed_catalog_observation_version
+                    != endpoint.observation_version
+                ),
                 process_generation=endpoint.process_generation,
                 raise_on_failure=False,
             )
+            if (
+                capability in {"available", "not_configured"}
+                and self._managed_catalog_process_generation
+                == endpoint.process_generation
+            ):
+                process = None if supervisor is None else supervisor.snapshot()
+                if (
+                    process is not None
+                    and process.process_generation == endpoint.process_generation
+                    and process.state in {"running", "draining"}
+                    and process.tts_capability in {"available", "not_configured"}
+                    and self._catalog.health.fresh
+                ):
+                    self._managed_catalog_observation_version = (
+                        process.observation_version
+                    )
+                else:
+                    self._managed_catalog_process_generation = None
+                    self._mark_catalog_stale(_TRANSIENT_FAILURE_HEALTH)
             return
 
         await self._refresh_catalog_with_client(
@@ -966,6 +1025,7 @@ class AudioCppAdapter:
                     )
                     if process_generation is not None:
                         self._managed_catalog_process_generation = None
+                        self._managed_catalog_observation_version = None
                     self._refresh_generation += 1
                 if raise_on_failure:
                     raise self._operation_error(
@@ -981,6 +1041,7 @@ class AudioCppAdapter:
                     )
                     if process_generation is not None:
                         self._managed_catalog_process_generation = None
+                        self._managed_catalog_observation_version = None
                     self._refresh_generation += 1
                 if raise_on_failure:
                     raise self._operation_error(
@@ -1122,6 +1183,7 @@ class AudioCppAdapter:
         self._managed_bundle = bundle
         self._managed_process_generation = process_generation
         self._managed_catalog_process_generation = None
+        self._managed_catalog_observation_version = None
         self._managed_stop_complete = False
         self._client = request_client
         self._catalog = TTSProviderCatalog(
@@ -1147,6 +1209,7 @@ class AudioCppAdapter:
             if self._managed_process_generation == process_generation:
                 self._managed_process_generation = None
                 self._managed_catalog_process_generation = None
+                self._managed_catalog_observation_version = None
                 self._clear_voice_state()
                 self._mark_catalog_stale(_TRANSIENT_FAILURE_HEALTH)
 
@@ -1202,6 +1265,7 @@ class AudioCppAdapter:
             if self._managed_process_generation == bundle.process_generation:
                 self._mark_catalog_stale(_TRANSIENT_FAILURE_HEALTH)
                 self._managed_catalog_process_generation = None
+                self._managed_catalog_observation_version = None
             return False
         return True
 
@@ -1476,6 +1540,8 @@ class AudioCppAdapter:
     def _mark_catalog_stale(self, health: ProviderHealth) -> None:
         if self._closed:
             return
+        if self._config.mode == "managed":
+            self._managed_catalog_observation_version = None
         self._catalog = self._failed_catalog(self._catalog, health)
         self._refresh_generation += 1
 

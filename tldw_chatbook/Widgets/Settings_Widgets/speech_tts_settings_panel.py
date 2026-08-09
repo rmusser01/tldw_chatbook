@@ -8,6 +8,7 @@ change rather than a dynamic schema side effect.
 from __future__ import annotations
 
 import asyncio
+import os
 from collections.abc import Sequence
 from copy import deepcopy
 from dataclasses import dataclass, replace
@@ -48,6 +49,7 @@ from tldw_chatbook.Event_Handlers.STTS_Events.stts_events import (
     STTSSettingsSaveResult,
 )
 from tldw_chatbook.TTS.adapter_types import TTSNativeCapabilityObservation
+from tldw_chatbook.TTS.audio_cpp_config import AudioCppConfig
 from tldw_chatbook.Third_Party.textual_fspicker import (
     FileOpen,
     Filters,
@@ -87,10 +89,12 @@ from tldw_chatbook.UI.Screens.settings_speech_tts import (
     audio_cpp_transport_warning,
     build_credential_mutation,
     build_global_speech_tts_save_proposal,
+    detect_audio_cpp_server_binary,
     global_speech_tts_provider_configuration_changed,
     global_speech_tts_provider_configuration_state,
     project_audio_cpp_global_choices,
     restore_non_secret_defaults,
+    validate_audio_cpp_managed_settings,
 )
 
 _PROVIDER_OPTIONS = [
@@ -113,6 +117,17 @@ _LANGUAGE_OPTIONS = [
 LeaveChoice = Literal["save", "discard", "cancel"]
 _GLOBAL_SPEECH_TTS_STACK_WIDTH = 104
 _COLLAPSIBLE_TITLE_FOCUS_SUFFIX = "::collapsible-title"
+_AUDIO_CPP_MANAGED_UI_SUPPORTED = os.name != "nt"
+_AUDIO_CPP_MANAGED_FIELD_IDS = frozenset(
+    {
+        "managed_binary_path",
+        "managed_server_json_path",
+        "managed_startup_timeout_seconds",
+        "managed_health_check_interval_seconds",
+        "managed_termination_grace_seconds",
+    }
+)
+_AUDIO_CPP_MANAGED_DEFAULTS = AudioCppConfig(mode="managed").to_mapping()
 # The panel's own blank sentinel for "no default voice profile chosen" in the
 # `#settings-speech-default-profile` Select. Never a real saved value: Task 2's
 # loader normalizes an absent/blank/whitespace-only `default_profile_id` to
@@ -508,6 +523,7 @@ class SpeechTTSSettingsPanel(Vertical):
         """Apply responsive layout without performing provider work."""
 
         self._sync_responsive_layout()
+        self._apply_audio_cpp_mode_visibility()
 
     def on_resize(self) -> None:
         """Keep labels and actions inside the available Settings detail width."""
@@ -521,6 +537,28 @@ class SpeechTTSSettingsPanel(Vertical):
             self.size.width < _GLOBAL_SPEECH_TTS_STACK_WIDTH,
             "settings-speech-stacked",
         )
+
+    def _apply_audio_cpp_mode_visibility(self) -> None:
+        """Show the selected primary fields without replacing focused widgets."""
+
+        if self.configure_provider != "audio_cpp":
+            return
+        mode = self.state.providers["audio_cpp"].get("mode", "external")
+        try:
+            mode_control = self.query_one("#settings-speech-audio_cpp-mode", Select)
+            if isinstance(mode_control.value, str):
+                mode = mode_control.value
+            self.query_one("#settings-speech-audio-cpp-external-fields").display = (
+                mode == "external"
+            )
+            self.query_one("#settings-speech-audio-cpp-managed-fields").display = (
+                mode == "managed" and _AUDIO_CPP_MANAGED_UI_SUPPORTED
+            )
+            self.query_one(
+                "#settings-speech-audio-cpp-managed-lifecycle-fields"
+            ).display = mode == "managed" and _AUDIO_CPP_MANAGED_UI_SUPPORTED
+        except QueryError:
+            return
 
     @staticmethod
     def _field_dom_id(provider_id: str, field_id: str) -> str:
@@ -737,11 +775,12 @@ class SpeechTTSSettingsPanel(Vertical):
         *,
         placeholder: str = "",
         disabled: bool = False,
+        default: object = "",
     ) -> Horizontal:
         return self._row(
             label,
             Input(
-                value=str(self.state.providers[provider_id].get(field_id, "")),
+                value=str(self.state.providers[provider_id].get(field_id, default)),
                 id=self._field_dom_id(provider_id, field_id),
                 placeholder=placeholder,
                 disabled=disabled,
@@ -1648,49 +1687,109 @@ class SpeechTTSSettingsPanel(Vertical):
                 TTS_PROVIDER_LABELS[provider_id], classes="destination-section"
             )
             if provider_id == "audio_cpp":
-                yield Static(
-                    "External server. Chatbook connects to a server that you start and own.",
-                    id="settings-speech-audio_cpp-external-mode",
-                    classes="settings-detail-row",
-                    markup=False,
+                mode_options = [("External server", "external")]
+                configured_mode = self.state.providers[provider_id].get(
+                    "mode", "external"
                 )
-                yield self._input(
-                    provider_id,
-                    "base_url",
-                    "Server URL (HTTP/HTTPS origin only)",
-                    placeholder="http://127.0.0.1:8080",
-                )
-                yield Static(
-                    audio_cpp_transport_warning(
-                        self.state.providers[provider_id].get("base_url")
+                if _AUDIO_CPP_MANAGED_UI_SUPPORTED:
+                    mode_options.append(("Managed local server", "managed"))
+                elif configured_mode == "managed":
+                    mode_options.append(
+                        (
+                            "Managed local server (unavailable on Windows)",
+                            "managed",
+                        )
                     )
-                    or "",
-                    id="settings-speech-audio-cpp-transport-warning",
-                    classes="settings-status-row",
-                    markup=False,
-                )
-                yield self._input(
+                yield self._select(
                     provider_id,
-                    "connect_timeout_seconds",
-                    "Connect timeout (seconds)",
+                    "mode",
+                    "Server mode",
+                    mode_options,
                 )
-                yield self._input(
-                    provider_id,
-                    "synthesis_timeout_seconds",
-                    "Synthesis timeout (seconds)",
-                )
-                yield Static(
-                    "Generation sends submitted text to this configured server.",
-                    id="settings-speech-audio_cpp-privacy-notice",
-                    classes="settings-status-row",
-                    markup=False,
-                )
-                yield Static(
-                    self._audio_cpp_draft_attribution_copy(),
-                    id="settings-speech-audio-cpp-draft-attribution",
-                    classes="settings-detail-row",
-                    markup=False,
-                )
+                if not _AUDIO_CPP_MANAGED_UI_SUPPORTED:
+                    yield Static(
+                        "Managed local server is unavailable on Windows until its "
+                        "native process lifecycle is qualified. Use External server.",
+                        id="settings-speech-audio-cpp-managed-platform-notice",
+                        classes="settings-status-row",
+                        markup=False,
+                    )
+                with Vertical(id="settings-speech-audio-cpp-external-fields"):
+                    yield Static(
+                        "External server: Chatbook connects to a server that you "
+                        "start and own.",
+                        id="settings-speech-audio_cpp-external-mode",
+                        classes="settings-detail-row",
+                        markup=False,
+                    )
+                    yield self._input(
+                        provider_id,
+                        "base_url",
+                        "Server URL (HTTP/HTTPS origin only)",
+                        placeholder="http://127.0.0.1:8080",
+                    )
+                    yield Static(
+                        audio_cpp_transport_warning(
+                            self.state.providers[provider_id].get("base_url")
+                        )
+                        or "",
+                        id="settings-speech-audio-cpp-transport-warning",
+                        classes="settings-status-row",
+                        markup=False,
+                    )
+                    yield Static(
+                        "Generation sends submitted text to this configured server.",
+                        id="settings-speech-audio_cpp-privacy-notice",
+                        classes="settings-status-row",
+                        markup=False,
+                    )
+                    yield Static(
+                        self._audio_cpp_draft_attribution_copy(),
+                        id="settings-speech-audio-cpp-draft-attribution",
+                        classes="settings-detail-row",
+                        markup=False,
+                    )
+
+                with Vertical(id="settings-speech-audio-cpp-managed-fields"):
+                    yield Static(
+                        "Managed local server: Chatbook will execute the selected "
+                        "file only after a deliberate Speech Lab, Console, or "
+                        "Roleplay speech action. Review and trust the binary first.",
+                        id="settings-speech-audio-cpp-managed-trust",
+                        classes="settings-status-row",
+                        markup=False,
+                    )
+                    yield self._path(
+                        provider_id,
+                        "managed_binary_path",
+                        "audiocpp_server binary path",
+                        placeholder="Choose a prebuilt audiocpp_server executable",
+                    )
+                    yield Button(
+                        "Use detected audiocpp_server",
+                        id="settings-speech-audio-cpp-use-detected",
+                        compact=True,
+                        tooltip=(
+                            "Look for audiocpp_server on PATH and update only this "
+                            "unsaved draft."
+                        ),
+                    )
+                    yield self._path(
+                        provider_id,
+                        "managed_server_json_path",
+                        "server.json path",
+                        placeholder="Choose an existing server.json",
+                    )
+                    yield Static(
+                        "Managed mode requires server.json to bind exactly to "
+                        "127.0.0.1 with an explicit port. The server.json folder "
+                        "becomes the child working directory, so relative paths in "
+                        "that file resolve from that folder. Chatbook never edits it.",
+                        id="settings-speech-audio-cpp-managed-json-help",
+                        classes="settings-detail-row",
+                        markup=False,
+                    )
+
                 yield Button(
                     "Open Speech Lab to test or refresh",
                     id="settings-speech-audio-cpp-open-lab",
@@ -1701,10 +1800,47 @@ class SpeechTTSSettingsPanel(Vertical):
                     ),
                 )
                 with Collapsible(
-                    title="Advanced safety limits",
+                    title="Advanced lifecycle and safety limits",
                     collapsed=True,
                     id="settings-speech-audio-cpp-advanced",
                 ):
+                    with Vertical(
+                        id="settings-speech-audio-cpp-managed-lifecycle-fields"
+                    ):
+                        yield self._input(
+                            provider_id,
+                            "managed_startup_timeout_seconds",
+                            "Managed startup timeout (seconds)",
+                            default=_AUDIO_CPP_MANAGED_DEFAULTS[
+                                "managed_startup_timeout_seconds"
+                            ],
+                        )
+                        yield self._input(
+                            provider_id,
+                            "managed_health_check_interval_seconds",
+                            "Managed health interval (seconds)",
+                            default=_AUDIO_CPP_MANAGED_DEFAULTS[
+                                "managed_health_check_interval_seconds"
+                            ],
+                        )
+                        yield self._input(
+                            provider_id,
+                            "managed_termination_grace_seconds",
+                            "Managed termination grace (seconds)",
+                            default=_AUDIO_CPP_MANAGED_DEFAULTS[
+                                "managed_termination_grace_seconds"
+                            ],
+                        )
+                    yield self._input(
+                        provider_id,
+                        "connect_timeout_seconds",
+                        "Connect timeout (seconds)",
+                    )
+                    yield self._input(
+                        provider_id,
+                        "synthesis_timeout_seconds",
+                        "Synthesis timeout (seconds)",
+                    )
                     yield self._input(
                         provider_id, "max_input_characters", "Max input characters"
                     )
@@ -1958,9 +2094,30 @@ class SpeechTTSSettingsPanel(Vertical):
             pass
 
         values = self.state.providers[self.configure_provider]
+        active_audio_cpp_mode = values.get("mode", "external")
+        if self.configure_provider == "audio_cpp":
+            try:
+                selected_mode = self.query_one(
+                    "#settings-speech-audio_cpp-mode", Select
+                ).value
+            except QueryError:
+                selected_mode = active_audio_cpp_mode
+            if isinstance(selected_mode, str):
+                active_audio_cpp_mode = selected_mode
+                values["mode"] = selected_mode
         for field_id in GLOBAL_TTS_PROVIDER_FIELD_IDS[self.configure_provider]:
             if field_id == "credential":
                 continue
+            if self.configure_provider == "audio_cpp":
+                if field_id == "mode":
+                    continue
+                if field_id == "base_url" and active_audio_cpp_mode != "external":
+                    continue
+                if (
+                    field_id in _AUDIO_CPP_MANAGED_FIELD_IDS
+                    and active_audio_cpp_mode != "managed"
+                ):
+                    continue
             selector = f"#{self._field_dom_id(self.configure_provider, field_id)}"
             try:
                 widget = self.query_one(selector)
@@ -2127,7 +2284,12 @@ class SpeechTTSSettingsPanel(Vertical):
         except QueryError:
             pass
         try:
-            self.query_one(selector).focus()
+            field = self.query_one(selector)
+            for ancestor in field.ancestors:
+                if isinstance(ancestor, Collapsible):
+                    ancestor.collapsed = False
+            field.focus()
+            field.scroll_visible(animate=False)
         except QueryError:
             pass
         self._set_result(str(error), severity="error")
@@ -2145,6 +2307,8 @@ class SpeechTTSSettingsPanel(Vertical):
                 self.state,
                 configure_provider=self.configure_provider,
             )
+            if "audio_cpp" in proposal.changed_provider_ids:
+                validate_audio_cpp_managed_settings(self.state.providers["audio_cpp"])
             defaults_changed = (
                 proposal.preferences != self.original_state.defaults.snapshot()
                 # `default_profile_id` lives outside `TTSPreferencesSnapshot`
@@ -2461,10 +2625,18 @@ class SpeechTTSSettingsPanel(Vertical):
             else:
                 self._provider_runtime_revisions[provider_id] = runtime_revision
             publication_state = result.provider_statuses.get(provider_id)
+            staged_pending = (
+                publication_state == "pending"
+                and provider_id in result.staged_provider_ids
+            )
             if result.failure_phase == "cache_reload":
                 runtime_state = SpeechTTSRuntimeState.UNAVAILABLE
                 category = SpeechTTSDiagnosticCategory.CONFIGURATION
                 recovery = SpeechTTSNavigationIntent.CONFIGURE
+            elif staged_pending:
+                runtime_state = SpeechTTSRuntimeState.NOT_CHECKED
+                category = SpeechTTSDiagnosticCategory.CONFIGURATION
+                recovery = SpeechTTSNavigationIntent.TEST
             elif publication_state == "pending":
                 runtime_state = SpeechTTSRuntimeState.RECONFIGURING
                 category = SpeechTTSDiagnosticCategory.CONFIGURATION
@@ -2494,7 +2666,7 @@ class SpeechTTSSettingsPanel(Vertical):
                 diagnostic_category=category,
                 recovery_action=recovery,
             )
-            if publication_state != "pending":
+            if publication_state != "pending" or staged_pending:
                 self._provider_runtime_request_observed_at.pop(
                     observation_key,
                     None,
@@ -2594,7 +2766,10 @@ class SpeechTTSSettingsPanel(Vertical):
             saved_provider_id=saved_provider_id,
         )
         for provider_id in result.provider_statuses:
-            self._provider_runtime_request_ids[provider_id] = result.request_id
+            if provider_id in result.staged_provider_ids:
+                self._provider_runtime_request_ids.pop(provider_id, None)
+            else:
+                self._provider_runtime_request_ids[provider_id] = result.request_id
         if saved_provider_id == "audio_cpp":
             self._audio_cpp_runtime_revision = self._provider_runtime_revisions.get(
                 "audio_cpp"
@@ -2612,6 +2787,26 @@ class SpeechTTSSettingsPanel(Vertical):
             result_copy = (
                 "Saved locally, but the runtime configuration cache reload failed; "
                 f"restart or retry. Provider handoff: {handoff}."
+            )
+        elif (
+            saved_provider_id == "audio_cpp"
+            and result.provider_statuses.get("audio_cpp") == "pending"
+            and "audio_cpp" in result.staged_provider_ids
+        ):
+            desired_mode = (
+                saved_provider_values.get("mode", "external")
+                if saved_provider_values is not None
+                else "external"
+            )
+            handoff_copy = (
+                "Open Speech Lab to apply the saved Managed settings."
+                if desired_mode == "managed"
+                else "Open Speech Lab to apply External mode and stop any active "
+                "managed server."
+            )
+            result_copy = (
+                "Saved locally; the active audio.cpp configuration remains "
+                f"unchanged. {handoff_copy}"
             )
         else:
             result_copy = f"Saved locally. Runtime reconfiguration: {handoff}."
@@ -2884,15 +3079,12 @@ class SpeechTTSSettingsPanel(Vertical):
         if not draft_dirty:
             await self._apply_configure_provider(requested_provider)
             return
-        try:
-            selector = self.query_one(
-                "#settings-speech-configure-provider",
-                Select,
-            )
-            self._syncing = True
+        selector = self.query_one(
+            "#settings-speech-configure-provider",
+            Select,
+        )
+        with selector.prevent(Select.Changed):
             selector.value = self.configure_provider
-        finally:
-            self._syncing = False
         self.run_worker(
             self._change_configure_provider(
                 requested_provider,
@@ -3004,6 +3196,47 @@ class SpeechTTSSettingsPanel(Vertical):
         warning.update(audio_cpp_transport_warning(event.value) or "")
         attribution.update(self._audio_cpp_draft_attribution_copy(event.value))
 
+    @on(Select.Changed, "#settings-speech-audio_cpp-mode")
+    def handle_audio_cpp_mode_changed(self, event: Select.Changed) -> None:
+        if self._syncing or not isinstance(event.value, str):
+            return
+        if event.value == "managed" and not _AUDIO_CPP_MANAGED_UI_SUPPORTED:
+            with event.select.prevent(Select.Changed):
+                event.select.value = "external"
+            self.state.providers["audio_cpp"]["mode"] = "external"
+            self._apply_audio_cpp_mode_visibility()
+            self._set_result(
+                "Managed local server is unavailable on Windows. Use External "
+                "server instead.",
+                severity="warning",
+            )
+            return
+        self.state.providers["audio_cpp"]["mode"] = event.value
+        self._apply_audio_cpp_mode_visibility()
+
+    @on(Button.Pressed, "#settings-speech-audio-cpp-use-detected")
+    def handle_audio_cpp_use_detected(self, event: Button.Pressed) -> None:
+        event.stop()
+        detected = detect_audio_cpp_server_binary()
+        if detected is None:
+            self._set_result(
+                "audiocpp_server was not found on PATH. Keep the current draft "
+                "or use Browse to choose a prebuilt binary.",
+                severity="warning",
+            )
+            return
+        try:
+            self.query_one(
+                "#settings-speech-audio_cpp-managed-binary-path", Input
+            ).value = detected
+        except QueryError:
+            return
+        self._set_result(
+            "Detected audiocpp_server in the managed draft. Review it and Save; "
+            "the server was not started.",
+            severity="information",
+        )
+
     @on(Input.Changed, ".settings-speech-draft-field")
     @on(Select.Changed, ".settings-speech-draft-field")
     @on(Switch.Changed, ".settings-speech-draft-field")
@@ -3067,11 +3300,6 @@ class SpeechTTSSettingsPanel(Vertical):
     @on(Button.Pressed, "#settings-speech-audio-cpp-open-lab")
     def handle_open_lab(self, event: Button.Pressed) -> None:
         event.stop()
-        intent = (
-            SpeechTTSNavigationIntent.REFRESH_MODELS
-            if event.button.id == "settings-speech-audio-cpp-open-lab"
-            else SpeechTTSNavigationIntent.TEST
-        )
         provider_id = (
             "audio_cpp"
             if event.button.id == "settings-speech-audio-cpp-open-lab"
@@ -3079,7 +3307,10 @@ class SpeechTTSSettingsPanel(Vertical):
         )
         self.run_worker(
             self._open_lab(
-                SpeechTTSNavigationTarget(provider_id, intent),
+                SpeechTTSNavigationTarget(
+                    provider_id,
+                    SpeechTTSNavigationIntent.TEST,
+                ),
             ),
             group="settings-speech-open-lab",
             exclusive=True,
@@ -3145,6 +3376,16 @@ class SpeechTTSSettingsPanel(Vertical):
         }
         if target_selector in directory_fields:
             picker = SelectDirectory(title="Choose voice resource directory")
+        elif target_selector == ("#settings-speech-audio_cpp-managed-binary-path"):
+            picker = FileOpen(
+                title="Choose prebuilt audiocpp_server",
+                filters=Filters(("Executable files", lambda path: path.is_file())),
+            )
+        elif target_selector == ("#settings-speech-audio_cpp-managed-server-json-path"):
+            picker = FileOpen(
+                title="Choose existing server.json",
+                filters=Filters(("JSON files", lambda path: path.suffix == ".json")),
+            )
         else:
             filters = Filters(("Model and resource files", lambda _path: True))
             picker = FileOpen(

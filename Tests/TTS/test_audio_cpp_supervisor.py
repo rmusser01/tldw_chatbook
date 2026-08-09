@@ -1563,12 +1563,17 @@ async def test_two_failures_mark_unhealthy_and_one_success_recovers(
     )
     launch = _make_launch(tmp_path)
     await supervisor.ensure_running(launch, generation_hooks_factory=hooks)
+    running_version = supervisor.snapshot().observation_version
 
     await _run_periodic_probe(sleep, hooks, False)
-    assert supervisor.snapshot().state == "running"
-    assert supervisor.snapshot().consecutive_health_failures == 1
+    first_failure = supervisor.snapshot()
+    assert first_failure.state == "running"
+    assert first_failure.consecutive_health_failures == 1
+    assert first_failure.observation_version > running_version
     await _run_periodic_probe(sleep, hooks, False)
-    assert supervisor.snapshot().state == "unhealthy"
+    unhealthy = supervisor.snapshot()
+    assert unhealthy.state == "unhealthy"
+    assert unhealthy.observation_version > first_failure.observation_version
     hooks.queue_health(True)
 
     await supervisor.ensure_running(launch, generation_hooks_factory=_HooksFactory())
@@ -1577,6 +1582,7 @@ async def test_two_failures_mark_unhealthy_and_one_success_recovers(
     assert snapshot.state == "running"
     assert snapshot.consecutive_health_failures == 0
     assert snapshot.last_failure is None
+    assert snapshot.observation_version > unhealthy.observation_version
     await supervisor.stop()
 
 

@@ -1450,6 +1450,7 @@ class AudioCppSupervisor:
                     self._publish_process_exited_locked(record)
                     return False
                 if healthy:
+                    recovered_from_failure = self._consecutive_health_failures > 0
                     self._consecutive_health_failures = 0
                     if self._state == "unhealthy":
                         self._state = "running"
@@ -1458,15 +1459,16 @@ class AudioCppSupervisor:
                             and self._last_failure.code == "runtime_unhealthy"
                         ):
                             self._last_failure = None
+                    if recovered_from_failure:
                         self._observation_version += 1
                 else:
                     self._consecutive_health_failures += 1
+                    self._observation_version += 1
                     if self._consecutive_health_failures >= 2:
                         self._state = "unhealthy"
                         self._last_failure = _failure_for(
                             _RUNTIME_UNHEALTHY_FAILURE, record.generation
                         )
-                        self._observation_version += 1
                 return healthy
         finally:
             async with self._lock:

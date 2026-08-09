@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import math
 import os
+import shutil
 import unicodedata
 from collections.abc import Mapping
 from copy import deepcopy
@@ -22,6 +23,9 @@ from urllib.parse import urlsplit
 
 from tldw_chatbook.TTS.adapter_types import TTSNativeCapabilityObservation
 from tldw_chatbook.TTS.audio_cpp_config import AudioCppConfig
+from tldw_chatbook.TTS.audio_cpp_managed_config import (
+    validate_audio_cpp_managed_launch,
+)
 from tldw_chatbook.TTS.preferences import TTSPreferencesSnapshot
 from tldw_chatbook.UI.Speech.speech_settings_contracts import (
     SpeechTTSConfigurationState,
@@ -53,12 +57,56 @@ TTS_PROVIDER_LABELS = MappingProxyType(
     }
 )
 
+_AUDIO_CPP_MANAGED_VALIDATION_ERRORS = MappingProxyType(
+    {
+        "audio.cpp managed_binary_path must be an absolute executable file": (
+            "managed_binary_path",
+            "Choose an existing audiocpp_server file that is executable.",
+        ),
+        "audio.cpp managed_server_json_path must be an absolute readable file": (
+            "managed_server_json_path",
+            "Choose an existing server.json file that is readable.",
+        ),
+        "audio.cpp server.json must be at most 1048576 bytes": (
+            "managed_server_json_path",
+            "server.json must be 1 MiB or smaller.",
+        ),
+        "audio.cpp server.json must be UTF-8 JSON": (
+            "managed_server_json_path",
+            "server.json must use UTF-8 encoding.",
+        ),
+        "audio.cpp server.json must be strict JSON": (
+            "managed_server_json_path",
+            "server.json must contain strict JSON with no duplicate keys or "
+            "non-JSON values.",
+        ),
+        "audio.cpp server.json must contain one JSON object": (
+            "managed_server_json_path",
+            "server.json must contain one JSON object.",
+        ),
+        "audio.cpp server.json host must be exactly 127.0.0.1": (
+            "managed_server_json_path",
+            "server.json must set host exactly to 127.0.0.1.",
+        ),
+        "audio.cpp server.json port must be an integer from 1 through 65535": (
+            "managed_server_json_path",
+            "server.json must set port to a whole number from 1 through 65535.",
+        ),
+    }
+)
+
 # Explicit global ownership destination.  The names are stable model keys;
 # rendering remains deliberately provider-specific in the panel.
 GLOBAL_TTS_PROVIDER_FIELD_IDS = MappingProxyType(
     {
         "audio_cpp": (
+            "mode",
             "base_url",
+            "managed_binary_path",
+            "managed_server_json_path",
+            "managed_startup_timeout_seconds",
+            "managed_health_check_interval_seconds",
+            "managed_termination_grace_seconds",
             "connect_timeout_seconds",
             "synthesis_timeout_seconds",
             "max_input_characters",
@@ -579,12 +627,14 @@ def load_global_speech_tts_state(
     app_tts = _section(settings, "app_tts")
     higgs = _section(settings, "HiggsSettings")
 
+    raw_audio_cpp = app_tts.get("audio_cpp", {})
     try:
-        audio_cpp = AudioCppConfig.from_mapping(
-            app_tts.get("audio_cpp", {})
-            if isinstance(app_tts.get("audio_cpp", {}), Mapping)
-            else {}
-        ).to_mapping()
+        if not isinstance(raw_audio_cpp, Mapping):
+            raise ValueError("Invalid audio.cpp settings")
+        audio_cpp = AudioCppConfig.from_mapping(raw_audio_cpp).to_mapping()
+        for field_id in GLOBAL_TTS_PROVIDER_FIELD_IDS["audio_cpp"]:
+            if field_id in raw_audio_cpp and field_id not in audio_cpp:
+                audio_cpp[field_id] = deepcopy(raw_audio_cpp[field_id])
     except ValueError:
         audio_cpp = AudioCppConfig().to_mapping()
 
@@ -966,6 +1016,56 @@ def _validation_error(provider_id: str, field_id: str, message: str) -> None:
     raise GlobalSpeechTTSValidationError(provider_id, field_id, message)
 
 
+def detect_audio_cpp_server_binary() -> str | None:
+    """Return the platform-resolved ``audiocpp_server`` path, if present.
+
+    Detection is deliberately an explicit draft helper. It does not validate,
+    persist, execute, or contact the discovered program.
+
+    Returns:
+        The exact detected executable path, or ``None`` when it is unavailable.
+    """
+
+    detected = shutil.which("audiocpp_server")
+    return detected if isinstance(detected, str) and detected else None
+
+
+def validate_audio_cpp_managed_settings(values: Mapping[str, object]) -> None:
+    """Validate selected Managed artifacts with bounded field diagnostics.
+
+    External mode returns without touching dormant managed paths. Managed mode
+    reuses the launch validator, which reads but never modifies the selected
+    executable or ``server.json`` and performs no process or network work.
+
+    Args:
+        values: Full two-mode audio.cpp Settings draft.
+
+    Raises:
+        GlobalSpeechTTSValidationError: If the selected Managed artifacts are
+            invalid or unsafe.
+    """
+
+    validated = _validated_provider_values("audio_cpp", values)
+    if validated.get("mode") != "managed":
+        return
+
+    config = AudioCppConfig.from_mapping(validated)
+    failure: tuple[str, str] | None = None
+    try:
+        validate_audio_cpp_managed_launch(config)
+    except ValueError as error:
+        failure = _AUDIO_CPP_MANAGED_VALIDATION_ERRORS.get(
+            str(error),
+            (
+                "managed_server_json_path",
+                "Review server.json and choose a valid managed server configuration.",
+            ),
+        )
+
+    if failure is not None:
+        raise GlobalSpeechTTSValidationError("audio_cpp", *failure)
+
+
 def _string(
     provider_id: str,
     field_id: str,
@@ -1123,16 +1223,21 @@ def _validated_provider_values(
     values: Mapping[str, object],
 ) -> dict[str, object]:
     if provider_id == "audio_cpp":
-        allowed_fields = frozenset(AudioCppConfig().to_mapping())
-        if set(values) - allowed_fields or values.get("mode") != "external":
+        allowed_fields = frozenset(GLOBAL_TTS_PROVIDER_FIELD_IDS["audio_cpp"])
+        if set(values) - allowed_fields:
             _validation_error(
                 provider_id,
-                "base_url",
-                "Only external audio.cpp server settings are supported.",
+                "mode",
+                "The audio.cpp settings contain an unsupported field.",
             )
+        mode = _choice(
+            provider_id,
+            "mode",
+            values.get("mode", "external"),
+            frozenset({"external", "managed"}),
+        )
         candidate: dict[str, object] = {
-            "mode": "external",
-            "base_url": _string(provider_id, "base_url", values.get("base_url")),
+            "mode": mode,
             "connect_timeout_seconds": _number(
                 provider_id,
                 "connect_timeout_seconds",
@@ -1163,8 +1268,50 @@ def _validated_provider_values(
                 1,
                 2**63 - 1,
             )
+        if mode == "external":
+            candidate["base_url"] = _string(
+                provider_id,
+                "base_url",
+                values.get("base_url"),
+            )
+        else:
+            candidate.update(
+                {
+                    "managed_binary_path": _path_syntax(
+                        provider_id,
+                        "managed_binary_path",
+                        values.get("managed_binary_path"),
+                    ),
+                    "managed_server_json_path": _path_syntax(
+                        provider_id,
+                        "managed_server_json_path",
+                        values.get("managed_server_json_path"),
+                    ),
+                    "managed_startup_timeout_seconds": _number(
+                        provider_id,
+                        "managed_startup_timeout_seconds",
+                        values.get("managed_startup_timeout_seconds"),
+                        1.0,
+                        300.0,
+                    ),
+                    "managed_health_check_interval_seconds": _number(
+                        provider_id,
+                        "managed_health_check_interval_seconds",
+                        values.get("managed_health_check_interval_seconds"),
+                        2.0,
+                        300.0,
+                    ),
+                    "managed_termination_grace_seconds": _number(
+                        provider_id,
+                        "managed_termination_grace_seconds",
+                        values.get("managed_termination_grace_seconds"),
+                        0.1,
+                        60.0,
+                    ),
+                }
+            )
         try:
-            return AudioCppConfig.from_mapping(candidate).to_mapping()
+            projected = AudioCppConfig.from_mapping(candidate).to_mapping()
         except ValueError as error:
             message = str(error)
             field_id = next(
@@ -1180,6 +1327,15 @@ def _validated_provider_values(
                 field_id,
                 "The external audio.cpp setting is invalid.",
             )
+        durable = {
+            field_id: deepcopy(values[field_id])
+            for field_id in GLOBAL_TTS_PROVIDER_FIELD_IDS[provider_id]
+            if field_id in values
+        }
+        durable.update(projected)
+        if mode == "managed" and "base_url" not in durable:
+            durable["base_url"] = AudioCppConfig().base_url
+        return durable
 
     if provider_id == "openai":
         base_url = _url(provider_id, "base_url", values.get("base_url"))

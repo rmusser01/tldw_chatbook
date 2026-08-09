@@ -42,6 +42,7 @@ from tldw_chatbook.TTS.effective_settings import (
 )
 from tldw_chatbook.TTS.preferences import TTSPreferencesSnapshot
 from tldw_chatbook.TTS.TTS_Generation import (
+    AudioCppRuntimeObservation,
     TTSService,
     TTSSettingsPersistenceOutcome,
 )
@@ -116,6 +117,16 @@ def _handler(request: httpx.Request) -> httpx.Response:
     raise AssertionError(f"unexpected path: {request.url.path}")
 
 
+def _no_model_handler(request: httpx.Request) -> httpx.Response:
+    if request.url.path == "/health":
+        return _response(
+            json.dumps({"status": "ok", "backend": "cpu", "models": 0}).encode(),
+        )
+    if request.url.path == "/v1/models":
+        return _response(b'{"object":"list","data":[]}')
+    raise AssertionError(f"unexpected path: {request.url.path}")
+
+
 class _PreparationSupervisor:
     def __init__(self) -> None:
         self.state = "stopped"
@@ -137,6 +148,7 @@ class _PreparationSupervisor:
         self.stop_failures_remaining = 0
         self.deadline_observations: list[float | None] = []
         self.wait_closed_calls = 0
+        self.tts_capability = "unknown"
 
     def admission_snapshot(self) -> AudioCppProcessAdmissionSnapshot:
         self.admission_calls += 1
@@ -161,7 +173,9 @@ class _PreparationSupervisor:
                 if self.state in {"running", "unhealthy"}
                 else None
             ),
-            tts_capability=("available" if self.state == "running" else "unknown"),
+            tts_capability=(
+                self.tts_capability if self.state == "running" else "unknown"
+            ),
             consecutive_health_failures=0,
             last_failure=None,
             diagnostics=(),
@@ -206,7 +220,7 @@ class _PreparationSupervisor:
         self.launches += 1
         self.hooks = await generation_hooks_factory(self.process_generation)
         assert await self.hooks.health_probe()
-        await self.hooks.contract_probe()
+        self.tts_capability = await self.hooks.contract_probe()
         self.state = "running"
         return self._endpoint(launch.base_url)
 
@@ -408,6 +422,7 @@ def _service(
     supervisor: _PreparationSupervisor,
     *,
     shutdown_timeout_seconds: float = 10.0,
+    transport_handler: Callable[[httpx.Request], httpx.Response] = _handler,
 ) -> tuple[TTSService, list[dict[str, Any]]]:
     factory_configs: list[dict[str, Any]] = []
 
@@ -415,7 +430,7 @@ def _service(
         factory_configs.append(dict(config))
         return AudioCppAdapter(
             AudioCppConfig.from_mapping(config),
-            transport=httpx.MockTransport(_handler),
+            transport=httpx.MockTransport(transport_handler),
             supervisor=supervisor,  # type: ignore[arg-type]
         )
 
@@ -457,6 +472,307 @@ async def _stage(
         generation=generation,
     )
     service._settings_persisted_provider_generations["audio_cpp"] = generation
+
+
+@pytest.mark.asyncio
+async def test_runtime_observation_is_passive_and_keeps_paths_out_of_repr(
+    tmp_path: Path,
+) -> None:
+    supervisor = _PreparationSupervisor()
+    managed = _managed_config(tmp_path, "passive-observation", 19_121)
+    service, factory_configs = _service(managed, supervisor)
+
+    try:
+        observation = await service.audio_cpp_runtime_observation()
+
+        assert isinstance(observation, AudioCppRuntimeObservation)
+        assert observation.saved_mode == "managed"
+        assert observation.applied_mode == "managed"
+        assert observation.saved_configuration_generation == 0
+        assert observation.applied_configuration_generation == 0
+        assert observation.pending_configuration is False
+        assert observation.process.state == "stopped"
+        assert observation.catalog_revision is None
+        assert observation.catalog_fresh is False
+        assert observation.service_closed is False
+        assert observation.saved_managed_binary_path == managed["managed_binary_path"]
+        assert (
+            observation.applied_managed_server_json_path
+            == managed["managed_server_json_path"]
+        )
+        rendered = repr(observation)
+        assert str(managed["managed_binary_path"]) not in rendered
+        assert str(managed["managed_server_json_path"]) not in rendered
+        assert factory_configs == []
+        assert supervisor.ensure_calls == 0
+        assert supervisor.launches == 0
+    finally:
+        await service.close()
+        await service.wait_closed()
+
+
+@pytest.mark.asyncio
+async def test_runtime_observation_reports_staged_managed_over_applied_external(
+    tmp_path: Path,
+) -> None:
+    supervisor = _PreparationSupervisor()
+    managed = _managed_config(tmp_path, "staged-managed-observation", 19_122)
+    service, factory_configs = _service(_external_config(), supervisor)
+    await _stage(service, managed, generation=7)
+
+    try:
+        observation = await service.audio_cpp_runtime_observation()
+
+        assert observation.saved_mode == "managed"
+        assert observation.applied_mode == "external"
+        assert observation.saved_configuration_generation == 7
+        assert observation.applied_configuration_generation == 0
+        assert observation.pending_configuration is True
+        assert observation.process.state == "stopped"
+        assert observation.saved_managed_binary_path == managed["managed_binary_path"]
+        assert observation.applied_managed_binary_path is None
+        assert factory_configs == []
+        assert supervisor.launches == 0
+    finally:
+        await service.close()
+        await service.wait_closed()
+
+
+@pytest.mark.asyncio
+async def test_external_runtime_capability_reflects_tested_catalog() -> None:
+    supervisor = _PreparationSupervisor()
+    service, factory_configs = _service(_external_config(), supervisor)
+
+    try:
+        before = await service.audio_cpp_runtime_observation()
+
+        assert before.tts_capability == "unknown"
+        assert before.catalog_revision is None
+
+        await service.start_and_test_audio_cpp()
+        after = await service.audio_cpp_runtime_observation()
+
+        assert after.applied_mode == "external"
+        assert after.tts_capability == "available"
+        assert after.catalog_revision is not None
+        assert after.catalog_fresh is True
+        assert after.active_endpoint == _external_config()["base_url"]
+        assert factory_configs == [_external_config()]
+        assert supervisor.launches == 0
+    finally:
+        await service.close()
+        await service.wait_closed()
+
+
+@pytest.mark.asyncio
+async def test_runtime_observation_keeps_live_managed_visible_when_external_staged(
+    tmp_path: Path,
+) -> None:
+    supervisor = _PreparationSupervisor()
+    managed = _managed_config(tmp_path, "active-managed-observation", 19_123)
+    service, _factory_configs = _service(managed, supervisor)
+    await service.start_and_test_audio_cpp()
+    await _stage(service, _external_config(), generation=9)
+
+    try:
+        observation = await service.audio_cpp_runtime_observation()
+
+        assert observation.saved_mode == "external"
+        assert observation.applied_mode == "managed"
+        assert observation.saved_configuration_generation == 9
+        assert observation.applied_configuration_generation == 0
+        assert observation.pending_configuration is True
+        assert observation.process.state == "running"
+        assert observation.process.process_generation == 1
+        assert observation.process.tts_capability == "available"
+        assert observation.catalog_revision is not None
+        assert observation.catalog_fresh is True
+    finally:
+        await service.close()
+        await service.wait_closed()
+
+
+@pytest.mark.asyncio
+async def test_runtime_observation_marks_catalog_stale_after_managed_exit(
+    tmp_path: Path,
+) -> None:
+    supervisor = _PreparationSupervisor()
+    managed = _managed_config(tmp_path, "crashed-observation", 19_124)
+    service, _factory_configs = _service(managed, supervisor)
+    await service.start_and_test_audio_cpp()
+    before_exit = await service.audio_cpp_runtime_observation()
+    await supervisor.force_exit()
+
+    try:
+        after_exit = await service.audio_cpp_runtime_observation()
+
+        assert before_exit.catalog_fresh is True
+        assert after_exit.process.state == "unavailable"
+        assert after_exit.catalog_revision == before_exit.catalog_revision
+        assert after_exit.catalog_fresh is False
+    finally:
+        await service.close()
+        await service.wait_closed()
+
+
+@pytest.mark.asyncio
+async def test_runtime_observation_keeps_catalog_stale_after_health_recovers(
+    tmp_path: Path,
+) -> None:
+    supervisor = _PreparationSupervisor()
+    managed = _managed_config(tmp_path, "recovered-observation", 19_126)
+    service, _factory_configs = _service(managed, supervisor)
+    await service.start_and_test_audio_cpp()
+
+    try:
+        assert (await service.audio_cpp_runtime_observation()).catalog_fresh is True
+
+        # The first failed probe leaves the process Running, but invalidates
+        # generation-bound catalog evidence immediately.
+        supervisor.observation_version += 1
+        assert (await service.audio_cpp_runtime_observation()).catalog_fresh is False
+
+        # A later successful probe must not resurrect the old catalog.
+        supervisor.observation_version += 1
+        recovered = await service.audio_cpp_runtime_observation()
+
+        assert recovered.catalog_fresh is False
+
+        await service.get_catalog("audio_cpp", refresh=True)
+        refreshed = await service.audio_cpp_runtime_observation()
+        assert refreshed.catalog_fresh is True
+    finally:
+        await service.close()
+        await service.wait_closed()
+
+
+@pytest.mark.asyncio
+async def test_health_failure_between_catalog_read_and_publication_stays_stale(
+    tmp_path: Path,
+) -> None:
+    fail_health = False
+
+    def mutable_handler(request: httpx.Request) -> httpx.Response:
+        if fail_health and request.url.path == "/health":
+            return httpx.Response(503, request=request)
+        return _handler(request)
+
+    supervisor = _PreparationSupervisor()
+    managed = _managed_config(tmp_path, "publication-health-race", 19_129)
+    service, _factory_configs = _service(
+        managed,
+        supervisor,
+        transport_handler=mutable_handler,
+    )
+    await service.start_and_test_audio_cpp()
+    record = service.registry._slots["audio_cpp"].active
+    assert record is not None
+    adapter = record.adapter
+    assert isinstance(adapter, AudioCppAdapter)
+    original_get_catalog = adapter.get_catalog
+
+    async def get_catalog_then_fail_health(
+        refresh: bool = False,
+    ) -> TTSProviderCatalog:
+        nonlocal fail_health
+        catalog = await original_get_catalog(refresh=refresh)
+        fail_health = True
+        assert supervisor.hooks is not None
+        assert await supervisor.hooks.health_probe() is False
+        supervisor.observation_version += 1
+        return catalog
+
+    adapter.get_catalog = get_catalog_then_fail_health  # type: ignore[method-assign]
+
+    try:
+        returned = await service.get_catalog("audio_cpp", refresh=False)
+        observation = await service.audio_cpp_runtime_observation()
+
+        assert returned.health.fresh is True
+        assert observation.catalog_fresh is False
+    finally:
+        await service.close()
+        await service.wait_closed()
+
+
+@pytest.mark.asyncio
+async def test_synthesis_revalidates_after_managed_health_observation_changes(
+    tmp_path: Path,
+) -> None:
+    request_paths: list[str] = []
+
+    def recording_handler(request: httpx.Request) -> httpx.Response:
+        request_paths.append(request.url.path)
+        return _handler(request)
+
+    supervisor = _PreparationSupervisor()
+    managed = _managed_config(tmp_path, "synthesis-revalidation", 19_128)
+    service, _factory_configs = _service(
+        managed,
+        supervisor,
+        transport_handler=recording_handler,
+    )
+    await service.start_and_test_audio_cpp()
+    request_paths.clear()
+
+    try:
+        supervisor.observation_version += 1
+        assert (await service.audio_cpp_runtime_observation()).catalog_fresh is False
+
+        response = await service.synthesize(_request())
+        assert [chunk async for chunk in response.byte_stream] == [_wav()]
+        await response.aclose()
+
+        assert request_paths == ["/health", "/v1/models", "/v1/audio/speech"]
+        assert (await service.audio_cpp_runtime_observation()).catalog_fresh is True
+    finally:
+        await service.close()
+        await service.wait_closed()
+
+
+@pytest.mark.asyncio
+async def test_runtime_observation_reports_fresh_zero_model_managed_catalog(
+    tmp_path: Path,
+) -> None:
+    supervisor = _PreparationSupervisor()
+    managed = _managed_config(tmp_path, "zero-model-observation", 19_127)
+    service, _factory_configs = _service(
+        managed,
+        supervisor,
+        transport_handler=_no_model_handler,
+    )
+
+    try:
+        catalog = await service.start_and_test_audio_cpp()
+        observation = await service.audio_cpp_runtime_observation()
+
+        assert catalog.health.state == "not_configured"
+        assert catalog.health.fresh is True
+        assert observation.process.tts_capability == "not_configured"
+        assert observation.tts_capability == "not_configured"
+        assert observation.catalog_fresh is True
+    finally:
+        await service.close()
+        await service.wait_closed()
+
+
+@pytest.mark.asyncio
+async def test_runtime_observation_reports_closed_service_without_provider_work(
+    tmp_path: Path,
+) -> None:
+    supervisor = _PreparationSupervisor()
+    managed = _managed_config(tmp_path, "closed-observation", 19_125)
+    service, factory_configs = _service(managed, supervisor)
+    await service.close()
+    await service.wait_closed()
+
+    observation = await service.audio_cpp_runtime_observation()
+
+    assert observation.service_closed is True
+    assert observation.process.state == "stopped"
+    assert observation.catalog_fresh is False
+    assert factory_configs == []
+    assert supervisor.launches == 0
 
 
 @pytest.mark.asyncio

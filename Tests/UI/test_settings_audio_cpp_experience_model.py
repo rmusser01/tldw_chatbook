@@ -2,9 +2,11 @@ from __future__ import annotations
 
 from copy import deepcopy
 from datetime import datetime, timezone
+import os
 
 import pytest
 
+from tldw_chatbook.UI.Screens import settings_speech_tts as settings_model
 from tldw_chatbook.TTS.adapter_types import (
     ProviderHealth,
     TTSModelInfo,
@@ -25,7 +27,7 @@ from tldw_chatbook.UI.Screens.settings_speech_tts import (
 )
 
 
-def test_slice_four_audio_cpp_settings_model_is_external_only() -> None:
+def test_audio_cpp_settings_inventory_exposes_both_explicit_modes() -> None:
     projected = AudioCppConfig().to_mapping()
     state = load_global_speech_tts_state({}, environment={})
     managed_fields = {
@@ -38,11 +40,387 @@ def test_slice_four_audio_cpp_settings_model_is_external_only() -> None:
 
     assert projected["mode"] == "external"
     assert state.providers["audio_cpp"] == projected
-    assert set(GLOBAL_TTS_PROVIDER_FIELD_IDS["audio_cpp"]) == (
-        set(projected) - {"mode"}
+    assert set(GLOBAL_TTS_PROVIDER_FIELD_IDS["audio_cpp"]) == set(projected) | (
+        managed_fields
     )
+    assert "mode" in GLOBAL_TTS_PROVIDER_FIELD_IDS["audio_cpp"]
     assert managed_fields.isdisjoint(projected)
-    assert managed_fields.isdisjoint(GLOBAL_TTS_PROVIDER_FIELD_IDS["audio_cpp"])
+
+
+def test_managed_load_retains_the_dormant_external_origin() -> None:
+    raw = {
+        "mode": "managed",
+        "base_url": "https://external.example.test:8443",
+        "managed_binary_path": "/opt/homebrew/bin/audiocpp_server",
+        "managed_server_json_path": "/srv/audio/server.json",
+        "managed_startup_timeout_seconds": 31.0,
+        "managed_health_check_interval_seconds": 11.0,
+        "managed_termination_grace_seconds": 6.0,
+        "connect_timeout_seconds": 4.0,
+        "synthesis_timeout_seconds": 90.0,
+        "max_input_characters": 1001,
+        "max_response_bytes": 1002,
+        "max_metadata_bytes": 1003,
+        "max_catalog_models": 1004,
+        "max_voices_per_model": 1005,
+        "max_identifier_characters": 1006,
+    }
+
+    state = load_global_speech_tts_state(
+        {"COMPREHENSIVE_CONFIG_RAW": {"app_tts": {"audio_cpp": raw}}},
+        environment={},
+    )
+
+    assert state.providers["audio_cpp"] == raw
+
+
+def test_managed_save_persists_the_external_origin_for_a_later_switch() -> None:
+    original = load_global_speech_tts_state(
+        {
+            "COMPREHENSIVE_CONFIG_RAW": {
+                "app_tts": {
+                    "audio_cpp": {
+                        **AudioCppConfig().to_mapping(),
+                        "base_url": "https://external.example.test:8443",
+                    }
+                }
+            }
+        },
+        environment={},
+    )
+    draft = deepcopy(original)
+    draft.providers["audio_cpp"].update(
+        {
+            "mode": "managed",
+            "managed_binary_path": "/opt/homebrew/bin/audiocpp_server",
+            "managed_server_json_path": "/srv/audio/server.json",
+            "managed_startup_timeout_seconds": 30.0,
+            "managed_health_check_interval_seconds": 10.0,
+            "managed_termination_grace_seconds": 5.0,
+        }
+    )
+
+    proposal = build_global_speech_tts_save_proposal(
+        original,
+        draft,
+        configure_provider="audio_cpp",
+    )
+
+    saved = proposal.settings["audio_cpp"]
+    assert saved["mode"] == "managed"
+    assert saved["base_url"] == "https://external.example.test:8443"
+    assert saved["managed_binary_path"] == "/opt/homebrew/bin/audiocpp_server"
+    assert saved["managed_server_json_path"] == "/srv/audio/server.json"
+
+
+def test_external_save_retains_previously_saved_managed_values() -> None:
+    managed = {
+        **AudioCppConfig(
+            mode="managed",
+            managed_binary_path="/opt/homebrew/bin/audiocpp_server",
+            managed_server_json_path="/srv/audio/server.json",
+        ).to_mapping(),
+        "base_url": "http://127.0.0.1:18080",
+    }
+    original = load_global_speech_tts_state(
+        {"COMPREHENSIVE_CONFIG_RAW": {"app_tts": {"audio_cpp": managed}}},
+        environment={},
+    )
+    draft = deepcopy(original)
+    draft.providers["audio_cpp"].update(
+        {"mode": "external", "base_url": "http://127.0.0.1:18081"}
+    )
+
+    proposal = build_global_speech_tts_save_proposal(
+        original,
+        draft,
+        configure_provider="audio_cpp",
+    )
+
+    saved = proposal.settings["audio_cpp"]
+    assert saved["mode"] == "external"
+    assert saved["base_url"] == "http://127.0.0.1:18081"
+    assert saved["managed_binary_path"] == "/opt/homebrew/bin/audiocpp_server"
+    assert saved["managed_server_json_path"] == "/srv/audio/server.json"
+
+
+def test_invalid_dormant_managed_values_do_not_block_external_save() -> None:
+    raw = {
+        **AudioCppConfig().to_mapping(),
+        "managed_binary_path": "relative/binary",
+        "managed_server_json_path": "relative/server.json",
+        "managed_startup_timeout_seconds": "not-a-number",
+    }
+    original = load_global_speech_tts_state(
+        {"COMPREHENSIVE_CONFIG_RAW": {"app_tts": {"audio_cpp": raw}}},
+        environment={},
+    )
+    draft = deepcopy(original)
+    draft.providers["audio_cpp"]["base_url"] = "http://127.0.0.1:18082"
+
+    proposal = build_global_speech_tts_save_proposal(
+        original,
+        draft,
+        configure_provider="audio_cpp",
+    )
+
+    saved = proposal.settings["audio_cpp"]
+    assert saved["managed_binary_path"] == "relative/binary"
+    assert saved["managed_server_json_path"] == "relative/server.json"
+    assert saved["managed_startup_timeout_seconds"] == "not-a-number"
+
+
+def test_selecting_invalid_dormant_managed_values_reports_the_active_field() -> None:
+    original = load_global_speech_tts_state({}, environment={})
+    draft = deepcopy(original)
+    draft.providers["audio_cpp"].update(
+        {
+            "mode": "managed",
+            "managed_binary_path": "/opt/homebrew/bin/audiocpp_server",
+            "managed_server_json_path": "/srv/audio/server.json",
+            "managed_startup_timeout_seconds": "not-a-number",
+            "managed_health_check_interval_seconds": 10.0,
+            "managed_termination_grace_seconds": 5.0,
+        }
+    )
+
+    with pytest.raises(GlobalSpeechTTSValidationError) as error:
+        build_global_speech_tts_save_proposal(
+            original,
+            draft,
+            configure_provider="audio_cpp",
+        )
+
+    assert error.value.provider_id == "audio_cpp"
+    assert error.value.field_id == "managed_startup_timeout_seconds"
+    assert "not-a-number" not in str(error.value)
+
+
+def test_invalid_dormant_external_origin_does_not_block_managed_save() -> None:
+    managed = {
+        **AudioCppConfig(
+            mode="managed",
+            managed_binary_path="/opt/homebrew/bin/audiocpp_server",
+            managed_server_json_path="/srv/audio/server.json",
+        ).to_mapping(),
+        "base_url": "https://[private-invalid.example.test",
+    }
+    original = load_global_speech_tts_state(
+        {"COMPREHENSIVE_CONFIG_RAW": {"app_tts": {"audio_cpp": managed}}},
+        environment={},
+    )
+    draft = deepcopy(original)
+    draft.providers["audio_cpp"]["connect_timeout_seconds"] = 6.0
+
+    proposal = build_global_speech_tts_save_proposal(
+        original,
+        draft,
+        configure_provider="audio_cpp",
+    )
+
+    assert proposal.settings["audio_cpp"]["base_url"] == (
+        "https://[private-invalid.example.test"
+    )
+
+
+def test_selecting_invalid_dormant_external_origin_reports_base_url() -> None:
+    managed = {
+        **AudioCppConfig(
+            mode="managed",
+            managed_binary_path="/opt/homebrew/bin/audiocpp_server",
+            managed_server_json_path="/srv/audio/server.json",
+        ).to_mapping(),
+        "base_url": "https://[private-invalid.example.test",
+    }
+    original = load_global_speech_tts_state(
+        {"COMPREHENSIVE_CONFIG_RAW": {"app_tts": {"audio_cpp": managed}}},
+        environment={},
+    )
+    draft = deepcopy(original)
+    draft.providers["audio_cpp"]["mode"] = "external"
+
+    with pytest.raises(GlobalSpeechTTSValidationError) as error:
+        build_global_speech_tts_save_proposal(
+            original,
+            draft,
+            configure_provider="audio_cpp",
+        )
+
+    assert error.value.field_id == "base_url"
+    assert "private-invalid" not in str(error.value)
+
+
+def test_detect_audio_cpp_binary_returns_the_exact_platform_lookup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    detected = "/opt/homebrew/bin/audiocpp_server"
+    calls: list[str] = []
+
+    def lookup(command: str) -> str:
+        calls.append(command)
+        return detected
+
+    monkeypatch.setattr(settings_model.shutil, "which", lookup)
+
+    assert settings_model.detect_audio_cpp_server_binary() == detected
+    assert calls == ["audiocpp_server"]
+
+
+def test_detect_audio_cpp_binary_returns_none_without_mutating_a_draft(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(settings_model.shutil, "which", lambda _command: None)
+
+    assert settings_model.detect_audio_cpp_server_binary() is None
+
+
+def _managed_values(binary_path: str, server_json_path: str) -> dict[str, object]:
+    return {
+        **AudioCppConfig(
+            mode="managed",
+            managed_binary_path=binary_path,
+            managed_server_json_path=server_json_path,
+        ).to_mapping(),
+        "base_url": "http://127.0.0.1:8080",
+    }
+
+
+def test_managed_save_validation_reads_but_never_modifies_user_artifacts(
+    tmp_path,
+) -> None:
+    binary = tmp_path / "audiocpp_server"
+    binary.write_bytes(b"synthetic-binary")
+    binary.chmod(0o700)
+    server_json = tmp_path / "server.json"
+    server_json.write_text('{"host":"127.0.0.1","port":19001}', encoding="utf-8")
+    before_binary = binary.read_bytes()
+    before_json = server_json.read_bytes()
+    before_binary_mode = os.stat(binary).st_mode
+
+    settings_model.validate_audio_cpp_managed_settings(
+        _managed_values(str(binary), str(server_json))
+    )
+
+    assert binary.read_bytes() == before_binary
+    assert server_json.read_bytes() == before_json
+    assert os.stat(binary).st_mode == before_binary_mode
+
+
+def test_managed_save_validation_maps_binary_failure_without_echoing_path(
+    tmp_path,
+) -> None:
+    missing_binary = tmp_path / "private-missing-audiocpp_server"
+    server_json = tmp_path / "server.json"
+    server_json.write_text('{"host":"127.0.0.1","port":19002}', encoding="utf-8")
+
+    with pytest.raises(GlobalSpeechTTSValidationError) as error:
+        settings_model.validate_audio_cpp_managed_settings(
+            _managed_values(str(missing_binary), str(server_json))
+        )
+
+    assert error.value.field_id == "managed_binary_path"
+    assert str(error.value) == (
+        "Choose an existing audiocpp_server file that is executable."
+    )
+    assert str(missing_binary) not in str(error.value)
+    assert error.value.__cause__ is None
+    assert error.value.__context__ is None
+
+
+@pytest.mark.parametrize(
+    ("case", "expected_message"),
+    (
+        ("missing", "Choose an existing server.json file that is readable."),
+        ("oversized", "server.json must be 1 MiB or smaller."),
+        ("invalid_utf8", "server.json must use UTF-8 encoding."),
+        (
+            "invalid_json",
+            "server.json must contain strict JSON with no duplicate keys or "
+            "non-JSON values.",
+        ),
+        ("not_object", "server.json must contain one JSON object."),
+        ("invalid_host", "server.json must set host exactly to 127.0.0.1."),
+        (
+            "invalid_port",
+            "server.json must set port to a whole number from 1 through 65535.",
+        ),
+    ),
+)
+def test_managed_save_validation_reports_the_exact_server_json_failure(
+    tmp_path,
+    case: str,
+    expected_message: str,
+) -> None:
+    binary = tmp_path / "audiocpp_server"
+    binary.write_bytes(b"synthetic-binary")
+    binary.chmod(0o700)
+    server_json = tmp_path / "private-server.json"
+    documents = {
+        "invalid_utf8": b"\xff",
+        "invalid_json": b'{"private-broken-json":',
+        "not_object": b"[]",
+        "invalid_host": b'{"host":"0.0.0.0","port":19003}',
+        "invalid_port": b'{"host":"127.0.0.1","port":"private-port"}',
+    }
+    if case == "oversized":
+        server_json.write_bytes(b"{" + (b" " * 1_048_576))
+    elif case != "missing":
+        server_json.write_bytes(documents[case])
+
+    with pytest.raises(GlobalSpeechTTSValidationError) as error:
+        settings_model.validate_audio_cpp_managed_settings(
+            _managed_values(str(binary), str(server_json))
+        )
+
+    assert error.value.field_id == "managed_server_json_path"
+    assert str(error.value) == expected_message
+    assert str(server_json) not in str(error.value)
+    assert "private-port" not in str(error.value)
+    assert error.value.__cause__ is None
+    assert error.value.__context__ is None
+
+
+@pytest.mark.parametrize(
+    "document",
+    (
+        '{"host":"0.0.0.0","port":19003}',
+        '{"host":"127.0.0.1","port":"private-port"}',
+        '{"private-broken-json":',
+    ),
+)
+def test_managed_save_validation_maps_server_json_failure_without_echoing_content(
+    tmp_path,
+    document: str,
+) -> None:
+    binary = tmp_path / "audiocpp_server"
+    binary.write_bytes(b"synthetic-binary")
+    binary.chmod(0o700)
+    server_json = tmp_path / "server.json"
+    server_json.write_text(document, encoding="utf-8")
+
+    with pytest.raises(GlobalSpeechTTSValidationError) as error:
+        settings_model.validate_audio_cpp_managed_settings(
+            _managed_values(str(binary), str(server_json))
+        )
+
+    assert error.value.field_id == "managed_server_json_path"
+    assert document not in str(error.value)
+    assert "private" not in str(error.value).lower()
+    assert error.value.__cause__ is None
+    assert error.value.__context__ is None
+
+
+def test_external_save_validation_ignores_dormant_managed_artifacts() -> None:
+    values = AudioCppConfig().to_mapping()
+    values.update(
+        {
+            "managed_binary_path": "/private/missing/binary",
+            "managed_server_json_path": "/private/missing/server.json",
+            "managed_startup_timeout_seconds": "dormant-invalid",
+        }
+    )
+
+    settings_model.validate_audio_cpp_managed_settings(values)
 
 
 def _observation(

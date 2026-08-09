@@ -423,6 +423,7 @@ class STTSSettingsSaveResult:
     failure_phase: str | None = None
     provider_configuration_revisions: Mapping[str, int] = field(default_factory=dict)
     provider_runtime_revisions: Mapping[str, int] = field(default_factory=dict)
+    staged_provider_ids: frozenset[str] = frozenset()
 
     def __post_init__(self) -> None:
         if type(self.request_id) is not int or self.request_id < 0:
@@ -457,6 +458,12 @@ class STTSSettingsSaveResult:
             raise ValueError("Persisted TTS provider results require saved revisions")
         if self.failure_phase not in {None, "before_replace", "cache_reload"}:
             raise ValueError("TTS settings failure phase is invalid")
+        staged_provider_ids = frozenset(self.staged_provider_ids)
+        if any(
+            copied_statuses.get(provider_id) != "pending"
+            for provider_id in staged_provider_ids
+        ):
+            raise ValueError("Staged TTS providers require pending results")
         object.__setattr__(
             self,
             "provider_statuses",
@@ -472,6 +479,7 @@ class STTSSettingsSaveResult:
             "provider_runtime_revisions",
             MappingProxyType(copied_runtime_revisions),
         )
+        object.__setattr__(self, "staged_provider_ids", staged_provider_ids)
 
 
 class STTSProviderConfigurationChanged(Message):
@@ -1520,7 +1528,11 @@ class STTSEventHandler:
                 service,
                 publication,
             )
-            if "pending" in publication.provider_statuses.values():
+            if any(
+                status == "pending"
+                and provider_id not in publication.staged_provider_ids
+                for provider_id, status in publication.provider_statuses.items()
+            ):
                 self._observe_pending_settings_publication(service, ticket, event)
             self._notify_settings_publication(publication)
             self._reply_settings_save(
@@ -1533,6 +1545,7 @@ class STTSEventHandler:
                     for provider_id in publication.provider_statuses
                 },
                 provider_runtime_revisions=publication.provider_revisions,
+                staged_provider_ids=publication.staged_provider_ids,
             )
         except asyncio.CancelledError:
             raise
@@ -1556,6 +1569,7 @@ class STTSEventHandler:
         failure_phase: str | None,
         provider_configuration_revisions: Mapping[str, int] = MappingProxyType({}),
         provider_runtime_revisions: Mapping[str, int] = MappingProxyType({}),
+        staged_provider_ids: frozenset[str] = frozenset(),
     ) -> None:
         """Deliver a bounded result to an optional mounted requester."""
         if event.request_id is None or event.reply_to is None:
@@ -1576,6 +1590,7 @@ class STTSEventHandler:
                     failure_phase=failure_phase,
                     provider_configuration_revisions=(provider_configuration_revisions),
                     provider_runtime_revisions=provider_runtime_revisions,
+                    staged_provider_ids=staged_provider_ids,
                 )
             )
         except Exception:
@@ -1641,18 +1656,29 @@ class STTSEventHandler:
         )
         if not callable(callback):
             return
+        provider_statuses = {
+            provider_id: status
+            for provider_id, status in publication.provider_statuses.items()
+            if provider_id not in publication.staged_provider_ids
+        }
+        if not provider_statuses:
+            return
         try:
             callback(
                 STTSSettingsSaveResult(
                     request_id=event.request_id,
                     persisted=publication.persistence.file_replaced,
-                    provider_statuses=publication.provider_statuses,
+                    provider_statuses=provider_statuses,
                     failure_phase=publication.persistence.failure_phase,
                     provider_configuration_revisions={
                         provider_id: publication.generation
-                        for provider_id in publication.provider_statuses
+                        for provider_id in provider_statuses
                     },
-                    provider_runtime_revisions=publication.provider_revisions,
+                    provider_runtime_revisions={
+                        provider_id: revision
+                        for provider_id, revision in publication.provider_revisions.items()
+                        if provider_id in provider_statuses
+                    },
                 )
             )
         except Exception:
@@ -1684,6 +1710,12 @@ class STTSEventHandler:
             )
             return
         if statuses.get("audio_cpp") == "pending":
+            if "audio_cpp" in publication.staged_provider_ids:
+                self.app.notify(
+                    "Saved — open Speech Lab to apply audio.cpp settings",
+                    severity="information",
+                )
+                return
             self.app.notify(
                 "Saved — applying after current speech",
                 severity="information",

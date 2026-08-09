@@ -101,6 +101,23 @@ explicitly unless you actually want it to eat the row.
 
 ---
 
+## A dynamic Button label can repaint without reflowing its width
+
+**TASK-3795, 2026-08-08.** Speech Lab composed its primary audio.cpp action as
+`Test`, then passive runtime state changed the same mounted Button to
+`Start & Test Connection`. Every test asserted the new label string and passed.
+The live browser UAT nevertheless rendered only `Star`: Textual repainted the
+reactive label but retained the original 16-cell layout width. The first honest
+geometry regression measured 16 cells against the 25 required for the new label
+and failed until the update called `refresh(layout=True)`.
+
+**What to do.** When a mounted auto-width widget changes content, verify the
+rendered region after refresh, not just its value. For dynamic Button labels,
+request a layout refresh and assert that `region.width` can contain the visible
+label; a correct reactive value does not prove that layout was recomputed.
+
+---
+
 ## Passing the suites a change touches is not passing the suites it can reach
 
 **The trap.** You run the tests near your edit. The breakage is somewhere that merely

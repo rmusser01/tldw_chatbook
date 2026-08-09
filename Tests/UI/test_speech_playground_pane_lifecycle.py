@@ -45,13 +45,22 @@ from rich.text import Text
 from textual.app import App, ComposeResult
 from textual.containers import Vertical
 from textual.screen import Screen
-from textual.widgets import Button, Input, Select, Static, TextArea
+from textual.widgets import (
+    Button,
+    Collapsible,
+    Input,
+    RichLog,
+    Select,
+    Static,
+    TextArea,
+)
 
 from tldw_chatbook.Event_Handlers.STTS_Events.stts_events import (
     STTSEventHandler,
     STTSPlaygroundGenerateEvent,
 )
 from tldw_chatbook.TTS import (
+    AudioCppRuntimeObservation,
     ProfileRepositoryError,
     ProfileServiceError,
     TTSPlaygroundSelectionPreset,
@@ -64,14 +73,23 @@ from tldw_chatbook.TTS.adapter_types import (
     TTSRegistryClosedError,
 )
 from tldw_chatbook.TTS.audio_player import PlaybackState
-from tldw_chatbook.TTS.audio_cpp_supervisor import AudioCppSupervisor
+from tldw_chatbook.TTS.audio_cpp_supervisor import (
+    AudioCppDiagnosticLine,
+    AudioCppProcessSnapshot,
+    AudioCppSupervisor,
+)
 from tldw_chatbook.TTS.playground_types import STTSGeneratedAudio
 from tldw_chatbook.UI import stts_profile_library as profile_library_module
+from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 from tldw_chatbook.UI.stts_playground_catalog import (
     LOADING_SELECT_VALUE,
     SERVER_DEFAULT_VOICE_ID,
 )
 from tldw_chatbook.UI.Speech.speech_playground_pane import SpeechPlaygroundPane
+from tldw_chatbook.UI.Speech.audio_cpp_runtime_card import (
+    AudioCppRuntimeCard,
+    project_audio_cpp_runtime_card,
+)
 
 from Tests.UI.app_factory import _build_test_app
 from Tests.UI.speech_playground_fixtures import (
@@ -94,6 +112,1179 @@ PROVIDER_IDS = (
     "higgs",
     "alltalk",
 )
+
+
+def _runtime_observation(
+    *,
+    saved_mode: str = "managed",
+    applied_mode: str = "managed",
+    saved_generation: int = 1,
+    applied_generation: int = 1,
+    process_state: str = "stopped",
+    process_generation: int = 0,
+    capability: str = "unknown",
+    endpoint: str | None = None,
+    active_endpoint: str | None = None,
+    catalog_revision: int | None = None,
+    catalog_fresh: bool = False,
+    service_closed: bool = False,
+    diagnostics: tuple[AudioCppDiagnosticLine, ...] = (),
+    dropped_diagnostics: int = 0,
+) -> AudioCppRuntimeObservation:
+    return AudioCppRuntimeObservation(
+        saved_mode=saved_mode,  # type: ignore[arg-type]
+        saved_configuration_generation=saved_generation,
+        applied_mode=applied_mode,  # type: ignore[arg-type]
+        applied_configuration_generation=applied_generation,
+        provider_configuration_revision=3,
+        pending_configuration=saved_generation != applied_generation,
+        process=AudioCppProcessSnapshot(
+            state=process_state,  # type: ignore[arg-type]
+            process_generation=process_generation,
+            observation_version=process_generation + 4,
+            endpoint=endpoint,
+            tts_capability=capability,  # type: ignore[arg-type]
+            consecutive_health_failures=(1 if process_state == "unhealthy" else 0),
+            last_failure=None,
+            diagnostics=diagnostics,
+            dropped_diagnostic_lines=dropped_diagnostics,
+        ),
+        catalog_revision=catalog_revision,
+        catalog_fresh=catalog_fresh,
+        catalog_observed_at=None,
+        tts_capability=capability,  # type: ignore[arg-type]
+        service_closed=service_closed,
+        saved_managed_binary_path=(
+            "/private/saved/audiocpp_server" if saved_mode == "managed" else None
+        ),
+        saved_managed_server_json_path=(
+            "/private/saved/server.json" if saved_mode == "managed" else None
+        ),
+        applied_managed_binary_path=(
+            "/private/applied/audiocpp_server" if applied_mode == "managed" else None
+        ),
+        applied_managed_server_json_path=(
+            "/private/applied/server.json" if applied_mode == "managed" else None
+        ),
+        active_endpoint=active_endpoint,
+    )
+
+
+@pytest.mark.parametrize(
+    ("observation", "primary_label", "primary_operation", "restart", "shutdown"),
+    (
+        (
+            _runtime_observation(),
+            "Start & Test Connection",
+            "test",
+            False,
+            False,
+        ),
+        (
+            _runtime_observation(
+                process_state="running",
+                process_generation=2,
+                capability="available",
+                endpoint="http://127.0.0.1:19001",
+                catalog_revision=11,
+                catalog_fresh=True,
+            ),
+            "Test Connection",
+            "test",
+            True,
+            True,
+        ),
+        (
+            _runtime_observation(
+                saved_generation=2,
+                applied_generation=1,
+                process_state="running",
+                process_generation=2,
+                capability="available",
+                endpoint="http://127.0.0.1:19001",
+            ),
+            "Restart & Apply Settings",
+            "restart",
+            False,
+            True,
+        ),
+        (
+            _runtime_observation(
+                saved_mode="external",
+                applied_mode="managed",
+                saved_generation=2,
+                applied_generation=1,
+                process_state="running",
+                process_generation=2,
+                capability="available",
+                endpoint="http://127.0.0.1:19001",
+            ),
+            "Apply Settings & Stop Managed Server",
+            "restart",
+            False,
+            True,
+        ),
+        (
+            _runtime_observation(
+                saved_generation=2,
+                applied_generation=1,
+                process_state="unhealthy",
+                process_generation=2,
+            ),
+            "Restart & Apply Settings",
+            "restart",
+            False,
+            True,
+        ),
+        (
+            _runtime_observation(
+                saved_mode="external",
+                applied_mode="managed",
+                saved_generation=2,
+                applied_generation=1,
+                process_state="unhealthy",
+                process_generation=2,
+            ),
+            "Apply Settings & Stop Managed Server",
+            "restart",
+            False,
+            True,
+        ),
+        (
+            _runtime_observation(
+                process_state="unhealthy",
+                process_generation=2,
+            ),
+            "Restart",
+            "restart",
+            False,
+            True,
+        ),
+        (
+            _runtime_observation(process_state="unavailable"),
+            "Start & Test Connection",
+            "test",
+            False,
+            False,
+        ),
+        (
+            _runtime_observation(
+                saved_mode="external",
+                applied_mode="external",
+            ),
+            "Test Connection",
+            "test",
+            False,
+            False,
+        ),
+    ),
+)
+def test_audio_cpp_runtime_projection_uses_state_specific_actions(
+    observation: AudioCppRuntimeObservation,
+    primary_label: str,
+    primary_operation: str,
+    restart: bool,
+    shutdown: bool,
+) -> None:
+    projection = project_audio_cpp_runtime_card(observation)
+
+    assert projection.primary_action.label == primary_label
+    assert projection.primary_action.operation == primary_operation
+    assert projection.primary_action.enabled is True
+    assert projection.restart_action.enabled is restart
+    assert projection.shutdown_action.enabled is shutdown
+    if not restart:
+        assert projection.restart_action.disabled_reason
+    if not shutdown:
+        assert projection.shutdown_action.disabled_reason
+
+
+@pytest.mark.parametrize("state", ("starting", "draining", "stopping"))
+def test_audio_cpp_runtime_projection_keeps_busy_actions_visible_but_disabled(
+    state: str,
+) -> None:
+    projection = project_audio_cpp_runtime_card(
+        _runtime_observation(
+            saved_generation=2,
+            applied_generation=1,
+            process_state=state,
+            process_generation=2,
+        )
+    )
+
+    assert projection.primary_action.enabled is False
+    assert projection.restart_action.enabled is False
+    assert projection.shutdown_action.enabled is False
+    assert "in progress" in projection.primary_action.disabled_reason.lower()
+
+
+def test_audio_cpp_runtime_projection_describes_generation_and_catalog_truth() -> None:
+    projection = project_audio_cpp_runtime_card(
+        _runtime_observation(
+            saved_mode="external",
+            applied_mode="managed",
+            saved_generation=7,
+            applied_generation=4,
+            process_state="running",
+            process_generation=3,
+            capability="available",
+            endpoint="http://127.0.0.1:19001",
+            catalog_revision=11,
+            catalog_fresh=False,
+        )
+    )
+
+    assert projection.primary_status.startswith("[RUNNING]")
+    assert "external mode is saved" in projection.pending_copy.lower()
+    assert projection.saved_copy == "Saved: External · generation 7"
+    assert projection.applied_copy == "Active: Managed · generation 4"
+    assert projection.process_copy == "Process: Running · generation 3"
+    assert projection.endpoint_copy.endswith("http://127.0.0.1:19001")
+    assert projection.catalog_copy == "Catalog: Stale · revision 11"
+
+
+def test_staged_managed_projection_keeps_applied_external_truth() -> None:
+    projection = project_audio_cpp_runtime_card(
+        _runtime_observation(
+            saved_mode="managed",
+            applied_mode="external",
+            saved_generation=7,
+            applied_generation=4,
+            active_endpoint="http://127.0.0.1:19001",
+        )
+    )
+
+    assert projection.primary_status == (
+        "[EXTERNAL] Chatbook will connect to the active external server."
+    )
+    assert projection.capability_copy == "TTS capability: Unknown"
+    assert "managed mode is saved" in projection.pending_copy.lower()
+    assert projection.endpoint_copy == "Active endpoint: http://127.0.0.1:19001"
+
+
+def test_audio_cpp_runtime_projection_labels_bounded_managed_diagnostics() -> None:
+    projection = project_audio_cpp_runtime_card(
+        _runtime_observation(
+            process_state="unavailable",
+            process_generation=5,
+            diagnostics=(
+                AudioCppDiagnosticLine("stdout", "loaded model"),
+                AudioCppDiagnosticLine("stderr", "request failed"),
+            ),
+            dropped_diagnostics=7,
+        )
+    )
+
+    assert projection.diagnostics_generation_copy == "Process generation: 5"
+    assert projection.diagnostic_lines == (
+        "STDOUT · loaded model",
+        "STDERR · request failed",
+    )
+    assert projection.dropped_diagnostics_copy == "7 older lines were dropped."
+
+
+@pytest.mark.asyncio
+async def test_runtime_diagnostics_are_collapsed_and_interactions_are_passive(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = _RuntimeObservationService(
+        _runtime_observation(
+            process_state="unavailable",
+            process_generation=5,
+            diagnostics=tuple(
+                AudioCppDiagnosticLine("stderr", f"safe output {index:02}")
+                for index in range(30)
+            ),
+        )
+    )
+    monkeypatch.setattr(
+        SpeechPlaygroundPane,
+        "_tts_service_factory",
+        lambda self: _resolved(service),
+    )
+    app = _PaneHost(provider="audio_cpp")
+
+    async with app.run_test(size=(150, 60)) as pilot:
+        await _wait_until(pilot, lambda: service.runtime_observation_calls > 0)
+        diagnostics = app.query_one("#audio-cpp-runtime-diagnostics", Collapsible)
+
+        assert diagnostics.collapsed is True
+        assert (
+            "potentially sensitive"
+            in str(
+                app.query_one("#audio-cpp-diagnostics-warning", Static).render()
+            ).lower()
+        )
+        assert (
+            "generation: 5"
+            in str(
+                app.query_one("#audio-cpp-diagnostics-generation", Static).render()
+            ).lower()
+        )
+        diagnostics.collapsed = False
+        await pilot.pause()
+        diagnostics.query_one("CollapsibleTitle").focus()
+        await pilot.press("tab")
+
+        diagnostic_log = app.query_one("#audio-cpp-diagnostics-lines", RichLog)
+        assert app.focused is diagnostic_log
+        assert any(
+            "STDERR · safe output 00" in line.text for line in diagnostic_log.lines
+        )
+
+        await pilot.press("home")
+        await pilot.pause()
+        assert diagnostic_log.scroll_y == 0
+        await pilot.press("pagedown")
+        await pilot.pause()
+        assert diagnostic_log.scroll_y > 0
+        assert service.lifecycle_calls == []
+        assert service.synthesize_calls == 0
+
+
+class _RuntimeObservationService(FakeTTSService):
+    def __init__(self, observation: AudioCppRuntimeObservation) -> None:
+        super().__init__()
+        self.runtime_observation = observation
+        self.runtime_observation_calls = 0
+        self.lifecycle_calls: list[str] = []
+        self.lifecycle_started = asyncio.Event()
+        self.lifecycle_gate: asyncio.Event | None = None
+        self.lifecycle_error: BaseException | None = None
+        self.lifecycle_result_observation: AudioCppRuntimeObservation | None = None
+
+    async def audio_cpp_runtime_observation(self) -> AudioCppRuntimeObservation:
+        self.runtime_observation_calls += 1
+        return self.runtime_observation
+
+    async def _run_lifecycle(self, operation: str) -> None:
+        self.lifecycle_calls.append(operation)
+        self.lifecycle_started.set()
+        if self.lifecycle_gate is not None:
+            await self.lifecycle_gate.wait()
+        if self.lifecycle_error is not None:
+            raise self.lifecycle_error
+        if self.lifecycle_result_observation is not None:
+            self.runtime_observation = self.lifecycle_result_observation
+
+    async def start_and_test_audio_cpp(self) -> TTSProviderCatalog:
+        await self._run_lifecycle("test")
+        return self.catalogs["audio_cpp"]
+
+    async def restart_audio_cpp(self) -> TTSProviderCatalog | None:
+        await self._run_lifecycle("restart")
+        return (
+            self.catalogs["audio_cpp"]
+            if self.runtime_observation.saved_mode == "managed"
+            else None
+        )
+
+    async def shutdown_audio_cpp(self) -> None:
+        await self._run_lifecycle("shutdown")
+
+
+@pytest.mark.asyncio
+async def test_audio_cpp_runtime_card_mounts_passively_and_updates_in_place(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = _RuntimeObservationService(
+        _runtime_observation(
+            process_state="running",
+            process_generation=1,
+            capability="available",
+            endpoint="http://127.0.0.1:19001",
+            catalog_revision=11,
+            catalog_fresh=True,
+        )
+    )
+    monkeypatch.setattr(
+        SpeechPlaygroundPane,
+        "_tts_service_factory",
+        lambda self: _resolved(service),
+    )
+    app = _PaneHost(provider="audio_cpp")
+
+    async with app.run_test(size=(150, 60)) as pilot:
+        await _wait_until(
+            pilot,
+            lambda: service.runtime_observation_calls > 0,
+        )
+        card = app.query_one("#audio-cpp-runtime-card", AudioCppRuntimeCard)
+        assert card.display is True
+        primary = app.query_one("#tts-test-connection-btn", Button)
+        primary.focus()
+        service.runtime_observation = _runtime_observation(
+            saved_generation=2,
+            applied_generation=1,
+            process_state="running",
+            process_generation=1,
+            capability="available",
+            endpoint="http://127.0.0.1:19001",
+        )
+        pane = app.query_one(SpeechPlaygroundPane)
+        pane._request_audio_cpp_runtime_observation()
+        await _wait_until(
+            pilot,
+            lambda: "Restart & Apply" in str(primary.label),
+        )
+
+        assert app.focused is primary
+        assert service.lifecycle_calls == []
+        assert service.synthesize_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_unhealthy_runtime_has_one_restart_and_a_labeled_test_probe(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = _RuntimeObservationService(
+        _runtime_observation(
+            process_state="unhealthy",
+            process_generation=1,
+            capability="available",
+            endpoint="http://127.0.0.1:19001",
+        )
+    )
+    monkeypatch.setattr(
+        SpeechPlaygroundPane,
+        "_tts_service_factory",
+        lambda self: _resolved(service),
+    )
+    app = _PaneHost(provider="audio_cpp")
+
+    async with app.run_test(size=(150, 60)) as pilot:
+        primary = app.query_one("#tts-test-connection-btn", Button)
+        secondary_restart = app.query_one("#audio-cpp-runtime-restart", Button)
+        probe = app.query_one("#tts-refresh-catalog-btn", Button)
+        await _wait_until(pilot, lambda: str(primary.label) == "Restart")
+
+        assert secondary_restart.disabled is True
+        assert "primary action" in str(secondary_restart.tooltip).lower()
+        assert str(probe.label) == "Test Connection"
+
+        service.runtime_observation = _runtime_observation(
+            process_state="running",
+            process_generation=1,
+            capability="available",
+            endpoint="http://127.0.0.1:19001",
+            catalog_revision=11,
+            catalog_fresh=True,
+        )
+        app.query_one(SpeechPlaygroundPane)._request_audio_cpp_runtime_observation()
+        await _wait_until(pilot, lambda: str(primary.label) == "Test Connection")
+
+        assert secondary_restart.disabled is False
+        assert str(probe.label) == "Refresh"
+
+
+@pytest.mark.asyncio
+async def test_runtime_primary_action_reflows_when_passive_state_changes_its_label(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = _RuntimeObservationService(_runtime_observation())
+    monkeypatch.setattr(
+        SpeechPlaygroundPane,
+        "_tts_service_factory",
+        lambda self: _resolved(service),
+    )
+    app = _PaneHost(provider="audio_cpp")
+
+    async with app.run_test(size=(150, 60)) as pilot:
+        primary = app.query_one("#tts-test-connection-btn", Button)
+        await _wait_until(
+            pilot,
+            lambda: str(primary.label) == "Start & Test Connection",
+        )
+        await pilot.pause()
+
+        assert primary.region.width >= len(str(primary.label)) + 2
+
+
+@pytest.mark.asyncio
+async def test_superseded_runtime_observation_cannot_overwrite_newer_generations(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    initial = _runtime_observation(
+        process_state="running",
+        process_generation=1,
+        capability="available",
+        endpoint="http://127.0.0.1:19001",
+    )
+    service = _RuntimeObservationService(initial)
+    monkeypatch.setattr(
+        SpeechPlaygroundPane,
+        "_tts_service_factory",
+        lambda self: _resolved(service),
+    )
+    app = _PaneHost(provider="audio_cpp")
+
+    async with app.run_test(size=(150, 60)) as pilot:
+        await _wait_until(pilot, lambda: service.runtime_observation_calls > 0)
+        pane = app.query_one(SpeechPlaygroundPane)
+        first_started = asyncio.Event()
+        release_first = asyncio.Event()
+        calls = 0
+        stale = _runtime_observation(
+            process_state="stopped",
+            process_generation=1,
+        )
+        newer = _runtime_observation(
+            saved_generation=2,
+            applied_generation=1,
+            process_state="running",
+            process_generation=1,
+            capability="available",
+            endpoint="http://127.0.0.1:19001",
+        )
+
+        async def observe() -> AudioCppRuntimeObservation:
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                first_started.set()
+                try:
+                    await release_first.wait()
+                except asyncio.CancelledError:
+                    await release_first.wait()
+                return stale
+            return newer
+
+        service.audio_cpp_runtime_observation = observe  # type: ignore[method-assign]
+        pane._request_audio_cpp_runtime_observation()
+        await asyncio.wait_for(first_started.wait(), timeout=2.0)
+        pane._request_audio_cpp_runtime_observation()
+        primary = app.query_one("#tts-test-connection-btn", Button)
+        await _wait_until(pilot, lambda: "Restart & Apply" in str(primary.label))
+
+        release_first.set()
+        await pilot.pause(0.1)
+
+        assert "Restart & Apply" in str(primary.label)
+        assert pane._audio_cpp_runtime_observation == newer
+
+
+@pytest.mark.asyncio
+async def test_audio_cpp_runtime_card_is_hidden_for_other_providers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = _RuntimeObservationService(_runtime_observation())
+    monkeypatch.setattr(
+        SpeechPlaygroundPane,
+        "_tts_service_factory",
+        lambda self: _resolved(service),
+    )
+    _patch_cli_setting(
+        monkeypatch,
+        {("app_tts", "default_provider"): "openai"},
+    )
+    app = _PaneHost(provider="openai")
+
+    async with app.run_test(size=(150, 60)) as pilot:
+        await pilot.pause()
+        card = app.query_one("#audio-cpp-runtime-card", AudioCppRuntimeCard)
+
+        assert card.display is False
+        assert service.runtime_observation_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_audio_cpp_runtime_poll_uses_a_bounded_five_second_interval(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    intervals: list[float] = []
+    original_set_interval = SpeechPlaygroundPane.set_interval
+
+    def capture_interval(
+        self: SpeechPlaygroundPane,
+        interval: float,
+        callback: object = None,
+        **kwargs: object,
+    ) -> object:
+        if getattr(callback, "__name__", "") == "_poll_audio_cpp_runtime_observation":
+            intervals.append(interval)
+        return original_set_interval(self, interval, callback, **kwargs)  # type: ignore[arg-type,return-value]
+
+    monkeypatch.setattr(SpeechPlaygroundPane, "set_interval", capture_interval)
+    app = _PaneHost(provider="openai")
+
+    async with app.run_test(size=(150, 60)) as pilot:
+        await pilot.pause()
+
+    assert intervals == [5.0]
+
+
+@pytest.mark.asyncio
+async def test_switch_back_before_runtime_read_cannot_reuse_stale_primary_action(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = _RuntimeObservationService(
+        _runtime_observation(
+            saved_generation=2,
+            applied_generation=1,
+            process_state="running",
+            process_generation=1,
+            capability="available",
+            endpoint="http://127.0.0.1:19001",
+        )
+    )
+    monkeypatch.setattr(
+        SpeechPlaygroundPane,
+        "_tts_service_factory",
+        lambda self: _resolved(service),
+    )
+    app = _PaneHost(provider="audio_cpp")
+
+    async with app.run_test(size=(150, 60)) as pilot:
+        primary = app.query_one("#tts-test-connection-btn", Button)
+        await _wait_until(pilot, lambda: "Restart & Apply" in str(primary.label))
+        provider = app.query_one("#tts-provider-select", Select)
+        provider.value = "openai"
+        await _wait_until(
+            pilot,
+            lambda: provider.value == "openai" and str(primary.label) == "Test",
+        )
+
+        observation_started = asyncio.Event()
+        release_observation = asyncio.Event()
+
+        async def gated_observation() -> AudioCppRuntimeObservation:
+            observation_started.set()
+            await release_observation.wait()
+            return service.runtime_observation
+
+        service.audio_cpp_runtime_observation = gated_observation  # type: ignore[method-assign]
+        provider.value = "audio_cpp"
+        await asyncio.wait_for(observation_started.wait(), timeout=2.0)
+        assert str(primary.label) == "Test Connection"
+
+        primary.press()
+        await _wait_until(pilot, lambda: service.lifecycle_calls == ["test"])
+
+        assert service.lifecycle_calls == ["test"]
+        release_observation.set()
+
+
+@pytest.mark.asyncio
+async def test_audio_cpp_runtime_card_links_to_canonical_global_settings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = _RuntimeObservationService(_runtime_observation())
+    monkeypatch.setattr(
+        SpeechPlaygroundPane,
+        "_tts_service_factory",
+        lambda self: _resolved(service),
+    )
+    app = _PaneHost(provider="audio_cpp")
+
+    async with app.run_test(size=(150, 60)) as pilot:
+        await _wait_until(pilot, lambda: service.runtime_observation_calls > 0)
+        app.query_one("#audio-cpp-runtime-open-settings", Button).press()
+        await pilot.pause()
+
+        assert len(app.navigation) == 1
+        assert app.navigation[0].screen_name == "settings"
+        assert app.navigation[0].screen_context == {
+            "category": "speech-tts",
+            "provider": "audio_cpp",
+            "intent": "configure",
+        }
+
+
+@pytest.mark.asyncio
+async def test_managed_start_and_test_runs_async_and_preserves_current_result(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    service = _RuntimeObservationService(_runtime_observation())
+    service.lifecycle_gate = asyncio.Event()
+    service.lifecycle_result_observation = _runtime_observation(
+        process_state="running",
+        process_generation=1,
+        capability="available",
+        endpoint="http://127.0.0.1:19001",
+        catalog_revision=11,
+        catalog_fresh=True,
+    )
+    monkeypatch.setattr(
+        SpeechPlaygroundPane,
+        "_tts_service_factory",
+        lambda self: _resolved(service),
+    )
+    app = _PaneHost(provider="audio_cpp")
+
+    async with app.run_test(size=(150, 60)) as pilot:
+        await _wait_until(
+            pilot,
+            lambda: (
+                str(app.query_one("#tts-test-connection-btn", Button).label)
+                == "Start & Test Connection"
+            ),
+        )
+        pane = app.query_one(SpeechPlaygroundPane)
+        existing = tmp_path / "current.wav"
+        existing.write_bytes(b"RIFF")
+        pane.current_audio_file = existing
+
+        primary = app.query_one("#tts-test-connection-btn", Button)
+        original_run_worker = app.run_worker
+        lifecycle_worker_options: dict[str, object] = {}
+
+        def capture_run_worker(
+            awaitable: object,
+            *args: object,
+            **kwargs: object,
+        ) -> object:
+            if kwargs.get("group") == "speech-audio-cpp-lifecycle":
+                lifecycle_worker_options.update(kwargs)
+            return original_run_worker(awaitable, *args, **kwargs)  # type: ignore[arg-type,return-value]
+
+        monkeypatch.setattr(app, "run_worker", capture_run_worker)
+        primary.press()
+        await asyncio.wait_for(service.lifecycle_started.wait(), timeout=2.0)
+        await pilot.pause()
+
+        assert service.lifecycle_calls == ["test"]
+        assert lifecycle_worker_options["exclusive"] is True
+        assert primary.disabled is True
+        assert "Starting" in str(primary.label)
+        assert app.query_one("#tts-refresh-catalog-btn", Button).disabled is True
+        assert pane.current_audio_file == existing
+
+        service.lifecycle_gate.set()
+        await _wait_until(
+            pilot,
+            lambda: str(primary.label) == "Test Connection" and not primary.disabled,
+        )
+
+        assert pane.current_audio_file == existing
+        assert service.synthesize_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_running_managed_test_exposes_busy_reasons_on_disabled_actions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    running = _runtime_observation(
+        process_state="running",
+        process_generation=1,
+        capability="available",
+        endpoint="http://127.0.0.1:19001",
+        catalog_revision=11,
+        catalog_fresh=True,
+    )
+    service = _RuntimeObservationService(running)
+    service.lifecycle_gate = asyncio.Event()
+    monkeypatch.setattr(
+        SpeechPlaygroundPane,
+        "_tts_service_factory",
+        lambda self: _resolved(service),
+    )
+    app = _PaneHost(provider="audio_cpp")
+
+    async with app.run_test(size=(150, 60)) as pilot:
+        primary = app.query_one("#tts-test-connection-btn", Button)
+        await _wait_until(pilot, lambda: str(primary.label) == "Test Connection")
+        primary.press()
+        await asyncio.wait_for(service.lifecycle_started.wait(), timeout=2.0)
+        await pilot.pause()
+
+        reason = str(app.query_one("#audio-cpp-runtime-action-reason", Static).render())
+        assert "operation is in progress" in reason.lower()
+        for selector in (
+            "#tts-test-connection-btn",
+            "#tts-refresh-catalog-btn",
+            "#tts-generate-btn",
+            "#audio-cpp-runtime-restart",
+            "#audio-cpp-runtime-shutdown",
+        ):
+            action = app.query_one(selector, Button)
+            assert action.disabled is True
+            assert "operation is in progress" in str(action.tooltip).lower()
+
+        service.lifecycle_gate.set()
+        await _wait_until(pilot, lambda: str(primary.label) == "Test Connection")
+
+
+@pytest.mark.asyncio
+async def test_pending_managed_primary_routes_to_restart_and_apply(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pending = _runtime_observation(
+        saved_generation=2,
+        applied_generation=1,
+        process_state="running",
+        process_generation=1,
+        capability="available",
+        endpoint="http://127.0.0.1:19001",
+    )
+    service = _RuntimeObservationService(pending)
+    service.lifecycle_result_observation = _runtime_observation(
+        saved_generation=2,
+        applied_generation=2,
+        process_state="running",
+        process_generation=2,
+        capability="available",
+        endpoint="http://127.0.0.1:19002",
+        catalog_revision=12,
+        catalog_fresh=True,
+    )
+    monkeypatch.setattr(
+        SpeechPlaygroundPane,
+        "_tts_service_factory",
+        lambda self: _resolved(service),
+    )
+    app = _PaneHost(provider="audio_cpp")
+
+    async with app.run_test(size=(150, 60)) as pilot:
+        primary = app.query_one("#tts-test-connection-btn", Button)
+        await _wait_until(pilot, lambda: "Restart & Apply" in str(primary.label))
+        primary.press()
+        await _wait_until(pilot, lambda: service.lifecycle_calls == ["restart"])
+        await _wait_until(pilot, lambda: str(primary.label) == "Test Connection")
+
+        assert service.lifecycle_calls == ["restart"]
+        assert service.synthesize_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_switching_back_during_lifecycle_restores_visible_busy_controls(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pending = _runtime_observation(
+        saved_generation=2,
+        applied_generation=1,
+        process_state="running",
+        process_generation=1,
+        capability="available",
+        endpoint="http://127.0.0.1:19001",
+    )
+    service = _RuntimeObservationService(pending)
+    service.lifecycle_gate = asyncio.Event()
+    service.lifecycle_result_observation = _runtime_observation(
+        saved_generation=2,
+        applied_generation=2,
+        process_state="running",
+        process_generation=2,
+        capability="available",
+        endpoint="http://127.0.0.1:19002",
+    )
+    monkeypatch.setattr(
+        SpeechPlaygroundPane,
+        "_tts_service_factory",
+        lambda self: _resolved(service),
+    )
+    app = _PaneHost(provider="audio_cpp")
+
+    async with app.run_test(size=(150, 60)) as pilot:
+        primary = app.query_one("#tts-test-connection-btn", Button)
+        await _wait_until(pilot, lambda: "Restart & Apply" in str(primary.label))
+        primary.press()
+        await _wait_until(pilot, lambda: service.lifecycle_calls == ["restart"])
+
+        provider = app.query_one("#tts-provider-select", Select)
+        provider.value = "openai"
+        await pilot.pause()
+        provider.value = "audio_cpp"
+        await pilot.pause()
+
+        assert primary.disabled is True
+        assert "Restarting & Applying" in str(primary.label)
+        assert app.query_one("#tts-refresh-catalog-btn", Button).disabled is True
+        assert app.query_one("#tts-generate-btn", Button).disabled is True
+        app.query_one("#tts-text-input", TextArea).text = "Do not generate yet."
+        await pilot.press("ctrl+g")
+        await pilot.pause()
+        assert app.generation_events == []
+
+        service.lifecycle_gate.set()
+        await _wait_until(pilot, lambda: str(primary.label) == "Test Connection")
+
+
+@pytest.mark.asyncio
+async def test_audio_cpp_lifecycle_completion_does_not_disable_selected_provider(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pending = _runtime_observation(
+        saved_generation=2,
+        applied_generation=1,
+        process_state="running",
+        process_generation=1,
+        capability="available",
+        endpoint="http://127.0.0.1:19001",
+    )
+    service = _RuntimeObservationService(pending)
+    service.lifecycle_gate = asyncio.Event()
+    service.lifecycle_result_observation = _runtime_observation(
+        saved_generation=2,
+        applied_generation=2,
+        process_state="running",
+        process_generation=2,
+        capability="available",
+        endpoint="http://127.0.0.1:19002",
+    )
+    monkeypatch.setattr(
+        SpeechPlaygroundPane,
+        "_tts_service_factory",
+        lambda self: _resolved(service),
+    )
+    app = _PaneHost(provider="audio_cpp")
+
+    async with app.run_test(size=(150, 60)) as pilot:
+        primary = app.query_one("#tts-test-connection-btn", Button)
+        await _wait_until(pilot, lambda: "Restart & Apply" in str(primary.label))
+        primary.press()
+        await _wait_until(pilot, lambda: service.lifecycle_calls == ["restart"])
+
+        provider = app.query_one("#tts-provider-select", Select)
+        provider.value = "openai"
+        generate = app.query_one("#tts-generate-btn", Button)
+        await _wait_until(
+            pilot,
+            lambda: provider.value == "openai" and not generate.disabled,
+        )
+
+        service.lifecycle_gate.set()
+        pane = app.query_one(SpeechPlaygroundPane)
+        await _wait_until(
+            pilot,
+            lambda: pane._audio_cpp_lifecycle_busy is None,
+        )
+        await pilot.pause()
+
+        assert provider.value == "openai"
+        assert generate.disabled is False
+
+
+@pytest.mark.asyncio
+async def test_saved_external_primary_applies_settings_and_stops_managed_child(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pending_external = _runtime_observation(
+        saved_mode="external",
+        applied_mode="managed",
+        saved_generation=2,
+        applied_generation=1,
+        process_state="running",
+        process_generation=1,
+        capability="available",
+        endpoint="http://127.0.0.1:19001",
+    )
+    service = _RuntimeObservationService(pending_external)
+    service.lifecycle_gate = asyncio.Event()
+    service.lifecycle_result_observation = _runtime_observation(
+        saved_mode="external",
+        applied_mode="external",
+        saved_generation=2,
+        applied_generation=2,
+        process_state="stopped",
+        process_generation=1,
+    )
+    monkeypatch.setattr(
+        SpeechPlaygroundPane,
+        "_tts_service_factory",
+        lambda self: _resolved(service),
+    )
+    app = _PaneHost(provider="audio_cpp")
+
+    async with app.run_test(size=(150, 60)) as pilot:
+        primary = app.query_one("#tts-test-connection-btn", Button)
+        await _wait_until(
+            pilot,
+            lambda: "Apply Settings & Stop" in str(primary.label),
+        )
+        calls_before = list(service.catalog_calls)
+        primary.press()
+        await _wait_until(pilot, lambda: service.lifecycle_calls == ["restart"])
+        assert "Applying & Stopping" in str(primary.label)
+        service.lifecycle_gate.set()
+        await _wait_until(pilot, lambda: str(primary.label) == "Test Connection")
+
+        assert service.catalog_calls == calls_before
+        assert service.runtime_observation.applied_mode == "external"
+
+
+@pytest.mark.asyncio
+async def test_server_shutdown_is_distinct_from_playback_stop_and_does_not_restart(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    running = _runtime_observation(
+        process_state="running",
+        process_generation=1,
+        capability="available",
+        endpoint="http://127.0.0.1:19001",
+        catalog_revision=11,
+        catalog_fresh=True,
+    )
+    service = _RuntimeObservationService(running)
+    service.lifecycle_result_observation = _runtime_observation(
+        process_state="stopped",
+        process_generation=1,
+    )
+    monkeypatch.setattr(
+        SpeechPlaygroundPane,
+        "_tts_service_factory",
+        lambda self: _resolved(service),
+    )
+    app = _PaneHost(provider="audio_cpp")
+
+    async with app.run_test(size=(150, 60)) as pilot:
+        await _wait_until(
+            pilot,
+            lambda: not app.query_one("#audio-cpp-runtime-shutdown", Button).disabled,
+        )
+        server_shutdown = app.query_one("#audio-cpp-runtime-shutdown", Button)
+        playback_stop = app.query_one("#stop-audio-btn", Button)
+        assert str(server_shutdown.label) == "Shut down server"
+        assert str(playback_stop.label) == "Stop"
+
+        server_shutdown.press()
+        await _wait_until(pilot, lambda: service.lifecycle_calls == ["shutdown"])
+        await _wait_until(
+            pilot,
+            lambda: (
+                str(app.query_one("#tts-test-connection-btn", Button).label)
+                == "Start & Test Connection"
+            ),
+        )
+
+        assert service.lifecycle_calls == ["shutdown"]
+        assert service.catalog_calls.count(("audio_cpp", False)) == 1
+
+
+@pytest.mark.asyncio
+async def test_lifecycle_failure_uses_safe_copy_and_keeps_existing_result(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    service = _RuntimeObservationService(_runtime_observation())
+    service.lifecycle_error = RuntimeError("PRIVATE /user/server.json prompt text")
+    monkeypatch.setattr(
+        SpeechPlaygroundPane,
+        "_tts_service_factory",
+        lambda self: _resolved(service),
+    )
+    app = _PaneHost(provider="audio_cpp")
+
+    async with app.run_test(size=(150, 60)) as pilot:
+        primary = app.query_one("#tts-test-connection-btn", Button)
+        await _wait_until(
+            pilot,
+            lambda: str(primary.label) == "Start & Test Connection",
+        )
+        pane = app.query_one(SpeechPlaygroundPane)
+        existing = tmp_path / "current.wav"
+        existing.write_bytes(b"RIFF")
+        pane.current_audio_file = existing
+
+        primary.press()
+        await _wait_until(pilot, lambda: bool(app.notices))
+
+        rendered_notices = repr(app.notices)
+        assert "PRIVATE" not in rendered_notices
+        assert "server.json" not in rendered_notices
+        assert "prompt text" not in rendered_notices
+        assert pane.current_audio_file == existing
+
+
+@pytest.mark.asyncio
+async def test_lifecycle_and_passive_status_failure_restore_safe_recovery_controls(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = _RuntimeObservationService(
+        _runtime_observation(
+            process_state="running",
+            process_generation=1,
+            capability="available",
+            endpoint="http://127.0.0.1:19001",
+            catalog_revision=11,
+            catalog_fresh=True,
+        )
+    )
+    service.lifecycle_error = RuntimeError("PRIVATE lifecycle failure")
+    original_observe = service.audio_cpp_runtime_observation
+
+    async def observe_until_lifecycle_fails() -> AudioCppRuntimeObservation:
+        if service.lifecycle_calls:
+            raise RuntimeError("PRIVATE passive status failure")
+        return await original_observe()
+
+    service.audio_cpp_runtime_observation = observe_until_lifecycle_fails  # type: ignore[method-assign]
+    monkeypatch.setattr(
+        SpeechPlaygroundPane,
+        "_tts_service_factory",
+        lambda self: _resolved(service),
+    )
+    app = _PaneHost(provider="audio_cpp")
+
+    async with app.run_test(size=(150, 60)) as pilot:
+        primary = app.query_one("#tts-test-connection-btn", Button)
+        await _wait_until(pilot, lambda: str(primary.label) == "Test Connection")
+        primary.press()
+        await _wait_until(
+            pilot,
+            lambda: (
+                "status could not be read"
+                in str(
+                    app.query_one("#audio-cpp-runtime-action-reason", Static).render()
+                ).lower()
+            ),
+        )
+
+        assert str(primary.label) == "Test Connection"
+        assert primary.disabled is False
+        assert "retry" in str(primary.tooltip).lower()
+        refresh = app.query_one("#tts-refresh-catalog-btn", Button)
+        assert refresh.disabled is False
+        assert "retry" in str(refresh.tooltip).lower()
+        generate = app.query_one("#tts-generate-btn", Button)
+        assert generate.disabled is True
+        assert "checked" in str(generate.tooltip).lower()
+        for selector in (
+            "#audio-cpp-runtime-restart",
+            "#audio-cpp-runtime-shutdown",
+        ):
+            action = app.query_one(selector, Button)
+            assert action.disabled is True
+            assert "checked" in str(action.tooltip).lower()
+
+
+@pytest.mark.asyncio
+async def test_unknown_runtime_test_does_not_reuse_stale_pending_restart_action(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = _RuntimeObservationService(
+        _runtime_observation(
+            saved_generation=2,
+            applied_generation=1,
+            process_state="running",
+            process_generation=1,
+            capability="available",
+            endpoint="http://127.0.0.1:19001",
+        )
+    )
+    monkeypatch.setattr(
+        SpeechPlaygroundPane,
+        "_tts_service_factory",
+        lambda self: _resolved(service),
+    )
+    app = _PaneHost(provider="audio_cpp")
+
+    async with app.run_test(size=(150, 60)) as pilot:
+        primary = app.query_one("#tts-test-connection-btn", Button)
+        await _wait_until(pilot, lambda: "Restart & Apply" in str(primary.label))
+
+        async def unavailable_observation() -> AudioCppRuntimeObservation:
+            raise RuntimeError("PRIVATE passive status failure")
+
+        service.audio_cpp_runtime_observation = unavailable_observation  # type: ignore[method-assign]
+        pane = app.query_one(SpeechPlaygroundPane)
+        pane._request_audio_cpp_runtime_observation()
+        await _wait_until(pilot, lambda: str(primary.label) == "Test Connection")
+
+        primary.press()
+        await _wait_until(pilot, lambda: service.lifecycle_calls == ["test"])
+
+        assert service.lifecycle_calls == ["test"]
 
 
 def _audio_catalog(
@@ -190,6 +1381,7 @@ class _PaneHost(App[None]):
         self.profile_service_requests = 0
         self.notices: list[tuple[str, str]] = []
         self.generation_events: list[STTSPlaygroundGenerateEvent] = []
+        self.navigation: list[NavigateToScreen] = []
 
     def compose(self) -> ComposeResult:
         yield SpeechPlaygroundPane(
@@ -216,6 +1408,9 @@ class _PaneHost(App[None]):
     def post_message(self, message: Any) -> bool:
         if isinstance(message, STTSPlaygroundGenerateEvent):
             self.generation_events.append(message)
+            return True
+        if isinstance(message, NavigateToScreen):
+            self.navigation.append(message)
             return True
         return super().post_message(message)
 
@@ -269,6 +1464,49 @@ class _PaneScreen(Screen):
         body.styles.width = "100%"
         body.styles.height = "100%"
         yield body
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("terminal_size", ((120, 40), (80, 24)))
+async def test_runtime_card_actions_remain_scroll_reachable_at_supported_widths(
+    monkeypatch: pytest.MonkeyPatch,
+    terminal_size: tuple[int, int],
+) -> None:
+    monkeypatch.setattr(
+        SpeechPlaygroundPane,
+        "_load_provider_catalog",
+        lambda self, *args, **kwargs: None,
+    )
+    monkeypatch.setattr(
+        SpeechPlaygroundPane,
+        "_request_audio_cpp_runtime_observation",
+        lambda self: None,
+    )
+    app = _build_test_app()
+
+    async with app.run_test(size=terminal_size) as pilot:
+        screen = _PaneScreen()
+        await app.push_screen(screen)
+        await pilot.pause()
+        pane = screen.query_one(SpeechPlaygroundPane)
+        card = screen.query_one("#audio-cpp-runtime-card", AudioCppRuntimeCard)
+        strip = screen.query_one("#audio-cpp-runtime-actions")
+
+        assert card.display is True
+        assert (
+            screen.query_one("#audio-player-container").virtual_region.y
+            < card.virtual_region.y
+        )
+        card.scroll_visible(animate=False)
+        await pilot.pause()
+        escaped = [
+            (str(button.label), strip.region, button.region)
+            for button in strip.query(Button)
+            if button.region.width and not strip.region.contains_region(button.region)
+        ]
+
+        assert not escaped, f"runtime actions clipped at {terminal_size}: {escaped}"
+        assert pane.max_scroll_y >= 0
 
 
 @pytest.fixture

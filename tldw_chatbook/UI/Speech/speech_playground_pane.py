@@ -22,6 +22,7 @@ old widgets carry the old rhythm with them.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Mapping
 from dataclasses import replace
 from datetime import datetime, timezone
@@ -34,6 +35,7 @@ from textual.css.query import NoMatches
 from textual.containers import Horizontal, Vertical
 from textual.message import Message
 from tldw_chatbook.TTS import (
+    AudioCppRuntimeObservation,
     TTSPlaygroundSelectionPreset,
     TTSPreferencesSnapshot,
 )
@@ -60,6 +62,11 @@ from tldw_chatbook.UI.stts_playground_catalog import UNAVAILABLE_SELECT_VALUE
 from ..Workbench.workbench_state import WorkbenchAction
 from .speech_action_strip import SpeechActionStrip
 from .speech_axis_row import AXIS_EMPTY_PROMPTS, SpeechAxisRow
+from .audio_cpp_runtime_card import (
+    AudioCppRuntimeCard,
+    AudioCppRuntimeOperation,
+    project_audio_cpp_runtime_card,
+)
 from .speech_catalog_mixin import SpeechCatalogMixin
 from .speech_playback_mixin import EXAMPLE_TEXTS, SpeechPlaybackMixin
 from .speech_playground_model import AXIS_CONTROLS
@@ -74,6 +81,7 @@ from .speech_runtime_status import (
     newest_speech_tts_status,
     project_speech_tts_status,
     speech_tts_runtime_status_from_catalog,
+    speech_tts_navigation_context,
 )
 from .speech_settings_contracts import (
     SpeechTTSConfigurationState,
@@ -85,6 +93,9 @@ from .speech_settings_contracts import (
     SpeechTTSStatusFreshness,
     speech_tts_model_scope,
 )
+from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
+
+_AUDIO_CPP_RUNTIME_POLL_SECONDS = 5.0
 
 if TYPE_CHECKING:
     pass
@@ -220,6 +231,8 @@ class SpeechPlaygroundPane(
     rebuild kept the legacy ids.
     """
 
+    _tts_service: Any
+
     #: The legacy widget's shortcuts, carried over verbatim. Deleting it
     #: took its BINDINGS with it while the `action_*` methods survived in
     #: `SpeechPlaybackMixin` -- five shortcuts silently stopped working, and
@@ -299,6 +312,9 @@ class SpeechPlaygroundPane(
         self._runtime_status_store = (
             runtime_status_store or SpeechTTSRuntimeStatusStore()
         )
+        self._audio_cpp_runtime_observation: AudioCppRuntimeObservation | None = None
+        self._audio_cpp_runtime_request_generation = 0
+        self._audio_cpp_lifecycle_busy: AudioCppRuntimeOperation | None = None
         self.init_synthesis_state()
         self.init_catalog_state()
         self._seed_session_control_snapshot()
@@ -501,6 +517,57 @@ class SpeechPlaygroundPane(
         event.stop()
         self.post_message(OpenStudioPreferencesRequested())
 
+    @on(Button.Pressed, "#audio-cpp-runtime-open-settings")
+    def _on_open_audio_cpp_global_settings(self, event: Button.Pressed) -> None:
+        """Open the one canonical owner of durable audio.cpp configuration."""
+
+        event.stop()
+        self.app.post_message(
+            NavigateToScreen(
+                "settings",
+                {
+                    "category": "speech-tts",
+                    **speech_tts_navigation_context(
+                        SpeechTTSNavigationTarget(
+                            "audio_cpp",
+                            SpeechTTSNavigationIntent.CONFIGURE,
+                        )
+                    ),
+                },
+            )
+        )
+
+    @on(Button.Pressed, "#audio-cpp-runtime-restart")
+    def _on_audio_cpp_restart(self, event: Button.Pressed) -> None:
+        """Run the existing managed replacement operation from Speech Lab."""
+
+        event.stop()
+        self._request_audio_cpp_lifecycle("restart")
+
+    @on(Button.Pressed, "#audio-cpp-runtime-shutdown")
+    def _on_audio_cpp_shutdown(self, event: Button.Pressed) -> None:
+        """Run process shutdown without touching the current audio result."""
+
+        event.stop()
+        self._request_audio_cpp_lifecycle("shutdown")
+
+    def _handle_connection_action(self) -> bool:
+        """Route audio.cpp's state-specific primary action through the service."""
+
+        if self._selected_runtime_provider() != "audio_cpp":
+            return False
+        observation = self._audio_cpp_runtime_observation
+        if observation is None:
+            self._request_audio_cpp_lifecycle("test", from_primary=True)
+            return True
+        action = project_audio_cpp_runtime_card(observation).primary_action
+        if not action.enabled:
+            if action.disabled_reason:
+                self.app.notify(action.disabled_reason, severity="warning")
+            return True
+        self._request_audio_cpp_lifecycle(action.operation, from_primary=True)
+        return True
+
     @on(Switch.Changed)
     def on_tts_option_switch_changed(self, event: Switch.Changed) -> None:
         """Delegate to the shared catalog mixin.
@@ -629,6 +696,7 @@ class SpeechPlaygroundPane(
         # Before the early return: this runs on catalog application as well
         # as on user change, and the language axis needs settling either way.
         self._settle_language_axis(provider)
+        self._sync_audio_cpp_runtime_visibility(provider)
 
         if provider == self.provider:
             return
@@ -1130,6 +1198,421 @@ class SpeechPlaygroundPane(
         if self._navigation_focus_pending:
             self.call_after_refresh(self._focus_navigation_target)
 
+    def _selected_runtime_provider(self) -> str:
+        """Return the provider whose runtime card may currently be observed."""
+
+        return self._selected_provider_id or self.provider
+
+    def _generation_readiness_error(
+        self,
+        provider_id: object,
+        model_id: object,
+    ) -> str | None:
+        """Fence both button and keyboard generation during managed transitions."""
+
+        error = super()._generation_readiness_error(provider_id, model_id)
+        if error is not None:
+            return error
+        if (
+            getattr(self, "_audio_cpp_lifecycle_busy", None) is not None
+            and provider_id == "audio_cpp"
+        ):
+            return "Wait for the audio.cpp lifecycle change to finish."
+        return None
+
+    def _sync_audio_cpp_runtime_visibility(self, provider_id: str) -> None:
+        """Show the mounted card only for audio.cpp and invalidate old reads."""
+
+        try:
+            card = self.query_one("#audio-cpp-runtime-card", AudioCppRuntimeCard)
+        except NoMatches:
+            return
+        selected = provider_id == "audio_cpp"
+        card.display = selected
+        if selected:
+            if self._audio_cpp_lifecycle_busy is not None:
+                self._render_audio_cpp_lifecycle_busy(self._audio_cpp_lifecycle_busy)
+            else:
+                self._audio_cpp_runtime_observation = None
+                loading_reason = (
+                    "Runtime status is loading; Test Connection starts a fresh "
+                    "audio.cpp check."
+                )
+                try:
+                    self.query_one("#audio-cpp-runtime-status", Static).update(
+                        "[CHECKING] Reading audio.cpp runtime status."
+                    )
+                    self.query_one(
+                        "#audio-cpp-runtime-action-reason",
+                        Static,
+                    ).update(loading_reason)
+                    primary = self.query_one("#tts-test-connection-btn", Button)
+                    primary.label = "Test Connection"
+                    primary.disabled = False
+                    primary.tooltip = loading_reason
+                    primary.refresh(layout=True)
+                    for selector in (
+                        "#audio-cpp-runtime-restart",
+                        "#audio-cpp-runtime-shutdown",
+                    ):
+                        action = self.query_one(selector, Button)
+                        action.disabled = True
+                        action.tooltip = "Wait for the runtime status check to finish."
+                except NoMatches:
+                    pass
+                self._sync_audio_cpp_probe_label(None)
+            self._request_audio_cpp_runtime_observation()
+            return
+        self._audio_cpp_runtime_request_generation += 1
+        self._sync_audio_cpp_probe_label(None)
+        try:
+            primary = self.query_one("#tts-test-connection-btn", Button)
+            primary.label = "Test"
+            primary.disabled = False
+            primary.tooltip = "Test the selected provider connection"
+            primary.refresh(layout=True)
+        except NoMatches:
+            pass
+
+    def _sync_audio_cpp_probe_label(
+        self,
+        observation: AudioCppRuntimeObservation | None,
+    ) -> None:
+        """Label catalog refresh as the explicit probe required for Unhealthy."""
+
+        is_unhealthy_probe = bool(
+            observation is not None
+            and observation.applied_mode == "managed"
+            and observation.process.state == "unhealthy"
+            and not observation.pending_configuration
+        )
+        try:
+            probe = self.query_one("#tts-refresh-catalog-btn", Button)
+        except NoMatches:
+            return
+        probe.label = "Test Connection" if is_unhealthy_probe else "Refresh"
+        probe.tooltip = (
+            "Probe the unhealthy managed server without restarting it"
+            if is_unhealthy_probe
+            else "Re-read available models and voices"
+        )
+        probe.refresh(layout=True)
+
+    def _poll_audio_cpp_runtime_observation(self) -> None:
+        """Poll only the passive service seam while audio.cpp is selected."""
+
+        if self._selected_runtime_provider() == "audio_cpp":
+            self._request_audio_cpp_runtime_observation()
+
+    def _request_audio_cpp_lifecycle(
+        self,
+        operation: AudioCppRuntimeOperation,
+        *,
+        from_primary: bool = False,
+    ) -> None:
+        """Accept one non-overlapping deliberate lifecycle action."""
+
+        if self._selected_runtime_provider() != "audio_cpp":
+            return
+        if self._audio_cpp_lifecycle_busy is not None:
+            self.app.notify(
+                "An audio.cpp lifecycle change is already in progress.",
+                severity="warning",
+            )
+            return
+        observation = self._audio_cpp_runtime_observation
+        if observation is not None:
+            projection = project_audio_cpp_runtime_card(observation)
+            action = (
+                projection.primary_action
+                if from_primary
+                else {
+                    "test": projection.primary_action,
+                    "restart": projection.restart_action,
+                    "shutdown": projection.shutdown_action,
+                }[operation]
+            )
+            if operation != "test" and not action.enabled:
+                if action.disabled_reason:
+                    self.app.notify(action.disabled_reason, severity="warning")
+                return
+        self._audio_cpp_lifecycle_busy = operation
+        self._render_audio_cpp_lifecycle_busy(operation)
+        self.app.run_worker(
+            self._run_audio_cpp_lifecycle(operation),
+            name=f"speech_audio_cpp_{operation}",
+            group="speech-audio-cpp-lifecycle",
+            exclusive=True,
+            exit_on_error=False,
+        )
+
+    def _render_audio_cpp_lifecycle_busy(
+        self,
+        operation: AudioCppRuntimeOperation,
+    ) -> None:
+        """Render immediate busy state without replacing focused controls."""
+
+        busy_reason = "An audio.cpp operation is in progress."
+        observation = self._audio_cpp_runtime_observation
+        if observation is not None and observation.applied_mode == "managed":
+            busy_state = {
+                "test": (
+                    "starting"
+                    if observation.process.state in {"stopped", "unavailable"}
+                    else observation.process.state
+                ),
+                "restart": "draining",
+                "shutdown": "draining",
+            }[operation]
+            busy_observation = replace(
+                observation,
+                process=replace(observation.process, state=busy_state),
+            )
+            try:
+                self.query_one(
+                    "#audio-cpp-runtime-card",
+                    AudioCppRuntimeCard,
+                ).apply_observation(busy_observation)
+                primary_label = {
+                    "test": (
+                        "Starting & Testing…"
+                        if busy_state == "starting"
+                        else "Testing…"
+                    ),
+                    "restart": (
+                        "Applying & Stopping…"
+                        if observation.saved_mode == "external"
+                        else "Restarting & Applying…"
+                    ),
+                    "shutdown": "Shutting down…",
+                }[operation]
+            except NoMatches:
+                primary_label = "Working…"
+        else:
+            primary_label = "Testing…" if operation == "test" else "Applying…"
+            try:
+                self.query_one("#audio-cpp-runtime-status", Static).update(
+                    "[CHECKING] Testing the external audio.cpp connection."
+                )
+                self.query_one(
+                    "#audio-cpp-runtime-action-reason",
+                    Static,
+                ).update(busy_reason)
+            except NoMatches:
+                pass
+
+        try:
+            self.query_one(
+                "#audio-cpp-runtime-action-reason",
+                Static,
+            ).update(busy_reason)
+        except NoMatches:
+            pass
+
+        for selector in (
+            "#tts-test-connection-btn",
+            "#tts-refresh-catalog-btn",
+            "#tts-generate-btn",
+            "#audio-cpp-runtime-restart",
+            "#audio-cpp-runtime-shutdown",
+        ):
+            try:
+                action = self.query_one(selector, Button)
+                action.disabled = True
+                action.tooltip = busy_reason
+            except NoMatches:
+                continue
+        try:
+            primary = self.query_one("#tts-test-connection-btn", Button)
+            primary.label = primary_label
+            primary.tooltip = busy_reason
+            primary.refresh(layout=True)
+        except NoMatches:
+            pass
+
+    async def _run_audio_cpp_lifecycle(
+        self,
+        operation: AudioCppRuntimeOperation,
+    ) -> None:
+        """Execute an accepted service operation and reconcile passive UI state."""
+
+        catalog = None
+        failure_copy: str | None = None
+        try:
+            service = self._tts_service
+            if service is None:
+                service = await self._tts_service_factory()
+                self._tts_service = service
+            if operation == "test":
+                catalog = await service.start_and_test_audio_cpp()
+            elif operation == "restart":
+                catalog = await service.restart_audio_cpp()
+            else:
+                await service.shutdown_audio_cpp()
+        except asyncio.CancelledError:
+            raise
+        except Exception as error:
+            failure_copy = self._catalog_error_copy(error, "audio_cpp")
+        finally:
+            self._audio_cpp_lifecycle_busy = None
+
+        if not self.is_mounted:
+            return
+        audio_cpp_selected = self._selected_runtime_provider() == "audio_cpp"
+        if failure_copy is not None:
+            self.app.notify(failure_copy, severity="error")
+            if audio_cpp_selected:
+                try:
+                    self.query_one("#tts-refresh-catalog-btn", Button).disabled = False
+                except NoMatches:
+                    pass
+                self._sync_generate_enabled()
+        elif catalog is not None:
+            if audio_cpp_selected:
+                self._load_provider_catalog("audio_cpp", refresh=False)
+            else:
+                self._stale_providers.add("audio_cpp")
+        else:
+            self._stale_providers.add("audio_cpp")
+            if audio_cpp_selected:
+                self._catalog_generation_allowed = False
+                self._sync_generate_enabled()
+                try:
+                    self.query_one("#tts-refresh-catalog-btn", Button).disabled = False
+                except NoMatches:
+                    pass
+        self._request_audio_cpp_runtime_observation()
+
+    def _request_audio_cpp_runtime_observation(self) -> None:
+        """Reserve stale-result identity before starting a passive read worker."""
+
+        if not self.is_mounted or self._selected_runtime_provider() != "audio_cpp":
+            return
+        self._audio_cpp_runtime_request_generation += 1
+        request_generation = self._audio_cpp_runtime_request_generation
+        self.run_worker(
+            self._observe_audio_cpp_runtime(request_generation),
+            group="speech-audio-cpp-runtime-observation",
+            exclusive=True,
+            exit_on_error=False,
+        )
+
+    async def _observe_audio_cpp_runtime(self, request_generation: int) -> None:
+        """Read and apply one coherent runtime observation without provider work."""
+
+        try:
+            service = self._tts_service
+            if service is None:
+                candidate = await self._tts_service_factory()
+                if self._tts_service is None:
+                    self._tts_service = candidate
+                service = self._tts_service
+            observe = getattr(service, "audio_cpp_runtime_observation", None)
+            if not callable(observe):
+                return
+            observation = await observe()
+            if type(observation) is not AudioCppRuntimeObservation:
+                raise TypeError("Unexpected audio.cpp runtime observation")
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            if self._audio_cpp_runtime_result_is_current(request_generation):
+                self._render_audio_cpp_runtime_observation_failure()
+            return
+
+        if not self._audio_cpp_runtime_result_is_current(request_generation):
+            return
+        if not self._audio_cpp_runtime_observation_is_current_enough(observation):
+            return
+        self._audio_cpp_runtime_observation = observation
+        if self._audio_cpp_lifecycle_busy is not None:
+            return
+        try:
+            card = self.query_one("#audio-cpp-runtime-card", AudioCppRuntimeCard)
+            projection = card.apply_observation(observation)
+            primary = self.query_one("#tts-test-connection-btn", Button)
+        except NoMatches:
+            return
+        primary.label = projection.primary_action.label
+        primary.disabled = not projection.primary_action.enabled
+        primary.tooltip = (
+            projection.primary_action.disabled_reason or projection.primary_action.label
+        )
+        primary.refresh(layout=True)
+        self._sync_audio_cpp_probe_label(observation)
+
+    def _audio_cpp_runtime_result_is_current(self, request_generation: int) -> bool:
+        return (
+            self.is_mounted
+            and request_generation == self._audio_cpp_runtime_request_generation
+            and self._selected_runtime_provider() == "audio_cpp"
+        )
+
+    def _audio_cpp_runtime_observation_is_current_enough(
+        self,
+        candidate: AudioCppRuntimeObservation,
+    ) -> bool:
+        """Reject a result older than any provider/process evidence on screen."""
+
+        current = self._audio_cpp_runtime_observation
+        if current is None:
+            return True
+        if (
+            candidate.saved_configuration_generation
+            < current.saved_configuration_generation
+            or candidate.applied_configuration_generation
+            < current.applied_configuration_generation
+            or candidate.provider_configuration_revision
+            < current.provider_configuration_revision
+            or candidate.process.process_generation < current.process.process_generation
+        ):
+            return False
+        return not (
+            candidate.process.process_generation == current.process.process_generation
+            and candidate.process.observation_version
+            < current.process.observation_version
+        )
+
+    def _render_audio_cpp_runtime_observation_failure(self) -> None:
+        """Show a fixed passive-read failure without exposing exception details."""
+
+        if self._audio_cpp_lifecycle_busy is not None:
+            return
+        retry_reason = "Runtime status could not be read. Test the connection to retry."
+        unchecked_reason = (
+            "Runtime status must be checked before this action is available."
+        )
+        self._stale_providers.add("audio_cpp")
+        self._catalog_generation_allowed = False
+        self._audio_cpp_runtime_observation = None
+        try:
+            self.query_one("#audio-cpp-runtime-status", Static).update(
+                "[UNAVAILABLE] Runtime status could not be read."
+            )
+            self.query_one("#audio-cpp-runtime-action-reason", Static).update(
+                retry_reason
+            )
+            primary = self.query_one("#tts-test-connection-btn", Button)
+            primary.label = "Test Connection"
+            primary.disabled = False
+            primary.tooltip = retry_reason
+            primary.refresh(layout=True)
+            refresh = self.query_one("#tts-refresh-catalog-btn", Button)
+            refresh.disabled = False
+            refresh.tooltip = retry_reason
+            generate = self.query_one("#tts-generate-btn", Button)
+            generate.disabled = True
+            generate.tooltip = unchecked_reason
+            for selector in (
+                "#audio-cpp-runtime-restart",
+                "#audio-cpp-runtime-shutdown",
+            ):
+                action = self.query_one(selector, Button)
+                action.disabled = True
+                action.tooltip = unchecked_reason
+        except NoMatches:
+            return
+
     def on_resize(self) -> None:
         """Stack the split when the pane is too narrow to hold two columns."""
         self._sync_split_layout()
@@ -1146,6 +1629,11 @@ class SpeechPlaygroundPane(
         self._settle_language_axis(self.provider)
         self._rehydrate_handler_state()
         self._sync_truthful_status_rows()
+        self._sync_audio_cpp_runtime_visibility(self.provider)
+        self.set_interval(
+            _AUDIO_CPP_RUNTIME_POLL_SECONDS,
+            self._poll_audio_cpp_runtime_observation,
+        )
         # dev's mount sequence for the profile preset, kept in order: a pane
         # opened on an exact profile shows that profile immediately, before
         # discovery runs, rather than showing a catalog the user did not ask
@@ -1260,6 +1748,10 @@ class SpeechPlaygroundPane(
                 yield from self._compose_player()
 
         yield from self._compose_generation_status()
+
+        runtime_card = AudioCppRuntimeCard(id="audio-cpp-runtime-card")
+        runtime_card.display = self.provider == "audio_cpp"
+        yield runtime_card
 
         yield Static(
             "Loading TTS providers…",

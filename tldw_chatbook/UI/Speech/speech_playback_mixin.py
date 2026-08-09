@@ -223,7 +223,9 @@ class SpeechPlaybackMixin:
             self._generate_tts()
             event.stop()  # Prevent event from bubbling up
         elif event.button.id == "tts-test-connection-btn":
-            if self._selected_provider_id is not None:
+            lifecycle_handler = getattr(self, "_handle_connection_action", None)
+            handled = bool(callable(lifecycle_handler) and lifecycle_handler())
+            if not handled and self._selected_provider_id is not None:
                 self._load_provider_catalog(
                     self._selected_provider_id,
                     refresh=True,

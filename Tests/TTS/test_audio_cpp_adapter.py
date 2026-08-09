@@ -34,6 +34,7 @@ from tldw_chatbook.TTS.audio_cpp_config import AudioCppConfig
 from tldw_chatbook.TTS.audio_cpp_supervisor import (
     AudioCppGenerationHooks,
     AudioCppProcessAdmissionSnapshot,
+    AudioCppProcessSnapshot,
     AudioCppReadyEndpoint,
     AudioCppSupervisor,
     _OwnedAudioCppProcess,
@@ -181,8 +182,10 @@ class _StubSupervisor:
         self.stop_calls: list[int | None] = []
         self.close_calls = 0
         self.process_generation = 0
+        self.observation_version = 0
         self.lifecycle_epoch = 0
         self.state = "stopped"
+        self.tts_capability = "unknown"
         self.hooks: AudioCppGenerationHooks | None = None
 
     def admission_snapshot(self) -> AudioCppProcessAdmissionSnapshot:
@@ -191,6 +194,19 @@ class _StubSupervisor:
             process_generation=self.process_generation,
             state=self.state,  # type: ignore[arg-type]
             stage_application_eligible=self.state in {"stopped", "unavailable"},
+        )
+
+    def snapshot(self) -> AudioCppProcessSnapshot:
+        return AudioCppProcessSnapshot(
+            state=self.state,  # type: ignore[arg-type]
+            process_generation=self.process_generation,
+            observation_version=self.observation_version,
+            endpoint=("http://127.0.0.1:19876" if self.state == "running" else None),
+            tts_capability=self.tts_capability,  # type: ignore[arg-type]
+            consecutive_health_failures=0,
+            last_failure=None,
+            diagnostics=(),
+            dropped_diagnostic_lines=0,
         )
 
     async def ensure_running(
@@ -204,17 +220,19 @@ class _StubSupervisor:
         self.ensure_calls += 1
         if self.hooks is None:
             self.state = "starting"
+            self.observation_version += 1
             self.process_generation += 1
             self.hook_factory_calls += 1
             self.hooks = await generation_hooks_factory(self.process_generation)
             if not await self.hooks.health_probe():
                 raise RuntimeError("synthetic health failure")
-            await self.hooks.contract_probe()
+            self.tts_capability = await self.hooks.contract_probe()
             self.state = "running"
+            self.observation_version += 1
         return AudioCppReadyEndpoint(
             base_url=launch.base_url,
             process_generation=self.process_generation,
-            observation_version=self.process_generation,
+            observation_version=self.observation_version,
         )
 
     async def stop(
@@ -238,6 +256,8 @@ class _StubSupervisor:
                 pass
             self.lifecycle_epoch += 1
             self.state = "stopped"
+            self.tts_capability = "unknown"
+            self.observation_version += 1
 
     async def replace_generation(self) -> None:
         if self.hooks is not None:
@@ -248,6 +268,8 @@ class _StubSupervisor:
                 pass
         self.lifecycle_epoch += 1
         self.state = "unavailable"
+        self.tts_capability = "unknown"
+        self.observation_version += 1
 
     async def close(self) -> None:
         self.close_calls += 1
