@@ -25,7 +25,6 @@ from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.events import DescendantFocus, Key
 from textual.css.query import NoMatches, QueryError
 from textual.geometry import Region
-from textual.screen import ModalScreen
 from textual.timer import Timer
 from textual.widget import Widget
 from textual.worker import Worker
@@ -103,8 +102,11 @@ from ...Library.library_ingest_state import (
     INGEST_UNAVAILABLE_COPY,
     LibraryIngestCanvasState,
     LibraryIngestFormState,
+    LibraryIngestLastSubmission,
     build_library_ingest_state,
     clamp_chunk_size,
+    library_ingest_retry_available,
+    library_ingest_retry_label,
     parse_keywords,
 )
 from ...Library.library_media_state import (
@@ -445,6 +447,37 @@ LIBRARY_SNAPSHOT_CACHE_TTL_SECONDS = 5.0
 LIBRARY_LIST_ENTRY_FOCUS_ARMED_SECONDS = 2.0
 LIBRARY_NOTES_AUTOSAVE_SECONDS = 2.0
 LIBRARY_NOTE_CONTENT_MAX_CHARS = 2_000_000
+# The literal title a just-created "Blank note" row is seeded with (LIB-14).
+# The editor presents it placeholder-only (empty Input, "Untitled"
+# placeholder), and the untouched-blank GC gate treats it as blank -- both
+# must agree with the create seed in ``handle_library_notes_create_blank``.
+LIBRARY_NOTE_BLANK_SEED_TITLE = "Untitled"
+
+
+def library_note_persisted_title(raw_title: str) -> str:
+    """The exact title a note with ``raw_title`` is actually stored under.
+
+    (P0, xhigh review + live-verify round) The save port substitutes the
+    seed title for a blank one on the wire (task-2858's reviewed decision:
+    an emptied-out title persists as "Untitled", never as a blank row
+    name), but ``DatabaseNotePortSaveReply`` carries no title back -- so
+    the session snapshot's baseline kept the blank the draft had while the
+    DB row was named "Untitled", and every list row patched from that
+    snapshot inherited the disagreement. The substitution is a pure
+    function of the payload title, so both sides derive it from HERE
+    instead of one side guessing: the port before the write, the list
+    patch after it.
+
+    Args:
+        raw_title: The draft/payload title exactly as the user left it.
+
+    Returns:
+        ``raw_title`` when it carries any non-whitespace text, otherwise
+        :data:`LIBRARY_NOTE_BLANK_SEED_TITLE`.
+    """
+    return raw_title if raw_title.strip() else LIBRARY_NOTE_BLANK_SEED_TITLE
+
+
 # Prompt editor body fields (details/system/user) have no dedicated cap of
 # their own -- reuses the note body's generous ceiling rather than inventing
 # a second magic number for the same "large text field" concern.
@@ -664,7 +697,16 @@ class _LibraryDatabaseNoteSessionPort:
             result = await self._run_service_call(
                 save_note,
                 scope="local_note",
-                title=payload.title,
+                # task-3315: restore the LIB-14 save-seam fallback the
+                # coordinator refactor (13cf08f90, notes-adaptive PR #1439)
+                # silently dropped -- an emptied-out title persists as the
+                # same "Untitled" default the create seam uses, never as a
+                # blank row title (task-2858's reviewed decision).
+                # (P0) The substitution rule lives in ONE helper now --
+                # ``_patch_library_note_list_from_session`` applies the
+                # same one to the snapshot, so the row name the session
+                # reports and the row name on disk can no longer disagree.
+                title=library_note_persisted_title(payload.title),
                 content=payload.body,
                 note_id=note_id,
                 version=expected_version,
@@ -1238,161 +1280,26 @@ def _sync_library_canvas(screen: "LibraryScreen", kind: str) -> None:
         screen.refresh(recompose=True)
 
 
-class IngestGuardrailModal(ModalScreen[bool]):
-    """Confirmation modal for starting an ingest with tooling warnings."""
+def _canonical_shortcut_key(key: str) -> str:
+    """Fold a shortcut key label to its canonical dedupe form.
 
-    DEFAULT_CSS = """
-    IngestGuardrailModal {
-        align: center middle;
-    }
+    (task-3312 #1) The footer's shared shortcut sets use display spellings
+    ("esc", "F6") while ``BINDINGS`` uses Textual key names ("escape",
+    "f6"); the F1 panel merges the two sources and must treat those as the
+    SAME key or it advertises one action twice.
 
-    #ingest-guardrail-modal {
-        width: 60;
-        height: auto;
-        max-height: 90%;
-        border: thick $primary;
-        background: $surface;
-        padding: 1 2;
-    }
+    Args:
+        key: A shortcut key label from either source.
 
-    /* task-3300 xhigh review round 2 (F3): the warning list is the ONLY
-       part of the modal allowed to give way -- it hugs its content while
-       everything fits, and scrolls once it doesn't, so Cancel / "Start
-       import anyway" stay reachable at any warning count. Before this,
-       5+ warnings grew the plain Vertical past the screen and clipped
-       the action row off the bottom. The row budget (screen cap minus
-       the pinned title/action chrome) is computed in ``on_mount``:
-       ``max-height: 1fr`` here resolves against the modal's FULL inner
-       height without subtracting the pinned siblings (measured -- a
-       7-warning list took all 17 inner rows and pushed the actions off
-       a 24-row screen). */
-    #ingest-guardrail-warnings {
-        height: auto;
-    }
-
-    /* task-3300: a bare ``Vertical()`` defaults to ``height: 1fr``, which
-       inside this ``height: auto`` modal starved every warning Static to
-       zero rendered height (the DESIGN.md section 7 "bare Container starving
-       its sibling" defect -- live capture showed an empty full-height
-       column). Each warning block must hug its content. */
-    .ingest-guardrail-warning {
-        height: auto;
-        margin-top: 1;
-    }
-
-    #ingest-guardrail-actions {
-        height: auto;
-        min-height: 3;
-        margin: 1 0 0 0;
-        align-horizontal: right;
-    }
-
-    #ingest-guardrail-cancel,
-    #ingest-guardrail-confirm {
-        width: auto;
-        min-width: 10;
-        height: 3;
-        min-height: 3;
-        margin-left: 1;
-    }
+    Returns:
+        A casefolded key with the "escape"/"esc" spelling unified.
     """
-
-    BINDINGS = [("escape", "dismiss(False)", "Close")]
-
-    def __init__(self, warnings: list[dict], affected_counts: dict[str, int]) -> None:
-        self.warnings = warnings
-        self.affected_counts = affected_counts
-        super().__init__()
-
-    def compose(self) -> ComposeResult:
-        with Vertical(id="ingest-guardrail-modal"):
-            yield Static("Some files may fail to import:")
-            # (F3) Warnings scroll; the title above and the action row
-            # below stay pinned, so the actions are reachable at any
-            # warning count.
-            with VerticalScroll(id="ingest-guardrail-warnings"):
-                for i, w in enumerate(self.warnings):
-                    count = self.affected_counts.get(w["feature"], 0)
-                    files_word = "file" if count == 1 else "files"
-                    with Vertical(classes="ingest-guardrail-warning"):
-                        yield Static(
-                            f"- {w['label']} ({count} {files_word}): {w['hint']}"
-                        )
-                        if w.get("command"):
-                            yield Button(
-                                "Copy install command",
-                                id=f"ingest-guardrail-copy-command-{i}",
-                                classes="copy-command",
-                            )
-            with Horizontal(id="ingest-guardrail-actions"):
-                # Cancel is the safe action -- repo convention keeps it
-                # ``default``; the confirm carries the emphasis (task-3300).
-                yield Button("Cancel", id="ingest-guardrail-cancel", variant="default")
-                yield Button(
-                    "Start import anyway",
-                    id="ingest-guardrail-confirm",
-                    variant="primary",
-                )
-
-    def on_mount(self) -> None:
-        """Cap the warning list to the rows left after the pinned chrome.
-
-        (F3) The scroll region's budget is 90% of the screen (the modal
-        container's own ``max-height``) minus the fixed rows around it:
-        border 2 + padding 2 + title 1 + action row 3 + action margin 1.
-        Computed here because no CSS scalar expresses "remaining height
-        after my siblings" inside a ``height: auto`` container --
-        ``max-height: 1fr`` resolves against the container's full inner
-        height and pushes the action row off-screen (measured on a
-        24-row screen with 7 warnings). ``max-height`` only ever caps:
-        short lists still hug their content exactly as before.
-        """
-        chrome_rows = 9
-        budget = max(3, int(self.app.size.height * 0.9) - chrome_rows)
-        self.query_one("#ingest-guardrail-warnings").styles.max_height = budget
-
-    @on(Button.Pressed, "#ingest-guardrail-confirm")
-    def _confirm(self) -> None:
-        self.dismiss(True)
-
-    @on(Button.Pressed, "#ingest-guardrail-cancel")
-    def _cancel(self) -> None:
-        self.dismiss(False)
-
-    @on(Button.Pressed, ".copy-command")
-    def _copy_command(self, event: Button.Pressed) -> None:
-        button_id = event.button.id
-        if not button_id or not button_id.startswith("ingest-guardrail-copy-command-"):
-            return
-        index = int(button_id.split("-")[-1])
-        command = self.warnings[index].get("command", "")
-        copy_fn = getattr(self.app, "copy_to_clipboard", None)
-        if callable(copy_fn):
-            try:
-                copy_fn(command)
-                self.notify("Install command copied to clipboard")
-            except Exception:
-                self.notify("Failed to copy command", severity="error")
-        else:
-            self.notify("Clipboard not available", severity="warning")
+    lowered = key.strip().casefold()
+    return "esc" if lowered == "escape" else lowered
 
 
 class _ParakeetV2NoPendingReportError(RuntimeError):
     """Raised when confirmation has no retained preflight report."""
-
-
-def _affected_counts(preflight: PreflightResult) -> dict[str, int]:
-    """Map each tooling feature to the number of files that depend on it."""
-    counts: dict[str, int] = {}
-    for group, files in preflight.type_groups.items():
-        if group == "unsupported":
-            # Unsupported files have no capability schema; they are surfaced
-            # separately in the pre-flight summary, not via tooling warnings.
-            continue
-        cap = get_capabilities(group)
-        for feat in cap.required_features + cap.optional_features:
-            counts[feat] = counts.get(feat, 0) + len(files)
-    return counts
 
 
 class LibraryScreen(BaseAppScreen):
@@ -1465,6 +1372,15 @@ class LibraryScreen(BaseAppScreen):
             "enter", "library_rag_result_card_select", "Select evidence", show=False
         ),
         Binding("o", "library_rag_result_card_open", "Open evidence", show=False),
+        # task-3313: "Retry this batch" accelerator. ``check_action`` gates
+        # it to the Ingest canvas WITH a last-submission snapshot; a
+        # focused Input/TextArea consumes the printable key before any
+        # screen binding sees it, so `r` still types normally in the form
+        # fields. Advertised via ``LIBRARY_INGEST_SHORTCUTS`` (footer+F1),
+        # so ``show=False`` like the other contextual keys.
+        Binding(
+            "r", "library_ingest_retry_last", "Retry this batch", show=False
+        ),
     ]
 
     #: Whether the media item open in the viewer lives on the SERVER. Set only
@@ -1596,10 +1512,15 @@ class LibraryScreen(BaseAppScreen):
     #: landing (``action_library_ingest_back``). Shared by the footer and
     #: F1 via ``_library_footer_shortcuts_for_current_state``, the
     #: task-2858 single-source rule.
+    #: task-3313 adds ``r`` -- re-stage the last submission ("Retry this
+    #: batch"); the binding itself is snapshot-gated, the advertisement is
+    #: static like the rest of this set (the footer already advertises
+    #: Enter while the gate is closed -- same precedent).
     LIBRARY_INGEST_SHORTCUTS = (
         ("/", "focus search"),
         ("F6", "next pane"),
         ("enter", "start import"),
+        ("r", "retry last batch"),
         ("esc", "back to hub"),
     )
 
@@ -2744,6 +2665,20 @@ class LibraryScreen(BaseAppScreen):
         # empty, which is exactly the row AC#5 forbids, regardless of what
         # happened to it in between.
         self._library_note_session_blank_id: str | None = None
+        # (P0, xhigh review + live-verify round) Whether the user has
+        # TOUCHED the title widget during this editor session. The
+        # untouched-blank GC used to key blankness on
+        # ``raw_title == LIBRARY_NOTE_BLANK_SEED_TITLE`` -- a pure string
+        # comparison -- so a note the user deliberately titled "Untitled"
+        # (body still empty) was destroyed on navigate-away with no
+        # prompt and no undo. A string can never distinguish the seed the
+        # create seam wrote from the identical string a human typed; only
+        # provenance can, so the GC reads THIS instead. Set on the first
+        # title edit (``handle_library_note_title_changed``) and cleared
+        # only when a new editor session begins (create / row switch /
+        # deep link / full editor reset) -- deliberately NOT cleared by a
+        # save, so the distinction survives a save round-trip.
+        self._library_note_title_user_edited: bool = False
         # Notes sync panel state. Seeded from config lazily on first entry
         # into sync mode (``_ensure_library_notes_sync_config_loaded``), not
         # here in __init__, so tests/screens that never open the sync panel
@@ -2806,6 +2741,36 @@ class LibraryScreen(BaseAppScreen):
         # clears; any registry mutation disarms.
         self._library_ingest_clear_finished_armed: bool = False
         self._library_ingest_clear_finished_armed_at: float = 0.0
+        # (task-3314) Two-press inline Start consent, mirroring the
+        # Clear-finished carrier: first Start with active tooling warnings
+        # arms (the gate line becomes the confirm copy), the second press
+        # submits. ``_warnings`` snapshots what the consent was armed
+        # against so a fresh pre-flight carrying DIFFERENT warnings
+        # disarms, while the Enter-in-path re-trigger landing an identical
+        # forecast does not steal the pending confirm.
+        self._library_ingest_start_confirm_armed: bool = False
+        self._library_ingest_start_confirm_armed_at: float = 0.0
+        self._library_ingest_start_confirm_warnings: list[dict] = []
+        # (task-3313) Session-scoped snapshot of the last submitted batch,
+        # captured at submit time before the form auto-clears; feeds the
+        # "Retry this batch" affordance. Deliberately NOT persisted (the
+        # jobs DB has sources but not staged options) and deliberately NOT
+        # cleared by rail re-entry -- it is submission history, not form
+        # state.
+        self._library_ingest_last_submission: (
+            LibraryIngestLastSubmission | None
+        ) = None
+        # (xhigh review + live-verify round) Two-press consent for the
+        # DESTRUCTIVE half of "Retry this batch". Re-staging replaces
+        # path/title/author/keywords/options wholesale with no undo, and
+        # the ``r`` accelerator can fire it from any non-text focus -- so
+        # when the re-stage would discard work the user entered since the
+        # submit, the first press only arms (the affordance's own label
+        # becomes the confirm) and the second replaces the form. A form
+        # that holds nothing the re-stage would discard skips consent
+        # entirely: friction with nothing at stake is just friction.
+        self._library_ingest_retry_confirm_armed: bool = False
+        self._library_ingest_retry_confirm_armed_at: float = 0.0
         # (task-2130) Durable session ledger: terminal jobs snapshotted at
         # Clear-finished time so Recent imports (incl. failure records)
         # survives the registry removal.
@@ -4377,9 +4342,9 @@ class LibraryScreen(BaseAppScreen):
             self._focus_library_note_control("#library-note-context")
             return
         if self._library_notes_view == "editor":
-            # P0 (independently confirmed at dev 4d0232358): this called
-            # `_back_from_library_note_editor()`, a method that never
-            # existed in ANY commit (introduced dangling on the
+            # P0 (found independently by task-3315 and at dev 4d0232358):
+            # this called `_back_from_library_note_editor()`, a method that
+            # never existed in ANY commit (introduced dangling on the
             # notes-adaptive branch at e453e9099, "feat(notes): preserve
             # focus across compact stages") -- a real Escape keypress from
             # the note editor raised an uncaught AttributeError that
@@ -4509,6 +4474,19 @@ class LibraryScreen(BaseAppScreen):
             event.key in {"/", "slash"} or getattr(event, "character", None) == "/"
         )
         if is_slash:
+            # task-3315: this screen-wide rail-search grab predates the
+            # notes-adaptive "/" binding (library_notes_focus_filter, PR
+            # #1439) and runs BEFORE bindings dispatch, so the notes-scoped
+            # "/" could never fire -- inside the Notes Navigator with a
+            # non-text control focused, "/" jumped to the rail search
+            # instead of the notes filter (reproduced failing at dev base
+            # ebeae1440). Defer to the binding's own check_action gate so
+            # the precedence lives in exactly one place.
+            if self.check_action("library_notes_focus_filter", ()):
+                self.action_library_notes_focus_filter()
+                event.stop()
+                event.prevent_default()
+                return
             try:
                 self.query_one("#library-search-input", Input).focus()
             except (NoMatches, QueryError):
@@ -5466,6 +5444,7 @@ class LibraryScreen(BaseAppScreen):
             # A deep link never owns the current blank-note GC identity.
             self._library_note_pending_blank_gc_id = None
             self._library_note_session_blank_id = None
+            self._library_note_title_user_edited = False
         if open_source_type and open_source_id and self.is_mounted:
             self.run_worker(
                 self._open_pending_library_source(),
@@ -8401,6 +8380,9 @@ class LibraryScreen(BaseAppScreen):
         # it was armed for.
         self._library_note_pending_blank_gc_id = None
         self._library_note_session_blank_id = None
+        # (P0) A full editor reset ends the session the pristine-title
+        # marker belonged to; the next note starts untouched again.
+        self._library_note_title_user_edited = False
         if self._library_notes_autosave_timer is not None:
             self._library_notes_autosave_timer.stop()
             self._library_notes_autosave_timer = None
@@ -8447,6 +8429,7 @@ class LibraryScreen(BaseAppScreen):
             timer.stop()
             self._library_ingest_path_debounce_timer = None
         self._library_ingest_clear_finished_armed = False
+        self._disarm_library_ingest_retry_confirm()
         self._library_ingest_expanded_details.clear()
         self._library_ingest_form = LibraryIngestFormState()
 
@@ -8468,6 +8451,9 @@ class LibraryScreen(BaseAppScreen):
         self._library_ingest_preflight_generation += 1
         self._cancel_library_ingest_preflight()
         self._library_ingest_clear_finished_armed = False
+        # (task-3314) Same hygiene for the pending Start consent: changing
+        # canvases mid-consent is not a "yes".
+        self._disarm_library_ingest_start_confirm()
 
     # ----- Export canvas -------------------------------------------------
 
@@ -9577,13 +9563,35 @@ class LibraryScreen(BaseAppScreen):
             scroll_y = canvas.scroll_offset.y
         except (NoMatches, QueryError):
             pass
+        # (task-3311, second half) ``refresh(recompose=True)`` is DEFERRED:
+        # the path Input below stays mounted, focused, and typeable until
+        # the recompose actually runs, and whatever the user types into it
+        # in that window is thrown away with the widget -- measured live
+        # as 5/5 characters lost within ~150ms of Clear, 3/3 surviving at
+        # >=400ms. Keeping the WIDGET (not a copy of its text) lets the
+        # restore below read the value it ended up holding, which is the
+        # only place those keystrokes exist. The value AT CAPTURE TIME
+        # comes along as the discriminator: a difference means the user
+        # typed during the window, whereas an unchanged stale value beside
+        # a deliberately rewritten form (the retry re-stage) must be left
+        # alone.
+        stale_path_input: Input | None = None
+        try:
+            stale_path_input = self.query_one("#library-ingest-path", Input)
+        except (NoMatches, QueryError):
+            pass
+        stale_path_value = (
+            stale_path_input.value if stale_path_input is not None else None
+        )
         self.refresh(recompose=True)
-        if focused_id is not None or scroll_y:
+        if focused_id is not None or scroll_y or stale_path_input is not None:
             self.call_after_refresh(
                 self._restore_library_ingest_canvas_context,
                 focused_id,
                 cursor,
                 scroll_y,
+                stale_path_input,
+                stale_path_value,
             )
 
     def _restore_library_ingest_canvas_context(
@@ -9591,12 +9599,31 @@ class LibraryScreen(BaseAppScreen):
         focused_id: str | None,
         cursor: int | None,
         scroll_y: float | None,
+        stale_path_input: Input | None = None,
+        stale_path_value: str | None = None,
     ) -> None:
         """Re-apply focus/cursor/scroll captured before a job-tick recompose.
 
         Scroll first, then focus with ``scroll_visible=False`` so restoring
         focus does not itself yank the scroll position. A vanished widget id
         (a finished job's row-action button) degrades silently (task-2010).
+
+        Also rescues keystrokes that raced the recompose (task-3311's
+        second half): the replaced path Input is the only holder of text
+        typed between scheduling and applying the rebuild. Adoption is
+        gated on the widget's value having CHANGED since capture, so a
+        deliberate form rewrite under an untouched field (the retry
+        re-stage) is never undone by a stale echo. The value is written to
+        the live Input rather than to the form echo, so the ordinary
+        ``Input.Changed`` seam runs the whole follow-through (gate, Clear
+        button, intro lines, the pre-flight debounce) exactly once.
+
+        Args:
+            focused_id: Id of the widget focused before the recompose.
+            cursor: That widget's cursor position, when it was an ``Input``.
+            scroll_y: The canvas's scroll offset before the recompose.
+            stale_path_input: The pre-recompose path ``Input`` object.
+            stale_path_value: That widget's value at capture time.
         """
         if scroll_y:
             try:
@@ -9604,6 +9631,23 @@ class LibraryScreen(BaseAppScreen):
                 canvas.scroll_to(y=scroll_y, animate=False, force=True)
             except (NoMatches, QueryError):
                 pass
+        raced_text: str | None = None
+        if (
+            stale_path_input is not None
+            and stale_path_value is not None
+            and stale_path_input.value != stale_path_value
+        ):
+            raced_text = stale_path_input.value
+        if raced_text is not None:
+            try:
+                live_path = self.query_one("#library-ingest-path", Input)
+            except (NoMatches, QueryError):
+                live_path = None
+            if live_path is not None and live_path.value != raced_text:
+                live_path.value = raced_text
+                live_path.cursor_position = len(raced_text)
+                if focused_id == "library-ingest-path":
+                    cursor = len(raced_text)
         if not focused_id:
             return
         try:
@@ -9632,6 +9676,13 @@ class LibraryScreen(BaseAppScreen):
         except (NoMatches, QueryError):
             return
         quiet_line.update(new_state.start_quiet_line)
+        # (task-3314) The two-press confirm lives in this updater's domain:
+        # copy (above) and warning treatment (here) ride the SAME in-place
+        # update, so the confirm text and its styling can never disagree
+        # -- and the widget keeps identity across the hot path.
+        quiet_line.set_class(
+            new_state.start_confirm_armed, "-ingest-start-confirm"
+        )
         # (task-3305, MI-16) The commit forecast rides the SAME update as
         # the gate: a text/number option edit takes the in-place path, and
         # syncing the gate but not the forecast left "1 will import"
@@ -9743,6 +9794,22 @@ class LibraryScreen(BaseAppScreen):
             pass
         else:
             clear_button.display = new_state.show_clear_path
+        # (task-3313) "Retry this batch" is canvas-level, always-mounted,
+        # display-managed chrome; job ticks land here, so its visibility
+        # tracks the settled-queue rule in place -- the widget itself is
+        # never remounted (object identity across ticks).
+        try:
+            retry_last = canvas.query_one("#library-ingest-retry-last", Button)
+        except (NoMatches, QueryError):
+            pass
+        else:
+            retry_last.display = new_state.show_retry_last
+            # (xhigh review + live-verify round) The pending destructive
+            # re-stage consent rides the same in-place update, so the
+            # label and the state can never disagree across a job tick.
+            retry_last.label = library_ingest_retry_label(
+                new_state.retry_confirm_armed
+            )
         # (task-2042 review) Scope labels depend on per-group file counts,
         # which change WITHOUT the group set changing (generic is always
         # present) -- update them in place so a panel never claims files it
@@ -9857,6 +9924,20 @@ class LibraryScreen(BaseAppScreen):
             recent_ledger=tuple(self._library_ingest_recent_ledger),
             expanded_details=self._library_ingest_expanded_details,
             analysis_unready_hint=analysis_unready_hint,
+            # (task-3314/3313) ``getattr`` quiet-degrade: several test
+            # suites build this screen via ``object.__new__`` and seed only
+            # the fields they exercise (the Clear-finished armed_at read
+            # below in the queue handler set this precedent).
+            start_confirm_armed=getattr(
+                self, "_library_ingest_start_confirm_armed", False
+            ),
+            last_submission_available=(
+                getattr(self, "_library_ingest_last_submission", None)
+                is not None
+            ),
+            retry_confirm_armed=getattr(
+                self, "_library_ingest_retry_confirm_armed", False
+            ),
         )
 
     def _ensure_library_notes_sync_config_loaded(self) -> None:
@@ -10002,6 +10083,16 @@ class LibraryScreen(BaseAppScreen):
             or not self._library_note_editor_armed
         ):
             return
+        # (P0) Recorded BEFORE (and independently of) the mutate result:
+        # the two guards above already exclude every programmatic echo, so
+        # reaching this line means the human changed the title widget --
+        # even when the resulting string happens to equal the seed and the
+        # coordinator reports "no change". A blank-seeded note renders its
+        # title Input placeholder-only (empty value, draft still holding
+        # the seed), so pasting "Untitled" into it is exactly that case:
+        # a real touch that mutate() sees as a no-op. Gating the marker on
+        # mutate() therefore left the GC free to destroy the note.
+        self._library_note_title_user_edited = True
         if self._library_note_session.mutate(title=event.value):
             self._library_note_pending_blank_gc_id = None
             self._library_note_shortcut_status = ""
@@ -10115,15 +10206,24 @@ class LibraryScreen(BaseAppScreen):
         self._apply_library_note_presentation_state()
 
     def _patch_library_note_list_from_session(self) -> None:
-        """Patch list caches from the payload the coordinator actually saved."""
+        """Patch list caches from the payload the coordinator actually saved.
+
+        (P0) The baseline title is the DRAFT's title; the save port
+        substitutes the seed for a blank one on the wire and the reply
+        carries no title back, so patching rows straight from the baseline
+        named an emptied-out note ``""`` while the persisted row said
+        "Untitled". Both sides now run the payload through
+        :func:`library_note_persisted_title`.
+        """
         snapshot = self._library_note_session.snapshot
         if snapshot is None:
             return
         baseline = snapshot.baseline
+        persisted_title = library_note_persisted_title(baseline.title)
         self._local_source_records["notes"] = patch_note_records_after_save(
             self._local_source_records.get("notes", ()),
             baseline.note_id,
-            title=baseline.title,
+            title=persisted_title,
             modified_at=baseline.modified_at,
         )
         if self._library_notes_filter_records is not None:
@@ -10131,7 +10231,7 @@ class LibraryScreen(BaseAppScreen):
                 patch_note_records_after_save(
                     self._library_notes_filter_records,
                     baseline.note_id,
-                    title=baseline.title,
+                    title=persisted_title,
                     modified_at=baseline.modified_at,
                 )
             )
@@ -10265,13 +10365,39 @@ class LibraryScreen(BaseAppScreen):
         if (
             self._library_note_session_blank_id
             and self._library_note_session_blank_id == self._selected_note_id
+            # task-3315: never start a SECOND destructive op from the
+            # untouched-blank GC while a discard/delete is already running
+            # or admitted -- fall through to the session flush, whose own
+            # destructive guard vetoes navigation until it settles.
+            and not self._library_note_session.destructive_running
+            and self._library_note_session.destructive_admission is None
         ):
             fields = self._read_library_note_editor_fields()
             if fields is not None:
                 raw_title, raw_content, raw_keywords_text = fields
-                if not any(
-                    value.strip()
-                    for value in (raw_title, raw_content, raw_keywords_text)
+                # task-3315 (LIB-14 regression, pre-arc dev churn): the
+                # session coordinator seeds a Blank note's title with the
+                # literal seed and ``_read_library_note_editor_fields`` now
+                # projects the SNAPSHOT rather than the widgets (13cf08f90,
+                # notes-adaptive PR #1439) -- the editor presents that seed
+                # as an empty placeholder-only Input, so it must count as
+                # blank here or the untouched-blank GC never fires and every
+                # abandoned Blank note leaves a permanent "Untitled" row
+                # (exactly what task-2858 AC#5 forbids).
+                # (P0, xhigh review + live-verify round) The seed only
+                # counts as blank while it is still THE SEED. Keying on
+                # string equality alone destroyed a note the user
+                # deliberately titled "Untitled" (body empty) on
+                # navigate-away, with no prompt and no undo -- a string
+                # cannot tell the create seam's default from the same
+                # letters typed by a human, so the provenance marker
+                # decides. An emptied-out title is blank either way.
+                title_blank = not raw_title.strip() or (
+                    raw_title == LIBRARY_NOTE_BLANK_SEED_TITLE
+                    and not self._library_note_title_user_edited
+                )
+                if title_blank and not any(
+                    value.strip() for value in (raw_content, raw_keywords_text)
                 ):
                     await self._gc_pending_blank_note()
                     return NoteFlushOutcome(NoteFlushOutcomeKind.PERMITTED)
@@ -13661,6 +13787,26 @@ class LibraryScreen(BaseAppScreen):
             # showing), so declaration order is what keeps this one
             # exclusive, not this predicate.
             return self._library_media_confirming_bulk_delete
+        if action == "library_ingest_retry_last":
+            # task-3313: only on the Ingest canvas AND while the affordance
+            # itself is offered. THE SAME predicate the state builder uses
+            # for ``show_retry_last`` -- imported, not restated. This gate
+            # used to carry its own copy of the rule with the settled-queue
+            # half missing, so mid-run the key stayed live exactly while
+            # the button was hidden to prevent a duplicate batch (xhigh
+            # review + live-verify round).
+            if self._library_selected_row_id != LIBRARY_ROW_INGEST_MEDIA:
+                return False
+            registry = self._library_ingest_registry()
+            jobs_fn = getattr(registry, "jobs", None)
+            jobs = jobs_fn() if callable(jobs_fn) else ()
+            return library_ingest_retry_available(
+                jobs,
+                last_submission_available=(
+                    getattr(self, "_library_ingest_last_submission", None)
+                    is not None
+                ),
+            )
         if action == "library_list_focus_rail":
             return self._library_list_canvas_showing_list()
         if action == "library_rag_use_in_console":
@@ -13725,11 +13871,19 @@ class LibraryScreen(BaseAppScreen):
         )
 
         footer_shortcuts = self._library_footer_shortcuts_for_current_state()
-        seen_keys = {key for key, _description in footer_shortcuts}
+        # (task-3312 #1) Dedupe on the CANONICAL key, not the raw string:
+        # the shared footer sets spell the exit key "esc" while BINDINGS
+        # entries spell it "escape" (Textual's key name), so a raw-string
+        # comparison kept both and F1 listed the exit twice in Ingest
+        # ("esc: back to hub" + "escape: Back to Library hub" -- live,
+        # 2026-08-08). Case is folded for the same reason ("F6" vs "f6").
+        seen_keys = {
+            _canonical_shortcut_key(key) for key, _description in footer_shortcuts
+        }
         binding_extras = tuple(
             pair
             for pair in self._active_library_binding_shortcuts()
-            if pair[0] not in seen_keys
+            if _canonical_shortcut_key(pair[0]) not in seen_keys
         )
         state = WorkbenchHelpState(
             route_id="library",
@@ -13864,6 +14018,14 @@ class LibraryScreen(BaseAppScreen):
         task-2043) applies exactly as a rail press would.
         """
         if self._library_selected_row_id != LIBRARY_ROW_INGEST_MEDIA:
+            return
+        if self._library_ingest_start_confirm_armed:
+            # (task-3314 AC#4) Esc is the consent "no": drop the pending
+            # two-press confirm and STAY on the canvas -- the user asked
+            # to back out of the confirm, not out of the form. A second
+            # Esc leaves for the hub as before.
+            self._disarm_library_ingest_start_confirm()
+            self._update_library_ingest_gate(self._build_library_ingest_state())
             return
         await self._select_library_rail_row("")
         if self.is_mounted:
@@ -18291,6 +18453,37 @@ class LibraryScreen(BaseAppScreen):
 
     # ----- Ingest canvas -----------------------------------------------
 
+    def _adopt_library_ingest_path(self, new_path: str) -> str:
+        """Set the staged path from a NON-typing source, invalidation included.
+
+        (xhigh review + live-verify round) ``handle_library_ingest_path_
+        changed`` is the only seam that disarms a pending Start consent on
+        a path change, and it cannot see a programmatic set: writing
+        ``form.path`` first makes the recomposed Input's re-announcement
+        equal to the form's copy, which the handler's echo guard drops by
+        design. Browse… did exactly that, so a consent armed against file
+        A survived picking file B and B could be submitted under A's
+        consent. Every non-typing path writer routes through here instead.
+
+        Args:
+            new_path: The path the picker (or any other non-typing source)
+                chose, exactly as it should appear in the field.
+
+        Returns:
+            The previous staged path, for callers that need to know
+            whether anything actually changed.
+        """
+        previous = self._library_ingest_form.path
+        self._library_ingest_form.path = new_path
+        if new_path != previous:
+            # Same rule the typing seam applies: a different source means
+            # a different blast radius, so any pending consent is stale --
+            # both the Start consent and a pending destructive re-stage
+            # (whose whole point is the path it would overwrite).
+            self._disarm_library_ingest_start_confirm()
+            self._disarm_library_ingest_retry_confirm()
+        return previous
+
     @on(Input.Changed, "#library-ingest-path")
     async def handle_library_ingest_path_changed(self, event: Input.Changed) -> None:
         """Track the ingest path text as the user types it (state only).
@@ -18319,6 +18512,16 @@ class LibraryScreen(BaseAppScreen):
             # family as the canvas's ``_reported_option_values`` guard).
             return
         self._library_ingest_form.path = event.value
+        # (task-3314) A genuine path edit invalidates the forecast a
+        # pending Start consent was armed against; the trailing gate
+        # update below re-renders the line out of its confirm state.
+        self._disarm_library_ingest_start_confirm()
+        # ...and it changes what a pending re-stage would discard, so that
+        # consent is stale too (guarded: the label write is off the hot
+        # typing path unless something is actually armed).
+        if self._library_ingest_retry_confirm_armed:
+            self._disarm_library_ingest_retry_confirm()
+            self._update_library_ingest_retry_label()
         # (task-2015 review) Fence off any in-flight pre-flight the moment
         # the text genuinely changes: its result describes a path this
         # field no longer shows, and generation equality alone would
@@ -18371,7 +18574,27 @@ class LibraryScreen(BaseAppScreen):
 
     @on(Input.Blurred, "#library-ingest-path")
     def handle_library_ingest_path_blurred(self, event: Input.Blurred) -> None:
-        """Trigger pre-flight when the user leaves the path field."""
+        """Trigger pre-flight when the user leaves the path field.
+
+        Blur deliberately does NOT disarm a pending Start consent
+        (reversal of task-3314 AC#4's original reading; xhigh review +
+        live-verify round). The original rule assumed the mouse flow
+        always blurs BEFORE the arming press -- true only when the FIRST
+        press is the click. Arm with Enter in the path field and the
+        confirm copy says "Press Start again to import anyway"; the Start
+        CLICK that instruction asks for blurs the path field on its way
+        in, so the disarm fired between the gesture and the press handler
+        and the second press merely RE-ARMED. Nothing could ever submit
+        by the route the copy prescribes.
+
+        A blur carries no information about the forecast: the staged
+        path, its options, and its warnings are all unchanged by focus
+        moving. Consent is invalidated by things that change what Start
+        would DO -- a genuine path edit, an option edit, a fresh
+        pre-flight with different warnings, pre-flight invalidation, a
+        Browse… pick, a rail switch, or an explicit Esc -- and every one
+        of those still disarms.
+        """
         event.stop()
         path = self._library_ingest_form.path.strip()
         if path:
@@ -18439,8 +18662,167 @@ class LibraryScreen(BaseAppScreen):
             path_input = None
         if path_input is not None:
             path_input.value = ""
-            path_input.focus()
+            # (task-3311) SYNCHRONOUS focus, before the dynamic-region
+            # update below. ``Widget.focus()`` defers through
+            # ``app.call_later``, so with a pre-flight staged (type-group
+            # set change -> the STRUCTURAL branch) the update's
+            # ``_refresh_library_ingest_canvas_preserving_context`` still
+            # saw the just-clicked Clear button as ``app.focused``,
+            # captured THAT id, and after the full recompose tried to
+            # restore focus onto the new Clear button -- hidden for an
+            # empty path, so ``Screen.set_focus`` silently no-ops on the
+            # non-focusable widget and focus stayed wherever the prune's
+            # ``_reset_focus`` dropped it (live: the rail search box, or
+            # nowhere -- a following "/" then ran the global focus-search
+            # binding). Setting focus through the Screen API updates
+            # ``screen.focused`` immediately, so the capture/restore
+            # round-trips ``#library-ingest-path`` deterministically.
+            self.set_focus(path_input)
         self._update_library_ingest_dynamic_regions()
+
+    @on(Button.Pressed, "#library-ingest-retry-last")
+    def handle_library_ingest_retry_last(self, event: Button.Pressed) -> None:
+        """Re-stage the last submitted batch into the form (task-3313).
+
+        Args:
+            event: Button press event emitted by the "Retry this batch"
+                action.
+        """
+        event.stop()
+        self._restage_library_ingest_last_submission()
+
+    def action_library_ingest_retry_last(self) -> None:
+        """``r``: keyboard route to "Retry this batch" (task-3313 AC#2).
+
+        Gated by ``check_action`` to the Ingest canvas while the affordance
+        is offered; a printable key is only ever seen here when no
+        Input/TextArea holds focus (text fields consume it first), so
+        typing an ``r`` into the path field never re-stages.
+        """
+        self._restage_library_ingest_last_submission()
+
+    #: (xhigh review + live-verify round) Presses landing this soon after
+    #: the arming press are the same physical gesture (a key repeat, a
+    #: double-click), not a decision -- mirrors the Clear-finished and
+    #: Start-consent dead zones, kept independently tunable.
+    _RETRY_CONFIRM_DEAD_ZONE_SECONDS = 0.3
+
+    def _disarm_library_ingest_retry_confirm(self) -> None:
+        """Drop a pending destructive-re-stage consent (state only)."""
+        self._library_ingest_retry_confirm_armed = False
+
+    def _library_ingest_restage_discards_work(self) -> bool:
+        """Whether re-staging would overwrite content the user entered.
+
+        A re-stage is destructive only insofar as the form currently holds
+        something DIFFERENT from what the snapshot would put back. Right
+        after a submit it does not: path and title are cleared and the
+        remaining metadata/options are the very values the snapshot
+        carries, so re-staging replaces nothing and consent would be pure
+        friction. Once the user has typed a new path, a new title, or
+        flipped an option, the same press silently destroys that work --
+        which is what the consent exists for.
+
+        Returns:
+            ``True`` when at least one non-empty form field (or option
+            value) differs from what the last-submission snapshot would
+            restore over it.
+        """
+        snapshot = self._library_ingest_last_submission
+        if snapshot is None:
+            return False
+        form = self._library_ingest_form
+        for current, staged in (
+            (form.path, snapshot.source),
+            (form.title, snapshot.title),
+            (form.author, snapshot.author),
+            (form.keywords, snapshot.keywords),
+        ):
+            # An empty field has nothing to lose; only entered text does.
+            if current.strip() and current.strip() != str(staged).strip():
+                return True
+        for group, staged_values in snapshot.type_options.items():
+            current_values = form.type_options.get(group, {})
+            for name, staged_value in staged_values.items():
+                if (
+                    name in current_values
+                    and current_values[name] != staged_value
+                ):
+                    return True
+        return False
+
+    def _update_library_ingest_retry_label(self) -> None:
+        """Sync the retry affordance's label in place (never a recompose).
+
+        The affordance is the pending consent's only surface -- the ``r``
+        route has no gate line of its own -- so arming has to be visible
+        without disturbing the form the user is mid-way through.
+        """
+        try:
+            retry_button = self.query_one("#library-ingest-retry-last", Button)
+        except (NoMatches, QueryError):
+            return
+        retry_button.label = library_ingest_retry_label(
+            self._library_ingest_retry_confirm_armed
+        )
+
+    def _restage_library_ingest_last_submission(self) -> None:
+        """Restore the last submission's source/options/metadata (task-3313).
+
+        Destructive by construction: every form field is replaced from the
+        snapshot with no undo. When that would discard work the user has
+        entered since the submit, the repo's incumbent two-press consent
+        applies (Clear-finished, task-2015/2160; the Start consent,
+        task-3314) -- the FIRST press only arms, relabelling the
+        affordance, and the second replaces the form. A form holding
+        nothing the re-stage would discard skips consent and re-stages on
+        one press. Both routes (button and the ``r`` accelerator) share
+        this one path, so the key can never be the looser of the two.
+
+        The old forecast must never be reused (AC#3): the stale pre-flight
+        echo is invalidated first, then a FRESH pre-flight runs through
+        the same trigger the typing path uses -- so tooling installed (or
+        removed) since the last run changes the forecast and the gate.
+        The context-preserving recompose re-renders the form widgets from
+        the restored echo; focus lands in the path field, matching entry
+        focus (the staged path is what the user acts on next).
+        """
+        snapshot = self._library_ingest_last_submission
+        if snapshot is None:
+            return
+        if self._library_ingest_restage_discards_work():
+            # ``getattr`` quiet-degrade, the convention several suites rely
+            # on: they build this screen via ``object.__new__`` and seed
+            # only the fields they exercise.
+            if not getattr(self, "_library_ingest_retry_confirm_armed", False):
+                self._library_ingest_retry_confirm_armed = True
+                self._library_ingest_retry_confirm_armed_at = time.monotonic()
+                self._update_library_ingest_retry_label()
+                return
+            if (
+                time.monotonic() - self._library_ingest_retry_confirm_armed_at
+                < self._RETRY_CONFIRM_DEAD_ZONE_SECONDS
+            ):
+                # A press inside the dead zone is the arming gesture
+                # repeating, not consent -- ignore it (stays armed).
+                return
+        self._disarm_library_ingest_retry_confirm()
+        form = self._library_ingest_form
+        form.path = snapshot.source
+        form.title = snapshot.title
+        form.author = snapshot.author
+        form.keywords = snapshot.keywords
+        form.analyze = snapshot.analyze
+        form.chunk = snapshot.chunk
+        form.chunk_size = snapshot.chunk_size
+        form.type_options = {
+            group: dict(values)
+            for group, values in snapshot.type_options.items()
+        }
+        self._invalidate_library_ingest_preflight()
+        self._refresh_library_ingest_canvas_preserving_context()
+        self._trigger_library_ingest_preflight(snapshot.source)
+        self.call_after_refresh(self._focus_library_ingest_path)
 
     @on(Button.Pressed, "#ingest-preflight-choose")
     @on(Button.Pressed, "#library-ingest-browse")
@@ -18464,7 +18846,7 @@ class LibraryScreen(BaseAppScreen):
             if selected_path is None:
                 return
             self._remember_library_ingest_location(selected_path)
-            self._library_ingest_form.path = str(selected_path)
+            self._adopt_library_ingest_path(str(selected_path))
             self.refresh(recompose=True)
             self._trigger_library_ingest_preflight(str(selected_path))
 
@@ -18556,6 +18938,13 @@ class LibraryScreen(BaseAppScreen):
         would remount the Input and lose cursor position mid-typing).
         """
         event.stop()
+        # (task-3314) An option edit changes what the submission will do --
+        # a pending Start consent no longer covers it. Both downstream
+        # paths (recompose / in-place gate update) re-render the line.
+        self._disarm_library_ingest_start_confirm()
+        # Same for a pending re-stage: the option the user just changed is
+        # among the things the re-stage would overwrite.
+        self._disarm_library_ingest_retry_confirm()
         group_options = self._library_ingest_form.type_options.setdefault(
             event.group, {}
         )
@@ -18946,6 +19335,9 @@ class LibraryScreen(BaseAppScreen):
         self._cancel_library_ingest_preflight()
         self._library_ingest_form.preflight = None
         self._library_ingest_form.preflight_checking = False
+        # (task-3314) A consent armed against a forecast that no longer
+        # exists must not survive it -- submit/Clear/reset all route here.
+        self._disarm_library_ingest_start_confirm()
 
     def _trigger_library_ingest_preflight(self, path: str) -> None:
         """Start (or restart) the pre-flight worker for ``path``.
@@ -19008,6 +19400,17 @@ class LibraryScreen(BaseAppScreen):
         """
         if generation != self._library_ingest_preflight_generation:
             return
+        # (task-3314) A fresh forecast carrying DIFFERENT warnings
+        # invalidates a pending Start consent (the Clear-finished "the
+        # queue you armed against changed" rule). An IDENTICAL warnings
+        # set keeps it -- the Enter-in-path re-trigger lands an equal
+        # forecast between the two presses, and stealing the consent there
+        # would make Enter,Enter unable to ever submit.
+        if self._library_ingest_start_confirm_armed and (
+            list(result.warnings)
+            != self._library_ingest_start_confirm_warnings
+        ):
+            self._disarm_library_ingest_start_confirm()
         self._library_ingest_form.preflight = result
         self._library_ingest_form.preflight_checking = False
         # (task-2042) In-place for the same reason as the trigger: the
@@ -19099,6 +19502,25 @@ class LibraryScreen(BaseAppScreen):
             return None
         return str(validated_path)
 
+    #: (task-3314) Presses landing this soon after the arming press are the
+    #: same physical gesture (a double-click / key repeat), not a decision
+    #: -- the Clear-finished rule (task-2160), mirrored. Its own constant
+    #: so the two dead zones stay independently tunable.
+    _START_CONFIRM_DEAD_ZONE_SECONDS = 0.3
+
+    def _disarm_library_ingest_start_confirm(self) -> None:
+        """Drop a pending two-press Start consent (task-3314).
+
+        Called wherever the forecast the consent was armed against stops
+        being current: a genuine path edit, a fresh pre-flight result with
+        different warnings, pre-flight invalidation (submit/Clear/reset),
+        rail-switch hygiene, an option edit, Esc, and path-field blur.
+        State only -- callers that can re-render do so themselves (the
+        gate updater owns the line).
+        """
+        self._library_ingest_start_confirm_armed = False
+        self._library_ingest_start_confirm_warnings = []
+
     def _submit_library_ingest_form(self) -> None:
         """Validate the ingest form and submit a new Library ingest job.
 
@@ -19106,13 +19528,18 @@ class LibraryScreen(BaseAppScreen):
         invalid/missing path is a quiet warning notice, matching every
         other Library form failure path in this screen; a missing
         ``submit_library_ingest_job`` seam (registry absent) gets the same
-        treatment. When pre-flight tooling warnings are present, a
-        confirmation modal quantifies the affected files before the user
-        proceeds. On success, the path AND title fields clear (L3b AB
-        wave, A1) -- title is per-file, so it must not silently reapply to
-        the next file in a batch -- while author/keywords/advanced options
-        persist, since those are batch metadata a user submitting several
-        files in a row shouldn't have to retype for every submission.
+        treatment. When pre-flight tooling warnings are present, consent
+        is the inline two-press grammar (task-3314; the guardrail modal is
+        retired): the FIRST press arms -- the gate line becomes "⚠ Press
+        Start again to import anyway — N files may fail." via an in-place
+        gate update -- and the SECOND press (outside the double-press dead
+        zone) submits. Enter in the path field routes through this same
+        method, so Enter,Enter carries identical semantics. On success,
+        the path AND title fields clear (L3b AB wave, A1) -- title is
+        per-file, so it must not silently reapply to the next file in a
+        batch -- while author/keywords/advanced options persist, since
+        those are batch metadata a user submitting several files in a row
+        shouldn't have to retype for every submission.
         """
         form = self._library_ingest_form
         submitted_source = self._resolve_ingest_source(form.path.strip())
@@ -19123,23 +19550,38 @@ class LibraryScreen(BaseAppScreen):
             self._notify_library_ingest_warning(INGEST_UNAVAILABLE_COPY)
             return
         if form.preflight is not None and form.preflight.warnings:
-            counts = _affected_counts(form.preflight)
-            self.app.push_screen(
-                IngestGuardrailModal(form.preflight.warnings, counts),
-                partial(self._do_submit_ingest, submitted_source),
+            # (task-3314) Mirrors the queue's Clear-finished two-press
+            # mechanism (task-2015/2160): arm in place, never submit on
+            # the arming press.
+            if not self._library_ingest_start_confirm_armed:
+                self._library_ingest_start_confirm_armed = True
+                self._library_ingest_start_confirm_armed_at = time.monotonic()
+                self._library_ingest_start_confirm_warnings = [
+                    dict(warning) for warning in form.preflight.warnings
+                ]
+                # Arming changes ONLY the gate line, in place -- the same
+                # no-recompose discipline the armed Clear-finished label
+                # uses, so the confirm appears under the finger/caret that
+                # armed it without disturbing layout or focus.
+                self._update_library_ingest_gate(
+                    self._build_library_ingest_state()
+                )
+                return
+            armed_at = getattr(
+                self, "_library_ingest_start_confirm_armed_at", 0.0
             )
-        else:
-            self._do_submit_ingest(submitted_source)
+            if (
+                time.monotonic() - armed_at
+                < self._START_CONFIRM_DEAD_ZONE_SECONDS
+            ):
+                # A press inside the dead zone is the arming gesture
+                # repeating, not consent -- ignore it (stays armed).
+                return
+            self._disarm_library_ingest_start_confirm()
+        self._do_submit_ingest(submitted_source)
 
-    def _do_submit_ingest(self, submitted_source: str, confirmed: bool = True) -> None:
-        """Perform the actual Library ingest job submission.
-
-        The ``confirmed`` parameter lets this method be used directly as the
-        guardrail modal callback: the modal dismisses with ``True``/``False``
-        and the partial binding already supplies ``submitted_source``.
-        """
-        if not confirmed:
-            return
+    def _do_submit_ingest(self, submitted_source: str) -> None:
+        """Perform the actual Library ingest job submission."""
         submit = getattr(self.app_instance, "submit_library_ingest_job", None)
         if not callable(submit):
             self._notify_library_ingest_warning(INGEST_UNAVAILABLE_COPY)
@@ -19167,6 +19609,24 @@ class LibraryScreen(BaseAppScreen):
         }
         if option_settings:
             save_settings_to_cli_config(option_settings)
+        # (task-3313) Session-scoped snapshot of what was just submitted,
+        # captured BEFORE the form clears, so "Retry this batch" can
+        # re-stage the exact same source with its options and metadata.
+        # Values are copied (not aliased) so later form edits never mutate
+        # the record of what actually ran.
+        self._library_ingest_last_submission = LibraryIngestLastSubmission(
+            source=submitted_source,
+            title=form.title,
+            author=form.author,
+            keywords=form.keywords,
+            analyze=form.analyze,
+            chunk=form.chunk,
+            chunk_size=str(form.chunk_size),
+            type_options={
+                group: dict(values)
+                for group, values in form.type_options.items()
+            },
+        )
         form.path = ""
         form.title = ""
         # The summary described the file that just left the form, so keeping
@@ -19962,6 +20422,7 @@ class LibraryScreen(BaseAppScreen):
         # A normal row switch never carries the blank-note GC identity.
         self._library_note_pending_blank_gc_id = None
         self._library_note_session_blank_id = None
+        self._library_note_title_user_edited = False
         if note_id:
             self._begin_library_note_load(note_id)
         self.refresh(recompose=True)
@@ -20391,7 +20852,7 @@ class LibraryScreen(BaseAppScreen):
             return
         self.run_worker(
             self._create_library_note(
-                title="Untitled",
+                title=LIBRARY_NOTE_BLANK_SEED_TITLE,
                 content="",
                 create_token=create_token,
                 blank=True,
@@ -20681,6 +21142,9 @@ class LibraryScreen(BaseAppScreen):
         self._library_note_editor_armed = False
         self._library_note_pending_blank_gc_id = created_id if blank else None
         self._library_note_session_blank_id = created_id if blank else None
+        # (P0) A freshly created note's title is whatever the create seam
+        # seeded -- untouched by definition.
+        self._library_note_title_user_edited = False
         self._finish_library_note_create(active_token)
         if self.is_mounted:
             self.refresh(recompose=True)

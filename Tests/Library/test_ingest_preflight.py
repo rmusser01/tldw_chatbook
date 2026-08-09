@@ -265,14 +265,16 @@ class TestAnalyzePath:
     ) -> None:
         """One unsupported file must not destroy the summary for the rest.
 
-        Any real folder is likely to hold a ``.json``, ``.jpg`` or ``.srt``
+        Any real folder is likely to hold a ``.json``, ``.srt`` or ``.tmp``
         alongside the content, and a single one of them used to abort the
         whole analysis -- losing the file count, the size, the type breakdown
         and, critically, the tooling warnings that feed the guardrail.
+        (Fixture was ``cover.jpg`` until task-3307 made images a supported
+        group.)
         """
         (tmp_path / "a.pdf").write_bytes(b"%PDF")
         (tmp_path / "b.txt").write_text("plain")
-        (tmp_path / "cover.jpg").write_bytes(b"jpg")
+        (tmp_path / "subs.srt").write_bytes(b"1\n00:00 --> 00:01\nhi")
 
         result = analyze_path(str(tmp_path))
 
@@ -280,14 +282,14 @@ class TestAnalyzePath:
         assert result.total_files == 3
         assert len(result.type_groups["pdf"]) == 1
         assert len(result.type_groups["generic"]) == 1
-        assert result.type_groups["unsupported"] == [str(tmp_path / "cover.jpg")]
+        assert result.type_groups["unsupported"] == [str(tmp_path / "subs.srt")]
 
     def test_unsupported_file_in_directory_does_not_block_tooling_warnings(
         self, tmp_path: Path, monkeypatch
     ) -> None:
         """Supported groups still report their tooling warnings."""
         (tmp_path / "a.pdf").write_bytes(b"%PDF")
-        (tmp_path / "cover.jpg").write_bytes(b"jpg")
+        (tmp_path / "subs.srt").write_bytes(b"1\n00:00 --> 00:01\nhi")
 
         def fake_warnings(group: str) -> list[dict]:
             return [{"feature": "test", "group": group}]
@@ -508,3 +510,36 @@ class TestUrlProbePlainLanguage:
         assert "failed" in probe.error.lower()
         assert "boom" not in probe.error
         assert "<" not in probe.error
+
+
+def test_xml_file_lands_in_the_unsupported_bucket_task_3308(tmp_path) -> None:
+    """task-3308 (defer ruling, task-3310 notes): an ``.xml`` source is
+    classified unsupported at pre-flight -- never grouped, never raised --
+    so the queue can never hand it to the parse path whose XML branch
+    still says "not yet implemented"."""
+    xml = tmp_path / "feed.xml"
+    xml.write_text("<rss><channel/></rss>")
+
+    result = analyze_path(str(xml))
+
+    assert result.errors == []
+    assert result.type_groups.get("unsupported") == [str(xml)]
+    assert result.total_files == 1
+
+
+def test_png_file_lands_in_the_image_group_task_3307(tmp_path) -> None:
+    """task-3307 (ship ruling, task-3310 notes): a raster image pre-flights
+    into its own ``image`` group -- it used to land in the unsupported
+    bucket while ``process_image`` sat unreachable."""
+    png = tmp_path / "photo.png"
+    # A real minimal PNG header is not needed for pre-flight (extension
+    # classification only), but keep the bytes non-empty so the empty-file
+    # classifier stays out of the way.
+    png.write_bytes(b"\x89PNG\r\n\x1a\n rest")
+
+    result = analyze_path(str(png))
+
+    assert result.errors == []
+    assert result.type_groups.get("image") == [str(png)]
+    assert "unsupported" not in result.type_groups
+    assert result.total_files == 1

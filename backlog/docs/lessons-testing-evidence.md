@@ -79,6 +79,59 @@ after the fact** over raising inside code that catches broadly.
 
 ---
 
+## A surviving mutant usually means a SECOND writer satisfies your assertion
+
+**The trap.** You delete the code under test, the test stays green, and the reflex is
+to strengthen the assertion. The real question is *who else produces the asserted
+outcome* — if a second mechanism writes the same state, the test is measuring that
+mechanism, not your feature.
+
+**What happened.** Task-3313 (2026-08-09), twice in one session:
+
+- Deleting the "Retry this batch" **options restore** stayed green because ingest
+  options deliberately persist across submits — the form still held the values the
+  restore was supposed to bring back. Fix: the test now *corrupts* the options and
+  metadata between submit and retry, so only the restore can produce the asserted
+  values. The mutant then failed on the exact line.
+- Deleting the **fresh pre-flight trigger** stayed green because the test's
+  programmatic `path_input.value = …` had armed the 0.8s typing debounce, which fired
+  *after* the re-stage at test speed and re-ran the analysis the mutant no longer
+  requested (found by wrapping the trigger and printing call stacks: the second call
+  came from `_run_debounced_library_ingest_preflight`). In production that timer fires
+  as a no-op long before a human reaches the button — a pure test-speed artifact. Fix:
+  the harness stops the pending debounce before the action under test.
+
+**What to do.** When a mutant survives, instrument for the *second writer* (wrap the
+seam, record call stacks) before touching the assertion. Then either perturb the state
+so only the code under test can restore it, or silence the background mechanism in the
+harness — and re-run the mutant to see it actually die.
+
+---
+
+## A widget reference captured before a structural recompose is a silent key sink
+
+**The trap.** A Pilot test grabs `path_input = screen.query_one(...)`, performs an
+action that lands a state change, then `set_focus(path_input)` and `pilot.press(...)`.
+If the state change took the STRUCTURAL recompose path, every form widget was
+replaced; the captured reference is a detached widget. Focusing it "works"
+(`screen.focused` even reports it), but keys go nowhere — no error, no typing, no
+`Submitted`.
+
+**What happened.** Task-3314 (2026-08-09): the inline-consent pilot tests captured the
+ingest path Input, then let a pre-flight result land — which changes the type-group
+set and forces the canvas's context-preserving full recompose. Enter then never fired
+`Input.Submitted`; three probes (handler spies, app-level recorders, a source-level
+log) all showed the handler simply never ran, and typing `x` changed nothing. The fix
+was one line: re-query the input *after* the forecast settles. (Related but distinct
+from the "pin object identity across the in-place path" lesson — here the identity
+break is *expected*, and the test must follow it.)
+
+**What to do.** In pilot tests, re-query any widget you focus or press *after* the
+last action that can recompose its region; treat "keys typed but value unchanged" as
+a detached-focus symptom, not a key-routing mystery.
+
+---
+
 ## A new widget in a shared row needs geometry assertions, not just display/text
 
 **The trap.** You add a small widget to an existing `Horizontal` row and assert it
@@ -1794,3 +1847,52 @@ route the sub-legs through `connect_private_sqlite` with a registered owner
 (`rag.chachanotes_keyword_leg`, read-only URI), add the inventory row, and bump the
 ratchet — which is what the guard existed to make happen, roughly a day later than it
 should have.
+## `Widget.focus()` is deferred — a same-handler capture of `app.focused` sees the old widget
+
+**task-3311, 2026-08-09.** The Ingest Clear handler called `path_input.focus()` and
+then a structural recompose helper that captures `app.focused` to restore focus
+afterwards. In Textual 8, `Widget.focus()` does NOT set focus synchronously — it
+queues `screen.set_focus` through `app.call_later` — so the capture still saw the
+just-clicked Clear button, and the post-recompose restore targeted the NEW Clear
+button, hidden for an empty path. `Screen.set_focus` silently no-ops on a
+non-focusable widget, so focus stayed wherever the recompose prune dropped it: the
+rail search box (typed path tail became a Library search) or nowhere (a leading
+"/" ran the global focus-search binding). Live it presented as a 2-of-4
+intermittent; headless, with a preflight staged, it failed deterministically on
+iteration 0 of an 8-pass loop.
+
+**What to do.** When a handler must hand focus somewhere before code later in the
+SAME handler reads `app.focused`/`screen.focused` (capture-and-restore helpers,
+recompose context savers), use the synchronous `Screen.set_focus(widget)`, not
+`widget.focus()`. And remember `set_focus` on a non-focusable (hidden/disabled)
+widget does nothing and reports nothing — a focus-restore path that can name a
+display-managed widget needs the target to be focusable, or a fallback.
+
+---
+
+## Bisecting dev-baseline test rot without a checkout: `git archive` trees run against the same venv
+
+**task-3315, 2026-08-09.** `Tests/UI/test_library_shell.py` carried 56 failures on
+the dev base, and the question that decided every repair was WHERE each family
+broke: the ingest arc, dev's own churn, or the very PR that authored the pins.
+With mutating git commands off-limits (shared checkout, other agents active),
+`git archive <sha> | tar -x -C scratch/tree_<sha>` + `cd tree_<sha> && <worktree>/
+.venv/bin/python -m pytest ...` reproduced the suite at any historical commit —
+cwd wins over the editable install on sys.path (verify once: print
+`tldw_chatbook.__file__`). Running the 60x20 geometry family at `6b4ccf475` (the
+notes-adaptive PR #1439 merge that INTRODUCED those tests to dev) and at the dev
+base proved the identical 14-test failure set at both: the family was born broken
+at its own merge, and the media-ingest arc was exonerated in one run. The same
+technique caught that the pins' authoring-branch snapshot (`42c994486`) was itself
+too broken to run — "the tests passed when written" is not a safe assumption for
+a PR whose battery only ever ran `-k` slices.
+
+**What to do.** When a full-file suite is red on a base you didn't build, don't
+reason from blame alone: extract the tree at the suspect merge commits with
+read-only `git archive` and run the failing family there. A failure set identical
+at the introducing merge and at base names the culprit (pins merged unvalidated)
+and scopes the fix to re-pinning; a set that appears only later points at product
+churn to bisect further. Corollary of the incident: line numbers in an earlier
+failure report drift as you edit the file — re-derive the failing STATEMENT
+before diagnosing (a "status query" failure here was actually the post-completion
+query racing the finish-of-run recompose, three asserts later than first read).

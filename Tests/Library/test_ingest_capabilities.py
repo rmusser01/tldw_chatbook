@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 from unittest.mock import patch
 
 import pytest
@@ -68,6 +69,16 @@ def test_get_type_group_maps_extensions(path: str, expected_group: str) -> None:
         ("https://example.com/paper.pdf", "pdf"),
         ("https://example.com/book.epub", "ebook"),
         ("https://example.com/talk.mp3", "audio_video"),
+        # ...but only when the pipeline can actually honor the verdict.
+        # (task-3307 xhigh review round) An image URL is the exception:
+        # ``classify_ingest_source`` has no image branch, so the pipeline
+        # scrapes it as an article. Grouping it as ``image`` made the
+        # canvas promise "1 image", mount the OCR panel, and raise an
+        # OCR-backend warning that forces the two-press consent -- after
+        # which every OCR option was discarded and the URL was fetched as
+        # HTML. The canvas must say what the pipeline will do.
+        ("https://example.com/chart.png", "web"),
+        ("https://example.com/scan.tiff", "web"),
         # Everything else addressable over http is a page to be clipped.
         ("https://example.com/some-post", "web"),
         ("https://en.wikipedia.org/wiki/Fort_Sumter", "web"),
@@ -111,6 +122,13 @@ def test_the_canvas_and_the_pipeline_agree_on_what_a_url_is() -> None:
         # while the pipeline fetches it as an article -- same compatibility
         # allowance the pdf/ebook rows above already make.
         "document": {"document", "article"},
+        # (task-3307 xhigh review round) NO allowance for image: unlike
+        # pdf/ebook/document -- whose panels' options are at worst unused
+        # -- an image URL grouped as ``image`` makes the canvas mount the
+        # OCR panel and raise the OCR-backend warning that forces the
+        # two-press consent, for a pipeline path that never calls
+        # ``process_image``. The group must be one the pipeline honors.
+        "image": {"image"},
         "generic": {"plaintext", "html", "xml", "article"},
     }
     for url in (
@@ -118,6 +136,8 @@ def test_the_canvas_and_the_pipeline_agree_on_what_a_url_is() -> None:
         "https://example.com/some-post",
         "https://example.com/talk.mp3",
         "https://example.com/paper.pdf",
+        "https://example.com/chart.png",
+        "https://example.com/scan.tiff",
     ):
         group = get_type_group(url)
         assert group != "unsupported", f"{url} is ingestible but grouped unsupported"
@@ -125,6 +145,12 @@ def test_the_canvas_and_the_pipeline_agree_on_what_a_url_is() -> None:
         assert classified in compatible[group], (
             f"{url}: canvas says {group}, pipeline says {classified}"
         )
+
+
+def test_local_image_files_still_group_as_image() -> None:
+    """The URL fix must not cost local images their own panel."""
+    assert get_type_group("/home/u/receipt.png") == "image"
+    assert get_type_group("/home/u/scan.TIFF") == "image"
 
 
 def test_get_capabilities_pdf() -> None:
@@ -250,6 +276,10 @@ def test_get_capabilities_audio_video() -> None:
         "timestamps",
         "diarization",
         "vad_filter",
+        "start_time",
+        "end_time",
+        "cookies_file",
+        "summarize_recursively",
     )
 
     provider_field = next(f for f in caps.fields if f.name == "transcription_provider")
@@ -277,10 +307,76 @@ def test_get_capabilities_audio_video() -> None:
     assert precision_field.enabled_when_values == ("parakeet-onnx",)
 
     model_field = next(f for f in caps.fields if f.name == "transcription_model")
-    assert model_field.options == ("tiny", "base", "small", "medium", "large")
+    # (task-3306) The full faster-whisper catalog the transcription service
+    # itself declares (``TranscriptionService.list_available_models``,
+    # ``transcription_service.py``) -- the old five-size list silently
+    # withheld large-v3, the .en variants, the distil family and the
+    # community turbo/CrisperWhisper builds the routing layer passes
+    # straight through to ``WhisperModel``. Order mirrors the service list.
+    assert model_field.options == (
+        "tiny",
+        "tiny.en",
+        "base",
+        "base.en",
+        "small",
+        "small.en",
+        "medium",
+        "medium.en",
+        "large-v1",
+        "large-v2",
+        "large-v3",
+        "large",
+        "distil-large-v2",
+        "distil-medium.en",
+        "distil-small.en",
+        "distil-large-v3",
+        "deepdml/faster-distil-whisper-large-v3.5",
+        "deepdml/faster-whisper-large-v3-turbo-ct2",
+        "nyrahealth/faster_CrisperWhisper",
+    )
     assert model_field.default == "base"
     assert model_field.enabled_when == "transcription_provider"
     assert model_field.enabled_when_values == ("faster-whisper",)
+
+
+def test_audio_video_trim_cookies_recursive_summary_fields() -> None:
+    """(task-3306) Time-range trim, cookies file, recursive summary shapes."""
+    caps = get_capabilities("audio_video")
+
+    start_field = next(f for f in caps.fields if f.name == "start_time")
+    assert start_field.type == "text"
+    assert start_field.default == ""
+    assert start_field.hint, "the accepted format must be stated at the control"
+    assert start_field.placeholder, "an empty Input needs example content"
+
+    end_field = next(f for f in caps.fields if f.name == "end_time")
+    assert end_field.type == "text"
+    assert end_field.default == ""
+    assert end_field.hint
+    assert end_field.placeholder
+
+    cookies_field = next(f for f in caps.fields if f.name == "cookies_file")
+    assert cookies_field.type == "text"
+    assert cookies_field.default == ""
+    # A PATH input, never raw cookie text: these option values persist with
+    # the job and echo into config.toml, where a credential must not land.
+    assert cookies_field.depends_on == "yt_dlp"
+    assert "video URL" in cookies_field.hint, (
+        "only the video (yt-dlp) download path consumes the cookie file; "
+        "the scope limit belongs at the control"
+    )
+    assert cookies_field.placeholder
+
+    recursive_field = next(
+        f for f in caps.fields if f.name == "summarize_recursively"
+    )
+    assert recursive_field.type == "checkbox"
+    assert recursive_field.default is False
+    # The gate lives in the GENERIC group (Analyze after import), which
+    # enabled_when cannot reach across groups -- the dependency is stated
+    # in the hint instead (the task-3303 convention).
+    assert recursive_field.enabled_when is None
+    assert "Analyze" in recursive_field.hint
 
 
 def test_parakeet_onnx_feature_probes_onnx_asr(monkeypatch) -> None:
@@ -854,3 +950,306 @@ def test_scope_nouns_exist_for_every_group() -> None:
     for caps in _TYPE_GROUPS.values():
         assert caps.noun_singular, f"{caps.group}: missing noun_singular"
         assert caps.noun_plural, f"{caps.group}: missing noun_plural"
+
+
+def test_get_type_group_xml_is_unsupported_task_3308() -> None:
+    """task-3308 (defer ruling, task-3310 notes): ``.xml`` stays unmapped in
+    ``detect_file_type``, so pre-flight must classify it unsupported -- the
+    honest state while ``XML_Ingestion.py`` remains unwired. If someone
+    wires XML through (extension -> group -> parse), this pin goes red on
+    purpose: retire it together with the deferral."""
+    assert get_type_group("/tmp/feed.xml") == "unsupported"
+    assert get_type_group("/tmp/FEED.XML") == "unsupported"
+
+
+# --- task-3307: image ingestion (ship ruling, task-3310 notes) --------------
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/tmp/photo.png",
+        "/tmp/photo.PNG",
+        "/tmp/photo.jpg",
+        "/tmp/photo.jpeg",
+        "/tmp/animation.gif",
+        "/tmp/photo.webp",
+        "/tmp/scan.bmp",
+        "/tmp/scan.tiff",
+        "/tmp/scan.tif",
+    ],
+)
+def test_get_type_group_maps_image_extensions_task_3307(path: str) -> None:
+    """Raster formats the image processor's PIL loader opens get the new
+    ``image`` group -- they used to pre-flight as unsupported while
+    ``Image_Processing_Lib.process_image`` sat unreachable."""
+    assert get_type_group(path) == "image"
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        # Not PIL-loadable raster content: SVG is a vector document.
+        "/tmp/diagram.svg",
+        # An icon container is not a content document to import.
+        "/tmp/favicon.ico",
+        # HEIC/HEIF need pillow_heif, which no install extra provides.
+        "/tmp/photo.heic",
+        "/tmp/photo.heif",
+    ],
+)
+def test_image_lookalikes_stay_unsupported_task_3307(path: str) -> None:
+    """Formats ``process_image``'s own SUPPORTED_IMAGE_FORMATS table lists
+    but the PIL loader cannot actually rasterize (svg), or that need the
+    absent pillow_heif opener (heic/heif), or that are icon containers
+    rather than content (ico), stay honestly unsupported."""
+    assert get_type_group(path) == "unsupported"
+
+
+def test_image_url_is_grouped_as_web_not_image_task_3307() -> None:
+    """An image URL groups as ``web``, unlike pdf/ebook/document.
+
+    (xhigh review round) This test previously asserted the opposite --
+    "the extension says what the target IS" -- which is true of pdf/ebook
+    only because their panels' options merely go unused. For images the
+    verdict had teeth: the OCR panel mounted, the missing-OCR-backend
+    warning fired and forced the ingest canvas's two-press consent, and
+    then the pipeline (``classify_ingest_source`` has no image branch)
+    scraped the URL as HTML with every OCR option discarded. The canvas
+    must not promise work the pipeline will not do.
+    """
+    assert get_type_group("https://example.com/diagram.png") == "web"
+
+
+def test_get_capabilities_image_task_3307() -> None:
+    caps = get_capabilities("image")
+
+    assert caps.group == "image"
+    assert caps.noun_singular == "image"
+    assert caps.noun_plural == "images"
+    # Without at least one OCR backend the group cannot produce content at
+    # all (the extracted text IS what gets imported), so the backend
+    # umbrella is REQUIRED, not optional.
+    assert caps.required_features == ("image_ocr",)
+
+    assert caps.field_names == ("ocr", "ocr_language", "ocr_backend")
+    fields = {f.name: f for f in caps.fields}
+
+    ocr = fields["ocr"]
+    assert ocr.type == "checkbox"
+    # Mirrors process_image's own enable_ocr=True default -- and with OCR
+    # off there is nothing to import.
+    assert ocr.default is True
+    assert ocr.hint, "the OCR toggle must say the text IS the content"
+
+    lang = fields["ocr_language"]
+    assert lang.enabled_when == "ocr"
+    assert lang.default == "en"
+    assert lang.disabled_reason
+
+    backend = fields["ocr_backend"]
+    assert backend.type == "select"
+    assert backend.default == "auto"
+    # The OCR manager's registered backends (OCR_Backends), plus auto.
+    assert backend.options == (
+        "auto",
+        "docext",
+        "docling",
+        "tesseract",
+        "easyocr",
+        "paddleocr",
+    )
+    assert backend.enabled_when == "ocr"
+    assert backend.disabled_reason
+
+
+def test_image_ocr_warning_names_text_extraction_task_3307() -> None:
+    """The missing-backend warning must say what it costs (text extraction
+    from images), with a real install command."""
+    with patch(
+        "tldw_chatbook.Library.ingest_capabilities._is_installed",
+        return_value=False,
+    ):
+        warnings = get_tooling_warnings("image")
+
+    assert [w["feature"] for w in warnings] == ["image_ocr"]
+    assert "text" in warnings[0]["hint"].lower()
+    assert warnings[0]["command"].startswith("pip install")
+
+
+def test_image_ocr_probe_is_any_of_task_3307(monkeypatch) -> None:
+    """``image_ocr`` is an ANY-OF umbrella: one importable backend package
+    makes the feature installed; none makes it missing. (The all-of
+    ``_FEATURE_REQUIRED_PACKAGES`` grammar would demand every backend at
+    once, which no real install has.)"""
+
+    def only_easyocr(name: str):
+        return object() if name == "easyocr" else None
+
+    monkeypatch.setattr(
+        tldw_chatbook.Library.ingest_capabilities.importlib.util,
+        "find_spec",
+        only_easyocr,
+    )
+    tldw_chatbook.Library.ingest_capabilities.reset_installed_probe_cache()
+    assert _is_installed("image_ocr") is True
+
+    monkeypatch.setattr(
+        tldw_chatbook.Library.ingest_capabilities.importlib.util,
+        "find_spec",
+        lambda name: None,
+    )
+    tldw_chatbook.Library.ingest_capabilities.reset_installed_probe_cache()
+    assert _is_installed("image_ocr") is False
+
+
+# ---------------------------------------------------------------------------
+# (task-3307 xhigh review round) The ``image_ocr`` umbrella must agree with
+# OCR_Backends' OWN registration rules. It re-derived availability from
+# single import names, which diverged in two places the review measured:
+# ``PADDLEOCR_AVAILABLE`` needs BOTH ``paddle`` and ``paddleocr``, and the
+# docext backend needs a companion (gradio_client / transformers / openai)
+# for whichever mode it runs in. Preflight therefore reported "an OCR
+# backend is installed" for environments where ``ocr_manager`` registers
+# nothing -- no warning, and then an empty-extraction failure at import.
+#
+# The guard drives the REAL backend classes with a simulated environment
+# rather than restating the rules, so a change in OCR_Backends breaks it.
+# ---------------------------------------------------------------------------
+
+_OCR_PROBED_PACKAGES = (
+    "docling",
+    "pytesseract",
+    "easyocr",
+    "paddle",
+    "paddleocr",
+    "docext",
+    "gradio_client",
+    "transformers",
+    "openai",
+)
+
+
+@contextlib.contextmanager
+def _ocr_backends_seeing(available: set[str]):
+    """Reload ``OCR_Backends`` as if only ``available`` were importable.
+
+    Its availability flags are computed at import time from
+    ``importlib.util.find_spec``, so the only way to ask it about a
+    hypothetical environment is to re-execute the module against a patched
+    resolver. Restored (and reloaded again for real) on exit.
+    """
+    import importlib
+    import importlib.util
+
+    from tldw_chatbook.Local_Ingestion import OCR_Backends as ocr_mod
+
+    real_find_spec = importlib.util.find_spec
+
+    def fake_find_spec(name, package=None):
+        if name in _OCR_PROBED_PACKAGES:
+            return object() if name in available else None
+        return real_find_spec(name, package)
+
+    importlib.util.find_spec = fake_find_spec
+    try:
+        yield importlib.reload(ocr_mod)
+    finally:
+        importlib.util.find_spec = real_find_spec
+        importlib.reload(ocr_mod)
+
+
+def _ocr_manager_registers_a_backend(available: set[str]) -> bool:
+    """Would some OCR backend's PACKAGE requirements be met in this env?
+
+    Asks the real backend classes, with two documented adjustments:
+
+    * ``TesseractOCRBackend.is_available()`` additionally imports
+      pytesseract for real and shells out for the ``tesseract`` binary --
+      a runtime condition a ``find_spec`` preflight cannot replicate (and
+      should not: the umbrella's contract is "the packages exist"). Its
+      package rule, ``TESSERACT_AVAILABLE``, is read directly. The residual
+      gap -- pytesseract installed, binary absent -- is real and out of
+      this umbrella's reach.
+    * The docext backend's mode is configuration-driven and the manager
+      constructs it with defaults, so every mode is asked: the umbrella
+      cannot know which one a user configured.
+    """
+    with _ocr_backends_seeing(available) as ocr:
+        if ocr.TESSERACT_AVAILABLE:
+            return True
+        if any(
+            backend().is_available()
+            for backend in (
+                ocr.DoclingOCRBackend,
+                ocr.EasyOCRBackend,
+                ocr.PaddleOCRBackend,
+            )
+        ):
+            return True
+        return any(
+            ocr.DocextOCRBackend({"mode": mode}).is_available()
+            for mode in ("api", "model", "openai")
+        )
+
+
+def _umbrella_says_installed(monkeypatch, available: set[str]) -> bool:
+    """The preflight umbrella's verdict for the same simulated env."""
+    caps_mod = tldw_chatbook.Library.ingest_capabilities
+    monkeypatch.setattr(caps_mod, "_module_present", lambda pkg: pkg in available)
+    caps_mod.reset_installed_probe_cache()
+    try:
+        return caps_mod._probe_installed("image_ocr")
+    finally:
+        caps_mod.reset_installed_probe_cache()
+
+
+def _image_ocr_groups() -> tuple[tuple[str, ...], ...]:
+    groups = tldw_chatbook.Library.ingest_capabilities._FEATURE_ANY_PACKAGES[
+        "image_ocr"
+    ]
+    assert all(isinstance(group, tuple) for group in groups), (
+        "image_ocr must be an ANY-OF over ALL-OF package groups; a flat "
+        "tuple of single names cannot express paddle+paddleocr or "
+        "docext+companion"
+    )
+    return groups
+
+
+@pytest.mark.parametrize("group", _image_ocr_groups())
+def test_each_umbrella_group_really_yields_a_backend(monkeypatch, group) -> None:
+    available = set(group)
+    assert _umbrella_says_installed(monkeypatch, available) is True
+    assert _ocr_manager_registers_a_backend(available) is True, (
+        f"the umbrella claims {sorted(available)} is enough, but "
+        "OCR_Backends registers nothing"
+    )
+
+
+@pytest.mark.parametrize("group", _image_ocr_groups())
+def test_dropping_any_package_from_a_group_loses_the_backend(
+    monkeypatch, group
+) -> None:
+    for missing in group:
+        available = set(group) - {missing}
+        assert _ocr_manager_registers_a_backend(available) is False, (
+            f"{sorted(available)} unexpectedly registers a backend; the "
+            "umbrella's groups are now over-strict"
+        )
+        assert _umbrella_says_installed(monkeypatch, available) is False, (
+            f"the umbrella claims {sorted(available)} is enough without "
+            f"{missing}, but OCR_Backends registers nothing"
+        )
+
+
+def test_the_backend_roster_the_umbrella_mirrors_is_pinned() -> None:
+    """A NEW OCR backend would need a new umbrella group; fail here first."""
+    from tldw_chatbook.Local_Ingestion.OCR_Backends import OCRBackendType
+
+    assert {member.value for member in OCRBackendType} == {
+        "docling",
+        "tesseract",
+        "easyocr",
+        "paddleocr",
+        "docext",
+    }

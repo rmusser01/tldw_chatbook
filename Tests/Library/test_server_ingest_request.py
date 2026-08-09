@@ -195,3 +195,23 @@ class TestBuildServerIngestKwargs:
     def test_empty_source_is_refused(self) -> None:
         with pytest.raises(ServerIngestUnsupported):
             build_server_ingest_kwargs("   ", options={})
+
+
+# --- task-3307: image files are local-only ----------------------------------
+
+
+class TestImageSourcesStayLocal:
+    """The server ingest-jobs endpoint accepts only video/audio/document/
+    pdf/ebook (SERVER_ACCEPTED_MEDIA_TYPES, established live). Images are
+    deliberately NOT mapped to a lookalike type: a server-mode submission
+    is refused with the honest no-handler reason instead of asking the
+    server's document extractor to read pixels."""
+
+    def test_image_file_is_refused_with_honest_reason(self) -> None:
+        with pytest.raises(ServerIngestUnsupported) as excinfo:
+            server_media_type_for("/tmp/photo.png")
+        assert "image" in str(excinfo.value)
+
+    def test_build_kwargs_refuses_image_files_too(self) -> None:
+        with pytest.raises(ServerIngestUnsupported):
+            build_server_ingest_kwargs("/tmp/photo.png", options={})

@@ -20,6 +20,8 @@ drift from the seam it stands in for.
 from __future__ import annotations
 
 import inspect
+import shutil
+import subprocess
 from pathlib import Path
 from typing import Any, Dict
 
@@ -1540,3 +1542,937 @@ class TestPublicWrapperChunkDefaults:
         result = quick_ingest(source)
 
         assert result["chunks_created"] > 1
+
+
+# ---------------------------------------------------------------------------
+# task-3306: time-range trim, cookies file, recursive summary reach the
+# processors; adaptive/multi-level chunking stays rejected while dead.
+# ---------------------------------------------------------------------------
+
+
+def _write_fake_mp3(tmp_path: Path, name: str = "talk.mp3") -> Path:
+    source = tmp_path / name
+    source.write_bytes(b"ID3\x00" + b"\x00" * 32)
+    return source
+
+
+def _write_fake_mp4(tmp_path: Path, name: str = "clip.mp4") -> Path:
+    source = tmp_path / name
+    source.write_bytes(b"\x00\x00\x00\x20ftypisom" + b"\x00" * 32)
+    return source
+
+
+def _install_audio_stub(monkeypatch) -> list:
+    """Stub LocalAudioProcessor, returning the captured call kwargs list."""
+    from tldw_chatbook.Local_Ingestion.audio_processing import (
+        LocalAudioProcessor as RealAudioProcessor,
+    )
+
+    real_method = RealAudioProcessor.process_audio_files
+    calls: list = []
+
+    class _StubAudioProcessor:
+        def __init__(self, media_db=None):
+            self.media_db = media_db
+
+        def process_audio_files(self, **kwargs):
+            _assert_kwargs_accepted(real_method, kwargs)
+            calls.append(kwargs)
+            return _audio_stub_result()
+
+    monkeypatch.setattr(
+        "tldw_chatbook.Local_Ingestion.local_file_ingestion.LocalAudioProcessor",
+        _StubAudioProcessor,
+    )
+    return calls
+
+
+def _install_video_stub(monkeypatch) -> list:
+    """Stub LocalVideoProcessor, returning the captured call kwargs list.
+
+    ``process_videos`` names inputs/download_video_flag/start_time/end_time
+    itself and forwards the rest into the audio pipeline, so the signature
+    guard runs against ``process_videos`` directly.
+    """
+    from tldw_chatbook.Local_Ingestion.video_processing import (
+        LocalVideoProcessor as RealVideoProcessor,
+    )
+
+    real_method = RealVideoProcessor.process_videos
+    calls: list = []
+
+    class _StubVideoProcessor:
+        def __init__(self, media_db=None):
+            self.media_db = media_db
+
+        def process_videos(self, **kwargs):
+            _assert_kwargs_accepted(real_method, kwargs)
+            calls.append(kwargs)
+            return {
+                "results": [
+                    {
+                        "status": "Success",
+                        "content": "Video transcript",
+                        "metadata": {"title": "Video", "author": "Unknown"},
+                        "chunks": [],
+                        "analysis": "",
+                    }
+                ]
+            }
+
+    monkeypatch.setattr(
+        "tldw_chatbook.Local_Ingestion.local_file_ingestion.LocalVideoProcessor",
+        _StubVideoProcessor,
+    )
+    return calls
+
+
+class TestAVTrimWiring:
+    def test_trim_reaches_audio_processor(self, tmp_path: Path, monkeypatch):
+        source = _write_fake_mp3(tmp_path)
+        from tldw_chatbook.Local_Ingestion.audio_processing import (
+            LocalAudioProcessor as RealAudioProcessor,
+        )
+
+        params = inspect.signature(
+            RealAudioProcessor.process_audio_files
+        ).parameters
+        assert "start_time" in params and "end_time" in params
+        calls = _install_audio_stub(monkeypatch)
+
+        parse_local_file_for_ingest(
+            str(source), {"start_time": "0:15", "end_time": "1:30"}
+        )
+
+        assert calls[0]["start_time"] == "0:15"
+        assert calls[0]["end_time"] == "1:30"
+
+    def test_trim_reaches_video_processor(self, tmp_path: Path, monkeypatch):
+        source = _write_fake_mp4(tmp_path)
+        calls = _install_video_stub(monkeypatch)
+
+        parse_local_file_for_ingest(
+            str(source), {"start_time": "00:00:10", "end_time": "90"}
+        )
+
+        assert calls[0]["start_time"] == "00:00:10"
+        assert calls[0]["end_time"] == "90"
+
+    def test_trim_absent_defaults_unbounded(self, tmp_path: Path, monkeypatch):
+        source = _write_fake_mp3(tmp_path)
+        calls = _install_audio_stub(monkeypatch)
+
+        parse_local_file_for_ingest(str(source), {})
+
+        assert calls[0].get("start_time") is None
+        assert calls[0].get("end_time") is None
+
+    def test_video_extraction_trim_is_not_applied_twice(
+        self, tmp_path: Path, monkeypatch
+    ):
+        """(task-3306) Governance: the ffmpeg trim must run ONCE.
+
+        ``_process_single_video`` extracts audio with the requested
+        start/end applied, then delegates to the audio stage with the same
+        kwargs -- whose own trim path re-cuts any local non-YouTube input.
+        Without dropping the bounds after extraction, a start of 60s is
+        applied twice and the transcript window silently shifts to 120s.
+        """
+        from tldw_chatbook.Local_Ingestion.video_processing import (
+            LocalVideoProcessor,
+        )
+
+        source = _write_fake_mp4(tmp_path)
+        extracted = tmp_path / "extracted.mp3"
+        extracted.write_bytes(b"ID3\x00" + b"\x00" * 32)
+
+        processor = LocalVideoProcessor(None)
+        extract_calls: list = []
+        audio_calls: list = []
+
+        def fake_extract(video_path, output_dir, start_time=None, end_time=None):
+            extract_calls.append((start_time, end_time))
+            return str(extracted)
+
+        def fake_single_audio(input_item, processing_dir, **kwargs):
+            audio_calls.append(kwargs)
+            return {
+                "status": "Success",
+                "input_ref": input_item,
+                "content": "Video transcript",
+                "metadata": {"title": "Video", "author": "Unknown"},
+                "segments": [],
+                "chunks": [],
+                "analysis": "",
+                "warnings": [],
+            }
+
+        monkeypatch.setattr(
+            processor, "_extract_audio_from_video", fake_extract
+        )
+        monkeypatch.setattr(
+            processor.audio_processor, "_process_single_audio", fake_single_audio
+        )
+
+        result = processor.process_videos(
+            inputs=[str(source)],
+            download_video_flag=False,
+            start_time="0:60",
+            end_time="2:00",
+        )
+
+        assert result["results"][0]["status"] != "Error"
+        assert extract_calls == [("0:60", "2:00")], (
+            "the extraction stage must receive the requested bounds"
+        )
+        assert audio_calls[0].get("start_time") is None
+        assert audio_calls[0].get("end_time") is None
+
+
+# ---------------------------------------------------------------------------
+# (task-3306 xhigh review round) "Stop at" must mean the SAME thing on both
+# media paths. These are governance tests on the ffmpeg argv, not on ffmpeg
+# output: neither ffmpeg nor a real media file is guaranteed present in this
+# venv, so the assertion is on the WINDOW the constructed command line
+# semantically requests. ``_interpret_ffmpeg_window`` below encodes ffmpeg's
+# own rules independently of the builder, so a regression in the builder is
+# not silently mirrored by the interpreter.
+# ---------------------------------------------------------------------------
+
+
+def _interpret_ffmpeg_window(argv: list[str]) -> tuple[float, float | None]:
+    """Return the ABSOLUTE ``(start, end)`` source window ``argv`` requests.
+
+    ffmpeg's rules, which the two ingest paths must not diverge on:
+
+    * ``-ss`` BEFORE ``-i`` is input seeking; the output's timestamps are
+      rebased to zero, so a subsequent output ``-to X`` stops at source
+      ``start + X`` (a DURATION), while ``-t X`` is a duration too.
+    * ``-ss`` AFTER ``-i`` is output seeking; timestamps are not rebased, so
+      ``-to X`` stops at source ``X`` (ABSOLUTE) and ``-t X`` is a duration.
+    """
+    index = argv.index("-i")
+    pre, post = argv[:index], argv[index + 2 :]
+
+    def _flag(args: list[str], flag: str) -> float | None:
+        if flag not in args:
+            return None
+        return _seconds(args[args.index(flag) + 1])
+
+    def _seconds(text: str) -> float:
+        total = 0.0
+        for unit, part in enumerate(reversed(text.split(":"))):
+            total += float(part) * (60**unit)
+        return total
+
+    input_ss = _flag(pre, "-ss")
+    output_ss = _flag(post, "-ss")
+    start = (input_ss or 0.0) + (output_ss or 0.0)
+
+    duration = _flag(post, "-t")
+    if duration is not None:
+        return start, start + duration
+    stop = _flag(post, "-to")
+    if stop is not None:
+        # Rebased timestamps (input seeking) make -to relative to the seek.
+        return start, (input_ss + stop) if input_ss else stop
+    return start, None
+
+
+def _capture_video_extraction_argv(tmp_path: Path, monkeypatch, start, end):
+    """Run ``_extract_audio_from_video`` with ffmpeg stubbed; return argv."""
+    from tldw_chatbook.Local_Ingestion.video_processing import LocalVideoProcessor
+
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    source = _write_fake_mp4(tmp_path)
+    processor = LocalVideoProcessor(None)
+    monkeypatch.setattr(processor, "_find_ffmpeg", lambda: "/usr/bin/ffmpeg")
+    captured: list[list[str]] = []
+
+    def fake_run(command, **kwargs):
+        captured.append(list(command))
+        Path(command[-1]).write_bytes(b"ID3\x00")
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    processor._extract_audio_from_video(
+        str(source), str(tmp_path), start_time=start, end_time=end
+    )
+    return captured[0]
+
+
+def _capture_audio_extraction_argv(tmp_path: Path, monkeypatch, start, end):
+    """Run ``_extract_time_range`` with ffmpeg stubbed; return argv."""
+    from tldw_chatbook.Local_Ingestion.audio_processing import LocalAudioProcessor
+
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    source = _write_fake_mp3(tmp_path)
+    processor = LocalAudioProcessor(None)
+    monkeypatch.setattr(shutil, "which", lambda _name: "/usr/bin/ffmpeg")
+    captured: list[list[str]] = []
+
+    def fake_run(command, **kwargs):
+        captured.append(list(command))
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    processor._extract_time_range(
+        str(source), str(tmp_path), start_time=start, end_time=end
+    )
+    return captured[0]
+
+
+class TestAVTrimArgvSemantics:
+    def test_video_and_audio_mean_the_same_window(self, tmp_path: Path, monkeypatch):
+        """Start 0:30 / Stop 1:00 must select 30s-60s on BOTH paths.
+
+        The video path used input seeking (``-ss`` before ``-i``, which
+        rebases output timestamps to zero) and then applied ``-to`` as an
+        output option -- turning "Stop at 1:00" into "one minute AFTER the
+        start", i.e. 0:30-1:30. The audio path, which puts ``-ss`` after
+        ``-i``, produced the absolute 0:30-1:00 the label promises. Same
+        two fields, same job, two different windows.
+        """
+        video_argv = _capture_video_extraction_argv(
+            tmp_path / "v", monkeypatch, "0:30", "1:00"
+        )
+        audio_argv = _capture_audio_extraction_argv(
+            tmp_path / "a", monkeypatch, "0:30", "1:00"
+        )
+
+        assert _interpret_ffmpeg_window(video_argv) == (30.0, 60.0), (
+            f"video argv requests the wrong window: {video_argv}"
+        )
+        assert _interpret_ffmpeg_window(audio_argv) == (30.0, 60.0), (
+            f"audio argv requests the wrong window: {audio_argv}"
+        )
+        assert _interpret_ffmpeg_window(video_argv) == _interpret_ffmpeg_window(
+            audio_argv
+        )
+
+    @pytest.mark.parametrize(
+        ("start", "end", "expected"),
+        [
+            ("0:30", "1:00", (30.0, 60.0)),
+            ("90", "150", (90.0, 150.0)),
+            ("00:01:00", "00:01:30", (60.0, 90.0)),
+            (None, "1:00", (0.0, 60.0)),
+            ("0:30", None, (30.0, None)),
+        ],
+    )
+    def test_both_paths_agree_across_formats(
+        self, tmp_path: Path, monkeypatch, start, end, expected
+    ):
+        video_argv = _capture_video_extraction_argv(
+            tmp_path / "v", monkeypatch, start, end
+        )
+        audio_argv = _capture_audio_extraction_argv(
+            tmp_path / "a", monkeypatch, start, end
+        )
+        assert _interpret_ffmpeg_window(video_argv) == expected
+        assert _interpret_ffmpeg_window(audio_argv) == expected
+
+    def test_bounded_trim_keeps_fast_input_seeking(
+        self, tmp_path: Path, monkeypatch
+    ):
+        """Correctness first, speed second -- but not speed sacrificed.
+
+        Absolute-stop semantics could have been bought by moving ``-ss``
+        after ``-i`` (output seeking decodes and throws away everything
+        before the start). The shipped fix keeps input seeking and converts
+        the absolute stop into the duration it implies, so a 2-hour file
+        trimmed to its last minute still seeks instead of decoding.
+        """
+        argv = _capture_video_extraction_argv(
+            tmp_path / "v", monkeypatch, "1:00:00", "1:01:00"
+        )
+        assert argv.index("-ss") < argv.index("-i"), (
+            "bounded trims must keep pre-input (fast) seeking"
+        )
+        assert _interpret_ffmpeg_window(argv) == (3600.0, 3660.0)
+
+
+class TestAVRecursiveSummaryWiring:
+    def test_summarize_recursively_reaches_audio_processor(
+        self, tmp_path: Path, monkeypatch
+    ):
+        source = _write_fake_mp3(tmp_path)
+        from tldw_chatbook.Local_Ingestion.audio_processing import (
+            LocalAudioProcessor as RealAudioProcessor,
+        )
+
+        params = inspect.signature(
+            RealAudioProcessor.process_audio_files
+        ).parameters
+        assert "summarize_recursively" in params
+        calls = _install_audio_stub(monkeypatch)
+
+        parse_local_file_for_ingest(str(source), {"summarize_recursively": True})
+
+        assert calls[0]["summarize_recursively"] is True
+
+    def test_summarize_recursively_reaches_video_processor(
+        self, tmp_path: Path, monkeypatch
+    ):
+        source = _write_fake_mp4(tmp_path)
+        calls = _install_video_stub(monkeypatch)
+
+        parse_local_file_for_ingest(str(source), {"summarize_recursively": True})
+
+        assert calls[0]["summarize_recursively"] is True
+
+    def test_legacy_chunk_options_spelling_still_works(
+        self, tmp_path: Path, monkeypatch
+    ):
+        """Older callers tucked the flag into chunk_options; keep honoring it."""
+        source = _write_fake_mp3(tmp_path)
+        calls = _install_audio_stub(monkeypatch)
+
+        parse_local_file_for_ingest(
+            str(source), {"chunk_options": {"recursive_summary": True}}
+        )
+
+        assert calls[0]["summarize_recursively"] is True
+
+    def test_absent_defaults_off(self, tmp_path: Path, monkeypatch):
+        source = _write_fake_mp3(tmp_path)
+        calls = _install_audio_stub(monkeypatch)
+
+        parse_local_file_for_ingest(str(source), {})
+
+        assert calls[0]["summarize_recursively"] is False
+
+    def test_recursive_summary_changes_the_analysis_dispatch(self):
+        """(task-3306) Governance at the consuming seam: with the flag ON
+        and multiple chunks, ``_analyze_content`` runs the map-reduce path
+        (one call per chunk + a combine call); OFF makes exactly one direct
+        call. The exposed control provably changes the output shape.
+        """
+        from tldw_chatbook.Local_Ingestion.audio_processing import (
+            LocalAudioProcessor,
+        )
+
+        processor = LocalAudioProcessor.__new__(LocalAudioProcessor)
+        chunks = [{"text": "part one"}, {"text": "part two"}]
+        for flag, expected_calls in ((True, 3), (False, 1)):
+            calls: list = []
+
+            def fake_chat_api_call(**kwargs):
+                calls.append(kwargs)
+                return f"summary {len(calls)}"
+
+            import tldw_chatbook.Local_Ingestion.audio_processing as audio_mod
+
+            original = audio_mod.chat_api_call
+            audio_mod.chat_api_call = fake_chat_api_call
+            try:
+                processor._analyze_content(
+                    content="part one part two",
+                    chunks=chunks,
+                    api_name="openai",
+                    api_key="k",
+                    custom_prompt=None,
+                    system_prompt=None,
+                    summarize_recursively=flag,
+                )
+            finally:
+                audio_mod.chat_api_call = original
+            assert len(calls) == expected_calls
+
+
+class TestAVCookiesFileWiring:
+    def test_cookies_file_reaches_video_processor(
+        self, tmp_path: Path, monkeypatch
+    ):
+        source = _write_fake_mp4(tmp_path)
+        calls = _install_video_stub(monkeypatch)
+
+        parse_local_file_for_ingest(
+            str(source),
+            {"use_cookies": True, "cookies": "/home/user/cookies.txt"},
+        )
+
+        assert calls[0]["use_cookies"] is True
+        assert calls[0]["cookies"] == "/home/user/cookies.txt"
+
+    def test_cookies_absent_defaults_off_for_video(
+        self, tmp_path: Path, monkeypatch
+    ):
+        source = _write_fake_mp4(tmp_path)
+        calls = _install_video_stub(monkeypatch)
+
+        parse_local_file_for_ingest(str(source), {})
+
+        assert calls[0]["use_cookies"] is False
+        assert calls[0].get("cookies") is None
+
+    def test_cookies_never_forwarded_to_audio_processor(
+        self, tmp_path: Path, monkeypatch
+    ):
+        """The audio downloader treats a cookies STRING as a JSON dict
+        (``json.loads`` -> raw Cookie header); handing it the video path's
+        cookiefile PATH would raise ``JSONDecodeError`` and fail the whole
+        job. The audio branch therefore never forwards the option -- its
+        yt-dlp (YouTube) path ignores cookies entirely anyway.
+        """
+        source = _write_fake_mp3(tmp_path)
+        calls = _install_audio_stub(monkeypatch)
+
+        parse_local_file_for_ingest(
+            str(source),
+            {"use_cookies": True, "cookies": "/home/user/cookies.txt"},
+        )
+
+        assert "use_cookies" not in calls[0]
+        assert "cookies" not in calls[0]
+
+    def test_cookies_problem_travels_to_the_payload(
+        self, tmp_path: Path, monkeypatch
+    ):
+        """(xhigh review round) A cookies path the option boundary refused
+        must be visible on the job, not swallowed. It rides the same
+        options -> payload channel as the analysis skip reason."""
+        source = _write_fake_mp4(tmp_path)
+        _install_video_stub(monkeypatch)
+
+        payload = parse_local_file_for_ingest(
+            str(source),
+            {
+                "use_cookies": False,
+                "cookies": None,
+                "cookies_problem": "Cookies file not found: /tmp/gone.txt",
+            },
+        )
+
+        assert payload["cookies_problem"] == (
+            "Cookies file not found: /tmp/gone.txt"
+        )
+        assert "Cookies file not found: /tmp/gone.txt" in payload["warnings"]
+
+
+class TestAdaptiveChunkingStaysRejected:
+    def test_adaptive_and_multi_level_are_dead_at_the_real_chunker(self):
+        """(task-3306) Rejection tripwire, not a wiring test.
+
+        ``process_audio_files`` ACCEPTS use_adaptive_chunking /
+        use_multi_level_chunking / chunk_language, but the only chunker on
+        the audio/video path is ``ChunkingService.chunk_text``, which has
+        no such parameters -- and ``_process_single_audio`` never reads the
+        adaptive/multi-level kwargs at all (chunk_language lands only in
+        per-chunk metadata). Exposing them would ship controls whose output
+        cannot vary with the input. If this test ever fails, the chunker
+        has grown the capability: re-open the exposure decision recorded in
+        task-3306 instead of deleting the test.
+        """
+        from tldw_chatbook.RAG_Search.chunking_service import ChunkingService
+
+        params = inspect.signature(ChunkingService.chunk_text).parameters
+        assert "use_adaptive_chunking" not in params
+        assert "adaptive" not in params
+        assert "use_multi_level_chunking" not in params
+        assert "multi_level" not in params
+        assert "language" not in params
+
+        from tldw_chatbook.Local_Ingestion.audio_processing import (
+            LocalAudioProcessor,
+        )
+
+        single_audio_source = inspect.getsource(
+            LocalAudioProcessor._process_single_audio
+        )
+        assert "use_adaptive_chunking" not in single_audio_source
+        assert "use_multi_level_chunking" not in single_audio_source
+
+
+# ---------------------------------------------------------------------------
+# task-3307: image ingestion wiring (ship ruling recorded in task-3310)
+# ---------------------------------------------------------------------------
+
+
+def _real_process_image():
+    from tldw_chatbook.Local_Ingestion.Image_Processing_Lib import process_image
+
+    return process_image
+
+
+def _real_extract_text_from_image():
+    from tldw_chatbook.Local_Ingestion.Image_Processing_Lib import (
+        extract_text_from_image,
+    )
+
+    return extract_text_from_image
+
+
+def _write_tiny_png(path: Path) -> None:
+    """A real 2x2 PNG -- Pillow is present in this venv (checked up front)."""
+    from PIL import Image
+
+    Image.new("RGB", (2, 2), (255, 255, 255)).save(path, "PNG")
+
+
+def _install_ocr_stub(monkeypatch, text: str | None):
+    """Stand in for ``extract_text_from_image`` at the OCR boundary.
+
+    Signature-checked against the real function so the stub can never
+    accept a call shape the real seam would reject. ``text=None`` models
+    OCR failure / no backend installed (the real function returns None).
+    """
+    from types import SimpleNamespace
+
+    real = _real_extract_text_from_image()
+    calls: list[Dict[str, Any]] = []
+
+    def fake_extract(image_path, **kwargs):
+        _assert_kwargs_accepted(real, kwargs)
+        calls.append({"image_path": image_path, **kwargs})
+        if text is None:
+            return None
+        return SimpleNamespace(
+            text=text,
+            confidence=0.93,
+            language=kwargs.get("language", "en"),
+            backend="stub-backend",
+            processing_time=0.01,
+        )
+
+    monkeypatch.setattr(
+        "tldw_chatbook.Local_Ingestion.Image_Processing_Lib.extract_text_from_image",
+        fake_extract,
+    )
+    return calls
+
+
+class TestImageWiring:
+    def test_image_options_reach_process_image(self, tmp_path: Path, monkeypatch):
+        """The parse branch forwards the panel's OCR knobs to the REAL
+        ``process_image`` parameter names, keeps visual features off (their
+        output is dropped by the persist path -- see the task notes), and
+        keeps the processor's own analysis path off in favor of the arc's
+        chat tail."""
+        source = tmp_path / "scan.png"
+        _write_tiny_png(source)
+
+        real = _real_process_image()
+        captured: Dict[str, Any] = {}
+
+        def fake_process_image(file_path, **kwargs):
+            _assert_kwargs_accepted(real, kwargs)
+            captured.update({"file_path": file_path, **kwargs})
+            return {
+                "status": "Success",
+                "content": "OCR TEXT",
+                "title": "scan",
+                "author": "Unknown",
+                "keywords": [],
+                "chunks": [{"text": "OCR TEXT", "metadata": {"chunk_num": 0}}],
+                "analysis": "",
+                "metadata": {},
+                "error": None,
+                "warnings": [],
+            }
+
+        monkeypatch.setattr(
+            "tldw_chatbook.Local_Ingestion.local_file_ingestion.process_image",
+            fake_process_image,
+        )
+
+        payload = parse_local_file_for_ingest(
+            str(source),
+            {
+                "ocr": True,
+                "ocr_language": "de",
+                "ocr_backend": "tesseract",
+                "chunk_options": {"size": 500, "max_size": 500, "overlap": 50},
+            },
+        )
+
+        assert captured["enable_ocr"] is True
+        assert captured["ocr_language"] == "de"
+        assert captured["ocr_backend"] == "tesseract"
+        assert captured["extract_features"] is False
+        assert captured["perform_analysis"] is False
+        # (xhigh review round) chunk_options no longer travels into the
+        # processor: the shared text-chunk tail owns image chunking now.
+        # See ``test_image_chunking_has_one_authority``.
+        assert captured["chunk_options"] is None
+        assert payload["media_type"] == "image"
+        assert payload["content"] == "OCR TEXT"
+
+    def test_image_defaults_match_the_real_signature(
+        self, tmp_path: Path, monkeypatch
+    ):
+        """The parse branch's fallbacks mirror ``process_image``'s own
+        declared defaults, pinned against ``inspect.signature`` so a
+        processor default change fails here instead of drifting."""
+        source = tmp_path / "scan.png"
+        _write_tiny_png(source)
+
+        real = _real_process_image()
+        sig = inspect.signature(real)
+        captured: Dict[str, Any] = {}
+
+        def fake_process_image(file_path, **kwargs):
+            _assert_kwargs_accepted(real, kwargs)
+            captured.update(kwargs)
+            return {
+                "status": "Success",
+                "content": "x",
+                "title": "scan",
+                "author": "Unknown",
+                "keywords": [],
+                "chunks": [],
+                "analysis": "",
+                "metadata": {},
+                "error": None,
+                "warnings": [],
+            }
+
+        monkeypatch.setattr(
+            "tldw_chatbook.Local_Ingestion.local_file_ingestion.process_image",
+            fake_process_image,
+        )
+
+        parse_local_file_for_ingest(str(source), {})
+
+        assert captured["enable_ocr"] == sig.parameters["enable_ocr"].default
+        assert captured["ocr_language"] == sig.parameters["ocr_language"].default
+        assert captured["ocr_backend"] == sig.parameters["ocr_backend"].default
+
+    def test_image_end_to_end_real_png_persists(
+        self, tmp_path: Path, monkeypatch, media_db: MediaDatabase
+    ):
+        """REAL ``process_image`` over a real 2x2 PNG (only the OCR boundary
+        stubbed -- no backend is installed in this venv), persisted through
+        the real ``persist_parsed_media`` into a real ``MediaDatabase``."""
+        source = tmp_path / "receipt.png"
+        _write_tiny_png(source)
+        ocr_calls = _install_ocr_stub(monkeypatch, "TOTAL 12.50 EUR thank you")
+
+        payload = parse_local_file_for_ingest(
+            str(source),
+            {
+                "ocr": True,
+                "ocr_language": "en",
+                "ocr_backend": "auto",
+                "chunk_options": {"size": 500, "max_size": 500, "overlap": 50},
+            },
+        )
+
+        assert ocr_calls, "the OCR boundary was never reached"
+        assert payload["media_type"] == "image"
+        assert payload["content"] == "TOTAL 12.50 EUR thank you"
+        # PIL metadata must survive: Pillow is installed here, and its
+        # availability must not be hostage to the absent pillow_heif
+        # (the coupled import guard this task decoupled).
+        assert payload["metadata"]["width"] == 2
+        assert payload["metadata"]["height"] == 2
+
+        media_id, _uuid, _msg = persist_parsed_media(payload, media_db)
+        assert media_id is not None
+
+        cursor = media_db.execute_query(
+            "SELECT type, content FROM Media WHERE id = ?", (media_id,)
+        )
+        row = cursor.fetchone()
+        assert row["type"] == "image"
+        assert row["content"] == "TOTAL 12.50 EUR thank you"
+        assert _chunk_rows(media_db, media_id), "chunk ON stored no chunks"
+
+    def test_image_chunk_off_stores_no_chunks(
+        self, tmp_path: Path, monkeypatch, media_db: MediaDatabase
+    ):
+        source = tmp_path / "receipt.png"
+        _write_tiny_png(source)
+        _install_ocr_stub(monkeypatch, "some text")
+
+        payload = parse_local_file_for_ingest(
+            str(source), {"ocr": True, "chunk_options": None}
+        )
+
+        assert payload["chunks"] is None
+        media_id, _uuid, _msg = persist_parsed_media(payload, media_db)
+        assert _chunk_rows(media_db, media_id) == []
+
+    def test_image_without_ocr_text_fails_honestly(
+        self, tmp_path: Path, monkeypatch, media_db: MediaDatabase
+    ):
+        """No OCR text (no backend installed, or OCR off) must fail the job
+        with a reason that names OCR -- never a 'done' row whose content is
+        empty and silently unfindable in search/RAG."""
+        source = tmp_path / "photo.png"
+        _write_tiny_png(source)
+        _install_ocr_stub(monkeypatch, None)  # OCR failed / no backend
+
+        payload = parse_local_file_for_ingest(str(source), {"ocr": True})
+        with pytest.raises(Exception, match="OCR"):
+            persist_parsed_media(payload, media_db)
+
+        cursor = media_db.execute_query("SELECT COUNT(*) AS n FROM Media", ())
+        assert cursor.fetchone()["n"] == 0
+
+    def test_image_ocr_off_also_fails_honestly(
+        self, tmp_path: Path, monkeypatch, media_db: MediaDatabase
+    ):
+        source = tmp_path / "photo.png"
+        _write_tiny_png(source)
+        ocr_calls = _install_ocr_stub(monkeypatch, "never reached")
+
+        payload = parse_local_file_for_ingest(str(source), {"ocr": False})
+
+        assert not ocr_calls, "OCR ran despite the toggle being off"
+        with pytest.raises(Exception, match="OCR"):
+            persist_parsed_media(payload, media_db)
+
+    def test_image_chunk_size_governs_chunk_count(self, tmp_path: Path, monkeypatch):
+        """(task-3307 xhigh review round) OCR text must chunk per the form.
+
+        The branch delegated to ``process_image``'s internal chunking,
+        which only chunks for a TRUTHY ``chunk_options``. ``Chunk content``
+        ON with untouched size/overlap arrives as ``{}`` (falsy), so the
+        processor took its "no chunking options" fallback and returned ONE
+        whole-text chunk; ``image`` was also absent from
+        ``_TEXT_CHUNK_TYPES``, so the shared tail's repair never ran either.
+        The image persisted as a single unchunked blob whatever the form
+        said. Real chunker, no stub -- only the OCR boundary is stubbed.
+        """
+        source = tmp_path / "page.png"
+        _write_tiny_png(source)
+        _install_ocr_stub(monkeypatch, _MANY_SENTENCES)
+
+        small = parse_local_file_for_ingest(
+            str(source),
+            {"ocr": True, "chunk_options": {"size": 40, "max_size": 40, "overlap": 10}},
+        )
+        large = parse_local_file_for_ingest(
+            str(source),
+            {
+                "ocr": True,
+                "chunk_options": {"size": 4000, "max_size": 4000, "overlap": 10},
+            },
+        )
+
+        assert len(small["chunks"]) > 1, "OCR text was never chunked"
+        assert len(small["chunks"]) > len(large["chunks"])
+
+    def test_image_chunk_on_with_defaulted_empty_options_still_chunks(
+        self, tmp_path: Path, monkeypatch
+    ):
+        """The exact shape the form produces for "chunk ON, nothing typed":
+        an EMPTY options dict. The falsy-dict hole lived here -- the
+        processor read it as "no chunking wanted" and returned one blob."""
+        long_text = " ".join(
+            f"Sentence number {i} carries a bit of body text for chunking."
+            for i in range(200)
+        )
+        source = tmp_path / "page.png"
+        _write_tiny_png(source)
+        _install_ocr_stub(monkeypatch, long_text)
+
+        payload = parse_local_file_for_ingest(
+            str(source), {"ocr": True, "chunk_options": {}}
+        )
+
+        assert len(payload["chunks"]) > 1
+        # The real chunker's metadata, not the processor's
+        # ``{"chunk_num": 0}`` placeholder.
+        assert "word_count" in payload["chunks"][0]
+
+    def test_image_chunking_has_one_authority(self, tmp_path: Path, monkeypatch):
+        """``process_image`` must never chunk on the ingest path.
+
+        Two chunking layers is how the falsy-dict hole happened in the
+        first place; the shared tail is the single authority, so the
+        processor is called with ``chunk_options=None`` regardless of what
+        the form asked for.
+        """
+        source = tmp_path / "page.png"
+        _write_tiny_png(source)
+
+        real = _real_process_image()
+        captured: Dict[str, Any] = {}
+
+        def fake_process_image(file_path, **kwargs):
+            _assert_kwargs_accepted(real, kwargs)
+            captured.update(kwargs)
+            return {
+                "status": "Success",
+                "content": _MANY_SENTENCES,
+                "title": "page",
+                "author": "Unknown",
+                "keywords": [],
+                # The processor's convenience single whole-text "chunk",
+                # returned even when it did no chunking at all.
+                "chunks": [{"text": _MANY_SENTENCES, "metadata": {"chunk_num": 0}}],
+                "analysis": "",
+                "metadata": {},
+                "error": None,
+                "warnings": [],
+            }
+
+        monkeypatch.setattr(
+            "tldw_chatbook.Local_Ingestion.local_file_ingestion.process_image",
+            fake_process_image,
+        )
+
+        payload = parse_local_file_for_ingest(
+            str(source),
+            {"ocr": True, "chunk_options": {"size": 40, "max_size": 40, "overlap": 10}},
+        )
+
+        assert captured["chunk_options"] is None, (
+            "the processor's own chunking must stay out of the ingest path"
+        )
+        assert len(payload["chunks"]) > 1, (
+            "the processor's single fallback chunk was persisted as-is"
+        )
+
+    def test_image_analysis_dispatches_via_chat_tail(
+        self, tmp_path: Path, monkeypatch
+    ):
+        """Analysis over the OCR text runs through the arc's chat_api_call
+        tail (full [analysis_defaults] shape, keyless support) -- NOT
+        ``process_image``'s own analyze() path, whose direct dispatch is
+        the dead branch task-3301 documented."""
+        source = tmp_path / "note.png"
+        _write_tiny_png(source)
+        _install_ocr_stub(monkeypatch, "OCR text worth analyzing.")
+
+        real_chat = _real_chat_api_call()
+        calls: list[Dict[str, Any]] = []
+
+        def fake_chat_api_call(**kwargs):
+            _assert_kwargs_accepted(real_chat, kwargs)
+            calls.append(kwargs)
+            return "IMAGE ANALYSIS."
+
+        monkeypatch.setattr(
+            "tldw_chatbook.Chat.Chat_Functions.chat_api_call",
+            fake_chat_api_call,
+        )
+
+        def exploding_analyze(*args, **kwargs):
+            raise AssertionError(
+                "image analysis went through Summarization analyze(); it "
+                "must dispatch through chat_api_call"
+            )
+
+        monkeypatch.setattr(
+            "tldw_chatbook.LLM_Calls.Summarization_General_Lib.analyze",
+            exploding_analyze,
+        )
+
+        payload = parse_local_file_for_ingest(
+            str(source),
+            {
+                "ocr": True,
+                "perform_analysis": True,
+                "api_name": "openai",
+                "api_key": "sk-test-not-real",
+            },
+        )
+
+        assert payload["analysis_content"] == "IMAGE ANALYSIS."
+        assert calls, "no dispatch reached the chat_api_call boundary"
+        assert "OCR text worth analyzing." in (
+            calls[0]["messages_payload"][0]["content"]
+        )

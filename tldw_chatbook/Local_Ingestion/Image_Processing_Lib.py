@@ -33,13 +33,24 @@ except ImportError:
     np = None
 try:
     from PIL import Image, ImageFilter, ImageEnhance
-    import pillow_heif  # For HEIF/HEIC support
 
-    pillow_heif.register_heif_opener()
     PIL_AVAILABLE = True
 except ImportError:
     PIL_AVAILABLE = False
     Image = None
+
+# (task-3307) HEIF/HEIC support is a SEPARATE availability question: the
+# old single try block made every PIL-backed path (metadata, visual
+# features, OCR preprocessing) report unavailable whenever pillow_heif was
+# missing -- and no install extra ships pillow_heif, so on a normal
+# install with Pillow present, PIL_AVAILABLE was False.
+try:
+    import pillow_heif  # For HEIF/HEIC support
+
+    pillow_heif.register_heif_opener()
+    HEIF_AVAILABLE = True
+except ImportError:
+    HEIF_AVAILABLE = False
 
 try:
     import cv2

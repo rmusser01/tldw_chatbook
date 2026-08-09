@@ -1707,6 +1707,49 @@ def _sanitize_library_ingest_error(exc: Exception) -> str:
     return sanitized if sanitized else exc.__class__.__name__[:200]
 
 
+def _resolve_ingest_cookies_file(raw: str) -> tuple[Optional[str], Optional[str]]:
+    """Validate the audio/video panel's ``Cookies file for gated URLs`` value.
+
+    (task-3306 xhigh review round) The value used to be forwarded verbatim
+    as ``options["cookies"]``. ``download_video`` treats a string that is
+    not an existing file as cookie JSON, so a typo'd or moved path became a
+    ``json.JSONDecodeError`` caught into a single "Invalid cookie format"
+    warning -- the download then ran un-authenticated and failed later for
+    a reason that named neither cookies nor the path. Validating here, at
+    the option boundary, is the earliest point this module owns.
+
+    NOTE: the canonical home for per-field validation is the shared
+    ``validate_ingest_option_value`` seam in ``library_ingest_state``, which
+    is where the sibling text fields (``start_time``/``end_time``) are
+    format-gated. This check lives here instead because existence is not a
+    format question -- a path can be well-formed at typing time and gone by
+    the time the job is claimed, which is exactly when this runs.
+
+    Args:
+        raw: The stripped field value; ``""`` means the option is unset.
+
+    Returns:
+        ``(cookies_path, problem)``. Exactly one is non-``None`` for a
+        non-empty input; both are ``None`` when no cookies were requested.
+    """
+    if not raw:
+        return None, None
+
+    from tldw_chatbook.Utils.path_validation import validate_path_simple
+
+    try:
+        # Repo security rule: user-supplied file paths go through
+        # path_validation before they become a subprocess/library argument.
+        validate_path_simple(os.path.expanduser(raw))
+    except ValueError as exc:
+        return None, f"Unsafe cookies file path: {_sanitize_library_ingest_error(exc)}"
+
+    candidate = Path(os.path.expanduser(raw))
+    if not candidate.is_file():
+        return None, f"Cookies file not found: {raw}"
+    return str(candidate), None
+
+
 def _library_ingest_done_progress(
     source_path: str, *, was_duplicate: bool, payload: Dict[str, Any]
 ) -> Dict[str, Any]:
@@ -1753,6 +1796,15 @@ def _library_ingest_done_progress(
     if failed_reason:
         progress["message"] += f" — analysis failed: {failed_reason}"
         progress["analysis_failed"] = failed_reason
+    # (task-3306 xhigh review round) A cookies path the option boundary
+    # refused to forward. The import itself is fine -- a public URL never
+    # needed cookies -- so this is an annotation, not a failure; without it
+    # a gated import that silently ran un-authenticated looks identical to
+    # one that worked.
+    cookies_problem = str(payload.get("cookies_problem") or "").strip()
+    if cookies_problem:
+        progress["message"] += f" — cookies ignored: {cookies_problem}"
+        progress["cookies_problem"] = cookies_problem
     return progress
 
 
@@ -1927,6 +1979,42 @@ class LibraryIngestQueueMixin:
     no resources (parse workers never touch ``media_db``; the writer never
     touches either heavy worker).
     """
+
+    def _init_library_ingest_runtime_state(self) -> None:
+        """Initialize every host attribute the ingest job loop reads.
+
+        The single source of truth for this mixin's host-state contract:
+        ``TldwCli``'s wiring calls this, and the headless test harnesses
+        (``Tests/UI/test_library_shell.py``'s ``_LibraryIngestCanvasHarness``,
+        ``Tests/Library/test_library_ingest_runner.py``'s
+        ``_IngestRunnerHarness``) call the same method, so a new
+        ``self._ingest_*`` read added to the coordinator/writer is mirrored
+        into the fakes automatically instead of hand-listed (task-3315 --
+        the hand-listed harness missed ``_ingest_local_stt_jobs`` when the
+        local-STT lane landed and ~20 pilots died with AttributeError).
+        ``self.media_db`` is deliberately NOT set here: it is a per-host
+        input (see the class docstring), not coordinator state.
+
+        F3 parallel-parse coordinator state: the lazily-created parse-pool
+        handle, the parse->write handoff (job_id -> parsed payload dict,
+        populated by a pool completion and drained by the writer's claim),
+        and the shutdown flag pool callbacks check before touching a
+        closing app.
+        """
+        self.library_ingest_jobs = LibraryIngestJobRegistry()
+        self._ingest_parse_pool = None
+        self._ingest_parse_pool_generation: int = 0
+        self._ingest_parse_jobs_by_generation: dict[int, set[str]] = {}
+        self._ingest_parse_pool_stop_event: Optional[threading.Event] = None
+        self._ingest_parsed_payloads: dict[str, dict] = {}
+        # RLock, not Lock: dev's STT dispatch work re-enters this guard.
+        self._local_stt_executor_lock = threading.RLock()
+        self._local_stt_executor: Optional[LocalSTTExecutor] = None
+        self._local_stt_dispatch_coordinator: Optional[
+            LocalSTTDispatchCoordinator
+        ] = None
+        self._ingest_local_stt_jobs: dict[str, tuple[int, str]] = {}
+        self._ingest_shutdown: bool = False
 
     def _restore_ingest_jobs(self) -> None:
         """One-time on_mount restore of persisted ingest job history."""
@@ -2587,6 +2675,37 @@ class LibraryIngestQueueMixin:
             # (task-3303) VAD filter -- travels as its own option; the
             # parse worker hands it to the processors' ``vad_use``.
             options["vad_filter"] = bool(flat_opts.get("vad_filter", False))
+            # (task-3306) Time-range trim: format-gated at the option layer
+            # (HH:MM:SS or seconds); blank means unbounded on that side.
+            start_trim = str(flat_opts.get("start_time") or "").strip()
+            end_trim = str(flat_opts.get("end_time") or "").strip()
+            options["start_time"] = start_trim or None
+            options["end_time"] = end_trim or None
+            # (task-3306) Gated URL downloads: a cookies FILE PATH only
+            # (yt-dlp cookiefile) -- raw cookie text is a credential, and
+            # this options dict persists with the job and echoes into
+            # config.toml. Its presence IS the use_cookies flag, so there
+            # is no separate toggle to go stale. Only the video (yt-dlp)
+            # branch of ``parse_local_file_for_ingest`` consumes it; the
+            # audio downloader's cookies parameter has JSON-dict semantics
+            # a path would crash.
+            # (xhigh review round) Validated here, not forwarded verbatim:
+            # an unusable path used to degrade into a silent "Invalid
+            # cookie format" debug line inside the downloader.
+            cookies_file = str(flat_opts.get("cookies_file") or "").strip()
+            cookies_path, cookies_problem = _resolve_ingest_cookies_file(
+                cookies_file
+            )
+            options["use_cookies"] = bool(cookies_path)
+            options["cookies"] = cookies_path
+            if cookies_problem:
+                options["cookies_problem"] = cookies_problem
+            # (task-3306) Recursive map-reduce summary; the processors'
+            # analysis tail consumes it only when analysis actually runs,
+            # so an idle True is inert rather than a stale hazard.
+            options["summarize_recursively"] = bool(
+                flat_opts.get("summarize_recursively", False)
+            )
             failed_attempt = job.retry_source_failure_provenance
             options["transcription_context"] = {
                 "attempt_id": f"{job.job_id}-attempt-{job.retry_count + 1}",
@@ -2607,6 +2726,21 @@ class LibraryIngestQueueMixin:
                     if isinstance(configured_path, str) and configured_path
                     else None
                 )
+        elif group == "image":
+            # (task-3307) The image panel's OCR knobs travel under the
+            # names the parse branch reads; fallbacks mirror
+            # ``process_image``'s own declared defaults. OCR defaults ON:
+            # the extracted text IS the imported content, and a no-text
+            # parse fails honestly at the persist seam.
+            if options["chunk_options"] is not None:
+                # (F12 parity) ``process_image`` chunks the OCR text via
+                # ``improved_chunking_process``; an explicit words method
+                # keeps the generic "words · 100-5000" size hint true here
+                # too.
+                options["chunk_options"]["method"] = "words"
+            options["ocr"] = flat_opts.get("ocr", flat_opts.get("enable_ocr", True))
+            options["ocr_language"] = flat_opts.get("ocr_language") or "en"
+            options["ocr_backend"] = flat_opts.get("ocr_backend") or "auto"
         elif group == "ebook":
             options["extraction_method"] = (
                 flat_opts.get("extraction_method")
@@ -5703,24 +5837,7 @@ class TldwCli(
             policy_enforcer=self.service_policy_enforcer,
         )
         self.library_rag_search_service = LibraryLocalRagSearchService(self)
-        self.library_ingest_jobs = LibraryIngestJobRegistry()
-        # F3 parallel-parse coordinator state (see LibraryIngestQueueMixin):
-        # the lazily-created parse-pool handle, the parse->write handoff
-        # (job_id -> parsed payload dict, populated by a pool completion and
-        # drained by the writer's claim), and the shutdown flag pool
-        # callbacks check before touching a closing app.
-        self._ingest_parse_pool = None
-        self._ingest_parse_pool_generation: int = 0
-        self._ingest_parse_jobs_by_generation: dict[int, set[str]] = {}
-        self._ingest_parse_pool_stop_event: Optional[threading.Event] = None
-        self._ingest_parsed_payloads: dict[str, dict] = {}
-        self._local_stt_executor_lock = threading.RLock()
-        self._local_stt_executor: Optional[LocalSTTExecutor] = None
-        self._local_stt_dispatch_coordinator: Optional[
-            LocalSTTDispatchCoordinator
-        ] = None
-        self._ingest_local_stt_jobs: dict[str, tuple[int, str]] = {}
-        self._ingest_shutdown: bool = False
+        self._init_library_ingest_runtime_state()
 
     def _wire_research_services(self) -> None:
         """Initialize source-aware research services if the broad parity wiring has not already done so."""

@@ -39,6 +39,7 @@ from loguru import logger
 process_pdf = None
 process_document = None
 process_ebook = None
+process_image = None
 LocalAudioProcessor = None
 LocalVideoProcessor = None
 
@@ -74,6 +75,17 @@ def _ensure_process_ebook():
 
         process_ebook = _process_ebook
     return process_ebook
+
+
+def _ensure_process_image():
+    """Import Image_Processing_Lib.process_image on first actual use (or
+    return an already-bound value, e.g. a test's mock)."""
+    global process_image
+    if process_image is None:
+        from .Image_Processing_Lib import process_image as _process_image
+
+        process_image = _process_image
+    return process_image
 
 
 def _ensure_local_audio_processor():
@@ -272,7 +284,8 @@ def detect_file_type(file_path: Union[str, Path]) -> str:
         file_path: Path to the file
 
     Returns:
-        File type as string: 'pdf', 'document', 'ebook', 'plaintext', 'html'
+        File type as string: 'pdf', 'document', 'ebook', 'plaintext',
+        'html', 'image', 'audio', 'video'
 
     Raises:
         FileIngestionError: If file type is not supported
@@ -299,6 +312,25 @@ def detect_file_type(file_path: Union[str, Path]) -> str:
     # Plain text files
     elif extension in [".txt", ".md", ".markdown", ".rst", ".log", ".csv"]:
         return "plaintext"
+
+    # Image files (task-3307). Exactly the raster formats
+    # ``Image_Processing_Lib``'s PIL loader opens on a plain Pillow
+    # install: .svg is a vector document PIL cannot rasterize, .ico is an
+    # icon container rather than content, and .heic/.heif need the
+    # pillow_heif opener no install extra provides -- all three stay
+    # honestly unsupported even though ``SUPPORTED_IMAGE_FORMATS`` lists
+    # them.
+    elif extension in [
+        ".png",
+        ".jpg",
+        ".jpeg",
+        ".gif",
+        ".webp",
+        ".bmp",
+        ".tiff",
+        ".tif",
+    ]:
+        return "image"
 
     # Audio files
     elif extension in [
@@ -332,6 +364,7 @@ def detect_file_type(file_path: Union[str, Path]) -> str:
         raise FileIngestionError(
             f"Unsupported file type: {extension}. "
             f"Supported types: PDF, DOCX, ODT, RTF, EPUB, MOBI, AZW, FB2, HTML, TXT, MD, "
+            f"PNG, JPG, GIF, WEBP, BMP, TIFF, "
             f"MP3, M4A, WAV, FLAC, OGG, AAC, MP4, AVI, MKV, MOV, WEBM"
         )
 
@@ -349,6 +382,7 @@ def get_supported_extensions() -> Dict[str, List[str]]:
         "ebook": [".epub", ".mobi", ".azw", ".azw3", ".fb2"],
         "html": [".html", ".htm"],
         "plaintext": [".txt", ".md", ".markdown", ".rst", ".log", ".csv"],
+        "image": [".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".tiff", ".tif"],
         "audio": [".mp3", ".m4a", ".wav", ".flac", ".ogg", ".aac", ".wma", ".opus"],
         "video": [
             ".mp4",
@@ -374,13 +408,26 @@ def get_supported_extensions() -> Dict[str, List[str]]:
 # consumed nowhere, and the DB layer explicitly ignores ``chunk_options``
 # as a placeholder -- so "the database will handle it" (the old comment on
 # these branches) handled nothing.
-_TEXT_CHUNK_TYPES = frozenset({"plaintext", "html", "document", "article"})
+# (task-3307 xhigh review round) ``image`` joined this set: the OCR text is
+# text like any other, and routing it through the same tail is what makes
+# the form's size/overlap govern it. The image branch calls
+# ``process_image`` with ``chunk_options=None`` and clears its convenience
+# single chunk so exactly one layer chunks.
+_TEXT_CHUNK_TYPES = frozenset(
+    {"plaintext", "html", "document", "article", "image"}
+)
 
 # Text-shaped types whose branch produces no analysis of its own. The
 # ``document`` type is excluded: ``process_document`` runs its own
 # ``analyze`` pass internally (``auto_summarize``), so analyzing it again
-# here would double the LLM spend.
-_TEXT_ANALYSIS_TYPES = frozenset({"plaintext", "html", "article"})
+# here would double the LLM spend. ``image`` is INCLUDED (task-3307): the
+# image branch deliberately calls ``process_image`` with
+# ``perform_analysis=False`` -- its internal path routes through the
+# legacy ``Summarization_General_Lib.analyze`` direct dispatch (the dead
+# branch task-3301 documented) and cannot carry the ``[analysis_defaults]``
+# call shape or keyless dispatch -- so the OCR text is analyzed by this
+# module's shared chat_api_call tail like plaintext/html.
+_TEXT_ANALYSIS_TYPES = frozenset({"plaintext", "html", "article", "image"})
 
 
 def _decode_ingest_text(
@@ -711,8 +758,8 @@ def parse_local_file_for_ingest(
     Returns:
         A payload dict consumed by ``persist_parsed_media``:
             - media_type: Media type string used for the DB write (e.g.
-              'pdf', 'document', 'ebook', 'plaintext', 'html', 'audio',
-              'video').
+              'pdf', 'document', 'ebook', 'plaintext', 'html', 'image',
+              'audio', 'video').
             - file_type: Same value as ``media_type`` -- kept as a
               separate key for parity with ``ingest_local_file``'s
               historical return dict.
@@ -827,6 +874,7 @@ def parse_local_file_for_ingest(
         "xml": "xml",
         "plaintext": "plaintext",
         "html": "web_article",  # HTML files map to web_article config
+        "image": "image",
         "audio": "audio",
         "video": "video",
     }
@@ -923,6 +971,50 @@ def parse_local_file_for_ingest(
                 keyless_ok=keyless_ok,
             )
 
+        elif file_type == "image":
+            # (task-3307, ship ruling in task-3310) The imported CONTENT is
+            # the OCR text -- there is no other text in an image -- so the
+            # OCR toggle defaults on (mirroring ``process_image``'s own
+            # ``enable_ocr=True``) and a no-text parse fails honestly at
+            # the persist seam rather than storing an empty row.
+            #
+            # ``extract_features`` is forced off: the visual-features dict
+            # ``process_image`` would compute lands in ``result["visual_
+            # features"]``, which this payload does not carry, and
+            # ``persist_parsed_media`` forwards no metadata at all -- the
+            # toggle would be paid-for compute whose output is dropped.
+            # ``perform_analysis`` is forced off too: the processor's
+            # internal analysis path is the legacy ``analyze()`` direct
+            # dispatch (dead on a normal install, task-3301); the OCR text
+            # is analyzed by the shared chat_api_call tail below instead
+            # (``image`` is in ``_TEXT_ANALYSIS_TYPES``).
+            result = _ensure_process_image()(
+                file_path=str(file_path),
+                title_override=title,
+                author_override=author,
+                keywords=keywords,
+                enable_ocr=bool(options.get("ocr", True)),
+                ocr_backend=options.get("ocr_backend") or "auto",
+                ocr_language=options.get("ocr_language") or "en",
+                extract_features=False,
+                # (task-3307 xhigh review round) ALWAYS None: the shared
+                # text-chunk tail below is the single chunking authority
+                # for this type (``image`` is in ``_TEXT_CHUNK_TYPES``).
+                # Delegating to the processor's own chunking left a hole --
+                # it chunks only for a TRUTHY ``chunk_options``, while
+                # "chunk ON with nothing typed" arrives as ``{}``, so the
+                # OCR text persisted as one whole-text blob whatever size
+                # the form asked for. Two chunking layers is how that
+                # happened; there is now one.
+                chunk_options=None,
+                perform_analysis=False,
+            )
+            if isinstance(result, dict):
+                # ``process_image`` returns a convenience single whole-text
+                # "chunk" even when it did no chunking; dropping it is what
+                # lets the tail's ``not chunks`` branch do the real work.
+                result["chunks"] = []
+
         elif file_type == "audio":
             # Initialize audio processor. media_db is intentionally None:
             # this function performs no database I/O (see docstring). A
@@ -979,12 +1071,29 @@ def parse_local_file_for_ingest(
                     options.get("vad_filter", chunk_options.get("vad_filter", False))
                 ),
                 timestamp_option=options.get("timestamps", True),
+                # (task-3306) Time-range trim: ffmpeg for local files,
+                # yt-dlp postprocessor args for YouTube URLs. NOTE: the
+                # panel's cookies_file is deliberately NOT forwarded here
+                # -- ``download_audio_file`` parses a cookies string as a
+                # JSON dict (raw Cookie header), so the video path's
+                # cookiefile PATH would raise JSONDecodeError and fail the
+                # job, and the audio YouTube path ignores cookies anyway.
+                start_time=options.get("start_time"),
+                end_time=options.get("end_time"),
                 perform_analysis=perform_analysis,
                 api_name=api_name,
                 api_key=api_key,
                 custom_prompt=custom_prompt,
                 system_prompt=system_prompt,
-                summarize_recursively=chunk_options.get("recursive_summary", False),
+                # (task-3306) The panel's own option travels first; the
+                # chunk-options spelling stays as a fallback for older
+                # callers that tucked it in there.
+                summarize_recursively=bool(
+                    options.get(
+                        "summarize_recursively",
+                        chunk_options.get("recursive_summary", False),
+                    )
+                ),
                 custom_title=title,
                 author=author,
             )
@@ -1075,12 +1184,27 @@ def parse_local_file_for_ingest(
                     options.get("vad_filter", chunk_options.get("vad_filter", False))
                 ),
                 timestamp_option=options.get("timestamps", True),
+                # (task-3306) Time-range trim (applied once, at audio
+                # extraction -- ``_process_single_video`` drops the bounds
+                # before delegating so the audio stage cannot re-cut) and
+                # gated-download cookies (a cookiefile PATH for yt-dlp;
+                # never raw cookie text -- see ``_ingest_job_options``).
+                start_time=options.get("start_time"),
+                end_time=options.get("end_time"),
+                use_cookies=bool(options.get("use_cookies", False)),
+                cookies=options.get("cookies"),
                 perform_analysis=perform_analysis,
                 api_name=api_name,
                 api_key=api_key,
                 custom_prompt=custom_prompt,
                 system_prompt=system_prompt,
-                summarize_recursively=chunk_options.get("recursive_summary", False),
+                # (task-3306) Panel option first, chunk-options fallback.
+                summarize_recursively=bool(
+                    options.get(
+                        "summarize_recursively",
+                        chunk_options.get("recursive_summary", False),
+                    )
+                ),
                 custom_title=title,
                 author=author,
             )
@@ -1340,6 +1464,16 @@ def parse_local_file_for_ingest(
         # annotation mechanism as the skip reason.
         if analysis_failed_reason:
             payload["analysis_failed_reason"] = analysis_failed_reason
+        # (task-3306 xhigh review round) The option boundary rejected the
+        # configured cookies path (missing/unsafe). Carry the reason so the
+        # done row can say "cookies ignored: ..." -- the same annotation
+        # mechanism as the analysis reasons -- AND surface it as a payload
+        # warning, instead of the downloader logging "Invalid cookie
+        # format" at debug and running un-authenticated.
+        cookies_problem = str(options.get("cookies_problem") or "").strip()
+        if cookies_problem:
+            payload["cookies_problem"] = cookies_problem
+            payload["warnings"] = list(payload["warnings"]) + [cookies_problem]
         return payload
 
     except DirectLocalSTTIngestError:
@@ -1391,6 +1525,17 @@ def _reject_empty_extraction(payload: Dict[str, Any], file_type: str) -> None:
         except OSError:
             # Unreadable/vanished: treat as an extraction failure below.
             pass
+
+    if file_type == "image":
+        # (task-3307) The generic copy below ("may be scanned images") reads
+        # as nonsense for a file that IS an image. Retryable on purpose:
+        # switching Extract text (OCR) on, or installing an OCR backend,
+        # genuinely can fix the next attempt.
+        raise FileIngestionError(
+            f"No text was found in {name}. An image import stores the text "
+            "OCR extracts; turn Extract text (OCR) on and install an OCR "
+            "backend (docling, tesseract, easyocr, paddleocr, or docext)."
+        )
 
     raise FileIngestionError(
         f"No text could be extracted from {name}. The {file_type} content may "

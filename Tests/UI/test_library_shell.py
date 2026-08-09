@@ -1142,17 +1142,23 @@ async def test_rail_counts_never_clip_and_titles_shrink_first_at_100x30():
             for banned in ("Conversa...", "Flash...", "Collect..."):
                 assert banned not in first_line, (row.id, first_line)
 
-        # ...and the count survives on the row whose full title + count
-        # would otherwise exceed the rail: Conversations' short_title
-        # ("Chats") absorbs the squeeze instead of an ellipsis.
+        # ...and the count survives on the longest-titled row. task-3315
+        # re-pin (pre-arc dev churn: task-2858's rail width fixes,
+        # a3591b503, merged 2026-08-07 in PR #1420 -- reproduced failing at
+        # dev base ebeae1440 with the ingest arc absent): the rail is now
+        # wide enough at 100x30 that the FULL "Conversations (2)" fits, so
+        # the short_title ("Chats") fallback this test used to pin never
+        # engages at this size. The durable invariants stay pinned: the
+        # count is intact, nothing ellipsizes, and the fit loop above
+        # still forbids any clipped row.
         conv = screen.query_one("#library-row-browse-conversations", Button)
         conv_line = conv.label.plain.split("\n")[0]
         assert conv_line.endswith("(2)"), f"count clipped: {conv_line!r}"
-        assert "Chats" in conv_line, (
-            f"title should fall back to its short_title, not ellipsize: {conv_line!r}"
+        assert "Conversations" in conv_line, (
+            f"full title now fits at 100x30; got: {conv_line!r}"
         )
         assert "..." not in conv_line and "…" not in conv_line, (
-            f"short_title fits outright -- no ellipsis needed: {conv_line!r}"
+            f"title fits outright -- no ellipsis allowed: {conv_line!r}"
         )
 
 
@@ -11560,22 +11566,30 @@ async def test_library_shell_blank_note_escape_key_returns_to_list_without_crash
     exercises Textual's own BINDINGS/check_action dispatch, matching what a
     user's keypress actually triggers.
 
-    Also pins Escape-vs-Back PARITY on the session-blank-note bookkeeping
-    (task-3021-era GC flags), not "GC succeeds": the untouched-blank GC
-    check in ``_flush_library_note_save`` compares the coordinator draft's
-    *title* against blank, but the create seam seeds that title with the
-    literal ``"Untitled"`` (see ``handle_library_notes_create_blank``), so
-    the GC branch's ``not any(...)`` never actually fires for the
-    never-touched case -- a pre-existing bug on ``_flush_library_note_save``
-    verified byte-identical on origin/dev (fccb3af6b), independently
-    confirmed by ``test_library_shell_blank_note_untouched_is_gc_from_
-    real_db_on_back`` already failing the same way via the "‹ Back to
-    list" button on this same branch. Out of scope for this P0 (which
-    fixes the crash, not that separate defect) -- this test therefore pins
-    today's REAL end state (row survives, GC bookkeeping flags still
-    clear), so Escape stays provably identical to Back rather than quietly
-    diverging from it, and a future fix to the GC check will need no
-    changes here.
+    Also pins Escape-vs-Back PARITY on the untouched-blank GC: Escape must
+    reach the same ``_exit_library_note_editor_guarded`` seam the "‹ Back
+    to list" button uses, so the never-touched row is deleted and the GC
+    bookkeeping flags are cleared, exactly as
+    ``test_library_shell_blank_note_untouched_is_gc_from_real_db_on_back``
+    pins for Back.
+
+    Rebase note (dev f6911b37b): as authored on dev at ``dd30c24e5`` this
+    test asserted the OPPOSITE end state -- ``count_notes(...) == 1``,
+    "row survival must match the Back button's own (separately tracked) GC
+    bug" -- because on dev the GC branch in ``_flush_library_note_save``
+    keys blankness on the draft *title* while the create seam seeds it with
+    the literal ``"Untitled"`` (``handle_library_notes_create_blank``), so
+    the branch never fires. THIS branch fixed that in ``794ee4be5``
+    (task-3315): the check is now seed-aware (``title_blank``), and the row
+    is really deleted. Verified as ours, not dev's: running this file
+    against a ``git archive`` extraction of dev ``f6911b37b``'s product
+    tree, the Back-button GC test fails ("never GC'd") and this test's
+    ``== 1`` passes -- the exact inverse of this branch. The pin therefore
+    moves to the FIXED behavior. It also polls instead of sleeping: the
+    delete lands on a worker, so dev's fixed ``pilot.pause(0.2)`` made the
+    assertion a race (it passed only when a loaded full-file run kept the
+    delete from landing inside the window, which is why it failed alone
+    8/8 but survived some whole-suite runs).
     """
     app = _build_test_app()
     _seed_conversations(app, _two_conversations())
@@ -11621,13 +11635,22 @@ async def test_library_shell_blank_note_escape_key_returns_to_list_without_crash
         # of whether the GC delete itself ran.
         assert screen._library_note_pending_blank_gc_id is None
         assert screen._library_note_session_blank_id is None
-        await pilot.pause(0.2)
-        assert (
-            await app.notes_scope_service.count_notes(
-                scope="local_note", user_id="default_user"
+        # Parity with the Back button's own GC test: poll for the delete
+        # rather than sleeping a fixed window on a worker-owned write.
+        for _ in range(150):
+            if (
+                await app.notes_scope_service.count_notes(
+                    scope="local_note", user_id="default_user"
+                )
+                == 0
+            ):
+                break
+            await pilot.pause(0.02)
+        else:
+            raise AssertionError(
+                "Escape left the untouched blank note in the real DB -- it must "
+                "GC it exactly like '‹ Back to list' does."
             )
-            == 1
-        ), "Row survival must match the Back button's own (separately tracked) GC bug."
 
 
 @pytest.mark.asyncio
@@ -11888,6 +11911,171 @@ async def test_library_shell_blank_note_autosaved_then_emptied_still_gcs_on_back
 
 
 @pytest.mark.asyncio
+async def test_library_shell_blank_note_titled_untitled_by_hand_survives_back(
+    tmp_path,
+):
+    """P0 (xhigh review + live-verify round): a note the user DELIBERATELY
+    titles "Untitled" must survive navigate-away, body empty or not.
+
+    The GC keyed blankness on ``raw_title == LIBRARY_NOTE_BLANK_SEED_TITLE``
+    -- a pure string comparison -- so typing the seed's own spelling into
+    the title field destroyed the note with no prompt and no undo. The
+    distinction the GC actually needs is "did the user ever touch the title
+    widget", which a session flag carries and a string never can.
+    """
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    real_service = _real_notes_scope_service(tmp_path)
+    app.notes_scope_service = real_service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one("#library-row-create-note").press()
+        await _wait_for_selector(screen, pilot, "#library-notes-create-blank")
+        screen.query_one("#library-notes-create-blank").press()
+        await _wait_for_selector(screen, pilot, "#library-note-title")
+        await pilot.pause()
+        await pilot.pause()
+        note_id = screen._selected_note_id
+
+        # The user types the seed's own spelling, on purpose, and leaves
+        # the body empty -- a perfectly ordinary "I'll name it later" note.
+        screen.query_one("#library-note-title", Input).value = "Untitled"
+        await pilot.pause()
+        assert screen._library_note_title_user_edited is True, (
+            "Typing in the title field must record that the seed is no "
+            "longer untouched."
+        )
+
+        screen.query_one("#library-note-back").press()
+        for _ in range(150):
+            if screen._library_notes_view == "list":
+                break
+            await pilot.pause(0.02)
+        else:
+            raise AssertionError("Back never returned to the list view.")
+
+        assert (
+            await real_service.count_notes(
+                scope="local_note", user_id="default_user"
+            )
+            == 1
+        ), (
+            "A note the user deliberately titled 'Untitled' was destroyed "
+            "on navigate-away -- silent data loss."
+        )
+        detail = await real_service.get_note_detail(
+            scope="local_note", note_id=note_id, user_id="default_user"
+        )
+        assert detail is not None
+        assert detail["title"] == "Untitled"
+
+
+@pytest.mark.asyncio
+async def test_library_shell_untouched_blank_note_still_gcs_after_body_round_trip(
+    tmp_path,
+):
+    """Mutation guard for the test above: the untouched seed must STILL be
+    GC'd. The user types only in the BODY (never the title), then empties
+    it -- the title widget was never touched, so the seed is still a seed
+    and the abandoned row must not survive."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    real_service = _real_notes_scope_service(tmp_path)
+    app.notes_scope_service = real_service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one("#library-row-create-note").press()
+        await _wait_for_selector(screen, pilot, "#library-notes-create-blank")
+        screen.query_one("#library-notes-create-blank").press()
+        await _wait_for_selector(screen, pilot, "#library-note-title")
+        await pilot.pause()
+        await pilot.pause()
+
+        screen.query_one("#library-note-body", TextArea).text = "scratch"
+        await pilot.pause()
+        screen.query_one("#library-note-body", TextArea).text = ""
+        await pilot.pause()
+        assert screen._library_note_title_user_edited is False
+
+        screen.query_one("#library-note-back").press()
+        for _ in range(150):
+            if (
+                await real_service.count_notes(
+                    scope="local_note", user_id="default_user"
+                )
+                == 0
+            ):
+                break
+            await pilot.pause(0.02)
+        else:
+            raise AssertionError(
+                "An untouched-title session blank was not GC'd on exit."
+            )
+
+
+@pytest.mark.asyncio
+async def test_library_shell_blank_title_save_round_trip_agrees_with_the_row(
+    tmp_path,
+):
+    """The save seam substitutes the seed title for a blank one on the
+    wire, but the reply carries no title -- so the session snapshot (and
+    every list row patched from it) claimed a name the persisted row did
+    not have. Both sides now derive the persisted name from one helper."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    real_service = _real_notes_scope_service(tmp_path)
+    app.notes_scope_service = real_service
+    created_id = await real_service.save_note(
+        scope="local_note",
+        title="Pre-existing note",
+        content="pre-existing content",
+        user_id="default_user",
+    )
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one("#library-row-browse-notes").press()
+        await _wait_for_selector(screen, pilot, "#library-notes-row-0")
+        screen.query_one("#library-notes-row-0").press()
+        await _wait_for_selector(screen, pilot, "#library-note-title")
+        await pilot.pause()
+        await pilot.pause()
+
+        screen.query_one("#library-note-title", Input).value = ""
+        await pilot.pause()
+        screen.query_one("#library-note-save").press()
+        for _ in range(150):
+            detail = await real_service.get_note_detail(
+                scope="local_note", note_id=created_id, user_id="default_user"
+            )
+            if detail is not None and detail["title"] == "Untitled":
+                break
+            await pilot.pause(0.02)
+        else:
+            raise AssertionError("The emptied title never persisted.")
+
+        rows = screen._local_source_records.get("notes", ())
+        patched = [row for row in rows if str(row.get("id")) == created_id]
+        assert patched, "The saved note vanished from the list cache."
+        assert patched[0]["title"] == "Untitled", (
+            "The list row patched from the session snapshot disagrees with "
+            f"the persisted row's name ({patched[0]['title']!r} vs "
+            "'Untitled')."
+        )
+
+
+@pytest.mark.asyncio
 async def test_library_shell_discard_new_note_deletes_untouched_create():
     app = _build_test_app()
     _seed_conversations(app, _two_conversations(), notes=_two_notes())
@@ -11968,8 +12156,36 @@ async def test_library_note_failed_discard_clears_shortcut_lock_status() -> None
 # TASK-1333 Task 8: exact compact Notes geometry and dynamic-state budgets.
 
 
-def _assert_task8_compact_chrome(screen: LibraryScreen) -> None:
-    """Pin the terminal-level 3 + 1 + 15 + 1 row allocation."""
+def _assert_task8_compact_chrome(
+    screen: LibraryScreen, *, source_strip: bool = True
+) -> None:
+    """Pin the terminal-level row allocation at 60x20.
+
+    task-3315 re-pin -- dev-baseline drift, NOT the media-ingest arc: the
+    identical failure set reproduces at ``6b4ccf475`` (the notes-adaptive
+    PR #1439 merge, the commit that brought these pins onto dev) and at dev
+    base ``ebeae1440``, verified by running this family against extracted
+    trees of both commits. Since the file-notes workspace (``b83852eda``)
+    the screen composes a one-row Database|Files source strip
+    (#library-notes-source-strip) above the shell grid whenever a FULL
+    screen recompose runs while ``shell.canvas_kind`` is "notes", so the
+    settled allocation on those routes is 3 + 1 + 1 + 14 + 1.
+
+    task-3315 re-pin round 2 (rebase onto dev ``f6911b37b``) -- again
+    dev-side, verified by running THIS file against a ``git archive``
+    extraction of dev ``f6911b37b``'s product tree, where both re-pinned
+    cases fail identically. Dev ``d1df7d0a7`` ("restore file notes source
+    access", TASK-13213) closed the per-route chrome asymmetry this
+    docstring used to record as task-3317: ``_replace_library_browse_
+    canvas`` now refuses its targeted swap whenever the mounted contextual
+    chrome disagrees with the destination
+    (``notes_source_strip_mounted != (shell.canvas_kind == "notes")``), so
+    the plain rail-press into the notes LIST also lands via the full
+    recompose and carries the strip. Every Database-notes route therefore
+    settles at 3 + 1 + 1 + 14 + 1 and ``source_strip=False`` now survives
+    only for the create-note canvas (canvas_kind "notes-create", which
+    never composes the strip), which keeps 3 + 1 + 15 + 1.
+    """
     navigation = screen.query_one("MainNavigationBar")
     header = screen.query_one("#library-header-line")
     shell = screen.query_one("#library-shell-grid")
@@ -11981,18 +12197,30 @@ def _assert_task8_compact_chrome(screen: LibraryScreen) -> None:
     )
     footer = screen.query_one("#screen-footer-status")
 
+    if source_strip:
+        strip = screen.query_one("#library-notes-source-strip")
+        strip_height = strip.region.height
+        assert strip_height == 1
+    else:
+        assert not screen.query("#library-notes-source-strip"), (
+            "source strip unexpectedly mounted on a fast-path route"
+        )
+        strip_height = 0
+    shell_height = 15 - strip_height
+
     assert screen.region.height == 20
     assert navigation.region.height == 3
     assert header.region.height == 1
-    assert shell.region.height == 15
-    assert shell.content_region.height == 15
-    assert canvas.region.height == 15
-    assert canvas.content_region.height == 15
-    assert notes.region.height == 15
+    assert shell.region.height == shell_height
+    assert shell.content_region.height == shell_height
+    assert canvas.region.height == shell_height
+    assert canvas.content_region.height == shell_height
+    assert notes.region.height == shell_height
     assert footer.region.height == 1
     assert (
         navigation.region.height
         + header.region.height
+        + strip_height
         + shell.region.height
         + footer.region.height
         == 20
@@ -12008,9 +12236,10 @@ async def _assert_task8_rows(
     expected: dict[str, int],
     *,
     focused_selector: str,
+    source_strip: bool = True,
 ) -> None:
     """Assert exact visible row heights, bounds, and focus visibility."""
-    _assert_task8_compact_chrome(screen)
+    _assert_task8_compact_chrome(screen, source_strip=source_strip)
     for selector, height in expected.items():
         widget = screen.query_one(selector)
         assert widget.display is True, selector
@@ -12050,6 +12279,12 @@ async def _enter_task8_navigator_state(screen, pilot, state: str) -> None:
     screen.query_one("#library-row-browse-notes").press()
     await _wait_for_selector(screen, pilot, "#library-notes-filter")
     if state == "normal":
+        # task-3315 re-pin round 2: since dev d1df7d0a7 the plain rail press
+        # also lands via the full recompose, so this route carries the source
+        # strip too -- wait for it here for the same determinism reason as
+        # the forced-recompose states below.
+        await _wait_for_selector(screen, pilot, "#library-notes-source-strip")
+        await pilot.pause()
         return
     if state == "filtered-empty":
         screen._library_notes_filter = "[none] Ω very long filter query"
@@ -12062,64 +12297,91 @@ async def _enter_task8_navigator_state(screen, pilot, state: str) -> None:
         raise AssertionError(f"Unsupported Navigator state: {state}")
     screen.refresh(recompose=True)
     await _wait_for_selector(screen, pilot, "#library-notes-canvas")
+    # task-3315 determinism guard: the forced FULL recompose above also
+    # mounts the screen-level #library-notes-source-strip (see
+    # _assert_task8_compact_chrome's docstring); wait for it so the
+    # geometry asserts below never race the recompose settling.
+    await _wait_for_selector(screen, pilot, "#library-notes-source-strip")
     await pilot.pause()
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("state", "expected", "focused_selector"),
+    ("state", "expected", "focused_selector", "source_strip"),
+    # task-3315 re-pin, causes named (both pre-date the media-ingest arc --
+    # identical failures reproduce at 6b4ccf475, the PR #1439 merge that
+    # brought these tests to dev, and at dev base ebeae1440):
+    # - every list state now carries #library-notes-database-purpose, the
+    #   LIB-19 placement sentence (task-2858, a3591b503, merged 2026-08-07
+    #   in PR #1420 -- AFTER these pins were authored on the PR #1439
+    #   branch): 3 wrapped rows at width 60 plus its 1-row bottom margin,
+    #   so the list loses 4 rows;
+    # - every state settles with the 1-row source strip (see
+    #   _assert_task8_compact_chrome), costing 1 more row. Round 2, after
+    #   the rebase onto dev f6911b37b: "normal" joined them -- dev
+    #   d1df7d0a7 routes the plain rail press through the full recompose
+    #   too, so its list drops 6 -> 5. Reproduced against an extracted dev
+    #   f6911b37b product tree, so this is dev's change, not the arc's.
     (
         (
             "normal",
             {
                 "#library-notes-header": 1,
+                "#library-notes-database-purpose": 3,
                 "#library-notes-filter-row": 1,
                 "#library-notes-browse-actions": 1,
                 "#library-notes-transfer-actions": 1,
                 "#library-notes-status-row": 1,
-                "#library-notes-list": 10,
+                "#library-notes-list": 5,
             },
             "#library-notes-filter",
+            True,  # dev d1df7d0a7: rail entry now recomposes with the strip
         ),
         (
             "filtered-empty",
             {
                 "#library-notes-header": 1,
+                "#library-notes-database-purpose": 3,
                 "#library-notes-filter-row": 1,
                 "#library-notes-browse-actions": 1,
                 "#library-notes-transfer-actions": 1,
                 "#library-notes-status-row": 1,
-                "#library-notes-empty": 10,
+                "#library-notes-empty": 5,
             },
             "#library-notes-filter-clear",
+            True,
         ),
         (
             "sort-choice",
             {
                 "#library-notes-header": 1,
+                "#library-notes-database-purpose": 3,
                 "#library-notes-filter-row": 1,
                 "#library-notes-sort-choices": 1,
                 "#library-notes-transfer-actions": 1,
                 "#library-notes-status-row": 1,
-                "#library-notes-list": 10,
+                "#library-notes-list": 5,
             },
             "#library-notes-sort-newest",
+            True,
         ),
         (
             "selection",
             {
                 "#library-notes-header": 1,
+                "#library-notes-database-purpose": 3,
                 "#library-notes-filter-row": 1,
                 "#library-notes-selection-actions": 1,
                 "#library-notes-selection-status": 1,
-                "#library-notes-list": 11,
+                "#library-notes-list": 6,
             },
             "#library-notes-select-toggle",
+            True,
         ),
     ),
 )
 async def test_library_note_60x20_navigator_state_allocation(
-    state: str, expected: dict[str, int], focused_selector: str
+    state: str, expected: dict[str, int], focused_selector: str, source_strip: bool
 ) -> None:
     app = _build_test_app()
     notes = _two_notes() + [
@@ -12147,6 +12409,7 @@ async def test_library_note_60x20_navigator_state_allocation(
             pilot,
             expected,
             focused_selector=focused_selector,
+            source_strip=source_strip,
         )
         if state == "selection":
             assert screen.query_one("#library-notes-status").display is False
@@ -12180,15 +12443,27 @@ async def test_library_note_60x20_temporary_region_allocation(state: str) -> Non
             viewport = "#library-notes-sync-viewport"
             focus = "#library-notes-sync-folder"
 
-        _assert_task8_compact_chrome(screen)
+        # task-3315: entering Sync forces a full recompose (view != "list"),
+        # which mounts the 1-row source strip -- the sync canvas settles at
+        # 14 rows. The create-note canvas (canvas_kind "notes-create") never
+        # composes the strip and keeps the full 15. See
+        # _assert_task8_compact_chrome for the cause chain.
+        source_strip = state == "sync"
+        canvas_height = 14 if source_strip else 15
+        _assert_task8_compact_chrome(screen, source_strip=source_strip)
         owner = screen.query_one("#library-notes-canvas")
         header = screen.query_one(heading)
         assert header.region.height == 1
         await _assert_task8_rows(
             screen,
             pilot,
-            {heading: 1, viewport: 14, "#library-notes-canvas": 15},
+            {
+                heading: 1,
+                viewport: canvas_height - 1,
+                "#library-notes-canvas": canvas_height,
+            },
             focused_selector=focus,
+            source_strip=source_strip,
         )
         scroll_owner = screen.query_one(viewport)
         assert str(owner.styles.overflow_y) == "hidden"
@@ -12276,7 +12551,9 @@ async def test_library_note_60x20_sync_activity_scrolls_below_fixed_heading() ->
         viewport = screen.query_one("#library-notes-sync-viewport")
         activity = screen.query_one("#library-notes-sync-activity")
         assert heading.region.height == 1
-        assert viewport.region.height == 14
+        # task-3315: 13, not 14 -- the sync route settles with the 1-row
+        # source strip above the shell (see _assert_task8_compact_chrome).
+        assert viewport.region.height == 13
         assert activity.region.height >= 20
         assert int(viewport.max_scroll_y) > 0
         heading_y = heading.region.y
@@ -12341,11 +12618,15 @@ async def test_library_note_60x20_loading_allocation_keeps_back_visible() -> Non
                 message="Detail service never entered its gated load.",
             )
             await _wait_for_selector(screen, pilot, "#library-note-load-state")
+            # task-3315: opening a note row forces a full recompose, which
+            # mounts the 1-row source strip -- the load-state root settles
+            # at 14 rows, its viewport at 12 (was 13). See
+            # _assert_task8_compact_chrome for the cause chain.
             _assert_task8_compact_chrome(screen)
             assert screen.query_one("#library-note-load-heading").region.height == 1
             assert screen.query_one("#library-note-loading").region.height == 1
             assert (
-                screen.query_one("#library-note-loading-viewport").region.height == 13
+                screen.query_one("#library-note-loading-viewport").region.height == 12
             )
             back = screen.query_one("#library-note-back")
             back.focus()
@@ -12380,7 +12661,9 @@ async def test_library_note_60x20_untouched_new_allocation_keeps_discard_visible
                 "#library-note-heading": 1,
                 "#library-note-title-row": 1,
                 "#library-note-body-label": 1,
-                "#library-note-body": 10,
+                # task-3315: 9, not 10 -- the editor route settles with the
+                # 1-row source strip (see _assert_task8_compact_chrome).
+                "#library-note-body": 9,
                 "#library-note-status": 1,
                 "#library-note-primary-actions": 1,
             },
@@ -12461,13 +12744,18 @@ async def _enter_task8_editor_state(screen, pilot, state: str) -> None:
 @pytest.mark.parametrize(
     ("state", "expected", "focused_selector"),
     (
+        # task-3315 re-pin: every editor route forces a full recompose,
+        # which mounts the 1-row Database|Files source strip above the
+        # shell (see _assert_task8_compact_chrome's cause chain -- landed
+        # broken-at-merge with PR #1439, pre-dates the media-ingest arc),
+        # so each state's flexible row is one shorter than authored.
         (
             "normal",
             {
                 "#library-note-heading": 1,
                 "#library-note-title-row": 1,
                 "#library-note-body-label": 1,
-                "#library-note-body": 10,
+                "#library-note-body": 9,
                 "#library-note-status": 1,
                 "#library-note-primary-actions": 1,
             },
@@ -12479,7 +12767,7 @@ async def _enter_task8_editor_state(screen, pilot, state: str) -> None:
                 "#library-note-heading": 1,
                 "#library-note-title-row": 1,
                 "#library-note-body-label": 1,
-                "#library-note-body": 9,
+                "#library-note-body": 8,
                 "#library-note-status": 2,
                 "#library-note-primary-actions": 1,
             },
@@ -12491,7 +12779,7 @@ async def _enter_task8_editor_state(screen, pilot, state: str) -> None:
                 "#library-note-heading": 1,
                 "#library-note-title-row": 1,
                 "#library-note-body-label": 1,
-                "#library-note-body": 8,
+                "#library-note-body": 7,
                 "#library-note-status": 1,
                 "#library-note-conflict-copy": 2,
                 "#library-note-conflict-actions": 1,
@@ -12504,7 +12792,7 @@ async def _enter_task8_editor_state(screen, pilot, state: str) -> None:
                 "#library-note-heading": 1,
                 "#library-note-title-row": 1,
                 "#library-note-body-label": 1,
-                "#library-note-body": 9,
+                "#library-note-body": 8,
                 "#library-note-status": 1,
                 "#library-note-delete-confirm-copy": 1,
                 "#library-note-delete-actions": 1,
@@ -12515,7 +12803,7 @@ async def _enter_task8_editor_state(screen, pilot, state: str) -> None:
             "preview",
             {
                 "#library-note-heading": 1,
-                "#library-note-preview-region": 12,
+                "#library-note-preview-region": 11,
                 "#library-note-status": 1,
                 "#library-note-primary-actions": 1,
             },
@@ -12526,7 +12814,7 @@ async def _enter_task8_editor_state(screen, pilot, state: str) -> None:
             {
                 "#library-note-heading": 1,
                 "#library-note-context-status": 1,
-                "#library-note-context-region": 13,
+                "#library-note-context-region": 12,
             },
             "#library-note-context-keywords",
         ),
@@ -13383,13 +13671,24 @@ async def test_library_shell_notes_sync_conflict_choices_are_direct_and_persist(
         assert get_cli_setting("notes", "sync_conflict_resolution", None) == "disk_wins"
 
         # Every supported policy is visible directly; the removed "ask"
-        # policy cannot render or be reached.
+        # policy cannot render or be reached. task-3315: scope the probe to
+        # the conflict choices themselves -- the old whole-screen substring
+        # sweep now trips on the rail's unrelated "Prompts — AI asks" gloss
+        # (pre-arc dev copy churn, reproduced failing at dev base
+        # ebeae1440), which says nothing about sync conflict policies.
         screen.query_one("#library-notes-sync-conflict-db_wins").press()
         await pilot.pause()
         assert screen._library_notes_sync_conflict == "db_wins"
         button = screen.query_one("#library-notes-sync-conflict-db_wins", Button)
         assert "Library wins" in str(button.label)
-        assert "ask" not in _visible_text(screen).lower()
+        conflict_labels = [
+            str(choice.label)
+            for choice in screen.query(".library-notes-sync-conflict-choice")
+        ]
+        assert conflict_labels, "conflict choices vanished -- probe is vacuous"
+        assert not any("ask" in label.lower() for label in conflict_labels), (
+            conflict_labels
+        )
 
 
 @pytest.mark.asyncio
@@ -13669,13 +13968,24 @@ async def test_library_shell_notes_sync_now_calls_recording_service_with_chosen_
         assert "1/2" in str(status_widget_mid_run.renderable)
 
         # Now let the gated fake service return so the run completes.
+        # task-3315: wait for the DOM, not just the flag -- the running
+        # flag flips before the finish-of-run recompose has swapped the
+        # canvas, so querying the instant the flag drops races the
+        # mid-recompose teardown (NoMatches; reproduced failing at dev
+        # base ebeae1440, pre-arc). Poll until the recomposed status
+        # widget actually renders the finished line.
         service.release_event.set()
         for _ in range(150):
-            if not screen._library_notes_sync_running:
+            status_widgets = screen.query("#library-notes-sync-status")
+            if (
+                not screen._library_notes_sync_running
+                and status_widgets
+                and "done" in str(status_widgets.first().renderable)
+            ):
                 break
             await pilot.pause(0.02)
         else:
-            raise AssertionError("Sync run never completed.")
+            raise AssertionError("Sync run never completed with a done status.")
 
         # (task-3022) Same state-then-DOM race task-699 diagnosed for the
         # note-conflict family, a third instance of the same shape:
@@ -14288,11 +14598,13 @@ class _LibraryIngestCanvasHarness(LibraryIngestQueueMixin, App):
 
     def __init__(self, media_db, *, pool_factory=None, worker_count=None):
         super().__init__()
-        self.library_ingest_jobs = LibraryIngestJobRegistry()
+        # task-3315: the runtime-state contract is DERIVED from the app's own
+        # initializer, never hand-listed -- the hand-listed version missed
+        # `_ingest_local_stt_jobs` when the local-STT lane landed and ~20
+        # pilots died with AttributeError inside `_top_up_ingest_parse_pool`.
+        # Guarded by test_ingest_canvas_harness_mirrors_every_mixin_state_read.
+        self._init_library_ingest_runtime_state()
         self.media_db = media_db
-        self._ingest_parse_pool = None
-        self._ingest_parsed_payloads = {}
-        self._ingest_shutdown = False
         self._pool_factory = pool_factory or (lambda: _FakeIngestParsePool())
         self._worker_count_override = worker_count
         self.notes_scope_service = StaticLibraryNotesScopeService([])
@@ -14312,6 +14624,96 @@ class _LibraryIngestCanvasHarness(LibraryIngestQueueMixin, App):
 
     async def on_mount(self) -> None:
         await self.push_screen(LibraryScreen(self))
+
+
+def _library_ingest_mixin_state_reads() -> set[str]:
+    """AST-derive every ingest-runtime attribute LibraryIngestQueueMixin reads.
+
+    task-3315 guard input: the ingest coordinator/writer (``app.py``'s
+    ``LibraryIngestQueueMixin``) reads host state like
+    ``self._ingest_local_stt_jobs``; a harness that fakes the host but
+    misses one of those attributes dies with AttributeError deep inside a
+    pilot (the exact drift that broke ~20 job-lifecycle pilots here when
+    the local-STT lane landed). This walks the mixin's AST and returns
+    the ``_ingest_*`` / ``_local_stt_*`` / ``library_ingest_jobs`` names
+    it loads (plain attribute reads and defensive ``getattr(self, ...)``
+    reads), minus its own method names -- so the required set is derived
+    from the real code, never hand-listed.
+    """
+    import tldw_chatbook.app as _app_module
+
+    source = Path(_app_module.__file__).read_text(encoding="utf-8")
+    module = ast.parse(source)
+    mixin = next(
+        node
+        for node in module.body
+        if isinstance(node, ast.ClassDef) and node.name == "LibraryIngestQueueMixin"
+    )
+    method_names = {
+        node.name
+        for node in mixin.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+
+    def _wanted(name: str) -> bool:
+        return (
+            name.startswith(("_ingest_", "_local_stt_"))
+            or name == "library_ingest_jobs"
+        ) and name not in method_names
+
+    reads: set[str] = set()
+    for node in ast.walk(mixin):
+        if (
+            isinstance(node, ast.Attribute)
+            and isinstance(node.value, ast.Name)
+            and node.value.id == "self"
+            and isinstance(node.ctx, ast.Load)
+            and _wanted(node.attr)
+        ):
+            reads.add(node.attr)
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "getattr"
+            and len(node.args) >= 2
+            and isinstance(node.args[0], ast.Name)
+            and node.args[0].id == "self"
+            and isinstance(node.args[1], ast.Constant)
+            and isinstance(node.args[1].value, str)
+            and _wanted(node.args[1].value)
+        ):
+            reads.add(node.args[1].value)
+    assert reads, "AST derivation found no mixin state reads -- guard is vacuous"
+    return reads
+
+
+def test_ingest_canvas_harness_mirrors_every_mixin_state_read():
+    """(task-3315 AC#3) The harness must carry every host attribute the real
+    ingest job loop reads, DERIVED from the mixin's code -- when app.py grows
+    a new ``self._ingest_*`` read, this fails naming it instead of ~20 pilots
+    dying with AttributeError mid-run."""
+    reads = _library_ingest_mixin_state_reads()
+
+    harness = _LibraryIngestCanvasHarness(None)
+    missing = sorted(name for name in reads if not hasattr(harness, name))
+    assert not missing, (
+        "harness does not mirror mixin state reads; missing attributes: "
+        f"{missing}"
+    )
+    # ``media_db`` is the one documented host input outside the runtime-state
+    # seam (a constructor argument, not coordinator state).
+    assert hasattr(harness, "media_db")
+
+    # The shared initializer must itself cover every read: apply it to a bare
+    # object and require read-set coverage, so a new read in app.py that is
+    # not added to ``_init_library_ingest_runtime_state`` fails HERE by name.
+    bare = SimpleNamespace()
+    LibraryIngestQueueMixin._init_library_ingest_runtime_state(bare)
+    uninitialized = sorted(set(reads) - set(vars(bare)) - {"media_db"})
+    assert not uninitialized, (
+        "_init_library_ingest_runtime_state does not set every attribute the "
+        f"mixin reads: {uninitialized}"
+    )
 
 
 async def _open_library_ingest_canvas(screen, pilot):
@@ -15303,15 +15705,26 @@ async def test_library_shell_ingest_canvas_live_updates_without_manual_recompose
                 f"{harness.library_ingest_jobs.jobs()}"
             )
 
+        # The very refresh this loop waits for RECOMPOSES the rail, so the
+        # row is transiently unmounted mid-poll and a bare ``query_one``
+        # here raced that window (``NoMatches: No nodes match
+        # '#library-row-browse-media'`` at this line -- reproduced under CPU
+        # contention, and once in a plain non-notes batch run). Pre-existing
+        # dev-side flake (test authored at d54c7a252, untouched by this
+        # branch); filed as task-14800. Tolerate the gap instead of asserting
+        # into it -- the loop's own budget is the real failure signal.
+        media_label = "<rail row absent>"
         for _ in range(_INGEST_POLL_ATTEMPTS):
-            media_button = screen.query_one("#library-row-browse-media", Button)
-            if "Media (1)" in str(media_button.label):
-                break
+            rail_rows = screen.query("#library-row-browse-media")
+            if rail_rows:
+                media_label = str(rail_rows.first(Button).label)
+                if "Media (1)" in media_label:
+                    break
             await pilot.pause(_INGEST_POLL_INTERVAL)
         else:
             raise AssertionError(
                 f"Rail Media count never incremented after completion. "
-                f"Label: {media_button.label!r}"
+                f"Label: {media_label!r}"
             )
 
 
@@ -19532,6 +19945,19 @@ async def test_library_note_same_side_resize_does_no_presentation_work(
         "owner_height_at_100x30",
     ),
     (
+        # task-3315 re-pin (pre-arc dev drift, same causes as the 60x20
+        # family -- see _assert_task8_compact_chrome): the navigator list
+        # loses 3 rows to the LIB-19 database-purpose sentence (2 wrapped
+        # rows + 1 margin at widths 80/100); the editor/context routes lose
+        # 1 row to the source strip mounted by their full recompose.
+        # Round 2 (rebase onto dev f6911b37b): the navigator loses that
+        # source-strip row too -- dev d1df7d0a7 gated the targeted canvas
+        # swap on matching contextual chrome, so the rail press into the
+        # notes list now recomposes with the Database|Files strip (11 -> 10
+        # at 80x24, 17 -> 16 at 100x30). Reproduced against an extracted
+        # dev f6911b37b product tree, so this is dev's change, not the
+        # arc's. The invariant under test -- surplus goes ONLY to the named
+        # owner, growth exactly +6 for +6 terminal rows -- is unchanged.
         (
             "navigator",
             "#library-notes-list",
@@ -19542,8 +19968,8 @@ async def test_library_note_same_side_resize_does_no_presentation_work(
                 "#library-notes-transfer-actions",
                 "#library-notes-status-row",
             ),
-            14,
-            20,
+            10,
+            16,
         ),
         (
             "editor",
@@ -19555,15 +19981,15 @@ async def test_library_note_same_side_resize_does_no_presentation_work(
                 "#library-note-status",
                 "#library-note-primary-actions",
             ),
-            14,
-            20,
+            13,
+            19,
         ),
         (
             "context",
             "#library-note-context-region",
             ("#library-note-heading", "#library-note-context-status"),
-            17,
-            23,
+            16,
+            22,
         ),
     ),
 )
@@ -20418,7 +20844,12 @@ async def test_library_note_footer_tracks_editor_states_and_ancillary_contents()
 
         def footer_shortcuts() -> str:
             footers = list(screen.query(AppFooterStatus))
-            return footers[0].shortcut_text if footers else ""
+            text = footers[0].shortcut_text if footers else ""
+            # task-3315: pin the CONTEXTUAL segment only -- the merged
+            # ingest arc's shared footer (task-3302, PR #1452, in the dev
+            # base) appends a width-adaptive global suffix after " | "
+            # ("F1 help · ... · Ctrl+Q quit") to every Library footer.
+            return text.split(" | ")[0]
 
         async def wait_footer(expected: str) -> None:
             await _wait_for_condition(
@@ -20517,7 +20948,12 @@ async def test_library_note_footer_covers_navigator_create_sync_and_exit() -> No
 
         def footer_shortcuts() -> str:
             footers = list(screen.query(AppFooterStatus))
-            return footers[0].shortcut_text if footers else ""
+            text = footers[0].shortcut_text if footers else ""
+            # task-3315: pin the CONTEXTUAL segment only -- the merged
+            # ingest arc's shared footer (task-3302, PR #1452, in the dev
+            # base) appends a width-adaptive global suffix after " | "
+            # ("F1 help · ... · Ctrl+Q quit") to every Library footer.
+            return text.split(" | ")[0]
 
         async def wait_footer(expected: str) -> None:
             await _wait_for_condition(
@@ -20564,7 +21000,19 @@ async def test_library_note_footer_covers_navigator_create_sync_and_exit() -> No
         )
         await _wait_for_condition(
             pilot,
-            lambda: "use Library context in Console" in footer_shortcuts(),
+            # task-3315 re-pin: at the compact rail stage the footer now
+            # restores the rail-stage guidance ("/ focus search | esc focus
+            # rail") rather than the old "u use Library context in Console"
+            # hint (that hint is Search/RAG-context copy in
+            # LIBRARY_SHORTCUTS; the compact stage footers came with the
+            # notes-adaptive PR #1439 -- reproduced failing at dev base
+            # ebeae1440). The invariant kept: leaving Notes must clear the
+            # notes-local help and restore Library-level guidance.
+            lambda: (
+                "focus search" in footer_shortcuts()
+                and "Esc Library" not in footer_shortcuts()
+                and "Ctrl+N New" not in footer_shortcuts()
+            ),
             message="Library footer guidance did not restore after Notes exit.",
         )
         assert all(
@@ -22080,11 +22528,14 @@ async def test_library_note_fifty_same_side_resize_sequences_do_zero_notes_work(
         for name, wrapped in seams.items():
             assert wrapped.call_count == 0, name
         if expected_compact:
-            assert screen.query_one("#library-note-body").region.height == 14
+            # task-3315 re-pin: 13/19, not 14/20 -- the editor route settles
+            # with the 1-row source strip above the shell (pre-arc dev
+            # drift; see _assert_task8_compact_chrome's cause chain).
+            assert screen.query_one("#library-note-body").region.height == 13
             await pilot.resize_terminal(100, 30)
             await pilot.pause()
             assert screen.query_one("#library-note-body") is body
-            assert body.region.height == 20
+            assert body.region.height == 19
 
 
 @pytest.mark.asyncio

@@ -1485,6 +1485,68 @@ def test_short_ingest_error_leaves_single_prefix_alone():
     assert short_ingest_error(single) == single
 
 
+# --- task-3312 (#2): egress-blocked receipts read as plain language ----------
+
+# The exact text an egress-blocked URL ingest produces today:
+# web_article_ingestion wraps ``EgressBlockedError``'s message, whose remedy
+# tail carries the raw config-key brackets that leaked into the queue row
+# (live 2026-08-08: rendered a literal "\[web_security]" and clipped
+# mid-sentence at "config.toml,").
+_EGRESS_RAW_ERROR = (
+    "URL blocked by egress policy (SSRF guard): Egress blocked (private) "
+    "for http://127.0.0.1:8000 [remedy: add the host to [web_security] "
+    "allowed_hosts in config.toml, or set [web_security] enabled = false]"
+)
+
+
+def test_short_ingest_error_maps_egress_block_to_plain_language():
+    """task-3312 (#2): the queue receipt must match the pre-flight line's
+    plain-language register (task-3305) -- a complete sentence, no policy
+    jargon, no markup-hostile brackets -- while keeping the remedy.
+
+    (xhigh review round) The register is unchanged; the receipt now also
+    NAMES the refused origin, which the fixed sentence never did.
+    """
+    short = short_ingest_error(_EGRESS_RAW_ERROR)
+    assert "http://127.0.0.1:8000" in short
+    # No bracketed config-key syntax to fight the renderer with.
+    assert "[" not in short and "\\" not in short
+    # The remedy survives in plain words.
+    assert "allowed_hosts" in short
+    assert "web_security" in short
+    assert "config.toml" in short
+    # A complete sentence -- the live receipt ended "config.toml,".
+    assert short.endswith(".")
+
+
+def test_short_ingest_error_maps_egress_block_under_pipeline_wrappers():
+    """The pipeline may wrap the egress text in its historical
+    'Failed to … file:' layers; the mapping keys on the egress marker, not
+    on position."""
+    wrapped = f"Failed to ingest web file: {_EGRESS_RAW_ERROR}"
+    assert short_ingest_error(wrapped) == short_ingest_error(
+        _EGRESS_RAW_ERROR
+    )
+    assert "http://127.0.0.1:8000" in short_ingest_error(wrapped)
+
+
+def test_failed_queue_row_for_egress_block_carries_the_plain_receipt():
+    """The FAILED queue row (and Home's failed-item line, same helper)
+    renders the plain-language receipt, never the raw policy text."""
+    job = _job(
+        job_id="ingest-job-egress",
+        source_path="http://127.0.0.1:8000/page",
+        state=IngestJobState.FAILED,
+        error=_EGRESS_RAW_ERROR,
+    )
+    state = build_library_ingest_state((job,), form=LibraryIngestFormState())
+    (row,) = state.queue_rows
+    assert short_ingest_error(_EGRESS_RAW_ERROR) in row.line
+    assert "SSRF" not in row.line
+    assert "[web_security]" not in row.line
+    assert "[remedy" not in row.line
+
+
 def test_estimate_and_breakdown_suppressed_when_preflight_has_errors():
     """(task-2015) A '0 files' estimate parked under a path error is noise;
     error states render the error + recovery only."""
@@ -1509,7 +1571,7 @@ def test_start_disabled_when_every_staged_file_is_unsupported():
     """(task-2015) Pre-flight just promised every file will fail; Start must
     be disabled with the gate line explaining why."""
     preflight = PreflightResult(
-        type_groups={"unsupported": ["/tmp/x.json", "/tmp/y.jpg"]},
+        type_groups={"unsupported": ["/tmp/x.json", "/tmp/y.srt"]},
         warnings=[],
         errors=[],
         total_size=51,
@@ -1772,7 +1834,7 @@ def test_unsupported_line_names_files_and_matches_gate():
         (),
         form=LibraryIngestFormState(path="/tmp/folder"),
         preflight=PreflightResult(
-            type_groups={"unsupported": ["/tmp/x.json", "/tmp/y.jpg"]},
+            type_groups={"unsupported": ["/tmp/x.json", "/tmp/y.srt"]},
             warnings=[],
             errors=[],
             total_size=50,
@@ -1782,9 +1844,9 @@ def test_unsupported_line_names_files_and_matches_gate():
     )
     assert blocked.start_enabled is False
     assert blocked.unsupported_line == (
-        "Unsupported: x.json, y.jpg."
+        "Unsupported: x.json, y.srt."
         " Supported: PDF documents, Word/Office documents, audio/video files,"
-        " e-books, plain text files, web pages (by URL)."
+        " e-books, images, plain text files, web pages (by URL)."
     )
 
     many = build_library_ingest_state(
@@ -1911,6 +1973,63 @@ def test_capped_duplicate_forecast_says_at_least():
         "at least 20 files appear to already be in your Library"
     )
     assert "at least 20 will match" in capped.commit_summary_line
+
+
+def test_trim_time_validation_accepts_ffmpeg_forms_and_rejects_garbage():
+    """(task-3306) Start/Stop trim inputs are format-gated at the shared
+    validator seam: the values travel verbatim to ffmpeg's -ss/-to/-t (and
+    yt-dlp's postprocessor args), which accept plain seconds or
+    [HH:]MM:SS[.fraction] -- anything else fails the job only at run time,
+    long after the form could have said so."""
+    from tldw_chatbook.Library.ingest_capabilities import get_capabilities
+    from tldw_chatbook.Library.library_ingest_state import (
+        validate_ingest_option_value,
+    )
+
+    fields = {f.name: f for f in get_capabilities("audio_video").fields}
+    start_field = fields["start_time"]
+    end_field = fields["end_time"]
+
+    for good in ("", "  ", "90", "90.5", "0:30", "1:30", "01:02:03",
+                 "1:02:03.5", "10:5"):
+        assert validate_ingest_option_value(start_field, good) == "", good
+        assert validate_ingest_option_value(end_field, good) == "", good
+
+    for bad in ("abc", "1:75", "12:34:56:78", "-5", ":30", "1:2:3:4", "1h30"):
+        message = validate_ingest_option_value(start_field, bad)
+        assert message, bad
+        assert "Start at" in message
+        assert "HH:MM:SS" in message and "seconds" in message
+
+    bad_end = validate_ingest_option_value(end_field, "nope")
+    assert "Stop at" in bad_end
+
+
+def test_invalid_trim_time_gates_start_when_audio_panel_rendered(monkeypatch):
+    """(task-3306) End-to-end through the state gate: a malformed trim
+    value in a RENDERED audio/video panel blocks Start with a message."""
+    import tldw_chatbook.Library.library_ingest_state as state_mod
+
+    monkeypatch.setattr(state_mod, "_dependency_installed", lambda feature: True)
+    form = LibraryIngestFormState(path="/tmp/talk.mp3")
+    form.type_options["audio_video"] = {"start_time": "abc"}
+    state = build_library_ingest_state(
+        (),
+        form=form,
+        preflight=PreflightResult(
+            type_groups={"audio_video": ["/tmp/talk.mp3"]},
+            warnings=[],
+            errors=[],
+            total_size=100,
+            truncated=False,
+            total_files=1,
+        ),
+    )
+    assert not state.start_enabled
+    assert any(
+        group == "audio_video" and name == "start_time"
+        for group, name, _message in state.option_errors
+    )
 
 
 def test_option_errors_skip_hidden_groups_and_gated_fields():
@@ -2059,8 +2178,8 @@ def test_skipped_jobs_render_neutral_and_count_separately():
     skipped = _job(
         job_id="ingest-job-1",
         state=IngestJobState.SKIPPED,
-        source_path="/tmp/photo.jpg",
-        error="Unsupported file type: .jpg.",
+        source_path="/tmp/photo.xyz",
+        error="Unsupported file type: .xyz.",
     )
     done = _job(job_id="ingest-job-2", state=IngestJobState.DONE)
     state = build_library_ingest_state(
@@ -2070,7 +2189,7 @@ def test_skipped_jobs_render_neutral_and_count_separately():
     )
     row = next(r for r in state.queue_rows if r.job_id == "ingest-job-1")
     assert row.glyph == "○"
-    assert row.line.startswith("○ skipped · photo.jpg")
+    assert row.line.startswith("○ skipped · photo.xyz")
     assert row.can_retry is False
     assert row.can_dismiss is True
     assert state.queue_counts_line == "This queue: 1 done · 1 skipped"
@@ -2092,7 +2211,7 @@ def test_commit_summary_splits_skip_from_fail():
         preflight=PreflightResult(
             type_groups={
                 "generic": ["/tmp/a.txt", "/tmp/b.txt"],
-                "unsupported": ["/tmp/pic.jpg"],
+                "unsupported": ["/tmp/pic.srt"],
             },
             warnings=[],
             errors=[],
@@ -2105,7 +2224,7 @@ def test_commit_summary_splits_skip_from_fail():
     assert state.commit_summary_line == (
         "2 will import · 1 will skip · 1 will fail"
     )
-    assert "will be skipped: pic.jpg." in state.unsupported_line
+    assert "will be skipped: pic.srt." in state.unsupported_line
 
 
 def test_skips_only_queue_still_offers_clear_finished():
@@ -2340,7 +2459,7 @@ def test_consent_line_requires_every_importable_file_to_match() -> None:
         preflight=PreflightResult(
             type_groups={
                 "generic": ["/tmp/a.txt", "/tmp/b.txt"],
-                "unsupported": ["/tmp/pic.jpg"],
+                "unsupported": ["/tmp/pic.srt"],
             },
             warnings=[],
             errors=[],
@@ -2620,3 +2739,149 @@ def test_failed_row_detail_without_basename_echo_passes_through():
     assert state.queue_rows[0].line == (
         "✗ failed · broken.pdf · PDF Extraction Error."
     )
+
+
+# --- task-3308: .xml defers honestly (owner ruling in task-3310's notes) -----
+
+
+def test_xml_only_selection_gates_start_with_honest_copy():
+    """task-3308: an ``.xml``-only staging closes the Start gate and says
+    so in plain terms -- the "XML processing is not yet implemented" raise
+    must stay unreachable from the queue."""
+    preflight = PreflightResult(
+        type_groups={"unsupported": ["/tmp/feed.xml"]},
+        warnings=[],
+        errors=[],
+        total_size=512,
+        truncated=False,
+        total_files=1,
+    )
+    state = build_library_ingest_state(
+        (),
+        form=LibraryIngestFormState(path="/tmp/feed.xml", preflight=preflight),
+    )
+    assert state.start_enabled is False
+    assert state.start_quiet_line == (
+        "Nothing in this selection can be imported — 1 unsupported file."
+    )
+    assert "feed.xml" in state.unsupported_line
+    assert "Unsupported" in state.unsupported_line
+
+
+def test_xml_in_a_mixed_selection_renders_the_will_skip_line():
+    """task-3308: alongside importable files, the ``.xml`` is named on the
+    will-skip line (task-2220's "skipped, never attempted" ruling) and the
+    commit forecast counts it as a skip."""
+    preflight = PreflightResult(
+        type_groups={
+            "generic": ["/tmp/notes.txt"],
+            "unsupported": ["/tmp/feed.xml"],
+        },
+        warnings=[],
+        errors=[],
+        total_size=1024,
+        truncated=False,
+        total_files=2,
+    )
+    state = build_library_ingest_state(
+        (),
+        form=LibraryIngestFormState(path="/tmp", preflight=preflight),
+    )
+    assert state.start_enabled is True
+    assert state.unsupported_line == (
+        "1 unsupported file will be skipped: feed.xml."
+    )
+    assert "1 will skip" in state.commit_summary_line
+
+
+# --- task-3307: images join the supported set --------------------------------
+
+
+def test_breakdown_line_counts_images_task_3307():
+    from tldw_chatbook.Library.library_ingest_state import build_type_breakdown_line
+
+    assert build_type_breakdown_line({"image": ["/tmp/a.png"]}) == "1 image"
+    assert (
+        build_type_breakdown_line({"image": ["/tmp/a.png", "/tmp/b.jpg"]})
+        == "2 images"
+    )
+
+
+def test_intro_line_promises_images_task_3307():
+    from tldw_chatbook.Library.library_ingest_state import build_intro_lines
+
+    assert "images" in build_intro_lines()[0]
+
+
+def test_supported_copy_names_images_task_3307():
+    from tldw_chatbook.Library.library_ingest_state import SUPPORTED_FORMATS_COPY
+
+    assert "images" in SUPPORTED_FORMATS_COPY
+
+
+# --- xhigh review round: the egress receipt never named the host ------------
+
+
+def _egress_raw(origin: str, reason: str = "private") -> str:
+    """The exact shape ``EgressBlockedError`` produces (Utils/egress.py)."""
+    return (
+        f"URL blocked by egress policy (SSRF guard): Egress blocked "
+        f"({reason}) for {origin} [remedy: add the host to [web_security] "
+        "allowed_hosts in config.toml, or set [web_security] enabled = "
+        "false]"
+    )
+
+
+def test_egress_receipts_for_different_hosts_are_distinguishable():
+    """task-3312 flattened EVERY egress refusal into one fixed sentence
+    that never names the refused address, so a queue of blocked URLs read
+    as N copies of the same receipt and the expanded details could not
+    recover the host either. Keep the plain-language register; keep the
+    host."""
+    first = short_ingest_error(_egress_raw("http://127.0.0.1:8000"))
+    second = short_ingest_error(_egress_raw("https://internal.example.com"))
+
+    assert first != second, f"both receipts read {first!r}"
+    assert "127.0.0.1:8000" in first, first
+    assert "internal.example.com" in second, second
+    # Still plain language, still bracket-free (the live markup incident).
+    for receipt in (first, second):
+        assert "SSRF" not in receipt
+        assert "[" not in receipt and "\\" not in receipt
+        assert "allowed_hosts" in receipt
+        assert "web_security" in receipt
+        assert receipt.endswith(".")
+
+
+def test_egress_receipt_without_a_recoverable_host_keeps_the_generic_copy():
+    """A refusal whose origin cannot be parsed out (or renders with
+    markup-hostile IPv6 brackets) falls back to the host-less sentence
+    rather than inventing or leaking one."""
+    from tldw_chatbook.Library.library_ingest_state import (
+        INGEST_EGRESS_BLOCKED_COPY,
+    )
+
+    assert (
+        short_ingest_error("Egress blocked (dns_failure) for <invalid-url>")
+        == INGEST_EGRESS_BLOCKED_COPY
+    )
+    assert (
+        short_ingest_error(_egress_raw("http://[::1]:8000"))
+        == INGEST_EGRESS_BLOCKED_COPY
+    )
+
+
+def test_failed_queue_row_names_the_blocked_host(tmp_path=None):
+    """The receipt reaches the queue row (and, via the same helper, Home's
+    failed-item line)."""
+    job = _job(
+        job_id="ingest-job-egress-host",
+        source_path="http://127.0.0.1:8000/page",
+        state=IngestJobState.FAILED,
+        error=_egress_raw("http://127.0.0.1:8000"),
+    )
+    state = build_library_ingest_state((job,), form=LibraryIngestFormState())
+    (row,) = state.queue_rows
+    assert "127.0.0.1:8000" in row.line
+    assert "SSRF" not in row.line
+    assert "[web_security]" not in row.line

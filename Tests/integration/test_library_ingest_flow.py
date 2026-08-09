@@ -92,8 +92,12 @@ async def test_preflight_detects_pdf(library_screen, tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_guardrail_modal_shows_when_pdf_deps_missing(library_screen, tmp_path, monkeypatch):
-    """Select PDF with deps mocked missing, verify modal text."""
+async def test_inline_consent_gates_start_when_pdf_deps_missing(
+    library_screen, tmp_path, monkeypatch
+):
+    """(task-3314) Select PDF with deps mocked missing: the FIRST Start
+    press arms the inline confirm (no modal on any Start path), the SECOND
+    press submits and the job lands in the real registry."""
     screen, pilot = library_screen
     pdf = tmp_path / "doc.pdf"
     pdf.write_text("%PDF-1.4 dummy")
@@ -116,12 +120,19 @@ async def test_guardrail_modal_shows_when_pdf_deps_missing(library_screen, tmp_p
     await pilot.pause()
     await pilot.pause()
 
-    # Modal should be pushed and contain the warning text.
-    modal = screen.app.screen_stack[-1]
-    assert modal.__class__.__name__ == "IngestGuardrailModal"
-    texts = [str(w.renderable) for w in modal.query("Static")]
-    assert any("PDF processing" in t for t in texts)
-    assert any("Install pdf support" in t for t in texts)
+    # No modal, no job yet: the gate line carries the consent instead.
+    assert screen.app.screen_stack[-1] is screen
+    assert screen.app_instance.library_ingest_jobs.jobs() == ()
+    assert screen._library_ingest_start_confirm_armed is True
+
+    # Second press (a decision, not a double-click) submits for real.
+    screen._library_ingest_start_confirm_armed_at -= 1.0
+    screen._submit_library_ingest_form()
+    await pilot.pause()
+    await pilot.pause()
+
+    jobs = screen.app_instance.library_ingest_jobs.jobs()
+    assert [job.source_path for job in jobs] == [str(pdf)]
 
 
 def test_options_persist_to_config(monkeypatch):

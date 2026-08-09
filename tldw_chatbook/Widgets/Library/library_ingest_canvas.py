@@ -7,7 +7,6 @@ from datetime import datetime, timezone
 from pathlib import PurePath
 from typing import Any
 
-from rich.markup import escape as escape_markup
 from textual import on
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
@@ -32,18 +31,27 @@ from tldw_chatbook.Library.library_ingest_state import (
     LibraryIngestCanvasState,
     build_intro_lines,
     build_web_scope_note,
+    library_ingest_retry_label,
 )
 
 
 def _command_short_name(command: str) -> str:
     """A compact identifier for an install command's copy button.
 
-    Prefers the pyproject extra (``pip install -e ".[audio]"`` -> ``.[audio]``)
+    Prefers the pyproject extra (``pip install -e ".[audio]"`` -> ``audio``)
     because that is the part users recognise; anything else truncates.
+
+    (live-verify round) The bracketed spelling this used to return
+    (``.[audio]``) never reached the screen: a ``Button`` label is parsed
+    as Textual content markup, which ate ``[audio]`` as a style tag and
+    left every one of the six or seven stacked buttons rendering the
+    identical string "Copy install command (.)" -- the disambiguation was
+    invisible exactly when there was most to disambiguate. The extra's
+    bare name says the same thing and survives the renderer.
     """
-    match = re.search(r"\[[^\]]+\]", command)
+    match = re.search(r"\[([^\]]+)\]", command)
     if match:
-        return f".{match.group(0)}"
+        return match.group(1)
     return command if len(command) <= 24 else f"{command[:23]}…"
 
 
@@ -74,10 +82,15 @@ class LibraryIngestPreflightSummary(Vertical):
             return
         if state.errors:
             for index, error in enumerate(state.errors):
+                # (task-3312 #2) Verbatim, not escape-then-parse: the
+                # escape_markup/content-markup pairing leaks a literal
+                # backslash for mixed bracket runs (see the queue-row
+                # comment in ``LibraryIngestQueuePanel.compose``).
                 yield Static(
-                    escape_markup(error),
+                    error,
                     id=f"ingest-preflight-error-{index}",
                     classes="library-ingest-quiet-line",
+                    markup=False,
                 )
             if state.errors_are_path_problem:
                 # Re-running the same analysis on the same bad path fails
@@ -98,9 +111,10 @@ class LibraryIngestPreflightSummary(Vertical):
         if state.warning_lines:
             for index, warning in enumerate(state.warning_lines):
                 yield Static(
-                    f"⚠ {escape_markup(warning)}",
+                    f"⚠ {warning}",
                     id=f"ingest-preflight-warning-{index}",
                     classes="library-ingest-quiet-line",
+                    markup=False,
                 )
             # (task-3304, MI-17) The pip command must be recoverable AT the
             # warning -- the guardrail modal used to hold the only copy
@@ -211,11 +225,16 @@ class LibraryIngestQueuePanel(Vertical):
                     classes="library-ingest-batch-header",
                     markup=False,
                 )
-            # A source filename can contain Rich markup syntax (e.g. a
-            # literal "[/bracket]" in the name) -- escape_markup here is
-            # what keeps a hostile filename from raising MarkupError at
-            # mount time (the L3a lesson; mirrors
-            # ``library_rag_history_children``'s escaped Button labels).
+            # A source filename or error can contain markup syntax (a
+            # literal "[/bracket]" in the name, an error quoting config
+            # keys) -- ``markup=False`` below renders it verbatim, which
+            # both keeps a hostile filename from raising MarkupError at
+            # mount time (the L3a lesson) AND never leaks an escape
+            # backslash. The old ``escape_markup``-then-parse pairing did:
+            # rich's escape skips a bracket run that never closes as a tag
+            # while escaping the inner closed ones, and Textual's content
+            # markup then leaves the first escape's backslash literal --
+            # the live "\[web_security]" receipt (task-3312 #2).
             row_classes = "library-ingest-row"
             # (task-2230 a11y) Severity gets a colour IN ADDITION to the
             # glyph+word it already carries -- failed and done rows were
@@ -247,9 +266,10 @@ class LibraryIngestQueuePanel(Vertical):
                 # spacing.
                 row_classes += " library-ingest-row-with-actions"
             yield Static(
-                escape_markup(row.line),
+                row.line,
                 id=f"library-ingest-row-{index}",
                 classes=row_classes,
+                markup=False,
             )
             if row.progress:
                 progress_line = row.progress.get("message") if row.progress else ""
@@ -597,6 +617,17 @@ class LibraryIngestCanvas(VerticalScroll):
     for all state changes so the screen can persist them.
     """
 
+    # (task-3314) The two-press Start confirm rides the gate line; while
+    # armed it carries the warning treatment. Theme tokens only (the same
+    # rule the retired guardrail modal's CSS was pinned to); the "⚠" glyph
+    # in the copy keeps the state legible in monochrome.
+    DEFAULT_CSS = """
+    LibraryIngestCanvas .-ingest-start-confirm {
+        color: $warning;
+        text-style: bold;
+    }
+    """
+
     class OptionValueChanged(Message):
         """A per-type option value changed."""
 
@@ -753,8 +784,15 @@ class LibraryIngestCanvas(VerticalScroll):
                     else field.label
                 )
                 # (task-3304, MI-07) Disabled-state reason at the control.
+                # (live-verify round) APPENDED to ``label_text``, not
+                # rebuilt from ``field.label``: rebuilding dropped the hint
+                # -- so on a stock install the cookies field's "video URLs
+                # only" and the trim fields' "HH:MM:SS or seconds" were
+                # invisible exactly while the control was inert and the
+                # user had the most to work out. The checkbox branch above
+                # already appends; these two now agree.
                 if disabled and disabled_note:
-                    label_text = f"{field.label} — {disabled_note}"
+                    label_text = f"{label_text} — {disabled_note}"
                 children.append(
                     Static(
                         label_text,
@@ -1014,6 +1052,12 @@ class LibraryIngestCanvas(VerticalScroll):
             markup=False,
         )
         start_quiet_line.styles.height = 1
+        # (task-3314) The confirm treatment is state-keyed at compose time
+        # too, so a full recompose while armed keeps copy and styling in
+        # agreement; the gate updater owns the in-place toggle.
+        start_quiet_line.set_class(
+            state.start_confirm_armed, "-ingest-start-confirm"
+        )
         yield start_quiet_line
         # (task-3301) Analyze-readiness hint: says BEFORE Start that
         # "Analyze after import" cannot actually run (no provider / missing
@@ -1045,6 +1089,20 @@ class LibraryIngestCanvas(VerticalScroll):
         # Queue block lives in its own render-from-state child so registry
         # job ticks recompose ONLY it (task-2042).
         yield LibraryIngestQueuePanel(state, id="library-ingest-queue-panel")
+        # (task-3313) "Retry this batch": re-stages the last submission's
+        # source + options + metadata into the form. Lives with the queue's
+        # outcome area but deliberately OUTSIDE the recomposing queue panel
+        # -- always mounted, display-managed by the screen's dynamic-region
+        # updater (never conditionally composed, the four-incident lesson),
+        # so it keeps object identity across job ticks.
+        retry_last = Button(
+            library_ingest_retry_label(state.retry_confirm_armed),
+            id="library-ingest-retry-last",
+            classes="library-canvas-action",
+            compact=True,
+        )
+        retry_last.display = state.show_retry_last
+        yield retry_last
         # (task-3304, MI-08) Fold indicator, task-1623 convention: docked
         # chrome (a docked child of a scroll container never scrolls with
         # the content), always mounted, display-managed by

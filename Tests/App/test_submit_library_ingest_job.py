@@ -633,6 +633,131 @@ class TestIngestJobOptions:
 
         assert options["vad_filter"] is False
 
+    def test_trim_fields_travel_stripped(self) -> None:
+        """(task-3306) Start/Stop trim bounds reach the worker options."""
+        app = _minimal_app()
+        job = _make_job(
+            source_path="/tmp/test.mp3",
+            ingest_options={
+                "audio_video": {"start_time": " 0:30 ", "end_time": "10:00"}
+            },
+        )
+        options = app._ingest_job_options(job)
+
+        assert options["start_time"] == "0:30"
+        assert options["end_time"] == "10:00"
+
+    def test_trim_fields_default_unbounded(self) -> None:
+        """Untouched (or blank) trim inputs mean no trim at all."""
+        app = _minimal_app()
+        job = _make_job(
+            source_path="/tmp/test.mp3",
+            ingest_options={"audio_video": {"start_time": "", "end_time": "  "}},
+        )
+        options = app._ingest_job_options(job)
+
+        assert options["start_time"] is None
+        assert options["end_time"] is None
+
+    def test_cookies_file_maps_to_use_cookies_and_cookies(
+        self, tmp_path: Any
+    ) -> None:
+        """(task-3306) A cookies FILE PATH travels; its presence IS the
+        use_cookies flag -- there is no separate toggle to go stale.
+
+        (xhigh review round) The path must EXIST: this test used to assert
+        against an invented ``/home/u/cookies.txt``, which is precisely the
+        input the option boundary now has to reject.
+        """
+        cookies = tmp_path / "cookies.txt"
+        cookies.write_text("# Netscape HTTP Cookie File\n")
+        app = _minimal_app()
+        job = _make_job(
+            source_path="/tmp/test.mp4",
+            ingest_options={"audio_video": {"cookies_file": f"  {cookies}  "}},
+        )
+        options = app._ingest_job_options(job)
+
+        assert options["use_cookies"] is True
+        assert options["cookies"] == str(cookies)
+        assert "cookies_problem" not in options
+
+    def test_nonexistent_cookies_file_is_rejected_not_forwarded(
+        self, tmp_path: Any
+    ) -> None:
+        """(xhigh review round) An unvalidated path used to be forwarded
+        verbatim; ``download_video`` then tried to parse it as cookie JSON
+        and logged only "Invalid cookie format", so a typo'd path looked
+        like a working gated import that mysteriously failed. The option
+        boundary rejects it and records a reason the job can show."""
+        app = _minimal_app()
+        missing = tmp_path / "nope" / "cookies.txt"
+        job = _make_job(
+            source_path="/tmp/test.mp4",
+            ingest_options={"audio_video": {"cookies_file": str(missing)}},
+        )
+        options = app._ingest_job_options(job)
+
+        assert options["use_cookies"] is False
+        assert options["cookies"] is None
+        assert "cookies.txt" in options["cookies_problem"]
+
+    def test_directory_as_cookies_file_is_rejected(self, tmp_path: Any) -> None:
+        app = _minimal_app()
+        job = _make_job(
+            source_path="/tmp/test.mp4",
+            ingest_options={"audio_video": {"cookies_file": str(tmp_path)}},
+        )
+        options = app._ingest_job_options(job)
+
+        assert options["use_cookies"] is False
+        assert options["cookies_problem"]
+
+    def test_unsafe_cookies_path_is_rejected(self) -> None:
+        """Repo security rule: file paths go through ``path_validation``.
+        A shell-metacharacter path never becomes a yt-dlp argument."""
+        app = _minimal_app()
+        job = _make_job(
+            source_path="/tmp/test.mp4",
+            ingest_options={
+                "audio_video": {"cookies_file": "/tmp/$(whoami)/cookies.txt"}
+            },
+        )
+        options = app._ingest_job_options(job)
+
+        assert options["use_cookies"] is False
+        assert options["cookies"] is None
+        assert options["cookies_problem"]
+
+    def test_blank_cookies_file_means_no_cookies(self) -> None:
+        app = _minimal_app()
+        job = _make_job(
+            source_path="/tmp/test.mp4",
+            ingest_options={"audio_video": {"cookies_file": "   "}},
+        )
+        options = app._ingest_job_options(job)
+
+        assert options["use_cookies"] is False
+        assert options["cookies"] is None
+
+    def test_summarize_recursively_travels(self) -> None:
+        app = _minimal_app()
+        job = _make_job(
+            source_path="/tmp/test.mp3",
+            ingest_options={"audio_video": {"summarize_recursively": True}},
+        )
+        options = app._ingest_job_options(job)
+
+        assert options["summarize_recursively"] is True
+
+    def test_summarize_recursively_defaults_off(self) -> None:
+        app = _minimal_app()
+        job = _make_job(source_path="/tmp/test.mp3")
+
+        options = app._ingest_job_options(job)
+
+        assert options["summarize_recursively"] is False
+
     def test_faster_whisper_preserves_normalized_translation_target(self) -> None:
         app = _minimal_app()
         job = _make_job(
@@ -1212,6 +1337,25 @@ class TestIngestDoneProgress:
         )
         assert progress["analysis_failed"] == "Invalid API Name 'custom'"
 
+    def test_cookies_problem_is_visible_on_the_done_row(self) -> None:
+        """(task-3306 xhigh review round) A rejected cookies path must be
+        SEEN. The import still succeeds (public URLs need no cookies), so
+        the only honest signal is the same done-row annotation the analysis
+        skip/failure reasons use."""
+        progress = app_module._library_ingest_done_progress(
+            "/tmp/clip.mp4",
+            was_duplicate=False,
+            payload={"cookies_problem": "Cookies file not found: /tmp/c.txt"},
+        )
+        assert (
+            progress["message"]
+            == "Imported clip.mp4 — cookies ignored: Cookies file not found: "
+            "/tmp/c.txt"
+        )
+        assert progress["cookies_problem"] == (
+            "Cookies file not found: /tmp/c.txt"
+        )
+
     def test_duplicate_message_keeps_matched_prefix(self) -> None:
         from tldw_chatbook.Library.library_ingest_jobs import (
             INGEST_DUPLICATE_PROGRESS_PREFIX,
@@ -1469,3 +1613,64 @@ def test_invalid_audio_request_allows_next_job_to_dispatch(
     assert invalid.job_id in routing_warnings[0]
     assert "detected_type=audio" in routing_warnings[0]
     assert error_fragment in routing_warnings[0]
+
+
+# --- task-3307: image group branch in _ingest_job_options --------------------
+
+
+class TestImageIngestJobOptions:
+    def test_image_group_options_travel(self) -> None:
+        """The image branch feeds ``process_image``'s OCR knobs."""
+        app = _minimal_app()
+        job = _make_job(
+            source_path="/tmp/scan.png",
+            ingest_options={
+                "generic": {"chunk": True, "chunk_size": 800, "chunk_overlap": 80},
+                "image": {
+                    "ocr": True,
+                    "ocr_language": "de",
+                    "ocr_backend": "tesseract",
+                },
+            },
+        )
+
+        options = app._ingest_job_options(job)
+
+        assert options["ocr"] is True
+        assert options["ocr_language"] == "de"
+        assert options["ocr_backend"] == "tesseract"
+        # The generic base still applies (task-3301 layering), and the
+        # chunk method is the explicit words unit the size hint promises
+        # (task-3303 F12) -- process_image chunks the OCR text itself via
+        # improved_chunking_process.
+        assert options["chunk_options"] == {
+            "size": 800,
+            "max_size": 800,
+            "overlap": 80,
+            "method": "words",
+        }
+
+    def test_image_group_defaults_without_snapshot(self) -> None:
+        """An untouched form mirrors the schema/processor defaults: OCR on
+        (the extracted text IS the imported content), auto backend, en."""
+        app = _minimal_app()
+        job = _make_job(source_path="/tmp/scan.jpg")
+
+        options = app._ingest_job_options(job)
+
+        assert options["ocr"] is True
+        assert options["ocr_language"] == "en"
+        assert options["ocr_backend"] == "auto"
+
+    def test_image_ocr_off_travels(self) -> None:
+        """OCR off must reach the processor as False -- the parse then
+        extracts nothing and the persist seam fails the job honestly."""
+        app = _minimal_app()
+        job = _make_job(
+            source_path="/tmp/scan.png",
+            ingest_options={"image": {"ocr": False}},
+        )
+
+        options = app._ingest_job_options(job)
+
+        assert options["ocr"] is False

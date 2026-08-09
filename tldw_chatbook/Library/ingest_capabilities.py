@@ -179,6 +179,11 @@ _FEATURE_TO_EXTRA: dict[str, str] = {
     "lxml": "ebook",
     "parakeet_onnx": "transcription_parakeet",
     "parakeet_mlx": "mlx_whisper",
+    # (task-3307) The OCR-backend umbrella recovers via the one extra that
+    # is explicitly OCR-purposed. Docling (via [pdf]) or a bare
+    # `pip install pytesseract` work just as well -- the failure detail
+    # names the alternatives; an install COMMAND can only name one extra.
+    "image_ocr": "ocr_docext",
     "pdf_processing": "pdf",
     "pymupdf": "pdf",
     "pymupdf4llm": "pdf",
@@ -197,6 +202,9 @@ _GROUP_EXTRAS: dict[str, tuple[str, ...]] = {
     # Document ingestion's one flagged optional feature (docling) installs
     # via the pdf extra; nothing document-specific has an extra of its own.
     "document": (),
+    # (task-3307) The OCR extra is the image group's one install route
+    # with a pyproject name.
+    "image": ("ocr_docext",),
     "generic": (),
 }
 
@@ -215,6 +223,9 @@ _FEATURE_LABELS: dict[str, str] = {
     "ebooklib": "ebooklib",
     "faster_whisper": "Faster Whisper",
     "html2text": "html2text",
+    # (task-3307) Named so the image group's warning reads "OCR backend
+    # isn't installed" rather than the ocr_docext extra's own label.
+    "image_ocr": "OCR backend",
     "lightning_whisper_mlx": "Lightning Whisper MLX",
     "lxml": "lxml",
     "parakeet_onnx": "Parakeet ONNX",
@@ -245,6 +256,38 @@ _FEATURE_REQUIRED_PACKAGES: dict[str, tuple[str, ...]] = {
     # Video reuses the audio stack; ``check_video_processing_deps`` sets it
     # straight from ``audio_processing``.
     "video_processing": ("soundfile", "scipy"),
+}
+
+#: (task-3307) ANY-OF-over-ALL-OF umbrella features: installed when EVERY
+#: package in at least ONE group imports. The all-of grammar above cannot
+#: express "one OCR backend, whichever": image ingestion needs SOME backend
+#: the OCR manager registers (``OCR_Backends._register_backends``), and no
+#: real install carries all five. Import names, not PyPI names (tesseract's
+#: package is pytesseract). Deliberately NOT the ``ocr_processing`` flag
+#: from ``optional_deps``: ``check_ocr_deps`` reports available when bare
+#: ``openai``/``gradio_client`` import -- true for docext's API mode, a lie
+#: as "an OCR backend exists".
+#:
+#: (xhigh review round) The groups mirror ``OCR_Backends``' own
+#: ``is_available()`` rules exactly, because a flat list of single import
+#: names did not: ``PADDLEOCR_AVAILABLE`` requires BOTH ``paddle`` and
+#: ``paddleocr``, and the docext backend requires a companion for whichever
+#: mode it runs in. Preflight consequently promised an OCR backend in
+#: environments where ``ocr_manager`` registers nothing -- so the image
+#: group raised no warning and the import then failed with an empty
+#: extraction. ``Tests/Library/test_ingest_capabilities.py`` drives the
+#: real backend classes against each group (and each group minus one
+#: package), so this table cannot drift from OCR_Backends unnoticed.
+_FEATURE_ANY_PACKAGES: dict[str, tuple[tuple[str, ...], ...]] = {
+    "image_ocr": (
+        ("docling",),
+        ("pytesseract",),
+        ("easyocr",),
+        ("paddle", "paddleocr"),
+        ("docext", "gradio_client"),
+        ("docext", "transformers"),
+        ("docext", "openai"),
+    ),
 }
 
 #: Memoised results of the ``find_spec`` fallback in :func:`_is_installed`.
@@ -279,8 +322,15 @@ def _probe_installed(feature_id: str) -> bool:
         return cached
 
     required = _FEATURE_REQUIRED_PACKAGES.get(feature_id)
+    any_of = _FEATURE_ANY_PACKAGES.get(feature_id)
     if required is not None:
         result = all(_module_present(package) for package in required)
+    elif any_of is not None:
+        # (task-3307) An any-of-over-all-of umbrella: one COMPLETE group of
+        # alternatives makes the feature real.
+        result = any(
+            all(_module_present(package) for package in group) for group in any_of
+        )
     else:
         # A feature is installed only when every package it depends on imports.
         info = OPTIONAL_FEATURES.get(feature_id)
@@ -367,6 +417,11 @@ def _install_hint(feature_id: str) -> dict[str, str]:
 #: ``(group, feature)``; absent pairs keep the extra's own wording.
 _GROUP_FEATURE_HINTS: dict[tuple[str, str], str] = {
     ("document", "docling"): "scanned-document OCR",
+    # (task-3307) ``_install_hint`` resolves image_ocr through the
+    # ocr_docext extra, whose blurb names docext's own toolkit; what the
+    # user is actually missing is the ability to get any text out of an
+    # image at all.
+    ("image", "image_ocr"): "extracting text from images",
 }
 
 #: Sentinel group returned by :func:`get_type_group` for files this app has no
@@ -598,13 +653,65 @@ _TYPE_GROUPS: dict[str, TypeGroupCapabilities] = {
                 label="Transcription model",
                 type="select",
                 default="base",
-                options=("tiny", "base", "small", "medium", "large"),
+                # (task-3306) The full catalog the transcription service
+                # itself declares for faster-whisper
+                # (``TranscriptionService.list_available_models``): the
+                # batch router passes an explicit faster-whisper model
+                # through untouched, and the service hands it straight to
+                # ``WhisperModel`` -- so the old five-size list silently
+                # withheld large-v3, every English-only ``.en`` variant,
+                # the distil family, and the community turbo/CrisperWhisper
+                # builds. Order mirrors the service list.
+                options=(
+                    "tiny",
+                    "tiny.en",
+                    "base",
+                    "base.en",
+                    "small",
+                    "small.en",
+                    "medium",
+                    "medium.en",
+                    "large-v1",
+                    "large-v2",
+                    "large-v3",
+                    "large",
+                    "distil-large-v2",
+                    "distil-medium.en",
+                    "distil-small.en",
+                    "distil-large-v3",
+                    "deepdml/faster-distil-whisper-large-v3.5",
+                    "deepdml/faster-whisper-large-v3-turbo-ct2",
+                    "nyrahealth/faster_CrisperWhisper",
+                ),
                 option_labels=(
                     ("tiny", "Tiny (fastest · least accurate)"),
+                    ("tiny.en", "Tiny · English-only"),
                     ("base", "Base (fast)"),
+                    ("base.en", "Base · English-only"),
                     ("small", "Small (balanced)"),
+                    ("small.en", "Small · English-only"),
                     ("medium", "Medium (more accurate · slower)"),
-                    ("large", "Large (most accurate · slowest)"),
+                    ("medium.en", "Medium · English-only"),
+                    ("large-v1", "Large v1 (legacy)"),
+                    ("large-v2", "Large v2"),
+                    ("large-v3", "Large v3 (most accurate · slowest)"),
+                    ("large", "Large (latest large build)"),
+                    ("distil-large-v2", "Distil Large v2 (distilled · faster)"),
+                    ("distil-medium.en", "Distil Medium · English-only"),
+                    ("distil-small.en", "Distil Small · English-only"),
+                    ("distil-large-v3", "Distil Large v3 (distilled · faster)"),
+                    (
+                        "deepdml/faster-distil-whisper-large-v3.5",
+                        "Distil Large v3.5 (community build)",
+                    ),
+                    (
+                        "deepdml/faster-whisper-large-v3-turbo-ct2",
+                        "Large v3 Turbo (community build)",
+                    ),
+                    (
+                        "nyrahealth/faster_CrisperWhisper",
+                        "CrisperWhisper (verbatim · community build)",
+                    ),
                 ),
                 depends_on="faster_whisper",
                 enabled_when="transcription_provider",
@@ -655,6 +762,66 @@ _TYPE_GROUPS: dict[str, TypeGroupCapabilities] = {
                 label="Voice activity detection (VAD) filter",
                 type="checkbox",
                 default=False,
+                depends_on="audio_processing",
+            ),
+            OptionField(
+                # (task-3306) ``process_audio_files(start_time=...)`` /
+                # ``process_videos(start_time=...)``: local files trim via
+                # ffmpeg (-ss/-to/-t), YouTube audio via yt-dlp
+                # postprocessor args. The value travels verbatim, so the
+                # accepted format is gated at the shared validator seam
+                # (``validate_ingest_option_value``).
+                name="start_time",
+                label="Start at",
+                type="text",
+                default="",
+                placeholder="e.g. 0:30 or 90",
+                hint="HH:MM:SS or seconds · blank = from start",
+                depends_on="audio_processing",
+            ),
+            OptionField(
+                name="end_time",
+                label="Stop at",
+                type="text",
+                default="",
+                placeholder="e.g. 10:00",
+                hint="HH:MM:SS or seconds · blank = to end",
+                depends_on="audio_processing",
+            ),
+            OptionField(
+                # (task-3306) A cookies FILE PATH, never raw cookie text:
+                # this options map persists with the job and echoes into
+                # ``[library.ingest_options.audio_video]`` in config.toml,
+                # where a credential must not land (and the video
+                # processor logs its kwargs at debug level). Only the
+                # video (yt-dlp) download path consumes the file
+                # (``ydl_opts["cookiefile"]``); the audio downloader's
+                # cookies parameter is a JSON dict with different
+                # semantics, so the job-option builder deliberately does
+                # not feed this path to it.
+                name="cookies_file",
+                label="Cookies file for gated URLs",
+                type="text",
+                default="",
+                placeholder="/path/to/cookies.txt",
+                hint="Netscape cookies.txt · video URLs only",
+                depends_on="yt_dlp",
+            ),
+            OptionField(
+                # (task-3306) ``process_audio_files(summarize_recursively=
+                # ...)``: with chunking on and analysis running, the
+                # processor summarizes each chunk and then combines the
+                # summaries (map-reduce) instead of one direct call. The
+                # Analyze gate lives in the GENERIC group, which
+                # ``enabled_when`` cannot reach across groups (the gate
+                # lookup and the per-group value maps are both
+                # group-scoped), so the dependency is stated in the hint --
+                # the task-3303 convention.
+                name="summarize_recursively",
+                label="Recursive summary (map-reduce)",
+                type="checkbox",
+                default=False,
+                hint="with Analyze after import · needs chunking",
                 depends_on="audio_processing",
             ),
         ),
@@ -712,6 +879,76 @@ _TYPE_GROUPS: dict[str, TypeGroupCapabilities] = {
                 type="checkbox",
                 default=True,
                 depends_on="ebook_processing",
+            ),
+        ),
+    ),
+    # (task-3307, ship ruling recorded in task-3310) Raster images: the
+    # imported content IS the text OCR extracts (``process_image``), so the
+    # whole panel is the OCR story. Visual features are deliberately not
+    # offered: ``persist_parsed_media`` forwards no metadata, so the toggle
+    # would compute a dict the pipeline drops (rejected-with-note in the
+    # task).
+    "image": TypeGroupCapabilities(
+        group="image",
+        label="Images",
+        noun_singular="image",
+        noun_plural="images",
+        # Without at least one OCR backend no image can produce content --
+        # the import always fails -- so the any-of umbrella is REQUIRED,
+        # not merely nice to have (contrast the document group, whose
+        # native parsers stand in for docling).
+        required_features=("image_ocr",),
+        optional_features=(),
+        fields=(
+            OptionField(
+                name="ocr",
+                label="Extract text (OCR)",
+                type="checkbox",
+                # Mirrors ``process_image``'s own enable_ocr=True -- and
+                # with OCR off there is nothing to import: the job fails
+                # honestly at the persist seam.
+                default=True,
+                depends_on="image_ocr",
+                hint="the extracted text is what gets imported",
+            ),
+            OptionField(
+                name="ocr_language",
+                label="OCR language",
+                type="text",
+                default="en",
+                depends_on="image_ocr",
+                enabled_when="ocr",
+                hint="e.g. en, de, fr",
+                disabled_reason="needs Extract text (OCR) on",
+            ),
+            OptionField(
+                name="ocr_backend",
+                label="OCR backend",
+                type="select",
+                default="auto",
+                # The OCR manager's registered backends
+                # (``OCR_Backends._register_backends``), ordered by its own
+                # default-selection priority; "auto" lets it pick the best
+                # installed one.
+                options=(
+                    "auto",
+                    "docext",
+                    "docling",
+                    "tesseract",
+                    "easyocr",
+                    "paddleocr",
+                ),
+                option_labels=(
+                    ("auto", "Auto (best installed backend)"),
+                    ("docext", "Docext (vision model)"),
+                    ("docling", "Docling"),
+                    ("tesseract", "Tesseract"),
+                    ("easyocr", "EasyOCR"),
+                    ("paddleocr", "PaddleOCR"),
+                ),
+                depends_on="image_ocr",
+                enabled_when="ocr",
+                disabled_reason="needs Extract text (OCR) on",
             ),
         ),
     ),
@@ -874,9 +1111,10 @@ def get_type_group(path_or_url: str) -> str:
         path_or_url: Local path, or an http(s) URL.
 
     Returns:
-        One of ``pdf``, ``document``, ``audio_video``, ``ebook``, ``web``,
-        ``generic``, or ``unsupported``. Unsupported file types are mapped to
-        ``unsupported`` so the pre-flight summary can surface them separately.
+        One of ``pdf``, ``document``, ``image``, ``audio_video``, ``ebook``,
+        ``web``, ``generic``, or ``unsupported``. Unsupported file types are
+        mapped to ``unsupported`` so the pre-flight summary can surface them
+        separately.
     """
     try:
         file_type = detect_file_type(path_or_url)
@@ -899,7 +1137,25 @@ def get_type_group(path_or_url: str) -> str:
         # options. Placed before the URL check for the same reason pdf/
         # ebook are: an extension on a URL still says what the target IS.
         return "document"
-    if _is_http_url(path_or_url) and file_type in ("plaintext", "html", "xml"):
+    if file_type == "image" and not _is_http_url(path_or_url):
+        # (task-3307) Raster FILES get their own group. Unlike pdf/ebook/
+        # document above, the image group deliberately does NOT claim URLs:
+        # the pipeline routes every URL through ``classify_ingest_source``,
+        # which has no image branch, so ``https://example.com/chart.png``
+        # is fetched and scraped as an article and ``process_image`` is
+        # never called. Claiming it made the canvas report "1 image", mount
+        # the OCR panel and raise the OCR-backend warning that forces the
+        # two-press consent -- and then discard every OCR option
+        # (task-3307 xhigh review round). Downloading image URLs to OCR
+        # them is a real feature, but it is one the pipeline would have to
+        # grow first; until then the canvas tells the truth.
+        return "image"
+    if _is_http_url(path_or_url) and file_type in (
+        "plaintext",
+        "html",
+        "xml",
+        "image",
+    ):
         # A bare ".html"/".htm" URL is a page to fetch, not a local file to
         # read; the extension says how it is written, not where it lives.
         return _url_type_group(path_or_url)

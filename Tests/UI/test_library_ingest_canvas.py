@@ -188,7 +188,7 @@ async def test_unsupported_files_summary_renders():
         assert str(summary.renderable) == (
             "Unsupported: weird.xyz."
             " Supported: PDF documents, Word/Office documents, audio/video"
-            " files, e-books, plain text files, web pages (by URL)."
+            " files, e-books, images, plain text files, web pages (by URL)."
         )
 
 
@@ -1334,7 +1334,7 @@ async def test_unsupported_files_summary_pluralizes_correctly():
         assert str(summary.renderable) == (
             "Unsupported: a.xyz, b.xyz."
             " Supported: PDF documents, Word/Office documents, audio/video"
-            " files, e-books, plain text files, web pages (by URL)."
+            " files, e-books, images, plain text files, web pages (by URL)."
         )
 
 
@@ -1979,3 +1979,171 @@ async def test_parakeet_folder_placeholder_is_an_example_not_the_label():
             )
             assert model_dir.placeholder == "/path/to/parakeet-model"
             assert model_dir.placeholder != "Local Parakeet model folder"
+
+
+@pytest.mark.asyncio
+async def test_failed_queue_row_bracket_error_renders_clean():
+    """(task-3312 #2) The queue-row Static rendered ``escape_markup``ed
+    text WITH markup enabled. ``rich.markup.escape`` skips a bracket run
+    that never closes as a tag (``[remedy: … [``) while escaping the inner
+    closed ones (``[keys]``), and Textual's content markup then leaves the
+    FIRST escape's backslash literal -- the live 2026-08-08 receipt showed
+    ``\\[web_security]`` verbatim (REPL-pinned: escape+from_markup on this
+    exact shape leaks). Verbatim ``markup=False`` rendering: byte-identical
+    text, no escape artifacts, nothing swallowed as a tag."""
+    error = (
+        "note [remedy: check [keys] in config.toml, or set [keys] off]"
+    )
+    failed = LibraryIngestJob(
+        job_id="ingest-job-1",
+        source_path="/tmp/[draft] notes.txt",
+        state=IngestJobState.FAILED,
+        error=error,
+    )
+    state = build_library_ingest_state((failed,), form=_default_form())
+    app = _CanvasHost(state)
+    async with app.run_test() as pilot:
+        row = pilot.app.query_one("#library-ingest-row-0", Static)
+        text = row.visual.plain
+        assert "[draft] notes.txt" in text, text
+        assert "\\[" not in text, text
+        # Nothing swallowed as a markup tag: the error text is intact.
+        assert error in text, text
+
+
+# --- live-verify round: gated text fields lost their hint --------------------
+
+
+def _audio_video_state() -> LibraryIngestCanvasState:
+    form = _default_form()
+    form.expanded_type_groups.add("audio_video")
+    return build_library_ingest_state(
+        (),
+        form=form,
+        preflight=PreflightResult(
+            type_groups={"audio_video": ["/tmp/a.mp3"]},
+            warnings=[],
+            errors=[],
+            total_size=0,
+            truncated=False,
+            total_files=1,
+        ),
+    )
+
+
+def _label_before(pilot, widget_id: str) -> str:
+    """The ``.type-group-field-label`` Static rendered above ``widget_id``."""
+    field = pilot.app.query_one(f"#{widget_id}")
+    siblings = list(field.parent.children)
+    index = siblings.index(field)
+    for candidate in reversed(siblings[:index]):
+        if isinstance(candidate, Static) and candidate.has_class(
+            "type-group-field-label"
+        ):
+            return candidate.visual.plain
+    raise AssertionError(f"no field label found above #{widget_id}")
+
+
+@pytest.mark.asyncio
+async def test_enabled_text_field_label_carries_its_hint():
+    """Baseline: the unit/format hint rides the label line (task-2223)."""
+    app = _CanvasHost(_audio_video_state())
+    with patch(
+        "tldw_chatbook.Widgets.Library.library_ingest_canvas._is_installed",
+        return_value=True,
+    ):
+        async with app.run_test() as pilot:
+            label = _label_before(pilot, "opt-audio_video-start_time")
+            assert "HH:MM:SS or seconds" in label, label
+            cookies = _label_before(pilot, "opt-audio_video-cookies_file")
+            assert "video URLs only" in cookies, cookies
+
+
+@pytest.mark.asyncio
+async def test_disabled_text_field_label_keeps_its_hint_too():
+    """The disabled branch rebuilt the label from ``field.label`` alone, so
+    the hint vanished exactly when the field is inert and the user most
+    needs to know what it wants -- on a stock install that is every gated
+    text field ("video URLs only", "HH:MM:SS or seconds"). The checkbox
+    branch never had the bug; the text branch must match it."""
+    app = _CanvasHost(_audio_video_state())
+    with patch(
+        "tldw_chatbook.Widgets.Library.library_ingest_canvas._is_installed",
+        return_value=False,
+    ):
+        async with app.run_test() as pilot:
+            assert (
+                pilot.app.query_one(
+                    "#opt-audio_video-cookies_file", Input
+                ).disabled
+                is True
+            )
+            cookies = _label_before(pilot, "opt-audio_video-cookies_file")
+            assert "video URLs only" in cookies, (
+                f"the gated field lost its hint: {cookies!r}"
+            )
+            assert "needs" in cookies, (
+                f"the disabled reason must still be there: {cookies!r}"
+            )
+            start = _label_before(pilot, "opt-audio_video-start_time")
+            assert "HH:MM:SS or seconds" in start, start
+
+
+# --- live-verify round: stacked copy buttons were indistinguishable ----------
+
+
+@pytest.mark.asyncio
+async def test_each_copy_install_button_names_its_own_extra():
+    """Six or seven "Copy install command" buttons stacked under the audio
+    warnings all RENDERED the same string: the disambiguator was spelled
+    ``.[audio]`` and a Button label is parsed as content markup, so
+    ``[audio]`` was eaten as a style tag and every button read "Copy
+    install command (.)". Each must name its own extra, visibly."""
+    warnings = [
+        {
+            "feature": "audio_processing",
+            "label": "Audio processing",
+            "hint": "audio transcription",
+            "command": 'pip install -e ".[audio]"',
+        },
+        {
+            "feature": "video_processing",
+            "label": "Video processing",
+            "hint": "video ingestion",
+            "command": 'pip install -e ".[video]"',
+        },
+        {
+            "feature": "faster_whisper",
+            "label": "faster-whisper",
+            "hint": "local transcription",
+            "command": 'pip install -e ".[transcription_faster_whisper]"',
+        },
+    ]
+    state = build_library_ingest_state(
+        (),
+        form=_default_form(),
+        preflight=PreflightResult(
+            type_groups={"audio_video": ["/tmp/a.mp3"]},
+            warnings=warnings,
+            errors=[],
+            total_size=0,
+            truncated=False,
+            total_files=1,
+        ),
+    )
+    app = _CanvasHost(state)
+    async with app.run_test() as pilot:
+        rendered = [
+            pilot.app.query_one(
+                f"#ingest-preflight-copy-command-{index}", Button
+            ).label.plain
+            for index in range(len(warnings))
+        ]
+        assert len(set(rendered)) == len(rendered), (
+            f"stacked copy buttons render identically: {rendered}"
+        )
+        assert any("audio" in text for text in rendered), rendered
+        assert any("video" in text for text in rendered), rendered
+        assert any(
+            "transcription_faster_whisper" in text for text in rendered
+        ), rendered

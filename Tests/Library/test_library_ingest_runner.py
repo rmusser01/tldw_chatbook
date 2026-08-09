@@ -238,18 +238,14 @@ class _IngestRunnerHarness(LibraryIngestQueueMixin, App):
         local_stt_dispatch_factory: Callable[..., dict[str, Any]] | None = None,
     ) -> None:
         super().__init__()
-        self.library_ingest_jobs = LibraryIngestJobRegistry()
+        # task-3315: runtime state DERIVED from the app's own initializer
+        # (LibraryIngestQueueMixin._init_library_ingest_runtime_state) instead
+        # of hand-listed, so a new `self._ingest_*` read in app.py can never
+        # silently drift this harness. Host inputs (media_db, the fake
+        # local-STT executor) are then applied on top.
+        self._init_library_ingest_runtime_state()
         self.media_db = media_db
-        self._ingest_parse_pool = None
-        self._ingest_parse_pool_generation = 0
-        self._ingest_parse_jobs_by_generation: dict[int, set[str]] = {}
-        self._ingest_parse_pool_stop_event: Optional[threading.Event] = None
-        self._ingest_parsed_payloads: dict[str, dict] = {}
-        self._ingest_shutdown = False
-        self._local_stt_executor_lock = threading.RLock()
         self._local_stt_executor = local_stt_executor
-        self._local_stt_dispatch_coordinator = None
-        self._ingest_local_stt_jobs: dict[str, tuple[int, str]] = {}
         self._pool_factory = pool_factory or (lambda: _FakeIngestParsePool())
         self._pool_create_count = 0
         self._worker_count_override = worker_count
@@ -422,20 +418,21 @@ async def test_directory_unsupported_file_is_skipped_alone(tmp_path: Path) -> No
     folder = tmp_path / "mixed"
     folder.mkdir()
     _write_text_file(folder, "good.txt", "A perfectly ingestible document.")
-    (folder / "cover.jpg").write_bytes(b"not really a jpeg")
+    # (task-3307: was cover.jpg -- images are a supported group now)
+    (folder / "cover.xyz").write_bytes(b"no handler for this")
     app = _IngestRunnerHarness(db, worker_count=2)
 
     async with app.run_test() as pilot:
         app.submit_library_ingest_job(source_path=str(folder))
 
         jobs = {Path(j.source_path).name: j for j in app.library_ingest_jobs.jobs()}
-        assert set(jobs) == {"good.txt", "cover.jpg"}
+        assert set(jobs) == {"good.txt", "cover.xyz"}
 
         await _wait_for_job_state(
             app, pilot, jobs["good.txt"].job_id, IngestJobState.DONE
         )
         skipped = await _wait_for_job_state(
-            app, pilot, jobs["cover.jpg"].job_id, IngestJobState.SKIPPED
+            app, pilot, jobs["cover.xyz"].job_id, IngestJobState.SKIPPED
         )
         assert "Unsupported file type" in skipped.error
 

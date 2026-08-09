@@ -32,15 +32,17 @@ needed.
 Correction to the original scout note: it is NOT true that no scoped
 unstyled token is a query-selector marker. Verified 2026-08-04 by
 grepping every scoped file for `query(".x")` / `query_one(".x")` /
-`has_class("x")` / `@on(..., ".x")` against each unstyled token: seven of
-the registered tokens below ARE selector handles, not styling oversights
--- one (`copy-command`) is a production `@on(Button.Pressed, ...)` event
-route in library_screen.py; six more (`console-send-button`,
-`console-settings-error-summary`, `console-transcript-summary-banner`,
-`destination-purpose`, `destination-status-row`,
-`mcp-perm-server-profile-row`) are pinned by has_class()/query()
-assertions in tests. Each is documented individually below rather than
-folded into a blanket claim.
+`has_class("x")` / `@on(..., ".x")` against each unstyled token: several
+of the registered tokens below ARE selector handles, not styling
+oversights -- `console-send-button`, `console-settings-error-summary`,
+`console-transcript-summary-banner`, `destination-purpose`,
+`destination-status-row` and `mcp-perm-server-profile-row` are pinned by
+has_class()/query() assertions in tests, and `console-markdown-header`/
+`console-markdown-footer` are read by ConsoleMarkdownMessage's own
+in-place `sync_message` update. Each is documented individually below
+rather than folded into a blanket claim. (A seventh, `copy-command`, was
+a production `@on(Button.Pressed, ...)` route until IngestGuardrailModal
+was deleted; see the note where its entry used to be.)
 """
 import re
 from pathlib import Path
@@ -121,6 +123,19 @@ KNOWN_UNSTYLED: dict[str, str] = {
         "hidden entirely via query_one(#id) + styles.display/height, never "
         "selected via the class."
     ),
+    "console-markdown-footer": (
+        "query-selector handle: ConsoleMarkdownMessage.sync_message reads "
+        "query_one('.console-markdown-footer', Static) to update it in "
+        "place. Sizing comes from that widget's own DEFAULT_CSS type rule "
+        "(`ConsoleMarkdownMessage > Static`), so the class carries no "
+        "style of its own by design."
+    ),
+    "console-markdown-header": (
+        "query-selector handle, same pair as console-markdown-footer "
+        "above: sync_message updates it via query_one('.console-markdown-"
+        "header', Static); styled by the `ConsoleMarkdownMessage > Static` "
+        "type rule in the widget's DEFAULT_CSS."
+    ),
     "console-save-as-context": (
         "plain descriptive Static (role/excerpt text) with no visual "
         "treatment of its own; not queried by class anywhere."
@@ -163,11 +178,18 @@ KNOWN_UNSTYLED: dict[str, str] = {
         "plain descriptive handoff-status-row Static; no distinct rule, "
         "not queried."
     ),
-    "copy-command": (
-        "event-routing selector for @on(Button.Pressed, '.copy-command') "
-        "in library_screen.py:872 -- a functional selector, not a style "
-        "hook."
-    ),
+    # (xhigh review round) "copy-command" WAS here, as the event-routing
+    # selector for @on(Button.Pressed, '.copy-command') in
+    # library_screen.py. Deleting IngestGuardrailModal removed the only
+    # composition of that class and the handler with it -- verified by
+    # grep across the whole package: no classes="…copy-command…" and no
+    # `.copy-command` selector survive anywhere. The inline warnings'
+    # replacement copy buttons carry a DIFFERENT token
+    # (`ingest-preflight-copy-command`, Widgets/Library/
+    # library_ingest_canvas.py), which is not composed in any scoped file,
+    # so widening SCOPES was not the answer either. The one remaining
+    # "copy-command" in the tree is an unrelated `id=` in
+    # Utils/widget_helpers.py, which this registry does not track.
     "destination-purpose": (
         "query-selector handle pinned by test_destination_shells.py:1094 "
         "(screen.query_one('.destination-purpose', Static)), not a style "
