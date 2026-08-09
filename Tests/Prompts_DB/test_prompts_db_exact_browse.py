@@ -283,6 +283,35 @@ def test_browse_prompts_sorts_with_same_direction_id_tie_breaker(
 
 
 @pytest.mark.parametrize(
+    ("sort_order", "expected_name_pages"),
+    [
+        ("asc", [["Kelvin", "Zulu"], ["éclair", "Éclair"]]),
+        ("desc", [["Éclair", "éclair"], ["Zulu", "Kelvin"]]),
+    ],
+)
+def test_browse_prompts_name_sort_matches_python_lower_across_pages(
+    database, sort_order, expected_name_pages
+):
+    ids = {
+        name: _insert_prompt(database, name=name)
+        for name in ("Zulu", "Kelvin", "éclair", "Éclair")
+    }
+
+    pages = []
+    for page in (1, 2):
+        items, total_pages, current_page, total_items = database.browse_prompts(
+            sort_by="name", sort_order=sort_order, page=page, page_size=2
+        )
+        pages.append([(item["name"], item["id"]) for item in items])
+        assert (total_pages, current_page, total_items) == (2, page, 4)
+
+    assert pages == [
+        [(name, ids[name]) for name in expected_names]
+        for expected_names in expected_name_pages
+    ]
+
+
+@pytest.mark.parametrize(
     ("kwargs", "error", "message"),
     [
         ({"query": None}, TypeError, "query"),

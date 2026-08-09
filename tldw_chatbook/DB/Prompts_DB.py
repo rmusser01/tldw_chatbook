@@ -161,7 +161,7 @@ class PromptsDatabase:
     _LIVENESS_PING_IDLE_SECONDS = 30.0
     _PROMPT_BROWSE_SORT_COLUMNS = {
         "last_modified": "p.last_modified",
-        "name": "p.name COLLATE NOCASE",
+        "name": "prompt_browse_lower(p.name)",
     }
     _PROMPT_BROWSE_SORT_ORDERS = {"asc": "ASC", "desc": "DESC"}
 
@@ -2670,7 +2670,7 @@ class PromptsDatabase:
                     ).fetchone()[0]
                     if collection_table_count != 2:
                         return [], 0, 1, 0
-                if normalized_query:
+                if normalized_query or normalized_sort == "name":
                     conn.create_function(
                         "prompt_browse_lower", 1, str.lower, deterministic=True
                     )
@@ -2707,10 +2707,6 @@ class PromptsDatabase:
                     rows = [dict(row) for row in cursor.fetchall()]
             return rows, total_pages, current_page, total_items
         except sqlite3.Error as e:
-            logger.opt(exception=True).error(
-                "Error browsing prompts "
-                f"(collection_id={collection_id!r}, query_chars={len(normalized_query)}): {e}"
-            )
             raise DatabaseError(f"Failed to browse prompts: {e}") from e
 
     # ============================= Library read seams (task-1337) =========================================
