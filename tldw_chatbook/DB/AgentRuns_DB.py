@@ -22,6 +22,7 @@ from loguru import logger
 
 from tldw_chatbook.Agents.agent_models import (
     AgentDefinition,
+    TERMINAL_RUN_STATUSES,
     validate_agent_definition,
 )
 from .base_db import BaseDB
@@ -644,8 +645,12 @@ class AgentRunsDB(BaseDB):
                 (json.dumps(existing), _now_iso(), run_id),
             )
 
-    def set_status(self, run_id: str, status: str, result: str | None = None) -> None:
+    def set_status(self, run_id: str, status: str, result: str | None = None) -> bool:
         """Update a run's terminal (or in-progress) status.
+
+        A run already in a terminal status is never rewritten (first-writer-wins),
+        because an abandoned child thread can persist after the coordinator recorded
+        a terminal status, and we must not overwrite that with a late update.
 
         Args:
             run_id: The run to update.
@@ -655,13 +660,20 @@ class AgentRunsDB(BaseDB):
                 text; when ``None`` the existing ``result`` column is left
                 unchanged (``COALESCE``), so a status-only update never
                 clobbers a previously recorded result.
+
+        Returns:
+            True if the run was updated (a row changed), False if the run is
+            already terminal or does not exist.
         """
+        placeholders = ",".join("?" for _ in TERMINAL_RUN_STATUSES)
         with self.transaction() as conn:
-            conn.execute(
+            cursor = conn.execute(
                 "UPDATE agent_runs SET status = ?, "
-                "result = COALESCE(?, result), updated_at = ? WHERE id = ?",
-                (status, result, _now_iso(), run_id),
+                "result = COALESCE(?, result), updated_at = ? "
+                f"WHERE id = ? AND status NOT IN ({placeholders})",
+                (status, result, _now_iso(), run_id, *sorted(TERMINAL_RUN_STATUSES)),
             )
+        return cursor.rowcount > 0
 
     def reconcile_orphaned_runs(self) -> int:
         """Mark runs left ``running`` by a crashed process as ``error``.
