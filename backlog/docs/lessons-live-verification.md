@@ -532,7 +532,7 @@ event-loop child-watcher and pipe-transport behavior on the host platform.
 
 ---
 
-## `.value = "x"` in a Pilot test cannot see a widget that never paints its own text (TASK-3795.1, 2026-08-09)
+## `.value = "x"` in a Pilot test cannot see a widget that never paints its own text (TASK-13154.1, 2026-08-09)
 
 **What happened.** Live-verifying the new Settings ▸ Agents CRUD editor (fleet
 PR-1), clicking into the Name field and typing produced no visible change at
@@ -581,7 +581,7 @@ the same field.
 
 ---
 
-## The app's own config-rewrite-on-boot can corrupt its own file into invalid TOML, and the failure mode is a silent profile swap, not an error (TASK-3795.1, 2026-08-09)
+## The app's own config-rewrite-on-boot can corrupt its own file into invalid TOML, and the failure mode is a silent profile swap, not an error (TASK-13154.1, 2026-08-09)
 
 **What happened.** Mid live-verification of the same fleet PR-1 task, a
 scratch profile launched via `TLDW_CONFIG_PATH=<scratch>/config.toml` (the
@@ -626,4 +626,4 @@ independent of the verification recipe: a config loader whose own
 normalization pass can write itself into unparseable TOML, with no visible
 failure and a silent fallback to the default profile, is a data-integrity and
 privacy-boundary risk for real users, not just scratch-profile verification —
-filed as task-3798.
+filed as task-13157.

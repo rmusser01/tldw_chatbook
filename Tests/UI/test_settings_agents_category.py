@@ -102,6 +102,39 @@ async def test_panel_selection_round_trip_updates_in_place(runs_db):
 
 
 @pytest.mark.asyncio
+async def test_panel_inputs_carry_the_compact_class_that_makes_them_paint(runs_db):
+    # Live-verification finding (task-13154.1, 2026-08-09): the Name/
+    # Description/Model override/Tools Input widgets were missing
+    # classes="settings-compact-input" -- the class every other Settings
+    # Input in this screen carries so it can live inside
+    # .settings-input-row's height:1. Without it, Textual's default 3-row
+    # bordered Input chrome ate the panel's single available row and NEVER
+    # painted placeholder or value text on screen, though .value/Save/DB
+    # were always correct -- which is exactly why no earlier test here (all
+    # of which set .value directly) could catch it. This guard asserts the
+    # class directly rather than the paint itself, since the harness above
+    # does not load the real CSS bundle (`.settings-input-row`'s height:1
+    # rule lives there, not in DEFAULT_CSS) and so cannot reproduce the
+    # collapse either way -- see lessons-live-verification.md for the two
+    # entries this incident produced.
+    panel = AgentsSettingsPanel(app_instance=None, runs_db=runs_db)
+    async with PanelHarness(panel).run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        for widget_id in (
+            "#agents-name-input",
+            "#agents-description-input",
+            "#agents-model-input",
+            "#agents-tools-input",
+        ):
+            widget = panel.query_one(widget_id)
+            assert widget.has_class("settings-compact-input"), (
+                f"{widget_id} is missing settings-compact-input -- it will "
+                "not paint its placeholder or value inside "
+                ".settings-input-row's height:1"
+            )
+
+
+@pytest.mark.asyncio
 async def test_panel_without_db_shows_notice(tmp_path):
     panel = AgentsSettingsPanel(app_instance=None, runs_db=None)
     async with PanelHarness(panel).run_test(size=(120, 40)) as pilot:

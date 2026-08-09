@@ -1,5 +1,5 @@
 ---
-id: TASK-3798
+id: TASK-13157
 title: >-
   Config boot-rewrite can write invalid TOML (duplicate key), silently degrading
   to default_user profile
