@@ -1766,6 +1766,96 @@ with stray left-edge border fragments), and padding 0 1 so the full
     margin: 0 0 1 0;
 }
 
+/* TASK-196: retained history is a compact disclosure inside the editor's
+   existing scroll owner. It deliberately adds neither another card nor a
+   VerticalScroll; the persistent action strip remains a sibling below. */
+#library-prompt-history-region,
+#library-prompt-history-collapsible {
+    width: 100%;
+    height: auto;
+    min-height: 0;
+}
+
+#library-prompt-history-region {
+    margin: 1 0 1 0;
+}
+
+#library-prompt-history-collapsible > CollapsibleTitle {
+    width: 100%;
+    color: $ds-text-primary;
+    text-style: bold;
+}
+
+.library-prompt-history-row {
+    width: 100%;
+    min-width: 0;
+    height: auto;
+    min-height: 3;
+    margin: 0 0 1 0;
+    content-align: left middle;
+}
+
+.library-prompt-history-row.history-selected {
+    outline: tall $ds-focus-accent;
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+}
+
+#library-prompt-history-metadata,
+#library-prompt-history-compatibility,
+#library-prompt-history-restore-reason,
+#library-prompt-history-outcome,
+#library-prompt-history-keywords-disclosure,
+#library-prompt-history-outcome-keywords,
+.library-prompt-history-error,
+.library-prompt-history-success {
+    width: 100%;
+    height: auto;
+    margin: 0 0 1 0;
+}
+
+.library-prompt-history-metadata,
+#library-prompt-history-compatibility,
+#library-prompt-history-restore-reason,
+#library-prompt-history-keywords-disclosure,
+#library-prompt-history-outcome-keywords {
+    color: $ds-text-muted;
+}
+
+.library-prompt-history-error {
+    color: $ds-status-error-readable;
+}
+
+.library-prompt-history-success {
+    color: $ds-status-ready;
+}
+
+#library-prompt-history-system,
+#library-prompt-history-user {
+    width: 100%;
+    height: auto;
+    min-height: 4;
+    max-height: 10;
+    margin: 0 0 1 0;
+}
+
+#library-prompt-history-region .library-canvas-action {
+    max-width: 100%;
+    margin: 0 0 1 0;
+}
+
+/* TASK-196 / TASK-1801: the reason line explains why restore is gated, but
+   the disabled action label must remain discoverable too. Neutralise the
+   app + Textual compound opacity stack and let the dark surface, rather
+   than illegible ink, communicate the inert state. `$text-muted` measures
+   above the product's 3:1 disabled-label floor on this surface. */
+#library-prompt-history-restore:disabled {
+    opacity: 100%;
+    text-opacity: 100%;
+    color: $text-muted;
+    background: $surface-darken-1;
+}
+
 /* TASK-202: the prompt editor owns two rows. The only vertical scroll owner
    is the content row; the action area measures to its controls below it. This
    prevents a tall editor from pushing its completion controls past the canvas. */

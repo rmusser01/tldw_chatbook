@@ -15,12 +15,16 @@ from rich.markup import escape as escape_markup
 from textual.app import ComposeResult
 from textual.css.query import NoMatches
 from textual.containers import Horizontal, Vertical, VerticalScroll
-from textual.widgets import Button, Checkbox, Input, Static, TextArea
+from textual.reactive import reactive
+from textual.widgets import Button, Checkbox, Collapsible, Input, Static, TextArea
 
 from tldw_chatbook.Library.library_prompts_state import (
     PromptEditorState,
+    PromptHistoryState,
     PromptsListState,
+    history_restore_gate,
     prompt_editor_meta_line,
+    prompt_history_count_label,
 )
 from tldw_chatbook.Widgets.Prompts.prompt_block_editor import PromptBlockEditor
 from tldw_chatbook.Widgets.Prompts.prompt_block_editor_state import (
@@ -34,6 +38,293 @@ _EMPTY_PROMPTS_FILTER_COPY = "No prompts match your filter."
 # explaining the two-part prompt model to a new user.
 _SYSTEM_PROMPT_HINT = "Instructions the model always follows."
 _USER_PROMPT_HINT = "The message inserted into the composer."
+
+
+class LibraryPromptHistoryRegion(Vertical):
+    """Recompose only the retained-history disclosure, never the editor."""
+
+    view_model: reactive[tuple[PromptHistoryState | None, bool, bool]] = reactive(
+        (None, False, True), recompose=True
+    )
+
+    def __init__(
+        self,
+        state: PromptHistoryState | None,
+        *,
+        dirty: bool,
+        current_compatible: bool,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(**kwargs)
+        self.view_model = (state, dirty, current_compatible)
+
+    def sync_state(
+        self,
+        state: PromptHistoryState | None,
+        *,
+        dirty: bool,
+        current_compatible: bool,
+    ) -> None:
+        """Apply one immutable view model and recompose this region only."""
+        if state is not None:
+            try:
+                self.query_one(
+                    "#library-prompt-history-collapsible", Collapsible
+                ).title = prompt_history_count_label(state)
+            except NoMatches:
+                pass
+        self.view_model = (state, dirty, current_compatible)
+
+    def compose(self) -> ComposeResult:
+        state, dirty, current_compatible = self.view_model
+        if state is None:
+            return
+        body = list(
+            self._body_children(
+                state,
+                dirty=dirty,
+                current_compatible=current_compatible,
+            )
+        )
+        yield Collapsible(
+            *body,
+            title=prompt_history_count_label(state),
+            collapsed=not state.is_open,
+            id="library-prompt-history-collapsible",
+        )
+
+    def _body_children(
+        self,
+        state: PromptHistoryState,
+        *,
+        dirty: bool,
+        current_compatible: bool,
+    ) -> list[Static | Button | TextArea]:
+        children: list[Static | Button | TextArea] = []
+        if state.count_status == "error":
+            children.extend(
+                (
+                    Static(
+                        "Retained history count is unavailable.",
+                        id="library-prompt-history-count-error",
+                        classes="library-prompt-history-error",
+                        markup=False,
+                    ),
+                    Button(
+                        "Retry count",
+                        id="library-prompt-history-retry-count",
+                        classes="library-canvas-action",
+                        compact=True,
+                    ),
+                )
+            )
+        if state.page_status == "loading" and not state.rows:
+            children.append(
+                Static(
+                    "Loading retained history…",
+                    id="library-prompt-history-loading",
+                    classes="destination-purpose",
+                    markup=False,
+                )
+            )
+        elif state.page_status == "error":
+            children.extend(
+                (
+                    Static(
+                        state.error or "Couldn't load retained history.",
+                        id="library-prompt-history-page-error",
+                        classes="library-prompt-history-error",
+                        markup=False,
+                    ),
+                    Button(
+                        "Retry",
+                        id="library-prompt-history-retry-page",
+                        classes="library-canvas-action",
+                        compact=True,
+                    ),
+                )
+            )
+        elif state.page_status == "loaded" and not state.rows:
+            children.append(
+                Static(
+                    "No retained versions are available.",
+                    id="library-prompt-history-empty",
+                    classes="destination-purpose",
+                    markup=False,
+                )
+            )
+
+        for row in state.rows:
+            artifact_label = row.artifact_type.title()
+            if row.artifact_type_raw and (
+                row.artifact_type_raw.casefold() != row.artifact_type.casefold()
+            ):
+                artifact_label = (
+                    f"{artifact_label} · stored type {row.artifact_type_raw}"
+                )
+            label = escape_markup(
+                f"v{row.version} · change {row.change_id} · "
+                f"{row.timestamp} · {artifact_label}\n{row.change_summary}"
+            )
+            button = Button(
+                label,
+                id=f"library-prompt-history-row-{row.change_id}",
+                classes="library-prompt-history-row",
+                compact=True,
+            )
+            button.change_id = row.change_id
+            button.source_version = row.version
+            button.set_class(
+                state.selected is not None
+                and state.selected.change_id == row.change_id
+                and state.selected.source_version == row.version,
+                "history-selected",
+            )
+            children.append(button)
+
+        if state.page_status == "loading" and state.rows:
+            children.append(
+                Static(
+                    "Loading older retained versions…",
+                    id="library-prompt-history-loading-older",
+                    classes="destination-purpose",
+                    markup=False,
+                )
+            )
+        elif state.has_more:
+            children.append(
+                Button(
+                    "Load older versions",
+                    id="library-prompt-history-load-older",
+                    classes="library-canvas-action",
+                    compact=True,
+                )
+            )
+
+        selection = state.selected
+        if selection is not None:
+            row = selection.row
+            metadata = (
+                f"Selected v{row.version} · change {row.change_id}\n"
+                f"Name: {row.name or '—'}\nAuthor: {row.author or '—'}\n"
+                f"Description: {row.details or '—'}\n"
+                f"Keywords: {', '.join(row.keywords) if row.keywords else '—'}"
+            )
+            children.extend(
+                (
+                    Static(
+                        metadata,
+                        id="library-prompt-history-metadata",
+                        classes="library-prompt-history-metadata",
+                        markup=False,
+                    ),
+                    Static(
+                        "Stored System lane",
+                        classes="library-prompt-field-label",
+                        markup=False,
+                    ),
+                    TextArea(
+                        row.system_preview,
+                        read_only=True,
+                        id="library-prompt-history-system",
+                    ),
+                    Static(
+                        "Stored User lane",
+                        classes="library-prompt-field-label",
+                        markup=False,
+                    ),
+                    TextArea(
+                        row.user_preview,
+                        read_only=True,
+                        id="library-prompt-history-user",
+                    ),
+                    Static(
+                        row.compatibility_reason
+                        or "Compatible with current local Prompt capabilities.",
+                        id="library-prompt-history-compatibility",
+                        classes=(
+                            "library-prompt-history-compatibility"
+                            if row.restore_eligible
+                            else "library-prompt-history-error"
+                        ),
+                        markup=False,
+                    ),
+                )
+            )
+            if not row.keywords_captured:
+                children.append(
+                    Static(
+                        "Current keywords were not captured in this older retained "
+                        "version; restoring it keeps the current keywords.",
+                        id="library-prompt-history-keywords-disclosure",
+                        classes="destination-purpose",
+                        markup=False,
+                    )
+                )
+
+        gate = history_restore_gate(state, dirty=dirty)
+        restore_reason = gate.reason
+        if not current_compatible:
+            restore_reason = (
+                "This compatibility-only editor cannot restore retained history."
+            )
+        if state.restore_request is not None:
+            restore_reason = "Restoring retained version…"
+        elif (
+            state.restore_outcome is not None and state.restore_outcome.reload_required
+        ):
+            restore_reason = state.restore_outcome.message
+        restore_enabled = (
+            gate.enabled
+            and current_compatible
+            and state.restore_request is None
+            and not (
+                state.restore_outcome is not None
+                and state.restore_outcome.reload_required
+            )
+        )
+        if restore_enabled:
+            restore_reason = "Confirmation creates a new current version."
+        children.extend(
+            (
+                Button(
+                    "Restore selected version…",
+                    id="library-prompt-history-restore",
+                    classes="library-canvas-action console-action-primary",
+                    compact=True,
+                    disabled=not restore_enabled,
+                ),
+                Static(
+                    restore_reason,
+                    id="library-prompt-history-restore-reason",
+                    classes="destination-purpose",
+                    markup=False,
+                ),
+            )
+        )
+        if state.restore_outcome is not None:
+            children.append(
+                Static(
+                    state.restore_outcome.message,
+                    id="library-prompt-history-outcome",
+                    classes=(
+                        "library-prompt-history-success"
+                        if state.restore_outcome.kind in {"restored", "no_change"}
+                        else "library-prompt-history-error"
+                    ),
+                    markup=False,
+                )
+            )
+            if state.restore_outcome.keyword_disclosure:
+                children.append(
+                    Static(
+                        state.restore_outcome.keyword_disclosure,
+                        id="library-prompt-history-outcome-keywords",
+                        classes="destination-purpose",
+                        markup=False,
+                    )
+                )
+        return children
 
 
 class LibraryPromptsListCanvas(Vertical):
@@ -104,6 +395,8 @@ class LibraryPromptsListCanvas(Vertical):
         dirty: bool = False,
         can_update_original: bool = False,
         include_starter_content: bool = False,
+        history_state: PromptHistoryState | None = None,
+        history_current_compatible: bool = True,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
@@ -121,6 +414,8 @@ class LibraryPromptsListCanvas(Vertical):
         self.dirty = dirty
         self.can_update_original = can_update_original
         self.include_starter_content = include_starter_content
+        self.history_state = history_state
+        self.history_current_compatible = history_current_compatible
         self.styles.width = "1fr"
         self.styles.min_width = 40
 
@@ -289,7 +584,9 @@ class LibraryPromptsListCanvas(Vertical):
                 yield Input(value=editor_state.name, id="library-prompt-name")
                 # Task 8b U4: rendered label only -- the DB/record field name
                 # (``details``, ``#library-prompt-details``) is untouched.
-                yield Static("Description", classes="library-prompt-field-label", markup=False)
+                yield Static(
+                    "Description", classes="library-prompt-field-label", markup=False
+                )
                 yield Input(value=editor_state.details, id="library-prompt-details")
                 yield Static(
                     (
@@ -346,7 +643,9 @@ class LibraryPromptsListCanvas(Vertical):
                     markup=False,
                 )
                 yield Static(
-                    _SYSTEM_PROMPT_HINT, classes="library-prompt-field-hint", markup=False
+                    _SYSTEM_PROMPT_HINT,
+                    classes="library-prompt-field-hint",
+                    markup=False,
                 )
                 yield TextArea(
                     editor_state.compiled_system_preview,
@@ -371,7 +670,9 @@ class LibraryPromptsListCanvas(Vertical):
                     placeholder="Keywords (comma-separated)",
                     id="library-prompt-keywords",
                 )
-                yield Static("Author", classes="library-prompt-field-label", markup=False)
+                yield Static(
+                    "Author", classes="library-prompt-field-label", markup=False
+                )
                 yield Input(value=editor_state.author, id="library-prompt-author")
                 yield Static(
                     prompt_editor_meta_line(editor_state, dirty=self.dirty),
@@ -403,6 +704,15 @@ class LibraryPromptsListCanvas(Vertical):
                             classes="library-canvas-action",
                             compact=True,
                         )
+                # Keep the empty region mounted for an unsaved editor so its
+                # first successful create can reveal history without
+                # remounting the editor fields or persistent action strip.
+                yield LibraryPromptHistoryRegion(
+                    self.history_state,
+                    dirty=self.dirty,
+                    current_compatible=self.history_current_compatible,
+                    id="library-prompt-history-region",
+                )
 
             with Vertical(id="library-prompt-editor-actions"):
                 if self.conflict:
@@ -431,7 +741,9 @@ class LibraryPromptsListCanvas(Vertical):
                             compact=True,
                             disabled=(
                                 editor_state.prompt_id is not None
-                                and (block_state is None or not self.can_update_original)
+                                and (
+                                    block_state is None or not self.can_update_original
+                                )
                             ),
                         )
                     with Vertical(id="library-prompt-actions-content"):
