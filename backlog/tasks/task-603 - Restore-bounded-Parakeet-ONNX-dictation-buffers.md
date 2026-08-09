@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-07-24 01:04'
-updated_date: '2026-08-09 04:22'
+updated_date: '2026-08-09 05:31'
 labels:
   - stt
   - dictation
@@ -33,8 +33,8 @@ Preserve microphone and in-memory buffer transcription after legacy Parakeet rem
 - [x] #1 The public bounded-buffer transcription path uses LocalSTTExecutor and returns normalized Parakeet ONNX results without creating another model process.
 - [x] #2 The Parakeet ONNX streaming factory reports unsupported through the existing fallback contract rather than advertising true streaming.
 - [x] #3 At most one dictation inference is pending; new audio coalesces within explicit duration and byte limits and never silently drops captured samples.
-- [ ] #4 When limits would be exceeded, capture pauses visibly with a recoverable overrun state and resumes only through an explicit user action.
-- [ ] #5 Dictation is selected before the next batch item without preempting active native inference, and users can pause future batch dispatch while local transcription is busy.
+- [x] #4 When limits would be exceeded, capture pauses visibly with a recoverable overrun state and resumes only through an explicit user action.
+- [x] #5 Dictation is selected before the next batch item without preempting active native inference, and users can pause future batch dispatch while local transcription is busy.
 - [ ] #6 Latency, backpressure, cancellation, shutdown, and batch coexistence tests pass on representative supported platforms before legacy providers can be removed.
 <!-- AC:END -->
 
@@ -57,11 +57,5 @@ Plan: Docs/superpowers/plans/2026-08-08-task-603-bounded-parakeet-dictation.md
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Implemented the bounded Parakeet ONNX dictation path under [ADR-025](../decisions/025-shared-stt-artifacts-and-runtime-routing.md). One app-owned LocalSTTExecutor and LocalSTTDispatchCoordinator now serve both Library file work and bounded Console PCM buffers; frame-based logical boundaries, one pending inference, format-derived 60-second/byte limits, generation fencing, and one-shot retry ownership prevent a second model process or unbounded queue. The Parakeet ONNX streaming factory continues to report unsupported, so this remains bounded whole-segment recognition rather than true streaming.
-
-Console wiring uses the existing chip/controller for busy, limit, explicit physical resume, retained caret insertion without auto-send, and bounded faster-whisper retry. The retired production route is bypassed but its dead legacy implementation remains intentionally present for TASK-605. Evidence is recorded in [Docs/STT_Evaluation/task-603](../../Docs/STT_Evaluation/task-603/README.md).
-
-Fresh post-rebase focused evidence at f8827ddff24b7415acc1b7f40dc40564b55a014d: 148 coordinator/executor/runtime/facade tests passed in 7.31s; ten exact app/Chat/UI contract nodes passed in 13.18s; review-fix boundary nodes passed and the full coordinator file passed 38 tests; changed-package py_compile and git diff --check passed. Changed-file Ruff reports only two proven pre-existing findings in Tests/Library/test_library_ingest_runner.py. Whole-branch review fixed one Important one-shot over-limit defect and approved focused re-review with no remaining finding.
-
-The macOS runtime evidence is a non-UI fallback: the real app factory, app-owned coordinator/executor, and Parakeet v2 INT8 ONNX CPU transcribed 4.7025 seconds / 150480 PCM bytes to the exact expected English sentence in 4.407s without network or profile/store mutation. It does not prove a real Mic press or Console surface. The one required changed-test union aborted at 96% with exit 134 during a background retained Parakeet MLX native warm-up; its exact active node passed alone, but the union is not green. Real Mic/caret, visible busy ordering, live limit/explicit resume, safe real retry, Windows, Linux, and TASK-605 remain open. Mergeable implementation evidence is partial, not release-gate completion; status remains In Progress and AC4-AC6 remain unchecked.
+Implemented bounded Parakeet ONNX dictation under ADR-025: one app-owned LocalSTTExecutor and LocalSTTDispatchCoordinator serve Library file work and Console PCM buffers with frame-aligned 60-second/byte limits, one pending inference, generation fencing, cancellation/shutdown ownership, dictation-next admission, visible limit recovery, explicit Mic resume, and bounded local-only faster-whisper retry. The Parakeet streaming factory remains unsupported rather than claiming true streaming; dead legacy code remains intentionally retained for TASK-605. Evidence is recorded in Docs/STT_Evaluation/task-603. At rebased commit 24a2ba3cf, a real macOS Console Mic smoke opened PyAudio, captured the verified speech fixture, routed 159360 PCM bytes through v2 INT8 ONNX CPU, inserted the exact transcript at the existing caret without sending, returned Mic to idle, and emitted no failure. The live run fixed configured local-model handoff and Textual fileno-less-stderr spawning. Fresh directly related gates passed: 94 executor/facade tests and 7 limit/resume/batch-ordering nodes; focused review found no issues. AC1-AC5 are complete. TASK-603 remains In Progress because AC6 still requires representative Windows/Linux and complete release-gate evidence; the aborted changed-test union and TASK-605 default/legacy work remain open.
 <!-- SECTION:NOTES:END -->
