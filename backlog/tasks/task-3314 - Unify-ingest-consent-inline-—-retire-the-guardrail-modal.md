@@ -156,4 +156,24 @@ second press submits. `IngestGuardrailModal` is deleted (class, push site,
   confirm (AC#4's wording) — the one visible consequence is that arming via Enter and
   confirming via a Start CLICK re-arms once instead of submitting, which reads as
   consent-conservative rather than broken.
+xhigh review + live-verify round (2026-08-09): AC#4's blur clause was wrong, and the notes above
+called the consequence "consent-conservative rather than broken" -- live it is simply broken.
+(a) Blur no longer disarms. The original reasoning assumed the mouse flow always blurs BEFORE the
+arming press, which holds only when the FIRST press is the click. Arm with Enter in the path field
+and the gate line says "Press Start again to import anyway"; the Start CLICK that copy asks for
+blurs the path field on its way in, so the disarm fired between the gesture and the press handler
+and the second press merely RE-ARMED. Nothing could ever submit by the route the copy prescribes.
+A blur carries no information about the forecast, so it is not an invalidation; every genuine
+invalidator (path edit, option edit, a fresh pre-flight with different warnings, pre-flight
+invalidation, Browse pick, rail switch, Esc) still disarms.
+(b) Browse… could submit file B under file A's consent. The picker callback wrote `form.path`
+directly, so the recomposed Input's re-announcement equalled the form's copy and
+`handle_library_ingest_path_changed`'s echo guard dropped it -- the one seam that disarms on a path
+change never ran. New `_adopt_library_ingest_path` is the single seam for every NON-typing path
+writer: it sets the field and disarms when the value actually changed.
+Tests (Tests/UI/test_library_ingest_inline_consent.py): Enter-arm -> Start-click submits (the click
+must be scrolled into view first -- `pilot.click` addresses screen coordinates and the Start button
+sits below the fold at 170x48, so an unscrolled click makes the test vacuous); a bare blur keeps the
+confirm; a Browse pick of a second file disarms. Mutation check (restore the blur disarm) sends the
+first two RED.
 <!-- SECTION:NOTES:END -->

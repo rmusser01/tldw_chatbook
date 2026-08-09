@@ -343,6 +343,21 @@ async def test_retry_last_restores_the_form_and_runs_a_fresh_preflight(
         )
         results["current"] = warned
 
+        # Meddling with the form above is exactly the "would discard work"
+        # leg of the destructive-re-stage consent added in the xhigh
+        # review + live-verify round, so this restore now takes the
+        # incumbent two presses. The subject of THIS test is the restore
+        # and the fresh forecast, not the press count -- the consent's own
+        # two legs are pinned by
+        # ``test_retry_over_an_edited_form_takes_two_presses`` and
+        # ``test_retry_over_a_pristine_form_re_stages_on_one_press``.
+        screen.query_one("#library-ingest-retry-last", Button).press()
+        await pilot.pause()
+        assert screen._library_ingest_retry_confirm_armed is True
+        assert screen._library_ingest_form.author == "Somebody Else", (
+            "the arming press must change nothing"
+        )
+        screen._library_ingest_retry_confirm_armed_at -= 1.0
         screen.query_one("#library-ingest-retry-last", Button).press()
         await pilot.pause()
 
@@ -470,3 +485,159 @@ async def test_r_key_re_stages_when_focus_is_not_in_a_text_field(
         await pilot.press("r")
         await pilot.pause()
         assert screen.query_one("#library-ingest-path", Input).value == "r"
+
+
+# --- xhigh review + live-verify round: gate parity + destructive consent -----
+
+
+def test_check_action_and_state_builder_share_one_retry_predicate():
+    """The `r` route and the button must appear and disappear TOGETHER.
+
+    ``check_action`` gated on (Ingest canvas AND snapshot) only, omitting
+    the settled-queue condition the state builder uses for
+    ``show_retry_last`` — so mid-run, exactly when the button is
+    deliberately hidden to prevent a duplicate batch, the key stayed live.
+    The two must read ONE predicate; duplicating the condition is the
+    defect, not the wording.
+    """
+    from tldw_chatbook.Library.library_ingest_state import (
+        LibraryIngestLastSubmission,
+        library_ingest_retry_available,
+    )
+    from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+
+    app = _build_test_app()
+    app.library_ingest_jobs = LibraryIngestJobRegistry()
+    screen = LibraryScreen(app)
+    screen._library_selected_row_id = LIBRARY_ROW_INGEST_MEDIA
+    screen._library_ingest_last_submission = LibraryIngestLastSubmission(
+        source="/tmp/talk.mp3"
+    )
+
+    # Settled queue: button visible, key live.
+    settled = build_library_ingest_state(
+        (), form=LibraryIngestFormState(), last_submission_available=True
+    )
+    assert settled.show_retry_last is True
+    assert screen.check_action("library_ingest_retry_last", ()) is True
+
+    # A job is running: the builder hides the button...
+    app.library_ingest_jobs.submit(source_path="/tmp/talk.mp3")
+    jobs = app.library_ingest_jobs.jobs()
+    mid_run = build_library_ingest_state(
+        jobs, form=LibraryIngestFormState(), last_submission_available=True
+    )
+    assert mid_run.show_retry_last is False
+    # ...so the key must be inert too.
+    assert screen.check_action("library_ingest_retry_last", ()) is False
+
+    # And the one shared predicate agrees with both.
+    assert (
+        library_ingest_retry_available(jobs, last_submission_available=True)
+        is False
+    )
+    assert (
+        library_ingest_retry_available((), last_submission_available=True)
+        is True
+    )
+
+
+@pytest.mark.asyncio
+async def test_retry_over_an_edited_form_takes_two_presses(
+    monkeypatch, tmp_path
+):
+    """A re-stage overwrites path + title + author + keywords + options
+    from the snapshot with no undo. When that would DISCARD work the user
+    has entered since the submit, it takes the repo's incumbent two-press
+    consent (Clear-finished / Start): the first press arms and changes
+    nothing, the second replaces the form."""
+    app = _pilot_app()
+    submitted: list[dict] = []
+    monkeypatch.setattr(
+        app,
+        "submit_library_ingest_job",
+        lambda **kwargs: submitted.append(kwargs),
+        raising=False,
+    )
+    host = LibraryHarness(app)
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = await _ingest_screen(host, pilot)
+        source, _results = await _submit_batch(
+            screen, pilot, monkeypatch, tmp_path, submitted
+        )
+
+        # The user is mid-way through staging something ELSE.
+        form = screen._library_ingest_form
+        path_input = screen.query_one("#library-ingest-path", Input)
+        path_input.value = "/tmp/half-typed-other"
+        await pilot.pause()
+        form.title = "Half-typed title"
+        assert form.path == "/tmp/half-typed-other"
+
+        screen.set_focus(screen.query_one("#library-ingest-browse", Button))
+        await pilot.pause()
+        await pilot.press("r")
+        await pilot.pause()
+
+        assert screen._library_ingest_form.path == "/tmp/half-typed-other", (
+            "the first `r` destroyed in-progress form content with no "
+            "confirmation"
+        )
+        assert screen._library_ingest_form.title == "Half-typed title"
+        retry = screen.query_one("#library-ingest-retry-last", Button)
+        assert "again" in str(retry.label).casefold(), (
+            f"the pending consent is not visible on the affordance "
+            f"({retry.label!r})"
+        )
+
+        # Second press (past the repeat-gesture dead zone) replaces it.
+        screen._library_ingest_retry_confirm_armed_at -= 1.0
+        await pilot.press("r")
+        await pilot.pause()
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_ingest_form.path == source,
+            message="the confirmed retry never re-staged",
+        )
+        assert screen._library_ingest_form.title == "My talk"
+        assert (
+            "again"
+            not in str(
+                screen.query_one("#library-ingest-retry-last", Button).label
+            ).casefold()
+        )
+
+
+@pytest.mark.asyncio
+async def test_retry_over_a_pristine_form_re_stages_on_one_press(
+    monkeypatch, tmp_path
+):
+    """The other leg: right after a submit the form holds nothing the
+    re-stage would discard, so consent would be pure friction — one press
+    re-stages."""
+    app = _pilot_app()
+    submitted: list[dict] = []
+    monkeypatch.setattr(
+        app,
+        "submit_library_ingest_job",
+        lambda **kwargs: submitted.append(kwargs),
+        raising=False,
+    )
+    host = LibraryHarness(app)
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = await _ingest_screen(host, pilot)
+        source, _results = await _submit_batch(
+            screen, pilot, monkeypatch, tmp_path, submitted
+        )
+
+        screen.set_focus(screen.query_one("#library-ingest-browse", Button))
+        await pilot.pause()
+        await pilot.press("r")
+        await pilot.pause()
+
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_ingest_form.path == source,
+            message="a pristine form should re-stage on a single press",
+        )
+        assert screen._library_ingest_retry_confirm_armed is False

@@ -258,17 +258,36 @@ _FEATURE_REQUIRED_PACKAGES: dict[str, tuple[str, ...]] = {
     "video_processing": ("soundfile", "scipy"),
 }
 
-#: (task-3307) ANY-OF umbrella features: installed when at least one of the
-#: listed packages imports. The all-of grammar above cannot express "one
-#: OCR backend, whichever": image ingestion needs SOME backend the OCR
-#: manager registers (``OCR_Backends._register_backends``), and no real
-#: install carries all five. Import names, not PyPI names (tesseract's
+#: (task-3307) ANY-OF-over-ALL-OF umbrella features: installed when EVERY
+#: package in at least ONE group imports. The all-of grammar above cannot
+#: express "one OCR backend, whichever": image ingestion needs SOME backend
+#: the OCR manager registers (``OCR_Backends._register_backends``), and no
+#: real install carries all five. Import names, not PyPI names (tesseract's
 #: package is pytesseract). Deliberately NOT the ``ocr_processing`` flag
 #: from ``optional_deps``: ``check_ocr_deps`` reports available when bare
-#: ``openai``/``gradio_client`` import -- true for docext's API mode,
-#: a lie as "an OCR backend exists".
-_FEATURE_ANY_PACKAGES: dict[str, tuple[str, ...]] = {
-    "image_ocr": ("docext", "docling", "pytesseract", "easyocr", "paddleocr"),
+#: ``openai``/``gradio_client`` import -- true for docext's API mode, a lie
+#: as "an OCR backend exists".
+#:
+#: (xhigh review round) The groups mirror ``OCR_Backends``' own
+#: ``is_available()`` rules exactly, because a flat list of single import
+#: names did not: ``PADDLEOCR_AVAILABLE`` requires BOTH ``paddle`` and
+#: ``paddleocr``, and the docext backend requires a companion for whichever
+#: mode it runs in. Preflight consequently promised an OCR backend in
+#: environments where ``ocr_manager`` registers nothing -- so the image
+#: group raised no warning and the import then failed with an empty
+#: extraction. ``Tests/Library/test_ingest_capabilities.py`` drives the
+#: real backend classes against each group (and each group minus one
+#: package), so this table cannot drift from OCR_Backends unnoticed.
+_FEATURE_ANY_PACKAGES: dict[str, tuple[tuple[str, ...], ...]] = {
+    "image_ocr": (
+        ("docling",),
+        ("pytesseract",),
+        ("easyocr",),
+        ("paddle", "paddleocr"),
+        ("docext", "gradio_client"),
+        ("docext", "transformers"),
+        ("docext", "openai"),
+    ),
 }
 
 #: Memoised results of the ``find_spec`` fallback in :func:`_is_installed`.
@@ -307,9 +326,11 @@ def _probe_installed(feature_id: str) -> bool:
     if required is not None:
         result = all(_module_present(package) for package in required)
     elif any_of is not None:
-        # (task-3307) An any-of umbrella: one importable alternative makes
-        # the feature real.
-        result = any(_module_present(package) for package in any_of)
+        # (task-3307) An any-of-over-all-of umbrella: one COMPLETE group of
+        # alternatives makes the feature real.
+        result = any(
+            all(_module_present(package) for package in group) for group in any_of
+        )
     else:
         # A feature is installed only when every package it depends on imports.
         info = OPTIONAL_FEATURES.get(feature_id)
@@ -1116,12 +1137,25 @@ def get_type_group(path_or_url: str) -> str:
         # options. Placed before the URL check for the same reason pdf/
         # ebook are: an extension on a URL still says what the target IS.
         return "document"
-    if file_type == "image":
-        # (task-3307) Raster images get their own group; before the URL
-        # check like pdf/ebook/document -- a ``.png`` URL is an image to
-        # OCR, not a page to scrape.
+    if file_type == "image" and not _is_http_url(path_or_url):
+        # (task-3307) Raster FILES get their own group. Unlike pdf/ebook/
+        # document above, the image group deliberately does NOT claim URLs:
+        # the pipeline routes every URL through ``classify_ingest_source``,
+        # which has no image branch, so ``https://example.com/chart.png``
+        # is fetched and scraped as an article and ``process_image`` is
+        # never called. Claiming it made the canvas report "1 image", mount
+        # the OCR panel and raise the OCR-backend warning that forces the
+        # two-press consent -- and then discard every OCR option
+        # (task-3307 xhigh review round). Downloading image URLs to OCR
+        # them is a real feature, but it is one the pipeline would have to
+        # grow first; until then the canvas tells the truth.
         return "image"
-    if _is_http_url(path_or_url) and file_type in ("plaintext", "html", "xml"):
+    if _is_http_url(path_or_url) and file_type in (
+        "plaintext",
+        "html",
+        "xml",
+        "image",
+    ):
         # A bare ".html"/".htm" URL is a page to fetch, not a local file to
         # read; the extension says how it is written, not where it lives.
         return _url_type_group(path_or_url)

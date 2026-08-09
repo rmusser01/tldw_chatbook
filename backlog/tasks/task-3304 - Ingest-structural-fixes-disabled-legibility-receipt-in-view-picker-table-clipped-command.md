@@ -164,4 +164,17 @@ takes); capabilities suite 64 passed, full ingest battery 417 passed
 after repair, fspicker suites 46 passed. `--collect-only` over Tests/:
 31,401 collected, 27 errors, all in the numpy/audio/transcription/
 confluence families this venv is known to lack — none in touched areas.
+xhigh review + live-verify round (2026-08-09): two MI-07/MI-17 regressions found live and fixed.
+(a) Disabled TEXT fields dropped their hint. The disabled branch rebuilt the label as
+`f"{field.label} — {disabled_note}"`, discarding the `(hint)` the enabled branch adds -- so on a
+stock install the cookies field's "Netscape cookies.txt · video URLs only" and the trim fields'
+"HH:MM:SS or seconds" were invisible exactly while the control was inert. The checkbox branch had
+always appended correctly; the text branch now does the same (`f"{label_text} — {disabled_note}"`).
+(b) MI-17's per-command disambiguation never reached the screen. `_command_short_name` returned
+`.[audio]`, and a Textual `Button` label is parsed as content markup, which ate `[audio]` as a style
+tag -- live, six or seven stacked buttons all read "Copy install command (.)". It now returns the
+bare extra name ("audio", "video", "transcription_faster_whisper"), which says the same thing and
+survives the renderer. Files: tldw_chatbook/Widgets/Library/library_ingest_canvas.py; new tests in
+Tests/UI/test_library_ingest_canvas.py (enabled+disabled hint pair; a distinct-labels assertion that
+is RED with the bracketed spelling -- captured output: three identical "Copy install command (.)").
 <!-- SECTION:NOTES:END -->

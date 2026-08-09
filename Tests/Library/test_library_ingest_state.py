@@ -1502,13 +1502,13 @@ _EGRESS_RAW_ERROR = (
 def test_short_ingest_error_maps_egress_block_to_plain_language():
     """task-3312 (#2): the queue receipt must match the pre-flight line's
     plain-language register (task-3305) -- a complete sentence, no policy
-    jargon, no markup-hostile brackets -- while keeping the remedy."""
-    from tldw_chatbook.Library.library_ingest_state import (
-        INGEST_EGRESS_BLOCKED_COPY,
-    )
+    jargon, no markup-hostile brackets -- while keeping the remedy.
 
+    (xhigh review round) The register is unchanged; the receipt now also
+    NAMES the refused origin, which the fixed sentence never did.
+    """
     short = short_ingest_error(_EGRESS_RAW_ERROR)
-    assert short == INGEST_EGRESS_BLOCKED_COPY
+    assert "http://127.0.0.1:8000" in short
     # No bracketed config-key syntax to fight the renderer with.
     assert "[" not in short and "\\" not in short
     # The remedy survives in plain words.
@@ -1523,21 +1523,16 @@ def test_short_ingest_error_maps_egress_block_under_pipeline_wrappers():
     """The pipeline may wrap the egress text in its historical
     'Failed to … file:' layers; the mapping keys on the egress marker, not
     on position."""
-    from tldw_chatbook.Library.library_ingest_state import (
-        INGEST_EGRESS_BLOCKED_COPY,
-    )
-
     wrapped = f"Failed to ingest web file: {_EGRESS_RAW_ERROR}"
-    assert short_ingest_error(wrapped) == INGEST_EGRESS_BLOCKED_COPY
+    assert short_ingest_error(wrapped) == short_ingest_error(
+        _EGRESS_RAW_ERROR
+    )
+    assert "http://127.0.0.1:8000" in short_ingest_error(wrapped)
 
 
 def test_failed_queue_row_for_egress_block_carries_the_plain_receipt():
     """The FAILED queue row (and Home's failed-item line, same helper)
     renders the plain-language receipt, never the raw policy text."""
-    from tldw_chatbook.Library.library_ingest_state import (
-        INGEST_EGRESS_BLOCKED_COPY,
-    )
-
     job = _job(
         job_id="ingest-job-egress",
         source_path="http://127.0.0.1:8000/page",
@@ -1546,7 +1541,7 @@ def test_failed_queue_row_for_egress_block_carries_the_plain_receipt():
     )
     state = build_library_ingest_state((job,), form=LibraryIngestFormState())
     (row,) = state.queue_rows
-    assert INGEST_EGRESS_BLOCKED_COPY in row.line
+    assert short_ingest_error(_EGRESS_RAW_ERROR) in row.line
     assert "SSRF" not in row.line
     assert "[web_security]" not in row.line
     assert "[remedy" not in row.line
@@ -2822,3 +2817,71 @@ def test_supported_copy_names_images_task_3307():
     from tldw_chatbook.Library.library_ingest_state import SUPPORTED_FORMATS_COPY
 
     assert "images" in SUPPORTED_FORMATS_COPY
+
+
+# --- xhigh review round: the egress receipt never named the host ------------
+
+
+def _egress_raw(origin: str, reason: str = "private") -> str:
+    """The exact shape ``EgressBlockedError`` produces (Utils/egress.py)."""
+    return (
+        f"URL blocked by egress policy (SSRF guard): Egress blocked "
+        f"({reason}) for {origin} [remedy: add the host to [web_security] "
+        "allowed_hosts in config.toml, or set [web_security] enabled = "
+        "false]"
+    )
+
+
+def test_egress_receipts_for_different_hosts_are_distinguishable():
+    """task-3312 flattened EVERY egress refusal into one fixed sentence
+    that never names the refused address, so a queue of blocked URLs read
+    as N copies of the same receipt and the expanded details could not
+    recover the host either. Keep the plain-language register; keep the
+    host."""
+    first = short_ingest_error(_egress_raw("http://127.0.0.1:8000"))
+    second = short_ingest_error(_egress_raw("https://internal.example.com"))
+
+    assert first != second, f"both receipts read {first!r}"
+    assert "127.0.0.1:8000" in first, first
+    assert "internal.example.com" in second, second
+    # Still plain language, still bracket-free (the live markup incident).
+    for receipt in (first, second):
+        assert "SSRF" not in receipt
+        assert "[" not in receipt and "\\" not in receipt
+        assert "allowed_hosts" in receipt
+        assert "web_security" in receipt
+        assert receipt.endswith(".")
+
+
+def test_egress_receipt_without_a_recoverable_host_keeps_the_generic_copy():
+    """A refusal whose origin cannot be parsed out (or renders with
+    markup-hostile IPv6 brackets) falls back to the host-less sentence
+    rather than inventing or leaking one."""
+    from tldw_chatbook.Library.library_ingest_state import (
+        INGEST_EGRESS_BLOCKED_COPY,
+    )
+
+    assert (
+        short_ingest_error("Egress blocked (dns_failure) for <invalid-url>")
+        == INGEST_EGRESS_BLOCKED_COPY
+    )
+    assert (
+        short_ingest_error(_egress_raw("http://[::1]:8000"))
+        == INGEST_EGRESS_BLOCKED_COPY
+    )
+
+
+def test_failed_queue_row_names_the_blocked_host(tmp_path=None):
+    """The receipt reaches the queue row (and, via the same helper, Home's
+    failed-item line)."""
+    job = _job(
+        job_id="ingest-job-egress-host",
+        source_path="http://127.0.0.1:8000/page",
+        state=IngestJobState.FAILED,
+        error=_egress_raw("http://127.0.0.1:8000"),
+    )
+    state = build_library_ingest_state((job,), form=LibraryIngestFormState())
+    (row,) = state.queue_rows
+    assert "127.0.0.1:8000" in row.line
+    assert "SSRF" not in row.line
+    assert "[web_security]" not in row.line

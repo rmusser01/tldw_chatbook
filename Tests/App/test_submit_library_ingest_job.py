@@ -659,20 +659,75 @@ class TestIngestJobOptions:
         assert options["start_time"] is None
         assert options["end_time"] is None
 
-    def test_cookies_file_maps_to_use_cookies_and_cookies(self) -> None:
+    def test_cookies_file_maps_to_use_cookies_and_cookies(
+        self, tmp_path: Any
+    ) -> None:
         """(task-3306) A cookies FILE PATH travels; its presence IS the
-        use_cookies flag -- there is no separate toggle to go stale."""
+        use_cookies flag -- there is no separate toggle to go stale.
+
+        (xhigh review round) The path must EXIST: this test used to assert
+        against an invented ``/home/u/cookies.txt``, which is precisely the
+        input the option boundary now has to reject.
+        """
+        cookies = tmp_path / "cookies.txt"
+        cookies.write_text("# Netscape HTTP Cookie File\n")
         app = _minimal_app()
         job = _make_job(
             source_path="/tmp/test.mp4",
-            ingest_options={
-                "audio_video": {"cookies_file": " /home/u/cookies.txt "}
-            },
+            ingest_options={"audio_video": {"cookies_file": f"  {cookies}  "}},
         )
         options = app._ingest_job_options(job)
 
         assert options["use_cookies"] is True
-        assert options["cookies"] == "/home/u/cookies.txt"
+        assert options["cookies"] == str(cookies)
+        assert "cookies_problem" not in options
+
+    def test_nonexistent_cookies_file_is_rejected_not_forwarded(
+        self, tmp_path: Any
+    ) -> None:
+        """(xhigh review round) An unvalidated path used to be forwarded
+        verbatim; ``download_video`` then tried to parse it as cookie JSON
+        and logged only "Invalid cookie format", so a typo'd path looked
+        like a working gated import that mysteriously failed. The option
+        boundary rejects it and records a reason the job can show."""
+        app = _minimal_app()
+        missing = tmp_path / "nope" / "cookies.txt"
+        job = _make_job(
+            source_path="/tmp/test.mp4",
+            ingest_options={"audio_video": {"cookies_file": str(missing)}},
+        )
+        options = app._ingest_job_options(job)
+
+        assert options["use_cookies"] is False
+        assert options["cookies"] is None
+        assert "cookies.txt" in options["cookies_problem"]
+
+    def test_directory_as_cookies_file_is_rejected(self, tmp_path: Any) -> None:
+        app = _minimal_app()
+        job = _make_job(
+            source_path="/tmp/test.mp4",
+            ingest_options={"audio_video": {"cookies_file": str(tmp_path)}},
+        )
+        options = app._ingest_job_options(job)
+
+        assert options["use_cookies"] is False
+        assert options["cookies_problem"]
+
+    def test_unsafe_cookies_path_is_rejected(self) -> None:
+        """Repo security rule: file paths go through ``path_validation``.
+        A shell-metacharacter path never becomes a yt-dlp argument."""
+        app = _minimal_app()
+        job = _make_job(
+            source_path="/tmp/test.mp4",
+            ingest_options={
+                "audio_video": {"cookies_file": "/tmp/$(whoami)/cookies.txt"}
+            },
+        )
+        options = app._ingest_job_options(job)
+
+        assert options["use_cookies"] is False
+        assert options["cookies"] is None
+        assert options["cookies_problem"]
 
     def test_blank_cookies_file_means_no_cookies(self) -> None:
         app = _minimal_app()
@@ -1281,6 +1336,25 @@ class TestIngestDoneProgress:
             == "Imported notes.txt — analysis failed: Invalid API Name 'custom'"
         )
         assert progress["analysis_failed"] == "Invalid API Name 'custom'"
+
+    def test_cookies_problem_is_visible_on_the_done_row(self) -> None:
+        """(task-3306 xhigh review round) A rejected cookies path must be
+        SEEN. The import still succeeds (public URLs need no cookies), so
+        the only honest signal is the same done-row annotation the analysis
+        skip/failure reasons use."""
+        progress = app_module._library_ingest_done_progress(
+            "/tmp/clip.mp4",
+            was_duplicate=False,
+            payload={"cookies_problem": "Cookies file not found: /tmp/c.txt"},
+        )
+        assert (
+            progress["message"]
+            == "Imported clip.mp4 — cookies ignored: Cookies file not found: "
+            "/tmp/c.txt"
+        )
+        assert progress["cookies_problem"] == (
+            "Cookies file not found: /tmp/c.txt"
+        )
 
     def test_duplicate_message_keeps_matched_prefix(self) -> None:
         from tldw_chatbook.Library.library_ingest_jobs import (

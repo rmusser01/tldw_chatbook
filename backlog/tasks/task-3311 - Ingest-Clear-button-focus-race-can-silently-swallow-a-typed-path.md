@@ -45,4 +45,19 @@ Fix: handle_library_ingest_clear_path now focuses the path field SYNCHRONOUSLY v
 Evidence: new Tests/UI/test_library_ingest_clear_focus.py -- an 8-iteration clear-and-type loop staging a warning-bearing preflight (AC#1) plus a leading-slash test (AC#2). RED pre-fix on iteration 0 with focused=LibraryRailSearchInput (the live symptom); GREEN post-fix; mutation check (revert to deferred path_input.focus()) sends both tests RED.
 
 Files: tldw_chatbook/UI/Screens/library_screen.py (Clear handler), Tests/UI/test_library_ingest_clear_focus.py (new). Battery: 433 passed across the ingest keep-green set.
+xhigh review + live-verify round (2026-08-09): the task fixed MISROUTING but not LOSS. Measured live:
+5/5 characters typed within ~150ms of Clear vanished; 3/3 landed at >=400ms. Mechanism: the Clear
+handler focuses synchronously and then takes the STRUCTURAL branch, whose `refresh(recompose=True)`
+is DEFERRED -- the path Input stays mounted and typeable until the rebuild runs, and the rebuild
+sources its value from `_library_ingest_form.path` (""), so anything typed in that window dies with
+the widget. Fix: `_refresh_library_ingest_canvas_preserving_context` now carries the pre-recompose
+path Input OBJECT (plus its value at capture time) into `_restore_library_ingest_canvas_context`;
+if that widget's value CHANGED during the window the text is written into the live Input, which
+re-enters the ordinary `Input.Changed` seam so the gate/Clear button/intros/pre-flight debounce all
+run exactly once. Gating on "changed since capture" is what keeps a deliberate form rewrite under an
+untouched field (the retry re-stage) from being undone by a stale echo. Test: a 6-iteration loop in
+Tests/UI/test_library_ingest_clear_focus.py that runs the Clear handler to completion and types
+BEFORE the pump gets a turn -- `pilot.click`/`pilot.press` cannot express this window (both settle
+the pump), which is why the two original tests pass either way. RED pre-fix on iteration 0 with an
+empty field; mutation check (disable the rescue) sends it RED again.
 <!-- SECTION:NOTES:END -->

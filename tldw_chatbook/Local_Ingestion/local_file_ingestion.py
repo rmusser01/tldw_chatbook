@@ -408,7 +408,14 @@ def get_supported_extensions() -> Dict[str, List[str]]:
 # consumed nowhere, and the DB layer explicitly ignores ``chunk_options``
 # as a placeholder -- so "the database will handle it" (the old comment on
 # these branches) handled nothing.
-_TEXT_CHUNK_TYPES = frozenset({"plaintext", "html", "document", "article"})
+# (task-3307 xhigh review round) ``image`` joined this set: the OCR text is
+# text like any other, and routing it through the same tail is what makes
+# the form's size/overlap govern it. The image branch calls
+# ``process_image`` with ``chunk_options=None`` and clears its convenience
+# single chunk so exactly one layer chunks.
+_TEXT_CHUNK_TYPES = frozenset(
+    {"plaintext", "html", "document", "article", "image"}
+)
 
 # Text-shaped types whose branch produces no analysis of its own. The
 # ``document`` type is excluded: ``process_document`` runs its own
@@ -990,14 +997,23 @@ def parse_local_file_for_ingest(
                 ocr_backend=options.get("ocr_backend") or "auto",
                 ocr_language=options.get("ocr_language") or "en",
                 extract_features=False,
-                # Chunk-content OFF arrives as the empty defaulted dict;
-                # ``process_image`` chunks only for a truthy chunk_options,
-                # so the OFF state stays a no-op (and the shared
-                # ``perform_chunking`` guard below clears any fallback
-                # single chunk).
-                chunk_options=chunk_options if perform_chunking else None,
+                # (task-3307 xhigh review round) ALWAYS None: the shared
+                # text-chunk tail below is the single chunking authority
+                # for this type (``image`` is in ``_TEXT_CHUNK_TYPES``).
+                # Delegating to the processor's own chunking left a hole --
+                # it chunks only for a TRUTHY ``chunk_options``, while
+                # "chunk ON with nothing typed" arrives as ``{}``, so the
+                # OCR text persisted as one whole-text blob whatever size
+                # the form asked for. Two chunking layers is how that
+                # happened; there is now one.
+                chunk_options=None,
                 perform_analysis=False,
             )
+            if isinstance(result, dict):
+                # ``process_image`` returns a convenience single whole-text
+                # "chunk" even when it did no chunking; dropping it is what
+                # lets the tail's ``not chunks`` branch do the real work.
+                result["chunks"] = []
 
         elif file_type == "audio":
             # Initialize audio processor. media_db is intentionally None:
@@ -1448,6 +1464,16 @@ def parse_local_file_for_ingest(
         # annotation mechanism as the skip reason.
         if analysis_failed_reason:
             payload["analysis_failed_reason"] = analysis_failed_reason
+        # (task-3306 xhigh review round) The option boundary rejected the
+        # configured cookies path (missing/unsafe). Carry the reason so the
+        # done row can say "cookies ignored: ..." -- the same annotation
+        # mechanism as the analysis reasons -- AND surface it as a payload
+        # warning, instead of the downloader logging "Invalid cookie
+        # format" at debug and running un-authenticated.
+        cookies_problem = str(options.get("cookies_problem") or "").strip()
+        if cookies_problem:
+            payload["cookies_problem"] = cookies_problem
+            payload["warnings"] = list(payload["warnings"]) + [cookies_problem]
         return payload
 
     except DirectLocalSTTIngestError:

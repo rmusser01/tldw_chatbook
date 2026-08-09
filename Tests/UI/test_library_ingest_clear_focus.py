@@ -26,7 +26,7 @@ own both the focus and the character.
 """
 
 import pytest
-from textual.widgets import Input
+from textual.widgets import Button, Input
 
 from tldw_chatbook.Library.ingest_types import PreflightResult
 from tldw_chatbook.Library.library_shell_state import LIBRARY_ROW_INGEST_MEDIA
@@ -191,3 +191,72 @@ async def test_leading_slash_after_clear_edits_path_never_focus_search(
             "the leading '/' fired the global focus-search binding"
         )
         assert search.value == ""
+
+
+#: The type-immediately-after-Clear race, looped for the same reason as
+#: ``CLEAR_LOOP_ITERATIONS``: one pass could be a lucky interleaving.
+CLEAR_TYPE_RACE_ITERATIONS = 6
+
+
+@pytest.mark.asyncio
+async def test_typing_into_the_pre_recompose_field_after_clear_survives(
+    monkeypatch,
+):
+    """task-3311's other half: the keystroke SWALLOW window.
+
+    Misrouting was fixed; loss was not. Live measurement (2026-08-08): 5/5
+    characters typed within ~150ms of Clear vanished, 3/3 landed at
+    >=400ms. ``handle_library_ingest_clear_path`` focuses the path field
+    synchronously and then runs the STRUCTURAL branch, which rebuilds the
+    Input from ``_library_ingest_form.path`` ("") -- so anything typed
+    into the still-mounted pre-recompose widget dies with it, and the
+    user is left staring at an empty field they just typed into.
+
+    The reproduction types into the LIVE widget in the window the pilot's
+    own ``click``+``press`` pair cannot reach (both settle the message
+    pump first, which is why the existing tests above pass either way).
+    """
+    _neutralize_background_preflight(monkeypatch)
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _enter_ingest_mode(screen, pilot)
+
+        for iteration in range(CLEAR_TYPE_RACE_ITERATIONS):
+            await _stage_warning_preflight(screen, pilot)
+
+            # Run the Clear handler to completion, then type BEFORE the
+            # message pump gets a turn -- the recompose it scheduled is
+            # deferred, so the field it clears is still the mounted one.
+            # (``pilot.click`` cannot express this: it settles the pump on
+            # the way out, which is precisely why the two tests above pass
+            # with or without the fix.)
+            clear_button = screen.query_one("#library-ingest-clear-path", Button)
+            screen.handle_library_ingest_clear_path(
+                Button.Pressed(clear_button)
+            )
+
+            # ...and type into the widget that is still mounted right now,
+            # exactly as a fast typist does.
+            racing_input = screen.query_one("#library-ingest-path", Input)
+            racing_input.value = "/e"
+            await pilot.pause()
+            await pilot.pause()
+
+            path_input = screen.query_one("#library-ingest-path", Input)
+            assert path_input.value == "/e", (
+                f"iteration {iteration}: keystrokes typed right after "
+                f"Clear were swallowed by the recompose "
+                f"(field={path_input.value!r})"
+            )
+            assert screen._library_ingest_form.path == "/e", (
+                f"iteration {iteration}: the form echo lost the typed text"
+            )
+
+            path_input.value = ""
+            screen._library_ingest_form.path = ""
+            await pilot.pause()

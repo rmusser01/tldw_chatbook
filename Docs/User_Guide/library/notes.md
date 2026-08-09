@@ -88,7 +88,9 @@ pick **Overwrite** or **Reload**.
 as an "Untitled" placeholder — just start typing) and an empty body. If you
 leave again via "‹ Back to list" without typing anything, the blank note is
 quietly discarded rather than left behind as a stray "Untitled" row; typing
-anything, or pressing "Save", keeps it. The "From a template" list
+anything, or pressing "Save", keeps it. That includes naming it "Untitled"
+yourself: once you have touched the title field the note is yours, and it
+is kept even with an empty body. The "From a template" list
 pre-fills title, body, and keywords instead; each row shows the template
 name with the title the note will get. Available templates: Brainstorming
 session, Bug report, Code review, Daily journal entry, Meeting notes,
@@ -205,3 +207,11 @@ the seeded snapshot title instead of the presented-empty editor, and
 dropped the save-seam fallback); both are restored, and Esc from the
 note editor no longer dead-ends (it routes through the same guarded
 Back seam as the "‹ Back to list" button).*
+
+*Verified against feat/media-ingest-followups — 2026-08-09 (xhigh review
++ live-verify round): a note you deliberately title "Untitled" with an
+empty body now survives navigating away — the discard used to compare the
+title against the seed's spelling, so typing that exact word destroyed
+the note with no prompt and no undo. It now keys on whether you touched
+the title field at all, and the "Untitled" a blank title is saved under
+matches what the notes list shows for that row.*

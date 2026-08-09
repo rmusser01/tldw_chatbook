@@ -1707,6 +1707,49 @@ def _sanitize_library_ingest_error(exc: Exception) -> str:
     return sanitized if sanitized else exc.__class__.__name__[:200]
 
 
+def _resolve_ingest_cookies_file(raw: str) -> tuple[Optional[str], Optional[str]]:
+    """Validate the audio/video panel's ``Cookies file for gated URLs`` value.
+
+    (task-3306 xhigh review round) The value used to be forwarded verbatim
+    as ``options["cookies"]``. ``download_video`` treats a string that is
+    not an existing file as cookie JSON, so a typo'd or moved path became a
+    ``json.JSONDecodeError`` caught into a single "Invalid cookie format"
+    warning -- the download then ran un-authenticated and failed later for
+    a reason that named neither cookies nor the path. Validating here, at
+    the option boundary, is the earliest point this module owns.
+
+    NOTE: the canonical home for per-field validation is the shared
+    ``validate_ingest_option_value`` seam in ``library_ingest_state``, which
+    is where the sibling text fields (``start_time``/``end_time``) are
+    format-gated. This check lives here instead because existence is not a
+    format question -- a path can be well-formed at typing time and gone by
+    the time the job is claimed, which is exactly when this runs.
+
+    Args:
+        raw: The stripped field value; ``""`` means the option is unset.
+
+    Returns:
+        ``(cookies_path, problem)``. Exactly one is non-``None`` for a
+        non-empty input; both are ``None`` when no cookies were requested.
+    """
+    if not raw:
+        return None, None
+
+    from tldw_chatbook.Utils.path_validation import validate_path_simple
+
+    try:
+        # Repo security rule: user-supplied file paths go through
+        # path_validation before they become a subprocess/library argument.
+        validate_path_simple(os.path.expanduser(raw))
+    except ValueError as exc:
+        return None, f"Unsafe cookies file path: {_sanitize_library_ingest_error(exc)}"
+
+    candidate = Path(os.path.expanduser(raw))
+    if not candidate.is_file():
+        return None, f"Cookies file not found: {raw}"
+    return str(candidate), None
+
+
 def _library_ingest_done_progress(
     source_path: str, *, was_duplicate: bool, payload: Dict[str, Any]
 ) -> Dict[str, Any]:
@@ -1753,6 +1796,15 @@ def _library_ingest_done_progress(
     if failed_reason:
         progress["message"] += f" — analysis failed: {failed_reason}"
         progress["analysis_failed"] = failed_reason
+    # (task-3306 xhigh review round) A cookies path the option boundary
+    # refused to forward. The import itself is fine -- a public URL never
+    # needed cookies -- so this is an annotation, not a failure; without it
+    # a gated import that silently ran un-authenticated looks identical to
+    # one that worked.
+    cookies_problem = str(payload.get("cookies_problem") or "").strip()
+    if cookies_problem:
+        progress["message"] += f" — cookies ignored: {cookies_problem}"
+        progress["cookies_problem"] = cookies_problem
     return progress
 
 
@@ -2637,9 +2689,17 @@ class LibraryIngestQueueMixin:
             # branch of ``parse_local_file_for_ingest`` consumes it; the
             # audio downloader's cookies parameter has JSON-dict semantics
             # a path would crash.
+            # (xhigh review round) Validated here, not forwarded verbatim:
+            # an unusable path used to degrade into a silent "Invalid
+            # cookie format" debug line inside the downloader.
             cookies_file = str(flat_opts.get("cookies_file") or "").strip()
-            options["use_cookies"] = bool(cookies_file)
-            options["cookies"] = cookies_file or None
+            cookies_path, cookies_problem = _resolve_ingest_cookies_file(
+                cookies_file
+            )
+            options["use_cookies"] = bool(cookies_path)
+            options["cookies"] = cookies_path
+            if cookies_problem:
+                options["cookies_problem"] = cookies_problem
             # (task-3306) Recursive map-reduce summary; the processors'
             # analysis tail consumes it only when analysis actually runs,
             # so an idle True is inert rather than a stale hazard.

@@ -11894,6 +11894,171 @@ async def test_library_shell_blank_note_autosaved_then_emptied_still_gcs_on_back
 
 
 @pytest.mark.asyncio
+async def test_library_shell_blank_note_titled_untitled_by_hand_survives_back(
+    tmp_path,
+):
+    """P0 (xhigh review + live-verify round): a note the user DELIBERATELY
+    titles "Untitled" must survive navigate-away, body empty or not.
+
+    The GC keyed blankness on ``raw_title == LIBRARY_NOTE_BLANK_SEED_TITLE``
+    -- a pure string comparison -- so typing the seed's own spelling into
+    the title field destroyed the note with no prompt and no undo. The
+    distinction the GC actually needs is "did the user ever touch the title
+    widget", which a session flag carries and a string never can.
+    """
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    real_service = _real_notes_scope_service(tmp_path)
+    app.notes_scope_service = real_service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one("#library-row-create-note").press()
+        await _wait_for_selector(screen, pilot, "#library-notes-create-blank")
+        screen.query_one("#library-notes-create-blank").press()
+        await _wait_for_selector(screen, pilot, "#library-note-title")
+        await pilot.pause()
+        await pilot.pause()
+        note_id = screen._selected_note_id
+
+        # The user types the seed's own spelling, on purpose, and leaves
+        # the body empty -- a perfectly ordinary "I'll name it later" note.
+        screen.query_one("#library-note-title", Input).value = "Untitled"
+        await pilot.pause()
+        assert screen._library_note_title_user_edited is True, (
+            "Typing in the title field must record that the seed is no "
+            "longer untouched."
+        )
+
+        screen.query_one("#library-note-back").press()
+        for _ in range(150):
+            if screen._library_notes_view == "list":
+                break
+            await pilot.pause(0.02)
+        else:
+            raise AssertionError("Back never returned to the list view.")
+
+        assert (
+            await real_service.count_notes(
+                scope="local_note", user_id="default_user"
+            )
+            == 1
+        ), (
+            "A note the user deliberately titled 'Untitled' was destroyed "
+            "on navigate-away -- silent data loss."
+        )
+        detail = await real_service.get_note_detail(
+            scope="local_note", note_id=note_id, user_id="default_user"
+        )
+        assert detail is not None
+        assert detail["title"] == "Untitled"
+
+
+@pytest.mark.asyncio
+async def test_library_shell_untouched_blank_note_still_gcs_after_body_round_trip(
+    tmp_path,
+):
+    """Mutation guard for the test above: the untouched seed must STILL be
+    GC'd. The user types only in the BODY (never the title), then empties
+    it -- the title widget was never touched, so the seed is still a seed
+    and the abandoned row must not survive."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    real_service = _real_notes_scope_service(tmp_path)
+    app.notes_scope_service = real_service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one("#library-row-create-note").press()
+        await _wait_for_selector(screen, pilot, "#library-notes-create-blank")
+        screen.query_one("#library-notes-create-blank").press()
+        await _wait_for_selector(screen, pilot, "#library-note-title")
+        await pilot.pause()
+        await pilot.pause()
+
+        screen.query_one("#library-note-body", TextArea).text = "scratch"
+        await pilot.pause()
+        screen.query_one("#library-note-body", TextArea).text = ""
+        await pilot.pause()
+        assert screen._library_note_title_user_edited is False
+
+        screen.query_one("#library-note-back").press()
+        for _ in range(150):
+            if (
+                await real_service.count_notes(
+                    scope="local_note", user_id="default_user"
+                )
+                == 0
+            ):
+                break
+            await pilot.pause(0.02)
+        else:
+            raise AssertionError(
+                "An untouched-title session blank was not GC'd on exit."
+            )
+
+
+@pytest.mark.asyncio
+async def test_library_shell_blank_title_save_round_trip_agrees_with_the_row(
+    tmp_path,
+):
+    """The save seam substitutes the seed title for a blank one on the
+    wire, but the reply carries no title -- so the session snapshot (and
+    every list row patched from it) claimed a name the persisted row did
+    not have. Both sides now derive the persisted name from one helper."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    real_service = _real_notes_scope_service(tmp_path)
+    app.notes_scope_service = real_service
+    created_id = await real_service.save_note(
+        scope="local_note",
+        title="Pre-existing note",
+        content="pre-existing content",
+        user_id="default_user",
+    )
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one("#library-row-browse-notes").press()
+        await _wait_for_selector(screen, pilot, "#library-notes-row-0")
+        screen.query_one("#library-notes-row-0").press()
+        await _wait_for_selector(screen, pilot, "#library-note-title")
+        await pilot.pause()
+        await pilot.pause()
+
+        screen.query_one("#library-note-title", Input).value = ""
+        await pilot.pause()
+        screen.query_one("#library-note-save").press()
+        for _ in range(150):
+            detail = await real_service.get_note_detail(
+                scope="local_note", note_id=created_id, user_id="default_user"
+            )
+            if detail is not None and detail["title"] == "Untitled":
+                break
+            await pilot.pause(0.02)
+        else:
+            raise AssertionError("The emptied title never persisted.")
+
+        rows = screen._local_source_records.get("notes", ())
+        patched = [row for row in rows if str(row.get("id")) == created_id]
+        assert patched, "The saved note vanished from the list cache."
+        assert patched[0]["title"] == "Untitled", (
+            "The list row patched from the session snapshot disagrees with "
+            f"the persisted row's name ({patched[0]['title']!r} vs "
+            "'Untitled')."
+        )
+
+
+@pytest.mark.asyncio
 async def test_library_shell_discard_new_note_deletes_untouched_create():
     app = _build_test_app()
     _seed_conversations(app, _two_conversations(), notes=_two_notes())

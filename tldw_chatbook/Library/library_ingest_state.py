@@ -289,6 +289,46 @@ INGEST_EGRESS_BLOCKED_COPY = (
     "web_security in config.toml."
 )
 
+#: (xhigh review round) ``EgressBlockedError`` renders the refused target
+#: as a credential- and query-free origin ("http://host:port") right after
+#: its reason slug. Pulling it back out is what lets the receipt NAME the
+#: host: task-3312's fixed sentence said "this address" and never which
+#: one, so a queue of refusals read as N identical rows and the expanded
+#: details could not recover the target either.
+_EGRESS_ORIGIN_RE = re.compile(
+    r"Egress blocked \([^)]*\) for (?P<origin>\S+)"
+)
+
+
+def egress_blocked_receipt(error: str) -> str:
+    """Plain-language egress refusal that names the host it refused.
+
+    Keeps task-3312's register exactly -- one complete sentence, no policy
+    jargon, no bracketed config-key syntax for the renderer to eat -- and
+    adds the one fact the user needs to act: WHICH address was refused.
+
+    An origin that cannot be recovered, or one whose rendering carries
+    square brackets (a bracketed IPv6 literal, e.g. ``http://[::1]:8000``
+    -- the exact character class that leaked a stray ``\\[`` into a live
+    queue row), falls back to the host-less sentence rather than shipping
+    markup-hostile text.
+
+    Args:
+        error: The raw (already unwrapped) job error text.
+
+    Returns:
+        The receipt to show on the queue row and Home's failed-item line.
+    """
+    match = _EGRESS_ORIGIN_RE.search(error)
+    origin = match.group("origin").rstrip(".,:;") if match else ""
+    if not origin or "[" in origin or "]" in origin or origin.startswith("<"):
+        return INGEST_EGRESS_BLOCKED_COPY
+    return (
+        f"URL blocked — your web-security settings don't allow fetching "
+        f"{origin}. To allow it, add the host to allowed_hosts under "
+        "web_security in config.toml."
+    )
+
 
 def short_ingest_error(error: str) -> str:
     """Return the short (queue-row) form of an ingest job's error message.
@@ -297,9 +337,11 @@ def short_ingest_error(error: str) -> str:
     ``local_file_ingestion.py``'s "Unsupported file type" error carries --
     that tail is dropped from the queue-row summary so it is not repeated
     on every failure surface. An error without that exact marker passes
-    through whole. An egress-blocked URL failure is rewritten to
-    :data:`INGEST_EGRESS_BLOCKED_COPY` -- the raw policy text is log
-    material, not a receipt (task-3312 #2).
+    through whole. An egress-blocked URL failure is rewritten by
+    :func:`egress_blocked_receipt` -- the raw policy text is log material,
+    not a receipt (task-3312 #2) -- which keeps that plain-language
+    register while naming the refused host (xhigh review round: the fixed
+    sentence said "this address" and never which one).
 
     Single source of truth for BOTH failure-reason surfaces: the Library
     ingest queue row (``_build_queue_row``) and Home's failed-item canvas
@@ -316,7 +358,7 @@ def short_ingest_error(error: str) -> str:
     """
     unwrapped = unwrap_ingest_error(error)
     if _EGRESS_BLOCKED_MARKER in unwrapped:
-        return INGEST_EGRESS_BLOCKED_COPY
+        return egress_blocked_receipt(unwrapped)
     return unwrapped.split(_SUPPORTED_TYPES_ERROR_MARKER)[0].rstrip()
 
 
@@ -515,6 +557,65 @@ def build_warning_lines(warnings: list[dict[str, Any]]) -> list[str]:
             sentence += f" Install it with: {command}"
         lines.append(sentence)
     return lines
+
+
+#: (task-3313) The "Retry this batch" affordance's resting label.
+LIBRARY_INGEST_RETRY_LABEL = "Retry this batch"
+#: (xhigh review + live-verify round) Its armed label. A re-stage replaces
+#: path/title/author/keywords/options wholesale with no undo, so when it
+#: would discard work the user entered since the submit it takes the
+#: incumbent two-press consent -- and the affordance itself carries the
+#: pending state, because the ``r`` accelerator has no other surface.
+LIBRARY_INGEST_RETRY_CONFIRM_LABEL = "Press again to replace form"
+
+
+def library_ingest_retry_label(retry_confirm_armed: bool) -> str:
+    """Return the retry affordance's label for the current consent state."""
+    return (
+        LIBRARY_INGEST_RETRY_CONFIRM_LABEL
+        if retry_confirm_armed
+        else LIBRARY_INGEST_RETRY_LABEL
+    )
+
+
+def library_ingest_retry_available(
+    jobs: Sequence[LibraryIngestJob],
+    *,
+    last_submission_available: bool,
+) -> bool:
+    """Whether "Retry this batch" is offered at all -- key AND button.
+
+    (task-3313; consolidated in the xhigh review + live-verify round) The
+    affordance appears once a submission exists this session AND the queue
+    has settled: an active job means that submission has not reached a
+    terminal state yet, and re-staging mid-run invites a duplicate batch.
+
+    This is the ONE predicate. ``build_library_ingest_state`` derives
+    ``show_retry_last`` from it and ``LibraryScreen.check_action`` gates
+    the ``r`` binding on it. They used to state the rule separately and
+    the screen's copy omitted the settled-queue half, so mid-run the key
+    stayed live exactly while the button was deliberately hidden -- one
+    keystroke away from the duplicate batch the button was hidden to
+    prevent.
+
+    Args:
+        jobs: The registry's current job snapshot.
+        last_submission_available: Whether a last-submission snapshot
+            exists for this session.
+
+    Returns:
+        ``True`` when the affordance (button and key alike) should be
+        offered.
+    """
+    return bool(last_submission_available) and not any(
+        job.state
+        in (
+            IngestJobState.QUEUED,
+            IngestJobState.PARSING,
+            IngestJobState.WRITING,
+        )
+        for job in jobs
+    )
 
 
 def preflight_install_commands(warnings: list[dict[str, Any]]) -> tuple[str, ...]:
@@ -889,8 +990,15 @@ class LibraryIngestCanvasState:
     #: (task-3313) Whether the "Retry this batch" affordance is visible:
     #: a last-submission snapshot exists AND the queue has settled (no
     #: queued/parsing/writing job). Canvas-level, always-mounted,
-    #: display-managed chrome.
+    #: display-managed chrome. Derived from
+    #: :func:`library_ingest_retry_available`, the same predicate
+    #: ``LibraryScreen.check_action`` gates the ``r`` binding on.
     show_retry_last: bool = False
+    #: (xhigh review + live-verify round) Whether a destructive re-stage
+    #: is awaiting its second press. Drives the affordance's LABEL (see
+    #: :func:`library_ingest_retry_label`), which is the only surface the
+    #: ``r`` accelerator has to announce a pending consent on.
+    retry_confirm_armed: bool = False
 
 
 def _basename(source_path: str) -> str:
@@ -1499,6 +1607,7 @@ def build_library_ingest_state(
     analysis_unready_hint: str = "",
     start_confirm_armed: bool = False,
     last_submission_available: bool = False,
+    retry_confirm_armed: bool = False,
 ) -> LibraryIngestCanvasState:
     """Build the ingest canvas's full display state.
 
@@ -1527,6 +1636,9 @@ def build_library_ingest_state(
             ``form.preflight_checking``.
         transcribe_cpp_configured: Whether the dedicated direct-local model
             setting exists. Only the boolean reaches render state.
+        retry_confirm_armed: Whether a destructive re-stage is awaiting its
+            second press. Rendered as the affordance's label; ignored
+            whenever the affordance itself is hidden.
 
     Returns:
         The canvas's full display state.
@@ -1827,14 +1939,8 @@ def build_library_ingest_state(
     # AND the queue has settled — an active job means that submission has
     # not reached a terminal state yet, and re-staging mid-run invites a
     # duplicate batch.
-    show_retry_last = bool(last_submission_available) and not any(
-        job.state
-        in (
-            IngestJobState.QUEUED,
-            IngestJobState.PARSING,
-            IngestJobState.WRITING,
-        )
-        for job in jobs
+    show_retry_last = library_ingest_retry_available(
+        jobs, last_submission_available=last_submission_available
     )
 
     # (task-2100) Name the unsupported files -- a count alone forces a
@@ -1967,6 +2073,9 @@ def build_library_ingest_state(
         warning_commands=tuple(warning_commands),
         start_confirm_armed=start_confirm_active,
         show_retry_last=show_retry_last,
+        # (xhigh review + live-verify round) Gated on visibility: a
+        # stale armed flag can never label a hidden affordance.
+        retry_confirm_armed=bool(retry_confirm_armed) and show_retry_last,
     )
 
 

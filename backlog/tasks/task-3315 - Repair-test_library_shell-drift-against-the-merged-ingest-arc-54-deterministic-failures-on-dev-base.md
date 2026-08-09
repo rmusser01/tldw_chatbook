@@ -114,4 +114,26 @@ test_library_shell.py` (guard + harness + re-pins), `Tests/Library/
 test_library_ingest_runner.py` (harness via seam), `Docs/User_Guide/library/
 notes.md` (re-verified stamp), `backlog/docs/lessons-testing-evidence.md`
 (git-archive bisect lesson), task-3317 filed.
+xhigh review + live-verify round (2026-08-09), P0 SILENT DATA LOSS in the restored LIB-14 GC:
+the untouched-blank gate treated the literal string "Untitled" as blank
+(`raw_title == LIBRARY_NOTE_BLANK_SEED_TITLE`), so a note the user DELIBERATELY titled "Untitled"
+with an empty body was destroyed on navigate-away -- no prompt, no undo. A string can never
+distinguish the create seam's seed from the same letters typed by a human; only provenance can. New
+screen-session marker `_library_note_title_user_edited` is set by `handle_library_note_title_changed`
+BEFORE and INDEPENDENTLY of the mutate result (the two guards above it already exclude every
+programmatic echo, and a blank-seeded note renders its title placeholder-only with the draft still
+holding the seed, so pasting "Untitled" is a real touch that `mutate()` reports as a no-op -- gating
+the marker on mutate() left the GC free to destroy the note). It is cleared only when a NEW editor
+session begins (create / row switch / deep link / full editor reset), never by a save, so the
+distinction survives a save round-trip. An emptied-out title is still blank either way, so the
+type-then-delete-everything case still GCs.
+Same round, the paired save-seam disagreement: the port substituted the seed title for a blank one
+on the wire but `DatabaseNotePortSaveReply` carries no title back, so the snapshot baseline kept the
+blank while the DB row was named "Untitled" and every list row patched from that snapshot inherited
+it (observed: list title '' vs persisted 'Untitled'). The substitution is a pure function of the
+payload title, so both sides now derive it from one helper, `library_note_persisted_title` --
+the port before the write, `_patch_library_note_list_from_session` after it.
+Tests in Tests/UI/test_library_shell.py (real DB): the deliberate-"Untitled" note survives; an
+untouched seed still GCs after a body round-trip; the list row agrees with the persisted name.
+Mutation check (revert the gate to plain string equality) sends the first RED.
 <!-- SECTION:NOTES:END -->

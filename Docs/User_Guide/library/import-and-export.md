@@ -98,13 +98,13 @@ the rest of the session.
 | Import control | What it does |
 |---|---|
 | "Browse…" | Opens the "Import media" file picker (remembers your last folder). The listing shows Name / Size / Modified column headers, human-readable sizes ("512 B", "2.4 MB", never a bare byte count), no size on folder rows (including ".."), and a labeled "File name:" input at the bottom. Folders and URLs are typed or pasted into the path field instead. |
-| Pre-check warnings ("⚠ …") | Name a missing optional package, what it's needed for, and the install command that fixes it. A compact "Copy install command" button sits right under the warnings (with several distinct commands, each button names its extra, e.g. "Copy install command (.[audio])"). |
+| Pre-check warnings ("⚠ …") | Name a missing optional package, what it's needed for, and the install command that fixes it. A compact "Copy install command" button sits right under the warnings (with several distinct commands, each button names its extra, e.g. "Copy install command (audio)", "Copy install command (video)"). |
 | "Choose a file…" / "Retry" | Offered under pre-check errors — pick a different path, or re-run the check after a network hiccup. |
-| Per-type options | Every dropdown shows a plain-language choice (the internal value still travels to the pipeline). PDF documents: "PDF engine" ("PyMuPDF (plain text)" / "PyMuPDF4LLM (Markdown)" / "Docling (layout-aware · OCR-capable)" / "Docext (vision-model OCR)"), "Enable OCR (docling or docext engines only)", "OCR language", "OCR backend" ("Auto (let Docext choose)" / Docext / Tesseract / EasyOCR / PaddleOCR / Docling — docext engine only). Word/Office documents: "Processing method" ("Auto (Docling when installed)" / Docling / "Native per-format parser"), "Enable OCR (docling method only)", "OCR language". Audio & video: "Transcription provider" ("Auto (faster-whisper)" / "Parakeet (ONNX)" / "Faster Whisper" / "transcribe.cpp (GGUF)"), "Local Parakeet model folder", "Transcription model" (the full faster-whisper catalog — Tiny through Large v3 including the English-only ".en" variants, the distilled "Distil" family, and the community "Large v3 Turbo" / "CrisperWhisper" builds), "Language", "Translate to English (via faster-whisper)", "Include timestamps", "Speaker diarization", "Voice activity detection (VAD) filter", "Start at" / "Stop at" (trim bounds, HH:MM:SS or seconds — blank means unbounded), "Cookies file for gated URLs" (a Netscape cookies.txt path for yt-dlp; video URLs only), "Recursive summary (map-reduce)" (with Analyze after import + chunking: summarizes each chunk, then combines the summaries). E-books: "Extraction method" ("Filtered (skips covers & front matter)" / "Markdown (keeps headings & structure)" / "Basic (every section · plain text)"), "Chunking method" ("By chapter" / "By sentence" / "By word count" / "By paragraph"), "Include table of contents". Images (.png/.jpg/.jpeg/.gif/.webp/.bmp/.tiff/.tif): "Extract text (OCR)" (on by default — the extracted text is what gets imported), "OCR language", "OCR backend" ("Auto (best installed backend)" / "Docext (vision model)" / Docling / Tesseract / EasyOCR / PaddleOCR). Plain text & HTML: "Analyze after import", "Chunk content", "Chunk size", "Chunk overlap", "Encoding". Web pages (URLs): "What to fetch" ("This page only" / "Site map" / "Pages under this URL" / "Follow links (recursive)"), "Maximum pages", "Maximum depth". |
+| Per-type options | Every dropdown shows a plain-language choice (the internal value still travels to the pipeline). PDF documents: "PDF engine" ("PyMuPDF (plain text)" / "PyMuPDF4LLM (Markdown)" / "Docling (layout-aware · OCR-capable)" / "Docext (vision-model OCR)"), "Enable OCR (docling or docext engines only)", "OCR language", "OCR backend" ("Auto (let Docext choose)" / Docext / Tesseract / EasyOCR / PaddleOCR / Docling — docext engine only). Word/Office documents: "Processing method" ("Auto (Docling when installed)" / Docling / "Native per-format parser"), "Enable OCR (docling method only)", "OCR language". Audio & video: "Transcription provider" ("Auto (faster-whisper)" / "Parakeet (ONNX)" / "Faster Whisper" / "transcribe.cpp (GGUF)"), "Local Parakeet model folder", "Transcription model" (the full faster-whisper catalog — Tiny through Large v3 including the English-only ".en" variants, the distilled "Distil" family, and the community "Large v3 Turbo" / "CrisperWhisper" builds), "Language", "Translate to English (via faster-whisper)", "Include timestamps", "Speaker diarization", "Voice activity detection (VAD) filter", "Start at" / "Stop at" (trim bounds, HH:MM:SS or seconds — blank means unbounded; "Stop at" is an absolute position in the recording, not a length measured from "Start at", and means the same thing for audio and video files), "Cookies file for gated URLs" (a Netscape cookies.txt path for yt-dlp; video URLs only — the file must exist when the job runs, otherwise the import proceeds without cookies and the queue row says "cookies ignored: …"), "Recursive summary (map-reduce)" (with Analyze after import + chunking: summarizes each chunk, then combines the summaries). E-books: "Extraction method" ("Filtered (skips covers & front matter)" / "Markdown (keeps headings & structure)" / "Basic (every section · plain text)"), "Chunking method" ("By chapter" / "By sentence" / "By word count" / "By paragraph"), "Include table of contents". Images (.png/.jpg/.jpeg/.gif/.webp/.bmp/.tiff/.tif): "Extract text (OCR)" (on by default — the extracted text is what gets imported), "OCR language", "OCR backend" ("Auto (best installed backend)" / "Docext (vision model)" / Docling / Tesseract / EasyOCR / PaddleOCR). Plain text & HTML: "Analyze after import", "Chunk content", "Chunk size", "Chunk overlap", "Encoding". Web pages (URLs): "What to fetch" ("This page only" / "Site map" / "Pages under this URL" / "Follow links (recursive)"), "Maximum pages", "Maximum depth". |
 | PDF / document OCR | The OCR checkbox is inert under engines that cannot OCR — the label names the capable ones. "OCR language" rides the OCR toggle; the PDF "OCR backend" applies to the docext engine only. |
 | Inert (grayed) options | Any option whose precondition isn't met renders dimmed on a darker field AND says why at its label — "Local Parakeet model folder — needs the parakeet-onnx provider", "Maximum pages — single-page fetch selected", "Chunk size — needs Chunk content on", "OCR language — needs Enable OCR on"; a missing optional package reads "— needs <package> installed". Flip the named gate and the field wakes up. |
 | "Translate to English" | Transcribes audio/video into English regardless of the spoken language. Runs via faster-whisper — the toggle is inert under parakeet-onnx and transcribe-cpp, which cannot translate. |
-| Image imports | An image's imported content is the text OCR finds in it, so OCR needs a backend installed (any one of docling, tesseract, easyocr, paddleocr, or docext — the pre-check "⚠" warning carries an install command when none is present). An image with OCR off, or in which OCR finds no text, fails its row honestly ("No text was found in …") instead of storing an empty, unsearchable entry. Images import locally only — a server-mode submission refuses them, since the server's ingest API has no image type. |
+| Image imports | An image's imported content is the text OCR finds in it, so OCR needs a backend installed (any one of docling, tesseract, easyocr, paddleocr, or docext — the pre-check "⚠" warning carries an install command when none is present). An image with OCR off, or in which OCR finds no text, fails its row honestly ("No text was found in …") instead of storing an empty, unsearchable entry. Images import locally only — a server-mode submission refuses them, since the server's ingest API has no image type. The Images fold applies to image FILES: a link to an image (`https://…/chart.png`) is pre-checked and imported as a web page, because the URL pipeline fetches and clips pages and has no image-download step. |
 | E-book "Chunking method" | "chapters" (the default) stores one retrieval chunk per chapter; sentences / words / paragraphs chunk by that unit using the Chunk size/overlap values. |
 | Web "What to fetch" on a local import | The multi-page methods (sitemap / url_level / recursive_scraping) run only on the server. Selecting one while importing on this machine shows "Multi-page fetch runs on the server — this local import fetches one page." right under the control. |
 | "Analyze after import" | Runs an LLM summary of each imported item, stored alongside it (visible from the media viewer's analysis panel). The whole `[analysis_defaults]` section travels — provider, model, temperature, top_p, min_p, max_tokens, system_prompt — so the stored analysis matches what the Media analysis panel would produce under the same config; the key comes from `[api_settings.<provider>]` or the provider's usual environment variable. When the option is on but no provider is callable — including a configured provider the analysis pipeline cannot dispatch ("provider 'X' is not supported for ingest analysis") — a line above Start says so ("Analyze after import is on, but … Imports will run without analysis.") and finished rows read "Imported name — analysis skipped: <reason>". If the analysis call itself fails (provider error), the import still succeeds and the row reads "Imported name — analysis failed: <reason>" instead of silently storing nothing (or worse, the error text). |
@@ -115,7 +115,7 @@ the rest of the session.
 | Queue rows | "● queued / parsing / writing · name" while working, "✓ done · name · 4s" on success, "✗ failed · name · reason" (plus " · retry 1" after a retry) on failure, "⊘ cancelled · name" when stopped on purpose. Server jobs carry an " · on server" suffix. |
 | Row actions | "Open in Library" (done, local) jumps to the new media item; "View on server" (done, server); "Show details" shows the full error; "Retry" re-queues a failed job; "Cancel" stops an in-flight server job; "Dismiss" removes a failed row. |
 | "Clear finished" | Removes all done and failed rows at once (two presses: the first arms and renames the button "Press again to clear N finished…"). |
-| "Retry this batch" | Below the queue, once your last import of the session has settled: one press puts that submission's source, options, title, author, and keywords back into the form and re-runs the pre-check from scratch — install the package a warning named, press it, and the fresh forecast reflects the fix. It stages, not submits: review the forecast and press "Start import" again. Keyboard: `r` (anywhere on the Import canvas outside a text field). |
+| "Retry this batch" | Below the queue, once your last import of the session has settled (while a job is still queued/parsing/writing it is hidden, and `r` is inert too — re-staging mid-run invites a duplicate batch): one press puts that submission's source, options, title, author, and keywords back into the form and re-runs the pre-check from scratch — install the package a warning named, press it, and the fresh forecast reflects the fix. If the form currently holds work the re-stage would overwrite (a different path, a title you started typing, an option you flipped), it takes two presses: the first renames the button "Press again to replace form" and changes nothing. It stages, not submits: review the forecast and press "Start import" again. Keyboard: `r` (anywhere on the Import canvas outside a text field). |
 
 **Consent for risky imports** — starting with "⚠" tooling warnings
 outstanding takes two presses, right at the Start button (task-3314
@@ -123,12 +123,15 @@ retired the old "Some files may fail to import:" dialog). The first press
 converts the line beside Start into "⚠ Press Start again to import anyway
 — N files may fail." naming how many staged files depend on the missing
 tooling ("1 file" when only one). The second press — button or Enter,
-they behave identically — starts the import. Starting anyway is safe:
-affected files simply fail individually and show up as ✗ rows you can
-retry after installing. Esc backs out of the pending confirm (and stays
-on the form); editing the path, changing an option, or a pre-check that
-comes back different also cancels it. The "Copy install command" buttons
-stay under the warnings the whole time.
+they behave identically — starts the import. You can arm with Enter in
+the path field and confirm with the Start button, or the other way
+round; moving focus between the two presses does not cancel anything.
+Starting anyway is safe: affected files simply fail individually and show
+up as ✗ rows you can retry after installing. Esc backs out of the pending
+confirm (and stays on the form); editing the path, changing an option,
+picking a different file with "Browse…", or a pre-check that comes back
+different also cancels it. The "Copy install command" buttons stay under
+the warnings the whole time.
 
 | Export control | What it does |
 |---|---|
@@ -392,3 +395,37 @@ the warnings; a "Retry this batch" button below the queue (key: `r`)
 re-stages the session's last submission — source, options, and metadata
 — and re-runs the pre-check fresh, so tooling installed since the last
 run changes the forecast)*
+
+*Verified against feat/media-ingest-followups — 2026-08-09 (tasks
+3306/3307 xhigh review round: "Stop at" is now absolute on BOTH media
+paths — a video trimmed 0:30-1:00 used to yield 0:30-1:30 while the same
+pair on an audio file yielded 0:30-1:00; a cookies path that does not
+exist is refused at the option boundary and annotated on the queue row
+("cookies ignored: …") instead of being silently parsed as cookie JSON,
+and a cookies file the user owns is never deleted by the downloader's
+cleanup; cookies now also authenticate the pre-download size probe and
+metadata lookup, so a gated URL no longer fails before the cookied
+download runs; an image URL pre-checks as a web page, matching what the
+pipeline actually does with it, instead of promising OCR that never ran;
+image OCR text is chunked by the form's chunk size like any other text
+import; and the "no OCR backend" warning now follows the OCR manager's
+real rules — paddleocr alone, or docext without one of
+gradio_client/transformers/openai, counts as no backend)*
+
+*Verified against feat/media-ingest-followups — 2026-08-09 (xhigh review
++ live-verify round): the two-press Start confirm now survives moving
+focus out of the path field, so "Press Start again" can be answered with
+the Start button after arming with Enter (previously that click cancelled
+the consent and merely re-armed, and nothing could submit); picking a
+different file with "Browse…" cancels a pending confirm instead of
+letting it cover the new file; "Retry this batch" takes two presses when
+re-staging would overwrite form content you entered (the button renames
+itself "Press again to replace form"), and `r` is now inert exactly while
+the button is hidden mid-run; each "Copy install command" button names
+its extra in plain text ("(audio)") — the bracketed spelling was eaten by
+the renderer and every button read "Copy install command (.)"; a gated
+text option keeps its format hint beside the reason it is inert (e.g.
+"Cookies file for gated URLs (Netscape cookies.txt · video URLs only) —
+needs yt-dlp installed"); a blocked-URL failure row now names the address
+it refused; and characters typed immediately after "Clear" are no longer
+swallowed by the relayout.*

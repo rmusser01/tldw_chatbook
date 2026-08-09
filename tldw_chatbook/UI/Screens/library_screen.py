@@ -105,6 +105,8 @@ from ...Library.library_ingest_state import (
     LibraryIngestLastSubmission,
     build_library_ingest_state,
     clamp_chunk_size,
+    library_ingest_retry_available,
+    library_ingest_retry_label,
     parse_keywords,
 )
 from ...Library.library_media_state import (
@@ -450,6 +452,32 @@ LIBRARY_NOTE_CONTENT_MAX_CHARS = 2_000_000
 # placeholder), and the untouched-blank GC gate treats it as blank -- both
 # must agree with the create seed in ``handle_library_notes_create_blank``.
 LIBRARY_NOTE_BLANK_SEED_TITLE = "Untitled"
+
+
+def library_note_persisted_title(raw_title: str) -> str:
+    """The exact title a note with ``raw_title`` is actually stored under.
+
+    (P0, xhigh review + live-verify round) The save port substitutes the
+    seed title for a blank one on the wire (task-2858's reviewed decision:
+    an emptied-out title persists as "Untitled", never as a blank row
+    name), but ``DatabaseNotePortSaveReply`` carries no title back -- so
+    the session snapshot's baseline kept the blank the draft had while the
+    DB row was named "Untitled", and every list row patched from that
+    snapshot inherited the disagreement. The substitution is a pure
+    function of the payload title, so both sides derive it from HERE
+    instead of one side guessing: the port before the write, the list
+    patch after it.
+
+    Args:
+        raw_title: The draft/payload title exactly as the user left it.
+
+    Returns:
+        ``raw_title`` when it carries any non-whitespace text, otherwise
+        :data:`LIBRARY_NOTE_BLANK_SEED_TITLE`.
+    """
+    return raw_title if raw_title.strip() else LIBRARY_NOTE_BLANK_SEED_TITLE
+
+
 # Prompt editor body fields (details/system/user) have no dedicated cap of
 # their own -- reuses the note body's generous ceiling rather than inventing
 # a second magic number for the same "large text field" concern.
@@ -674,11 +702,11 @@ class _LibraryDatabaseNoteSessionPort:
                 # silently dropped -- an emptied-out title persists as the
                 # same "Untitled" default the create seam uses, never as a
                 # blank row title (task-2858's reviewed decision).
-                title=(
-                    payload.title
-                    if payload.title.strip()
-                    else LIBRARY_NOTE_BLANK_SEED_TITLE
-                ),
+                # (P0) The substitution rule lives in ONE helper now --
+                # ``_patch_library_note_list_from_session`` applies the
+                # same one to the snapshot, so the row name the session
+                # reports and the row name on disk can no longer disagree.
+                title=library_note_persisted_title(payload.title),
                 content=payload.body,
                 note_id=note_id,
                 version=expected_version,
@@ -2637,6 +2665,20 @@ class LibraryScreen(BaseAppScreen):
         # empty, which is exactly the row AC#5 forbids, regardless of what
         # happened to it in between.
         self._library_note_session_blank_id: str | None = None
+        # (P0, xhigh review + live-verify round) Whether the user has
+        # TOUCHED the title widget during this editor session. The
+        # untouched-blank GC used to key blankness on
+        # ``raw_title == LIBRARY_NOTE_BLANK_SEED_TITLE`` -- a pure string
+        # comparison -- so a note the user deliberately titled "Untitled"
+        # (body still empty) was destroyed on navigate-away with no
+        # prompt and no undo. A string can never distinguish the seed the
+        # create seam wrote from the identical string a human typed; only
+        # provenance can, so the GC reads THIS instead. Set on the first
+        # title edit (``handle_library_note_title_changed``) and cleared
+        # only when a new editor session begins (create / row switch /
+        # deep link / full editor reset) -- deliberately NOT cleared by a
+        # save, so the distinction survives a save round-trip.
+        self._library_note_title_user_edited: bool = False
         # Notes sync panel state. Seeded from config lazily on first entry
         # into sync mode (``_ensure_library_notes_sync_config_loaded``), not
         # here in __init__, so tests/screens that never open the sync panel
@@ -2718,6 +2760,17 @@ class LibraryScreen(BaseAppScreen):
         self._library_ingest_last_submission: (
             LibraryIngestLastSubmission | None
         ) = None
+        # (xhigh review + live-verify round) Two-press consent for the
+        # DESTRUCTIVE half of "Retry this batch". Re-staging replaces
+        # path/title/author/keywords/options wholesale with no undo, and
+        # the ``r`` accelerator can fire it from any non-text focus -- so
+        # when the re-stage would discard work the user entered since the
+        # submit, the first press only arms (the affordance's own label
+        # becomes the confirm) and the second replaces the form. A form
+        # that holds nothing the re-stage would discard skips consent
+        # entirely: friction with nothing at stake is just friction.
+        self._library_ingest_retry_confirm_armed: bool = False
+        self._library_ingest_retry_confirm_armed_at: float = 0.0
         # (task-2130) Durable session ledger: terminal jobs snapshotted at
         # Clear-finished time so Recent imports (incl. failure records)
         # survives the registry removal.
@@ -5391,6 +5444,7 @@ class LibraryScreen(BaseAppScreen):
             # A deep link never owns the current blank-note GC identity.
             self._library_note_pending_blank_gc_id = None
             self._library_note_session_blank_id = None
+            self._library_note_title_user_edited = False
         if open_source_type and open_source_id and self.is_mounted:
             self.run_worker(
                 self._open_pending_library_source(),
@@ -8326,6 +8380,9 @@ class LibraryScreen(BaseAppScreen):
         # it was armed for.
         self._library_note_pending_blank_gc_id = None
         self._library_note_session_blank_id = None
+        # (P0) A full editor reset ends the session the pristine-title
+        # marker belonged to; the next note starts untouched again.
+        self._library_note_title_user_edited = False
         if self._library_notes_autosave_timer is not None:
             self._library_notes_autosave_timer.stop()
             self._library_notes_autosave_timer = None
@@ -8372,6 +8429,7 @@ class LibraryScreen(BaseAppScreen):
             timer.stop()
             self._library_ingest_path_debounce_timer = None
         self._library_ingest_clear_finished_armed = False
+        self._disarm_library_ingest_retry_confirm()
         self._library_ingest_expanded_details.clear()
         self._library_ingest_form = LibraryIngestFormState()
 
@@ -9505,13 +9563,35 @@ class LibraryScreen(BaseAppScreen):
             scroll_y = canvas.scroll_offset.y
         except (NoMatches, QueryError):
             pass
+        # (task-3311, second half) ``refresh(recompose=True)`` is DEFERRED:
+        # the path Input below stays mounted, focused, and typeable until
+        # the recompose actually runs, and whatever the user types into it
+        # in that window is thrown away with the widget -- measured live
+        # as 5/5 characters lost within ~150ms of Clear, 3/3 surviving at
+        # >=400ms. Keeping the WIDGET (not a copy of its text) lets the
+        # restore below read the value it ended up holding, which is the
+        # only place those keystrokes exist. The value AT CAPTURE TIME
+        # comes along as the discriminator: a difference means the user
+        # typed during the window, whereas an unchanged stale value beside
+        # a deliberately rewritten form (the retry re-stage) must be left
+        # alone.
+        stale_path_input: Input | None = None
+        try:
+            stale_path_input = self.query_one("#library-ingest-path", Input)
+        except (NoMatches, QueryError):
+            pass
+        stale_path_value = (
+            stale_path_input.value if stale_path_input is not None else None
+        )
         self.refresh(recompose=True)
-        if focused_id is not None or scroll_y:
+        if focused_id is not None or scroll_y or stale_path_input is not None:
             self.call_after_refresh(
                 self._restore_library_ingest_canvas_context,
                 focused_id,
                 cursor,
                 scroll_y,
+                stale_path_input,
+                stale_path_value,
             )
 
     def _restore_library_ingest_canvas_context(
@@ -9519,12 +9599,31 @@ class LibraryScreen(BaseAppScreen):
         focused_id: str | None,
         cursor: int | None,
         scroll_y: float | None,
+        stale_path_input: Input | None = None,
+        stale_path_value: str | None = None,
     ) -> None:
         """Re-apply focus/cursor/scroll captured before a job-tick recompose.
 
         Scroll first, then focus with ``scroll_visible=False`` so restoring
         focus does not itself yank the scroll position. A vanished widget id
         (a finished job's row-action button) degrades silently (task-2010).
+
+        Also rescues keystrokes that raced the recompose (task-3311's
+        second half): the replaced path Input is the only holder of text
+        typed between scheduling and applying the rebuild. Adoption is
+        gated on the widget's value having CHANGED since capture, so a
+        deliberate form rewrite under an untouched field (the retry
+        re-stage) is never undone by a stale echo. The value is written to
+        the live Input rather than to the form echo, so the ordinary
+        ``Input.Changed`` seam runs the whole follow-through (gate, Clear
+        button, intro lines, the pre-flight debounce) exactly once.
+
+        Args:
+            focused_id: Id of the widget focused before the recompose.
+            cursor: That widget's cursor position, when it was an ``Input``.
+            scroll_y: The canvas's scroll offset before the recompose.
+            stale_path_input: The pre-recompose path ``Input`` object.
+            stale_path_value: That widget's value at capture time.
         """
         if scroll_y:
             try:
@@ -9532,6 +9631,23 @@ class LibraryScreen(BaseAppScreen):
                 canvas.scroll_to(y=scroll_y, animate=False, force=True)
             except (NoMatches, QueryError):
                 pass
+        raced_text: str | None = None
+        if (
+            stale_path_input is not None
+            and stale_path_value is not None
+            and stale_path_input.value != stale_path_value
+        ):
+            raced_text = stale_path_input.value
+        if raced_text is not None:
+            try:
+                live_path = self.query_one("#library-ingest-path", Input)
+            except (NoMatches, QueryError):
+                live_path = None
+            if live_path is not None and live_path.value != raced_text:
+                live_path.value = raced_text
+                live_path.cursor_position = len(raced_text)
+                if focused_id == "library-ingest-path":
+                    cursor = len(raced_text)
         if not focused_id:
             return
         try:
@@ -9688,6 +9804,12 @@ class LibraryScreen(BaseAppScreen):
             pass
         else:
             retry_last.display = new_state.show_retry_last
+            # (xhigh review + live-verify round) The pending destructive
+            # re-stage consent rides the same in-place update, so the
+            # label and the state can never disagree across a job tick.
+            retry_last.label = library_ingest_retry_label(
+                new_state.retry_confirm_armed
+            )
         # (task-2042 review) Scope labels depend on per-group file counts,
         # which change WITHOUT the group set changing (generic is always
         # present) -- update them in place so a panel never claims files it
@@ -9812,6 +9934,9 @@ class LibraryScreen(BaseAppScreen):
             last_submission_available=(
                 getattr(self, "_library_ingest_last_submission", None)
                 is not None
+            ),
+            retry_confirm_armed=getattr(
+                self, "_library_ingest_retry_confirm_armed", False
             ),
         )
 
@@ -9958,6 +10083,16 @@ class LibraryScreen(BaseAppScreen):
             or not self._library_note_editor_armed
         ):
             return
+        # (P0) Recorded BEFORE (and independently of) the mutate result:
+        # the two guards above already exclude every programmatic echo, so
+        # reaching this line means the human changed the title widget --
+        # even when the resulting string happens to equal the seed and the
+        # coordinator reports "no change". A blank-seeded note renders its
+        # title Input placeholder-only (empty value, draft still holding
+        # the seed), so pasting "Untitled" into it is exactly that case:
+        # a real touch that mutate() sees as a no-op. Gating the marker on
+        # mutate() therefore left the GC free to destroy the note.
+        self._library_note_title_user_edited = True
         if self._library_note_session.mutate(title=event.value):
             self._library_note_pending_blank_gc_id = None
             self._library_note_shortcut_status = ""
@@ -10071,15 +10206,24 @@ class LibraryScreen(BaseAppScreen):
         self._apply_library_note_presentation_state()
 
     def _patch_library_note_list_from_session(self) -> None:
-        """Patch list caches from the payload the coordinator actually saved."""
+        """Patch list caches from the payload the coordinator actually saved.
+
+        (P0) The baseline title is the DRAFT's title; the save port
+        substitutes the seed for a blank one on the wire and the reply
+        carries no title back, so patching rows straight from the baseline
+        named an emptied-out note ``""`` while the persisted row said
+        "Untitled". Both sides now run the payload through
+        :func:`library_note_persisted_title`.
+        """
         snapshot = self._library_note_session.snapshot
         if snapshot is None:
             return
         baseline = snapshot.baseline
+        persisted_title = library_note_persisted_title(baseline.title)
         self._local_source_records["notes"] = patch_note_records_after_save(
             self._local_source_records.get("notes", ()),
             baseline.note_id,
-            title=baseline.title,
+            title=persisted_title,
             modified_at=baseline.modified_at,
         )
         if self._library_notes_filter_records is not None:
@@ -10087,7 +10231,7 @@ class LibraryScreen(BaseAppScreen):
                 patch_note_records_after_save(
                     self._library_notes_filter_records,
                     baseline.note_id,
-                    title=baseline.title,
+                    title=persisted_title,
                     modified_at=baseline.modified_at,
                 )
             )
@@ -10240,9 +10384,17 @@ class LibraryScreen(BaseAppScreen):
                 # blank here or the untouched-blank GC never fires and every
                 # abandoned Blank note leaves a permanent "Untitled" row
                 # (exactly what task-2858 AC#5 forbids).
-                title_blank = (
-                    not raw_title.strip()
-                    or raw_title == LIBRARY_NOTE_BLANK_SEED_TITLE
+                # (P0, xhigh review + live-verify round) The seed only
+                # counts as blank while it is still THE SEED. Keying on
+                # string equality alone destroyed a note the user
+                # deliberately titled "Untitled" (body empty) on
+                # navigate-away, with no prompt and no undo -- a string
+                # cannot tell the create seam's default from the same
+                # letters typed by a human, so the provenance marker
+                # decides. An emptied-out title is blank either way.
+                title_blank = not raw_title.strip() or (
+                    raw_title == LIBRARY_NOTE_BLANK_SEED_TITLE
+                    and not self._library_note_title_user_edited
                 )
                 if title_blank and not any(
                     value.strip() for value in (raw_content, raw_keywords_text)
@@ -13636,13 +13788,24 @@ class LibraryScreen(BaseAppScreen):
             # exclusive, not this predicate.
             return self._library_media_confirming_bulk_delete
         if action == "library_ingest_retry_last":
-            # task-3313: only on the Ingest canvas AND once a submission
-            # exists this session -- the same predicate that shows the
-            # button, so key and affordance appear together.
-            return (
-                self._library_selected_row_id == LIBRARY_ROW_INGEST_MEDIA
-                and getattr(self, "_library_ingest_last_submission", None)
-                is not None
+            # task-3313: only on the Ingest canvas AND while the affordance
+            # itself is offered. THE SAME predicate the state builder uses
+            # for ``show_retry_last`` -- imported, not restated. This gate
+            # used to carry its own copy of the rule with the settled-queue
+            # half missing, so mid-run the key stayed live exactly while
+            # the button was hidden to prevent a duplicate batch (xhigh
+            # review + live-verify round).
+            if self._library_selected_row_id != LIBRARY_ROW_INGEST_MEDIA:
+                return False
+            registry = self._library_ingest_registry()
+            jobs_fn = getattr(registry, "jobs", None)
+            jobs = jobs_fn() if callable(jobs_fn) else ()
+            return library_ingest_retry_available(
+                jobs,
+                last_submission_available=(
+                    getattr(self, "_library_ingest_last_submission", None)
+                    is not None
+                ),
             )
         if action == "library_list_focus_rail":
             return self._library_list_canvas_showing_list()
@@ -18290,6 +18453,37 @@ class LibraryScreen(BaseAppScreen):
 
     # ----- Ingest canvas -----------------------------------------------
 
+    def _adopt_library_ingest_path(self, new_path: str) -> str:
+        """Set the staged path from a NON-typing source, invalidation included.
+
+        (xhigh review + live-verify round) ``handle_library_ingest_path_
+        changed`` is the only seam that disarms a pending Start consent on
+        a path change, and it cannot see a programmatic set: writing
+        ``form.path`` first makes the recomposed Input's re-announcement
+        equal to the form's copy, which the handler's echo guard drops by
+        design. Browse… did exactly that, so a consent armed against file
+        A survived picking file B and B could be submitted under A's
+        consent. Every non-typing path writer routes through here instead.
+
+        Args:
+            new_path: The path the picker (or any other non-typing source)
+                chose, exactly as it should appear in the field.
+
+        Returns:
+            The previous staged path, for callers that need to know
+            whether anything actually changed.
+        """
+        previous = self._library_ingest_form.path
+        self._library_ingest_form.path = new_path
+        if new_path != previous:
+            # Same rule the typing seam applies: a different source means
+            # a different blast radius, so any pending consent is stale --
+            # both the Start consent and a pending destructive re-stage
+            # (whose whole point is the path it would overwrite).
+            self._disarm_library_ingest_start_confirm()
+            self._disarm_library_ingest_retry_confirm()
+        return previous
+
     @on(Input.Changed, "#library-ingest-path")
     async def handle_library_ingest_path_changed(self, event: Input.Changed) -> None:
         """Track the ingest path text as the user types it (state only).
@@ -18322,6 +18516,12 @@ class LibraryScreen(BaseAppScreen):
         # pending Start consent was armed against; the trailing gate
         # update below re-renders the line out of its confirm state.
         self._disarm_library_ingest_start_confirm()
+        # ...and it changes what a pending re-stage would discard, so that
+        # consent is stale too (guarded: the label write is off the hot
+        # typing path unless something is actually armed).
+        if self._library_ingest_retry_confirm_armed:
+            self._disarm_library_ingest_retry_confirm()
+            self._update_library_ingest_retry_label()
         # (task-2015 review) Fence off any in-flight pre-flight the moment
         # the text genuinely changes: its result describes a path this
         # field no longer shows, and generation equality alone would
@@ -18376,17 +18576,26 @@ class LibraryScreen(BaseAppScreen):
     def handle_library_ingest_path_blurred(self, event: Input.Blurred) -> None:
         """Trigger pre-flight when the user leaves the path field.
 
-        (task-3314 AC#4) Blur also parks a pending Start consent: focus
-        travelling away from the commit area between the two presses means
-        the confirm copy may no longer be in view, so consent must be
-        re-affirmed. Harmless for the mouse flow -- the first Start click
-        blurs BEFORE the press handler arms -- and the Enter,Enter flow
-        never blurs at all.
+        Blur deliberately does NOT disarm a pending Start consent
+        (reversal of task-3314 AC#4's original reading; xhigh review +
+        live-verify round). The original rule assumed the mouse flow
+        always blurs BEFORE the arming press -- true only when the FIRST
+        press is the click. Arm with Enter in the path field and the
+        confirm copy says "Press Start again to import anyway"; the Start
+        CLICK that instruction asks for blurs the path field on its way
+        in, so the disarm fired between the gesture and the press handler
+        and the second press merely RE-ARMED. Nothing could ever submit
+        by the route the copy prescribes.
+
+        A blur carries no information about the forecast: the staged
+        path, its options, and its warnings are all unchanged by focus
+        moving. Consent is invalidated by things that change what Start
+        would DO -- a genuine path edit, an option edit, a fresh
+        pre-flight with different warnings, pre-flight invalidation, a
+        Browse… pick, a rail switch, or an explicit Esc -- and every one
+        of those still disarms.
         """
         event.stop()
-        if self._library_ingest_start_confirm_armed:
-            self._disarm_library_ingest_start_confirm()
-            self._update_library_ingest_gate(self._build_library_ingest_state())
         path = self._library_ingest_form.path.strip()
         if path:
             self._trigger_library_ingest_preflight(path)
@@ -18485,15 +18694,90 @@ class LibraryScreen(BaseAppScreen):
     def action_library_ingest_retry_last(self) -> None:
         """``r``: keyboard route to "Retry this batch" (task-3313 AC#2).
 
-        Gated by ``check_action`` to the Ingest canvas with a snapshot
-        present; a printable key is only ever seen here when no
+        Gated by ``check_action`` to the Ingest canvas while the affordance
+        is offered; a printable key is only ever seen here when no
         Input/TextArea holds focus (text fields consume it first), so
         typing an ``r`` into the path field never re-stages.
         """
         self._restage_library_ingest_last_submission()
 
+    #: (xhigh review + live-verify round) Presses landing this soon after
+    #: the arming press are the same physical gesture (a key repeat, a
+    #: double-click), not a decision -- mirrors the Clear-finished and
+    #: Start-consent dead zones, kept independently tunable.
+    _RETRY_CONFIRM_DEAD_ZONE_SECONDS = 0.3
+
+    def _disarm_library_ingest_retry_confirm(self) -> None:
+        """Drop a pending destructive-re-stage consent (state only)."""
+        self._library_ingest_retry_confirm_armed = False
+
+    def _library_ingest_restage_discards_work(self) -> bool:
+        """Whether re-staging would overwrite content the user entered.
+
+        A re-stage is destructive only insofar as the form currently holds
+        something DIFFERENT from what the snapshot would put back. Right
+        after a submit it does not: path and title are cleared and the
+        remaining metadata/options are the very values the snapshot
+        carries, so re-staging replaces nothing and consent would be pure
+        friction. Once the user has typed a new path, a new title, or
+        flipped an option, the same press silently destroys that work --
+        which is what the consent exists for.
+
+        Returns:
+            ``True`` when at least one non-empty form field (or option
+            value) differs from what the last-submission snapshot would
+            restore over it.
+        """
+        snapshot = self._library_ingest_last_submission
+        if snapshot is None:
+            return False
+        form = self._library_ingest_form
+        for current, staged in (
+            (form.path, snapshot.source),
+            (form.title, snapshot.title),
+            (form.author, snapshot.author),
+            (form.keywords, snapshot.keywords),
+        ):
+            # An empty field has nothing to lose; only entered text does.
+            if current.strip() and current.strip() != str(staged).strip():
+                return True
+        for group, staged_values in snapshot.type_options.items():
+            current_values = form.type_options.get(group, {})
+            for name, staged_value in staged_values.items():
+                if (
+                    name in current_values
+                    and current_values[name] != staged_value
+                ):
+                    return True
+        return False
+
+    def _update_library_ingest_retry_label(self) -> None:
+        """Sync the retry affordance's label in place (never a recompose).
+
+        The affordance is the pending consent's only surface -- the ``r``
+        route has no gate line of its own -- so arming has to be visible
+        without disturbing the form the user is mid-way through.
+        """
+        try:
+            retry_button = self.query_one("#library-ingest-retry-last", Button)
+        except (NoMatches, QueryError):
+            return
+        retry_button.label = library_ingest_retry_label(
+            self._library_ingest_retry_confirm_armed
+        )
+
     def _restage_library_ingest_last_submission(self) -> None:
         """Restore the last submission's source/options/metadata (task-3313).
+
+        Destructive by construction: every form field is replaced from the
+        snapshot with no undo. When that would discard work the user has
+        entered since the submit, the repo's incumbent two-press consent
+        applies (Clear-finished, task-2015/2160; the Start consent,
+        task-3314) -- the FIRST press only arms, relabelling the
+        affordance, and the second replaces the form. A form holding
+        nothing the re-stage would discard skips consent and re-stages on
+        one press. Both routes (button and the ``r`` accelerator) share
+        this one path, so the key can never be the looser of the two.
 
         The old forecast must never be reused (AC#3): the stale pre-flight
         echo is invalidated first, then a FRESH pre-flight runs through
@@ -18506,6 +18790,23 @@ class LibraryScreen(BaseAppScreen):
         snapshot = self._library_ingest_last_submission
         if snapshot is None:
             return
+        if self._library_ingest_restage_discards_work():
+            # ``getattr`` quiet-degrade, the convention several suites rely
+            # on: they build this screen via ``object.__new__`` and seed
+            # only the fields they exercise.
+            if not getattr(self, "_library_ingest_retry_confirm_armed", False):
+                self._library_ingest_retry_confirm_armed = True
+                self._library_ingest_retry_confirm_armed_at = time.monotonic()
+                self._update_library_ingest_retry_label()
+                return
+            if (
+                time.monotonic() - self._library_ingest_retry_confirm_armed_at
+                < self._RETRY_CONFIRM_DEAD_ZONE_SECONDS
+            ):
+                # A press inside the dead zone is the arming gesture
+                # repeating, not consent -- ignore it (stays armed).
+                return
+        self._disarm_library_ingest_retry_confirm()
         form = self._library_ingest_form
         form.path = snapshot.source
         form.title = snapshot.title
@@ -18545,7 +18846,7 @@ class LibraryScreen(BaseAppScreen):
             if selected_path is None:
                 return
             self._remember_library_ingest_location(selected_path)
-            self._library_ingest_form.path = str(selected_path)
+            self._adopt_library_ingest_path(str(selected_path))
             self.refresh(recompose=True)
             self._trigger_library_ingest_preflight(str(selected_path))
 
@@ -18641,6 +18942,9 @@ class LibraryScreen(BaseAppScreen):
         # a pending Start consent no longer covers it. Both downstream
         # paths (recompose / in-place gate update) re-render the line.
         self._disarm_library_ingest_start_confirm()
+        # Same for a pending re-stage: the option the user just changed is
+        # among the things the re-stage would overwrite.
+        self._disarm_library_ingest_retry_confirm()
         group_options = self._library_ingest_form.type_options.setdefault(
             event.group, {}
         )
@@ -20118,6 +20422,7 @@ class LibraryScreen(BaseAppScreen):
         # A normal row switch never carries the blank-note GC identity.
         self._library_note_pending_blank_gc_id = None
         self._library_note_session_blank_id = None
+        self._library_note_title_user_edited = False
         if note_id:
             self._begin_library_note_load(note_id)
         self.refresh(recompose=True)
@@ -20837,6 +21142,9 @@ class LibraryScreen(BaseAppScreen):
         self._library_note_editor_armed = False
         self._library_note_pending_blank_gc_id = created_id if blank else None
         self._library_note_session_blank_id = created_id if blank else None
+        # (P0) A freshly created note's title is whatever the create seam
+        # seeded -- untouched by definition.
+        self._library_note_title_user_edited = False
         self._finish_library_note_create(active_token)
         if self.is_mounted:
             self.refresh(recompose=True)

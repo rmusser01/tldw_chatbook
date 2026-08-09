@@ -20,6 +20,8 @@ drift from the seam it stands in for.
 from __future__ import annotations
 
 import inspect
+import shutil
+import subprocess
 from pathlib import Path
 from typing import Any, Dict
 
@@ -1727,6 +1729,169 @@ class TestAVTrimWiring:
         assert audio_calls[0].get("end_time") is None
 
 
+# ---------------------------------------------------------------------------
+# (task-3306 xhigh review round) "Stop at" must mean the SAME thing on both
+# media paths. These are governance tests on the ffmpeg argv, not on ffmpeg
+# output: neither ffmpeg nor a real media file is guaranteed present in this
+# venv, so the assertion is on the WINDOW the constructed command line
+# semantically requests. ``_interpret_ffmpeg_window`` below encodes ffmpeg's
+# own rules independently of the builder, so a regression in the builder is
+# not silently mirrored by the interpreter.
+# ---------------------------------------------------------------------------
+
+
+def _interpret_ffmpeg_window(argv: list[str]) -> tuple[float, float | None]:
+    """Return the ABSOLUTE ``(start, end)`` source window ``argv`` requests.
+
+    ffmpeg's rules, which the two ingest paths must not diverge on:
+
+    * ``-ss`` BEFORE ``-i`` is input seeking; the output's timestamps are
+      rebased to zero, so a subsequent output ``-to X`` stops at source
+      ``start + X`` (a DURATION), while ``-t X`` is a duration too.
+    * ``-ss`` AFTER ``-i`` is output seeking; timestamps are not rebased, so
+      ``-to X`` stops at source ``X`` (ABSOLUTE) and ``-t X`` is a duration.
+    """
+    index = argv.index("-i")
+    pre, post = argv[:index], argv[index + 2 :]
+
+    def _flag(args: list[str], flag: str) -> float | None:
+        if flag not in args:
+            return None
+        return _seconds(args[args.index(flag) + 1])
+
+    def _seconds(text: str) -> float:
+        total = 0.0
+        for unit, part in enumerate(reversed(text.split(":"))):
+            total += float(part) * (60**unit)
+        return total
+
+    input_ss = _flag(pre, "-ss")
+    output_ss = _flag(post, "-ss")
+    start = (input_ss or 0.0) + (output_ss or 0.0)
+
+    duration = _flag(post, "-t")
+    if duration is not None:
+        return start, start + duration
+    stop = _flag(post, "-to")
+    if stop is not None:
+        # Rebased timestamps (input seeking) make -to relative to the seek.
+        return start, (input_ss + stop) if input_ss else stop
+    return start, None
+
+
+def _capture_video_extraction_argv(tmp_path: Path, monkeypatch, start, end):
+    """Run ``_extract_audio_from_video`` with ffmpeg stubbed; return argv."""
+    from tldw_chatbook.Local_Ingestion.video_processing import LocalVideoProcessor
+
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    source = _write_fake_mp4(tmp_path)
+    processor = LocalVideoProcessor(None)
+    monkeypatch.setattr(processor, "_find_ffmpeg", lambda: "/usr/bin/ffmpeg")
+    captured: list[list[str]] = []
+
+    def fake_run(command, **kwargs):
+        captured.append(list(command))
+        Path(command[-1]).write_bytes(b"ID3\x00")
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    processor._extract_audio_from_video(
+        str(source), str(tmp_path), start_time=start, end_time=end
+    )
+    return captured[0]
+
+
+def _capture_audio_extraction_argv(tmp_path: Path, monkeypatch, start, end):
+    """Run ``_extract_time_range`` with ffmpeg stubbed; return argv."""
+    from tldw_chatbook.Local_Ingestion.audio_processing import LocalAudioProcessor
+
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    source = _write_fake_mp3(tmp_path)
+    processor = LocalAudioProcessor(None)
+    monkeypatch.setattr(shutil, "which", lambda _name: "/usr/bin/ffmpeg")
+    captured: list[list[str]] = []
+
+    def fake_run(command, **kwargs):
+        captured.append(list(command))
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    processor._extract_time_range(
+        str(source), str(tmp_path), start_time=start, end_time=end
+    )
+    return captured[0]
+
+
+class TestAVTrimArgvSemantics:
+    def test_video_and_audio_mean_the_same_window(self, tmp_path: Path, monkeypatch):
+        """Start 0:30 / Stop 1:00 must select 30s-60s on BOTH paths.
+
+        The video path used input seeking (``-ss`` before ``-i``, which
+        rebases output timestamps to zero) and then applied ``-to`` as an
+        output option -- turning "Stop at 1:00" into "one minute AFTER the
+        start", i.e. 0:30-1:30. The audio path, which puts ``-ss`` after
+        ``-i``, produced the absolute 0:30-1:00 the label promises. Same
+        two fields, same job, two different windows.
+        """
+        video_argv = _capture_video_extraction_argv(
+            tmp_path / "v", monkeypatch, "0:30", "1:00"
+        )
+        audio_argv = _capture_audio_extraction_argv(
+            tmp_path / "a", monkeypatch, "0:30", "1:00"
+        )
+
+        assert _interpret_ffmpeg_window(video_argv) == (30.0, 60.0), (
+            f"video argv requests the wrong window: {video_argv}"
+        )
+        assert _interpret_ffmpeg_window(audio_argv) == (30.0, 60.0), (
+            f"audio argv requests the wrong window: {audio_argv}"
+        )
+        assert _interpret_ffmpeg_window(video_argv) == _interpret_ffmpeg_window(
+            audio_argv
+        )
+
+    @pytest.mark.parametrize(
+        ("start", "end", "expected"),
+        [
+            ("0:30", "1:00", (30.0, 60.0)),
+            ("90", "150", (90.0, 150.0)),
+            ("00:01:00", "00:01:30", (60.0, 90.0)),
+            (None, "1:00", (0.0, 60.0)),
+            ("0:30", None, (30.0, None)),
+        ],
+    )
+    def test_both_paths_agree_across_formats(
+        self, tmp_path: Path, monkeypatch, start, end, expected
+    ):
+        video_argv = _capture_video_extraction_argv(
+            tmp_path / "v", monkeypatch, start, end
+        )
+        audio_argv = _capture_audio_extraction_argv(
+            tmp_path / "a", monkeypatch, start, end
+        )
+        assert _interpret_ffmpeg_window(video_argv) == expected
+        assert _interpret_ffmpeg_window(audio_argv) == expected
+
+    def test_bounded_trim_keeps_fast_input_seeking(
+        self, tmp_path: Path, monkeypatch
+    ):
+        """Correctness first, speed second -- but not speed sacrificed.
+
+        Absolute-stop semantics could have been bought by moving ``-ss``
+        after ``-i`` (output seeking decodes and throws away everything
+        before the start). The shipped fix keeps input seeking and converts
+        the absolute stop into the duration it implies, so a 2-hour file
+        trimmed to its last minute still seeks instead of decoding.
+        """
+        argv = _capture_video_extraction_argv(
+            tmp_path / "v", monkeypatch, "1:00:00", "1:01:00"
+        )
+        assert argv.index("-ss") < argv.index("-i"), (
+            "bounded trims must keep pre-input (fast) seeking"
+        )
+        assert _interpret_ffmpeg_window(argv) == (3600.0, 3660.0)
+
+
 class TestAVRecursiveSummaryWiring:
     def test_summarize_recursively_reaches_audio_processor(
         self, tmp_path: Path, monkeypatch
@@ -1860,6 +2025,29 @@ class TestAVCookiesFileWiring:
 
         assert "use_cookies" not in calls[0]
         assert "cookies" not in calls[0]
+
+    def test_cookies_problem_travels_to_the_payload(
+        self, tmp_path: Path, monkeypatch
+    ):
+        """(xhigh review round) A cookies path the option boundary refused
+        must be visible on the job, not swallowed. It rides the same
+        options -> payload channel as the analysis skip reason."""
+        source = _write_fake_mp4(tmp_path)
+        _install_video_stub(monkeypatch)
+
+        payload = parse_local_file_for_ingest(
+            str(source),
+            {
+                "use_cookies": False,
+                "cookies": None,
+                "cookies_problem": "Cookies file not found: /tmp/gone.txt",
+            },
+        )
+
+        assert payload["cookies_problem"] == (
+            "Cookies file not found: /tmp/gone.txt"
+        )
+        assert "Cookies file not found: /tmp/gone.txt" in payload["warnings"]
 
 
 class TestAdaptiveChunkingStaysRejected:
@@ -2003,11 +2191,10 @@ class TestImageWiring:
         assert captured["ocr_backend"] == "tesseract"
         assert captured["extract_features"] is False
         assert captured["perform_analysis"] is False
-        assert captured["chunk_options"] == {
-            "size": 500,
-            "max_size": 500,
-            "overlap": 50,
-        }
+        # (xhigh review round) chunk_options no longer travels into the
+        # processor: the shared text-chunk tail owns image chunking now.
+        # See ``test_image_chunking_has_one_authority``.
+        assert captured["chunk_options"] is None
         assert payload["media_type"] == "image"
         assert payload["content"] == "OCR TEXT"
 
@@ -2135,6 +2322,109 @@ class TestImageWiring:
         assert not ocr_calls, "OCR ran despite the toggle being off"
         with pytest.raises(Exception, match="OCR"):
             persist_parsed_media(payload, media_db)
+
+    def test_image_chunk_size_governs_chunk_count(self, tmp_path: Path, monkeypatch):
+        """(task-3307 xhigh review round) OCR text must chunk per the form.
+
+        The branch delegated to ``process_image``'s internal chunking,
+        which only chunks for a TRUTHY ``chunk_options``. ``Chunk content``
+        ON with untouched size/overlap arrives as ``{}`` (falsy), so the
+        processor took its "no chunking options" fallback and returned ONE
+        whole-text chunk; ``image`` was also absent from
+        ``_TEXT_CHUNK_TYPES``, so the shared tail's repair never ran either.
+        The image persisted as a single unchunked blob whatever the form
+        said. Real chunker, no stub -- only the OCR boundary is stubbed.
+        """
+        source = tmp_path / "page.png"
+        _write_tiny_png(source)
+        _install_ocr_stub(monkeypatch, _MANY_SENTENCES)
+
+        small = parse_local_file_for_ingest(
+            str(source),
+            {"ocr": True, "chunk_options": {"size": 40, "max_size": 40, "overlap": 10}},
+        )
+        large = parse_local_file_for_ingest(
+            str(source),
+            {
+                "ocr": True,
+                "chunk_options": {"size": 4000, "max_size": 4000, "overlap": 10},
+            },
+        )
+
+        assert len(small["chunks"]) > 1, "OCR text was never chunked"
+        assert len(small["chunks"]) > len(large["chunks"])
+
+    def test_image_chunk_on_with_defaulted_empty_options_still_chunks(
+        self, tmp_path: Path, monkeypatch
+    ):
+        """The exact shape the form produces for "chunk ON, nothing typed":
+        an EMPTY options dict. The falsy-dict hole lived here -- the
+        processor read it as "no chunking wanted" and returned one blob."""
+        long_text = " ".join(
+            f"Sentence number {i} carries a bit of body text for chunking."
+            for i in range(200)
+        )
+        source = tmp_path / "page.png"
+        _write_tiny_png(source)
+        _install_ocr_stub(monkeypatch, long_text)
+
+        payload = parse_local_file_for_ingest(
+            str(source), {"ocr": True, "chunk_options": {}}
+        )
+
+        assert len(payload["chunks"]) > 1
+        # The real chunker's metadata, not the processor's
+        # ``{"chunk_num": 0}`` placeholder.
+        assert "word_count" in payload["chunks"][0]
+
+    def test_image_chunking_has_one_authority(self, tmp_path: Path, monkeypatch):
+        """``process_image`` must never chunk on the ingest path.
+
+        Two chunking layers is how the falsy-dict hole happened in the
+        first place; the shared tail is the single authority, so the
+        processor is called with ``chunk_options=None`` regardless of what
+        the form asked for.
+        """
+        source = tmp_path / "page.png"
+        _write_tiny_png(source)
+
+        real = _real_process_image()
+        captured: Dict[str, Any] = {}
+
+        def fake_process_image(file_path, **kwargs):
+            _assert_kwargs_accepted(real, kwargs)
+            captured.update(kwargs)
+            return {
+                "status": "Success",
+                "content": _MANY_SENTENCES,
+                "title": "page",
+                "author": "Unknown",
+                "keywords": [],
+                # The processor's convenience single whole-text "chunk",
+                # returned even when it did no chunking at all.
+                "chunks": [{"text": _MANY_SENTENCES, "metadata": {"chunk_num": 0}}],
+                "analysis": "",
+                "metadata": {},
+                "error": None,
+                "warnings": [],
+            }
+
+        monkeypatch.setattr(
+            "tldw_chatbook.Local_Ingestion.local_file_ingestion.process_image",
+            fake_process_image,
+        )
+
+        payload = parse_local_file_for_ingest(
+            str(source),
+            {"ocr": True, "chunk_options": {"size": 40, "max_size": 40, "overlap": 10}},
+        )
+
+        assert captured["chunk_options"] is None, (
+            "the processor's own chunking must stay out of the ingest path"
+        )
+        assert len(payload["chunks"]) > 1, (
+            "the processor's single fallback chunk was persisted as-is"
+        )
 
     def test_image_analysis_dispatches_via_chat_tail(
         self, tmp_path: Path, monkeypatch

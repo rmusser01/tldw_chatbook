@@ -594,3 +594,142 @@ async def test_editing_the_path_resets_the_pending_confirm(
         assert screen._library_ingest_start_confirm_armed is False
         quiet = screen.query_one("#library-ingest-start-quiet-line", Static)
         assert "Press Start again" not in str(quiet.renderable)
+
+
+# --- xhigh review + live-verify round: consent state-machine defects --------
+
+
+@pytest.mark.asyncio
+async def test_enter_armed_consent_survives_the_start_click_and_submits(
+    monkeypatch, tmp_path
+):
+    """The confirm copy says "Press Start again to import anyway" — so the
+    Start CLICK must be the second press, not a reset.
+
+    Live defect: the click blurs the path field first, the blur handler
+    disarmed the pending consent, and the press then merely RE-ARMED.
+    Nothing ever submitted — the copy instructed the exact gesture that
+    made submission impossible. A blur is not a forecast-invalidating
+    edit; only real edits/invalidation disarm.
+    """
+    app = _pilot_app()
+    submitted: list[dict] = []
+    monkeypatch.setattr(
+        app,
+        "submit_library_ingest_job",
+        lambda **kwargs: submitted.append(kwargs),
+        raising=False,
+    )
+    host = LibraryHarness(app)
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen, path_input, source = await _warned_ingest_screen(
+            host, pilot, monkeypatch, tmp_path
+        )
+        screen.set_focus(path_input)
+        await pilot.pause()
+
+        await pilot.press("enter")
+        await pilot.pause()
+        assert screen._library_ingest_start_confirm_armed is True
+        assert submitted == []
+
+        # The human reads the confirm before clicking; model that pause so
+        # the double-press dead zone (a repeat-gesture guard) is not what
+        # this test is measuring.
+        screen._library_ingest_start_confirm_armed_at -= 1.0
+
+        # The Start button sits below the fold at this terminal size, and
+        # ``pilot.click`` addresses SCREEN coordinates -- an unscrolled
+        # click lands on whatever occupies that cell and the press handler
+        # never runs at all (which would make this test vacuous).
+        start_button = screen.query_one("#library-ingest-start")
+        start_button.scroll_visible(animate=False)
+        await pilot.pause()
+        await pilot.click("#library-ingest-start")
+        await pilot.pause()
+
+        assert [k.get("source_path") for k in submitted] == [source], (
+            "the Start click the confirm copy asks for did not submit "
+            f"(armed={screen._library_ingest_start_confirm_armed})"
+        )
+
+
+@pytest.mark.asyncio
+async def test_path_blur_alone_keeps_the_pending_confirm(monkeypatch, tmp_path):
+    """Unit-level statement of the same rule: leaving the path field is
+    not an edit, so it must not disarm."""
+    app = _pilot_app()
+    monkeypatch.setattr(
+        app, "submit_library_ingest_job", lambda **kwargs: None, raising=False
+    )
+    host = LibraryHarness(app)
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen, path_input, _source = await _warned_ingest_screen(
+            host, pilot, monkeypatch, tmp_path
+        )
+        screen.set_focus(path_input)
+        await pilot.pause()
+        await pilot.press("enter")
+        await pilot.pause()
+        assert screen._library_ingest_start_confirm_armed is True
+
+        screen.set_focus(screen.query_one("#library-ingest-browse"))
+        await pilot.pause()
+
+        assert screen._library_ingest_start_confirm_armed is True, (
+            "a bare blur cancelled the pending Start consent"
+        )
+        quiet = screen.query_one("#library-ingest-start-quiet-line", Static)
+        assert "Press Start again" in str(quiet.renderable)
+
+
+@pytest.mark.asyncio
+async def test_browse_picking_a_new_file_disarms_the_pending_confirm(
+    monkeypatch, tmp_path
+):
+    """A consent armed against file A must never cover file B.
+
+    The Browse… callback wrote ``form.path`` directly; the recomposed
+    Input then re-announced that value, which ``handle_library_ingest_
+    path_changed``'s echo guard drops — so the disarm on the genuine-edit
+    seam never ran and B could be submitted under A's consent.
+    """
+    app = _pilot_app()
+    monkeypatch.setattr(
+        app, "submit_library_ingest_job", lambda **kwargs: None, raising=False
+    )
+    host = LibraryHarness(app)
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen, path_input, source = await _warned_ingest_screen(
+            host, pilot, monkeypatch, tmp_path
+        )
+        screen.set_focus(path_input)
+        await pilot.pause()
+        await pilot.press("enter")
+        await pilot.pause()
+        assert screen._library_ingest_start_confirm_armed is True
+
+        other = tmp_path / "second.pdf"
+        other.write_text("dummy")
+
+        callbacks: list = []
+        monkeypatch.setattr(
+            screen.app,
+            "push_screen",
+            lambda *args, **kwargs: callbacks.append(
+                kwargs.get("callback", args[1] if len(args) > 1 else None)
+            ),
+            raising=False,
+        )
+        screen.query_one("#library-ingest-browse").press()
+        await pilot.pause()
+        assert callbacks and callbacks[0] is not None, "Browse pushed no picker"
+
+        await callbacks[0](other)
+        await pilot.pause()
+
+        assert screen._library_ingest_form.path == str(other)
+        assert screen._library_ingest_start_confirm_armed is False, (
+            "a consent armed against "
+            f"{source} still covers the newly picked {other}"
+        )

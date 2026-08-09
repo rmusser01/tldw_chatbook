@@ -117,4 +117,24 @@ FRESH pre-flight.
   passed / 14 failed — all 14 verified as task-3315's pre-existing
   `_ingest_local_stt_jobs` harness drift (each failure log carries that AttributeError;
   the raise point is inside `submit(...)`, upstream of this task's code).
+xhigh review + live-verify round (2026-08-09): two defects.
+(a) Gate divergence. `check_action("library_ingest_retry_last")` stated its own copy of the
+visibility rule with the settled-queue half MISSING, so mid-run -- exactly while the button is
+deliberately hidden to prevent a duplicate batch -- the `r` key stayed live. Fixed by extracting the
+ONE predicate, `library_ingest_retry_available(jobs, last_submission_available=...)` in
+tldw_chatbook/Library/library_ingest_state.py; `build_library_ingest_state` derives `show_retry_last`
+from it and `check_action` calls it directly. Duplicating the condition was the defect, so the test
+asserts builder and gate agree on both sides of the same job snapshot. Mutation check (feed
+check_action an empty job list) sends it RED.
+(b) No consent on a destructive overwrite. A re-stage replaces path/title/author/keywords/options
+wholesale with no undo, and `r` fires it from any non-text focus. It now uses the incumbent two-press
+grammar (Clear-finished, Start consent) WHEN the re-stage would discard work -- i.e. when a non-empty
+form field or option value differs from what the snapshot would put back. Right after a submit
+nothing differs (path/title are cleared and the rest IS the snapshot), so the common case still
+re-stages on one press. Both routes share `_restage_library_ingest_last_submission`, so the key can
+never be the looser of the two, and the affordance's own LABEL carries the pending state
+("Press again to replace form") because the `r` route has no gate line of its own -- rendered from
+the new `LibraryIngestCanvasState.retry_confirm_armed` and synced in place by the dynamic-region
+updater. `test_retry_last_restores_the_form_and_runs_a_fresh_preflight` deliberately dirties the form
+before pressing, so it was updated to press twice; the two consent legs have their own tests.
 <!-- SECTION:NOTES:END -->

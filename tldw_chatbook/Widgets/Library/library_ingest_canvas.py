@@ -31,18 +31,27 @@ from tldw_chatbook.Library.library_ingest_state import (
     LibraryIngestCanvasState,
     build_intro_lines,
     build_web_scope_note,
+    library_ingest_retry_label,
 )
 
 
 def _command_short_name(command: str) -> str:
     """A compact identifier for an install command's copy button.
 
-    Prefers the pyproject extra (``pip install -e ".[audio]"`` -> ``.[audio]``)
+    Prefers the pyproject extra (``pip install -e ".[audio]"`` -> ``audio``)
     because that is the part users recognise; anything else truncates.
+
+    (live-verify round) The bracketed spelling this used to return
+    (``.[audio]``) never reached the screen: a ``Button`` label is parsed
+    as Textual content markup, which ate ``[audio]`` as a style tag and
+    left every one of the six or seven stacked buttons rendering the
+    identical string "Copy install command (.)" -- the disambiguation was
+    invisible exactly when there was most to disambiguate. The extra's
+    bare name says the same thing and survives the renderer.
     """
-    match = re.search(r"\[[^\]]+\]", command)
+    match = re.search(r"\[([^\]]+)\]", command)
     if match:
-        return f".{match.group(0)}"
+        return match.group(1)
     return command if len(command) <= 24 else f"{command[:23]}…"
 
 
@@ -775,8 +784,15 @@ class LibraryIngestCanvas(VerticalScroll):
                     else field.label
                 )
                 # (task-3304, MI-07) Disabled-state reason at the control.
+                # (live-verify round) APPENDED to ``label_text``, not
+                # rebuilt from ``field.label``: rebuilding dropped the hint
+                # -- so on a stock install the cookies field's "video URLs
+                # only" and the trim fields' "HH:MM:SS or seconds" were
+                # invisible exactly while the control was inert and the
+                # user had the most to work out. The checkbox branch above
+                # already appends; these two now agree.
                 if disabled and disabled_note:
-                    label_text = f"{field.label} — {disabled_note}"
+                    label_text = f"{label_text} — {disabled_note}"
                 children.append(
                     Static(
                         label_text,
@@ -1080,7 +1096,7 @@ class LibraryIngestCanvas(VerticalScroll):
         # updater (never conditionally composed, the four-incident lesson),
         # so it keeps object identity across job ticks.
         retry_last = Button(
-            "Retry this batch",
+            library_ingest_retry_label(state.retry_confirm_armed),
             id="library-ingest-retry-last",
             classes="library-canvas-action",
             compact=True,

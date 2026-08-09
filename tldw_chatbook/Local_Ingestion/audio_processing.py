@@ -77,6 +77,121 @@ class AudioTranscriptionError(AudioProcessingError):
     pass
 
 
+#: Multipliers for the ``[[HH:]MM:]SS`` timecode fields, least significant
+#: first -- the order :func:`parse_media_timecode` walks them in.
+_TIMECODE_UNIT_SECONDS = (1, 60, 3600)
+
+
+def parse_media_timecode(value: Optional[str]) -> Optional[float]:
+    """Parse an ingest time-range field into seconds.
+
+    Accepts the two spellings the "Start at"/"Stop at" fields advertise:
+    ``HH:MM:SS`` (or the shorter ``MM:SS``) and a bare number of seconds.
+    Fractional seconds are preserved.
+
+    Args:
+        value: The field's raw value; ``None``/blank means "no bound".
+
+    Returns:
+        The value in seconds, or ``None`` when there is no bound or the
+        text is not a timecode this function understands. Callers must
+        treat ``None`` as "unknown", never as zero.
+    """
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    parts = text.split(":")
+    if len(parts) > len(_TIMECODE_UNIT_SECONDS):
+        return None
+    total = 0.0
+    try:
+        for index, part in enumerate(reversed(parts)):
+            total += float(part) * _TIMECODE_UNIT_SECONDS[index]
+    except ValueError:
+        return None
+    return total if total >= 0 else None
+
+
+def _format_seconds(seconds: float) -> str:
+    """Render a duration for ffmpeg's ``-t``, without trailing zero noise."""
+    text = f"{seconds:.3f}".rstrip("0").rstrip(".")
+    return text or "0"
+
+
+def build_ffmpeg_trim_args(
+    start_time: Optional[str], end_time: Optional[str]
+) -> tuple[list[str], list[str]]:
+    """Build the ffmpeg arguments for an ABSOLUTE ``[start, stop]`` window.
+
+    (task-3306 xhigh review round) This is the single authority for what
+    the ingest form's "Start at"/"Stop at" mean, because the two media
+    paths used to disagree. ``_extract_audio_from_video`` emitted ``-ss``
+    BEFORE ``-i`` -- input seeking, which rebases the output's timestamps
+    to zero -- and then ``-to`` as an OUTPUT option, so "Stop at 1:00" with
+    "Start at 0:30" selected 0:30-1:30 (twice the requested span, including
+    content the user had excluded). ``_extract_time_range`` put ``-ss``
+    after ``-i``, where ``-to`` is absolute, and selected 0:30-1:00. Same
+    two fields, same job, two different windows.
+
+    Both callers now share this builder, and "Stop at" is absolute
+    everywhere -- which is what the label promises.
+
+    The tradeoff, chosen correctness-first and then speed: absolute stop
+    could have been bought by moving ``-ss`` after ``-i`` on the video path
+    (output seeking, where ``-to`` is already absolute), but output seeking
+    decodes and discards everything before the start -- trimming the last
+    minute of a two-hour recording would decode 119 minutes first. So the
+    fast pre-input seek is kept and the absolute stop is converted into the
+    duration it implies (``-t``), which is exact under input seeking. The
+    conversion needs both bounds to parse as timecodes; when either does
+    not (or the window is empty/inverted), the builder falls back to output
+    seeking, which is slower but keeps the same absolute meaning rather
+    than silently reinterpreting the user's numbers.
+
+    Args:
+        start_time: "Start at" value (``HH:MM:SS`` or seconds); blank/None
+            means "from the beginning".
+        end_time: "Stop at" value, absolute in the source's own timeline;
+            blank/None means "to the end".
+
+    Returns:
+        ``(pre_input_args, post_input_args)`` -- arguments to place before
+        the ``-i <input>`` pair and after it, respectively. Both are empty
+        when neither bound is set.
+    """
+    start = str(start_time or "").strip()
+    end = str(end_time or "").strip()
+
+    if not start and not end:
+        return [], []
+    if not start:
+        # No start bound: "stop at X" is already a duration from zero.
+        return [], ["-t", end]
+    if not end:
+        return ["-ss", start], []
+
+    start_seconds = parse_media_timecode(start)
+    end_seconds = parse_media_timecode(end)
+    if (
+        start_seconds is not None
+        and end_seconds is not None
+        and end_seconds > start_seconds
+    ):
+        return ["-ss", start], ["-t", _format_seconds(end_seconds - start_seconds)]
+
+    # Unparseable or non-positive window: keep the absolute meaning by
+    # seeking on the output side, where -to is not rebased.
+    logger.warning(
+        "Time-range trim {start!r}-{end!r} could not be converted to a "
+        "duration; falling back to slower output-side seeking.",
+        start=start,
+        end=end,
+    )
+    return [], ["-ss", start, "-to", end]
+
+
 class LocalAudioProcessor:
     """Handles local audio processing including download, transcription, and analysis."""
 
@@ -1175,21 +1290,11 @@ class LocalAudioProcessor:
         suffix = f"_trim_{start_time or '0'}_{end_time or 'end'}".replace(":", "-")
         output_path = os.path.join(output_dir, f"{base_name}{suffix}.mp3")
 
-        # Build ffmpeg command
-        command = [ffmpeg_cmd, "-i", audio_path]
-
-        # Add start time if specified
-        if start_time:
-            command.extend(["-ss", start_time])
-
-        # Add duration if end time is specified
-        if end_time:
-            if start_time:
-                # Calculate duration from start to end
-                # This is a simplified approach - ideally we'd parse the times properly
-                command.extend(["-to", end_time])
-            else:
-                command.extend(["-t", end_time])
+        # Build ffmpeg command. The trim arguments come from the shared
+        # builder so this path and the video path cannot mean different
+        # windows for the same Start/Stop pair (task-3306 review round).
+        pre_input, post_input = build_ffmpeg_trim_args(start_time, end_time)
+        command = [ffmpeg_cmd, *pre_input, "-i", audio_path, *post_input]
 
         # Output options
         command.extend(

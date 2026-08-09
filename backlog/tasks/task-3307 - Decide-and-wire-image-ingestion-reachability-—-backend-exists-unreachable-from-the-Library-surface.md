@@ -184,4 +184,62 @@ too and the warning hint stays generic; (2) `.heic/.heif` stay unsupported
 until someone ships pillow_heif in an extra (the decoupled guard is ready
 for it); (3) images are local-only by design -- revisit if the server
 ever grows an image media type.
+**xhigh review round (2026-08-09):** three confirmed defects in this task's
+own new code, all fixed under TDD with READ reds.
+
+1. **The canvas promised OCR on image URLs the pipeline never OCRs.** The
+`image` branch of `get_type_group` sat before the URL check (copying the
+pdf/ebook/document precedent), so `https://example.com/chart.png` reported
+"1 image", mounted the OCR fold, and raised the missing-OCR-backend warning
+that forces the new two-press consent — after which the pipeline
+(`classify_ingest_source` has no image branch) scraped the URL as HTML and
+discarded every OCR option. **Decision: group image URLs as `web`**, not
+route them to `process_image`. Downloading and OCR'ing image URLs is a real
+feature, but it is one the pipeline would have to grow first (fetch, size
+caps, egress policy); until then the canvas tells the truth. The pdf/ebook
+precedent does not transfer: their unused options are inert, whereas the
+image verdict changes the panel AND costs the user a consent press. The
+existing canvas-vs-pipeline agreement test now covers image URLs with NO
+compatibility allowance for the `image` group, and the task's own
+`test_image_url_extension_wins_over_web_task_3307` was inverted (it pinned
+the defect).
+
+2. **Image OCR text was never chunked by the form's settings.** The branch
+delegated to `process_image`'s internal chunking, which chunks only for a
+TRUTHY `chunk_options`; "Chunk content ON with nothing typed" arrives as
+`{}`, and `image` was deliberately absent from `_TEXT_CHUNK_TYPES`, so the
+shared tail's repair never ran either — the image persisted as one
+unchunked whole-text chunk whatever size the form asked for. **One chunking
+authority:** `process_image` is now always called with `chunk_options=None`,
+its convenience single chunk is dropped, and `image` joined
+`_TEXT_CHUNK_TYPES` so the same tail that chunks plaintext/html chunks OCR
+text. Governance test uses the real chunker (only the OCR boundary is
+stubbed) and asserts chunk size governs chunk count; mutation-checked by
+removing `image` from `_TEXT_CHUNK_TYPES` (4 red).
+
+3. **The OCR-backend probe disagreed with the OCR manager.** The
+`_FEATURE_ANY_PACKAGES["image_ocr"]` umbrella re-derived availability from
+single import names, so `paddleocr` alone (OCR_Backends needs `paddle` too)
+or bare `docext` (needs a gradio_client/transformers/openai companion for
+its mode) reported "an OCR backend is installed" — no warning, then an
+empty-extraction failure. The table is now ANY-OF-over-ALL-OF and mirrors
+OCR_Backends' rules exactly. Importing OCR_Backends from the render path
+was rejected: its flags are computed at import time and the module builds
+the global `OCRManager` (registering five backends) as a side effect, so a
+memoised `find_spec` probe stays the right shape. Instead the guard test
+drives the REAL backend classes against each group and each group-minus-one
+package, by reloading OCR_Backends under a patched resolver — the old flat
+rules make it red on exactly the paddleocr/docext rows. One honest gap
+recorded in the test: `TesseractOCRBackend.is_available()` also shells out
+for the tesseract binary, which a package probe cannot and should not
+replicate.
+
+Files: `Library/ingest_capabilities.py` (URL-aware image branch; any-of-
+over-all-of umbrella + `_probe_installed`),
+`Local_Ingestion/local_file_ingestion.py` (`_TEXT_CHUNK_TYPES` + image
+branch), `Docs/User_Guide/library/import-and-export.md`. Tests:
+`test_ingest_capabilities.py` (image-URL rows, inverted 3307 test, local-
+image regression, 3 OCR-umbrella guards incl. the pinned backend roster),
+`test_ingest_option_wiring.py` (3 image-chunking tests; the
+chunk_options-passthrough assertion corrected).
 <!-- SECTION:NOTES:END -->
