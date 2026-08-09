@@ -65,14 +65,19 @@ cannot alias one another.
 Resolution for one Parakeet request is:
 
 1. Explicit per-job external directory for the request's exact model/precision.
-2. Matching persistent external selection.
-3. Matching active managed root.
-4. Existing verified legacy fallback.
+2. The configured preferred source for that exact descriptor: its matching
+   persistent external directory or its matching active managed root.
+3. If no source preference exists, a matching active managed root.
+4. If no source preference or matching managed root exists, the verified legacy
+   fallback.
 
-An explicit or persistent external selection is authoritative. If it is gone,
-changed, or invalid, resolution fails with recovery actions rather than silently
-using a different model source or provider. The legacy singular configured
-directory is considered only as a v2 INT8 migration candidate.
+An explicit external override or configured preferred source is authoritative.
+If it is gone, changed, or invalid, resolution fails with recovery actions
+rather than silently using a remembered non-preferred directory, a different
+model source, or another provider. Retaining an external directory after the
+user prefers managed therefore does not keep it in the resolver candidate
+chain. The legacy singular configured directory is considered only as a v2
+INT8 migration candidate when no exact source preference has been established.
 
 Activating a managed root changes the source preference only for that exact
 descriptor. It may retain the external directory so the user can choose it
@@ -105,7 +110,11 @@ progress. Concurrent checks for the same exact descriptor and unchanged
 snapshot share one in-flight result. Cancelling one caller cancels only that
 caller's wait; hashing continues for remaining callers and stops when no caller
 still needs it. The in-memory cache is bounded to current configured selections
-and is cleared when a source changes.
+plus verified job-scoped selections owned by live Library batches. One batch
+reuses the same verified snapshot for identical per-job overrides across its
+items and releases those job-scoped entries on completion or cancellation.
+Configured entries are cleared when a source changes. No verification result
+survives process restart.
 
 The app performs a full hash pass on selection and before the first use after
 each restart. Later requests in the same process may reuse the result while
@@ -127,6 +136,13 @@ preflight and presents the existing consent information: source, revision,
 license, size, destination, and free space. Provisioning uses the existing
 acquisition service with activation disabled for the dependency descriptor.
 No Parakeet root URL appears in that plan or transfer.
+
+Selecting a persistent external source is atomic across root verification,
+VAD readiness, and configuration. Chatbook does not commit the external path
+or source preference until the exact managed VAD is ready. Offline operation,
+download failure, or cancellation leaves the prior path and preference
+unchanged. A Library per-job override likewise finishes validation and any
+interactive VAD consent before the job is created or enqueued.
 
 The artifact core exposes a public exact-dependency acquisition/lease result
 that verifies the installed dependency under shared mutation protection and
@@ -196,6 +212,11 @@ appear in a clearly separate user-owned section with:
 A dependency-only VAD row is labeled **Managed dependency** and never receives
 an Activate action.
 
+A copied Parakeet root whose immutable files are installed but which has not
+yet been activated is labeled **Installed · activation required**, not broken
+or ready. Its root row offers **Activate** even though no readiness record
+exists yet. Dependency rows never gain that action.
+
 ### Library per-job override
 
 The existing Parakeet-only directory field remains and gains a directory
@@ -217,11 +238,17 @@ After external verification and VAD readiness, **Copy into managed store**:
 3. Copies only catalog-declared root files through existing staging.
 4. Revalidates staged bytes through `ModelArtifactService.install`.
 5. Reuses the installed exact VAD dependency.
-6. Activates root readiness only through the existing readiness-last boundary.
+6. Leaves the root installed but inactive, without writing readiness or the
+   active selector and without changing the exact source preference.
 
 Copy failure or cancellation leaves the external source unchanged. If the exact
 managed root already exists, no copy occurs and the existing activation control
-is shown. The managed source becomes preferred only after explicit activation.
+is shown. A later explicit **Activate** calls the existing artifact activation
+boundary, which verifies the complete installed root-plus-VAD closure, writes
+readiness last, switches the active selector, and only then changes the source
+preference to managed. The managed inventory therefore permits activation of a
+valid installed root manifest even when readiness is absent; that absence means
+"activation required," not "broken."
 
 ## Failure model
 
@@ -249,8 +276,11 @@ symlinks, irregular nodes, mutation, cancellation within a hash chunk loop,
 coalesced concurrent validation, harmless extra files, and cache invalidation.
 
 Focused configuration and dispatch tests cover descriptor-keyed persistence,
-legacy migration, per-job precedence, managed activation, no silent fallback,
-and path-private failures.
+legacy migration, per-job precedence, preferred-source switching, remembered
+non-preferred external paths being ineligible, atomic VAD/config commit, no
+silent fallback, and path-private failures. Batch coverage proves that repeated
+items sharing one per-job override reuse one verified snapshot and release it
+when the batch completes or is cancelled.
 
 Focused artifact/executor tests cover VAD-only consent, no root download,
 exact dependency leasing, mixed external/managed runtime load, resident recycle,
@@ -262,9 +292,11 @@ focused state/event tests proving that they call the same shared flow. Run one
 real macOS external-mode transcription smoke through the app-owned shared
 executor and managed VAD.
 
-Windows and Linux remain required release evidence. Structural tests do not
-close that gate; TASK-598 remains In Progress until those hosts are available
-and the focused platform evidence passes.
+The wheel-supported CPU matrix remains the one defined by the parent STT design:
+Linux x86_64, Linux aarch64, Windows x86_64, macOS arm64, and macOS x86_64.
+Structural tests do not close those host gates. The available macOS smoke can
+land first, but TASK-598 remains In Progress until the focused evidence passes
+on the other wheel-supported targets.
 
 Only affected focused tests, scoped lint, formatting checks for changed files,
 and `git diff --check` run locally. The unrelated full suite is not part of this

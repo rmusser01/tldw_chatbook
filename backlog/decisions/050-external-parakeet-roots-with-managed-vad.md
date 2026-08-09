@@ -32,10 +32,13 @@ interval. This creates an intentional mixed-ownership runtime closure:
 - managed, immutable, leased Silero VAD dependency.
 
 External selections persist per exact model ID and precision. Resolution order
-is an explicit per-job external directory, a matching persistent external
-selection, a matching active managed root, then the existing verified legacy
-fallback. A selected external source that is missing, changed, or invalid fails
-clearly and does not silently fall through to another source or provider.
+is an explicit per-job external directory, then the configured preferred source
+for the exact descriptor (external or managed), then an active managed root
+when no preference exists, then the existing verified legacy fallback when no
+preference or managed root exists. A remembered but non-preferred external path
+is not a resolver candidate. An explicit override or preferred source that is
+missing, changed, or invalid fails clearly and does not silently fall through to
+another source or provider.
 
 The external descriptor reference, local metadata snapshot, and exact managed
 VAD reference participate in resident-model identity and worker recycling.
@@ -56,11 +59,25 @@ result, requires a new hash pass, and recycles a resident model. Hashing is
 chunked, cancellable, and runs outside the Textual event loop. No verification
 result is persisted as a durable integrity receipt.
 
+The bounded in-memory result set includes persistent configured selections and
+verified job-scoped selections owned by live Library batches. Repeated items in
+one batch reuse an identical per-job snapshot; the batch releases its entries on
+completion or cancellation. A restart always requires a new full hash pass.
+
+Persistent external selection is atomic with VAD readiness: Chatbook commits
+the new path and preference only after root verification and exact managed VAD
+readiness succeed. Offline operation, VAD acquisition failure, or cancellation
+leaves the previous source configuration unchanged.
+
 The optional managed-copy action uses the existing artifact service to stage,
 revalidate, and install only the Parakeet root. It reuses the already managed
-VAD and writes the root readiness record last. Copying does not alter the
-external source or switch the exact source preference until the user explicitly
-activates the managed copy.
+VAD but does not write root readiness, update the active selector, or change the
+source preference. The installed root is presented as activation-required, not
+broken. Later explicit activation verifies the complete root-plus-VAD closure,
+writes readiness last, switches the active selector, and only then changes the
+exact source preference to managed. Root inventory permits that explicit
+activation when an installed root manifest is valid but readiness is absent;
+dependency-only entries never receive an activation action.
 
 ## Context
 
@@ -101,6 +118,10 @@ amendment to ADR-025.
   reported as a missing dependency on next use.
 - Dependency-only inventory entries are labeled as managed dependencies and
   are never offered an Activate action.
+- The required CPU evidence matrix remains Linux x86_64, Linux aarch64,
+  Windows x86_64, macOS arm64, and macOS x86_64, as defined by the parent STT
+  design. Evidence may land incrementally, but unsupported hosts cannot be
+  inferred from structural tests.
 - The legacy `transcription.parakeet_onnx_model_dir` value is treated only as a
   v2 INT8 migration candidate and must pass the new descriptor validation.
 - No provider-initiated download is introduced. Headless and already-enqueued
