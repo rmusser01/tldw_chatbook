@@ -109,6 +109,33 @@ Tabs with unwatched activity carry a status marker, listed in F1 help:
 - The left rail pins a fleet summary line whenever other tabs are busy:
   "N other agents running, M waiting for approval."
 
+### Named agents
+
+Beyond a plain, generic sub-agent, the supervisor can delegate to a **named
+agent definition** — a reusable persona with its own instructions and
+optionally a narrower tool list or a different model. Create and manage
+definitions in **Settings ▸ Agents** (Troubleshooting group); changes there
+apply immediately but only take effect on the **next** reply, never one
+already streaming.
+
+- A definition's instructions are **appended** to the built-in sub-agent
+  prompt, not swapped in — every sub-agent still starts from the same base
+  identity.
+- A definition's tools can only **narrow** what the sub-agent inherits from
+  the parent (never grant something the parent itself couldn't use); its
+  model override stays on the same provider.
+- When a reply spawns a named agent, the transcript's `⤷ spawned sub-agent: …`
+  marker and the Agent rail's per-sub-agent line both show it as
+  `[<name>] <task>` while the run is live. That prefix is a display detail of
+  the running turn, not a stored field — a session you reopen after the app
+  restarts shows the sub-agent's task text without the `[<name>]` prefix, and
+  the drill-in "Sub-agent · \<status\>" view never shows the name either.
+- The run log durably records which definition ran, for future audit tooling
+  — `agent_runs.agent_definition` (the definition's name) and
+  `definition_fingerprint` (a content hash of its instructions, tools, and
+  model at spawn time) are written on every named-agent spawn. Neither is
+  currently surfaced in **View full log** or anywhere else in the UI.
+
 ### Skills
 
 Skills are reusable instruction packs kept in Library ▸ Skills.
@@ -192,6 +219,8 @@ Enter). Tab-fleet keys (Ctrl+T, Alt+1…9, Ctrl+K) are covered in
   `console.max_parallel_runs`; raising it is allowed without limit) and
   "Tool result display cap" (how much of a tool result the transcript
   preview shows).
+- **Settings > Agents** — create and manage the named agent definitions the
+  supervisor can delegate to; see [Named agents](#named-agents) above.
 - [Library ▸ Skills](../library/skills.md) — create, import, review, and
   approve skills.
 - [MCP](../mcp.md) 🚧 — servers, tools, and permissions.
