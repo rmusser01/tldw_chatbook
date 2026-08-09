@@ -214,7 +214,9 @@ def test_submits_packaged_workflow_through_observed_history_shape(
     assert len(histories) == 2
 
 
-def test_view_download_has_descriptor_query_and_trusted_origin(adapter, json_recorder, monkeypatch):
+def test_generic_non_mp4_output_is_rejected_before_console_storage(
+    adapter, json_recorder, monkeypatch
+):
     calls, routes = json_recorder
     graph = _custom_workflow()
     _install_workflow(adapter, monkeypatch, graph)
@@ -249,14 +251,26 @@ def test_view_download_has_descriptor_query_and_trusted_origin(adapter, json_rec
         "job-2": {"outputs": {"7": {"gifs": [{"filename": "clip.webp", "subfolder": "", "type": "temp"}]}}}
     }
 
-    result = adapter.generate(_request(width=1280, height=704, duration_seconds=6, fps=24))
+    with pytest.raises(VideoGenerationError, match="MP4 output"):
+        adapter.generate(
+            _request(width=1280, height=704, duration_seconds=6, fps=24)
+        )
 
-    assert result.content_type == "image/webp"
-    assert (result.width, result.height, result.duration_seconds, result.fps) == (1280, 704, 6.0, 24.0)
     assert download_calls == [(
         "http://127.0.0.1:8188/view?filename=clip.webp&subfolder=&type=temp",
         {"timeout": 30, "headers": None, "cookies": None, "max_bytes": 500 * 1024 * 1024, "trusted_origins": frozenset({"127.0.0.1"})},
     )]
+
+
+def test_non_mp4_request_is_rejected_before_remote_side_effects(adapter, monkeypatch):
+    effects: list[str] = []
+    monkeypatch.setattr(adapter, "_base_url", lambda: effects.append("base_url"))
+
+    with pytest.raises(VideoGenerationError, match="unsupported output format: webm"):
+        adapter.generate(_request(video_format="webm"))
+
+    assert adapter.supported_formats == {"mp4"}
+    assert effects == []
 
 
 @pytest.mark.parametrize("observed_type", ["application/octet-stream", None, "video/webm"])
@@ -393,6 +407,60 @@ def test_upload_uses_multipart_endpoint_and_trusted_origin(adapter, monkeypatch)
     ]
 
 
+@pytest.mark.parametrize(
+    ("name", "subfolder"),
+    [
+        ("../input.png", "upload"),
+        ("nested/input.png", "upload"),
+        (r"nested\input.png", "upload"),
+        (".", "upload"),
+        ("input.png", "../escape"),
+        ("input.png", "/absolute"),
+        ("input.png", "nested//upload"),
+        ("input.png", "nested/./upload"),
+        ("input.png", "nested/../upload"),
+        ("input.png", r"nested\upload"),
+        ("input.png", 0),
+    ],
+)
+def test_upload_rejects_unsafe_server_returned_paths(
+    adapter, monkeypatch, name, subfolder
+):
+    response = Mock(spec=httpx.Response)
+    response.is_redirect = False
+    response.json.return_value = {"name": name, "subfolder": subfolder}
+    client = create_autospec(httpx.Client, instance=True)
+    client.__enter__.return_value = client
+    client.post.return_value = response
+    monkeypatch.setattr(cva, "create_client", lambda **_kwargs: client)
+    monkeypatch.setattr(cva, "_validate_egress_or_raise", lambda *_args, **_kwargs: None)
+    asset = ResolvedReferenceAsset(
+        "first_frame", b"png-bytes", "image/png", "source.png"
+    )
+
+    with pytest.raises(VideoGenerationError, match="unsafe path"):
+        adapter._upload_image(asset)
+
+
+def test_upload_accepts_safe_nested_server_subfolder(adapter, monkeypatch):
+    response = Mock(spec=httpx.Response)
+    response.is_redirect = False
+    response.json.return_value = {
+        "name": "input.png",
+        "subfolder": "nested/upload",
+    }
+    client = create_autospec(httpx.Client, instance=True)
+    client.__enter__.return_value = client
+    client.post.return_value = response
+    monkeypatch.setattr(cva, "create_client", lambda **_kwargs: client)
+    monkeypatch.setattr(cva, "_validate_egress_or_raise", lambda *_args, **_kwargs: None)
+    asset = ResolvedReferenceAsset(
+        "first_frame", b"png-bytes", "image/png", "source.png"
+    )
+
+    assert adapter._upload_image(asset) == "nested/upload/input.png"
+
+
 def test_missing_required_classes_fail_before_prompt(adapter, json_recorder, monkeypatch):
     calls, routes = json_recorder
     graph = _custom_workflow()
@@ -434,6 +502,35 @@ def test_workflow_resolution_prefers_user_dir_and_rejects_unsafe_names(adapter, 
         adapter._load_workflow("chosen.txt")
     with pytest.raises(VideoGenerationError, match="workflow.*path"):
         adapter._load_workflow("../chosen.json")
+
+
+def test_workflow_read_uses_central_path_validation_result(
+    adapter, monkeypatch, tmp_path
+):
+    user_dir = tmp_path / "data"
+    workflow_root = user_dir / "video_workflows"
+    workflow_root.mkdir(parents=True)
+    validated = workflow_root / "validated.json"
+    validated.write_text('{"safe": {"class_type": "Validated"}}')
+    calls = []
+    monkeypatch.setattr(cva, "get_user_data_dir", lambda: user_dir)
+
+    def fake_validate_path(user_path, base_directory, **kwargs):
+        calls.append((user_path, base_directory, kwargs))
+        return validated
+
+    monkeypatch.setattr(cva, "validate_path", fake_validate_path, raising=False)
+
+    assert adapter._load_workflow("configured.json") == {
+        "safe": {"class_type": "Validated"}
+    }
+    assert calls == [
+        (
+            "configured.json",
+            workflow_root,
+            {"redact_paths": True},
+        )
+    ]
 
 
 def test_workflow_resolution_rejects_user_workflow_symlink_escape(adapter, monkeypatch, tmp_path):

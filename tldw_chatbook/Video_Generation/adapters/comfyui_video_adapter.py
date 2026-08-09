@@ -31,6 +31,7 @@ from tldw_chatbook.Image_Generation.http_client import (
     fetch_json,
 )
 from tldw_chatbook.Utils.egress import origin_set
+from tldw_chatbook.Utils.path_validation import validate_path
 from tldw_chatbook.Utils.paths import get_user_data_dir
 from tldw_chatbook.Video_Generation.adapters.base import (
     ResolvedReferenceAsset,
@@ -99,7 +100,7 @@ class ComfyUIVideoAdapter:
     """
 
     name = "comfyui"
-    supported_formats = {"mp4", "webm", "mov", "avi", "gif", "webp"}
+    supported_formats = {"mp4"}
 
     def __init__(self) -> None:
         self._config = get_video_generation_config()
@@ -207,15 +208,27 @@ class ComfyUIVideoAdapter:
 
         data_root = get_user_data_dir().resolve()
         workflow_root = data_root / "video_workflows"
+        if workflow_root.is_symlink():
+            raise VideoGenerationError(
+                "ComfyUI workflow path escapes video_workflows"
+            )
         user_candidate = workflow_root / candidate.name
         if user_candidate.is_symlink():
             raise VideoGenerationError("ComfyUI workflow symlink is not allowed")
-        try:
-            user_candidate.resolve().relative_to(workflow_root)
-        except (OSError, ValueError) as exc:
-            raise VideoGenerationError("ComfyUI workflow path escapes video_workflows") from exc
-        paths = (user_candidate, self._shipped_workflow_dir() / candidate.name)
-        selected = next((path for path in paths if path.is_file()), None)
+        roots = (workflow_root, self._shipped_workflow_dir())
+        validated_paths: list[Path] = []
+        for root in roots:
+            try:
+                validated_paths.append(
+                    validate_path(candidate.name, root, redact_paths=True)
+                )
+            except ValueError as exc:
+                raise VideoGenerationError(
+                    "ComfyUI workflow path is not allowed"
+                ) from exc
+            if validated_paths[-1].is_file():
+                break
+        selected = next((path for path in validated_paths if path.is_file()), None)
         if selected is None:
             raise VideoGenerationError(f"ComfyUI workflow not found: {candidate.name}")
         try:
@@ -833,7 +846,27 @@ class ComfyUIVideoAdapter:
         if not isinstance(data, dict) or not isinstance(data.get("name"), str) or not data["name"].strip():
             raise VideoGenerationError("ComfyUI image upload response did not include a filename")
         name = data["name"].strip()
-        subfolder = str(data.get("subfolder") or "").strip("/")
+        raw_subfolder = data.get("subfolder", "")
+        if raw_subfolder is None:
+            raw_subfolder = ""
+        if not isinstance(raw_subfolder, str):
+            raise VideoGenerationError("ComfyUI image upload response included an unsafe path")
+        subfolder = raw_subfolder.strip()
+        if (
+            name in {".", ".."}
+            or "/" in name
+            or "\\" in name
+            or "\x00" in name
+            or "\\" in subfolder
+            or "\x00" in subfolder
+            or (
+                subfolder
+                and any(
+                    part in {"", ".", ".."} for part in subfolder.split("/")
+                )
+            )
+        ):
+            raise VideoGenerationError("ComfyUI image upload response included an unsafe path")
         return f"{subfolder}/{name}" if subfolder else name
 
     # -- history/output parsing ------------------------------------------
@@ -962,13 +995,15 @@ class ComfyUIVideoAdapter:
             raise VideoGenerationError(f"ComfyUI output download failed: {exc}") from exc
         normalized_type = (content_type or "").split(";", 1)[0].strip().lower()
         suffix = Path(descriptor["filename"]).suffix.lower()
-        if self._is_h3_workflow(prepared.graph) and (
-            suffix != ".mp4"
-            or normalized_type != "video/mp4"
+        if suffix != ".mp4" or (
+            self._is_h3_workflow(prepared.graph)
+            and normalized_type != "video/mp4"
         ):
-            raise VideoGenerationError("ComfyUI H3 workflow did not return an MP4 output")
+            raise VideoGenerationError("ComfyUI workflow did not return an MP4 output")
         if normalized_type not in _VIDEO_SUFFIX_TYPES.values():
             normalized_type = _VIDEO_SUFFIX_TYPES[suffix]
+        if normalized_type != "video/mp4":
+            raise VideoGenerationError("ComfyUI workflow did not return an MP4 output")
         return VideoGenResult(
             content=content,
             content_type=normalized_type,
