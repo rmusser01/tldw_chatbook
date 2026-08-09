@@ -61,9 +61,11 @@ Both previously-never-executed paths were audited before the change:
   On the fixture corpus that is `[] + [chunk citation]`: the keyword leg
   only emits citations when the WHOLE query string appears verbatim in the
   document, which is rare for multi-word queries, so real merged rows carry
-  exactly the vector citation today. No duplication, no crash. (Possible
-  follow-up: the keyword leg's phrase-exact citation extraction, the
-  citation-side analogue of TASK-3995.)
+  exactly the vector citation today. No duplication, no crash. (That
+  phrase-exact citation extraction -- the citation-side analogue of
+  TASK-3995 -- was closed later in the same PR: `_keyword_citation_spans`
+  now locates spans from the SAME token list the MATCH expression is built
+  from, so a scattered-token hit still cites.)
 
 Evidence (gated harness, `RAG_EVAL=1`):
 - 22 of 44 golden queries now return a different id-list from semantic

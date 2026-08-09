@@ -29,14 +29,19 @@ with the short-circuit neutered (`if False:`) the unseeded file stayed
 5/5 green; seeded, the same mutation yields three `_perform_fts5_search`
 calls (one per retry attempt) and reds the test. Do not drop the seed.
 """
+import asyncio
 import sqlite3
 from pathlib import Path
 
 import pytest
 
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
+from tldw_chatbook.RAG_Search.simplified.citations import CitationType
 from tldw_chatbook.RAG_Search.simplified.config import RAGConfig
-from tldw_chatbook.RAG_Search.simplified.rag_service import RAGService
+from tldw_chatbook.RAG_Search.simplified.rag_service import (
+    MAX_CITATION_MATCHES,
+    RAGService,
+)
 
 
 def _seed_media_db(tmp_path):
@@ -208,8 +213,6 @@ def test_all_punctuation_query_short_circuits(tmp_path):
     service = _make_service(tmp_path)
     assert service._escape_fts5_query("!!! ...") == ""
 
-    import asyncio
-
     calls = []
     original_perform = service._perform_fts5_search
 
@@ -225,3 +228,154 @@ def test_all_punctuation_query_short_circuits(tmp_path):
         "an all-punctuation query must short-circuit before the FTS5 "
         f"call is ever made; calls={calls}"
     )
+
+
+# --- Citation spans must use the SAME tokenization as the MATCH expression ---
+#
+# The per-token AND-of-terms fix above admits documents whose query tokens
+# are scattered. The citation builder still looked for the RAW query as one
+# contiguous, case-insensitive substring -- the phrase assumption the fix
+# had just deleted -- so exactly the rows the fix newly admitted came back
+# with `citations=[]`. Both halves now read one shared token list
+# (`_fts5_query_tokens`), which is what keeps them from drifting again.
+
+
+def test_one_tokenization_feeds_both_the_match_expression_and_the_spans(tmp_path):
+    """The MATCH expression is built from the shared token list verbatim."""
+    service = _make_service(tmp_path)
+    query = "  Obsidian-3 !!! runout "
+
+    tokens = service._fts5_query_tokens(query)
+    assert tokens == ["Obsidian-3", "runout"], tokens
+    # Punctuation-only tokens are dropped identically on both sides, and the
+    # MATCH expression is exactly those tokens quoted.
+    assert service._escape_fts5_query(query) == '"Obsidian-3" "runout"'
+
+
+def test_non_contiguous_multi_token_match_still_yields_citations(tmp_path):
+    """The regression Qodo flagged: scattered tokens must still cite.
+
+    The seed doc ("The Obsidian-3 lathe shows spindle runout under load.")
+    contains all three query tokens but never contiguously, so the old
+    raw-query substring lookup found nothing and the row -- newly reachable
+    thanks to TASK-3995 -- arrived with no citations at all.
+    """
+    service = _make_service(tmp_path)
+    query = "Obsidian-3 spindle runout"
+
+    results = asyncio.run(
+        service._keyword_search(query, top_k=5, include_citations=True)
+    )
+    assert results, "the AND-of-terms form must match the seeded media doc"
+
+    row = results[0]
+    assert row.citations, (
+        "a keyword row whose tokens are scattered must still carry citation "
+        f"spans; document={row.document!r}"
+    )
+
+    sliced = []
+    for citation in row.citations:
+        assert 0 <= citation.start_char < citation.end_char <= len(row.document), (
+            f"citation offsets must index the returned content: "
+            f"{citation.start_char}-{citation.end_char} into "
+            f"{len(row.document)} chars"
+        )
+        span_text = row.document[citation.start_char : citation.end_char]
+        assert span_text, "a citation span must not slice to empty text"
+        sliced.append(span_text.lower())
+
+    # Both ends of the scattered match are evidenced, each at its real offset.
+    assert "obsidian-3" in sliced, sliced
+    assert any("runout" in text for text in sliced), sliced
+
+
+def test_contiguous_match_still_cites_the_whole_phrase(tmp_path):
+    """Old behavior stays pinned: adjacent tokens cite as ONE span.
+
+    "spindle runout" is contiguous in the seed doc, and the citation for it
+    must still be the single whole-phrase span (offsets bracketing both
+    tokens, `EXACT` at full confidence) that the pre-TASK-3995 raw-query
+    lookup produced -- not two half-citations.
+    """
+    service = _make_service(tmp_path)
+
+    results = asyncio.run(
+        service._keyword_search("spindle runout", top_k=5, include_citations=True)
+    )
+    assert results, "the seeded media doc must match"
+
+    row = results[0]
+    spans = [
+        row.document[c.start_char : c.end_char].lower() for c in row.citations
+    ]
+    assert "spindle runout" in spans, spans
+
+    whole_phrase = next(
+        c
+        for c in row.citations
+        if row.document[c.start_char : c.end_char].lower() == "spindle runout"
+    )
+    assert whole_phrase.match_type == CitationType.EXACT
+    assert whole_phrase.confidence == 1.0
+
+
+def test_span_cap_still_evidences_a_rare_second_token(tmp_path):
+    """The citation cap must not be spent entirely on one repeated token.
+
+    "alpha" occurs four times before "beta" occurs once. Taking the first
+    `MAX_CITATION_MATCHES` spans in document order would cite "alpha" three
+    times and never show that "beta" -- the token that actually made this
+    an AND match -- is present at all.
+    """
+    service = _make_service(tmp_path)
+    item = {
+        "id": 11,
+        "title": "Repeated Token Doc",
+        "content": (
+            "alpha one. alpha two. alpha three. alpha four. "
+            "and much later, beta."
+        ),
+    }
+
+    result = asyncio.run(
+        service._create_keyword_result_with_citations(item, "alpha beta", None)
+    )
+    assert result is not None
+    assert 0 < len(result.citations) <= MAX_CITATION_MATCHES
+
+    spans = [
+        result.document[c.start_char : c.end_char].lower() for c in result.citations
+    ]
+    assert "beta" in spans, spans
+    assert "alpha" in spans, spans
+    # Offsets index the returned content, not some other string.
+    for citation in result.citations:
+        assert result.document[citation.start_char : citation.end_char] == (
+            citation.metadata["match_text"]
+        )
+
+
+def test_keyword_row_matching_only_on_title_is_never_citation_empty(tmp_path):
+    """`media_fts` indexes title AND content, so a row can match on its
+    title alone. Its content then holds no span at all -- the fallback
+    citation is what keeps such a keyword-backed row from reaching the
+    evidence list with nothing to show.
+    """
+    service = _make_service(tmp_path)
+    item = {
+        "id": 7,
+        "title": "Wombat Field Notes",
+        "content": "Burrow geometry, cross-sections and tunnel branching.",
+    }
+
+    result = asyncio.run(
+        service._create_keyword_result_with_citations(item, "wombat", None)
+    )
+    assert result is not None
+    assert result.citations, (
+        "a keyword-backed row must never come back citation-empty; the "
+        "title-only match has no in-content span to point at"
+    )
+    fallback = result.citations[0]
+    assert 0 <= fallback.start_char <= fallback.end_char <= len(result.document)

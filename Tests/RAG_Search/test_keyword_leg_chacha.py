@@ -260,6 +260,60 @@ def test_deleted_notes_and_conversations_are_excluded(tmp_path):
     )
 
 
+def test_conversation_messages_are_aggregated_chronologically(tmp_path):
+    """A conversation row's text must read in the ORM's message order.
+
+    The conversation sub-leg renders the matching messages as
+    `sender: content` lines. SQLite's `group_concat` has NO defined order,
+    so the concatenation order was whatever the query plan happened to
+    produce -- in practice the messages' storage order, which is insertion
+    order, not chronological order. Any snippet, preview or span-based
+    evidence built on that text then depends on a query plan.
+
+    The ORM orders messages by `timestamp ASC`
+    (`get_messages_for_conversation`), and the vector leg indexes them in
+    exactly that order (`conversation_document` renders whatever the ORM
+    handed it), so the two legs must agree.
+
+    This conversation is seeded with the LATER message inserted first, so
+    insertion order and chronological order disagree.
+    """
+    db = _chacha_db(tmp_path)
+    conv_id = db.add_conversation({"title": "Numbat Timeline"})
+    assert conv_id
+    assert db.add_message(
+        {
+            "conversation_id": conv_id,
+            "sender": "assistant",
+            "content": "SECOND numbat reply, written later, stored first.",
+            "timestamp": "2026-02-02T00:00:00.000Z",
+        }
+    )
+    assert db.add_message(
+        {
+            "conversation_id": conv_id,
+            "sender": "user",
+            "content": "FIRST numbat question, written earlier, stored second.",
+            "timestamp": "2026-02-01T00:00:00.000Z",
+        }
+    )
+    db.close_connection()
+
+    service = _make_service(chachanotes_db_path=tmp_path / "chacha.db")
+    results = asyncio.run(
+        service._keyword_search("numbat", top_k=10, include_citations=False)
+    )
+
+    conv_rows = _rows_by_type(results).get("conversation") or []
+    assert conv_rows, "the conversation sub-leg returned no rows"
+    document = conv_rows[0].document
+    assert "FIRST" in document and "SECOND" in document, document
+    assert document.index("FIRST") < document.index("SECOND"), (
+        "matched messages must be concatenated chronologically "
+        f"(timestamp ASC), got: {document!r}"
+    )
+
+
 def test_missing_chacha_db_degrades_to_media_only_with_warning(
     tmp_path, warnings_captured
 ):

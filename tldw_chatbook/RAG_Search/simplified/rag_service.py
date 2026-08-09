@@ -6,6 +6,7 @@ embeddings, vector stores, chunking, and search operations.
 """
 
 import asyncio
+import re
 import sqlite3
 import time
 import uuid
@@ -76,6 +77,17 @@ DEFAULT_EMBEDDING_DIM = _rag_service_config.get("default_embedding_dim", 768)
 KEYWORD_SEARCH_SCORE = _rag_service_config.get("keyword_search_score", 0.8)
 MAX_CITATION_MATCHES = _rag_service_config.get("max_citation_matches", 3)
 CITATION_CONTEXT_CHARS = _rag_service_config.get("citation_context_chars", 50)
+# Two keyword spans this close together, with nothing alphanumeric between
+# them, are one piece of evidence (e.g. the two tokens of a contiguous
+# "spindle runout" match) rather than two separate citations.
+CITATION_SPAN_MERGE_GAP_CHARS = _rag_service_config.get(
+    "citation_span_merge_gap_chars", 3
+)
+# Confidence for a span that evidences only SOME of the query's tokens --
+# a real match, but weaker evidence than a span covering the whole query.
+PARTIAL_CITATION_CONFIDENCE = _rag_service_config.get(
+    "partial_citation_confidence", 0.8
+)
 KEYWORD_BATCH_SIZE = _rag_service_config.get("keyword_batch_size", 10)
 FTS5_CONNECTION_POOL_SIZE = _rag_service_config.get("fts5_connection_pool_size", 3)
 CACHE_TIMEOUT_SECONDS = _rag_service_config.get("cache_timeout_seconds", 3600.0)
@@ -1306,15 +1318,15 @@ class RAGService:
         LIMIT ?
         """
         try:
-            cursor = conn.execute(sql, (escaped_query, limit))
-            return [
-                {
-                    "id": row["id"],
-                    "title": row["title"] or f"Note {row['id']}",
-                    "content": row["content"] or "",
-                }
-                for row in cursor
-            ]
+            with closing(conn.execute(sql, (escaped_query, limit))) as cursor:
+                return [
+                    {
+                        "id": row["id"],
+                        "title": row["title"] or f"Note {row['id']}",
+                        "content": row["content"] or "",
+                    }
+                    for row in cursor
+                ]
         except sqlite3.Error as e:
             logger.warning(
                 f"Notes keyword sub-leg failed: {e}; returning no note rows."
@@ -1347,7 +1359,17 @@ class RAGService:
         The document text is the matched messages rendered as
         ``sender: content`` lines, the same shape
         ``ingestion_indexing.conversation_document`` indexes (restricted to
-        the matching messages, which is what the user searched for).
+        the matching messages, which is what the user searched for) -- and
+        in the same order. That ordering is why this is two statements
+        rather than one ``group_concat``: SQLite defines NO order for the
+        rows an aggregate consumes, so the concatenation order was whatever
+        the query plan produced (in practice storage order, i.e. insertion
+        order), and every snippet or span built on that text inherited the
+        plan's whim. Selecting the matching lines in the ORM's own order
+        (``get_messages_for_conversation``: ``timestamp ASC``, with the
+        rowid as a deterministic tie-break for equal timestamps) and
+        joining them in Python makes the order a property of the query,
+        not of the planner.
 
         Args:
             conn: Read-only ChaChaNotes connection.
@@ -1357,14 +1379,11 @@ class RAGService:
         Returns:
             Row dicts (``id``/``title``/``content``), best match first.
         """
-        sql = """
+        conversations_sql = """
         SELECT
             c.id AS id,
             c.title AS title,
-            MIN(rank) AS best_rank,
-            group_concat(
-                COALESCE(m.sender, 'unknown') || ': ' || m.content, char(10)
-            ) AS content
+            MIN(rank) AS best_rank
         FROM messages_fts fts
         JOIN messages m ON fts.rowid = m.rowid
         JOIN conversations c ON m.conversation_id = c.id
@@ -1376,14 +1395,46 @@ class RAGService:
         LIMIT ?
         """
         try:
-            cursor = conn.execute(sql, (escaped_query, limit))
+            with closing(
+                conn.execute(conversations_sql, (escaped_query, limit))
+            ) as cursor:
+                conversations = [
+                    {
+                        "id": row["id"],
+                        "title": row["title"] or f"Conversation {row['id']}",
+                    }
+                    for row in cursor
+                ]
+            if not conversations:
+                return []
+
+            # Only "?" characters are interpolated; every value is bound.
+            placeholders = ",".join("?" * len(conversations))
+            messages_sql = f"""
+            SELECT
+                m.conversation_id AS conversation_id,
+                COALESCE(m.sender, 'unknown') || ': '
+                    || COALESCE(m.content, '') AS line
+            FROM messages_fts fts
+            JOIN messages m ON fts.rowid = m.rowid
+            WHERE fts.messages_fts MATCH ?
+              AND m.deleted = 0
+              AND m.conversation_id IN ({placeholders})
+            ORDER BY m.timestamp ASC, m.rowid ASC
+            """
+            lines: Dict[Any, List[str]] = {}
+            params = [escaped_query, *(row["id"] for row in conversations)]
+            with closing(conn.execute(messages_sql, params)) as cursor:
+                for row in cursor:
+                    lines.setdefault(row["conversation_id"], []).append(row["line"])
+
             return [
                 {
                     "id": row["id"],
-                    "title": row["title"] or f"Conversation {row['id']}",
-                    "content": row["content"] or "",
+                    "title": row["title"],
+                    "content": "\n".join(lines.get(row["id"], ())),
                 }
-                for row in cursor
+                for row in conversations
             ]
         except sqlite3.Error as e:
             logger.warning(
@@ -1753,6 +1804,13 @@ class RAGService:
     ) -> Optional[SearchResultWithCitations]:
         """Create a single keyword result with citations.
 
+        Citation spans come from ``_keyword_citation_spans``, which reads
+        the SAME token list ``_escape_fts5_query`` built this search's MATCH
+        expression from. Locating the raw query as one contiguous substring
+        instead (what this did before) assumed phrase semantics the keyword
+        leg no longer has, so every multi-token hit whose tokens are
+        scattered lost its citations entirely.
+
         Args:
             item: One raw sub-leg row.
             query: Raw user query (used to locate citation spans).
@@ -1762,8 +1820,6 @@ class RAGService:
         Returns:
             The row, or ``None`` when the metadata filters exclude it.
         """
-        import re
-
         # Apply metadata filters
         if filter_metadata:
             item_meta = {
@@ -1783,39 +1839,63 @@ class RAGService:
         content = item.get("content", "")[:1000]
         base_metadata = self._keyword_row_metadata(item, content, source_type)
 
-        # Find citations
-        escaped_query = re.escape(query)
-        pattern = re.compile(escaped_query, re.IGNORECASE)
-
+        # Find citations from the query's own tokens (see the docstring).
         full_content = item.get("content", "")
-        matches = list(pattern.finditer(full_content))
+        tokens = self._fts5_query_tokens(query)
+        spans = self._keyword_citation_spans(full_content, tokens)
+
+        # Cap the spans, preferring coverage: a span evidencing a token no
+        # earlier span did comes first, so a two-token query whose first
+        # token repeats does not spend every slot on that one token. Ties
+        # and leftover slots fall back to document order, which is what the
+        # single-token case (and the old whole-query lookup) produced.
+        selected: List[Tuple[int, int, frozenset]] = []
+        covered_tokens: set = set()
+        for span in spans:
+            if len(selected) >= MAX_CITATION_MATCHES:
+                break
+            if span[2] - covered_tokens:
+                selected.append(span)
+                covered_tokens |= span[2]
+        for span in spans:
+            if len(selected) >= MAX_CITATION_MATCHES:
+                break
+            if span not in selected:
+                selected.append(span)
+        selected.sort()
 
         citations = []
-
-        # Create citations for limited number of matches
-        for match in matches[:MAX_CITATION_MATCHES]:
-            start_context = max(0, match.start() - CITATION_CONTEXT_CHARS)
-            end_context = min(len(full_content), match.end() + CITATION_CONTEXT_CHARS)
+        all_token_indices = frozenset(range(len(tokens)))
+        for start, end, span_tokens in selected:
+            start_context = max(0, start - CITATION_CONTEXT_CHARS)
+            end_context = min(len(full_content), end + CITATION_CONTEXT_CHARS)
+            whole_query = span_tokens == all_token_indices
 
             citation = Citation(
                 document_id=str(item["id"]),
                 document_title=item.get("title", "Untitled"),
-                chunk_id=f"{source_type}_{item['id']}_kw_{match.start()}",
+                chunk_id=f"{source_type}_{item['id']}_kw_{start}",
                 text=full_content[start_context:end_context],
-                start_char=match.start(),
-                end_char=match.end(),
-                confidence=1.0,
-                match_type=CitationType.EXACT,
+                start_char=start,
+                end_char=end,
+                # A span covering every query token is the exact match the
+                # pre-implicit-AND builder used to emit; a span covering
+                # only some of them is real but weaker evidence.
+                confidence=1.0 if whole_query else PARTIAL_CITATION_CONFIDENCE,
+                match_type=CitationType.EXACT if whole_query else CitationType.KEYWORD,
                 metadata={
                     "query": query,
-                    "match_text": match.group(),
+                    "match_text": full_content[start:end],
                     "media_type": item.get("type"),
                 },
             )
             citations.append(citation)
 
-        # If no exact matches, create general citation
-        if not citations and query.lower() in full_content.lower():
+        # No span at all -- the row still matched FTS5, on an indexed column
+        # this content does not carry (`media_fts` indexes the title too),
+        # so fall back to a document-level citation rather than hand the
+        # evidence list a keyword-backed row with nothing to show.
+        if not citations and full_content:
             citation = Citation(
                 document_id=str(item["id"]),
                 document_title=item.get("title", "Untitled"),
@@ -1836,6 +1916,42 @@ class RAGService:
             metadata=base_metadata,
             citations=citations,
         )
+
+    @staticmethod
+    def _fts5_query_tokens(query: str) -> List[str]:
+        """Tokenize a raw user query -- the ONE tokenization of the keyword leg.
+
+        Two consumers must agree on this list or the leg contradicts itself:
+        ``_escape_fts5_query`` builds the FTS5 MATCH expression from it, and
+        ``_keyword_citation_spans`` locates the citation spans from it. They
+        used to tokenize independently (per-token quoting on one side, a raw
+        whole-query substring lookup on the other), which is exactly how a
+        row could match the query and then be reported with no evidence for
+        it -- see ``_keyword_citation_spans``.
+
+        Tokens are whitespace-separated runs that contain at least one
+        alphanumeric character. FTS5's default tokenizer indexes only
+        alphanumeric runs, so a pure-punctuation token ("!!!") can never
+        match anything and is dropped rather than carried as a no-op.
+
+        Args:
+            query: Raw search query.
+
+        Returns:
+            The query's searchable tokens, in query order; empty when the
+            query is empty, whitespace-only or all punctuation.
+        """
+        if not query:
+            return []
+
+        # Bound total processing length before tokenizing (DoS guard). The
+        # warning belongs to `_escape_fts5_query`, which runs once per
+        # search; this helper also runs once per RESULT ROW.
+        query = query[:MAX_QUERY_LENGTH]
+
+        return [
+            token for token in query.split() if any(ch.isalnum() for ch in token)
+        ]
 
     def _escape_fts5_query(self, query: str) -> str:
         """
@@ -1865,13 +1981,12 @@ class RAGService:
         the exact same MATCH expression as before (one quoted token), so
         single-token search behavior is unchanged.
 
-        FTS5's default tokenizer only indexes alphanumeric runs, so a
-        token with no alphanumeric character (pure punctuation, e.g.
-        "!!!") can never match anything; such tokens are dropped rather
-        than emitted as a no-op quoted empty string. If every token in
-        the query is dropped this way, the result is "" -- callers must
-        treat "" as "no results" and skip the FTS5 query entirely rather
-        than run a MATCH expression that can only ever match nothing.
+        Tokenization (including the pure-punctuation drop and the length
+        guard) lives in ``_fts5_query_tokens``, shared with the citation
+        builder. If every token is dropped, the result is "" -- callers
+        must treat "" as "no results" and skip the FTS5 query entirely
+        rather than run a MATCH expression that can only ever match
+        nothing.
 
         Args:
             query: Raw search query
@@ -1881,25 +1996,97 @@ class RAGService:
             query has no FTS5-searchable tokens (empty, whitespace-only,
             or all punctuation).
         """
-        if not query:
-            return ""
-
-        # Bound total processing length before tokenizing (DoS guard).
-        if len(query) > MAX_QUERY_LENGTH:
+        if query and len(query) > MAX_QUERY_LENGTH:
             logger.warning(
                 f"Query truncated from {len(query)} to {MAX_QUERY_LENGTH} characters"
             )
-            query = query[:MAX_QUERY_LENGTH]
 
-        quoted_tokens = []
-        for token in query.split():
-            if not any(ch.isalnum() for ch in token):
-                continue
-            escaped_token = token.replace('"', '""')
-            quoted_tokens.append(f'"{escaped_token}"')
+        quoted_tokens = [
+            '"{}"'.format(token.replace('"', '""'))
+            for token in self._fts5_query_tokens(query)
+        ]
 
         # FTS5 joins space-separated quoted terms with an implicit AND.
         return " ".join(quoted_tokens)
+
+    @staticmethod
+    def _keyword_citation_spans(
+        content: str, tokens: List[str]
+    ) -> List[Tuple[int, int, frozenset]]:
+        """Locate the citation spans for a keyword hit, from the SAME tokens.
+
+        TASK-3996 follow-up (Qodo, PR #1469). Before TASK-3995 the keyword
+        leg used phrase semantics, so a hit guaranteed the raw query was one
+        contiguous substring of the document and the citation builder could
+        just look that raw query up. Per-token implicit AND deleted that
+        guarantee: documents now match with the tokens scattered, the raw
+        lookup found nothing, and the rows the fix had just made reachable
+        came back with ``citations=[]``.
+
+        Spans are located per token, case-insensitively, from the token list
+        ``_escape_fts5_query`` built the MATCH expression from. A token is
+        matched as its alphanumeric runs separated by non-alphanumerics
+        ("Obsidian-3" -> ``Obsidian`` then ``3``), which is how FTS5 reads a
+        quoted token: a phrase over the runs, adjacency required.
+
+        Spans that overlap, or that are separated only by non-alphanumeric
+        characters, are merged -- so a query whose tokens ARE contiguous in
+        the document ("spindle runout") still yields the single whole-phrase
+        span the pre-TASK-3995 lookup produced, rather than one citation per
+        token.
+
+        Args:
+            content: The document text the offsets must index.
+            tokens: ``_fts5_query_tokens(query)`` for the same query.
+
+        Returns:
+            Merged, non-overlapping ``(start, end, token_indices)`` spans in
+            document order, where ``token_indices`` is the set of ``tokens``
+            positions the span evidences. Empty when no token appears in the
+            content -- a real case, since a row can match on an indexed
+            column the caller never sees (``media_fts`` indexes the title
+            too).
+        """
+        if not content or not tokens:
+            return []
+
+        raw_spans: List[Tuple[int, int, int]] = []
+        for index, token in enumerate(tokens):
+            runs = re.findall(r"[^\W_]+", token, re.UNICODE)
+            if not runs:
+                continue
+            # Runs separated by any non-alphanumeric run: FTS5 treats a
+            # quoted token as a phrase over exactly these runs.
+            pattern = r"[\W_]+".join(re.escape(run) for run in runs)
+            raw_spans.extend(
+                (match.start(), match.end(), index)
+                for match in re.finditer(pattern, content, re.IGNORECASE)
+            )
+
+        if not raw_spans:
+            return []
+
+        merged: List[Tuple[int, int, set]] = []
+        for start, end, index in sorted(raw_spans):
+            if merged:
+                previous_start, previous_end, covered = merged[-1]
+                gap = content[previous_end:start] if start > previous_end else ""
+                if start <= previous_end or (
+                    len(gap) <= CITATION_SPAN_MERGE_GAP_CHARS
+                    and not any(ch.isalnum() for ch in gap)
+                ):
+                    # Overlapping, or separated only by a little
+                    # punctuation/whitespace: one piece of evidence.
+                    covered.add(index)
+                    merged[-1] = (
+                        previous_start,
+                        max(previous_end, end),
+                        covered,
+                    )
+                    continue
+            merged.append((start, end, {index}))
+
+        return [(start, end, frozenset(covered)) for start, end, covered in merged]
 
     def _perform_fts5_search(
         self, pool, query: str, limit: int
