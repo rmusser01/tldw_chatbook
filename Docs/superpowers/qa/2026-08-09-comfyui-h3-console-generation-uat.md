@@ -16,21 +16,22 @@ TASK-3401.14 tests the packaged Base and Spectrum H3 workflows through the real 
 | Check | Result | Sanitized evidence |
 |---|---|---|
 | Server prerequisites | Pass | Base and Spectrum prerequisites plus the video-output class were present. |
-| Reach Video Gen Settings | Blocked | The panel and contract exist, but the category is absent from the Domain Defaults navigation group. See TASK-3401.15. |
-| Console generation submission | Blocked | Persisted video-generation settings were absent from `load_settings()` output, so the runtime reported no enabled backend before any submission. See TASK-3401.16. |
-| Terminal error hygiene | Pass for observed blocker | The Console displayed a terminal system message and did not create a pending video card. |
-| Partial-media hygiene | Pass | The isolated profile contained zero generated-video or partial-download files after the rejected command. |
-| Base/Spectrum media validation | Not run | Submission was blocked before the server boundary. |
-| Full player and save copy | Not run | No video was produced. |
+| Reach Video Gen Settings | Pass | Category search opened the existing panel; curated ComfyUI values and ownership guidance were visible. TASK-3401.15 is live-verified. |
+| Runtime settings projection | Pass | A workflow change saved through Settings and the same process used it for the next Console request. TASK-3401.16 is live-verified. |
+| Base Console generation | Pass | The real command produced a ready card with 864×480, 24 FPS, and 5-second displayed metadata. |
+| Spectrum Console generation | Pass | Spectrum was selected and saved through Settings, then the same command path produced a ready card. |
+| Base stored bytes | Pass | MP4-family container; H.264 864×480 at 24 FPS; 124 frames; 5.167 seconds; AAC audio; observed MIME `video/mp4`. |
+| Spectrum stored bytes | Pass | MP4-family container; H.264 864×480 at 24 FPS; 124 frames; 5.167 seconds; AAC audio; observed MIME `video/mp4`. |
+| Cancellation | Pass | Stop cleared the running queue, rendered an explicit user-cancelled terminal message, left no pending card, and retained no partial file. |
+| Full player and save copy | Blocked | Video identity/retention failed across Console lifecycle transitions (TASK-3401.17), and inline-preview activation terminated the app with an unhandled `AttributeError` (TASK-3401.18). |
 
-## Root-cause evidence
+## Defect evidence
 
-The Settings failure is a navigation-registration defect: the Video Gen summary, contract, and panel branch exist, while the Domain Defaults category tuple omits the Video Generation category.
-
-The Console failure is a configuration-projection defect: the persisted TOML contains the requested global and ComfyUI values and the process has the intended config override, but `load_settings()` does not include the `video_generation` table in its returned settings mapping. The video-generation loader consequently uses built-in defaults with an empty enabled-backend list.
-
-Both defects were reproduced without changing production code and were filed separately, as required by the UAT task.
+- The generated-video directory key did not match the persisted video-message ID. The card was initially ready from the live in-memory state but could not resolve the same bytes after restart even under TTL retention.
+- A Console lifecycle transition under session retention reapplied the startup sweep and removed a current-run generated video. Session retention must describe the app session, not each screen instance.
+- Explicit inline-preview activation was followed by an app-level unhandled `AttributeError` and shutdown in the isolated persistent log. The log contained no prompt or media bytes.
+- These issues are tracked in TASK-3401.17 and TASK-3401.18. No production fix was made inside this UAT task.
 
 ## Cleanup
 
-The isolated app session was stopped. The validated scratch directory contained no symlinks and no generated or partial video files, then was removed. TASK-3401.14 remains In Progress with the live-generation and playback criteria open.
+The isolated app session was stopped. Before deletion, the validated scratch root contained no symlinks and no partial downloads; its disposable generated media and diagnostic state were then permanently removed. A before/after fingerprint check confirmed the real user config was unchanged. TASK-3401.14 remains In Progress with only full-player/save-copy acceptance open.
