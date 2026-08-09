@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass, replace
@@ -10,8 +11,10 @@ from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
 
 from .contracts import (
+    BufferAudioSource,
     DeviceFailureOrigin,
     ExecutionDevice,
+    FileAudioSource,
     TranscriptionFailureCode,
     TranscriptionWarningCode,
 )
@@ -42,6 +45,7 @@ class ProviderRuntime:
 
     runner: TranscriptionRunner
     close: Callable[[], None]
+    buffer_runner: Callable[..., dict[str, Any]] | None = None
 
 
 @dataclass(slots=True)
@@ -425,14 +429,18 @@ def _parakeet_provider(
     context = request.options.get("transcription_context") or {}
     if not isinstance(context, dict):
         context = {}
+    model_id = request.identity.model_id
+    precision = request.identity.precision
     requested_language = request.options.get("language") or "en"
     effective_language = (
         "auto"
-        if request.identity.model_id == "nemo-parakeet-tdt-0.6b-v3"
+        if model_id == "nemo-parakeet-tdt-0.6b-v3"
         else "en"
     )
     artifact_root = None
     artifact_dependencies: tuple[Any, ...] = ()
+
+    missing = object()
 
     def failure(
         code: TranscriptionFailureCode,
@@ -441,7 +449,7 @@ def _parakeet_provider(
         effective_device: ExecutionDevice | None = None,
         attempt_id: str | None = None,
         batch_id: str | None = None,
-        job_id: str | None = None,
+        job_id: str | None | object = missing,
         language: str | None = None,
     ) -> ParakeetOnnxFailure:
         return ParakeetOnnxFailure(
@@ -449,11 +457,11 @@ def _parakeet_provider(
             message,
             attempt_id=attempt_id or request.attempt_id,
             batch_id=batch_id if batch_id is not None else context.get("batch_id"),
-            job_id=job_id or request.job_id,
-            model_id=request.identity.model_id,
+            job_id=request.job_id if job_id is missing else job_id,
+            model_id=model_id,
             artifact_root=artifact_root,
             artifact_dependencies=artifact_dependencies,
-            precision=request.identity.precision,
+            precision=precision,
             requested_language=language or requested_language,
             effective_language=effective_language,
             effective_device=effective_device,
@@ -509,8 +517,8 @@ def _parakeet_provider(
         runtime = ParakeetOnnxRuntime.load(
             model_root=model_root,
             vad_root=vad_root,
-            model_id=request.identity.model_id,
-            precision=request.identity.precision,
+            model_id=model_id,
+            precision=precision,
             artifact_root=artifact_root,
             artifact_dependencies=artifact_dependencies,
         )
@@ -585,7 +593,109 @@ def _parakeet_provider(
             "transcription_provenance": provenance,
         }
 
-    return ProviderRuntime(runner=runner, close=runtime.close)
+    def buffer_runner(
+        source: BufferAudioSource,
+        *,
+        segment_end_frames: tuple[int, ...],
+        attempt_id: str,
+        job_id: str | None,
+        language: str,
+        transcription_context: dict[str, Any],
+    ) -> dict[str, Any]:
+        if source.sample_width != 2:
+            raise _ProviderLoadFailure(
+                TranscriptionFailureCode.UNSUPPORTED_CAPABILITY
+            )
+        current_context = (
+            transcription_context
+            if isinstance(transcription_context, dict)
+            else {}
+        )
+
+        def buffer_failure() -> ParakeetOnnxFailure:
+            return ParakeetOnnxFailure(
+                TranscriptionFailureCode.INFERENCE_FAILED,
+                "Parakeet ONNX could not complete this transcription.",
+                attempt_id=attempt_id,
+                batch_id=current_context.get("batch_id"),
+                job_id=job_id,
+                model_id=model_id,
+                artifact_root=artifact_root,
+                artifact_dependencies=artifact_dependencies,
+                precision=precision,
+                requested_language=language,
+                effective_language=effective_language,
+                effective_device=ExecutionDevice.CPU,
+            )
+
+        try:
+            result = runtime.transcribe_buffer(
+                source=source,
+                segment_end_frames=segment_end_frames,
+                attempt_id=attempt_id,
+                language=language,
+                job_id=job_id,
+                is_cancelled=is_cancelled,
+            )
+        except (ParakeetOnnxCancelled, ParakeetOnnxFailure):
+            raise
+        except Exception:
+            raise buffer_failure() from None
+        normalized = replace(
+            result.normalized,
+            provenance=replace(
+                result.normalized.provenance,
+                batch_id=current_context.get("batch_id"),
+            ),
+        )
+        provenance = build_transcription_provenance_document(
+            normalized,
+            failed_attempt=current_context.get(
+                "retry_source_failure_provenance"
+            ),
+        )
+        return {
+            "text": normalized.text,
+            "logical_segments": result.logical_segments,
+            "duration": normalized.duration_seconds,
+            "transcription_model": normalized.provenance.model_id,
+            "transcription_provenance": provenance,
+        }
+
+    return ProviderRuntime(
+        runner=runner,
+        close=runtime.close,
+        buffer_runner=buffer_runner,
+    )
+
+
+def _buffer_runner_kwargs(
+    runner: Callable[..., dict[str, Any]],
+    request: ExecutorRequest,
+) -> dict[str, Any]:
+    """Build current-request metadata accepted by one buffer runner."""
+
+    context = request.options.get("transcription_context") or {}
+    if not isinstance(context, dict):
+        context = {}
+    values = {
+        "segment_end_frames": request.segment_end_frames,
+        "attempt_id": request.attempt_id,
+        "job_id": request.job_id,
+        "language": request.options.get("language") or "en",
+        "transcription_context": dict(context),
+    }
+    try:
+        parameters = inspect.signature(runner).parameters.values()
+    except (TypeError, ValueError):
+        return values
+    if any(
+        parameter.kind is inspect.Parameter.VAR_KEYWORD
+        for parameter in parameters
+    ):
+        return values
+    accepted = {parameter.name for parameter in parameters}
+    return {name: value for name, value in values.items() if name in accepted}
 
 
 def _default_provider_builder(
@@ -702,11 +812,27 @@ def _run_executor_worker(
                         WorkerPhase.TRANSCRIBING,
                     )
                 )
-                payload = parse_job(
-                    request.source_path,
-                    dict(request.options),
-                    transcription_runner=resident.provider.runner,
-                )
+                if type(request.source) is FileAudioSource:
+                    payload = parse_job(
+                        request.source.path,
+                        dict(request.options),
+                        transcription_runner=resident.provider.runner,
+                    )
+                elif (
+                    request.identity.provider_id == "parakeet-onnx"
+                    and resident.provider.buffer_runner is not None
+                ):
+                    payload = resident.provider.buffer_runner(
+                        request.source,
+                        **_buffer_runner_kwargs(
+                            resident.provider.buffer_runner,
+                            request,
+                        ),
+                    )
+                else:
+                    raise _ProviderLoadFailure(
+                        TranscriptionFailureCode.UNSUPPORTED_CAPABILITY
+                    )
                 if cancellation_event.is_set():
                     connection.send(_cancelled_failure(request))
                     continue

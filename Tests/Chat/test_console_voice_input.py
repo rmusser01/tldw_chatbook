@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import gc
 import queue
 import subprocess
 import sys
 import threading
 import time
+import weakref
+from types import SimpleNamespace
 
 import pytest
 
@@ -141,6 +144,7 @@ def test_capture_available_true_with_only_one_backend_installed(monkeypatch):
     deliberately left unresolved so this still proves any(), not all(), over
     `CAPTURE_MODULES` specifically.
     """
+
     def fake_find_spec(name, *args, **kwargs):
         return object() if name in {"sounddevice", "numpy"} else None
 
@@ -156,7 +160,9 @@ def test_capture_available_false_with_no_backend_installed(monkeypatch):
     assert cvi.capture_available() is False
 
 
-def test_capture_available_false_when_numpy_missing_even_with_backend_present(monkeypatch):
+def test_capture_available_false_when_numpy_missing_even_with_backend_present(
+    monkeypatch,
+):
     """A resolvable capture backend is not enough on its own.
 
     `AudioRecordingService.__init__` raises `AudioRecordingError` when NumPy
@@ -164,6 +170,7 @@ def test_capture_available_false_when_numpy_missing_even_with_backend_present(mo
     was chosen. Without this check, `probe()` would report OK and the Mic
     button would light up for a start that deterministically fails.
     """
+
     def fake_find_spec(name, *args, **kwargs):
         return object() if name == "pyaudio" else None  # numpy stays unresolved
 
@@ -179,6 +186,7 @@ def test_capture_available_true_when_backend_and_numpy_both_present(monkeypatch)
     "sounddevice", stays unresolved), proving both are genuinely consulted
     rather than the fake happening to resolve everything.
     """
+
     def fake_find_spec(name, *args, **kwargs):
         return object() if name in {"pyaudio", "numpy"} else None
 
@@ -193,6 +201,7 @@ def test_probe_reports_missing_capture_when_numpy_missing(monkeypatch):
     underlying failure (`AudioRecordingService` refuses to construct) is
     identical either way.
     """
+
     def fake_find_spec(name, *args, **kwargs):
         return object() if name == "sounddevice" else None  # numpy stays unresolved
 
@@ -231,6 +240,7 @@ def test_installed_local_providers_includes_parakeet_onnx_when_present(monkeypat
     """parakeet-onnx is the provider the shipping one-shot dictation used --
     the worst omission this task fixes. Cross-platform: no darwin gate.
     """
+
     def fake_find_spec(name, *args, **kwargs):
         return object() if name == "onnx_asr" else None
 
@@ -257,6 +267,7 @@ def test_installed_local_providers_detects_cross_platform_providers(
     monkeypatch, provider, module_name
 ):
     """Providers with no darwin gate are detected purely by find_spec."""
+
     def fake_find_spec(name, *args, **kwargs):
         return object() if name == module_name else None
 
@@ -267,6 +278,7 @@ def test_installed_local_providers_detects_cross_platform_providers(
 
 def test_parakeet_and_canary_both_come_from_nemo(monkeypatch):
     """A single NeMo install makes both NeMo-backed providers available."""
+
     def fake_find_spec(name, *args, **kwargs):
         return object() if name == "nemo" else None
 
@@ -287,8 +299,11 @@ def test_qwen2audio_requires_both_torch_and_transformers(monkeypatch):
 
 
 @pytest.mark.parametrize("present_module", ["torch", "transformers"])
-def test_qwen2audio_unavailable_with_only_one_of_two_modules(monkeypatch, present_module):
+def test_qwen2audio_unavailable_with_only_one_of_two_modules(
+    monkeypatch, present_module
+):
     """Present with only one of the two required modules -> not available."""
+
     def fake_find_spec(name, *args, **kwargs):
         return object() if name == present_module else None
 
@@ -299,7 +314,10 @@ def test_qwen2audio_unavailable_with_only_one_of_two_modules(monkeypatch, presen
 
 @pytest.mark.parametrize(
     ("provider", "module_name"),
-    [("parakeet-mlx", "parakeet_mlx"), ("lightning-whisper-mlx", "lightning_whisper_mlx")],
+    [
+        ("parakeet-mlx", "parakeet_mlx"),
+        ("lightning-whisper-mlx", "lightning_whisper_mlx"),
+    ],
 )
 def test_mlx_providers_require_darwin_even_if_module_resolves(
     monkeypatch, provider, module_name
@@ -309,7 +327,9 @@ def test_mlx_providers_require_darwin_even_if_module_resolves(
     capture time.
     """
     monkeypatch.setattr(
-        cvi.importlib.util, "find_spec", lambda name, *a, **k: object() if name == module_name else None
+        cvi.importlib.util,
+        "find_spec",
+        lambda name, *a, **k: object() if name == module_name else None,
     )
     monkeypatch.setattr(cvi.sys, "platform", "linux")
 
@@ -318,13 +338,18 @@ def test_mlx_providers_require_darwin_even_if_module_resolves(
 
 @pytest.mark.parametrize(
     ("provider", "module_name"),
-    [("parakeet-mlx", "parakeet_mlx"), ("lightning-whisper-mlx", "lightning_whisper_mlx")],
+    [
+        ("parakeet-mlx", "parakeet_mlx"),
+        ("lightning-whisper-mlx", "lightning_whisper_mlx"),
+    ],
 )
 def test_mlx_providers_available_on_darwin_when_module_resolves(
     monkeypatch, provider, module_name
 ):
     monkeypatch.setattr(
-        cvi.importlib.util, "find_spec", lambda name, *a, **k: object() if name == module_name else None
+        cvi.importlib.util,
+        "find_spec",
+        lambda name, *a, **k: object() if name == module_name else None,
     )
     monkeypatch.setattr(cvi.sys, "platform", "darwin")
 
@@ -349,6 +374,7 @@ def test_module_installed_returns_false_when_find_spec_raises(monkeypatch, exc):
     `find_spec`; `_module_installed` must swallow that and report False
     instead of propagating.
     """
+
     def fake_find_spec(name, *args, **kwargs):
         raise exc("broken namespace package")
 
@@ -418,7 +444,9 @@ def test_resolve_flags_override_instead_of_swapping_silently(monkeypatch):
 def test_resolve_never_returns_an_uninstalled_provider(monkeypatch):
     """This is the guard against the service's parakeet-mlx rewrite."""
     monkeypatch.setattr(cvi, "installed_local_providers", lambda: ("faster-whisper",))
-    _stub_settings(monkeypatch, {"transcription.default_provider": "lightning-whisper-mlx"})
+    _stub_settings(
+        monkeypatch, {"transcription.default_provider": "lightning-whisper-mlx"}
+    )
 
     effective = cvi.resolve()
 
@@ -507,9 +535,7 @@ def test_resolve_falls_back_to_stt_settings_section_name(monkeypatch):
     monkeypatch.setattr(
         cvi, "installed_local_providers", lambda: ("parakeet-mlx", "faster-whisper")
     )
-    _stub_settings(
-        monkeypatch, {"STT_settings.default_stt_provider": "faster-whisper"}
-    )
+    _stub_settings(monkeypatch, {"STT_settings.default_stt_provider": "faster-whisper"})
 
     effective = cvi.resolve()
 
@@ -599,6 +625,12 @@ def _controller(monkeypatch, service=None, spawn=None):
     """
     monkeypatch.setattr(cvi, "capture_available", lambda: True)
     monkeypatch.setattr(cvi, "installed_local_providers", lambda: ("faster-whisper",))
+    monkeypatch.setattr(
+        cvi,
+        "_faster_whisper_model_is_local",
+        lambda _model: True,
+        raising=False,
+    )
     _stub_settings(monkeypatch, {"transcription.default_provider": "faster-whisper"})
 
     service = service or FakeDictationService()
@@ -811,12 +843,8 @@ def test_model_default_is_not_announced_for_a_non_fast_provider(monkeypatch):
     """Only the `DICTATION_FAST_MODEL_PROVIDER` branch can displace anything;
     every other provider keeps reading `transcription.default_model` as-is.
     """
-    controller, events, _ = _controller(
-        monkeypatch, spawn=lambda thunk: thunk()
-    )
-    monkeypatch.setattr(
-        cvi, "installed_local_providers", lambda: ("parakeet-mlx",)
-    )
+    controller, events, _ = _controller(monkeypatch, spawn=lambda thunk: thunk())
+    monkeypatch.setattr(cvi, "installed_local_providers", lambda: ("parakeet-mlx",))
     _stub_settings(
         monkeypatch,
         {
@@ -930,7 +958,9 @@ def test_fail_emits_voicefailed_before_voicestatechanged_idle(monkeypatch):
 
     controller.start()
 
-    failed_index = next(i for i, e in enumerate(events) if isinstance(e, cvi.VoiceFailed))
+    failed_index = next(
+        i for i, e in enumerate(events) if isinstance(e, cvi.VoiceFailed)
+    )
     idle_index = next(
         i
         for i, e in enumerate(events)
@@ -980,7 +1010,9 @@ def test_abandon_mid_preparing_releases_service_built_after_abandon(monkeypatch)
     audio = FakeAudioService()
     service = FakeDictationService()
     service._audio_service = audio
-    controller, events, _ = _controller(monkeypatch, service=service, spawn=pending.append)
+    controller, events, _ = _controller(
+        monkeypatch, service=service, spawn=pending.append
+    )
 
     controller.start()
     assert controller.state == cvi.STATE_PREPARING
@@ -1092,7 +1124,9 @@ def test_probe_failure_does_not_cascade_into_a_second_voicefailed(monkeypatch):
     assert failures[0].reason == cvi.CAPTURE_REASON
 
 
-def test_fail_emits_voicefailed_before_voicestatechanged_idle_after_restructure(monkeypatch):
+def test_fail_emits_voicefailed_before_voicestatechanged_idle_after_restructure(
+    monkeypatch,
+):
     """Re-confirms the Finding 2 invariant survives the try/except
     restructuring done for NEW BREAKAGE 1: state mutated first, then
     VoiceFailed, then VoiceStateChanged(idle)."""
@@ -1102,7 +1136,9 @@ def test_fail_emits_voicefailed_before_voicestatechanged_idle_after_restructure(
 
     controller.start()
 
-    failed_index = next(i for i, e in enumerate(events) if isinstance(e, cvi.VoiceFailed))
+    failed_index = next(
+        i for i, e in enumerate(events) if isinstance(e, cvi.VoiceFailed)
+    )
     idle_index = next(
         i
         for i, e in enumerate(events)
@@ -1149,7 +1185,9 @@ def test_ghost_listening_race_is_closed_by_the_atomic_recheck(monkeypatch):
         controller.abandon()
         real_enter_listening()
 
-    monkeypatch.setattr(controller, "_enter_listening", enter_listening_after_concurrent_abandon)
+    monkeypatch.setattr(
+        controller, "_enter_listening", enter_listening_after_concurrent_abandon
+    )
 
     controller.start()
 
@@ -1212,7 +1250,9 @@ def test_begin_when_start_dictation_returns_false(monkeypatch):
     assert controller._service is None
 
 
-def test_begin_not_started_failure_does_not_cascade_into_a_second_voicefailed(monkeypatch):
+def test_begin_not_started_failure_does_not_cascade_into_a_second_voicefailed(
+    monkeypatch,
+):
     """The S4 fix (wrapping `self._spawn(...)` in `start()`) reintroduced the
     N1 cascade one call frame deeper: with the default inline `spawn`, that
     try transitively covers all of `_begin()`, so `_begin()`'s own `_fail()`
@@ -1269,7 +1309,9 @@ def test_begin_not_started_stays_quiet_when_abandoned_in_the_gap(monkeypatch):
         controller.abandon()
         real_fail_not_started()
 
-    monkeypatch.setattr(controller, "_fail_not_started", fail_not_started_after_concurrent_abandon)
+    monkeypatch.setattr(
+        controller, "_fail_not_started", fail_not_started_after_concurrent_abandon
+    )
 
     controller.start()
 
@@ -1374,7 +1416,9 @@ def test_synchronous_on_error_is_the_only_failure_reported(monkeypatch):
     assert controller.state == cvi.STATE_IDLE
     assert controller._service is None
     # The load-bearing ordering still holds on this path too.
-    failed_index = next(i for i, e in enumerate(events) if isinstance(e, cvi.VoiceFailed))
+    failed_index = next(
+        i for i, e in enumerate(events) if isinstance(e, cvi.VoiceFailed)
+    )
     idle_index = next(
         i
         for i, e in enumerate(events)
@@ -1492,7 +1536,10 @@ def test_stop_does_not_wedge_finishing_when_the_finishing_emit_raises(monkeypatc
 
     def emit_raising_on_finishing(event):
         recorded.append(event)
-        if isinstance(event, cvi.VoiceStateChanged) and event.state == cvi.STATE_FINISHING:
+        if (
+            isinstance(event, cvi.VoiceStateChanged)
+            and event.state == cvi.STATE_FINISHING
+        ):
             raise RuntimeError("widget torn down")
 
     service = FakeDictationService()
@@ -1724,9 +1771,7 @@ class _WarmableService:
         self._transcriber = transcriber if transcriber is not None else _Transcriber()
         self._gate = gate
         self._build_error = build_error
-        self._audio_service = type(
-            "R", (), {"stop_recording": lambda s: None}
-        )()
+        self._audio_service = type("R", (), {"stop_recording": lambda s: None})()
 
     @property
     def transcription_service(self):
@@ -1744,6 +1789,25 @@ class _WarmableService:
 
     def stop_dictation(self):
         return None
+
+
+class _WaitingHandle:
+    waiting_for_executor = True
+
+
+class _DeferredWarmableService(_WarmableService):
+    """Parakeet service that reserves shared execution instead of warming."""
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.capture_generation = None
+        self.uses_deferred_dictation = False
+
+    def reserve_deferred_dictation(self, capture_generation):
+        self.calls.append("reserve_deferred_dictation")
+        self.capture_generation = capture_generation
+        self.uses_deferred_dictation = True
+        return _WaitingHandle()
 
 
 class _Transcriber:
@@ -1775,6 +1839,7 @@ class _Transcriber:
                 "provider": provider,
                 "model": model,
                 "language": language,
+                "provider_kwargs": kwargs,
             }
         )
         if self.entered is not None:
@@ -1804,6 +1869,45 @@ def test_the_model_is_warmed_before_the_microphone_opens(monkeypatch):
     assert service.calls == ["build-transcriber", "start_dictation"]
     assert len(service._transcriber.buffer_calls) == 1
     assert controller.state == cvi.STATE_LISTENING
+
+
+def test_deferred_parakeet_reserves_before_warmup_and_opens_while_busy(monkeypatch):
+    service = _DeferredWarmableService()
+    monkeypatch.setattr(
+        cvi,
+        "resolve",
+        lambda: cvi.EffectiveConfig(
+            provider="parakeet-onnx",
+            model=None,
+            language="en",
+            configured_provider="parakeet-onnx",
+            was_overridden=False,
+        ),
+    )
+    controller, events, _ = _controller(monkeypatch, service=service)
+
+    controller.start(capture_generation=17)
+
+    assert service.calls == ["reserve_deferred_dictation", "start_dictation"]
+    assert service.capture_generation == 17
+    assert service._transcriber.buffer_calls == []
+    assert service.started is True
+    busy = [event for event in events if isinstance(event, cvi.VoiceLocalSTTBusy)]
+    assert busy == [
+        cvi.VoiceLocalSTTBusy("Local transcription busy — dictation will run next.")
+    ]
+
+
+def test_faster_whisper_still_warms_when_service_has_no_deferred_reservation(
+    monkeypatch,
+):
+    service = _DeferredWarmableService()
+    controller, _events, _ = _controller(monkeypatch, service=service)
+
+    controller.start(capture_generation=18)
+
+    assert service.calls == ["build-transcriber", "start_dictation"]
+    assert len(service._transcriber.buffer_calls) == 1
 
 
 def test_the_warm_up_uses_the_resolved_provider_model_and_language(monkeypatch):
@@ -1857,9 +1961,9 @@ def test_a_slow_warm_announces_itself_before_it_blocks(monkeypatch):
     transcriber = _Transcriber(gate=gate, entered=entered)
     service = _WarmableService(transcriber=transcriber)
     controller, events, _ = _controller(
-        monkeypatch, service=service, spawn=lambda thunk: threading.Thread(
-            target=thunk, daemon=True
-        ).start()
+        monkeypatch,
+        service=service,
+        spawn=lambda thunk: threading.Thread(target=thunk, daemon=True).start(),
     )
 
     controller.start()
@@ -1899,9 +2003,7 @@ def test_the_first_run_message_differs_from_later_presses(monkeypatch):
     assert second.detail == ""
 
 
-@pytest.mark.parametrize(
-    "message", [cvi.WARMUP_MESSAGE_FIRST_RUN, cvi.WARMUP_MESSAGE]
-)
+@pytest.mark.parametrize("message", [cvi.WARMUP_MESSAGE_FIRST_RUN, cvi.WARMUP_MESSAGE])
 def test_every_preparing_message_fits_the_one_row_chip(message):
     """The chip is 42 cells and one row; longer copy is cut mid-sentence.
 
@@ -2237,6 +2339,306 @@ def test_a_raising_stop_dictation_still_releases_the_microphone(monkeypatch):
     assert controller.state == cvi.STATE_IDLE
     failures = [e for e in events if isinstance(e, cvi.VoiceFailed)]
     assert len(failures) == 1
+
+
+class _RetryTranscriber(_Transcriber):
+    def __init__(self, texts):
+        super().__init__()
+        self._texts = list(texts)
+
+    def transcribe_buffer(self, *args, **kwargs):
+        super().transcribe_buffer(*args, **kwargs)
+        return {"text": self._texts.pop(0)}
+
+
+class _RetryableStopService(_DeferredWarmableService):
+    def __init__(self, failure, transcriber, **kwargs):
+        super().__init__(transcriber=transcriber, **kwargs)
+        self._failure = failure
+
+    def stop_dictation(self):
+        raise self._failure
+
+
+def _retryable_stop_service():
+    from tldw_chatbook.STT.contracts import BufferAudioSource
+    from tldw_chatbook.STT.dispatch_coordinator import (
+        RetryableDictationBuffer,
+        RetryableDictationFailure,
+    )
+
+    retry_buffer = RetryableDictationBuffer(
+        BufferAudioSource(b"\x01\x00\x02\x00\x03\x00\x04\x00", 16_000, 1, 2),
+        (2, 4),
+    )
+    transcriber = _RetryTranscriber(["failed segment", "pending segment"])
+    return _RetryableStopService(
+        RetryableDictationFailure(retry_buffer),
+        transcriber,
+    ), transcriber
+
+
+def test_retryable_parakeet_failure_exposes_one_bounded_faster_whisper_retry(
+    monkeypatch,
+):
+    service, transcriber = _retryable_stop_service()
+    monkeypatch.setattr(
+        cvi,
+        "resolve",
+        lambda: cvi.EffectiveConfig(
+            provider="parakeet-onnx",
+            model=None,
+            language="en",
+            configured_provider="parakeet-onnx",
+            was_overridden=False,
+        ),
+    )
+    controller, events, _ = _controller(monkeypatch, service=service)
+    controller.start(capture_generation=19)
+    events.clear()
+
+    controller.stop()
+
+    failures = [event for event in events if isinstance(event, cvi.VoiceFailed)]
+    assert failures == [
+        cvi.VoiceFailed(
+            reason="Parakeet transcription failed.",
+            retry_available=True,
+        )
+    ]
+    assert controller.retry_available is True
+    assert transcriber.buffer_calls == []
+
+    transcript = controller.retry_with_faster_whisper()
+
+    assert transcript == "failed segment pending segment"
+    assert [call["audio_data"] for call in transcriber.buffer_calls] == [
+        b"\x01\x00\x02\x00",
+        b"\x03\x00\x04\x00",
+    ]
+    assert all(
+        call["provider"] == "faster-whisper" for call in transcriber.buffer_calls
+    )
+    assert all(call["model"] == "base" for call in transcriber.buffer_calls)
+    assert all(
+        call["provider_kwargs"] == {"local_files_only": True}
+        for call in transcriber.buffer_calls
+    )
+    assert controller.retry_available is False
+
+
+def test_retry_preserves_logical_segment_texts_for_the_console_adapter(monkeypatch):
+    service, transcriber = _retryable_stop_service()
+    monkeypatch.setattr(
+        cvi,
+        "resolve",
+        lambda: cvi.EffectiveConfig(
+            provider="parakeet-onnx",
+            model=None,
+            language="en",
+            configured_provider="parakeet-onnx",
+            was_overridden=False,
+        ),
+    )
+    controller, _events, _ = _controller(monkeypatch, service=service)
+    controller.start(capture_generation=32)
+    controller.stop()
+
+    texts = controller.retry_segments_with_faster_whisper()
+
+    assert texts == ("failed segment", "pending segment")
+    assert [call["audio_data"] for call in transcriber.buffer_calls] == [
+        b"\x01\x00\x02\x00",
+        b"\x03\x00\x04\x00",
+    ]
+    assert controller.retry_available is False
+
+
+def test_retry_closure_does_not_retain_the_finished_dictation_service(monkeypatch):
+    service, transcriber = _retryable_stop_service()
+    service.language = "fr"
+    service_box = [service]
+    monkeypatch.setattr(cvi, "capture_available", lambda: True)
+    monkeypatch.setattr(cvi, "installed_local_providers", lambda: ("faster-whisper",))
+    monkeypatch.setattr(
+        cvi,
+        "_faster_whisper_model_is_local",
+        lambda _model: True,
+        raising=False,
+    )
+    _stub_settings(monkeypatch, {"transcription.default_provider": "parakeet-onnx"})
+
+    def _service_factory(**kwargs):
+        built = service_box.pop()
+        built.kwargs = kwargs
+        return built
+
+    controller = cvi.ConsoleVoiceInputController(
+        emit=lambda _event: None,
+        spawn=lambda thunk: thunk(),
+        service_factory=_service_factory,
+    )
+    monkeypatch.setattr(
+        cvi,
+        "resolve",
+        lambda: cvi.EffectiveConfig(
+            provider="parakeet-onnx",
+            model=None,
+            language="fr",
+            configured_provider="parakeet-onnx",
+            was_overridden=False,
+        ),
+    )
+    controller.start(capture_generation=29)
+    controller.stop()
+    service_ref = weakref.ref(service)
+
+    del service
+    gc.collect()
+
+    assert service_ref() is None
+    assert controller.retry_with_faster_whisper() == "failed segment pending segment"
+    assert all(call["language"] == "fr" for call in transcriber.buffer_calls)
+
+
+def test_retry_execution_failure_is_fixed_and_sanitized(monkeypatch):
+    service, transcriber = _retryable_stop_service()
+    transcriber._error = RuntimeError("native failure at /private/models/secret.bin")
+    monkeypatch.setattr(
+        cvi,
+        "resolve",
+        lambda: cvi.EffectiveConfig(
+            provider="parakeet-onnx",
+            model=None,
+            language="en",
+            configured_provider="parakeet-onnx",
+            was_overridden=False,
+        ),
+    )
+    controller, _events, _ = _controller(monkeypatch, service=service)
+    controller.start(capture_generation=30)
+    controller.stop()
+
+    with pytest.raises(RuntimeError) as caught:
+        controller.retry_with_faster_whisper()
+
+    assert str(caught.value) == "Dictation retry failed."
+    assert caught.value.__cause__ is None
+    assert caught.value.__suppress_context__ is True
+    assert "secret.bin" not in str(caught.value)
+    assert controller.retry_available is False
+
+
+def test_retry_is_not_offered_when_base_model_is_not_cached(monkeypatch):
+    service, transcriber = _retryable_stop_service()
+    monkeypatch.setattr(
+        cvi,
+        "resolve",
+        lambda: cvi.EffectiveConfig(
+            provider="parakeet-onnx",
+            model=None,
+            language="en",
+            configured_provider="parakeet-onnx",
+            was_overridden=False,
+        ),
+    )
+    controller, events, _ = _controller(monkeypatch, service=service)
+    monkeypatch.setattr(cvi, "_faster_whisper_model_is_local", lambda _model: False)
+    controller.start(capture_generation=31)
+    events.clear()
+
+    controller.stop()
+
+    failures = [event for event in events if isinstance(event, cvi.VoiceFailed)]
+    assert failures == [
+        cvi.VoiceFailed(
+            reason="Parakeet transcription failed.",
+            retry_available=False,
+        )
+    ]
+    assert transcriber.buffer_calls == []
+    assert controller.retry_available is False
+
+
+def test_faster_whisper_cache_probe_resolves_without_network(monkeypatch):
+    from tldw_chatbook.Utils import optional_deps
+
+    calls = []
+    dependency_requests = []
+
+    def _download_model(model, **kwargs):
+        calls.append((model, kwargs))
+        return "/cached/faster-whisper-base"
+
+    monkeypatch.setattr(
+        optional_deps,
+        "require_dependency",
+        lambda module_name, feature_name: (
+            dependency_requests.append((module_name, feature_name))
+            or SimpleNamespace(download_model=_download_model)
+        ),
+    )
+    probe = getattr(cvi, "_faster_whisper_model_is_local", None)
+
+    assert callable(probe)
+    assert probe("base") is True
+    assert dependency_requests == [
+        ("faster_whisper", "transcription_faster_whisper")
+    ]
+    assert calls == [("base", {"local_files_only": True})]
+
+
+def test_retryable_failure_without_faster_whisper_is_not_offered(monkeypatch):
+    service, _transcriber = _retryable_stop_service()
+    monkeypatch.setattr(
+        cvi,
+        "resolve",
+        lambda: cvi.EffectiveConfig(
+            provider="parakeet-onnx",
+            model=None,
+            language="en",
+            configured_provider="parakeet-onnx",
+            was_overridden=False,
+        ),
+    )
+    controller, events, _ = _controller(monkeypatch, service=service)
+    controller.start(capture_generation=20)
+    monkeypatch.setattr(cvi, "installed_local_providers", lambda: ("parakeet-onnx",))
+    events.clear()
+
+    controller.stop()
+
+    failures = [event for event in events if isinstance(event, cvi.VoiceFailed)]
+    assert failures == [
+        cvi.VoiceFailed(
+            reason="Parakeet transcription failed.",
+            retry_available=False,
+        )
+    ]
+    assert controller.retry_available is False
+
+
+def test_a_later_start_clears_the_previous_capture_retry(monkeypatch):
+    service, _transcriber = _retryable_stop_service()
+    monkeypatch.setattr(
+        cvi,
+        "resolve",
+        lambda: cvi.EffectiveConfig(
+            provider="parakeet-onnx",
+            model=None,
+            language="en",
+            configured_provider="parakeet-onnx",
+            was_overridden=False,
+        ),
+    )
+    controller, _events, _ = _controller(monkeypatch, service=service)
+    controller.start(capture_generation=21)
+    controller.stop()
+    assert controller.retry_available is True
+
+    controller.start(capture_generation=22)
+
+    assert controller.retry_available is False
 
 
 # --------------------------------------------------------------------------

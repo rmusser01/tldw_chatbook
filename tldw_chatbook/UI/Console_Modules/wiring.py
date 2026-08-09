@@ -378,6 +378,9 @@ def build_console_controllers(screen: "ChatScreen") -> None:
         visible_draft_session_id_accessor=(
             lambda: screen._console_visible_draft_session_id
         ),
+        dictation_service_factory=lambda **kwargs: (
+            screen.app_instance._create_console_dictation_service(**kwargs)
+        ),
     )
     #: The V3 pipeline hands-free loop's state and lifecycle, plus the
     #: two-engine fork/action coordination it shares with the V4

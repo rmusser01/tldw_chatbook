@@ -13,6 +13,7 @@ from __future__ import annotations
 # (`monkeypatch.setattr(cvi.importlib.util, "find_spec", ...)` and
 # `monkeypatch.setattr(cvi.sys, "platform", ...)` both mutate the real module
 # objects, which the detection helpers then read).
+import importlib
 import importlib.util  # noqa: F401 - patched seam; see comment above
 import string
 import sys  # noqa: F401 - patched seam; see comment above
@@ -81,7 +82,10 @@ WARMUP_DURATION_MS = 500
 #: Half a second of digital silence: long enough that every provider's own
 #: framing accepts it, short enough that a warm load stays imperceptible.
 WARMUP_PCM = b"\x00" * (
-    WARMUP_SAMPLE_RATE * WARMUP_CHANNELS * WARMUP_SAMPLE_WIDTH * WARMUP_DURATION_MS
+    WARMUP_SAMPLE_RATE
+    * WARMUP_CHANNELS
+    * WARMUP_SAMPLE_WIDTH
+    * WARMUP_DURATION_MS
     // 1000
 )
 # The chip these render into is `VOICE_CHIP_MAX_WIDTH = 42` cells and exactly
@@ -126,7 +130,9 @@ WARMUP_DEGRADED_REASON_TEMPLATE = (
 # so the transcript is not empty because the microphone was silent -- it is
 # empty because the work never finished. Saying "no audio was captured" here
 # blames the one component that was demonstrably working.
-TRANSCRIPTION_INCOMPLETE_REASON = "Transcription did not finish before dictation stopped."
+TRANSCRIPTION_INCOMPLETE_REASON = (
+    "Transcription did not finish before dictation stopped."
+)
 TRANSCRIPTION_INCOMPLETE_REMEDY = (
     "The speech model was still running. Try a shorter capture or a faster "
     "model, or raise dictation.stop_join_timeout_seconds."
@@ -157,6 +163,25 @@ def capture_available() -> bool:
     if not all(_module_installed(name) for name in CAPTURE_REQUIRED_MODULES):
         return False
     return any(_module_installed(name) for name in CAPTURE_MODULES)
+
+
+def _faster_whisper_model_is_local(model: str) -> bool:
+    """Resolve a faster-whisper model from local cache without downloading."""
+
+    try:
+        from ..Utils.optional_deps import require_dependency
+
+        utilities = require_dependency(
+            "faster_whisper",
+            "transcription_faster_whisper",
+        )
+        utilities.download_model(model, local_files_only=True)
+    except Exception:  # noqa: BLE001 - cache misses vary by hub version
+        logger.opt(exception=True).debug(
+            "Faster-whisper retry model is not available in the local cache"
+        )
+        return False
+    return True
 
 
 def probe() -> Availability:
@@ -202,6 +227,7 @@ DICTATION_FAST_MODEL_PROVIDER = "faster-whisper"
 #: this; this is only the *unset* default for a dictation capture, and it
 #: never changes what the transcription stack itself uses elsewhere.
 DICTATION_FAST_MODEL_DEFAULT = "base"
+DICTATION_RETRY_FAILED_REASON = "Dictation retry failed."
 
 
 @dataclass(frozen=True)
@@ -539,6 +565,14 @@ class VoiceFailed:
 
     reason: str
     remedy: str = ""
+    retry_available: bool = False
+
+
+@dataclass(frozen=True)
+class VoiceLocalSTTBusy:
+    """Shared local transcription is active; this capture owns next admission."""
+
+    message: str = "Local transcription busy — dictation will run next."
 
 
 @dataclass(frozen=True)
@@ -781,14 +815,19 @@ def classify_segment(text: str) -> "VoiceCommand | VoiceFinal":
     """
     normalized = normalize_spoken(text)
     configured_prefix = command_prefix()
-    prefixes = (configured_prefix, *(
-        alias for alias in MISHEARD_PREFIXES if configured_prefix == DEFAULT_COMMAND_PREFIX
-    ))
+    prefixes = (
+        configured_prefix,
+        *(
+            alias
+            for alias in MISHEARD_PREFIXES
+            if configured_prefix == DEFAULT_COMMAND_PREFIX
+        ),
+    )
     for prefix in prefixes:
         marker = f"{prefix} "
         if not normalized.startswith(marker):
             continue
-        remainder = normalized[len(marker):]
+        remainder = normalized[len(marker) :]
         name = COMMAND_PHRASES.get(remainder)
         if name is None:
             corrected = MISHEARD_PHRASES.get(remainder)
@@ -890,7 +929,9 @@ def handsfree_send_delay_seconds() -> float:
         The countdown duration in seconds, always positive.
     """
     raw = get_cli_setting(
-        "dictation", "handsfree_send_delay_seconds", DEFAULT_HANDSFREE_SEND_DELAY_SECONDS
+        "dictation",
+        "handsfree_send_delay_seconds",
+        DEFAULT_HANDSFREE_SEND_DELAY_SECONDS,
     )
     try:
         value = float(raw)
@@ -1056,9 +1097,7 @@ def realtime_turn_detection() -> str:
     Returns:
         `"semantic_vad"` or `"server_vad"`.
     """
-    raw = get_cli_setting(
-        "realtime", "turn_detection", DEFAULT_REALTIME_TURN_DETECTION
-    )
+    raw = get_cli_setting("realtime", "turn_detection", DEFAULT_REALTIME_TURN_DETECTION)
     value = raw.strip().lower() if isinstance(raw, str) else raw
     if value not in _REALTIME_TURN_DETECTION_VALUES:
         logger.warning(
@@ -1157,9 +1196,7 @@ def handsfree_engine() -> str:
     raw = get_cli_setting("dictation", "handsfree_engine", "auto")
     value = raw.strip().lower() if isinstance(raw, str) else raw
     if value not in _HANDSFREE_ENGINE_VALUES:
-        logger.warning(
-            "dictation.handsfree_engine invalid ({!r}); using 'auto'", raw
-        )
+        logger.warning("dictation.handsfree_engine invalid ({!r}); using 'auto'", raw)
         return "auto"
     return value
 
@@ -1332,6 +1369,7 @@ class ConsoleVoiceInputController:
         # processing thread from THIS attempt finally calls one of them (see
         # `start()`'s `capture_generation` parameter).
         self._pending_capture_generation: int | None = None
+        self._retry_action: Callable[[], tuple[str, ...]] | None = None
 
     @property
     def state(self) -> str:
@@ -1348,6 +1386,33 @@ class ConsoleVoiceInputController:
     def last_capture_outcome(self) -> CaptureOutcome:
         """What the service reported about the most recently stopped capture."""
         return self._last_capture_outcome
+
+    @property
+    def retry_available(self) -> bool:
+        """Return whether this controller owns one explicit bounded retry."""
+
+        with self._state_lock:
+            return self._retry_action is not None
+
+    def clear_retry(self) -> None:
+        """Discard any retained retry PCM owned by this controller."""
+
+        with self._state_lock:
+            self._retry_action = None
+
+    def retry_with_faster_whisper(self) -> str:
+        """Consume the one retained faster-whisper retry and return its text."""
+
+        return " ".join(self.retry_segments_with_faster_whisper())
+
+    def retry_segments_with_faster_whisper(self) -> tuple[str, ...]:
+        """Consume the retry while preserving its logical segment texts."""
+
+        with self._state_lock:
+            action, self._retry_action = self._retry_action, None
+        if action is None:
+            raise RuntimeError("No dictation retry is available.")
+        return action()
 
     @property
     def is_active(self) -> bool:
@@ -1389,6 +1454,7 @@ class ConsoleVoiceInputController:
         remedy: str = "",
         *,
         generation: int | None = None,
+        retry_available: bool = False,
     ) -> None:
         # Mutate first so a throwing `emit` cannot leave the machine wedged,
         # but keep VoiceFailed ahead of VoiceStateChanged(idle): the UI clears
@@ -1405,7 +1471,14 @@ class ConsoleVoiceInputController:
         # screen-side session-identity/state guards already cover a stale
         # idle transition, and `_handle_event` does not gate that event type.
         self._state = STATE_IDLE
-        self._emit_capture_event(VoiceFailed(reason=reason, remedy=remedy), generation)
+        self._emit_capture_event(
+            VoiceFailed(
+                reason=reason,
+                remedy=remedy,
+                retry_available=retry_available,
+            ),
+            generation,
+        )
         self._emit(VoiceStateChanged(STATE_IDLE))
 
     def start(self, *, capture_generation: int | None = None) -> None:
@@ -1437,6 +1510,7 @@ class ConsoleVoiceInputController:
             self._last_capture_outcome = CaptureOutcome()
             self._state = STATE_PREPARING
             self._pending_capture_generation = capture_generation
+            self._retry_action = None
         self._emit(VoiceStateChanged(STATE_PREPARING))
 
         # Each `try` below covers only the call that can crash unexpectedly,
@@ -1448,7 +1522,9 @@ class ConsoleVoiceInputController:
         try:
             availability = probe()
         except Exception as exc:  # noqa: BLE001 - a probe crash must not wedge preparing
-            logger.opt(exception=True).warning("Console dictation availability probe crashed")
+            logger.opt(exception=True).warning(
+                "Console dictation availability probe crashed"
+            )
             self._fail(str(exc))
             return
 
@@ -1459,7 +1535,9 @@ class ConsoleVoiceInputController:
         try:
             effective = resolve()
         except Exception as exc:  # noqa: BLE001 - a resolve crash must not wedge preparing
-            logger.opt(exception=True).warning("Console dictation provider resolution crashed")
+            logger.opt(exception=True).warning(
+                "Console dictation provider resolution crashed"
+            )
             self._fail(str(exc))
             return
 
@@ -1513,7 +1591,9 @@ class ConsoleVoiceInputController:
         try:
             self._run_begin(effective)
         except Exception:  # noqa: BLE001 - nothing may escape _begin(); see docstring
-            logger.opt(exception=True).warning("Console dictation _begin() raised unexpectedly")
+            logger.opt(exception=True).warning(
+                "Console dictation _begin() raised unexpectedly"
+            )
 
     def _run_begin(self, effective: EffectiveConfig) -> None:
         """The actual work of `_begin()`, shielded from its caller by `_begin()`."""
@@ -1544,6 +1624,31 @@ class ConsoleVoiceInputController:
             self._fail(str(exc))
             return
 
+        if effective.provider == "parakeet-onnx":
+            reserve = getattr(service, "reserve_deferred_dictation", None)
+            if callable(reserve):
+                try:
+                    handle = reserve(
+                        capture_generation
+                        if isinstance(capture_generation, int)
+                        and capture_generation >= 0
+                        else 0
+                    )
+                except Exception as exc:  # noqa: BLE001 - reservation is required
+                    logger.opt(exception=True).warning(
+                        "Console dictation could not reserve shared local STT"
+                    )
+                    self._release(service)
+                    self._fail(str(exc))
+                    return
+                if handle is not None and bool(
+                    getattr(handle, "waiting_for_executor", False)
+                ):
+                    self._emit_quietly(
+                        VoiceLocalSTTBusy(),
+                        "local transcription busy notice",
+                    )
+
         # Before the microphone opens, never after: a model load that happens
         # on the first audio chunk runs while the user is already speaking and
         # behind the stop-side join, which is exactly how a good capture came
@@ -1568,9 +1673,11 @@ class ConsoleVoiceInputController:
                 on_segment_no_final=lambda _gen=capture_generation: (
                     self._emit_capture_event(VoiceSegmentNoFinal(), _gen)
                 ),
-                on_state_change=lambda _state: None,  # our state machine is authoritative
-                on_error=lambda error, _gen=capture_generation: self._report_service_error(
-                    error, generation=_gen
+                on_state_change=lambda _state: (
+                    None
+                ),  # our state machine is authoritative
+                on_error=lambda error, _gen=capture_generation: (
+                    self._report_service_error(error, generation=_gen)
                 ),
                 save_audio=self.save_audio_requested,
             )
@@ -1646,6 +1753,8 @@ class ConsoleVoiceInputController:
         if self._abandoned:
             self._release(service)
             return False
+        if bool(getattr(service, "uses_deferred_dictation", False)):
+            return True
         if not warm_before_capture_enabled():
             logger.debug(
                 "Console dictation model warm-up disabled by "
@@ -1681,7 +1790,9 @@ class ConsoleVoiceInputController:
             self._release(service)
             return False
         if error is not None:
-            logger.opt(exception=error).warning("Console dictation model warm-up failed")
+            logger.opt(exception=error).warning(
+                "Console dictation model warm-up failed"
+            )
             self._emit_quietly(
                 VoiceModelWarmupFailed(
                     reason=(
@@ -1765,7 +1876,9 @@ class ConsoleVoiceInputController:
         """Phrase a warm-up failure as a model problem, never a microphone one."""
         return f"{WARMUP_REASON_TEMPLATE.format(provider=effective.provider)} {exc}".strip()
 
-    def _report_service_error(self, error: Any, *, generation: int | None = None) -> None:
+    def _report_service_error(
+        self, error: Any, *, generation: int | None = None
+    ) -> None:
         """Turn a service-reported error into a failure, recording that we did.
 
         `LazyLiveDictationService` reports through this callback
@@ -1917,7 +2030,9 @@ class ConsoleVoiceInputController:
             self._emit(VoiceStateChanged(STATE_FINISHING))
             self._spawn(self._finish)
         except Exception as exc:  # noqa: BLE001 - finishing must never wedge
-            logger.opt(exception=True).warning("Console dictation could not be finished")
+            logger.opt(exception=True).warning(
+                "Console dictation could not be finished"
+            )
             # The microphone is live and no worker will ever run `_finish()`
             # now, so drop it here rather than leave it recording behind an
             # idle state machine.
@@ -1940,7 +2055,9 @@ class ConsoleVoiceInputController:
         try:
             self._run_finish()
         except Exception:  # noqa: BLE001 - nothing may escape _finish(); see docstring
-            logger.opt(exception=True).warning("Console dictation _finish() raised unexpectedly")
+            logger.opt(exception=True).warning(
+                "Console dictation _finish() raised unexpectedly"
+            )
 
     def _run_finish(self) -> None:
         """The actual work of `_finish()`, shielded from its caller by `_finish()`."""
@@ -1948,6 +2065,36 @@ class ConsoleVoiceInputController:
         try:
             result = service.stop_dictation() if service is not None else None
         except Exception as exc:  # noqa: BLE001
+            # Imported only on the stop-side failure path: keeping the STT
+            # package out of this module's import graph preserves cheap
+            # Console startup and the existing import-cost contract.
+            from ..STT.dispatch_coordinator import RetryableDictationFailure
+
+            if isinstance(exc, RetryableDictationFailure):
+                retry_action = None
+                if (
+                    service is not None
+                    and "faster-whisper" in installed_local_providers()
+                    and _faster_whisper_model_is_local(DICTATION_FAST_MODEL_DEFAULT)
+                ):
+                    transcriber = service.transcription_service
+                    language = getattr(service, "language", DEFAULT_LANGUAGE)
+                    retry_action = self._build_faster_whisper_retry(
+                        transcriber,
+                        language,
+                        exc.retry_buffer,
+                    )
+                    with self._state_lock:
+                        self._retry_action = retry_action
+                else:
+                    self.clear_retry()
+                if service is not None:
+                    self._release(service)
+                self._fail(
+                    str(exc),
+                    retry_available=retry_action is not None,
+                )
+                return
             logger.opt(exception=True).warning("Console dictation failed to stop")
             # The service was already claimed, so nothing else will ever
             # release it: without this, a `stop_dictation()` that raises
@@ -1959,6 +2106,7 @@ class ConsoleVoiceInputController:
                 self._release(service)
             self._fail(str(exc))
             return
+        self.clear_retry()
         # How many bytes the recorder delivered, and whether the transcription
         # thread actually finished. Without this the caller can only guess from
         # an empty transcript -- and it guessed "microphone", every time.
@@ -1972,6 +2120,49 @@ class ConsoleVoiceInputController:
         if service is not None:
             self._release(service)
         self._enter_idle()
+
+    @staticmethod
+    def _build_faster_whisper_retry(
+        transcriber: Any,
+        language: str,
+        retry_buffer: Any,
+    ) -> Callable[[], tuple[str, ...]]:
+        """Build one replay over exactly the retained logical boundaries."""
+
+        def _retry() -> tuple[str, ...]:
+            try:
+                source = retry_buffer.source
+                frame_bytes = source.channels * source.sample_width
+                start_frame = 0
+                texts: list[str] = []
+                for end_frame in retry_buffer.segment_end_frames:
+                    audio = source.audio[
+                        start_frame * frame_bytes : end_frame * frame_bytes
+                    ]
+                    start_frame = end_frame
+                    if not audio:
+                        continue
+                    result = transcriber.transcribe_buffer(
+                        audio_data=audio,
+                        sample_rate=source.sample_rate,
+                        channels=source.channels,
+                        sample_width=source.sample_width,
+                        provider=DICTATION_FAST_MODEL_PROVIDER,
+                        model=DICTATION_FAST_MODEL_DEFAULT,
+                        language=language,
+                        local_files_only=True,
+                    )
+                    text = result.get("text", "") if isinstance(result, dict) else ""
+                    if isinstance(text, str) and text.strip():
+                        texts.append(text.strip())
+                return tuple(texts)
+            except Exception:  # noqa: BLE001 - retry errors are sanitized
+                logger.opt(exception=True).warning(
+                    "Console dictation faster-whisper retry failed"
+                )
+                raise RuntimeError(DICTATION_RETRY_FAILED_REASON) from None
+
+        return _retry
 
     def _enter_idle(self) -> None:
         """Atomically return to `idle`, re-checking abandonment.
@@ -2021,6 +2212,7 @@ class ConsoleVoiceInputController:
             self._abandoned = True
             service, self._service = self._service, None
             self._state = STATE_IDLE
+            self._retry_action = None
         if service is not None:
             self._release(service)
 
@@ -2043,6 +2235,15 @@ class ConsoleVoiceInputController:
         Args:
             service: The dictation service instance to release.
         """
+        abandon = getattr(service, "abandon", None)
+        if callable(abandon):
+            try:
+                abandon()
+            except Exception:  # noqa: BLE001 - teardown must never raise
+                logger.opt(exception=True).debug(
+                    "Console dictation service abandon failed"
+                )
+            return
         try:
             audio = getattr(service, "_audio_service", None)
             if audio is not None and hasattr(audio, "stop_recording"):

@@ -20,9 +20,12 @@ from multiprocessing.connection import Connection
 from pathlib import Path
 from typing import Any
 
+from tldw_chatbook.Utils.fd_protection import protect_file_descriptors
 from .contracts import (
+    BufferAudioSource,
     DeviceFailureOrigin,
     ExecutionDevice,
+    FileAudioSource,
     TranscriptionFailureCode,
 )
 from .executor_process_tree import (
@@ -192,19 +195,40 @@ class ExecutorRequest:
 
     generation: int
     attempt_id: str
-    job_id: str
-    source_path: Path = field(repr=False)
+    job_id: str | None
+    source: FileAudioSource | BufferAudioSource = field(repr=False)
     identity: ModelIdentity
     options: dict[str, Any] = field(repr=False)
+    segment_end_frames: tuple[int, ...] = ()
     local_source: LocalSourceSnapshot | None = field(default=None, repr=False)
     managed_store_root: Path | None = field(default=None, repr=False)
     managed_artifact_ref: tuple[str, str, str] | None = None
 
     def __post_init__(self) -> None:
         _require_generation_and_attempt(self.generation, self.attempt_id)
-        _require_nonempty_text("job_id", self.job_id)
-        if not isinstance(self.source_path, Path):
-            raise TypeError("source_path must be a Path")
+        if self.job_id is not None:
+            _require_nonempty_text("job_id", self.job_id)
+        if type(self.source) not in (FileAudioSource, BufferAudioSource):
+            raise TypeError("source must be a FileAudioSource or BufferAudioSource")
+        if self.segment_end_frames:
+            if type(self.source) is not BufferAudioSource:
+                raise ValueError("segment_end_frames require a buffer source")
+            frame_bytes = self.source.channels * self.source.sample_width
+            total_frames = len(self.source.audio) // frame_bytes
+            if (
+                any(type(end) is not int or end <= 0 for end in self.segment_end_frames)
+                or any(
+                    a >= b
+                    for a, b in zip(
+                        self.segment_end_frames,
+                        self.segment_end_frames[1:],
+                    )
+                )
+                or self.segment_end_frames[-1] != total_frames
+            ):
+                raise ValueError(
+                    "segment_end_frames must increase to the final PCM frame"
+                )
         if type(self.identity) is not ModelIdentity:
             raise TypeError("identity must be a ModelIdentity")
         if type(self.options) is not dict:
@@ -467,10 +491,11 @@ class LocalSTTExecutor:
         self,
         *,
         attempt_id: str,
-        job_id: str,
-        source_path: Path,
+        job_id: str | None,
+        source: FileAudioSource | BufferAudioSource,
         identity: ModelIdentity,
         options: dict[str, Any],
+        segment_end_frames: tuple[int, ...] = (),
         local_source: LocalSourceSnapshot | None = None,
         managed_store_root: Path | None = None,
         managed_artifact_ref: tuple[str, str, str] | None = None,
@@ -509,9 +534,10 @@ class LocalSTTExecutor:
                 generation=self._worker_generation,
                 attempt_id=attempt_id,
                 job_id=job_id,
-                source_path=source_path,
+                source=source,
                 identity=identity,
                 options=request_options,
+                segment_end_frames=segment_end_frames,
                 local_source=local_source,
                 managed_store_root=managed_store_root,
                 managed_artifact_ref=managed_artifact_ref,
@@ -649,23 +675,25 @@ class LocalSTTExecutor:
         generation = self._generation_counter
         scratch_path = Path(tempfile.mkdtemp(prefix=f"tldw_stt_g{generation}_"))
         scratch_path.chmod(0o700)
-        parent_connection, child_connection = self._context.Pipe(duplex=True)
-        admission_event = self._context.Event()
-        cancellation_event = self._context.Event()
-        process = self._context.Process(
-            target=target,
-            args=(
-                child_connection,
-                admission_event,
-                cancellation_event,
-                generation,
-                str(scratch_path),
-            ),
-            name=f"local-stt-worker-{generation}",
-        )
+        with protect_file_descriptors():
+            parent_connection, child_connection = self._context.Pipe(duplex=True)
+            admission_event = self._context.Event()
+            cancellation_event = self._context.Event()
+            process = self._context.Process(
+                target=target,
+                args=(
+                    child_connection,
+                    admission_event,
+                    cancellation_event,
+                    generation,
+                    str(scratch_path),
+                ),
+                name=f"local-stt-worker-{generation}",
+            )
         tree: ExecutorProcessTree | None = None
         try:
-            process.start()
+            with protect_file_descriptors():
+                process.start()
             child_connection.close()
             if not parent_connection.poll(self._startup_timeout):
                 raise ProcessContainmentError("worker bootstrap timed out")

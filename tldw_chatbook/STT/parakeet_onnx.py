@@ -7,10 +7,12 @@ import subprocess
 import tempfile
 import time
 import wave
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
+from dataclasses import dataclass
+from itertools import pairwise
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any
 
 from tldw_chatbook.Local_Ingestion.stt_batch_routing import (
     PARAKEET_V2_MODEL,
@@ -18,6 +20,7 @@ from tldw_chatbook.Local_Ingestion.stt_batch_routing import (
 )
 
 from .contracts import (
+    BufferAudioSource,
     ExecutionDevice,
     ProducedCapabilities,
     TimestampGranularity,
@@ -35,8 +38,15 @@ from .persistence import (
     load_failed_transcription_attempt,
 )
 
-
 LONG_FORM_SECONDS = 30.0
+
+
+@dataclass(frozen=True, slots=True)
+class ParakeetBufferResult:
+    """Normalized buffer result plus text for each caller-logical segment."""
+
+    normalized: TranscriptionResult
+    logical_segments: tuple[str, ...]
 
 
 class ParakeetOnnxCancelled(RuntimeError):
@@ -190,7 +200,7 @@ class ParakeetOnnxRuntime:
         precision: str,
         artifact_root: Any | None,
         artifact_dependencies: tuple[Any, ...],
-    ) -> "ParakeetOnnxRuntime":
+    ) -> ParakeetOnnxRuntime:
         """Load only explicit local paths with ONNX Runtime's CPU provider.
 
         Args:
@@ -279,8 +289,7 @@ class ParakeetOnnxRuntime:
             ParakeetOnnxFailure: If long-form input lacks the managed VAD.
         """
         started = time.monotonic()
-        model_load_seconds = self.model_load_seconds
-        self.model_load_seconds = 0.0
+        model_load_seconds = self._take_model_load_seconds()
         normalized_language = (language or "en").strip().lower()
         effective_language = (
             "auto" if self.model_id == PARAKEET_V3_MODEL else "en"
@@ -312,7 +321,173 @@ class ParakeetOnnxRuntime:
                 self._check_cancelled(is_cancelled)
                 text = str(self._model.recognize(wav_path)).strip()
                 raw_segments = ((0.0, duration, text),) if text else ()
-        inference_seconds = time.monotonic() - started
+        return self._build_result(
+            text=text,
+            raw_segments=raw_segments,
+            duration=duration,
+            attempt_id=attempt_id,
+            batch_id=batch_id,
+            job_id=job_id,
+            retry_of_attempt_id=retry_of_attempt_id,
+            retry_of_job_id=retry_of_job_id,
+            language=normalized_language,
+            timestamps=timestamps,
+            used_vad=use_vad,
+            model_load_seconds=model_load_seconds,
+            inference_seconds=time.monotonic() - started,
+        )
+
+    def transcribe_buffer(
+        self,
+        *,
+        source: BufferAudioSource,
+        segment_end_frames: tuple[int, ...],
+        attempt_id: str,
+        language: str,
+        job_id: str | None = None,
+        is_cancelled: Callable[[], bool] | None = None,
+    ) -> ParakeetBufferResult:
+        """Transcribe validated interleaved 16-bit PCM entirely in memory.
+
+        Args:
+            source: Bounded PCM bytes and their audio format.
+            segment_end_frames: Increasing logical segment boundaries ending at
+                the final PCM frame, or an empty tuple for one segment.
+            attempt_id: Stable identifier for this inference attempt.
+            language: Requested language code.
+            job_id: Optional Library job identifier.
+            is_cancelled: Optional cancellation probe called before inference.
+
+        Returns:
+            Normalized transcription plus text for each logical segment.
+
+        Raises:
+            ImportError: NumPy is unavailable for the Parakeet ONNX feature.
+            ParakeetOnnxFailure: PCM or artifact capabilities are unsupported.
+            ValueError: Logical segment boundaries are invalid.
+        """
+
+        if source.sample_width != 2:
+            normalized_language = (language or "en").strip().lower()
+            raise ParakeetOnnxFailure(
+                TranscriptionFailureCode.UNSUPPORTED_CAPABILITY,
+                "Parakeet ONNX buffer transcription requires 16-bit PCM audio.",
+                attempt_id=attempt_id,
+                batch_id=None,
+                job_id=job_id,
+                model_id=self.model_id,
+                artifact_root=self.artifact_root,
+                artifact_dependencies=self.artifact_dependencies,
+                precision=self.precision,
+                requested_language=normalized_language,
+                effective_language=(
+                    "auto" if self.model_id == PARAKEET_V3_MODEL else "en"
+                ),
+            )
+
+        from tldw_chatbook.Utils.optional_deps import require_dependency
+
+        np = require_dependency("numpy", "transcription_parakeet_onnx")
+
+        started = time.monotonic()
+        model_load_seconds = self._take_model_load_seconds()
+        samples = np.frombuffer(source.audio, dtype="<i2").reshape(
+            -1, source.channels
+        )
+        mono = samples.astype(np.float32).mean(axis=1) / 32768.0
+        ends = segment_end_frames or (len(mono),)
+        if (
+            any(type(end) is not int or end <= 0 for end in ends)
+            or any(a >= b for a, b in pairwise(ends))
+            or ends[-1] != len(mono)
+        ):
+            raise ValueError(
+                "segment_end_frames must increase to the final PCM frame"
+            )
+        starts = (0, *ends[:-1])
+        logical_waveforms = tuple(
+            mono[start:end] for start, end in zip(starts, ends)
+        )
+        duration = len(mono) / source.sample_rate
+        if (
+            duration > LONG_FORM_SECONDS
+            and self._vad is None
+            and self.model_id != PARAKEET_V2_MODEL
+        ):
+            normalized_language = (language or "en").strip().lower()
+            raise ParakeetOnnxFailure(
+                TranscriptionFailureCode.ARTIFACT_INCOMPATIBLE,
+                "Long-form Parakeet v3 requires the managed VAD dependency. "
+                "Retry with faster-whisper.",
+                attempt_id=attempt_id,
+                batch_id=None,
+                job_id=job_id,
+                model_id=self.model_id,
+                artifact_root=self.artifact_root,
+                artifact_dependencies=self.artifact_dependencies,
+                precision=self.precision,
+                requested_language=normalized_language,
+                effective_language="auto",
+            )
+        use_vad = duration > LONG_FORM_SECONDS and self._vad is not None
+        if use_vad:
+            logical_segments = self._transcribe_buffer_segments(
+                logical_waveforms,
+                sample_rate=source.sample_rate,
+                is_cancelled=is_cancelled,
+            )
+        else:
+            logical_segments_list: list[str] = []
+            for waveform in logical_waveforms:
+                self._check_cancelled(is_cancelled)
+                text = str(
+                    self._model.recognize(
+                        waveform,
+                        sample_rate=source.sample_rate,
+                    )
+                ).strip()
+                logical_segments_list.append(text)
+            logical_segments = tuple(logical_segments_list)
+        text = " ".join(item for item in logical_segments if item)
+        normalized = self._build_result(
+            text=text,
+            raw_segments=(),
+            duration=duration,
+            attempt_id=attempt_id,
+            batch_id=None,
+            job_id=job_id,
+            retry_of_attempt_id=None,
+            retry_of_job_id=None,
+            language=(language or "en").strip().lower(),
+            timestamps=False,
+            used_vad=use_vad,
+            model_load_seconds=model_load_seconds,
+            inference_seconds=time.monotonic() - started,
+        )
+        return ParakeetBufferResult(
+            normalized=normalized,
+            logical_segments=logical_segments,
+        )
+
+    def _build_result(
+        self,
+        *,
+        text: str,
+        raw_segments: tuple[tuple[float, float, str], ...],
+        duration: float,
+        attempt_id: str,
+        batch_id: str | None,
+        job_id: str | None,
+        retry_of_attempt_id: str | None,
+        retry_of_job_id: str | None,
+        language: str,
+        timestamps: bool,
+        used_vad: bool,
+        model_load_seconds: float,
+        inference_seconds: float,
+    ) -> TranscriptionResult:
+        """Assemble the shared normalized file-or-buffer result contract."""
+
         granularity = (
             TimestampGranularity.SEGMENT
             if timestamps
@@ -327,6 +502,7 @@ class ParakeetOnnxRuntime:
             else ()
         )
         is_v3 = self.model_id == PARAKEET_V3_MODEL
+        effective_language = "auto" if is_v3 else "en"
         warnings = (
             (TranscriptionWarningCode.REQUESTED_LANGUAGE_NOT_ENFORCED,)
             if is_v3
@@ -346,7 +522,7 @@ class ParakeetOnnxRuntime:
             precision=self.precision,
             requested_device=ExecutionDevice.CPU,
             effective_device=ExecutionDevice.CPU,
-            requested_language=normalized_language,
+            requested_language=language,
             effective_language=effective_language,
             detected_language=None,
             task=TranscriptionTask.TRANSCRIBE,
@@ -359,7 +535,7 @@ class ParakeetOnnxRuntime:
                 timestamps=granularity,
                 punctuation=True,
                 capitalization=True,
-                vad=use_vad,
+                vad=used_vad,
                 diarization=False,
             ),
             duration_seconds=duration,
@@ -372,6 +548,55 @@ class ParakeetOnnxRuntime:
             ),
             warnings=warnings,
         )
+
+    def _transcribe_buffer_segments(
+        self,
+        logical_waveforms: tuple[Any, ...],
+        *,
+        sample_rate: int,
+        is_cancelled: Callable[[], bool] | None,
+    ) -> tuple[str, ...]:
+        """Run resident VAD and ASR for each logical in-memory waveform."""
+
+        logical_texts: list[str] = []
+        for logical_waveform in logical_waveforms:
+            self._check_cancelled(is_cancelled)
+            waveforms, lengths = self._model.resampler(
+                [logical_waveform],
+                [len(logical_waveform)],
+                sample_rate,
+            )
+            target_rate = self._model.asr._get_sample_rate()
+            self._check_cancelled(is_cancelled)
+            segment_groups = self._vad.segment_batch(
+                waveforms,
+                lengths,
+                target_rate,
+            )
+            recognized_segments: list[str] = []
+            for waveform, ranges in zip(
+                waveforms,
+                segment_groups,
+                strict=True,
+            ):
+                for start, end in ranges:
+                    self._check_cancelled(is_cancelled)
+                    batch, batch_lengths = self._pad_list([waveform[start:end]])
+                    recognized = self._model.asr.recognize_batch(
+                        batch,
+                        batch_lengths,
+                    )
+                    result = next(iter(recognized))
+                    text = str(result.text).strip()
+                    if text:
+                        recognized_segments.append(text)
+            logical_texts.append(" ".join(recognized_segments))
+        return tuple(logical_texts)
+
+    def _take_model_load_seconds(self) -> float:
+        model_load_seconds = self.model_load_seconds
+        self.model_load_seconds = 0.0
+        return model_load_seconds
 
     def _transcribe_segments(
         self,
@@ -414,6 +639,7 @@ class ParakeetOnnxRuntime:
 
 
 __all__ = [
+    "ParakeetBufferResult",
     "ParakeetOnnxCancelled",
     "ParakeetOnnxFailure",
     "ParakeetOnnxRuntime",

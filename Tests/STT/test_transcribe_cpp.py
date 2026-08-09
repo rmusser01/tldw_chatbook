@@ -13,6 +13,7 @@ import pytest
 from tldw_chatbook.STT.contracts import (
     DeviceFailureOrigin,
     ExecutionDevice,
+    FileAudioSource,
     TranscriptionFailureCode,
     TranscriptionWarningCode,
 )
@@ -259,7 +260,7 @@ def test_native_backend_load_failure_is_typed_for_one_cpu_retry(
         generation=1,
         attempt_id="attempt-metal",
         job_id="job-metal",
-        source_path=tmp_path / "audio.wav",
+        source=FileAudioSource(tmp_path / "audio.wav"),
         identity=ModelIdentity(
             provider_id="transcribe-cpp",
             model_id="local-gguf:whisper",
@@ -326,7 +327,7 @@ def test_successful_cpu_retry_records_warning_and_original_requested_device(
         generation=2,
         attempt_id="attempt-cpu-retry",
         job_id="job-cpu-retry",
-        source_path=audio_path,
+        source=FileAudioSource(audio_path),
         identity=ModelIdentity(
             provider_id="transcribe-cpp",
             model_id="local-gguf:whisper",
@@ -338,7 +339,7 @@ def test_successful_cpu_retry_records_warning_and_original_requested_device(
         options={"_local_stt_cpu_fallback_requested_device": "auto"},
     )
 
-    provider = _transcribe_cpp_provider(request, model_path)
+    provider = _transcribe_cpp_provider(request, model_path, None, lambda: False)
     try:
         payload = provider.runner(str(audio_path), timestamps=True)
     finally:
@@ -371,7 +372,7 @@ def test_managed_gguf_rejects_windows_path_escape_syntax(
         generation=1,
         attempt_id="attempt-managed-path",
         job_id="job-managed-path",
-        source_path=tmp_path / "audio.wav",
+        source=FileAudioSource(tmp_path / "audio.wav"),
         identity=ModelIdentity(
             provider_id="transcribe-cpp",
             model_id="managed-gguf",
@@ -390,7 +391,7 @@ def test_managed_gguf_rejects_windows_path_escape_syntax(
     )
 
     with pytest.raises(_ProviderLoadFailure) as raised:
-        _transcribe_cpp_provider(request, model_root)
+        _transcribe_cpp_provider(request, model_root, None, lambda: False)
 
     assert raised.value.code is TranscriptionFailureCode.ARTIFACT_INCOMPATIBLE
 
@@ -412,7 +413,7 @@ def test_managed_gguf_rejects_symlink_escape(
         generation=1,
         attempt_id="attempt-managed-link",
         job_id="job-managed-link",
-        source_path=tmp_path / "audio.wav",
+        source=FileAudioSource(tmp_path / "audio.wav"),
         identity=ModelIdentity(
             provider_id="transcribe-cpp",
             model_id="managed-gguf",
@@ -431,7 +432,7 @@ def test_managed_gguf_rejects_symlink_escape(
     )
 
     with pytest.raises(_ProviderLoadFailure) as raised:
-        _transcribe_cpp_provider(request, model_root)
+        _transcribe_cpp_provider(request, model_root, None, lambda: False)
 
     assert raised.value.code is TranscriptionFailureCode.ARTIFACT_INCOMPATIBLE
 

@@ -105,6 +105,49 @@ class _FakeRecorder:
         self.callback(chunk)
 
 
+class _DeferredHandle:
+    """Asynchronous capture handle whose inference completion is test-driven."""
+
+    def __init__(
+        self, *, waiting: bool = False, append_status: str = "accepted"
+    ) -> None:
+        self.waiting_for_executor = waiting
+        self.append_status = append_status
+        self.appended: List[bytes] = []
+        self.finished = False
+        self.cancelled = False
+        self.wait_entered = threading.Event()
+        self.release = threading.Event()
+
+    def append_segment(self, audio: bytes) -> str:
+        self.appended.append(audio)
+        return self.append_status
+
+    def finish(self) -> None:
+        self.finished = True
+
+    def wait(self) -> None:
+        self.wait_entered.set()
+        self.release.wait(timeout=5)
+
+    def cancel(self, *, force: bool = False) -> bool:
+        self.cancelled = True
+        return True
+
+
+class _DeferredTranscriptionService(_FakeTranscriptionService):
+    uses_deferred_local_stt_dispatch = True
+
+    def __init__(self, handles: Optional[List[_DeferredHandle]] = None) -> None:
+        super().__init__()
+        self.handles = list(handles or [_DeferredHandle()])
+        self.capture_calls: List[Dict[str, Any]] = []
+
+    def begin_dictation_capture(self, **kwargs: Any) -> _DeferredHandle:
+        self.capture_calls.append(kwargs)
+        return self.handles[len(self.capture_calls) - 1]
+
+
 # --------------------------------------------------------------------------
 # Helpers
 # --------------------------------------------------------------------------
@@ -188,6 +231,161 @@ def _attach(service, sink: _Sink) -> None:
     service.on_partial_transcript = sink.partial
     service.on_final_transcript = sink.final
     service.on_error = sink.error
+
+
+# --------------------------------------------------------------------------
+# Shared-executor deferred Parakeet capture
+# --------------------------------------------------------------------------
+
+
+def test_transcription_factory_is_lazy_and_one_handle_is_reserved_per_capture(
+    monkeypatch,
+):
+    _stub_settings(monkeypatch)
+    from tldw_chatbook.Audio.dictation_service_lazy import LazyLiveDictationService
+
+    transcription = _DeferredTranscriptionService()
+    factory_calls: List[str] = []
+    service = LazyLiveDictationService(
+        transcription_provider="parakeet-onnx",
+        transcription_model=None,
+        language="en",
+        transcription_service_factory=lambda: (
+            factory_calls.append("built") or transcription
+        ),
+    )
+
+    assert factory_calls == []
+    first = service.reserve_deferred_dictation(9)
+    second = service.reserve_deferred_dictation(9)
+
+    assert first is second is transcription.handles[0]
+    assert factory_calls == ["built"]
+    assert len(transcription.capture_calls) == 1
+    assert transcription.capture_calls[0]["capture_generation"] == 9
+
+
+def test_deferred_segment_append_returns_without_waiting_for_inference(monkeypatch):
+    handle = _DeferredHandle()
+    transcription = _DeferredTranscriptionService([handle])
+    service = _build_service(
+        monkeypatch,
+        transcription,
+        provider="parakeet-onnx",
+        model=None,
+    )
+    service.reserve_deferred_dictation(3)
+    returned = threading.Event()
+
+    thread = threading.Thread(
+        target=lambda: (
+            service._transcribe_segment_audio([b"\x00\x01" * 16]),
+            returned.set(),
+        ),
+        daemon=True,
+    )
+    thread.start()
+
+    assert returned.wait(timeout=0.05), (
+        "segment processing waited for native inference instead of appending"
+    )
+    assert handle.appended == [b"\x00\x01" * 16]
+    assert handle.wait_entered.is_set() is False
+
+
+def test_deferred_ordered_callbacks_preserve_final_and_no_final_events(monkeypatch):
+    handle = _DeferredHandle()
+    transcription = _DeferredTranscriptionService([handle])
+    service = _build_service(
+        monkeypatch,
+        transcription,
+        provider="parakeet-onnx",
+        model=None,
+    )
+    sink = _Sink()
+    events: List[tuple[str, object]] = []
+
+    def _partial(text: str) -> None:
+        sink.partial(text)
+        events.append(("partial", text))
+
+    def _final(text: str) -> None:
+        sink.final(text)
+        events.append(("final", text))
+
+    service.on_partial_transcript = _partial
+    service.on_final_transcript = _final
+    service.on_error = sink.error
+    service.on_segment_transcribing = lambda done: events.append(("done", done))
+    service.on_segment_no_final = lambda: events.append(("no-final", None))
+    service.reserve_deferred_dictation(4)
+
+    service._transcribe_segment_audio([b"\x01\x00"])
+    service._transcribe_segment_audio([b"\x02\x00"])
+    callback = transcription.capture_calls[0]["on_logical_segment"]
+    callback(0, "first segment")
+    callback(1, "   ")
+
+    assert sink.partials == ["first segment"]
+    assert sink.finals == ["first segment"]
+    assert events == [
+        ("done", False),
+        ("done", False),
+        ("partial", "first segment"),
+        ("done", True),
+        ("final", "first segment"),
+        ("done", True),
+        ("no-final", None),
+    ]
+
+
+def test_abandon_cancels_deferred_capture_and_stale_callback_is_fenced(
+    monkeypatch,
+):
+    first = _DeferredHandle()
+    second = _DeferredHandle()
+    transcription = _DeferredTranscriptionService([first, second])
+    recorder = _FakeRecorder()
+    service = _build_service(
+        monkeypatch,
+        transcription,
+        recorder,
+        provider="parakeet-onnx",
+        model=None,
+    )
+    sink = _Sink()
+    _attach(service, sink)
+
+    service.reserve_deferred_dictation(1)
+    stale_callback = transcription.capture_calls[0]["on_logical_segment"]
+    service.abandon()
+    service.reserve_deferred_dictation(2)
+    stale_callback(0, "stale text")
+
+    assert first.cancelled is True
+    assert first.wait_entered.is_set() is False
+    assert sink.partials == []
+    assert sink.finals == []
+    assert service.current_transcript == ""
+
+
+def test_deferred_limit_uses_the_existing_one_shot_buffer_callback(monkeypatch):
+    handle = _DeferredHandle(append_status="limit_reached")
+    transcription = _DeferredTranscriptionService([handle])
+    limits: List[str] = []
+    service = _build_service(
+        monkeypatch,
+        transcription,
+        provider="parakeet-onnx",
+        model=None,
+    )
+    service.on_buffer_limit = lambda: limits.append("limit")
+    service.reserve_deferred_dictation(5)
+
+    service._transcribe_segment_audio([b"\x01\x00"])
+    service._transcribe_segment_audio([b"\x02\x00"])
+
+    assert limits == ["limit"]
 
 
 # --------------------------------------------------------------------------
@@ -414,9 +612,7 @@ def test_parakeet_mlx_streams_finals_without_double_firing_and_drains_the_tail(
     whatever is left through that same `_process_audio_buffer` call the
     cadence uses, not a separate buffer-API mechanism.
     """
-    streaming = _FakeStreamingTranscriber(
-        results=[{"text": "hello", "partial": True}]
-    )
+    streaming = _FakeStreamingTranscriber(results=[{"text": "hello", "partial": True}])
     transcription = _FakeTranscriptionService(streaming_transcriber=streaming)
     recorder = _FakeRecorder()
     service = _build_service(
@@ -459,8 +655,7 @@ def test_parakeet_mlx_streams_finals_without_double_firing_and_drains_the_tail(
         time.sleep(0.01)
     assert sink.finals == ["hello"]
     assert transcription.buffer_calls == [], (
-        "the silence gate double-fired a buffer transcription in the "
-        "streaming regime"
+        "the silence gate double-fired a buffer transcription in the streaming regime"
     )
 
     service.stop_dictation()

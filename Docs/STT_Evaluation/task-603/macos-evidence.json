@@ -1,0 +1,339 @@
+{
+  "schema_version": 1,
+  "evidence_label": "partial_focused_macos_console_evidence",
+  "generated_at": "2026-08-09T05:28:20Z",
+  "tested_commit": "24a2ba3cf0b2856be5b5fe5ad52a1bf58405dbfc",
+  "origin_dev": "0cb70a95cbd52547a8b811c756ab40f0e5a68d59",
+  "task_status": {
+    "status": "In Progress",
+    "checked_acceptance_criteria": [1, 2, 3, 4, 5],
+    "open_acceptance_criteria": [6],
+    "release_gate_complete": false
+  },
+  "host": {
+    "system": "Darwin",
+    "mac_version": "15.6",
+    "machine": "arm64",
+    "python": {
+      "implementation": "CPython",
+      "version": "3.12.11",
+      "executable": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python"
+    },
+    "packages": {
+      "tldw-chatbook": "0.1.8.0",
+      "textual": "8.2.7",
+      "onnx-asr": "0.12.0",
+      "onnxruntime": "1.27.0",
+      "numpy": "2.4.4",
+      "sounddevice": "0.5.5",
+      "webrtcvad": "2.0.10"
+    },
+    "onnxruntime_available_providers": [
+      "CoreMLExecutionProvider",
+      "AzureExecutionProvider",
+      "CPUExecutionProvider"
+    ],
+    "runtime_execution_provider": "CPUExecutionProvider"
+  },
+  "artifact_reuse": {
+    "source_task": "TASK-602",
+    "store_kind": "reused_temporary_immutable_evidence_store",
+    "store_root": "/private/tmp/tldw-task602-macos-models",
+    "network_used": false,
+    "download_or_acquisition_attempted": false,
+    "store_mutated": false,
+    "lease": {
+      "service": "ModelArtifactService",
+      "mode": "read acquire and release",
+      "status": "passed"
+    },
+    "root": {
+      "artifact_id": "parakeet-v2",
+      "model_id": "nemo-parakeet-tdt-0.6b-v2",
+      "revision": "0bbb45a3365852604aef28b538a8f066f4ccaa85-vad-b3e3ee3cce4c",
+      "variant": "int8",
+      "precision": "int8",
+      "expected_installed_bytes": 661191781,
+      "runtime_constraint": "onnx-asr==0.12.0",
+      "closure_fingerprint": "d52f16e6505c8efc3e5a9178f597e2414814ae44e677ea0cd75b317a240effc0",
+      "files": [
+        {
+          "path": "config.json",
+          "size_bytes": 97,
+          "sha256": "666903c76b9798caf2c210afd4f6cd60b08a8dbf9800ec8d7a3bc0d2148ac466"
+        },
+        {
+          "path": "vocab.txt",
+          "size_bytes": 9384,
+          "sha256": "ec182b70dd42113aff6c5372c75cac58c952443eb22322f57bbd7f53977d497d"
+        },
+        {
+          "path": "encoder-model.int8.onnx",
+          "size_bytes": 652184014,
+          "sha256": "3e0581fda6ab843888b51e56d7ee78b6d5bc3237ec113af1f732d1d5286aa155"
+        },
+        {
+          "path": "decoder_joint-model.int8.onnx",
+          "size_bytes": 8998286,
+          "sha256": "a449f49acd68979d418651dd2dcb737cc0f1bf0225e009e29ee326354edbf7d3"
+        }
+      ]
+    },
+    "dependency": {
+      "artifact_id": "silero-vad",
+      "model_id": "silero-vad-onnx",
+      "revision": "b3e3ee3cce4c11ceb63b1a0b229d916069c1ddf6",
+      "variant": "f32",
+      "size_bytes": 2327524,
+      "sha256": "1a153a22f4509e292a94e67d6f9b85e8deb25b4988682b7e174c65279d8788e3"
+    },
+    "active_selector_after_evidence": {
+      "variant": "f32",
+      "unchanged": true,
+      "sha256": "7868f0fe220b421ae667b62a8583b8cb40dcc963d0f9b499b2c0cdf68c708b37",
+      "qualification": "The runtime fallback explicitly selected the verified INT8 local snapshot; it did not promote or alter the global F32 active selector."
+    }
+  },
+  "profile_isolation": {
+    "status": "passed",
+    "established_before_app_import": true,
+    "scratch_path_redacted": true,
+    "variables_redirected": [
+      "HOME",
+      "XDG_CONFIG_HOME",
+      "XDG_DATA_HOME",
+      "TLDW_CONFIG_PATH"
+    ],
+    "explicit_scratch_data_dir": true,
+    "test_mode_set": false,
+    "credentials_added": false,
+    "real_profile_invariance": [
+      {
+        "path": "~/.config/tldw_cli/config.toml",
+        "size_bytes": 51270,
+        "mtime_epoch": 1786035601,
+        "sha256": "5e496b75a706c4693a4fbbc4d90933a05b0e3cb6ccc9f56ad6f7744cf0a7fb06"
+      },
+      {
+        "path": "~/.config/tldw_cli/runtime_policy.json",
+        "size_bytes": 299,
+        "mtime_epoch": 1781304897,
+        "sha256": "4197e7cca06ba6355543b2bd637db57dccafb4dac3fd14f16a951307eb4367f3"
+      },
+      {
+        "path": "~/.config/tldw_cli/ui_state.toml",
+        "size_bytes": 58,
+        "mtime_epoch": 1786242203,
+        "sha256": "92ed0c3dcba7b43610f0a867f255c09e921add3508b726216f043f211faaeb42"
+      }
+    ],
+    "real_data_tree_post_check": "No entry through depth two acquired an mtime after the pre-run snapshot."
+  },
+  "runtime_fallback": {
+    "label": "non_ui_in_memory_production_path_fallback",
+    "status": "passed",
+    "path": [
+      "TldwCli._create_console_dictation_service",
+      "TranscriptionService",
+      "app-owned LocalSTTDispatchCoordinator",
+      "app-owned LocalSTTExecutor",
+      "ParakeetOnnxRuntime CPU"
+    ],
+    "ownership": {
+      "uses_deferred_local_stt_dispatch": true,
+      "app_owns_coordinator": true,
+      "app_owns_executor": true
+    },
+    "input": {
+      "kind": "bounded in-memory PCM fixture",
+      "fixture_file_size_bytes": 150558,
+      "fixture_sha256": "8025642b1da904543a336b0239ceb51f241e8c7d0610060993f13dbea81d9f07",
+      "pcm_bytes": 150480,
+      "frames": 75240,
+      "sample_rate_hz": 16000,
+      "channels": 1,
+      "sample_width_bytes": 2,
+      "duration_seconds": 4.7025,
+      "disk_staged_by_runtime": false
+    },
+    "output": {
+      "text": "The local transcription stack is working on this Mac and does not need a network connection.",
+      "logical_segments": 1,
+      "elapsed_seconds": 4.407,
+      "provider_id": "parakeet-onnx",
+      "model_id": "nemo-parakeet-tdt-0.6b-v2",
+      "precision": "int8",
+      "requested_device": "cpu",
+      "effective_device": "cpu",
+      "job_id": null,
+      "warnings": []
+    },
+    "shutdown_thread_alive_after_bounded_join": false,
+    "known_probe_log": "The unmounted app could not marshal the final Library top-up callback; transcription and shutdown still completed.",
+    "does_not_prove": [
+      "microphone permission or capture",
+      "Console rendering or Mic state",
+      "caret insertion or unchanged message count",
+      "visible Library busy ordering",
+      "live hard-limit behavior",
+      "a real retry failure"
+    ]
+  },
+  "console_mic_smoke": {
+    "label": "real_console_mic_capture_and_caret_insertion",
+    "status": "passed",
+    "tested_commit": "24a2ba3cf0b2856be5b5fe5ad52a1bf58405dbfc",
+    "environment": "isolated scratch profile with network-disabled model resolution",
+    "input": {
+      "device": "MacBook Pro Microphone through PyAudio",
+      "stimulus": "verified 4.7025-second English fixture played through the host speakers",
+      "sample_rate_hz": 16000,
+      "channels": 1,
+      "sample_width_bytes": 2,
+      "captured_pcm_bytes": 159360
+    },
+    "ui": {
+      "physical_mic_start_clicked": true,
+      "state_after_click": "starting",
+      "recording_reached_seconds": 2.004,
+      "physical_mic_stop_clicked": true,
+      "final_state": "idle",
+      "final_mic_label": "Dictate",
+      "caret_insertion": true,
+      "message_count_before": 0,
+      "message_count_after": 0,
+      "user_visible_notices": []
+    },
+    "output": {
+      "text": "The local transcription stack is working on this Mac and does not need a network connection.",
+      "draft": "before The local transcription stack is working on this Mac and does not need a network connection. after"
+    },
+    "ownership": {
+      "app_owns_coordinator": true,
+      "app_owns_executor": true,
+      "provider_id": "parakeet-onnx",
+      "model_id": "nemo-parakeet-tdt-0.6b-v2",
+      "precision": "int8",
+      "effective_device": "cpu"
+    },
+    "live_blockers_fixed": [
+      "Deferred dictation now forwards the configured parakeet_onnx_model_dir to local-only dispatch resolution.",
+      "LocalSTTExecutor protects first-spawn multiprocessing primitives and Process.start from Textual's fileno-less stderr."
+    ],
+    "qualification": "This is an end-to-end wiring/runtime smoke using a known fixture, not a speech quality benchmark."
+  },
+  "post_rebase_verification": {
+    "mounted_console_followup": {
+      "tested_commit": "24a2ba3cf0b2856be5b5fe5ad52a1bf58405dbfc",
+      "focused_executor_and_facade": {
+        "command": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest -q Tests/STT/test_local_stt_executor.py Tests/STT/test_transcription_service_facade.py",
+        "status": "passed",
+        "passed": 94,
+        "warnings": 1,
+        "duration_seconds": 5.94
+      },
+      "limit_resume_and_batch_ordering": {
+        "status": "passed",
+        "passed": 7,
+        "warnings": 2,
+        "duration_seconds": 7.1,
+        "coverage": [
+          "visible exact limit copy and non-blocking stop",
+          "retained caret insertion and explicit physical Mic resume",
+          "no hands-free auto-send or hidden reopen",
+          "dictation submission before the next batch callback",
+          "heavy Library work deferred while dictation is reserved"
+        ]
+      },
+      "review": "Focused review approved both follow-up fixes with no Critical, Important, or Minor findings."
+    },
+    "focused_core": {
+      "command": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest -q Tests/STT/test_dispatch_coordinator.py Tests/STT/test_local_stt_executor.py Tests/STT/test_parakeet_onnx.py Tests/STT/test_transcription_service_facade.py",
+      "status": "passed",
+      "passed": 148,
+      "warnings": 1,
+      "warning_kinds": [
+        "RequestsDependencyWarning"
+      ],
+      "duration_seconds": 7.31,
+      "source": "root-supplied fresh post-rebase evidence"
+    },
+    "exact_app_chat_ui_nodes": {
+      "command": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest -q Tests/App/test_submit_library_ingest_job.py::test_console_dictation_factory_injects_app_owned_coordinator Tests/Chat/test_console_voice_input.py::test_deferred_parakeet_reserves_before_warmup_and_opens_while_busy Tests/Chat/test_console_voice_input.py::test_retryable_parakeet_failure_exposes_one_bounded_faster_whisper_retry Tests/Chat/test_console_voice_input.py::test_retry_preserves_logical_segment_texts_for_the_console_adapter Tests/UI/test_console_controller_wiring.py::test_dictation_session_late_binds_the_app_owned_service_factory Tests/UI/test_console_voice_chip.py::test_busy_dictation_copy_uses_the_existing_chip_and_clears_at_idle Tests/UI/test_console_dictation_streaming.py::test_mounted_retry_keeps_prefix_and_routes_retried_stop_command Tests/UI/test_console_dictation_streaming.py::test_the_buffer_limit_callback_stops_the_capture_from_its_own_thread Tests/UI/test_console_hands_free_wiring.py::test_hands_free_limit_exits_without_reopen_until_a_physical_mic_press Tests/UI/test_console_hands_free_wiring.py::test_hands_free_limit_never_auto_sends_the_retained_text",
+      "status": "passed",
+      "passed": 10,
+      "warnings": 2,
+      "warning_kinds": [
+        "RequestsDependencyWarning",
+        "pydub audioop deprecation warning"
+      ],
+      "duration_seconds": 13.18,
+      "source": "root-supplied fresh post-rebase evidence"
+    },
+    "review_fix_boundary": {
+      "defect": "The blocking one-shot buffer path could admit more than the format-derived 60-second PCM limit.",
+      "red_on_old_code": true,
+      "green_boundary_nodes": 2,
+      "full_coordinator_test_file_passed": 38,
+      "focused_rereview": "approved with no new findings",
+      "source": "root-supplied review evidence"
+    },
+    "static": {
+      "changed_package_py_compile": "passed",
+      "changed_file_ruff": {
+        "status": "two pre-existing findings",
+        "findings": [
+          "F841 unused local job in Tests/Library/test_library_ingest_runner.py",
+          "F401 unused local import SimpleNamespace in Tests/Library/test_library_ingest_runner.py"
+        ],
+        "introduced_by_task_603": false
+      },
+      "git_diff_check_origin_dev_to_head": "passed"
+    }
+  },
+  "changed_test_union": {
+    "phase_1_target": "8de33a6f38a7066a3ce828f960601e0a440b6e4d",
+    "attempts": 1,
+    "status": "aborted",
+    "progress_percent": 96,
+    "exit_code": 134,
+    "real_seconds": 252.69,
+    "terminal_summary_available": false,
+    "fatal_context": "Background retained parakeet_mlx/MLX native warm-up import aborted the interpreter.",
+    "assertion_failure_reported_before_abort": false,
+    "exact_active_node_diagnosis": {
+      "node": "Tests/UI/test_console_hands_free_wiring.py::test_awaiting_reply_watchdog_disarms_at_row_creation_not_first_token",
+      "status": "passed",
+      "passed": 1,
+      "warnings": 2,
+      "duration_seconds": 3.29
+    },
+    "qualification": "The isolated node pass does not turn the changed-test union green; the abort remains a release gate."
+  },
+  "review": {
+    "scope": "origin/dev through final rebased HEAD",
+    "important_findings_found": 1,
+    "important_findings_fixed": 1,
+    "remaining_findings": {
+      "critical": 0,
+      "important": 0,
+      "minor": 0
+    },
+    "deferred_test_debt": "The Task-2 import-order assertion is test-isolation debt, not a production download defect."
+  },
+  "open_gates": [
+    "normal terminal summary from the exact changed-test union at final HEAD",
+    "safe real retryable-failure evidence",
+    "Windows representative-platform evidence",
+    "Linux representative-platform evidence",
+    "TASK-605 legacy removal and semantic-default promotion"
+  ],
+  "limitations": [
+    "This is one Apple-silicon macOS host, not cross-platform evidence.",
+    "Synthetic speech is a wiring/runtime smoke, not a quality benchmark.",
+    "The real microphone captured controlled fixture playback rather than unconstrained human speech.",
+    "Hard-limit and batch-ordering outcomes are focused mounted/contract tests, not a 60-second physical capture.",
+    "No artifact was corrupted and no destructive real retry was induced.",
+    "Mergeable implementation evidence is partial and does not complete the release gate."
+  ]
+}
