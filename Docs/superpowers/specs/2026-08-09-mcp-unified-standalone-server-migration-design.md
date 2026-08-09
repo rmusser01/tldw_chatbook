@@ -2,7 +2,7 @@
 
 **Date:** 2026-08-09
 
-**Status:** Spec-reviewed; pending owner review
+**Status:** Owner-review corrections applied; pending re-review
 
 **Task:** TASK-2512
 
@@ -206,11 +206,19 @@ FastMCP-only generic `arguments: dict` schema and appended parameter-summary
 copy are removed.
 
 The runtime invokes local handlers through `asyncio.to_thread`, keeping sync
-filesystem/git/web work off the protocol event loop. Registration remains
-best-effort as a group: an optional local-tool composition failure is logged
-to stderr and never removes the built-in catalog. The diagnostic is one fixed
-message with no exception interpolation or traceback; a path, secret, raw
-argument, or provider exception must never reach stdout or stderr.
+filesystem/git/web work off the protocol event loop. Local registrations are
+all-or-none: build the complete registration list first, validate every name,
+description, object-root input schema, callable handler, duplicate, and
+built-in collision against temporary maps, then publish the staged maps with
+one update. A composition or staging failure discards the entire optional
+local set and leaves the built-in catalog unchanged.
+
+That recoverable failure emits exactly `Local MCP tools unavailable;
+continuing with built-in tools.` to stderr, with no exception interpolation
+or traceback. A path, secret, raw argument, or provider exception must never
+reach stdout or stderr through this diagnostic. The real gateway profile
+tests compile every provider schema; an unexpected schema rejection after
+publication fails closed instead of serving a partial catalog.
 
 ### 5.3 Resources
 
@@ -265,13 +273,13 @@ refusal or execution failure it raises/returns `GatewayToolExecutionError`
 with a safe message capped by the upstream 512-character limit and one stable
 reason code:
 
-| Condition | Reason code |
-| --- | --- |
-| External call requires operator approval | `operator_approval_required` |
-| Tool permission is Off | `tool_permission_denied` |
-| Local-tool kill switch is engaged | `local_tools_disabled` |
-| Permission state could not be resolved | `permission_state_unavailable` |
-| Provider invocation failed | `local_tool_failed` |
+| Condition | Reason code | Exact public message |
+| --- | --- | --- |
+| External call requires operator approval | `operator_approval_required` | `Operator approval is required for this local tool.` |
+| Tool permission is Off | `tool_permission_denied` | `This local tool is disabled by operator policy.` |
+| Local-tool kill switch is engaged | `local_tools_disabled` | `Local tools are disabled.` |
+| Permission state could not be resolved | `permission_state_unavailable` | `Local tool permission state is unavailable.` |
+| Provider invocation failed | `local_tool_failed` | `Local tool execution failed.` |
 
 `ToolResult` does not retain the provider's internal verdict, so the adapter
 uses exact equality against the provider's existing stable refusal constants:
@@ -284,7 +292,8 @@ uses exact equality against the provider's existing stable refusal constants:
 - every other `ok=False` value maps to `local_tool_failed`.
 
 This is deliberately a narrow adapter mapping. It does not widen the shared
-`ToolResult` contract or classify by substrings.
+`ToolResult` contract or classify by substrings. The adapter never forwards
+or logs `ToolResult.error`; it selects only the fixed public message above.
 
 This produces `isError: true`, bounded text content, and gateway-owned error
 metadata. It must not include stack traces, secrets, raw paths, SQL, or an
@@ -324,7 +333,8 @@ The adapter returns:
       "returnedBytes": 100,
       "hasMore": false,
       "nextUri": null
-    }
+    },
+    "tldw.chatbook/resource": {"message_count": 2}
   }
 }
 ```
@@ -344,18 +354,23 @@ Rules:
   parameters, empty tokens, and every unknown query parameter. The adapter
   removes and validates that parameter first, then matches the normalized
   query-free base URI to the registered template and handler identifier.
-- The token contains the next character offset and a SHA-256 content
-  revision. It exposes no content, path, database identifier beyond the
-  already-public resource URI, or secret.
+- The token contains a format version, the next character offset, a SHA-256
+  digest of the normalized base URI, and a SHA-256 content revision. It
+  exposes no content, path, database identifier beyond the already-public
+  resource URI, or secret.
 - A token is accepted only for the same normalized base URI. Offsets must be
   within the current content bounds.
 - If the resource text changes between chunks, the continuation fails with a
   bounded `resource_changed` application error and instructs the caller to
   restart from the base URI. It never silently skips or repeats changed text.
-- Malformed or mismatched tokens fail as invalid resource arguments.
-- Handler `metadata` is recursively JSON-normalized and carried as vendor
-  metadata only when it satisfies upstream limits. Gateway-reserved keys can
-  never be overwritten.
+- Malformed, base-mismatched, or out-of-bounds tokens fail as invalid resource
+  arguments. The token is an opaque continuation cursor, not an authentication
+  or authorization boundary: its unkeyed digests detect stale/mismatched
+  state but do not claim to make a client-provided offset unforgeable.
+- A non-empty handler `metadata` mapping is recursively JSON-normalized and
+  stored only under `_meta["tldw.chatbook/resource"]`. Absent or empty handler
+  metadata omits that key. Invalid metadata fails closed; it is never flattened
+  or silently dropped, and gateway-reserved keys cannot be overwritten.
 - `Not Found` and existing textual resource-error responses remain compatible
   application content; the migration does not redesign backend lookup
   semantics.
@@ -386,14 +401,17 @@ The adapter returns canonical MCP content blocks:
 Mapping rules:
 
 - `user` and `assistant` messages pass through as text blocks.
-- One or more contiguous leading `system` messages are joined and prepended
-  to the first `user` message under explicit `System instructions` and `User
-  request` labels.
+- One or more contiguous leading `system` messages must be immediately
+  followed by a `user` message. Their content is joined with two newlines and
+  replaces that first user's text with exactly
+  `System instructions:\n{joined}\n\nUser request:\n{original}`.
 - A system message after any user/assistant message, a trailing system block
-  with no user message, an unknown role, a non-string content value, or an
-  invalid overall shape fails closed as an invalid application result.
-- Empty message lists are permitted only if the upstream prompt-result
-  contract permits them; otherwise they fail before serialization.
+  not immediately followed by a user message, an unknown role, a non-string
+  content value, or an invalid overall shape fails closed as an invalid
+  application result.
+- Empty message lists fail closed. All five Chatbook prompt handlers are
+  required to return at least one message even though the upstream projector
+  accepts an empty list.
 
 This folding is performed only at the external MCP adapter. The underlying
 `MCPPrompts.character_writing_prompt` continues to return its internal
@@ -529,22 +547,29 @@ Implementation follows strict red-green-refactor. Required coverage includes:
 - duplicate/missing registrations fail construction;
 - ten built-in descriptors map to ten handlers;
 - real local-provider schemas appear unchanged in `tools/list`;
+- optional local registrations publish all-or-none, and a duplicate,
+  built-in collision, invalid descriptor shape, or non-callable handler leaves
+  the built-in catalog unchanged;
 - no `library_*` tool appears in standalone catalog;
 - tool dict/list/string projection through the real gateway;
 - typed local allow/ask/deny/kill-switch/gate-error/execution-error behavior;
 - exact stable-refusal-constant to reason-code mapping, with every other
   failure classified as `local_tool_failed`;
+- every typed local failure uses its exact fixed public message and a sentinel
+  `ToolResult.error` containing a path/secret reaches neither the wire nor
+  adapter diagnostics;
 - sync local handlers run off the event loop;
 - local-tool registration failure emits one fixed payload-free diagnostic and
   does not echo a sentinel path, secret, exception, or traceback;
 - all five URI templates route exact valid identifiers and reject malformed,
   ambiguous, unknown, or mismatched URIs;
-- small and multi-chunk resource reads, exact metadata, UTF-8 boundaries,
-  continuation mismatch/tamper/content-change behavior;
+- small and multi-chunk resource reads, exact namespaced metadata, UTF-8
+  boundaries, malformed/base-mismatched/out-of-bounds cursor rejection, and
+  content-change behavior without treating the cursor as authentication;
 - all five prompt descriptors include correct arguments;
 - prompt primitive coercion, missing/unknown/invalid arguments;
-- user/assistant pass-through and leading-system folding;
-- invalid prompt role/order/content failures.
+- user/assistant pass-through and exact leading-system folding;
+- empty-list and invalid prompt role/order/content failures.
 
 ### 13.2 Real handler tests
 
@@ -581,7 +606,13 @@ Implementation follows strict red-green-refactor. Required coverage includes:
 - install each artifact's `[mcp]` extra independently in a clean environment;
 - assert `mcp_unified` and `tldw_chatbook` import from that environment's
   site-packages, not the checkout;
-- run the standalone MCP protocol smoke against both artifacts;
+- run each artifact smoke from a temporary working directory with a fresh
+  temporary `HOME`, no checkout `PYTHONPATH`, and no inherited Chatbook
+  config/data/path override or provider-credential environment variables;
+- before launch, assert the resolved Chatbook databases, permission store,
+  configuration, and default workspace all remain under that temporary root,
+  and place the artifact virtual environment and `TMPDIR` under the same root;
+- run the standalone MCP protocol smoke against both isolated artifacts;
 - dependency/license metadata and documentation checks remain green.
 
 ### 13.5 Regression scope

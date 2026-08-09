@@ -53,9 +53,18 @@ thread.
 
 The adapter classifies local-tool failures only by exact equality with the
 provider's existing stable refusal constants; every other failed
-`ToolResult` is a generic local execution failure. Optional local-tool
-registration failures emit one fixed payload-free diagnostic without an
-exception or traceback.
+`ToolResult` is a generic local execution failure. Each reason code selects a
+fixed public message, and raw provider errors are neither emitted nor logged
+by the adapter. Optional local tools are staged and published all-or-none;
+composition or staging failure retains the complete built-in catalog and
+emits one fixed payload-free diagnostic without an exception or traceback.
+
+Handler metadata is namespaced under
+`_meta["tldw.chatbook/resource"]`. Resource continuation cursors carry bounded
+offset and SHA-256 state, but are explicitly not an authentication boundary;
+authorization remains the resource read itself. Prompt results must be
+non-empty, and a leading system block is folded only when immediately
+followed by the first user message.
 
 The optional dependency is pinned exactly to `mcp-unified==0.2.1`. Chatbook
 keeps its existing `python -m tldw_chatbook.MCP` client configuration and
@@ -153,6 +162,8 @@ repository's architecture rules.
   ceiling fail closed; this migration does not redesign all ten legacy tool
   result contracts.
 - Resource continuation adds an opaque query token to follow-up reads.
+- That token detects stale/mismatched state but is not authenticated; it does
+  not add a separate authorization boundary beyond the resource read.
 - A leading prompt system block becomes visible inside the first user message
   because MCP has no system role in prompt results.
 - Sync local-agent work may finish after its awaiting request is cancelled;
