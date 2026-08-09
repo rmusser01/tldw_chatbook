@@ -16,7 +16,7 @@ class _ProbeTool:
 
 
 class _OpenGate:
-    def check(self, tool, run_id=""):
+    def check(self, tool, run_id):
         return None
 
 

@@ -510,7 +510,8 @@ class AgentService:
         config: AgentConfig,
         disclosed_names: set,
         should_cancel: Callable[[], bool] = lambda: False,
-        run_id: str = "",
+        *,
+        run_id: str,
     ):
         """Build this run's ``LoopDeps.invoke_tool``.
 
@@ -524,9 +525,14 @@ class AgentService:
                 INSIDE the callable handed to ``_call_with_timeout``, so
                 it is established on the per-call daemon thread that
                 actually runs the tool -- a ``ContextVar`` set on this
-                thread would not be visible there. ``""`` (the default)
-                binds the no-run key, matching the pre-Task-5 behavior
-                for a service built without a run.
+                thread would not be visible there.
+
+                Keyword-REQUIRED, with no default, deliberately: a
+                defaulted ``""`` would turn a future caller that forgets
+                it (PR2a Task 6 adds dispatch paths) into a SILENT
+                fail-closed degradation -- every approved tool refused
+                for want of a stamp it can no longer find -- instead of
+                a loud ``TypeError`` at the call site.
         """
 
         def invoke_tool(call: ToolCall) -> ToolResult:
@@ -896,7 +902,7 @@ class AgentService:
         # sub_agent_spawns counter -- see Finding 2 above), cancellable, and
         # DB-lineage-tracked exactly like a spawn_subagent call.
         builtin_invoke_tool = self._make_invoke_tool(
-            config, disclosed_names, should_cancel, run_id
+            config, disclosed_names, should_cancel, run_id=run_id
         )
 
         def invoke_tool(call: ToolCall) -> ToolResult:

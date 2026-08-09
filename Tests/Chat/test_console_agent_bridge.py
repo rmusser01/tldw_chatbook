@@ -288,7 +288,7 @@ class _RefusingBuiltinGate:
     def __init__(self) -> None:
         self.checked: list[str] = []
 
-    def check(self, tool, run_id=""):
+    def check(self, tool, run_id):
         self.checked.append(tool.name)
         return f"disabled for test: {tool.name}"
 
@@ -1940,7 +1940,7 @@ class _FakeBuiltinGateForRegistry:
         self.refuse = refuse
         self.checked: list[str] = []
 
-    def check(self, tool, run_id=""):
+    def check(self, tool, run_id):
         self.checked.append(tool.name)
         return f"disabled for test: {tool.name}" if self.refuse else None
 

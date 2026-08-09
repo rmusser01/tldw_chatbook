@@ -72,7 +72,7 @@ class _AllowGate:
     trip, so the provider is handed a gate that always allows.
     """
 
-    def check(self, tool, run_id=""):
+    def check(self, tool, run_id):
         return None
 
 

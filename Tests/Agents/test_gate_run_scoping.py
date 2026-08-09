@@ -10,6 +10,7 @@ decided and has not yet consumed.
 import threading
 
 from tldw_chatbook.Agents.builtin_tool_gate import BuiltinToolGate
+from tldw_chatbook.Agents.local_tool_provider import LocalToolProvider
 from tldw_chatbook.Agents.mcp_tool_provider import MCPToolProvider
 
 
@@ -42,6 +43,33 @@ def test_mcp_decisions_do_not_clobber_across_runs():
     provider.apply_batch_decisions("run-child", {"srv__tool": "deny"})
     assert provider.stamped_decision("run-parent", "srv__tool") == "proceed"
     assert provider.stamped_decision("run-child", "srv__tool") == "deny"
+
+
+def test_local_decisions_do_not_clobber_across_runs(tmp_path):
+    """The THIRD gate with this exact shape, and the one with no other
+    coverage of its per-run keying.
+
+    ``LocalToolProvider`` shares one instance across a parent run and every
+    sub-agent it spawns, exactly like the two gates above, and its stamps
+    were name-keyed and REPLACED wholesale for the same reasons. Review of
+    the first cut found both of its per-run mutations survived the entire
+    suite (1012 passed): reverting ``apply_batch_decisions`` to a
+    whole-dict replace, and making ``stamped`` ignore ``run_id`` -- the
+    latter a genuine FAIL-OPEN, since a sibling's ``approve_once`` would
+    then permit this run's call. Both are red against this test.
+    """
+    provider = LocalToolProvider(workspace_root=tmp_path)
+    provider.apply_batch_decisions("run-parent", {"fs_list": "approve_once"})
+    provider.apply_batch_decisions("run-child", {"fs_list": "deny"})
+
+    # The child's turn must not have replaced the parent's slice.
+    assert provider.stamped("run-parent", "fs_list") == "approve_once"
+    assert provider.stamped("run-child", "fs_list") == "deny"
+    # The fail-open direction, stated explicitly: a run that was never
+    # granted anything must never READ a sibling's verdict, permitting or
+    # otherwise. A name-keyed lookup would hand this run one of the two
+    # above.
+    assert provider.stamped("run-other", "fs_list") is None
 
 
 def test_concurrent_runs_keep_their_own_verdicts():

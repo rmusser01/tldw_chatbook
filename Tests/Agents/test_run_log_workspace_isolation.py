@@ -62,7 +62,7 @@ class _AllowGate:
     approval round trip.
     """
 
-    def check(self, tool, run_id=""):
+    def check(self, tool, run_id):
         return None
 
 

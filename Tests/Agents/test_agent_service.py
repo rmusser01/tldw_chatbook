@@ -1234,8 +1234,14 @@ def test_make_invoke_tool_wraps_slow_custom_tool_cancellable(db, monkeypatch):
         allowed_tools=("calculator",),
         budget=RunBudget(max_tool_call_seconds=5.0),
     )
+    # PR2a Task 5: `run_id` is keyword-REQUIRED -- it binds the dispatching
+    # run for the permission gates (run_context), and a default would let a
+    # caller silently lose every approval stamp instead of failing loudly.
     invoke_tool = service._make_invoke_tool(
-        cfg, disclosed_names={"calculator"}, should_cancel=lambda: True
+        cfg,
+        disclosed_names={"calculator"},
+        should_cancel=lambda: True,
+        run_id="run-1",
     )
     from tldw_chatbook.Agents.agent_models import ToolCall
     t0 = time.monotonic()
@@ -1268,7 +1274,9 @@ def test_make_invoke_tool_bypasses_wrapper_when_unlimited(db, monkeypatch):
         allowed_tools=("calculator",),
         budget=RunBudget(max_tool_call_seconds=0),
     )
-    invoke_tool = service._make_invoke_tool(cfg, disclosed_names={"calculator"})
+    invoke_tool = service._make_invoke_tool(
+        cfg, disclosed_names={"calculator"}, run_id="run-1"
+    )
     from tldw_chatbook.Agents.agent_models import ToolCall
     result = invoke_tool(ToolCall(name="calculator", args={"expression": "2+2"}))
     assert result.ok is True
@@ -1294,7 +1302,9 @@ def test_make_invoke_tool_wraps_slow_custom_tool_in_timeout(db, monkeypatch):
         allowed_tools=("calculator",),
         budget=RunBudget(max_tool_call_seconds=0.2),
     )
-    invoke_tool = service._make_invoke_tool(cfg, disclosed_names={"calculator"})
+    invoke_tool = service._make_invoke_tool(
+        cfg, disclosed_names={"calculator"}, run_id="run-1"
+    )
     from tldw_chatbook.Agents.agent_models import ToolCall
     result = invoke_tool(ToolCall(name="calculator", args={"expression": "2+2"}))
     assert result.ok is False

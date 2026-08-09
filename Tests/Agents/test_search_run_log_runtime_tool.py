@@ -215,7 +215,7 @@ class _AllowGate:
     allows.
     """
 
-    def check(self, tool, run_id=""):
+    def check(self, tool, run_id):
         return None
 
 

@@ -1527,7 +1527,11 @@ class ConsoleAgentBridge:
         supersede_previous: bool = False,
         mcp_provider: Any | None = None,
         builtin_gate: Any | None = None,
-        review_tool_calls: Callable[[list[ToolCall]], dict[str, str]] | None = None,
+        # PR2a Task 5: `(calls, run_id)` -- forwarded straight to
+        # `AgentService(review_tool_calls=...)`, which binds each run's own
+        # id in before handing it to `LoopDeps`.
+        review_tool_calls: Callable[[list[ToolCall], str], dict[str, str]]
+        | None = None,
         change_roots: Sequence[Path] | None = None,
         turn_skill_bindings: tuple[str, ...] = (),
         turn_bundle_block: str = "",
