@@ -688,6 +688,32 @@ async def test_audio_cpp_runtime_card_is_hidden_for_other_providers(
 
 
 @pytest.mark.asyncio
+async def test_audio_cpp_runtime_poll_uses_a_bounded_five_second_interval(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    intervals: list[float] = []
+    original_set_interval = SpeechPlaygroundPane.set_interval
+
+    def capture_interval(
+        self: SpeechPlaygroundPane,
+        interval: float,
+        callback: object = None,
+        **kwargs: object,
+    ) -> object:
+        if getattr(callback, "__name__", "") == "_poll_audio_cpp_runtime_observation":
+            intervals.append(interval)
+        return original_set_interval(self, interval, callback, **kwargs)  # type: ignore[arg-type,return-value]
+
+    monkeypatch.setattr(SpeechPlaygroundPane, "set_interval", capture_interval)
+    app = _PaneHost(provider="openai")
+
+    async with app.run_test(size=(150, 60)) as pilot:
+        await pilot.pause()
+
+    assert intervals == [5.0]
+
+
+@pytest.mark.asyncio
 async def test_switch_back_before_runtime_read_cannot_reuse_stale_primary_action(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -800,11 +826,25 @@ async def test_managed_start_and_test_runs_async_and_preserves_current_result(
         pane.current_audio_file = existing
 
         primary = app.query_one("#tts-test-connection-btn", Button)
+        original_run_worker = app.run_worker
+        lifecycle_worker_options: dict[str, object] = {}
+
+        def capture_run_worker(
+            awaitable: object,
+            *args: object,
+            **kwargs: object,
+        ) -> object:
+            if kwargs.get("group") == "speech-audio-cpp-lifecycle":
+                lifecycle_worker_options.update(kwargs)
+            return original_run_worker(awaitable, *args, **kwargs)  # type: ignore[arg-type,return-value]
+
+        monkeypatch.setattr(app, "run_worker", capture_run_worker)
         primary.press()
         await asyncio.wait_for(service.lifecycle_started.wait(), timeout=2.0)
         await pilot.pause()
 
         assert service.lifecycle_calls == ["test"]
+        assert lifecycle_worker_options["exclusive"] is True
         assert primary.disabled is True
         assert "Starting" in str(primary.label)
         assert app.query_one("#tts-refresh-catalog-btn", Button).disabled is True

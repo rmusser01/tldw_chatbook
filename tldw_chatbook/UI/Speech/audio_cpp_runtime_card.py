@@ -196,7 +196,14 @@ def _runtime_actions(
 def project_audio_cpp_runtime_card(
     observation: AudioCppRuntimeObservation,
 ) -> AudioCppRuntimeCardProjection:
-    """Project one service observation without I/O or lifecycle work."""
+    """Project one service observation without I/O or lifecycle work.
+
+    Args:
+        observation: Coherent saved, applied, process, and catalog state.
+
+    Returns:
+        Bounded display copy and lifecycle-action state for the runtime card.
+    """
 
     process = observation.process
     primary, restart, shutdown = _runtime_actions(observation)
@@ -267,6 +274,12 @@ class AudioCppRuntimeCard(Vertical):
         self._rendered_diagnostic_lines: tuple[str, ...] | None = None
 
     def compose(self) -> ComposeResult:
+        """Compose the stable runtime, action, detail, and diagnostic controls.
+
+        Yields:
+            Always-mounted children updated in place by runtime observations.
+        """
+
         yield Static(
             "audio.cpp runtime",
             classes="speech-section-head",
@@ -393,7 +406,14 @@ class AudioCppRuntimeCard(Vertical):
         self,
         observation: AudioCppRuntimeObservation,
     ) -> AudioCppRuntimeCardProjection:
-        """Update mounted children in place and return the pure projection."""
+        """Update mounted children in place and return the pure projection.
+
+        Args:
+            observation: Coherent saved, applied, process, and catalog state.
+
+        Returns:
+            The projection rendered by the card, or available to an unmounted caller.
+        """
 
         projection = project_audio_cpp_runtime_card(observation)
         self.observation = observation

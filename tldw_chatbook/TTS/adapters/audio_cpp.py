@@ -421,7 +421,15 @@ class AudioCppAdapter:
         self,
         catalog: TTSProviderCatalog,
     ) -> tuple[int | None, int | None] | None:
-        """Fence service publication to this adapter's current catalog evidence."""
+        """Fence service publication to this adapter's current catalog evidence.
+
+        Args:
+            catalog: Catalog instance proposed for service-level publication.
+
+        Returns:
+            Managed process and observation generations, ``(None, None)`` for
+            External or stale evidence, or ``None`` when publication is unsafe.
+        """
         if self._closed or catalog is not self._catalog:
             return None
         if self._config.mode != "managed" or not catalog.health.fresh:

@@ -95,6 +95,8 @@ from .speech_settings_contracts import (
 )
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 
+_AUDIO_CPP_RUNTIME_POLL_SECONDS = 5.0
+
 if TYPE_CHECKING:
     pass
 
@@ -1340,7 +1342,7 @@ class SpeechPlaygroundPane(
             self._run_audio_cpp_lifecycle(operation),
             name=f"speech_audio_cpp_{operation}",
             group="speech-audio-cpp-lifecycle",
-            exclusive=False,
+            exclusive=True,
             exit_on_error=False,
         )
 
@@ -1628,7 +1630,10 @@ class SpeechPlaygroundPane(
         self._rehydrate_handler_state()
         self._sync_truthful_status_rows()
         self._sync_audio_cpp_runtime_visibility(self.provider)
-        self.set_interval(1.0, self._poll_audio_cpp_runtime_observation)
+        self.set_interval(
+            _AUDIO_CPP_RUNTIME_POLL_SECONDS,
+            self._poll_audio_cpp_runtime_observation,
+        )
         # dev's mount sequence for the profile preset, kept in order: a pane
         # opened on an exact profile shows that profile immediately, before
         # discovery runs, rather than showing a catalog the user did not ask

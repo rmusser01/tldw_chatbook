@@ -57,6 +57,44 @@ TTS_PROVIDER_LABELS = MappingProxyType(
     }
 )
 
+_AUDIO_CPP_MANAGED_VALIDATION_ERRORS = MappingProxyType(
+    {
+        "audio.cpp managed_binary_path must be an absolute executable file": (
+            "managed_binary_path",
+            "Choose an existing audiocpp_server file that is executable.",
+        ),
+        "audio.cpp managed_server_json_path must be an absolute readable file": (
+            "managed_server_json_path",
+            "Choose an existing server.json file that is readable.",
+        ),
+        "audio.cpp server.json must be at most 1048576 bytes": (
+            "managed_server_json_path",
+            "server.json must be 1 MiB or smaller.",
+        ),
+        "audio.cpp server.json must be UTF-8 JSON": (
+            "managed_server_json_path",
+            "server.json must use UTF-8 encoding.",
+        ),
+        "audio.cpp server.json must be strict JSON": (
+            "managed_server_json_path",
+            "server.json must contain strict JSON with no duplicate keys or "
+            "non-JSON values.",
+        ),
+        "audio.cpp server.json must contain one JSON object": (
+            "managed_server_json_path",
+            "server.json must contain one JSON object.",
+        ),
+        "audio.cpp server.json host must be exactly 127.0.0.1": (
+            "managed_server_json_path",
+            "server.json must set host exactly to 127.0.0.1.",
+        ),
+        "audio.cpp server.json port must be an integer from 1 through 65535": (
+            "managed_server_json_path",
+            "server.json must set port to a whole number from 1 through 65535.",
+        ),
+    }
+)
+
 # Explicit global ownership destination.  The names are stable model keys;
 # rendering remains deliberately provider-specific in the panel.
 GLOBAL_TTS_PROVIDER_FIELD_IDS = MappingProxyType(
@@ -983,6 +1021,9 @@ def detect_audio_cpp_server_binary() -> str | None:
 
     Detection is deliberately an explicit draft helper. It does not validate,
     persist, execute, or contact the discovered program.
+
+    Returns:
+        The exact detected executable path, or ``None`` when it is unavailable.
     """
 
     detected = shutil.which("audiocpp_server")
@@ -1013,27 +1054,13 @@ def validate_audio_cpp_managed_settings(values: Mapping[str, object]) -> None:
     try:
         validate_audio_cpp_managed_launch(config)
     except ValueError as error:
-        diagnostic = str(error)
-        if "managed_binary_path" in diagnostic:
-            failure = (
-                "managed_binary_path",
-                "Choose an existing audiocpp_server file that is executable.",
-            )
-        elif "host" in diagnostic:
-            failure = (
+        failure = _AUDIO_CPP_MANAGED_VALIDATION_ERRORS.get(
+            str(error),
+            (
                 "managed_server_json_path",
-                "server.json must set host exactly to 127.0.0.1.",
-            )
-        elif "port" in diagnostic:
-            failure = (
-                "managed_server_json_path",
-                "server.json must set port to a whole number from 1 through 65535.",
-            )
-        else:
-            failure = (
-                "managed_server_json_path",
-                "Choose a readable server.json containing strict UTF-8 JSON.",
-            )
+                "Review server.json and choose a valid managed server configuration.",
+            ),
+        )
 
     if failure is not None:
         raise GlobalSpeechTTSValidationError("audio_cpp", *failure)

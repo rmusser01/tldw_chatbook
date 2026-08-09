@@ -319,7 +319,63 @@ def test_managed_save_validation_maps_binary_failure_without_echoing_path(
         )
 
     assert error.value.field_id == "managed_binary_path"
+    assert str(error.value) == (
+        "Choose an existing audiocpp_server file that is executable."
+    )
     assert str(missing_binary) not in str(error.value)
+    assert error.value.__cause__ is None
+    assert error.value.__context__ is None
+
+
+@pytest.mark.parametrize(
+    ("case", "expected_message"),
+    (
+        ("missing", "Choose an existing server.json file that is readable."),
+        ("oversized", "server.json must be 1 MiB or smaller."),
+        ("invalid_utf8", "server.json must use UTF-8 encoding."),
+        (
+            "invalid_json",
+            "server.json must contain strict JSON with no duplicate keys or "
+            "non-JSON values.",
+        ),
+        ("not_object", "server.json must contain one JSON object."),
+        ("invalid_host", "server.json must set host exactly to 127.0.0.1."),
+        (
+            "invalid_port",
+            "server.json must set port to a whole number from 1 through 65535.",
+        ),
+    ),
+)
+def test_managed_save_validation_reports_the_exact_server_json_failure(
+    tmp_path,
+    case: str,
+    expected_message: str,
+) -> None:
+    binary = tmp_path / "audiocpp_server"
+    binary.write_bytes(b"synthetic-binary")
+    binary.chmod(0o700)
+    server_json = tmp_path / "private-server.json"
+    documents = {
+        "invalid_utf8": b"\xff",
+        "invalid_json": b'{"private-broken-json":',
+        "not_object": b"[]",
+        "invalid_host": b'{"host":"0.0.0.0","port":19003}',
+        "invalid_port": b'{"host":"127.0.0.1","port":"private-port"}',
+    }
+    if case == "oversized":
+        server_json.write_bytes(b"{" + (b" " * 1_048_576))
+    elif case != "missing":
+        server_json.write_bytes(documents[case])
+
+    with pytest.raises(GlobalSpeechTTSValidationError) as error:
+        settings_model.validate_audio_cpp_managed_settings(
+            _managed_values(str(binary), str(server_json))
+        )
+
+    assert error.value.field_id == "managed_server_json_path"
+    assert str(error.value) == expected_message
+    assert str(server_json) not in str(error.value)
+    assert "private-port" not in str(error.value)
     assert error.value.__cause__ is None
     assert error.value.__context__ is None
 

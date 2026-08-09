@@ -70,9 +70,11 @@ Implemented the approved Slice 5 UI over the existing managed audio.cpp runtime.
 
 The implementation extends the existing TTS service boundary instead of adding a second runtime owner. External mode remains process-free, Managed mode remains lazy until a deliberate Speech action, and one app-scoped supervisor retains sole ownership of any launched child. Tests cover passive-mount fences, saved/applied handoffs, lifecycle busy states, crash recovery, privacy, narrow layouts, keyboard/focus behavior, Windows qualification, and unchanged complete-WAV behavior.
 
+PR review hardening added exact safe guidance for every managed artifact-validation failure, app-group-exclusive lifecycle workers, a five-second passive runtime poll only while audio.cpp is selected, and complete Google-style documentation for the reviewed public APIs.
+
 Automated verification completed on the rebased branch:
 
-- Final changed-module rerun: 722 passed in the sandbox; the five real-child cases blocked only by sandbox loopback permissions then passed 5/5 outside it (727 total).
+- Final changed-module rerun: 730 passed in the sandbox; the five real-child cases passed 5/5 outside it (735 total).
 - Full TTS suite: 2,509 passed and 16 optional/live cases skipped before one release-evidence metadata correction; the corrected evidence suite then passed 2/2.
 - Broader Settings, Console, Roleplay, application-ownership, and UI coverage passed except one UI test whose identical stale-fake failure was reproduced on clean `origin/dev`.
 - Ruff check, Ruff format check, compileall, CSS generation, privacy/boundary tests, and cumulative diff checks passed. Repository-wide mypy retained the identical 178-error `origin/dev` baseline and introduced no new errors.
