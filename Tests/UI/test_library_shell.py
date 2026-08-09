@@ -7088,10 +7088,10 @@ async def test_library_shell_prompts_rail_row_shows_exact_count():
     """The Browse rail renders a ``Prompts (2)`` row -- id
     ``LIBRARY_ROW_BROWSE_PROMPTS`` -- once ``count_prompts`` is wired into
     the Library screen's local-source snapshot fetch (Task 1). Row
-    selection renders the Task 3 list canvas: this fake only exposes
-    ``count_prompts`` (no ``list_prompts``), so the page-records fetch is
-    skipped entirely (guarded by ``callable(list_prompts)``) and the canvas
-    renders its empty state rather than erroring."""
+    selection renders the exact browse canvas: this count-only fake has no
+    ``browse_prompts`` seam, so the rail badge remains truthful while the
+    canvas names the service failure and offers Retry rather than falsely
+    reporting an empty library."""
     app = _build_test_app()
     app.notes_scope_service = StaticLibraryNotesListScopeService([])
     app.media_reading_scope_service = StaticLibraryMediaScopeService([])
@@ -7113,12 +7113,12 @@ async def test_library_shell_prompts_rail_row_shows_exact_count():
         assert "Prompts (2)" in rail_label
 
         button.press()
-        await pilot.pause()
-        await pilot.pause()
+        error = await _wait_for_selector(screen, pilot, "#library-prompts-error")
 
         assert screen._library_selected_row_id == LIBRARY_ROW_BROWSE_PROMPTS
         assert screen.query_one("#library-prompts-canvas")
-        assert screen.query_one("#library-prompts-empty")
+        assert "unavailable" in str(error.renderable)
+        assert screen.query_one("#library-prompts-retry", Button)
     assert app.prompt_scope_service.count_calls
 
 
@@ -22898,6 +22898,7 @@ async def test_library_note_unmount_clears_notes_timers_and_workers() -> None:
             worker.node is screen and worker.group.startswith("library_note")
             for worker in host.workers
         )
+
 
 @pytest.mark.asyncio
 async def test_commit_line_hides_while_option_error_gate_blocks(tmp_path):

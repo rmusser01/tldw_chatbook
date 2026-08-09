@@ -18,6 +18,7 @@ from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.widgets import Button, Checkbox, Input, Static, TextArea
 
 from tldw_chatbook.Library.library_prompts_state import (
+    PromptBrowseResult,
     PromptEditorState,
     PromptHistoryState,
     PromptsListState,
@@ -35,6 +36,10 @@ from tldw_chatbook.Widgets.Prompts.prompt_block_editor_state import (
 _SORT_LABELS = {"newest": "Newest", "name": "Name"}
 _EMPTY_PROMPTS_COPY = "No prompts yet."
 _EMPTY_PROMPTS_FILTER_COPY = "No prompts match your filter."
+_EMPTY_PROMPT_LIBRARY_COPY = "No prompts yet. Create or import a prompt to begin."
+_EMPTY_PROMPT_COLLECTION_COPY = (
+    "This collection has no prompts. Choose another collection or add prompts."
+)
 # Task 8c U7: one-line dim hints under the System/User prompt labels,
 # explaining the two-part prompt model to a new user.
 _SYSTEM_PROMPT_HINT = "Instructions the model always follows."
@@ -52,6 +57,9 @@ class LibraryPromptsListCanvas(Vertical):
             used to label the sort control.
         filter_value: Current prompts filter text, prefilled into the
             filter ``Input``.
+        browse_result: Exact immutable service-backed page and request state.
+            When omitted, the legacy ``state``-only rendering remains available
+            to existing widget callers; the Library screen always supplies it.
         mode: ``"list"`` renders the prompts list; ``"editor"`` renders the
             in-canvas prompt editor for ``editor_state``.
         editor_state: The prompt to render in editor mode. Required when
@@ -98,6 +106,7 @@ class LibraryPromptsListCanvas(Vertical):
         *,
         sort_mode: str = "newest",
         filter_value: str = "",
+        browse_result: PromptBrowseResult | None = None,
         mode: str = "list",
         editor_state: PromptEditorState | None = None,
         conflict: bool = False,
@@ -117,6 +126,7 @@ class LibraryPromptsListCanvas(Vertical):
         self.state = state
         self.sort_mode = sort_mode
         self.filter_value = filter_value
+        self.browse_result = browse_result
         self.mode = mode
         self.editor_state = editor_state
         self.conflict = conflict
@@ -143,8 +153,10 @@ class LibraryPromptsListCanvas(Vertical):
         state = self.state
         if state is None:
             return
+        browse_result = self.browse_result
+        total = browse_result.total_items if browse_result is not None else state.count
         yield Static(
-            f"Prompts ({state.count})",
+            f"Prompts ({total})",
             id="library-prompts-header",
             classes="destination-section",
             markup=False,
@@ -180,11 +192,49 @@ class LibraryPromptsListCanvas(Vertical):
             )
         if self.import_open:
             yield from self._compose_import_row()
-        if not state.rows:
+        if browse_result is not None and browse_result.status == "loading":
             yield Static(
-                _EMPTY_PROMPTS_FILTER_COPY
-                if self.filter_value
-                else _EMPTY_PROMPTS_COPY,
+                "Loading prompts…",
+                id="library-prompts-loading",
+                classes="destination-purpose",
+                markup=False,
+            )
+            return
+        if browse_result is not None and browse_result.status == "error":
+            yield Static(
+                browse_result.error,
+                id="library-prompts-error",
+                classes="destination-purpose",
+                markup=False,
+            )
+            yield Button(
+                "Retry",
+                id="library-prompts-retry",
+                classes="library-canvas-action",
+                compact=True,
+            )
+            return
+        if browse_result is not None and browse_result.total_pages > 1:
+            yield from self._compose_paging(browse_result)
+        if not state.rows:
+            if browse_result is not None:
+                if browse_result.status == "empty_collection":
+                    empty_copy = _EMPTY_PROMPT_COLLECTION_COPY
+                elif browse_result.status == "no_matches":
+                    empty_copy = (
+                        f'No prompts match "{browse_result.scope.query}". '
+                        "Clear the search or try different words."
+                    )
+                else:
+                    empty_copy = _EMPTY_PROMPT_LIBRARY_COPY
+            else:
+                empty_copy = (
+                    _EMPTY_PROMPTS_FILTER_COPY
+                    if self.filter_value
+                    else _EMPTY_PROMPTS_COPY
+                )
+            yield Static(
+                empty_copy,
                 id="library-prompts-empty",
                 markup=False,
             )
@@ -213,6 +263,34 @@ class LibraryPromptsListCanvas(Vertical):
                 )
                 button.prompt_id = row.prompt_id
                 yield button
+
+    def _compose_paging(self, result: PromptBrowseResult) -> ComposeResult:
+        """Render the minimal bounded page controls required for exact browse."""
+        first = (result.page - 1) * result.scope.page_size + 1
+        last = min(result.total_items, first + len(result.items) - 1)
+        toolbar = Horizontal(classes="ds-toolbar")
+        toolbar.styles.height = "auto"
+        with toolbar:
+            yield Button(
+                "Previous",
+                id="library-prompts-page-previous",
+                classes="library-canvas-action",
+                compact=True,
+                disabled=result.page <= 1,
+            )
+            yield Static(
+                f"Page {result.page} of {result.total_pages} · "
+                f"showing {first}–{last} of {result.total_items}",
+                id="library-prompts-page-label",
+                markup=False,
+            )
+            yield Button(
+                "Next",
+                id="library-prompts-page-next",
+                classes="library-canvas-action",
+                compact=True,
+                disabled=result.page >= result.total_pages,
+            )
 
     def _compose_import_row(self) -> ComposeResult:
         """Render the inline Import row: a path Input, then a Run/Cancel

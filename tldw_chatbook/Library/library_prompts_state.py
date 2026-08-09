@@ -151,9 +151,11 @@ def _prompt_browse_integer(value: Any, *, field: str, minimum: int) -> int:
 
 
 def _freeze_prompt_browse_value(value: Any) -> Any:
-    """Return an immutable detached copy of one JSON-like browse value."""
+    """Detach one service value, normalizing timestamps into immutable text."""
     if value is None or type(value) in {str, bool, int, float}:
         return value
+    if isinstance(value, datetime):
+        return value.isoformat()
     if isinstance(value, Mapping):
         if any(type(key) is not str for key in value):
             raise TypeError("Prompt browse mappings must use JSON-like string keys.")
@@ -1427,7 +1429,7 @@ def _resolve_editor_prompt_id(detail: Mapping[str, Any]) -> int | None:
 
 
 def _row(record: Mapping[str, Any], *, now: datetime) -> PromptListRow | None:
-    prompt_id = _to_int(record.get("id"))
+    prompt_id = _to_int(record.get("local_id")) or _to_int(record.get("id"))
     if prompt_id is None:
         return None
     # Task 8b D2/U1: surfaces the prompt's PURPOSE (details) instead of
@@ -1508,6 +1510,28 @@ def build_prompts_list_state(
         row for row in (_row(record, now=now) for record in items) if row is not None
     )
     return PromptsListState(rows=rows, count=len(rows), sort=sort)
+
+
+def build_prompt_browse_list_state(
+    result: PromptBrowseResult, *, now: datetime
+) -> PromptsListState:
+    """Project an exact service-backed page without filtering or sorting it.
+
+    Args:
+        result: Immutable browse result whose page order is authoritative.
+        now: Reference time used for row-relative timestamps.
+
+    Returns:
+        Display rows in the service-provided order with normalized local ids.
+    """
+    rows = tuple(
+        row for row in (_row(record, now=now) for record in result.items) if row
+    )
+    return PromptsListState(
+        rows=rows,
+        count=len(rows),
+        sort="name" if result.scope.sort_by == "name" else "newest",
+    )
 
 
 def build_prompt_editor_state(

@@ -335,7 +335,10 @@ def test_browse_prompt_result_constructor_deeply_freezes_and_detaches_items():
     source = {
         "id": 8,
         "values": [None, "text", True, 3, 4.5],
-        "metadata": {"labels": ["stable"]},
+        "metadata": {
+            "labels": ["stable"],
+            "seen_at": datetime(2026, 8, 9, tzinfo=timezone.utc),
+        },
     }
     source_items = [source]
 
@@ -348,6 +351,7 @@ def test_browse_prompt_result_constructor_deeply_freezes_and_detaches_items():
     assert len(result.items) == 1
     assert result.items[0]["values"] == (None, "text", True, 3, 4.5)
     assert result.items[0]["metadata"]["labels"] == ("stable",)
+    assert result.items[0]["metadata"]["seen_at"] == "2026-08-09T00:00:00+00:00"
     with pytest.raises(TypeError):
         result.items[0]["id"] = 10  # type: ignore[index]
 
@@ -643,6 +647,45 @@ def test_browse_prompt_scope_clamps_to_last_exact_page_or_first_empty_page():
     )
     with pytest.raises(ValueError, match="total_pages"):
         prompts_state_module.clamp_prompt_browse_scope(scope, total_pages=-1)
+
+
+def test_browse_prompt_list_state_preserves_service_order_and_local_identity():
+    scope = prompts_state_module.PromptBrowseScope(
+        sort_by="name", sort_order="desc", page_size=2
+    )
+    result = prompts_state_module.build_prompt_browse_result(
+        scope,
+        {
+            "items": [
+                {
+                    "id": "local:prompt:uuid-z",
+                    "local_id": 9,
+                    "name": "Zulu",
+                    "last_modified": datetime(2020, 1, 1, tzinfo=timezone.utc),
+                },
+                {
+                    "id": "local:prompt:uuid-a",
+                    "local_id": 4,
+                    "name": "Alpha",
+                    "last_modified": "2030-01-01T00:00:00+00:00",
+                },
+            ],
+            "total_items": 2,
+            "total_pages": 1,
+            "current_page": 1,
+            "per_page": 2,
+        },
+    )
+
+    state = prompts_state_module.build_prompt_browse_list_state(result, now=NOW)
+
+    assert [(row.prompt_id, row.name) for row in state.rows] == [
+        (9, "Zulu"),
+        (4, "Alpha"),
+    ]
+    assert state.count == 2
+    assert state.sort == "name"
+    assert result.items[0]["last_modified"] == "2020-01-01T00:00:00+00:00"
 
 
 def test_list_state_newest_sort_orders_by_modified_desc():

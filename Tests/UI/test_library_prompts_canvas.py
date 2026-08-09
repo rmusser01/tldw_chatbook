@@ -37,6 +37,8 @@ from textual.widgets import Button, Checkbox, Collapsible, Input, Static, TextAr
 
 from tldw_chatbook.DB.Prompts_DB import ConflictError, DatabaseError, PromptsDatabase
 from tldw_chatbook.Library.library_prompts_state import (
+    PromptBrowseResult,
+    PromptBrowseScope,
     PromptEditorState,
     PromptHistoryState,
     PromptHistoryRestoreOutcome,
@@ -45,6 +47,9 @@ from tldw_chatbook.Library.library_prompts_state import (
     apply_prompt_history_count,
     apply_prompt_history_page,
     apply_prompt_history_preview,
+    begin_prompt_browse,
+    build_prompt_browse_error,
+    build_prompt_browse_result,
     build_prompt_editor_state,
     build_prompt_history_page,
     build_prompt_history_state,
@@ -181,6 +186,38 @@ def _three_row_state(*, sort: str = "newest") -> PromptsListState:
         ),
         count=3,
         sort=sort,
+    )
+
+
+def _browse_result(
+    *,
+    items: list[dict[str, Any]] | None = None,
+    query: str = "",
+    collection_id: int | None = None,
+    page: int = 1,
+    page_size: int = 50,
+    total_items: int | None = None,
+    request_token: int = 1,
+) -> PromptBrowseResult:
+    """Build one exact settled result for prompt-canvas tests."""
+    rows = items or []
+    total = len(rows) if total_items is None else total_items
+    total_pages = (total + page_size - 1) // page_size if total else 0
+    return build_prompt_browse_result(
+        PromptBrowseScope(
+            query=query,
+            collection_id=collection_id,
+            page=page,
+            page_size=page_size,
+        ),
+        {
+            "items": rows,
+            "total_items": total,
+            "total_pages": total_pages,
+            "current_page": page if total else 1,
+            "per_page": page_size,
+        },
+        request_token=request_token,
     )
 
 
@@ -905,6 +942,204 @@ async def test_prompts_canvas_sort_label_reflects_sort_mode():
         assert "Name" in str(sort_button.label)
 
 
+@pytest.mark.asyncio
+async def test_prompts_canvas_loading_keeps_search_and_toolbar_stable():
+    scope = PromptBrowseScope(query="plan")
+    loading = begin_prompt_browse(scope, request_token=4)
+    app = _CanvasHost(
+        PromptsListState(rows=(), count=0, sort="newest"),
+        browse_result=loading,
+        filter_value=scope.query,
+    )
+
+    async with app.run_test() as pilot:
+        assert pilot.app.query_one("#library-prompts-filter", Input).value == "plan"
+        assert pilot.app.query_one("#library-prompts-sort", Button)
+        assert pilot.app.query_one("#library-prompts-import", Button)
+        loading_line = pilot.app.query_one("#library-prompts-loading", Static)
+        assert str(loading_line.renderable) == "Loading prompts…"
+        assert not pilot.app.query(".library-prompt-row")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("result", "expected"),
+    [
+        (_browse_result(), "No prompts yet. Create or import a prompt to begin."),
+        (
+            _browse_result(collection_id=9),
+            "This collection has no prompts. Choose another collection or add prompts.",
+        ),
+        (
+            _browse_result(query="[draft]"),
+            'No prompts match "[draft]". Clear the search or try different words.',
+        ),
+    ],
+    ids=["empty-library", "empty-collection", "no-matches"],
+)
+async def test_prompts_canvas_renders_truthful_literal_empty_states(
+    result: PromptBrowseResult, expected: str
+):
+    app = _CanvasHost(
+        PromptsListState(rows=(), count=0, sort="newest"),
+        browse_result=result,
+        filter_value=result.scope.query,
+    )
+
+    async with app.run_test() as pilot:
+        empty = pilot.app.query_one("#library-prompts-empty", Static)
+        assert str(empty.renderable) == expected
+        assert str(empty.render()) == expected
+        assert not pilot.app.query("#library-prompts-retry")
+
+
+@pytest.mark.asyncio
+async def test_prompts_canvas_error_names_recovery_and_renders_retry():
+    error = build_prompt_browse_error(
+        PromptBrowseScope(query="plan"),
+        request_token=3,
+        error="Couldn't load prompts. Check the local Library and retry.",
+    )
+    app = _CanvasHost(
+        PromptsListState(rows=(), count=0, sort="newest"),
+        browse_result=error,
+        filter_value="plan",
+    )
+
+    async with app.run_test() as pilot:
+        line = pilot.app.query_one("#library-prompts-error", Static)
+        assert str(line.renderable) == error.error
+        assert str(line.render()) == error.error
+        assert pilot.app.query_one("#library-prompts-retry", Button)
+        assert not pilot.app.query("#library-prompts-empty")
+
+
+@pytest.mark.asyncio
+async def test_prompts_canvas_minimal_paging_is_literal_and_keyboard_ordered():
+    items = [
+        {
+            "id": f"local:prompt:uuid-{index}",
+            "local_id": index,
+            "name": f"Prompt {index}",
+            "backend": "local",
+        }
+        for index in range(51, 76)
+    ]
+    result = _browse_result(
+        items=items,
+        page=2,
+        page_size=50,
+        total_items=75,
+    )
+    state = PromptsListState(
+        rows=tuple(
+            PromptListRow(prompt_id=index, name=f"Prompt {index}", secondary="")
+            for index in range(51, 76)
+        ),
+        count=25,
+        sort="newest",
+    )
+    app = _CanvasHost(state, browse_result=result)
+
+    async with app.run_test() as pilot:
+        page_label = pilot.app.query_one("#library-prompts-page-label", Static)
+        assert str(page_label.renderable) == "Page 2 of 2 · showing 51–75 of 75"
+        assert str(page_label.render()) == "Page 2 of 2 · showing 51–75 of 75"
+        previous = pilot.app.query_one("#library-prompts-page-previous", Button)
+        next_page = pilot.app.query_one("#library-prompts-page-next", Button)
+        assert previous.disabled is False
+        assert next_page.disabled is True
+        focusable_ids = [
+            widget.id
+            for widget in pilot.app.screen.focus_chain
+            if widget.id is not None
+        ]
+        assert focusable_ids.index("library-prompts-filter") < focusable_ids.index(
+            "library-prompts-sort"
+        )
+        assert focusable_ids.index("library-prompts-sort") < focusable_ids.index(
+            "library-prompts-page-previous"
+        )
+        assert "library-prompts-page-next" not in focusable_ids
+        assert focusable_ids.index(
+            "library-prompts-page-previous"
+        ) < focusable_ids.index("library-prompt-row-51")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("size", [(64, 24), (120, 40)], ids=["narrow", "wide"])
+@pytest.mark.parametrize(
+    ("result", "state", "selector"),
+    [
+        (
+            _browse_result(
+                items=[
+                    {
+                        "id": "local:prompt:one",
+                        "local_id": 1,
+                        "name": "Visible prompt",
+                        "backend": "local",
+                    }
+                ]
+            ),
+            PromptsListState(
+                rows=(PromptListRow(1, "Visible prompt", ""),),
+                count=1,
+                sort="newest",
+            ),
+            "#library-prompt-row-1",
+        ),
+        (
+            begin_prompt_browse(PromptBrowseScope(), request_token=8),
+            PromptsListState(rows=(), count=0, sort="newest"),
+            "#library-prompts-loading",
+        ),
+        (
+            _browse_result(),
+            PromptsListState(rows=(), count=0, sort="newest"),
+            "#library-prompts-empty",
+        ),
+        (
+            _browse_result(query="[missing]"),
+            PromptsListState(rows=(), count=0, sort="newest"),
+            "#library-prompts-empty",
+        ),
+        (
+            build_prompt_browse_error(
+                PromptBrowseScope(),
+                request_token=9,
+                error="Couldn't load prompts. Check the local Library and retry.",
+            ),
+            PromptsListState(rows=(), count=0, sort="newest"),
+            "#library-prompts-error",
+        ),
+    ],
+    ids=["normal", "loading", "empty", "no-match", "error"],
+)
+async def test_prompts_canvas_browse_states_render_at_narrow_and_wide_sizes(
+    result: PromptBrowseResult,
+    state: PromptsListState,
+    selector: str,
+    size: tuple[int, int],
+):
+    """All exact-browse states paint with stable toolbar dimensions."""
+    app = _StyledCanvasHost(
+        state,
+        browse_result=result,
+        filter_value=result.scope.query,
+    )
+
+    async with app.run_test(size=size) as pilot:
+        rendered = pilot.app.query_one(selector)
+        search = pilot.app.query_one("#library-prompts-filter", Input)
+        sort = pilot.app.query_one("#library-prompts-sort", Button)
+        assert rendered.region.width > 0
+        assert rendered.region.height > 0
+        assert search.region.width > 0
+        assert sort.region.width > 0
+        assert search.region.y < rendered.region.bottom
+
+
 # ---------------------------------------------------------------------------
 # Task 5: toolbar Import… row widget tests
 # ---------------------------------------------------------------------------
@@ -978,78 +1213,82 @@ async def test_prompts_canvas_import_path_input_is_not_packed_into_a_toolbar_row
 # ---------------------------------------------------------------------------
 
 
-def test_build_library_prompts_state_reads_local_source_records():
+def test_build_library_prompts_state_reads_browse_result_not_sampled_source():
+    result = _browse_result(
+        items=[
+            {
+                "id": "local:prompt:result-2",
+                "local_id": 2,
+                "name": "Browse result",
+                "backend": "local",
+            }
+        ]
+    )
     fake = SimpleNamespace(
         _local_source_records={
             "prompts": (
-                2,
+                99,
                 (
                     {
-                        "id": 1,
-                        "name": "Summarize",
-                        "author": "Alice",
-                        "last_modified": "2026-07-01T00:00:00+00:00",
-                    },
-                    {
-                        "id": 2,
-                        "name": "Translate",
-                        "author": "Bob",
-                        "last_modified": "2026-07-02T00:00:00+00:00",
+                        "id": 999,
+                        "name": "Sampled row that must never render",
                     },
                 ),
             )
         },
-        _library_prompts_filter="",
-        _library_prompts_sort="newest",
+        _library_prompt_browse_controller=SimpleNamespace(result=result),
     )
+
     state = LibraryScreen._build_library_prompts_state(fake)
-    assert state.count == 2
-    assert [row.prompt_id for row in state.rows] == [2, 1]  # newest first
+
+    assert state.count == 1
+    assert [(row.prompt_id, row.name) for row in state.rows] == [(2, "Browse result")]
 
 
-def test_build_library_prompts_state_tolerates_missing_entry():
+def test_build_library_prompts_state_uses_loading_result_without_source_lookup():
+    loading = begin_prompt_browse(PromptBrowseScope(), request_token=2)
     fake = SimpleNamespace(
-        _local_source_records={},
-        _library_prompts_filter="",
-        _library_prompts_sort="newest",
+        _local_source_records={"prompts": (500, ({"id": 999},))},
+        _library_prompt_browse_controller=SimpleNamespace(result=loading),
     )
+
     state = LibraryScreen._build_library_prompts_state(fake)
+
     assert state.rows == ()
     assert state.count == 0
 
 
 def test_handle_library_prompts_sort_cycles_newest_to_name():
-    calls = []
+    calls: list[PromptBrowseScope] = []
     fake = SimpleNamespace(
-        _library_prompts_sort="newest",
-        refresh=lambda recompose=False: calls.append(recompose),
+        _library_prompt_browse_controller=SimpleNamespace(scope=PromptBrowseScope()),
+        _request_library_prompts_browse=lambda scope, **_kwargs: calls.append(scope),
     )
     event = SimpleNamespace(stop=lambda: None)
     LibraryScreen.handle_library_prompts_sort(fake, event)
-    assert fake._library_prompts_sort == "name"
-    assert calls == [True]
+    assert calls == [PromptBrowseScope(sort_by="name", sort_order="asc")]
 
 
 def test_handle_library_prompts_sort_cycles_name_back_to_newest():
+    calls: list[PromptBrowseScope] = []
     fake = SimpleNamespace(
-        _library_prompts_sort="name",
-        refresh=lambda recompose=False: None,
+        _library_prompt_browse_controller=SimpleNamespace(
+            scope=PromptBrowseScope(sort_by="name", sort_order="asc")
+        ),
+        _request_library_prompts_browse=lambda scope, **_kwargs: calls.append(scope),
     )
     LibraryScreen.handle_library_prompts_sort(fake, SimpleNamespace(stop=lambda: None))
-    assert fake._library_prompts_sort == "newest"
+    assert calls == [PromptBrowseScope()]
 
 
-def test_handle_library_prompts_filter_submitted_sets_filter():
-    calls = []
+def test_handle_library_prompts_filter_submitted_flushes_debounce_once():
+    calls: list[str] = []
     fake = SimpleNamespace(
-        _library_prompts_filter="",
-        _safe_text=LibraryScreen._safe_text,
-        refresh=lambda recompose=False: calls.append(recompose),
+        _flush_library_prompts_search=lambda query: calls.append(query),
     )
     event = SimpleNamespace(value="plan", stop=lambda: None)
     LibraryScreen.handle_library_prompts_filter(fake, event)
-    assert fake._library_prompts_filter == "plan"
-    assert calls == [True]
+    assert calls == ["plan"]
 
 
 ## ``test_handle_library_prompt_row_records_selected_id`` (the old
@@ -1067,20 +1306,67 @@ def test_handle_library_prompts_filter_submitted_sets_filter():
 
 
 class _FakePromptScopeServiceWithList:
-    """Prompt-scope fake exposing both ``count_prompts`` and ``list_prompts``
-    (unlike ``test_library_shell._FakePromptScopeService``, which only
-    exposes the count seam) -- shaped like the real
-    ``PromptScopeService.list_prompts`` normalized envelope (composite
-    string ``id``, integer ``local_id``) so the screen's remap-to-raw-shape
-    adapter is exercised for real."""
+    """Prompt-scope fake proving browse is isolated from the sampled list seam."""
 
-    def __init__(self, prompts):
+    def __init__(self, prompts, *, browse_failures: int = 0):
         self._prompts = prompts
+        self._browse_failures = browse_failures
+        self.browse_calls: list[dict[str, Any]] = []
+        self.browse_threads: list[int] = []
+        self.list_calls = 0
 
     async def count_prompts(self, *, mode="local", **kwargs):
         return len(self._prompts)
 
     async def list_prompts(self, *, mode="local", page=1, per_page=10, **kwargs):
+        self.list_calls += 1
+        raise AssertionError("Library Prompt rows must not use list_prompts")
+
+    async def browse_prompts(
+        self,
+        *,
+        mode="local",
+        query="",
+        collection_id=None,
+        sort_by="last_modified",
+        sort_order="desc",
+        page=1,
+        page_size=50,
+    ):
+        self.browse_threads.append(threading.get_ident())
+        self.browse_calls.append(
+            {
+                "mode": mode,
+                "query": query,
+                "collection_id": collection_id,
+                "sort_by": sort_by,
+                "sort_order": sort_order,
+                "page": page,
+                "page_size": page_size,
+            }
+        )
+        if self._browse_failures:
+            self._browse_failures -= 1
+            raise RuntimeError("temporary browse failure")
+        matching = [
+            prompt
+            for prompt in self._prompts
+            if not query
+            or query.casefold()
+            in f"{prompt.get('name', '')} {prompt.get('details', '')}".casefold()
+        ]
+        matching.sort(
+            key=(
+                (lambda prompt: str(prompt.get("name") or "").casefold())
+                if sort_by == "name"
+                else (lambda prompt: str(prompt.get("last_modified") or ""))
+            ),
+            reverse=sort_order == "desc",
+        )
+        total_items = len(matching)
+        total_pages = (total_items + page_size - 1) // page_size if total_items else 0
+        current_page = min(page, max(1, total_pages))
+        start = (current_page - 1) * page_size
         items = [
             {
                 "id": f"local:prompt:{prompt['id']}",
@@ -1093,29 +1379,27 @@ class _FakePromptScopeServiceWithList:
                 "last_modified": prompt.get("last_modified"),
                 "version": prompt.get("version"),
             }
-            for prompt in self._prompts
+            for prompt in matching[start : start + page_size]
         ]
         return {
             "items": items,
-            "total_pages": 1,
-            "current_page": page,
-            "total_items": len(items),
-            "page": page,
-            "per_page": per_page,
+            "total_pages": total_pages,
+            "current_page": current_page,
+            "total_items": total_items,
+            "page": current_page,
+            "per_page": page_size,
         }
 
 
 @pytest.mark.asyncio
 async def test_library_shell_prompts_row_press_renders_list_canvas():
-    """Pressing the Prompts rail row -- with a fake service exposing both
-    ``count_prompts`` and ``list_prompts`` -- renders
-    ``LibraryPromptsListCanvas`` with a row button per fetched prompt,
-    replacing the old placeholder-empty canvas fallback."""
+    """Prompt rows come only from exact browse, whose local work is off-loop."""
+    ui_thread = threading.get_ident()
     app = _build_test_app()
     app.notes_scope_service = StaticLibraryNotesListScopeService([])
     app.media_reading_scope_service = StaticLibraryMediaScopeService([])
     app.chat_conversation_scope_service = StaticLibraryConversationScopeService([])
-    app.prompt_scope_service = _FakePromptScopeServiceWithList(
+    prompt_service = _FakePromptScopeServiceWithList(
         [
             {
                 "id": 5,
@@ -1131,29 +1415,143 @@ async def test_library_shell_prompts_row_press_renders_list_canvas():
             },
         ]
     )
+    app.prompt_scope_service = prompt_service
     host = LibraryHarness(app)
 
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
         screen.query_one("#library-row-browse-prompts").press()
-        await pilot.pause()
-        await pilot.pause()
+        await _wait_for_selector(screen, pilot, "#library-prompt-row-5")
 
         assert screen._library_selected_row_id == LIBRARY_ROW_BROWSE_PROMPTS
         canvas = screen.query_one("#library-prompts-canvas", LibraryPromptsListCanvas)
         assert canvas is not None
         assert screen.query_one("#library-prompt-row-5", Button)
         assert screen.query_one("#library-prompt-row-6", Button)
+        assert prompt_service.list_calls == 0
+        assert prompt_service.browse_calls == [
+            {
+                "mode": "local",
+                "query": "",
+                "collection_id": None,
+                "sort_by": "last_modified",
+                "sort_order": "desc",
+                "page": 1,
+                "page_size": 50,
+            }
+        ]
+        assert prompt_service.browse_threads
+        assert set(prompt_service.browse_threads) == {prompt_service.browse_threads[0]}
+        assert prompt_service.browse_threads[0] != ui_thread
+
+
+@pytest.mark.asyncio
+async def test_library_prompts_enter_flushes_debounce_without_duplicate_call():
+    """Enter dispatches the pending token once and cancels its timer."""
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    service = _FakePromptScopeServiceWithList(
+        [{"id": 5, "name": "Summarize", "details": "Summarize a plan"}]
+    )
+    app.prompt_scope_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-prompts").press()
+        await _wait_for_selector(screen, pilot, "#library-prompt-row-5")
+
+        screen._queue_library_prompts_search("plan")
+        assert screen._library_prompts_debounce_timer is not None
+        screen._flush_library_prompts_search("plan")
+        await _wait_for_selector(screen, pilot, "#library-prompt-row-5")
+        await pilot.pause(0.35)
+
+        assert [call["query"] for call in service.browse_calls] == ["", "plan"]
+        assert screen._library_prompts_debounce_timer is None
+
+
+@pytest.mark.asyncio
+async def test_library_prompts_retry_recovers_service_error():
+    """The explicit Retry control reruns the same scope with a fresh token."""
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    service = _FakePromptScopeServiceWithList(
+        [{"id": 5, "name": "Recovered"}],
+        browse_failures=1,
+    )
+    app.prompt_scope_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-prompts").press()
+        await _wait_for_selector(screen, pilot, "#library-prompts-retry")
+        first_token = screen._library_prompt_browse_controller.result.request_token
+
+        screen.query_one("#library-prompts-retry", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-prompt-row-5")
+
+        assert len(service.browse_calls) == 2
+        assert (
+            screen._library_prompt_browse_controller.result.request_token > first_token
+        )
+        assert screen._library_prompt_browse_controller.result.status == "ready"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("next_page", [1, 2], ids=["surviving-row", "fallback"])
+async def test_library_prompts_result_restores_row_or_toolbar_focus(next_page: int):
+    """Settle to a surviving row, or the stable sort control if it vanished."""
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    service = _FakePromptScopeServiceWithList(
+        [
+            {
+                "id": index,
+                "name": f"Prompt {index:02d}",
+                "last_modified": "2026-07-01T00:00:00+00:00",
+            }
+            for index in range(1, 52)
+        ]
+    )
+    app.prompt_scope_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-prompts").press()
+        await _wait_for_selector(screen, pilot, "#library-prompt-row-1")
+        row = screen.query_one("#library-prompt-row-1", Button)
+        row.focus()
+
+        screen._request_library_prompts_browse(
+            replace(screen._library_prompt_browse_controller.scope, page=next_page),
+            focus_identity="library-prompt-row-1",
+        )
+        selector = (
+            "#library-prompt-row-1" if next_page == 1 else "#library-prompt-row-51"
+        )
+        await _wait_for_selector(screen, pilot, selector)
+        await pilot.pause()
+
+        expected_focus = (
+            "library-prompt-row-1" if next_page == 1 else "library-prompts-sort"
+        )
+        assert screen.focused is not None
+        assert screen.focused.id == expected_focus
 
 
 @pytest.mark.asyncio
 async def test_library_shell_prompts_row_secondary_line_shows_details_not_author():
     """Task 8b D2/U1: the list row's secondary line surfaces the prompt's
     PURPOSE (``details``) instead of ``author · age`` -- exercises the full
-    pipeline: the screen's ``_prompts_page_records_or_empty`` remap now
-    carries ``details`` through, and the pure state builder's secondary
-    line uses it instead of ``author``."""
+    exact-browse pipeline: normalized service records carry ``details``
+    through, and the pure state projection uses it instead of ``author``."""
     app = _build_test_app()
     app.notes_scope_service = StaticLibraryNotesListScopeService([])
     app.media_reading_scope_service = StaticLibraryMediaScopeService([])
@@ -1175,8 +1573,7 @@ async def test_library_shell_prompts_row_secondary_line_shows_details_not_author
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
         screen.query_one("#library-row-browse-prompts").press()
-        await pilot.pause()
-        await pilot.pause()
+        await _wait_for_selector(screen, pilot, "#library-prompt-row-5")
 
         button = screen.query_one("#library-prompt-row-5", Button)
         label_text = str(button.label)
@@ -1237,14 +1634,12 @@ async def test_library_real_recipe_list_pipeline_preserves_type_source_and_lanes
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
         screen.query_one("#library-row-browse-prompts").press()
-        await pilot.pause()
-        await pilot.pause()
+        await _wait_for_selector(screen, pilot, f"#library-prompt-row-{prompt_id}")
 
         button = screen.query_one(f"#library-prompt-row-{prompt_id}", Button)
         assert "Recipe · Local · System + User" in str(button.label)
-        _count, records = screen._local_source_records["prompts"]
-        [record] = records
-        assert record["id"] == prompt_id
+        [record] = screen._library_prompt_browse_controller.result.items
+        assert record["id"] == f"local:prompt:{prompt_uuid}"
         assert record["local_id"] == prompt_id
         assert record["source_id"] == prompt_uuid
         assert record["uuid"] == prompt_uuid
@@ -1562,9 +1957,13 @@ def _wire_empty_non_prompt_services(app) -> None:
 async def _open_prompt_editor(screen, pilot, prompt_id: int) -> None:
     """Open the rail's Prompts row, then a specific prompt's row."""
     screen.query_one("#library-row-browse-prompts").press()
-    await pilot.pause()
-    await pilot.pause()
-    screen.query_one(f"#library-prompt-row-{prompt_id}", Button).press()
+    row = await _wait_for_selector(
+        screen,
+        pilot,
+        f"#library-prompt-row-{prompt_id}",
+    )
+    assert isinstance(row, Button)
+    row.press()
     await pilot.pause()
     for _ in range(150):
         if screen._library_prompt_detail is not None:
