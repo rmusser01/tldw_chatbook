@@ -90,7 +90,8 @@ Category totals: 13 raw/processed/extracted input, 8 prompt content, 8 credentia
 | `_dispatch_to_api` | exception/error detail | `Error during dispatch to API` (498) |
 | `analyze` | raw/processed/extracted input | `Extracted text content` (565) |
 | `analyze` | response/output content | `Failed to summarize chunk` (721); `Summarization failed` (773); `Final Summary` (779) |
-| `analyze` | exception/error detail | `Error consuming generator` (586); `Critical error in summarize function` (791) |
+| `analyze.consume_generator` | exception/error detail | `Error consuming generator` (586) |
+| `analyze` | exception/error detail | `Critical error in summarize function` (791) |
 | `summarize_with_openai` | prompt content | `Custom prompt` (839); `System Message` (840) |
 | `summarize_with_openai` | credential fragment | `Using API key from config` (819); `OpenAI API Key` (849) |
 | `summarize_with_openai` | private endpoint/path | `Posting request to` (896) |
