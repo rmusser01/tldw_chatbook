@@ -3,17 +3,22 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import copy
+import hashlib
 import inspect
 import json
 import math
 import re
 from collections.abc import Awaitable, Callable, Iterable
-from typing import TYPE_CHECKING, Any, NoReturn
+from binascii import Error as Base64Error
+from typing import TYPE_CHECKING, Any, NoReturn, overload
+from urllib.parse import parse_qsl, unquote, urlencode, urlsplit, urlunsplit
 
 from jsonschema import Draft7Validator, Draft202012Validator
 from jsonschema.exceptions import SchemaError
 from mcp_unified.gateway import (
+    GatewayApplicationError,
     GatewayJSONValue,
     GatewayLimits,
     GatewayRequestContext,
@@ -37,6 +42,25 @@ _TOOL_NAME = re.compile(r"[A-Za-z0-9_.-]{1,128}\Z")
 _GATEWAY_LIMITS = GatewayLimits()
 _ToolHandler = Callable[..., Awaitable[GatewayJSONValue]]
 _LocalToolHandler = Callable[[dict[str, Any]], ToolResult]
+_ResourceHandler = Callable[..., Awaitable[dict[str, Any]]]
+_ResourceListHandler = Callable[[], Awaitable[list[dict[str, Any]]]]
+
+MAX_RESOURCE_CHUNK_BYTES = 256 * 1024
+CONTINUATION_QUERY_KEY = "tldw_continue"
+
+_CONTINUATION_VERSION = 1
+_MAX_CONTINUATION_TOKEN_CHARS = 512
+_MAX_RESOURCE_URI_CHARS = 2_048
+_BAD_PERCENT_ENCODING = re.compile(r"%(?![0-9A-Fa-f]{2})")
+_CONTINUATION_TOKEN = re.compile(r"[A-Za-z0-9_-]{1,512}\Z")
+_SHA256_HEX = re.compile(r"[0-9a-f]{64}\Z")
+_RESOURCE_TEMPLATE_VARIABLES = {
+    "conversation://{conversation_id}": "conversation_id",
+    "note://{note_id}": "note_id",
+    "character://{character_id}": "character_id",
+    "media://{media_id}": "media_id",
+    "rag-chunk://{chunk_uuid}": "chunk_uuid",
+}
 
 _OPERATOR_APPROVAL_ERROR = (
     "operator_approval_required",
@@ -59,6 +83,14 @@ _LOCAL_FAILURES = {
     ),
 }
 _GENERIC_LOCAL_FAILURE = ("local_tool_failed", "Local tool execution failed.")
+
+
+def _unique_json_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    """Reject duplicate cursor keys instead of silently taking the last value."""
+    value = dict(pairs)
+    if len(value) != len(pairs):
+        raise ValueError("duplicate JSON key")
+    return value
 
 
 def _is_finite_json_structure(value: object, *, max_depth: int) -> bool:
@@ -117,6 +149,11 @@ class ChatbookGatewayRuntime:
 
         self._tool_handlers: dict[str, _ToolHandler] = {}
         self._local_tool_handlers: dict[str, _LocalToolHandler] = {}
+        self._resource_handlers: dict[
+            str, tuple[str, re.Pattern[str], _ResourceHandler]
+        ] = {}
+        self._resource_template_descriptors: dict[str, dict[str, str]] = {}
+        self._resource_list_handler: _ResourceListHandler | None = None
         self._finalized = False
 
     @staticmethod
@@ -250,11 +287,393 @@ class ChatbookGatewayRuntime:
         self._tool_descriptors.update(descriptors)
         self._local_tool_handlers.update(handlers)
 
+    def resource(self, template: str) -> Callable[[_ResourceHandler], _ResourceHandler]:
+        """Return a decorator for one of Chatbook's five resource templates."""
+        if self._finalized:
+            raise RuntimeError("runtime is finalized")
+        variable = _RESOURCE_TEMPLATE_VARIABLES.get(template)
+        if variable is None:
+            raise ValueError("resource template is not supported")
+        if template in self._resource_handlers:
+            raise ValueError("duplicate resource template")
+        scheme = template.split(":", 1)[0]
+        matcher = re.compile(rf"{re.escape(scheme)}://(?P<{variable}>[^/?#]+)\Z")
+
+        def decorator(handler: _ResourceHandler) -> _ResourceHandler:
+            if self._finalized:
+                raise RuntimeError("runtime is finalized")
+            if template in self._resource_handlers:
+                raise ValueError("duplicate resource template")
+            if not inspect.iscoroutinefunction(handler):
+                raise ValueError("resource handler must be async")
+            parameters = inspect.signature(handler).parameters
+            if list(parameters) != [variable] or parameters[variable].kind not in {
+                inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                inspect.Parameter.KEYWORD_ONLY,
+            }:
+                raise ValueError("resource identifier and handler parameter must match")
+            name = getattr(handler, "__name__", None)
+            if not isinstance(name, str) or _TOOL_NAME.fullmatch(name) is None:
+                raise ValueError("resource handler name is invalid")
+            descriptor = {"uriTemplate": template, "name": name}
+            doc = inspect.getdoc(handler)
+            if doc:
+                descriptor["description"] = doc.splitlines()[0].strip()
+            self._resource_handlers[template] = (variable, matcher, handler)
+            self._resource_template_descriptors[template] = descriptor
+            return handler
+
+        return decorator
+
+    @overload
+    def list_resources(
+        self, context: None = None
+    ) -> Callable[[_ResourceListHandler], _ResourceListHandler]: ...
+
+    @overload
+    def list_resources(
+        self, context: GatewayRequestContext
+    ) -> Awaitable[list[dict[str, Any]]]: ...
+
+    def list_resources(
+        self, context: GatewayRequestContext | None = None
+    ) -> (
+        Callable[[_ResourceListHandler], _ResourceListHandler]
+        | Awaitable[list[dict[str, Any]]]
+    ):
+        """Register the dynamic catalog or return its detached current value."""
+        if context is not None:
+            return self._list_resources(context)
+        if self._finalized:
+            raise RuntimeError("runtime is finalized")
+
+        def decorator(handler: _ResourceListHandler) -> _ResourceListHandler:
+            if self._finalized:
+                raise RuntimeError("runtime is finalized")
+            if self._resource_list_handler is not None:
+                raise ValueError("duplicate resource list handler")
+            if not inspect.iscoroutinefunction(handler):
+                raise ValueError("resource list handler must be async")
+            if inspect.signature(handler).parameters:
+                raise ValueError("resource list handler must not accept arguments")
+            self._resource_list_handler = handler
+            return handler
+
+        return decorator
+
+    async def _list_resources(
+        self, context: GatewayRequestContext
+    ) -> list[dict[str, Any]]:
+        self._require_finalized()
+        if self._resource_list_handler is None:
+            return []
+        resources = await self._resource_list_handler()
+        if not isinstance(resources, list):
+            self._raise_invalid_resource_result()
+        return [self._canonical_resource_descriptor(item) for item in resources]
+
+    async def list_resource_templates(
+        self, context: GatewayRequestContext
+    ) -> list[dict[str, Any]]:
+        """Return detached resource templates in their accepted order."""
+        self._require_finalized()
+        return copy.deepcopy(
+            [
+                self._resource_template_descriptors[template]
+                for template in _RESOURCE_TEMPLATE_VARIABLES
+                if template in self._resource_template_descriptors
+            ]
+        )
+
+    async def read_resource(
+        self,
+        uri: str,
+        context: GatewayRequestContext,
+    ) -> dict[str, Any]:
+        """Route and map one bounded canonical resource chunk."""
+        self._require_finalized()
+        base_uri, token = self._parse_resource_uri(uri)
+        variable, handler, identifier = self._match_resource(base_uri)
+        state = self._decode_continuation(token) if token is not None else None
+        base_digest = self._digest(base_uri)
+        if state is not None and state["b"] != base_digest:
+            self._raise_invalid_resource_uri()
+
+        raw_result = await handler(**{variable: identifier})
+        content, mime_type, metadata = self._canonical_resource_result(raw_result)
+        try:
+            content_bytes = content.encode("utf-8")
+        except UnicodeEncodeError:
+            self._raise_invalid_resource_result()
+        content_digest = hashlib.sha256(content_bytes).hexdigest()
+        start = 0
+        if state is not None:
+            if state["c"] != content_digest:
+                raise GatewayApplicationError(
+                    "Resource changed; restart from the base URI.",
+                    reason_code="resource_changed",
+                    kind="resource",
+                ) from None
+            start = state["o"]
+            if start <= 0 or start >= len(content):
+                self._raise_invalid_resource_uri()
+
+        chunk = (
+            content[start:]
+            .encode("utf-8")[:MAX_RESOURCE_CHUNK_BYTES]
+            .decode("utf-8", errors="ignore")
+        )
+        end = start + len(chunk)
+        has_more = end < len(content)
+        next_uri = None
+        if has_more:
+            next_token = self._encode_continuation(
+                offset=end,
+                base_digest=base_digest,
+                content_digest=content_digest,
+            )
+            next_uri = f"{base_uri}?{urlencode({CONTINUATION_QUERY_KEY: next_token})}"
+            if len(next_uri) > _MAX_RESOURCE_URI_CHARS:
+                self._raise_invalid_resource_result()
+
+        result_meta: dict[str, Any] = {
+            "tldw.chatbook/continuation": {
+                "startChar": start,
+                "endChar": end,
+                "totalChars": len(content),
+                "totalBytes": len(content_bytes),
+                "returnedBytes": len(chunk.encode("utf-8")),
+                "hasMore": has_more,
+                "nextUri": next_uri,
+            }
+        }
+        if metadata:
+            result_meta["tldw.chatbook/resource"] = metadata
+        return {
+            "contents": [
+                {
+                    "uri": base_uri,
+                    "mimeType": mime_type,
+                    "text": chunk,
+                }
+            ],
+            "_meta": result_meta,
+        }
+
+    @staticmethod
+    def _canonical_resource_descriptor(descriptor: object) -> dict[str, Any]:
+        if not isinstance(descriptor, dict):
+            ChatbookGatewayRuntime._raise_invalid_resource_result()
+        uri = descriptor.get("uri")
+        name = descriptor.get("name")
+        mime_type = descriptor.get("mimeType")
+        if (
+            not isinstance(uri, str)
+            or not uri
+            or len(uri) > _MAX_RESOURCE_URI_CHARS
+            or any(character.isspace() or ord(character) < 32 for character in uri)
+            or not isinstance(name, str)
+            or not name
+            or len(name) > 512
+            or not isinstance(mime_type, str)
+            or not mime_type
+            or len(mime_type) > 255
+        ):
+            ChatbookGatewayRuntime._raise_invalid_resource_result()
+        canonical = {"uri": uri, "name": name, "mimeType": mime_type}
+        if "description" in descriptor:
+            description = descriptor["description"]
+            if not isinstance(description, str) or len(description) > 4_096:
+                ChatbookGatewayRuntime._raise_invalid_resource_result()
+            canonical["description"] = description
+        return canonical
+
+    @staticmethod
+    def _canonical_resource_result(
+        result: object,
+    ) -> tuple[str, str, dict[str, Any] | None]:
+        if not isinstance(result, dict):
+            ChatbookGatewayRuntime._raise_invalid_resource_result()
+        result_uri = result.get("uri")
+        name = result.get("name")
+        mime_type = result.get("mimeType")
+        content = result.get("content")
+        if (
+            not isinstance(result_uri, str)
+            or not result_uri
+            or len(result_uri) > _MAX_RESOURCE_URI_CHARS
+            or not isinstance(name, str)
+            or not name
+            or len(name) > 512
+            or not isinstance(mime_type, str)
+            or not mime_type
+            or len(mime_type) > 255
+            or not isinstance(content, str)
+        ):
+            ChatbookGatewayRuntime._raise_invalid_resource_result()
+        if "metadata" not in result:
+            return content, mime_type, None
+        metadata = result["metadata"]
+        if not isinstance(metadata, dict):
+            ChatbookGatewayRuntime._raise_invalid_resource_result()
+        if not metadata:
+            return content, mime_type, None
+        if not _is_finite_json_structure(
+            metadata, max_depth=_GATEWAY_LIMITS.max_json_depth - 2
+        ):
+            ChatbookGatewayRuntime._raise_invalid_resource_result()
+        try:
+            serialized = json.dumps(
+                metadata,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+                allow_nan=False,
+            ).encode("utf-8")
+            normalized = json.loads(serialized)
+        except (RecursionError, TypeError, ValueError, UnicodeEncodeError):
+            ChatbookGatewayRuntime._raise_invalid_resource_result()
+        if not isinstance(normalized, dict) or not normalized:
+            ChatbookGatewayRuntime._raise_invalid_resource_result()
+        return content, mime_type, normalized
+
+    @staticmethod
+    def _parse_resource_uri(uri: object) -> tuple[str, str | None]:
+        if (
+            not isinstance(uri, str)
+            or not uri
+            or len(uri) > _MAX_RESOURCE_URI_CHARS
+            or any(character.isspace() or ord(character) < 32 for character in uri)
+            or _BAD_PERCENT_ENCODING.search(uri) is not None
+            or "#" in uri
+        ):
+            ChatbookGatewayRuntime._raise_invalid_resource_uri()
+        try:
+            parsed = urlsplit(uri)
+        except ValueError:
+            ChatbookGatewayRuntime._raise_invalid_resource_uri()
+        if parsed.fragment:
+            ChatbookGatewayRuntime._raise_invalid_resource_uri()
+        token = None
+        if parsed.query:
+            try:
+                pairs = parse_qsl(
+                    parsed.query,
+                    keep_blank_values=True,
+                    strict_parsing=True,
+                    max_num_fields=2,
+                )
+            except ValueError:
+                ChatbookGatewayRuntime._raise_invalid_resource_uri()
+            if (
+                len(pairs) != 1
+                or pairs[0][0] != CONTINUATION_QUERY_KEY
+                or not pairs[0][1]
+            ):
+                ChatbookGatewayRuntime._raise_invalid_resource_uri()
+            token = pairs[0][1]
+        base_uri = urlunsplit(
+            (parsed.scheme.lower(), parsed.netloc, parsed.path, "", "")
+        )
+        return base_uri, token
+
+    def _match_resource(self, base_uri: str) -> tuple[str, _ResourceHandler, str]:
+        for template in _RESOURCE_TEMPLATE_VARIABLES:
+            registration = self._resource_handlers.get(template)
+            if registration is None:
+                continue
+            variable, matcher, handler = registration
+            matched = matcher.fullmatch(base_uri)
+            if matched is None:
+                continue
+            try:
+                identifier = unquote(matched.group(variable), errors="strict")
+            except UnicodeDecodeError:
+                self._raise_invalid_resource_uri()
+            if not identifier:
+                self._raise_invalid_resource_uri()
+            return variable, handler, identifier
+        self._raise_invalid_resource_uri()
+
+    @staticmethod
+    def _digest(value: str) -> str:
+        return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+    @staticmethod
+    def _encode_continuation(
+        *, offset: int, base_digest: str, content_digest: str
+    ) -> str:
+        payload = json.dumps(
+            {
+                "b": base_digest,
+                "c": content_digest,
+                "o": offset,
+                "v": _CONTINUATION_VERSION,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("ascii")
+        return base64.urlsafe_b64encode(payload).decode("ascii").rstrip("=")
+
+    @staticmethod
+    def _decode_continuation(token: str) -> dict[str, Any]:
+        if (
+            len(token) > _MAX_CONTINUATION_TOKEN_CHARS
+            or _CONTINUATION_TOKEN.fullmatch(token) is None
+        ):
+            ChatbookGatewayRuntime._raise_invalid_resource_uri()
+        try:
+            padding = b"=" * (-len(token) % 4)
+            decoded = base64.b64decode(
+                token.encode("ascii") + padding,
+                altchars=b"-_",
+                validate=True,
+            )
+            state = json.loads(decoded, object_pairs_hook=_unique_json_object)
+        except (Base64Error, UnicodeDecodeError, json.JSONDecodeError, ValueError):
+            ChatbookGatewayRuntime._raise_invalid_resource_uri()
+        if (
+            not isinstance(state, dict)
+            or set(state) != {"b", "c", "o", "v"}
+            or not isinstance(state["v"], int)
+            or state["v"] != _CONTINUATION_VERSION
+            or isinstance(state["v"], bool)
+            or isinstance(state["o"], bool)
+            or not isinstance(state["o"], int)
+            or state["o"] <= 0
+            or not isinstance(state["b"], str)
+            or _SHA256_HEX.fullmatch(state["b"]) is None
+            or not isinstance(state["c"], str)
+            or _SHA256_HEX.fullmatch(state["c"]) is None
+        ):
+            ChatbookGatewayRuntime._raise_invalid_resource_uri()
+        return state
+
+    @staticmethod
+    def _raise_invalid_resource_uri() -> NoReturn:
+        raise GatewayApplicationError(
+            "Invalid resource URI.",
+            reason_code="invalid_resource_uri",
+            kind="resource",
+        ) from None
+
+    @staticmethod
+    def _raise_invalid_resource_result() -> NoReturn:
+        raise GatewayApplicationError(
+            "Resource handler returned an invalid result.",
+            reason_code="invalid_resource_result",
+            kind="resource",
+        ) from None
+
     def finalize(self) -> None:
         """Validate exact descriptor/handler identity and freeze registration."""
         handler_names = set(self._tool_handlers) | set(self._local_tool_handlers)
         if set(self._tool_descriptors) != handler_names:
             raise ValueError("tool descriptor and handler names must match exactly")
+        if self._resource_handlers and set(self._resource_handlers) != set(
+            _RESOURCE_TEMPLATE_VARIABLES
+        ):
+            raise ValueError("resource template registrations must match exactly")
         self._finalized = True
 
     def _require_finalized(self) -> None:

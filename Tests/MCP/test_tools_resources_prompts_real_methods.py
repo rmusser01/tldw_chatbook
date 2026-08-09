@@ -395,3 +395,100 @@ def test_get_rag_chunk_resource_reports_not_found_for_unknown_uuid(tmp_path):
     result = asyncio.run(resources.get_rag_chunk_resource("does-not-exist"))
 
     assert result["name"] == "Not Found"
+
+
+def test_gateway_runtime_maps_all_real_resources_and_continues_large_text(tmp_path):
+    """All five server registrations dispatch through the adapter to real SQLite."""
+    from mcp_unified.gateway import GatewayRequestContext
+
+    from tldw_chatbook.MCP.gateway_runtime import ChatbookGatewayRuntime
+    from tldw_chatbook.MCP.resources import MCPResources
+    from tldw_chatbook.MCP.server import TldwMCPServer
+
+    chachanotes_db, media_db = _real_dbs(tmp_path)
+    resources = MCPResources(chachanotes_db, media_db)
+    conversation_text = "Conversation body 😀\n" * 16_000
+    media_text = "Media transcript é😀\n" * 16_000
+
+    conversation_id = chachanotes_db.add_conversation({"title": "Large Conversation"})
+    assert conversation_id is not None
+    chachanotes_db.add_message(
+        {
+            "conversation_id": conversation_id,
+            "sender": "user",
+            "content": conversation_text,
+            "role": "user",
+        }
+    )
+    note_id = chachanotes_db.add_note("Gateway Note", "Note body")
+    assert note_id is not None
+    character_id = chachanotes_db.add_character_card(
+        {"name": "Gateway Character", "first_message": "Hello from SQLite"}
+    )
+    assert character_id is not None
+    media_id, _media_uuid, _message = media_db.add_media_with_keywords(
+        title="Large Media", media_type="video", content="fallback content"
+    )
+    _seed_transcript(media_db, media_id, media_text)
+    chunk_uuid = "gateway-real-chunk"
+    _seed_chunk(
+        media_db,
+        media_id,
+        chunk_uuid,
+        "A real RAG chunk from SQLite.",
+        end_char=29,
+    )
+
+    runtime = ChatbookGatewayRuntime(
+        name="tldw_chatbook",
+        version="0.1.0",
+        tool_descriptors=[],
+    )
+    server = TldwMCPServer.__new__(TldwMCPServer)
+    server.mcp = runtime
+    server.resources = resources
+    server._register_resources()
+    runtime.finalize()
+    context = GatewayRequestContext(request_id="real-resource-test")
+
+    async def exercise() -> None:
+        expected_by_uri = {
+            f"conversation://{conversation_id}": await resources.get_conversation_resource(
+                conversation_id
+            ),
+            f"note://{note_id}": await resources.get_note_resource(note_id),
+            f"character://{character_id}": await resources.get_character_resource(
+                str(character_id)
+            ),
+            f"media://{media_id}": await resources.get_media_resource(str(media_id)),
+            f"rag-chunk://{chunk_uuid}": await resources.get_rag_chunk_resource(
+                chunk_uuid
+            ),
+        }
+        read_counts: dict[str, int] = {}
+
+        for base_uri, expected in expected_by_uri.items():
+            uri: str | None = base_uri
+            chunks: list[str] = []
+            reads = 0
+            while uri is not None:
+                result = await runtime.read_resource(uri, context)
+                assert len(result["contents"]) == 1
+                assert result["contents"][0]["uri"] == expected["uri"]
+                assert result["contents"][0]["mimeType"] == expected["mimeType"]
+                chunks.append(result["contents"][0]["text"])
+                reads += 1
+                uri = result["_meta"]["tldw.chatbook/continuation"]["nextUri"]
+            read_counts[base_uri] = reads
+            assert "".join(chunks) == expected["content"]
+
+        assert read_counts[f"conversation://{conversation_id}"] >= 2
+        assert read_counts[f"media://{media_id}"] >= 2
+
+        catalog = await runtime.list_resources(context)
+        assert any(
+            item["uri"] == f"conversation://{conversation_id}" for item in catalog
+        )
+        assert any(item["uri"] == f"note://{note_id}" for item in catalog)
+
+    asyncio.run(exercise())

@@ -687,25 +687,48 @@ class TldwMCPServer:
     def _register_resources(self):
         """Register MCP resources."""
 
+        def json_metadata(resource: Dict[str, Any]) -> Dict[str, Any]:
+            """Normalize SQLite datetime metadata before gateway validation."""
+
+            def normalize(value: Any) -> Any:
+                if isinstance(value, datetime):
+                    return value.isoformat()
+                if isinstance(value, dict):
+                    return {key: normalize(item) for key, item in value.items()}
+                if isinstance(value, list):
+                    return [normalize(item) for item in value]
+                return value
+
+            metadata = resource.get("metadata")
+            return (
+                {**resource, "metadata": normalize(metadata)}
+                if isinstance(metadata, dict)
+                else resource
+            )
+
         @self.mcp.resource("conversation://{conversation_id}")
         async def get_conversation(conversation_id: str) -> Dict[str, Any]:
             """Get a conversation by ID."""
-            return await self.resources.get_conversation_resource(conversation_id)
+            return json_metadata(
+                await self.resources.get_conversation_resource(conversation_id)
+            )
 
         @self.mcp.resource("note://{note_id}")
         async def get_note(note_id: str) -> Dict[str, Any]:
             """Get a note by ID."""
-            return await self.resources.get_note_resource(note_id)
+            return json_metadata(await self.resources.get_note_resource(note_id))
 
         @self.mcp.resource("character://{character_id}")
         async def get_character(character_id: str) -> Dict[str, Any]:
             """Get a character profile by ID."""
-            return await self.resources.get_character_resource(character_id)
+            return json_metadata(
+                await self.resources.get_character_resource(character_id)
+            )
 
         @self.mcp.resource("media://{media_id}")
         async def get_media(media_id: str) -> Dict[str, Any]:
             """Get media content by ID."""
-            return await self.resources.get_media_resource(media_id)
+            return json_metadata(await self.resources.get_media_resource(media_id))
 
         @self.mcp.resource("rag-chunk://{chunk_uuid}")
         async def get_rag_chunk(chunk_uuid: str) -> Dict[str, Any]:
@@ -715,7 +738,9 @@ class TldwMCPServer:
             an integer id -- see `MCPResources.get_rag_chunk_resource` for
             why (TASK-985).
             """
-            return await self.resources.get_rag_chunk_resource(chunk_uuid)
+            return json_metadata(
+                await self.resources.get_rag_chunk_resource(chunk_uuid)
+            )
 
         # List resources
         @self.mcp.list_resources()
