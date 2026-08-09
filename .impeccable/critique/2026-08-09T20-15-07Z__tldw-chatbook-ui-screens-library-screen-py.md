@@ -10,6 +10,25 @@ slug: tldw-chatbook-ui-screens-library-screen-py
 ---
 Method: dual-agent (A: design-director live walkthrough · B: mechanical probes/detector) — isolated tmux instances (`rcritA6729`/`rcritB6729`), scratch profiles, identity-verified on every launch; dev `4d0232358` (all three fix arcs merged), read-only worktree.
 
+> **CORRECTION (2026-08-09, after task-4020's investigation): RC-02 is WITHDRAWN — it was a measurement artifact, not a defect.**
+> B's nav probe (V7) used colorless `tmux capture-pane -p`, which cannot distinguish a genuinely
+> mid-word-clipped label from a correctly ghosted one: ghosting paints foreground **equal to**
+> background, so the characters remain in the buffer while being invisible on screen. Direct ANSI
+> decoding at 80/100/120 cols with early and late active tabs shows fg `(18,18,18)` == bg
+> `(18,18,18)` for every fragment B quoted (`⌃6 Watc`, `⌃9 M`, the `‹ …` lead-ins). **Nav ghosting
+> was never broken.**
+> B's own evidence corroborates this in hindsight: its click at col 78 landed on what it called a
+> "blank" cell and did not navigate — that cell was a ghosted tab, exactly as designed.
+> **Assessment A contradicted B here** ("the nav collapses to `More ▾` rather than hard-cutting
+> mid-word") and A was right; the synthesis resolved the conflict toward the mechanical arm without
+> flagging the disagreement. Two synthesis lessons: (1) a plain capture is not evidence about a
+> colour-based mechanism — use `-e` whenever the mechanism under test IS colour; (2) an explicit
+> A-vs-B contradiction must be named and adjudicated in the report, never silently resolved.
+> What task-4020 *did* find and fix was real but different: task-3200's tests only ever exercised
+> `MainNavigationBar.DEFAULT_CSS`, never the bundled-CSS tier that actually wins live — a genuine
+> coverage gap, now closed. The score is unchanged (RC-02 was not scored as its own heuristic
+> deduction), but **p1_count should be read as 8, not 9.**
+
 # Re-critique — Library screen + all subscreens (2026-08-09)
 
 Baseline: **22/40** on 2026-08-06 (0 P0 / 8 P1). Three fix arcs merged since: PR #1410 (P1s), PR #1420 (P2 batch), PR #1459 (polish batch).
