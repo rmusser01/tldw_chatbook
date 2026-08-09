@@ -20,6 +20,8 @@ from multiprocessing.connection import Connection
 from pathlib import Path
 from typing import Any
 
+from tldw_chatbook.Utils.fd_protection import protect_file_descriptors
+
 from .contracts import (
     BufferAudioSource,
     DeviceFailureOrigin,
@@ -674,23 +676,25 @@ class LocalSTTExecutor:
         generation = self._generation_counter
         scratch_path = Path(tempfile.mkdtemp(prefix=f"tldw_stt_g{generation}_"))
         scratch_path.chmod(0o700)
-        parent_connection, child_connection = self._context.Pipe(duplex=True)
-        admission_event = self._context.Event()
-        cancellation_event = self._context.Event()
-        process = self._context.Process(
-            target=target,
-            args=(
-                child_connection,
-                admission_event,
-                cancellation_event,
-                generation,
-                str(scratch_path),
-            ),
-            name=f"local-stt-worker-{generation}",
-        )
+        with protect_file_descriptors():
+            parent_connection, child_connection = self._context.Pipe(duplex=True)
+            admission_event = self._context.Event()
+            cancellation_event = self._context.Event()
+            process = self._context.Process(
+                target=target,
+                args=(
+                    child_connection,
+                    admission_event,
+                    cancellation_event,
+                    generation,
+                    str(scratch_path),
+                ),
+                name=f"local-stt-worker-{generation}",
+            )
         tree: ExecutorProcessTree | None = None
         try:
-            process.start()
+            with protect_file_descriptors():
+                process.start()
             child_connection.close()
             if not parent_connection.poll(self._startup_timeout):
                 raise ProcessContainmentError("worker bootstrap timed out")

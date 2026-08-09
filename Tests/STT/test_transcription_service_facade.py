@@ -544,6 +544,49 @@ def test_begin_dictation_capture_forwards_the_resolved_dispatch(
     ]
 
 
+def test_begin_dictation_capture_resolves_the_configured_model_dir(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    dispatcher = _Dispatcher()
+    bridge = _Bridge()
+    bridge.config["parakeet_onnx_model_dir"] = str(tmp_path)
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        service_module,
+        "LegacyTranscriptionBridge",
+        lambda _backend_factory: bridge,
+    )
+
+    def _resolve(**kwargs: object) -> object:
+        captured.update(kwargs)
+        return object()
+
+    monkeypatch.setattr(
+        service_module,
+        "resolve_parakeet_dispatch",
+        _resolve,
+        raising=False,
+    )
+
+    TranscriptionService(local_stt_dispatcher=dispatcher).begin_dictation_capture(
+        capture_generation=7,
+        model=None,
+        language="en",
+        sample_rate=16_000,
+        channels=1,
+        sample_width=2,
+        on_logical_segment=lambda _sequence, _text: None,
+    )
+
+    assert captured == {
+        "model_id": "nemo-parakeet-tdt-0.6b-v2",
+        "precision": "int8",
+        "model_dir": str(tmp_path),
+    }
+
+
 @pytest.mark.parametrize(
     ("method_name", "arguments", "keywords", "bridge_method"),
     [

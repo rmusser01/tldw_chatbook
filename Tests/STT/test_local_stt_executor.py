@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import os
 import pickle
+import subprocess
+import sys
+import textwrap
 import threading
 import time
 from dataclasses import FrozenInstanceError
@@ -430,6 +434,105 @@ def _wait_until(predicate: object, timeout: float = 10.0) -> None:
     while not predicate() and time.monotonic() < deadline:  # type: ignore[operator]
         time.sleep(0.01)
     assert predicate()  # type: ignore[operator]
+
+
+@pytest.mark.integration
+def test_executor_starts_under_textual_filenoless_stderr() -> None:
+    """The first real spawn must survive Textual's ``fileno() == -1`` stderr."""
+
+    repo_root = Path(__file__).resolve().parents[2]
+    environment = {**os.environ, "PYTHONPATH": str(repo_root)}
+    environment.pop("PYTEST_CURRENT_TEST", None)
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            textwrap.dedent(
+                """
+                import sys
+                import threading
+
+
+                class TextualLikeStderr:
+                    def fileno(self):
+                        return -1
+
+                    def write(self, *_args, **_kwargs):
+                        return 0
+
+                    def flush(self):
+                        pass
+
+
+                if __name__ == "__main__":
+                    sys.stderr = TextualLikeStderr()
+
+                    from Tests.STT.executor_test_support import protocol_executor_worker
+                    from tldw_chatbook.STT.contracts import (
+                        BufferAudioSource,
+                        ExecutionDevice,
+                    )
+                    from tldw_chatbook.STT.executor import LocalSTTExecutor, ModelIdentity
+
+                    terminal = threading.Event()
+                    results = []
+                    failures = []
+
+                    def on_result(value):
+                        results.append(value)
+                        terminal.set()
+
+                    def on_failure(value):
+                        failures.append(value)
+                        terminal.set()
+
+                    executor = LocalSTTExecutor(
+                        worker_target=protocol_executor_worker,
+                        startup_timeout=5.0,
+                        graceful_shutdown_timeout=0.2,
+                        force_stop_timeout=2.0,
+                    )
+                    try:
+                        executor.submit(
+                            attempt_id="textual-stderr",
+                            job_id=None,
+                            source=BufferAudioSource(b"\\x00\\x00", 16_000),
+                            identity=ModelIdentity(
+                                provider_id="parakeet-onnx",
+                                model_id="nemo-parakeet-tdt-0.6b-v2",
+                                root_revision=None,
+                                closure_fingerprint=None,
+                                precision="int8",
+                                device=ExecutionDevice.CPU,
+                            ),
+                            options={},
+                            segment_end_frames=(1,),
+                            on_result=on_result,
+                            on_failure=on_failure,
+                        )
+                        assert terminal.wait(10.0)
+                        assert len(results) == 1, failures
+                    except BaseException:
+                        import traceback
+
+                        traceback.print_exc(file=sys.stdout)
+                        raise
+                    finally:
+                        executor.close()
+                    print("STT_WORKER_OK")
+                """
+            ),
+        ],
+        cwd=repo_root,
+        env=environment,
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=30,
+    )
+
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    assert "STT_WORKER_OK" in completed.stdout
 
 
 def test_worker_file_source_uses_existing_parser_with_path_options_and_runner() -> None:

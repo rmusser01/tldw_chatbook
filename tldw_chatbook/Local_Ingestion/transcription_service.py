@@ -4273,7 +4273,7 @@ class TranscriptionService:
             )
             .strip()
             .lower(),
-            model_dir=None,
+            model_dir=self.config.get("parakeet_onnx_model_dir") or None,
         )
         return self._local_stt_dispatcher.begin_dictation(
             capture_generation=capture_generation,
