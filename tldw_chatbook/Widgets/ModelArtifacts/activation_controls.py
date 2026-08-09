@@ -59,7 +59,8 @@ class ModelActivationControls(Widget):
         Args:
             reference: Exact managed-model identity.
             active: Whether this reference is already selected.
-            ready: Whether verification/readiness allows activation.
+            ready: Whether a readiness record already exists. Missing readiness
+                does not prevent an eligible root from being activated.
             pending: Whether another lifecycle operation is running.
             allow_activation: Whether this model is eligible for activation.
         """
@@ -78,7 +79,7 @@ class ModelActivationControls(Widget):
                     "Active" if self.active else "Activate",
                     classes="model-activate",
                     variant="primary",
-                    disabled=self.pending or self.active or not self.ready,
+                    disabled=self.pending or self.active,
                 )
             yield Button(
                 "Delete…",
@@ -96,7 +97,7 @@ class ModelActivationControls(Widget):
         self.pending = pending
         delete = self.query_one(".model-delete", Button)
         for activate in self.query(".model-activate"):
-            activate.disabled = pending or self.active or not self.ready
+            activate.disabled = pending or self.active
         delete.disabled = pending
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
@@ -107,7 +108,6 @@ class ModelActivationControls(Widget):
         if (
             self.allow_activation
             and event.button.has_class("model-activate")
-            and self.ready
             and not self.active
         ):
             self.post_message(ActivationRequested(self.reference))

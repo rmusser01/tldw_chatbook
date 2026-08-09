@@ -154,6 +154,47 @@ async def test_unassigned_controls_omit_activate_and_keep_delete_available() -> 
     assert app.messages[0].reference == reference
 
 
+@pytest.mark.asyncio
+async def test_mounted_dependency_row_labels_ownership_and_omits_activate(
+    tmp_path: Path,
+) -> None:
+    """The Installed surface exposes dependency ownership without root actions."""
+    from dataclasses import replace
+
+    from textual.widgets import Static
+
+    from Tests.Model_Artifacts.test_acquisition_types import make_descriptor
+    from tldw_chatbook.Model_Artifacts.service import ArtifactRole, InstalledArtifact
+    from tldw_chatbook.UI.Screens.model_browser_state import inventory_rows
+    from tldw_chatbook.UI.Screens.model_installed_view import InstalledView
+
+    descriptor = replace(make_descriptor(), role=ArtifactRole.DEPENDENCY)
+    rows = inventory_rows(
+        (
+            InstalledArtifact(
+                path=tmp_path / "dependency",
+                descriptor=descriptor,
+                ready=False,
+                active=False,
+                error=None,
+            ),
+        ),
+        None,
+        (),
+    )
+    view = InstalledView(service_factory=MagicMock(), legacy_dir=tmp_path)
+    app = _InstalledApp(view)
+
+    async with app.run_test() as pilot:
+        view._apply_inventory(rows, None, None)
+        await pilot.pause()
+        text = "\n".join(str(item.renderable) for item in view.query(Static))
+
+        assert "Managed dependency" in text
+        assert len(view.query(".model-activate")) == 0
+        assert view.query_one(".model-delete", Button).disabled is False
+
+
 def test_installed_view_refuses_a_second_lifecycle_operation() -> None:
     """Activation/deletion cannot re-enter while hashing or leasing is pending."""
     from tldw_chatbook.UI.Screens.model_installed_view import InstalledView
@@ -165,6 +206,69 @@ def test_installed_view_refuses_a_second_lifecycle_operation() -> None:
     view._request_activation(ArtifactRef("parakeet-v2", "rev2", "f32"))
 
     view._activate_model.assert_not_called()
+
+
+def test_activation_changes_source_preference_only_after_core_success(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    """The preference callback follows the real activation boundary."""
+    from tldw_chatbook.UI.Screens import model_installed_view as module
+
+    reference = ArtifactRef("parakeet-v2", "immutable-revision", "int8")
+    events: list[str] = []
+
+    class _Service:
+        def activate(self, activated: ArtifactRef) -> ArtifactRef:
+            assert activated == reference
+            events.append("activate")
+            return activated
+
+    fake_app = MagicMock()
+    monkeypatch.setattr(module.InstalledView, "app", property(lambda self: fake_app))
+    view = module.InstalledView(
+        service_factory=_Service,
+        legacy_dir=tmp_path,
+        on_root_activated=lambda activated: events.append(
+            "prefer-managed" if activated == reference else "wrong-reference"
+        ),
+    )
+
+    module.InstalledView._activate_model.__wrapped__(view, reference)
+
+    assert events == ["activate", "prefer-managed"]
+    fake_app.call_from_thread.assert_called_once_with(
+        view._apply_lifecycle_result,
+        "activate",
+        None,
+    )
+
+
+def test_failed_activation_does_not_change_source_preference(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    """A failed core activation leaves the exact source preference untouched."""
+    from tldw_chatbook.UI.Screens import model_installed_view as module
+
+    reference = ArtifactRef("parakeet-v2", "immutable-revision", "int8")
+    preferred: list[ArtifactRef] = []
+    service = MagicMock()
+    service.activate.side_effect = RuntimeError("private activation detail")
+    fake_app = MagicMock()
+    monkeypatch.setattr(module.InstalledView, "app", property(lambda self: fake_app))
+    view = module.InstalledView(
+        service_factory=lambda: service,
+        legacy_dir=tmp_path,
+        on_root_activated=preferred.append,
+    )
+
+    module.InstalledView._activate_model.__wrapped__(view, reference)
+
+    assert preferred == []
+    fake_app.call_from_thread.assert_called_once()
+    assert fake_app.call_from_thread.call_args.args[1] == "activate"
+    assert fake_app.call_from_thread.call_args.args[2] is not None
 
 
 def test_lease_blocked_deletion_message_is_specific_and_sanitized() -> None:
@@ -282,6 +386,37 @@ def test_deletion_requires_confirmation_before_starting_worker(monkeypatch) -> N
     assert isinstance(dialog, DeleteConfirmationDialog)
     callback(True)
     view._delete_model.assert_called_once_with(reference)
+
+
+def test_deletion_guard_blocks_before_and_after_confirmation(monkeypatch) -> None:
+    """A dependency that becomes required cannot enter the delete worker."""
+    from tldw_chatbook.UI.Screens.model_installed_view import InstalledView
+    from tldw_chatbook.Widgets.ModelArtifacts.activation_controls import (
+        DeletionRequested,
+    )
+
+    reference = ArtifactRef("silero-vad", "immutable-revision", "f32")
+    decisions = iter((None, "Managed dependency is required by an external source."))
+    fake_app = MagicMock()
+    monkeypatch.setattr(InstalledView, "app", property(lambda self: fake_app))
+    view = InstalledView(
+        service_factory=MagicMock(),
+        legacy_dir=Path("/tmp/models"),
+        may_delete=lambda _reference: next(decisions),
+    )
+    view.refresh = MagicMock()
+    view._delete_model = MagicMock()
+
+    view._deletion_requested(DeletionRequested(reference))
+    dialog, callback = fake_app.push_screen.call_args.args
+    callback(True)
+
+    view._delete_model.assert_not_called()
+    fake_app.notify.assert_called_once()
+    assert fake_app.notify.call_args.args == (
+        "Managed dependency is required by an external source.",
+    )
+    assert fake_app.notify.call_args.kwargs["severity"] == "warning"
 
 
 @pytest.mark.asyncio

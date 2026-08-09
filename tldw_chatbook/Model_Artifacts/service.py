@@ -3004,6 +3004,7 @@ class ModelArtifactService:
         source_directory: Path,
         *,
         consume_source: bool = False,
+        declared_files_only: bool = False,
     ) -> ArtifactRef:
         """Verify and promote one local source directory immutably.
 
@@ -3014,6 +3015,8 @@ class ModelArtifactService:
                 the service root. Requires source inside the root; raises
                 ArtifactPathError otherwise. On EXDEV (cross-device link), falls
                 back to copy+delete. Defaults to False (today's copy semantics).
+            declared_files_only: Validate and snapshot only descriptor-declared
+                paths, allowing unrelated user-owned entries to remain ignored.
 
         Returns:
             The installed artifact's immutable reference.
@@ -3031,6 +3034,8 @@ class ModelArtifactService:
             raise TypeError("descriptor must be an ArtifactDescriptor")
         if not isinstance(source_directory, Path):
             raise TypeError("source_directory must be a Path")
+        if type(declared_files_only) is not bool:
+            raise TypeError("declared_files_only must be a bool")
         try:
             source_directory = validate_path_simple(
                 source_directory,
@@ -3042,6 +3047,7 @@ class ModelArtifactService:
         source_snapshot = self._validate_payload_tree(
             source_directory,
             descriptor.files,
+            declared_files_only=declared_files_only,
         )
 
         staging: Path | None = None
@@ -3105,6 +3111,7 @@ class ModelArtifactService:
                     self._validate_payload_tree(
                         source_directory,
                         descriptor.files,
+                        declared_files_only=declared_files_only,
                     )
                     != source_snapshot
                 ):
@@ -3571,6 +3578,7 @@ class ModelArtifactService:
         files: tuple[ArtifactFile, ...],
         *,
         allowed_files: frozenset[str] = frozenset(),
+        declared_files_only: bool = False,
     ) -> tuple[tuple[str, _PathSnapshot], ...]:
         lexical_root = Path(os.path.abspath(root))
         try:
@@ -3589,6 +3597,41 @@ class ModelArtifactService:
         root_mode = root_info.st_mode
         if stat.S_ISLNK(root_mode) or not stat.S_ISDIR(root_mode):
             raise ArtifactPathError("source_directory must be a non-symlink directory")
+        if declared_files_only:
+            snapshots = {"": _path_snapshot(root_info)}
+            for item in files:
+                current = lexical_root
+                parts = Path(item.path).parts
+                for index, component in enumerate(parts):
+                    current /= component
+                    relative = current.relative_to(lexical_root).as_posix()
+                    try:
+                        info = current.stat(follow_symlinks=False)
+                        resolved = current.resolve(strict=True)
+                        resolved.relative_to(resolved_root)
+                    except (FileNotFoundError, NotADirectoryError) as error:
+                        raise ArtifactPathError(
+                            f"source is missing declared path: {relative}"
+                        ) from error
+                    except (OSError, RuntimeError, ValueError) as error:
+                        raise ArtifactPathError(
+                            f"failed to inspect declared path: {relative}"
+                        ) from error
+                    is_file = index == len(parts) - 1
+                    if stat.S_ISLNK(info.st_mode) or resolved != current:
+                        raise ArtifactPathError(
+                            f"declared path is symlinked or redirected: {relative}"
+                        )
+                    if is_file and not stat.S_ISREG(info.st_mode):
+                        raise ArtifactPathError(
+                            f"declared path is not a regular file: {relative}"
+                        )
+                    if not is_file and not stat.S_ISDIR(info.st_mode):
+                        raise ArtifactPathError(
+                            f"declared path ancestor is not a directory: {relative}"
+                        )
+                    snapshots[relative] = _path_snapshot(info)
+            return tuple(sorted(snapshots.items()))
         expected_files = {item.path for item in files}
         permitted_files = expected_files | allowed_files
         expected_directories = {

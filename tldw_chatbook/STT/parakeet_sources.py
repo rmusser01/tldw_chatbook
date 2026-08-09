@@ -79,6 +79,8 @@ class ParakeetSourceErrorCode(str, Enum):
     VAD_UNAVAILABLE = "managed_vad_unavailable"
     CONFIG_WRITE_FAILED = "config_write_failed"
     CONFIG_MISMATCH = "config_commit_mismatch"
+    COPY_CONSENT_MISMATCH = "managed_copy_consent_mismatch"
+    COPY_INSUFFICIENT_SPACE = "managed_copy_insufficient_space"
 
 
 class ParakeetSourceError(RuntimeError):
@@ -113,6 +115,37 @@ class ExternalSourceConfigCommit:
 
     prepared: PreparedExternalSelection = field(repr=False)
     section_values: Mapping[str, Mapping[str, object]] = field(repr=False)
+
+
+@dataclass(frozen=True)
+class ManagedCopyConsent:
+    """Consent bound to one exact managed-copy plan."""
+
+    reference: ArtifactRef
+    additional_bytes: int
+    destination: Path
+
+
+@dataclass(frozen=True)
+class ManagedCopyPlan:
+    """User-reviewable local-copy disk plan for one exact root."""
+
+    reference: ArtifactRef
+    additional_bytes: int
+    destination: Path
+    free_bytes: int
+    already_installed: bool
+
+    def grant(self) -> ManagedCopyConsent:
+        """Grant this plan when its additional bytes fit on disk."""
+
+        if self.additional_bytes > self.free_bytes:
+            raise ParakeetSourceError(ParakeetSourceErrorCode.COPY_INSUFFICIENT_SPACE)
+        return ManagedCopyConsent(
+            reference=self.reference,
+            additional_bytes=self.additional_bytes,
+            destination=self.destination,
+        )
 
 
 _ReadSetting = Callable[[str, str, object], object]
@@ -258,6 +291,78 @@ class ParakeetSourceService:
             preferred_source=ParakeetSourcePreference.MANAGED,
         )
         self._persist_records(records)
+
+    def on_root_activated(self, reference: ArtifactRef) -> None:
+        """Prefer managed only when an exact curated Parakeet root activates."""
+
+        if type(reference) is not ArtifactRef:
+            raise TypeError("reference must be an ArtifactRef")
+        for key in ParakeetSourceKey:
+            if self._descriptor_for(key.model_id, key.precision).reference == reference:
+                self.prefer_managed(key)
+                return
+
+    def may_delete(self, reference: ArtifactRef) -> str | None:
+        """Block configured external sources from losing their managed VAD."""
+
+        if type(reference) is not ArtifactRef:
+            raise TypeError("reference must be an ArtifactRef")
+        if reference != parakeet_vad_reference():
+            return None
+        if any(
+            record.preferred_source is ParakeetSourcePreference.EXTERNAL
+            for record in self._records.values()
+        ):
+            return (
+                "Managed dependency is required by a configured external "
+                "Parakeet source. Stop using the external source first."
+            )
+        return None
+
+    def plan_managed_copy(
+        self,
+        verified: VerifiedExternalParakeet,
+    ) -> ManagedCopyPlan:
+        """Recheck one external root and report its managed-copy disk use."""
+
+        _, descriptor = self._validated_external(verified)
+        self._require_vad_ready()
+        managed = self._managed_store_service()
+        already_installed = any(
+            item.descriptor == descriptor and item.error is None
+            for item in managed.list_installed()
+        )
+        usage = managed.disk_usage()
+        return ManagedCopyPlan(
+            reference=descriptor.reference,
+            additional_bytes=(
+                0 if already_installed else descriptor.expected_installed_bytes
+            ),
+            destination=managed.artifact_path(descriptor.reference),
+            free_bytes=usage.free_bytes,
+            already_installed=already_installed,
+        )
+
+    def copy_into_managed(
+        self,
+        verified: VerifiedExternalParakeet,
+        consent: ManagedCopyConsent,
+    ) -> ArtifactRef:
+        """Install declared root files without activation or preference changes."""
+
+        if type(consent) is not ManagedCopyConsent:
+            raise TypeError("consent must be a ManagedCopyConsent")
+        plan = self.plan_managed_copy(verified)
+        if consent != plan.grant():
+            raise ParakeetSourceError(ParakeetSourceErrorCode.COPY_CONSENT_MISMATCH)
+        if plan.already_installed:
+            return plan.reference
+        _, descriptor = self._validated_external(verified)
+        return self._managed_store_service().install(
+            descriptor,
+            verified.directory,
+            declared_files_only=True,
+        )
 
     def stop_using_external(self, key: ParakeetSourceKey) -> None:
         """Forget the directory without erasing a managed preference."""
@@ -423,6 +528,28 @@ class ParakeetSourceService:
                 ParakeetSourceErrorCode.INVALID_SELECTION
             ) from None
 
+    def _validated_external(
+        self,
+        verified: VerifiedExternalParakeet,
+    ) -> tuple[ParakeetSourceKey, ArtifactDescriptor]:
+        if type(verified) is not VerifiedExternalParakeet:
+            raise TypeError("verified must be a VerifiedExternalParakeet")
+        for key in ParakeetSourceKey:
+            descriptor = self._descriptor_for(key.model_id, key.precision)
+            if descriptor.reference == verified.reference:
+                self._validate_prepared(
+                    PreparedExternalSelection(key=key, verified=verified)
+                )
+                return key, descriptor
+        raise ParakeetSourceError(ParakeetSourceErrorCode.INVALID_SELECTION)
+
+    def _managed_store_service(self) -> ModelArtifactService:
+        return (
+            self._managed_service
+            if self._managed_service is not None
+            else parakeet_v2_managed_service()
+        )
+
     def _default_vad_ready(self) -> bool:
         service = (
             self._managed_service
@@ -561,6 +688,8 @@ class ParakeetSourceService:
 
 __all__ = [
     "ExternalSourceConfigCommit",
+    "ManagedCopyConsent",
+    "ManagedCopyPlan",
     "ParakeetSourceError",
     "ParakeetSourceErrorCode",
     "ParakeetSourceKey",

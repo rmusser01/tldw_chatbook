@@ -129,6 +129,8 @@ class InstalledView(Widget):
         *,
         service_factory: Callable[[], ModelArtifactService] = managed_service,
         legacy_dir: Path | None = None,
+        on_root_activated: Callable[[ArtifactRef], None] | None = None,
+        may_delete: Callable[[ArtifactRef], str | None] | None = None,
         id: str | None = None,
     ) -> None:
         """Create an idle view; no filesystem work occurs here.
@@ -136,10 +138,14 @@ class InstalledView(Widget):
         Args:
             service_factory: Lazy managed-store service factory.
             legacy_dir: Legacy downloader directory to scan on activation.
+            on_root_activated: Called after successful core activation.
+            may_delete: Return a user-visible reason to block deletion.
             id: Optional Textual widget id.
         """
         self._service_factory = service_factory
         self._legacy_dir = legacy_dir or Path("~/Downloads/tldw_models").expanduser()
+        self._on_root_activated = on_root_activated or (lambda _reference: None)
+        self._may_delete = may_delete or (lambda _reference: None)
         self._service: ModelArtifactService | None = None
         self._rows: tuple[InventoryRow, ...] = ()
         self._usage: ArtifactDiskUsage | None = None
@@ -440,6 +446,10 @@ class InstalledView(Widget):
             or self._pending_delete_reference is not None
         ):
             return
+        blocked = self._may_delete(event.reference)
+        if blocked is not None:
+            self.notify(blocked, severity="warning")
+            return
         self._pending_delete_reference = event.reference
         self.refresh(recompose=True)
         self.app.push_screen(
@@ -464,6 +474,11 @@ class InstalledView(Widget):
         if not confirmed or reference is None:
             self.refresh(recompose=True)
             return
+        blocked = self._may_delete(reference)
+        if blocked is not None:
+            self.notify(blocked, severity="warning")
+            self.refresh(recompose=True)
+            return
         if self._operation_reference is not None or self._operation_name is not None:
             self.refresh(recompose=True)
             return
@@ -476,7 +491,8 @@ class InstalledView(Widget):
     def _activate_model(self, reference: ArtifactRef) -> None:
         """Activate one exact verified model off the event loop."""
         try:
-            self._service_for_worker().activate(reference)
+            activated = self._service_for_worker().activate(reference)
+            self._on_root_activated(activated)
         except Exception as exc:
             logger.opt(exception=True).error(
                 "Managed model activation failed for {}@{}/{}",

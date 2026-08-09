@@ -2311,6 +2311,95 @@ def test_install_rejects_special_source_entry_when_supported(
     assert service.artifact_path(item.reference).exists() is False
 
 
+def test_declared_files_only_install_ignores_unrelated_entries_and_copies_declared(
+    tmp_path: Path,
+) -> None:
+    service, item, source = install_inputs(
+        tmp_path,
+        {"nested/model.onnx": b"model"},
+    )
+    (source / "README.md").write_text("user-owned", encoding="utf-8")
+    unrelated = tmp_path / "unrelated"
+    unrelated.write_bytes(b"outside")
+    symlink_or_skip(source / "unrelated-link", unrelated, target_is_directory=False)
+
+    assert service.install(item, source, declared_files_only=True) == item.reference
+
+    final = service.artifact_path(item.reference)
+    assert (final / "nested" / "model.onnx").read_bytes() == b"model"
+    assert (final / "manifest.json").is_file()
+    assert (final / "README.md").exists() is False
+    assert (final / "unrelated-link").exists() is False
+
+
+@pytest.mark.parametrize("symlink_target", ("declared-file", "declared-directory"))
+def test_declared_files_only_install_rejects_symlinked_declared_paths(
+    tmp_path: Path,
+    symlink_target: str,
+) -> None:
+    service, item, source = install_inputs(
+        tmp_path,
+        {"nested/model.onnx": b"model"},
+    )
+    external = tmp_path / "external"
+    if symlink_target == "declared-file":
+        external.write_bytes(b"model")
+        (source / "nested" / "model.onnx").unlink()
+        symlink_or_skip(
+            source / "nested" / "model.onnx",
+            external,
+            target_is_directory=False,
+        )
+    else:
+        external.mkdir()
+        (external / "model.onnx").write_bytes(b"model")
+        shutil.rmtree(source / "nested")
+        symlink_or_skip(source / "nested", external, target_is_directory=True)
+
+    with pytest.raises(service_module.ArtifactPathError):
+        service.install(item, source, declared_files_only=True)
+
+    assert service.artifact_path(item.reference).exists() is False
+
+
+def test_declared_files_only_install_rechecks_declared_ancestor_identity(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service, item, source = install_inputs(
+        tmp_path,
+        {"nested/model.onnx": b"model"},
+    )
+    original_copy = service._copy_payload
+
+    def copy_then_replace_ancestor(
+        copied_descriptor: ArtifactDescriptor,
+        copied_source: Path,
+        staging: Path,
+    ) -> None:
+        original_copy(copied_descriptor, copied_source, staging)
+        nested = copied_source / "nested"
+        nested.rename(copied_source / "original-nested")
+        nested.mkdir()
+        (nested / "model.onnx").write_bytes(b"model")
+
+    monkeypatch.setattr(service, "_copy_payload", copy_then_replace_ancestor)
+
+    with pytest.raises(service_module.ArtifactPathError, match="changed"):
+        service.install(item, source, declared_files_only=True)
+
+    assert service.artifact_path(item.reference).exists() is False
+
+
+def test_declared_files_only_flag_requires_a_real_bool(tmp_path: Path) -> None:
+    service, item, source = install_inputs(tmp_path)
+
+    with pytest.raises(TypeError):
+        service.install(item, source, declared_files_only=1)  # type: ignore[arg-type]
+
+    assert service.artifact_path(item.reference).exists() is False
+
+
 def test_identical_reinstall_is_idempotent_and_rehashes_payload(
     tmp_path: Path,
 ) -> None:
