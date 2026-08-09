@@ -4531,10 +4531,16 @@ def _write_raw_cli_config_unlocked(
     ``ConfigLoadFailure``). Parsing the freshly serialized text back through
     the exact reader used on the next boot, before the atomic write, makes
     it categorically impossible for this function to leave behind a file its
-    own next read cannot parse -- the write is idempotent by construction:
-    re-running it against its own output can never change the on-disk
-    result, and it can never regress a previously-valid file into an
-    invalid one.
+    own next read cannot parse. That is the full extent of the guarantee:
+    this guard proves PARSEABILITY, not fidelity -- it never compares the
+    parsed-back value against ``config_data``, so an encoder-level mangling
+    that still happens to produce valid TOML sails through unnoticed
+    (measured: ``toml.dumps`` silently drops control characters such as
+    ``\\x00``/``\\x1b`` from string values, and the mangled output still
+    parses back cleanly). The write is NOT idempotent by construction and
+    can change the on-disk result relative to what was requested; what is
+    guaranteed is narrower -- it can never regress a config this function
+    can write at all into a file the next read cannot parse.
     """
 
     application_directory = _prepare_config_parent(config_path)

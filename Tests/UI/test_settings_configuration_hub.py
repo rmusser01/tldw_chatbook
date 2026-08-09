@@ -193,6 +193,27 @@ def test_settings_category_summaries_cover_every_category_id_exactly_once():
     assert {s.category for s in summaries} == set(SettingsCategoryId)
 
 
+def test_settings_category_groups_cover_every_category_id_exactly_once():
+    """Guards against a category losing its sidebar group placement.
+
+    A category can have a summary (so the count test above stays green) yet be
+    absent from every group tuple in `_category_groups()` -- the sidebar is built
+    by walking the groups, not the summaries, so that category renders no
+    sidebar button at all. This is exactly how VIDEO_GENERATION shipped
+    unreachable on dev: it had a summary but no group tuple entry. Assert every
+    SettingsCategoryId appears in exactly one group tuple.
+    """
+    screen = SettingsScreen(_build_test_app())
+    groups = screen._category_groups()
+    flattened = [
+        category for _group_title, category_ids in groups for category in category_ids
+    ]
+    # No duplicates -- each id lives in exactly one group tuple.
+    assert len(flattened) == len(set(flattened))
+    # Full coverage -- no id is missing from every group tuple.
+    assert set(flattened) == set(SettingsCategoryId)
+
+
 def test_inspector_guidance_covers_every_settings_category():
     """Every non-domain sidebar category must have an explicit guidance entry.
 
