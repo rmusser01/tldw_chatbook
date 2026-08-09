@@ -5251,7 +5251,7 @@ class TldwCli(
                 result = HomeControlResult(
                     action=HomeControlAction.RETRY,
                     status=HomeControlResultStatus.UNAVAILABLE,
-                    message="This ingest job can no longer be retried.",
+                    message="This import job can no longer be retried.",
                     severity="warning",
                     recovery_route="library",
                     target_id=target_id,

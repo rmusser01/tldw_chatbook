@@ -2383,6 +2383,15 @@ async def test_action_library_skill_back_honors_dirty_guard():
             # isn't.
             set_timer=lambda delay, callback: timer_calls.append((delay, callback)),
             _disarm_library_list_entry_focus=lambda: None,
+            # task-3800: ``_arm_library_list_entry_focus`` reads this
+            # __init__-only attribute (PR #1410's stored-timer-handle guard,
+            # see its docstring) before scheduling a new timer, to stop any
+            # prior one first. This SimpleNamespace bypasses ``__init__``
+            # entirely (task-3022's fixture-bypass shape), so every
+            # __init__-only attribute the guarded-exit path touches must be
+            # supplied here explicitly -- this one was missing, raising
+            # ``AttributeError`` instead of exercising the guard.
+            _library_list_entry_focus_timer=None,
         )
     )
     timer_calls: list[object] = []

@@ -4368,7 +4368,18 @@ class LibraryScreen(BaseAppScreen):
             self._focus_library_note_control("#library-note-context")
             return
         if self._library_notes_view == "editor":
-            await self._back_from_library_note_editor()
+            # P0 (independently confirmed at dev 4d0232358): this called
+            # `_back_from_library_note_editor()`, a method that never
+            # existed in ANY commit (introduced dangling on the
+            # notes-adaptive branch at e453e9099, "feat(notes): preserve
+            # focus across compact stages") -- a real Escape keypress from
+            # the note editor raised an uncaught AttributeError that
+            # terminated the whole app. Route through the one shared Back
+            # seam the "‹ Back to list" button and
+            # `action_library_note_editor_back` already use (dirty-flush +
+            # veto + session-blank GC + list restore) instead of inventing
+            # a second exit path.
+            await self._exit_library_note_editor_guarded()
             return
         if self._library_selected_row_id == LIBRARY_ROW_CREATE_NOTE:
             if self._library_note_create_running:

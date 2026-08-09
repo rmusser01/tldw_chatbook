@@ -11542,6 +11542,95 @@ async def test_library_shell_blank_note_untouched_is_gc_from_real_db_on_back(
 
 
 @pytest.mark.asyncio
+async def test_library_shell_blank_note_escape_key_returns_to_list_without_crash(
+    tmp_path,
+):
+    """P0 regression: Library > Notes > New > Blank note > Escape must NOT
+    crash the app.
+
+    ``action_library_notes_escape`` (the ``check_action``-gated Escape
+    binding that wins over ``action_library_note_editor_back`` for as long
+    as the Notes canvas is visible at all -- see ``check_action``'s
+    ``library_notes_escape``/``library_note_editor_back`` branches) called
+    a method, ``_back_from_library_note_editor``, that never existed in any
+    commit (introduced dangling at e453e9099). Pressing the real "escape"
+    key from the note editor therefore raised an uncaught ``AttributeError``
+    that terminated the whole app -- reproduced 3/3 in a UX re-critique.
+    This drives the exact real key press (not a direct method call) so it
+    exercises Textual's own BINDINGS/check_action dispatch, matching what a
+    user's keypress actually triggers.
+
+    Also pins Escape-vs-Back PARITY on the session-blank-note bookkeeping
+    (task-3021-era GC flags), not "GC succeeds": the untouched-blank GC
+    check in ``_flush_library_note_save`` compares the coordinator draft's
+    *title* against blank, but the create seam seeds that title with the
+    literal ``"Untitled"`` (see ``handle_library_notes_create_blank``), so
+    the GC branch's ``not any(...)`` never actually fires for the
+    never-touched case -- a pre-existing bug on ``_flush_library_note_save``
+    verified byte-identical on origin/dev (fccb3af6b), independently
+    confirmed by ``test_library_shell_blank_note_untouched_is_gc_from_
+    real_db_on_back`` already failing the same way via the "‹ Back to
+    list" button on this same branch. Out of scope for this P0 (which
+    fixes the crash, not that separate defect) -- this test therefore pins
+    today's REAL end state (row survives, GC bookkeeping flags still
+    clear), so Escape stays provably identical to Back rather than quietly
+    diverging from it, and a future fix to the GC check will need no
+    changes here.
+    """
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    app.notes_scope_service = _real_notes_scope_service(tmp_path)
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one("#library-row-create-note").press()
+        await _wait_for_selector(screen, pilot, "#library-notes-create-blank")
+        screen.query_one("#library-notes-create-blank").press()
+        await _wait_for_selector(screen, pilot, "#library-note-title")
+        await pilot.pause()
+        await pilot.pause()
+
+        assert screen._library_notes_view == "editor"
+        assert screen._library_note_pending_blank_gc_id == screen._selected_note_id
+        assert (
+            await app.notes_scope_service.count_notes(
+                scope="local_note", user_id="default_user"
+            )
+            == 1
+        )
+
+        await pilot.press("escape")
+        for _ in range(150):
+            if screen._library_notes_view == "list":
+                break
+            await pilot.pause(0.02)
+        else:
+            raise AssertionError("Escape never returned to the notes list.")
+
+        # The app must still be alive and responsive -- not merely that the
+        # attribute happened to flip before a crash tore the process down.
+        assert host._exit is False
+        assert screen.is_mounted
+        screen.query_one("#library-notes-status")
+
+        # GC bookkeeping flags are unconditionally cleared on any full
+        # editor exit (``_reset_library_note_editor_state``), independent
+        # of whether the GC delete itself ran.
+        assert screen._library_note_pending_blank_gc_id is None
+        assert screen._library_note_session_blank_id is None
+        await pilot.pause(0.2)
+        assert (
+            await app.notes_scope_service.count_notes(
+                scope="local_note", user_id="default_user"
+            )
+            == 1
+        ), "Row survival must match the Back button's own (separately tracked) GC bug."
+
+
+@pytest.mark.asyncio
 async def test_library_shell_blank_note_edited_then_back_survives_in_real_db(
     tmp_path,
 ):

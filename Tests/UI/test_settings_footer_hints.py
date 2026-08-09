@@ -15,9 +15,12 @@ These tests pin:
   fire their actions;
 * a confirmation dialog before a dirty category's staged edits are
   discarded (clean categories keep the "nothing to revert" path);
-* narrow-width discoverability: when the footer collapses the screen hints
-  to an ellipsis at <=100 cols, F1 help still lists the ACTIVE category's
-  working shortcuts.
+* narrow-width discoverability: task-2860/LIB-18 reordered the responsive
+  ladder so the screen's OWN hints outrank the global cluster -- the
+  globals compact first (``AppFooterStatus.GLOBAL_HINTS_COMPACT``) while
+  the screen hints stay intact, and only once even that no longer fits
+  does the screen context collapse to an ellipsis. F1 help must still list
+  the ACTIVE category's working shortcuts once that collapse happens.
 """
 
 import pytest
@@ -256,12 +259,23 @@ async def test_revert_without_changes_keeps_the_nothing_to_revert_path():
 
 @pytest.mark.asyncio
 async def test_narrow_footer_collapses_but_f1_help_stays_truthful():
-    """At <=100 cols the footer elides screen hints; F1 help must list the
-    ACTIVE category's working shortcuts so the bindings stay discoverable."""
+    """The screen's own hints outrank the global cluster (task-2860/LIB-18).
+
+    The ladder compacts the globals first and keeps the Storage category's
+    ``s``/``r``/``t`` hints intact all the way down to 84 cols -- confirmed
+    directly against the widget's own responsive steps in
+    ``AppFooterStatus._apply_responsive_footer``. Only below that does the
+    screen context itself collapse to an ellipsis; F1 help must still list
+    the ACTIVE category's working shortcuts once that happens, so the
+    bindings stay discoverable."""
     app = _build_test_app()
     host = DestinationHarness(app, "settings")
 
-    async with host.run_test(size=(90, 28)) as pilot:
+    # 70 cols sits well inside the range that forces the screen context to
+    # ellipsis (measured: full context text survives compacting the globals
+    # down to width=84; it collapses at width=83 and stays collapsed through
+    # width=56, only compacting the *globals* further at width<=55).
+    async with host.run_test(size=(70, 28)) as pilot:
         await _settle_settings(pilot)
         await _click_settings_category(pilot, "storage")
         screen = _active_destination_screen(host)
@@ -269,7 +283,10 @@ async def test_narrow_footer_collapses_but_f1_help_stays_truthful():
 
         collapsed_text = str(footer.query_one("#footer-key-quit", Static).renderable)
         assert "save category" not in collapsed_text, (
-            f"expected collapsed footer at 90 cols, got {collapsed_text!r}"
+            f"expected collapsed footer at 70 cols, got {collapsed_text!r}"
+        )
+        assert collapsed_text.startswith("…"), (
+            f"expected the screen context to collapse to an ellipsis, got {collapsed_text!r}"
         )
 
         screen.action_show_workbench_help()

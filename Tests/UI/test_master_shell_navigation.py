@@ -1,5 +1,7 @@
 """Mounted tests for master-shell navigation."""
 
+import re
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -8,10 +10,61 @@ from textual.app import App
 from textual.containers import Horizontal
 from textual.widgets import Button
 
+import tldw_chatbook
 from tldw_chatbook.UI.Navigation.main_navigation import (
     MainNavigationBar,
     _straddles_viewport,
 )
+
+#: task-3801: the real, generated app stylesheet -- mirrors
+#: `Tests/UI/test_mcp_inspector.py`'s `_BUNDLED_CSS_PATH` /
+#: `InspectorAppWithBundledCSS`. A bare `App()` with no `CSS_PATH` only
+#: exercises `MainNavigationBar.DEFAULT_CSS`, never the separately
+#: maintained `.nav-button.nav-button-clip-ghost:disabled` override in
+#: `css/components/_navigation.tcss` -- which is the tier that actually wins
+#: live, since `App.CSS_PATH` stylesheets outrank widget `DEFAULT_CSS`
+#: regardless of specificity or `!important` (see the rule's docstring in
+#: `main_navigation.py`).
+_BUNDLED_CSS_PATH = str(Path(tldw_chatbook.__file__).parent / "css" / "tldw_cli_modular.tcss")
+
+#: The selector `test_ghost_rule_is_width_neutral_under_the_bundled_stylesheet`
+#: pins, and the box-model properties that made it geometry-non-neutral once
+#: before (task-3225 review round 4's `border: solid $background` regression,
+#: see that test's docstring).
+_GHOST_RULE_SELECTOR = ".nav-button.nav-button-clip-ghost:disabled"
+_BOX_MODEL_PROPERTIES = ("border", "padding", "margin", "width", "height")
+
+
+def _bundled_css_rule_body(css_path: str, selector: str) -> str:
+    """Return the declaration block for `selector` in a generated CSS bundle.
+
+    Fails loudly (via assertion) rather than returning an empty string when
+    the bundle is missing or the selector can't be found, so a moved/renamed
+    bundle file or a renamed selector breaks LOUD instead of letting a
+    geometry-only test go quietly non-proving (task-3801 review finding: the
+    original harness never checked either of those things, so it could pass
+    for the wrong reason).
+    """
+    bundle = Path(css_path)
+    assert bundle.is_file(), f"bundled stylesheet missing: {css_path!r}"
+    css = bundle.read_text(encoding="utf-8")
+    # Strip comments first so a selector mentioned only in a docstring/comment
+    # (this module has several) can't be mistaken for the live rule.
+    css = re.sub(r"/\*.*?\*/", "", css, flags=re.DOTALL)
+    match = re.search(re.escape(selector) + r"\s*\{([^}]*)\}", css)
+    assert match, f"{selector!r} not found in bundled stylesheet {css_path!r}"
+    return match.group(1)
+
+
+def _declared_properties(rule_body: str) -> list[str]:
+    """Return the property names declared in a `prop: value;` rule body.
+
+    Matches on `name :` rather than doing a bare substring search so a value
+    that happens to contain a box-model word (e.g. `background: $background`
+    contains no such word today, but a future `color: $border-muted` could)
+    is never mistaken for a property declaration.
+    """
+    return re.findall(r"([a-zA-Z-]+)\s*:", rule_body)
 
 
 def test_compact_navigation_labels_preserve_full_meaning():
@@ -1100,6 +1153,101 @@ async def test_ghosting_a_button_never_reflows_the_strip():
             "ghosting a nav button changed the strip's virtual size "
             f"({virtual_before} -> {strip.virtual_size}), which moves "
             "max_scroll_x and the 'More ›' pager's reach"
+        )
+
+
+class _NoAutoGhostBarWithBundledCSS(MainNavigationBar):
+    """Ghosting is applied by hand in the test below, so the widget's own
+    settle passes must not race the assertion by re-deciding it -- same
+    reasoning as `_NoAutoGhostBar` in
+    `test_ghosting_a_button_never_reflows_the_strip`, above (its own
+    docstring names the race this avoids: without this override, `#nav-
+    workflows` is not actually straddling the viewport at this test's
+    width, so the widget's own `_ghost_clipped_buttons` pass silently
+    un-ghosts it again before the assertion runs)."""
+
+    def _ghost_clipped_buttons(self) -> None:
+        return
+
+
+class _NavAppWithBundledCSS(App):
+    """Loads the REAL generated bundle (`App.CSS_PATH`), not just
+    `MainNavigationBar.DEFAULT_CSS`. Mirrors `InspectorAppWithBundledCSS`
+    in `Tests/UI/test_mcp_inspector.py`."""
+
+    CSS_PATH = _BUNDLED_CSS_PATH
+
+    def compose(self):
+        yield _NoAutoGhostBarWithBundledCSS(active="home")
+
+
+@pytest.mark.asyncio
+async def test_ghost_rule_is_width_neutral_under_the_bundled_stylesheet():
+    """task-3801: pin the bundle tier's ghost-rule override, not just DEFAULT_CSS.
+
+    Specifically, this pins `.nav-button.nav-button-clip-ghost:disabled` in
+    the generated `App.CSS_PATH` bundle, not just `MainNavigationBar.
+    DEFAULT_CSS`. task-3225 review round 4 found and fixed a real regression: the
+    DEFAULT_CSS-tier ghost rule once declared a four-edge `border: solid
+    $background`, which is NOT geometry-neutral (Textual's own
+    `Button.-style-default` has zero horizontal border cells) -- a ghosted
+    button measured 2 cells wider than the same button un-ghosted and
+    reflowed the strip (`test_ghosting_a_button_never_reflows_the_strip`,
+    above, pins that fix). But `App.CSS_PATH` stylesheets outrank widget
+    `DEFAULT_CSS` regardless of specificity, so in the REAL running app it
+    is `css/components/_navigation.tcss`'s separately maintained copy of
+    this rule that actually wins -- and nothing exercised THAT copy the
+    same way: `test_ghosting_a_button_never_reflows_the_strip` runs under
+    a bare `App()` with no `CSS_PATH`, so it cannot see a box-model
+    property reintroduced into the bundle tier. This test closes that gap
+    by loading the real bundle and comparing one button's region before
+    and after ghosting, exactly as the DEFAULT_CSS-tier sibling does.
+
+    Before any of that, it also guards its own premise: that the bundle
+    file exists and still contains the rule under test. Without this, a
+    renamed/moved bundle or a renamed selector would make the geometry
+    assertions below vacuously pass (nothing to apply, so nothing to
+    reflow) instead of failing loud -- silently non-proving rather than
+    red. It also statically asserts the rule's declaration block carries
+    no box-model property, which is the direct, source-level statement of
+    the same task-3225 round-4 incident the runtime geometry check below
+    proves dynamically.
+    """
+    rule_body = _bundled_css_rule_body(_BUNDLED_CSS_PATH, _GHOST_RULE_SELECTOR)
+    box_model_hits = [
+        prop
+        for prop in _declared_properties(rule_body)
+        if prop in _BOX_MODEL_PROPERTIES
+        or any(prop.startswith(f"{box}-") for box in _BOX_MODEL_PROPERTIES)
+    ]
+    assert not box_model_hits, (
+        f"{_GHOST_RULE_SELECTOR!r} in {_BUNDLED_CSS_PATH!r} declares box-model "
+        f"property(ies) {box_model_hits} -- this is exactly the task-3225 "
+        "round-4 regression (a border/padding/margin/width/height delta "
+        "between ghosted and un-ghosted buttons reflows the nav strip)."
+    )
+
+    app = _NavAppWithBundledCSS()
+
+    async with app.run_test(size=(200, 24)) as pilot:
+        await pilot.pause(0.4)
+
+        victim = app.query_one("#nav-workflows", Button)
+        before = victim.region
+        assert before.width > 0, "test premise: the button actually renders"
+
+        victim.add_class("nav-button-clip-ghost")
+        victim.disabled = True
+        await pilot.pause(0.3)
+
+        after = victim.region
+        assert after == before, (
+            "ghosting #nav-workflows under the REAL app stylesheet changed "
+            f"its region ({before} -> {after}) -- the bundle-tier "
+            ".nav-button.nav-button-clip-ghost:disabled rule in "
+            "css/components/_navigation.tcss reintroduced a non-zero "
+            "border/padding/margin delta between the ghosted and "
+            "un-ghosted box model."
         )
 
 
