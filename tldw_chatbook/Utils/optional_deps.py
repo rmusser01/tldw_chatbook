@@ -203,7 +203,14 @@ OPTIONAL_FEATURES: dict[str, OptionalFeatureInfo] = {
         "all-tools",
         "All optional tools",
         AREA_ALL,
-        ("grep_ast", "chromadb", "vllm", "playwright", "faster-whisper", "mcp[cli]"),
+        (
+            "grep_ast",
+            "chromadb",
+            "vllm",
+            "playwright",
+            "faster-whisper",
+            "mcp-unified",
+        ),
         "Release packaging",
         "All optional capabilities",
         OWNER_RELEASE,
@@ -362,7 +369,7 @@ OPTIONAL_FEATURES: dict[str, OptionalFeatureInfo] = {
         "mcp",
         "MCP server and client support",
         AREA_MCP,
-        ("mcp[cli]",),
+        ("mcp-unified",),
         "MCP",
         "MCP server/client tools",
         OWNER_MCP,
@@ -1305,7 +1312,7 @@ def check_image_processing_deps() -> bool:
 
 def check_mcp_deps() -> bool:
     """Check dependencies needed for MCP functionality."""
-    mcp_available = check_dependency("mcp")
+    mcp_available = check_dependency("mcp_unified", "mcp")
     DEPENDENCIES_AVAILABLE["mcp"] = mcp_available
 
     if mcp_available:

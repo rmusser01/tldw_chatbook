@@ -439,6 +439,30 @@ def test_mcp_deps():
     assert "mcp" in DEPENDENCIES_AVAILABLE
 
 
+def test_mcp_deps_probes_mcp_unified_under_the_mcp_feature_key(monkeypatch):
+    """The distribution and its import name remain distinct at the live gate."""
+    from tldw_chatbook.Utils import optional_deps
+
+    calls = []
+
+    def fake_check_dependency(module_name, feature_name=None):
+        calls.append((module_name, feature_name))
+        return True
+
+    monkeypatch.setattr(optional_deps, "check_dependency", fake_check_dependency)
+
+    assert optional_deps.check_mcp_deps() is True
+    assert calls == [("mcp_unified", "mcp")]
+
+
+def test_mcp_optional_feature_names_the_mcp_unified_distribution():
+    """Recovery metadata names the package users install, not its import name."""
+    from tldw_chatbook.Utils.optional_deps import get_optional_feature_info
+
+    assert get_optional_feature_info("mcp").package_dependencies == ("mcp-unified",)
+    assert "mcp-unified" in get_optional_feature_info("all-tools").package_dependencies
+
+
 def test_initialize_dependency_checks():
     """Test that initialize_dependency_checks calls all check functions."""
     from tldw_chatbook.Utils.optional_deps import (

@@ -129,7 +129,7 @@ mlx_whisper = [
 ]
 local_transformers = ["transformers"]
 mcp = [
-    "mcp[cli]>=1.0.0",
+    "mcp-unified==0.2.1",
 ]
 image_generation = [
     # SwarmUI API client (Media_Creation/swarmui_client.py). aiohttp previously
@@ -414,7 +414,7 @@ all-tools = [
     "Pillow",
     
     # === MCP and Integrations ===
-    "mcp[cli]>=1.0.0",
+    "mcp-unified==0.2.1",
     
     # === Subscriptions and Scheduling ===
     "markdown",
