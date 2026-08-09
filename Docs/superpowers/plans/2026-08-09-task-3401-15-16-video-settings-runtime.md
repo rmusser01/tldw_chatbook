@@ -27,7 +27,7 @@ Add a direct contract test that expects `SettingsCategoryId.VIDEO_GENERATION` to
 Run:
 
 ```bash
-.venv/bin/python -m pytest Tests/UI/test_settings_configuration_hub.py -q -k 'video_generation_category or video_gen_filter or invalid_video_gen_draft'
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/UI/test_settings_configuration_hub.py -q -k 'video_generation_category or video_gen_filter or invalid_video_gen_draft'
 ```
 
 Expected: the two navigation tests fail because the category button/group member is missing; the invalid-draft boundary test already passes and establishes the unchanged save guard.
@@ -48,7 +48,7 @@ Do not change category derivation, ordering, collapse behavior, panel compositio
 Run:
 
 ```bash
-.venv/bin/python -m pytest Tests/UI/test_settings_configuration_hub.py Tests/UI/test_settings_video_gen_defaults.py Tests/Chat/test_console_generate_video.py::test_successful_settings_save_rebuilds_adapter_and_console_uses_same_instance -q -k 'video or domain_category_contracts or successful_settings_save'
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/UI/test_settings_configuration_hub.py Tests/UI/test_settings_video_gen_defaults.py Tests/Chat/test_console_generate_video.py::test_successful_settings_save_rebuilds_adapter_and_console_uses_same_instance -q -k 'video or domain_category_contracts or successful_settings_save'
 ```
 
 Expected: all selected tests pass.
@@ -96,7 +96,7 @@ Rewrite the same scratch profile with a changed workflow, then use this exact re
 Run:
 
 ```bash
-.venv/bin/python -m pytest Tests/Video_Generation/test_config_projection.py -q
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/Video_Generation/test_config_projection.py -q
 ```
 
 Expected: failure because `load_settings()` has no `video_generation` key.
@@ -122,7 +122,7 @@ Do not change the video loader, registry, writers, or cache-reset APIs.
 Run:
 
 ```bash
-.venv/bin/python -m pytest Tests/Video_Generation/test_config_projection.py Tests/Video_Generation/test_config_loader.py Tests/Video_Generation/test_adapter_registry.py -q
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/Video_Generation/test_config_projection.py Tests/Video_Generation/test_config_loader.py Tests/Video_Generation/test_adapter_registry.py -q
 ```
 
 Expected: all tests pass.
@@ -153,7 +153,7 @@ git commit -m "fix: project video settings into runtime"
 Run only the affected Settings and Video Generation files:
 
 ```bash
-.venv/bin/python -m pytest Tests/UI/test_settings_configuration_hub.py Tests/UI/test_settings_video_gen_defaults.py Tests/Chat/test_console_generate_video.py Tests/Video_Generation/test_config_projection.py Tests/Video_Generation/test_config_loader.py Tests/Video_Generation/test_adapter_registry.py -q -k 'video or domain_category_contracts or successful_settings_save or config_projection or adapter_registry'
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/UI/test_settings_configuration_hub.py Tests/UI/test_settings_video_gen_defaults.py Tests/Chat/test_console_generate_video.py Tests/Video_Generation/test_config_projection.py Tests/Video_Generation/test_config_loader.py Tests/Video_Generation/test_adapter_registry.py -q -k 'video or domain_category_contracts or successful_settings_save or config_projection or adapter_registry'
 ```
 
 - [ ] **Step 2: Run targeted static verification**
@@ -161,19 +161,19 @@ Run only the affected Settings and Video Generation files:
 Run full Ruff rules on the compact changed files:
 
 ```bash
-.venv/bin/ruff check tldw_chatbook/config.py Tests/Video_Generation/test_config_projection.py Tests/UI/test_settings_configuration_hub.py
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/ruff check tldw_chatbook/config.py Tests/Video_Generation/test_config_projection.py Tests/UI/test_settings_configuration_hub.py
 ```
 
 Run the repository-established syntax/error subset on the large baseline Settings screen:
 
 ```bash
-.venv/bin/ruff check --select E9,F63,F7,F82 tldw_chatbook/UI/Screens/settings_screen.py
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/ruff check --select E9,F63,F7,F82 tldw_chatbook/UI/Screens/settings_screen.py
 ```
 
 Compile the exact four changed Python files to a `TemporaryDirectory` output:
 
 ```bash
-.venv/bin/python -c 'import py_compile,tempfile; from pathlib import Path; files=["tldw_chatbook/config.py","tldw_chatbook/UI/Screens/settings_screen.py","Tests/Video_Generation/test_config_projection.py","Tests/UI/test_settings_configuration_hub.py"]; d=tempfile.TemporaryDirectory(); [py_compile.compile(f,cfile=str(Path(d.name)/(Path(f).name+".pyc")),doraise=True) for f in files]'
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -c 'import py_compile,tempfile; from pathlib import Path; files=["tldw_chatbook/config.py","tldw_chatbook/UI/Screens/settings_screen.py","Tests/Video_Generation/test_config_projection.py","Tests/UI/test_settings_configuration_hub.py"]; d=tempfile.TemporaryDirectory(); [py_compile.compile(f,cfile=str(Path(d.name)/(Path(f).name+".pyc")),doraise=True) for f in files]'
 ```
 
 Run exact diff, workflow-immutability, and privacy checks:
