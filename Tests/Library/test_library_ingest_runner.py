@@ -238,18 +238,14 @@ class _IngestRunnerHarness(LibraryIngestQueueMixin, App):
         local_stt_dispatch_factory: Callable[..., dict[str, Any]] | None = None,
     ) -> None:
         super().__init__()
-        self.library_ingest_jobs = LibraryIngestJobRegistry()
+        # task-3315: runtime state DERIVED from the app's own initializer
+        # (LibraryIngestQueueMixin._init_library_ingest_runtime_state) instead
+        # of hand-listed, so a new `self._ingest_*` read in app.py can never
+        # silently drift this harness. Host inputs (media_db, the fake
+        # local-STT executor) are then applied on top.
+        self._init_library_ingest_runtime_state()
         self.media_db = media_db
-        self._ingest_parse_pool = None
-        self._ingest_parse_pool_generation = 0
-        self._ingest_parse_jobs_by_generation: dict[int, set[str]] = {}
-        self._ingest_parse_pool_stop_event: Optional[threading.Event] = None
-        self._ingest_parsed_payloads: dict[str, dict] = {}
-        self._ingest_shutdown = False
-        self._local_stt_executor_lock = threading.RLock()
         self._local_stt_executor = local_stt_executor
-        self._local_stt_dispatch_coordinator = None
-        self._ingest_local_stt_jobs: dict[str, tuple[int, str]] = {}
         self._pool_factory = pool_factory or (lambda: _FakeIngestParsePool())
         self._pool_create_count = 0
         self._worker_count_override = worker_count

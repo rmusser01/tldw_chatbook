@@ -1867,3 +1867,32 @@ recompose context savers), use the synchronous `Screen.set_focus(widget)`, not
 `widget.focus()`. And remember `set_focus` on a non-focusable (hidden/disabled)
 widget does nothing and reports nothing — a focus-restore path that can name a
 display-managed widget needs the target to be focusable, or a fallback.
+
+---
+
+## Bisecting dev-baseline test rot without a checkout: `git archive` trees run against the same venv
+
+**task-3315, 2026-08-09.** `Tests/UI/test_library_shell.py` carried 56 failures on
+the dev base, and the question that decided every repair was WHERE each family
+broke: the ingest arc, dev's own churn, or the very PR that authored the pins.
+With mutating git commands off-limits (shared checkout, other agents active),
+`git archive <sha> | tar -x -C scratch/tree_<sha>` + `cd tree_<sha> && <worktree>/
+.venv/bin/python -m pytest ...` reproduced the suite at any historical commit —
+cwd wins over the editable install on sys.path (verify once: print
+`tldw_chatbook.__file__`). Running the 60x20 geometry family at `6b4ccf475` (the
+notes-adaptive PR #1439 merge that INTRODUCED those tests to dev) and at the dev
+base proved the identical 14-test failure set at both: the family was born broken
+at its own merge, and the media-ingest arc was exonerated in one run. The same
+technique caught that the pins' authoring-branch snapshot (`42c994486`) was itself
+too broken to run — "the tests passed when written" is not a safe assumption for
+a PR whose battery only ever ran `-k` slices.
+
+**What to do.** When a full-file suite is red on a base you didn't build, don't
+reason from blame alone: extract the tree at the suspect merge commits with
+read-only `git archive` and run the failing family there. A failure set identical
+at the introducing merge and at base names the culprit (pins merged unvalidated)
+and scopes the fix to re-pinning; a set that appears only later points at product
+churn to bisect further. Corollary of the incident: line numbers in an earlier
+failure report drift as you edit the file — re-derive the failing STATEMENT
+before diagnosing (a "status query" failure here was actually the post-completion
+query racing the finish-of-run recompose, three asserts later than first read).

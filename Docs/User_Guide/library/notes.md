@@ -197,3 +197,11 @@ placement sentence in-app relating them to each other).*
 
 *Re-stamped against dev @ 4acb17a0b — 2026-08-07 (TASK-2857: "Export…"
 now opens the "Export bundle (.zip)" canvas, not "Export chatbook").*
+
+*Re-verified 2026-08-09 (task-3315): the LIB-14 untouched-blank discard
+and the empty-title → "Untitled" save fallback described above had
+regressed on dev (the notes-adaptive session-coordinator refactor read
+the seeded snapshot title instead of the presented-empty editor, and
+dropped the save-seam fallback); both are restored, and Esc from the
+note editor no longer dead-ends (it routes through the same guarded
+Back seam as the "‹ Back to list" button).*

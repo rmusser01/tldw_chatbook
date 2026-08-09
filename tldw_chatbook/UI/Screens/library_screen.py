@@ -445,6 +445,11 @@ LIBRARY_SNAPSHOT_CACHE_TTL_SECONDS = 5.0
 LIBRARY_LIST_ENTRY_FOCUS_ARMED_SECONDS = 2.0
 LIBRARY_NOTES_AUTOSAVE_SECONDS = 2.0
 LIBRARY_NOTE_CONTENT_MAX_CHARS = 2_000_000
+# The literal title a just-created "Blank note" row is seeded with (LIB-14).
+# The editor presents it placeholder-only (empty Input, "Untitled"
+# placeholder), and the untouched-blank GC gate treats it as blank -- both
+# must agree with the create seed in ``handle_library_notes_create_blank``.
+LIBRARY_NOTE_BLANK_SEED_TITLE = "Untitled"
 # Prompt editor body fields (details/system/user) have no dedicated cap of
 # their own -- reuses the note body's generous ceiling rather than inventing
 # a second magic number for the same "large text field" concern.
@@ -664,7 +669,16 @@ class _LibraryDatabaseNoteSessionPort:
             result = await self._run_service_call(
                 save_note,
                 scope="local_note",
-                title=payload.title,
+                # task-3315: restore the LIB-14 save-seam fallback the
+                # coordinator refactor (13cf08f90, notes-adaptive PR #1439)
+                # silently dropped -- an emptied-out title persists as the
+                # same "Untitled" default the create seam uses, never as a
+                # blank row title (task-2858's reviewed decision).
+                title=(
+                    payload.title
+                    if payload.title.strip()
+                    else LIBRARY_NOTE_BLANK_SEED_TITLE
+                ),
                 content=payload.body,
                 note_id=note_id,
                 version=expected_version,
@@ -4275,9 +4289,9 @@ class LibraryScreen(BaseAppScreen):
             self._focus_library_note_control("#library-note-context")
             return
         if self._library_notes_view == "editor":
-            # P0 (independently confirmed at dev 4d0232358): this called
-            # `_back_from_library_note_editor()`, a method that never
-            # existed in ANY commit (introduced dangling on the
+            # P0 (found independently by task-3315 and at dev 4d0232358):
+            # this called `_back_from_library_note_editor()`, a method that
+            # never existed in ANY commit (introduced dangling on the
             # notes-adaptive branch at e453e9099, "feat(notes): preserve
             # focus across compact stages") -- a real Escape keypress from
             # the note editor raised an uncaught AttributeError that
@@ -4407,6 +4421,19 @@ class LibraryScreen(BaseAppScreen):
             event.key in {"/", "slash"} or getattr(event, "character", None) == "/"
         )
         if is_slash:
+            # task-3315: this screen-wide rail-search grab predates the
+            # notes-adaptive "/" binding (library_notes_focus_filter, PR
+            # #1439) and runs BEFORE bindings dispatch, so the notes-scoped
+            # "/" could never fire -- inside the Notes Navigator with a
+            # non-text control focused, "/" jumped to the rail search
+            # instead of the notes filter (reproduced failing at dev base
+            # ebeae1440). Defer to the binding's own check_action gate so
+            # the precedence lives in exactly one place.
+            if self.check_action("library_notes_focus_filter", ()):
+                self.action_library_notes_focus_filter()
+                event.stop()
+                event.prevent_default()
+                return
             try:
                 self.query_one("#library-search-input", Input).focus()
             except (NoMatches, QueryError):
@@ -10194,13 +10221,31 @@ class LibraryScreen(BaseAppScreen):
         if (
             self._library_note_session_blank_id
             and self._library_note_session_blank_id == self._selected_note_id
+            # task-3315: never start a SECOND destructive op from the
+            # untouched-blank GC while a discard/delete is already running
+            # or admitted -- fall through to the session flush, whose own
+            # destructive guard vetoes navigation until it settles.
+            and not self._library_note_session.destructive_running
+            and self._library_note_session.destructive_admission is None
         ):
             fields = self._read_library_note_editor_fields()
             if fields is not None:
                 raw_title, raw_content, raw_keywords_text = fields
-                if not any(
-                    value.strip()
-                    for value in (raw_title, raw_content, raw_keywords_text)
+                # task-3315 (LIB-14 regression, pre-arc dev churn): the
+                # session coordinator seeds a Blank note's title with the
+                # literal seed and ``_read_library_note_editor_fields`` now
+                # projects the SNAPSHOT rather than the widgets (13cf08f90,
+                # notes-adaptive PR #1439) -- the editor presents that seed
+                # as an empty placeholder-only Input, so it must count as
+                # blank here or the untouched-blank GC never fires and every
+                # abandoned Blank note leaves a permanent "Untitled" row
+                # (exactly what task-2858 AC#5 forbids).
+                title_blank = (
+                    not raw_title.strip()
+                    or raw_title == LIBRARY_NOTE_BLANK_SEED_TITLE
+                )
+                if title_blank and not any(
+                    value.strip() for value in (raw_content, raw_keywords_text)
                 ):
                     await self._gc_pending_blank_note()
                     return NoteFlushOutcome(NoteFlushOutcomeKind.PERMITTED)
@@ -20502,7 +20547,7 @@ class LibraryScreen(BaseAppScreen):
             return
         self.run_worker(
             self._create_library_note(
-                title="Untitled",
+                title=LIBRARY_NOTE_BLANK_SEED_TITLE,
                 content="",
                 create_token=create_token,
                 blank=True,

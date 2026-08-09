@@ -1928,6 +1928,42 @@ class LibraryIngestQueueMixin:
     touches either heavy worker).
     """
 
+    def _init_library_ingest_runtime_state(self) -> None:
+        """Initialize every host attribute the ingest job loop reads.
+
+        The single source of truth for this mixin's host-state contract:
+        ``TldwCli``'s wiring calls this, and the headless test harnesses
+        (``Tests/UI/test_library_shell.py``'s ``_LibraryIngestCanvasHarness``,
+        ``Tests/Library/test_library_ingest_runner.py``'s
+        ``_IngestRunnerHarness``) call the same method, so a new
+        ``self._ingest_*`` read added to the coordinator/writer is mirrored
+        into the fakes automatically instead of hand-listed (task-3315 --
+        the hand-listed harness missed ``_ingest_local_stt_jobs`` when the
+        local-STT lane landed and ~20 pilots died with AttributeError).
+        ``self.media_db`` is deliberately NOT set here: it is a per-host
+        input (see the class docstring), not coordinator state.
+
+        F3 parallel-parse coordinator state: the lazily-created parse-pool
+        handle, the parse->write handoff (job_id -> parsed payload dict,
+        populated by a pool completion and drained by the writer's claim),
+        and the shutdown flag pool callbacks check before touching a
+        closing app.
+        """
+        self.library_ingest_jobs = LibraryIngestJobRegistry()
+        self._ingest_parse_pool = None
+        self._ingest_parse_pool_generation: int = 0
+        self._ingest_parse_jobs_by_generation: dict[int, set[str]] = {}
+        self._ingest_parse_pool_stop_event: Optional[threading.Event] = None
+        self._ingest_parsed_payloads: dict[str, dict] = {}
+        # RLock, not Lock: dev's STT dispatch work re-enters this guard.
+        self._local_stt_executor_lock = threading.RLock()
+        self._local_stt_executor: Optional[LocalSTTExecutor] = None
+        self._local_stt_dispatch_coordinator: Optional[
+            LocalSTTDispatchCoordinator
+        ] = None
+        self._ingest_local_stt_jobs: dict[str, tuple[int, str]] = {}
+        self._ingest_shutdown: bool = False
+
     def _restore_ingest_jobs(self) -> None:
         """One-time on_mount restore of persisted ingest job history."""
         from datetime import datetime, timezone
@@ -5741,24 +5777,7 @@ class TldwCli(
             policy_enforcer=self.service_policy_enforcer,
         )
         self.library_rag_search_service = LibraryLocalRagSearchService(self)
-        self.library_ingest_jobs = LibraryIngestJobRegistry()
-        # F3 parallel-parse coordinator state (see LibraryIngestQueueMixin):
-        # the lazily-created parse-pool handle, the parse->write handoff
-        # (job_id -> parsed payload dict, populated by a pool completion and
-        # drained by the writer's claim), and the shutdown flag pool
-        # callbacks check before touching a closing app.
-        self._ingest_parse_pool = None
-        self._ingest_parse_pool_generation: int = 0
-        self._ingest_parse_jobs_by_generation: dict[int, set[str]] = {}
-        self._ingest_parse_pool_stop_event: Optional[threading.Event] = None
-        self._ingest_parsed_payloads: dict[str, dict] = {}
-        self._local_stt_executor_lock = threading.RLock()
-        self._local_stt_executor: Optional[LocalSTTExecutor] = None
-        self._local_stt_dispatch_coordinator: Optional[
-            LocalSTTDispatchCoordinator
-        ] = None
-        self._ingest_local_stt_jobs: dict[str, tuple[int, str]] = {}
-        self._ingest_shutdown: bool = False
+        self._init_library_ingest_runtime_state()
 
     def _wire_research_services(self) -> None:
         """Initialize source-aware research services if the broad parity wiring has not already done so."""
