@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from collections.abc import Sequence
 from typing import Any, Callable, Iterable, Mapping, NamedTuple, Protocol
 
 from loguru import logger
@@ -17,6 +18,7 @@ from loguru import logger
 from tldw_chatbook.Tools.tool_executor import CalculatorTool, DateTimeTool
 
 from .agent_models import (
+    AgentDefinition,
     DIRECT_DISCLOSE_THRESHOLD,
     FIND_TOOLS_NAME,
     INSTALL_SKILL_TOOL_NAME,
@@ -57,6 +59,49 @@ SPAWN_TOOL_SCHEMA = ToolSchema(
         "required": ["task"],
     },
 )
+
+
+def build_spawn_schema(definitions: Sequence[AgentDefinition]) -> ToolSchema:
+    """The spawn tool's schema for THIS run.
+
+    With no definitions, returns ``SPAWN_TOOL_SCHEMA`` itself (identity —
+    byte-identical payloads for every pre-definition caller). With
+    definitions, adds an OPTIONAL ``agent`` parameter carrying both an
+    ``enum`` (native tool-calling) and a prose roster in the description
+    (fence-protocol models read prose better than schema; this text rides
+    every fence-model turn, which is why AgentDefinition.description is
+    hard-capped).
+    """
+    if not definitions:
+        return SPAWN_TOOL_SCHEMA
+    roster = "\n".join(
+        f"- {d.name} — {d.description}" if d.description else f"- {d.name}"
+        for d in definitions
+    )
+    parameters = {
+        "type": "object",
+        "properties": {
+            # Shallow-copied so no future consumer of the built schema can
+            # mutate the module-global SPAWN_TOOL_SCHEMA through this alias.
+            "task": dict(SPAWN_TOOL_SCHEMA.parameters["properties"]["task"]),
+            "agent": {
+                "type": "string",
+                "enum": [d.name for d in definitions],
+                "description": (
+                    "Optional: run the task as one of these named agents "
+                    "(omit for a generic sub-agent):\n" + roster
+                ),
+            },
+        },
+        "required": ["task"],
+    }
+    return ToolSchema(
+        id=SPAWN_TOOL_SCHEMA.id,
+        name=SPAWN_TOOL_SCHEMA.name,
+        description=SPAWN_TOOL_SCHEMA.description,
+        parameters=parameters,
+    )
+
 
 FIND_TOOLS_SCHEMA = ToolSchema(
     id="runtime:find_tools",

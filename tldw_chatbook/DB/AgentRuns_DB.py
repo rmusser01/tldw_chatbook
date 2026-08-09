@@ -20,6 +20,10 @@ from typing import Sequence, Iterator, Union
 
 from loguru import logger
 
+from tldw_chatbook.Agents.agent_models import (
+    AgentDefinition,
+    validate_agent_definition,
+)
 from .base_db import BaseDB
 
 
@@ -184,7 +188,9 @@ class AgentRunsDB(BaseDB):
                     budget TEXT,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL,
-                    assistant_message_id TEXT
+                    assistant_message_id TEXT,
+                    agent_definition TEXT,
+                    definition_fingerprint TEXT
                 );
 
                 CREATE INDEX IF NOT EXISTS idx_agent_runs_conversation
@@ -214,6 +220,28 @@ class AgentRunsDB(BaseDB):
                 );
                 CREATE INDEX IF NOT EXISTS idx_change_snapshots_run
                     ON change_snapshots(run_id);
+
+                -- v5 (fleet spec §4, PR 1): user-authored agent
+                -- definitions. DURABILITY NOTE: from v5 on this DB holds
+                -- durable USER-AUTHORED CONTENT, not just run telemetry --
+                -- any future "clear run history" feature must NOT treat
+                -- the file as disposable.
+                CREATE TABLE IF NOT EXISTS agent_definitions (
+                    id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    description TEXT NOT NULL DEFAULT '',
+                    instructions TEXT NOT NULL DEFAULT '',
+                    tool_allowlist TEXT NOT NULL DEFAULT '[]',
+                    model TEXT NOT NULL DEFAULT '',
+                    enabled INTEGER NOT NULL DEFAULT 1,
+                    deleted INTEGER NOT NULL DEFAULT 0,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+                -- Partial unique index: a live name is unique, but a
+                -- soft-deleted row releases its name for re-creation.
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_definitions_name
+                    ON agent_definitions(name) WHERE deleted = 0;
                 """
             )
             # v1->v2: this DB has no migration framework -- _initialize_schema
@@ -228,6 +256,16 @@ class AgentRunsDB(BaseDB):
             if "assistant_message_id" not in existing_columns:
                 conn.execute(
                     "ALTER TABLE agent_runs ADD COLUMN assistant_message_id TEXT"
+                )
+            # v4->v5 (fleet spec §4): definition audit identity on runs --
+            # same idempotent-ALTER mechanism as above.
+            if "agent_definition" not in existing_columns:
+                conn.execute(
+                    "ALTER TABLE agent_runs ADD COLUMN agent_definition TEXT"
+                )
+            if "definition_fingerprint" not in existing_columns:
+                conn.execute(
+                    "ALTER TABLE agent_runs ADD COLUMN definition_fingerprint TEXT"
                 )
             # v3->v4 (TASK-1975): oversize disclosure count on snapshot
             # rows -- same idempotent-ALTER migration mechanism as above.
@@ -253,6 +291,9 @@ class AgentRunsDB(BaseDB):
             # when older version rows exist).
             conn.execute(
                 "INSERT OR IGNORE INTO schema_version (version) VALUES (4)"
+            )
+            conn.execute(
+                "INSERT OR IGNORE INTO schema_version (version) VALUES (5)"
             )
 
     def record_change_snapshot(
@@ -416,6 +457,8 @@ class AgentRunsDB(BaseDB):
         parent_run_id: str | None = None,
         budget: dict | None = None,
         assistant_message_id: str | None = None,
+        agent_definition: str | None = None,
+        definition_fingerprint: str | None = None,
     ) -> str:
         """Create a new run record in ``running`` status.
 
@@ -432,6 +475,11 @@ class AgentRunsDB(BaseDB):
                 ``None`` (the common case) when it will be recorded later
                 via ``set_run_assistant_message_id`` once the reply is
                 persisted.
+            agent_definition: The name of the agent definition used for
+                this run, if spawned from a definition; ``None`` otherwise.
+            definition_fingerprint: The fingerprint hash of the agent
+                definition used for this run, for audit trail purposes;
+                ``None`` if not applicable.
 
         Returns:
             The newly created run's id (a hex UUID4).
@@ -443,8 +491,8 @@ class AgentRunsDB(BaseDB):
                 """INSERT INTO agent_runs
                    (id, conversation_id, parent_run_id, agent_kind, task,
                     status, steps, result, budget, created_at, updated_at,
-                    assistant_message_id)
-                   VALUES (?, ?, ?, ?, ?, 'running', '[]', NULL, ?, ?, ?, ?)""",
+                    assistant_message_id, agent_definition, definition_fingerprint)
+                   VALUES (?, ?, ?, ?, ?, 'running', '[]', NULL, ?, ?, ?, ?, ?, ?)""",
                 (
                     run_id,
                     conversation_id,
@@ -455,9 +503,122 @@ class AgentRunsDB(BaseDB):
                     now,
                     now,
                     assistant_message_id,
+                    agent_definition,
+                    definition_fingerprint,
                 ),
             )
         return run_id
+
+    def create_agent_definition(self, defn: AgentDefinition) -> str:
+        """Insert a definition; returns its id.
+
+        Raises:
+            ValueError: On validation failure, or a duplicate live name.
+        """
+        errors = validate_agent_definition(defn)
+        if errors:
+            raise ValueError("; ".join(errors))
+        definition_id = uuid.uuid4().hex
+        now = _now_iso()
+        try:
+            with self.transaction() as conn:
+                conn.execute(
+                    """INSERT INTO agent_definitions
+                       (id, name, description, instructions, tool_allowlist,
+                        model, enabled, deleted, created_at, updated_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?)""",
+                    (
+                        definition_id,
+                        defn.name,
+                        defn.description,
+                        defn.instructions,
+                        json.dumps(list(defn.tool_allowlist)),
+                        defn.model,
+                        1 if defn.enabled else 0,
+                        now,
+                        now,
+                    ),
+                )
+        except sqlite3.IntegrityError as exc:
+            raise ValueError(
+                f"an agent named '{defn.name}' already exists"
+            ) from exc
+        return definition_id
+
+    def update_agent_definition(
+        self, definition_id: str, defn: AgentDefinition
+    ) -> None:
+        """Replace a definition's fields (same raises as create).
+
+        Raises:
+            ValueError: On validation failure, a duplicate live name, or
+                when ``definition_id`` doesn't match any live (non-deleted)
+                row -- without this check a missing/soft-deleted id was a
+                silent no-op and the caller (Settings ▸ Agents) would still
+                report "Saved".
+        """
+        errors = validate_agent_definition(defn)
+        if errors:
+            raise ValueError("; ".join(errors))
+        try:
+            with self.transaction() as conn:
+                cursor = conn.execute(
+                    """UPDATE agent_definitions
+                       SET name = ?, description = ?, instructions = ?,
+                           tool_allowlist = ?, model = ?, enabled = ?,
+                           updated_at = ?
+                       WHERE id = ? AND deleted = 0""",
+                    (
+                        defn.name,
+                        defn.description,
+                        defn.instructions,
+                        json.dumps(list(defn.tool_allowlist)),
+                        defn.model,
+                        1 if defn.enabled else 0,
+                        _now_iso(),
+                        definition_id,
+                    ),
+                )
+                if cursor.rowcount == 0:
+                    raise ValueError(
+                        f"agent definition not found: {definition_id}"
+                    )
+        except sqlite3.IntegrityError as exc:
+            raise ValueError(
+                f"an agent named '{defn.name}' already exists"
+            ) from exc
+
+    def soft_delete_agent_definition(self, definition_id: str) -> None:
+        with self.transaction() as conn:
+            conn.execute(
+                "UPDATE agent_definitions SET deleted = 1, updated_at = ? "
+                "WHERE id = ?",
+                (_now_iso(), definition_id),
+            )
+
+    def _definition_row_to_dict(self, row: sqlite3.Row) -> dict:
+        data = {key: row[key] for key in row.keys()}
+        data["tool_allowlist"] = json.loads(data["tool_allowlist"] or "[]")
+        data.pop("deleted", None)
+        return data
+
+    def list_agent_definitions(self, enabled_only: bool = False) -> list[dict]:
+        """Live (non-deleted) definitions ordered by name."""
+        query = "SELECT * FROM agent_definitions WHERE deleted = 0"
+        if enabled_only:
+            query += " AND enabled = 1"
+        query += " ORDER BY name"
+        with self.connection() as conn:
+            rows = conn.execute(query).fetchall()
+        return [self._definition_row_to_dict(row) for row in rows]
+
+    def get_agent_definition(self, definition_id: str) -> dict | None:
+        with self.connection() as conn:
+            row = conn.execute(
+                "SELECT * FROM agent_definitions WHERE id = ? AND deleted = 0",
+                (definition_id,),
+            ).fetchone()
+        return self._definition_row_to_dict(row) if row else None
 
     def append_steps(self, run_id: str, steps: list[dict]) -> None:
         """Append step records to a run's step log.

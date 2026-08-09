@@ -15,10 +15,12 @@ from tldw_chatbook.Agents.agent_models import (
     RUN_STUCK,
     SPAWN_TOOL_NAME,
     AgentConfig,
+    AgentDefinition,
     RunBudget,
     ToolCatalogEntry,
     ToolResult,
     ToolSchema,
+    definition_fingerprint,
 )
 from tldw_chatbook.Agents import agent_service
 from tldw_chatbook.Agents.agent_service import (
@@ -1330,3 +1332,187 @@ def test_registry_timeout_for_reports_a_tools_own_ceiling():
     assert registry.timeout_for("slow_thing") == 42.0
     assert registry.timeout_for("calculator") is None
     assert registry.timeout_for("no_such_tool") is None
+
+
+RESEARCHER_DEFN = AgentDefinition(
+    name="researcher",
+    description="Searches and summarizes.",
+    instructions="Always cite sources in your result.",
+    tool_allowlist=("calculator",),
+)
+
+
+def _seed_definition(db, defn=RESEARCHER_DEFN):
+    db.create_agent_definition(defn)
+
+
+def test_named_spawn_appends_instructions_and_keeps_identity_prefix(db):
+    _seed_definition(db)
+    service, chat = make_service(
+        db,
+        [
+            fence(SPAWN_TOOL_NAME, {"task": "compute 6*7", "agent": "researcher"}),
+            "sub answer: 42",
+            "done",
+        ],
+    )
+    run_id, outcome = service.run_turn(
+        conversation_id="c",
+        messages=[{"role": "user", "content": "delegate"}],
+        config=CFG,
+        api_endpoint="llama_cpp",
+    )
+    assert outcome.status == RUN_DONE
+    child_system = chat.calls[1]["messages_payload"][0]
+    assert child_system["role"] == "system"
+    # IDENTITY CONTRACT: base subagent prompt stays the PREFIX
+    # (console_agent_bridge._is_subagent prefix-matches it) ...
+    assert child_system["content"].startswith(SUBAGENT_SYSTEM_PROMPT.split(".")[0])
+    # ... and the definition's instructions are appended after it.
+    assert "Always cite sources" in child_system["content"]
+
+
+def test_named_spawn_intersects_allowlist_never_grants(db):
+    _seed_definition(
+        db,
+        AgentDefinition(
+            name="narrow",
+            instructions="Do the task.",
+            # calculator is in the parent set; forbidden_tool is not — the
+            # definition can narrow to calculator but never grant extras.
+            tool_allowlist=("calculator", "forbidden_tool"),
+        ),
+    )
+    service, chat = make_service(
+        db,
+        [
+            fence(SPAWN_TOOL_NAME, {"task": "t", "agent": "narrow"}),
+            "child done",
+            "done",
+        ],
+    )
+    service.run_turn(
+        conversation_id="c",
+        messages=[{"role": "user", "content": "go"}],
+        config=CFG,
+        api_endpoint="llama_cpp",
+    )
+    # Channel-agnostic: disclosed schemas may ride the system prompt
+    # (fence protocol) OR the tools= kwarg (native) — inspect the whole
+    # provider call.
+    child_call = json.dumps(chat.calls[1], default=str)
+    assert "calculator" in child_call
+    assert "get_current_datetime" not in child_call  # narrowed away
+    assert "forbidden_tool" not in child_call  # never granted
+
+
+def test_named_spawn_model_override_same_endpoint(db):
+    _seed_definition(
+        db,
+        AgentDefinition(
+            name="cheap", instructions="Do it.", model="tiny-model"
+        ),
+    )
+    service, chat = make_service(
+        db,
+        [fence(SPAWN_TOOL_NAME, {"task": "t", "agent": "cheap"}), "ok", "done"],
+    )
+    service.run_turn(
+        conversation_id="c",
+        messages=[{"role": "user", "content": "go"}],
+        config=CFG,
+        api_endpoint="llama_cpp",
+    )
+    assert chat.calls[1]["model"] == "tiny-model"
+    assert chat.calls[0]["model"] == "test-model"
+    assert chat.calls[1]["api_endpoint"] == "llama_cpp"
+
+
+def test_unknown_agent_refused_without_burning_budget(db):
+    _seed_definition(db)
+    service, chat = make_service(
+        db,
+        [
+            fence(SPAWN_TOOL_NAME, {"task": "t", "agent": "nope"}),
+            fence(SPAWN_TOOL_NAME, {"task": "t2", "agent": "researcher"}),
+            "child ok",
+            fence(SPAWN_TOOL_NAME, {"task": "t3", "agent": "researcher"}),
+            "child ok 2",
+            "done",
+        ],
+    )
+    # 3 parent-level spawn rounds (1 refused + 2 real) + the final answer =
+    # 10 parent steps; CFG's default max_steps=8 would trip stuck before
+    # the model ever gets to answer -- raise it, mirroring
+    # test_spawn_result_and_budget's identical fix in test_agent_runtime.py
+    # (max_subagents stays at CFG's default of 2, which is what this test
+    # is actually about).
+    cfg = dataclasses.replace(CFG, budget=RunBudget(max_steps=20))
+    run_id, outcome = service.run_turn(
+        conversation_id="c",
+        messages=[{"role": "user", "content": "go"}],
+        config=cfg,
+        api_endpoint="llama_cpp",
+    )
+    # max_subagents=2: the unknown-agent refusal must not have consumed a
+    # slot, so BOTH later spawns succeed.
+    assert outcome.status == RUN_DONE
+    assert db.count_subagent_runs("c") == 2
+    # The refusal itself surfaced the roster to the model.
+    refusal = chat.calls[1]["messages_payload"]
+    assert any(
+        "unknown agent 'nope'" in str(m.get("content", "")) for m in refusal
+    )
+
+
+def test_named_spawn_records_audit_fields(db):
+    _seed_definition(db)
+    service, _ = make_service(
+        db,
+        [
+            fence(SPAWN_TOOL_NAME, {"task": "t", "agent": "researcher"}),
+            "child ok",
+            "done",
+        ],
+    )
+    service.run_turn(
+        conversation_id="c",
+        messages=[{"role": "user", "content": "go"}],
+        config=CFG,
+        api_endpoint="llama_cpp",
+    )
+    child = next(
+        r for r in db.list_runs("c") if r["agent_kind"] == "subagent"
+    )
+    assert child["agent_definition"] == "researcher"
+    assert child["definition_fingerprint"] == definition_fingerprint(
+        RESEARCHER_DEFN
+    )
+
+
+def test_definitions_load_once_per_turn_roster_in_protocol(db):
+    _seed_definition(db)
+    service, chat = make_service(db, ["no tools needed"])
+    service.run_turn(
+        conversation_id="c",
+        messages=[{"role": "user", "content": "hi"}],
+        config=CFG,
+        api_endpoint="llama_cpp",
+    )
+    # The spawn schema (with the roster) must reach the provider call —
+    # via the system prompt (fence protocol) or the tools= kwarg (native);
+    # inspect the whole call to stay channel-agnostic.
+    assert "researcher" in json.dumps(chat.calls[0], default=str)
+
+
+def test_no_definitions_spawn_unchanged(db):
+    # Guard the identity path: with an empty definitions table the primary
+    # system prompt must NOT mention an 'agent' parameter.
+    service, chat = make_service(db, ["plain answer"])
+    service.run_turn(
+        conversation_id="c",
+        messages=[{"role": "user", "content": "hi"}],
+        config=CFG,
+        api_endpoint="llama_cpp",
+    )
+    assert '"agent"' not in json.dumps(chat.calls[0], default=str)

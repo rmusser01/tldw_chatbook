@@ -212,11 +212,12 @@ class LoopDeps:
     call_model: Callable[[list, tuple], ModelTurn]
     invoke_tool: Callable[..., ToolResult]
     # Callable[..., ...] (not Callable[[str], ...]): the loop itself only
-    # ever calls spawn(task) positionally, but the real implementation
-    # (agent_service._run_one's spawn closure) also accepts a keyword-only
-    # `allowed_tools` override, used by the skill-tool dispatch path
-    # (SkillRunner.run) to narrow a spawned child's allow-list. The loop
-    # never passes it and never needs to.
+    # ever calls spawn(task) positionally, or spawn(task, agent=...) when
+    # the model supplied a named agent (fleet spec §4). The real
+    # implementation (agent_service._run_one's spawn closure) also accepts
+    # a keyword-only `allowed_tools` override, used by the skill-tool
+    # dispatch path (SkillRunner.run) to narrow a spawned child's
+    # allow-list -- the loop never passes THAT one and never needs to.
     spawn: Callable[..., ToolResult]
     find_tools: Callable[[str], list]
     load_schemas: Callable[[list], list]
@@ -692,6 +693,14 @@ def run_agent_loop(
                         )
                     else:
                         task = str(call.args.get("task", "")).strip()
+                        # `.get("agent") or ""` (not `.get("agent", "")`):
+                        # an explicit JSON `null` for "agent" arrives here as
+                        # Python `None`, and `str(None)` is the truthy
+                        # string "None" -- which would then fail unknown-
+                        # agent resolution with a spurious "unknown agent
+                        # 'None'" refusal instead of taking the no-agent
+                        # path.
+                        agent_name = str(call.args.get("agent") or "").strip()
                         if not task:
                             # G4: an empty task is refused with no budget
                             # consumption and no STEP_SPAWN.
@@ -705,12 +714,40 @@ def run_agent_loop(
                         else:
                             add(
                                 STEP_SPAWN,
-                                summary=task[:200],
+                                summary=(
+                                    f"[{agent_name}] {task}"[:200]
+                                    if agent_name
+                                    else task[:200]
+                                ),
                                 tool_name=SPAWN_TOOL_NAME,
                                 args=dict(call.args),
                             )
-                            result = deps.spawn(task)
-                            spawned += 1
+                            if agent_name:
+                                result = deps.spawn(task, agent=agent_name)
+                            else:
+                                result = deps.spawn(task)
+                            # Named-agent resolution (fleet spec §4) gave
+                            # deps.spawn a NEW failure mode this loop-level
+                            # check does not pre-screen: deps.spawn can now
+                            # refuse a NAMED spawn for an unknown `agent`
+                            # (or its own budget check) after this branch
+                            # was already entered. This is a redundant
+                            # secondary bound; the service's own
+                            # sub_agent_spawns counter remains authoritative.
+                            #
+                            # Increment accounting differs by path:
+                            # - No-agent path: increment is unconditional,
+                            #   byte-identical to pre-task-5 behavior, including
+                            #   spawns whose child ran and ended non-DONE.
+                            # - Named path: increment only when result.ok.
+                            #   Any named-spawn failure (unknown agent, budget
+                            #   refusal before dispatch, or child ending
+                            #   non-DONE) skips the counter; otherwise a later
+                            #   VALID named spawn would be wrongly refused here
+                            #   before ever reaching deps.spawn's own (real)
+                            #   budget check.
+                            if result.ok or not agent_name:
+                                spawned += 1
                 elif call.name == FIND_TOOLS_NAME:
                     add(STEP_TOOL_CALL, tool_name=call.name, args=dict(call.args))
                     entries = deps.find_tools(str(call.args.get("query", "")))

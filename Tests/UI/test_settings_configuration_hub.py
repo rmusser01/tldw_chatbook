@@ -181,15 +181,37 @@ def test_settings_category_summaries_cover_every_category_id_exactly_once():
     Adding Internal Prompts brought the total from 19 to 20; adding Image Gen
     (Settings > Image Gen task 4) brought it to 21; adding Workspaces
     (settings-workspaces-folder-roots task 8) brought it to 22; Speech & TTS
-    (TASK-1984) brought it to 23; About (TASK-2775) brought it to 24. This pins
-    the literal count so the next addition must touch this assertion
-    deliberately, and cross-checks that summaries neither miss nor duplicate
-    an enum member.
+    (TASK-1984) brought it to 23; About (TASK-2775) brought it to 24; Video
+    Gen (video-generation-foundation) brought it to 25; Agents
+    (supervisor-fleet PR-1 task 6) brought it to 26. This pins the literal
+    count so the next addition must touch this assertion deliberately, and
+    cross-checks that summaries neither miss nor duplicate an enum member.
     """
     screen = SettingsScreen(_build_test_app())
     summaries = screen._category_summaries()
-    assert len(summaries) == len(list(SettingsCategoryId)) == 25
+    assert len(summaries) == len(list(SettingsCategoryId)) == 26
     assert {s.category for s in summaries} == set(SettingsCategoryId)
+
+
+def test_settings_category_groups_cover_every_category_id_exactly_once():
+    """Guards against a category losing its sidebar group placement.
+
+    A category can have a summary (so the count test above stays green) yet be
+    absent from every group tuple in `_category_groups()` -- the sidebar is built
+    by walking the groups, not the summaries, so that category renders no
+    sidebar button at all. This is exactly how VIDEO_GENERATION shipped
+    unreachable on dev: it had a summary but no group tuple entry. Assert every
+    SettingsCategoryId appears in exactly one group tuple.
+    """
+    screen = SettingsScreen(_build_test_app())
+    groups = screen._category_groups()
+    flattened = [
+        category for _group_title, category_ids in groups for category in category_ids
+    ]
+    # No duplicates -- each id lives in exactly one group tuple.
+    assert len(flattened) == len(set(flattened))
+    # Full coverage -- no id is missing from every group tuple.
+    assert set(flattened) == set(SettingsCategoryId)
 
 
 def test_inspector_guidance_covers_every_settings_category():
@@ -1165,9 +1187,13 @@ async def test_settings_appearance_renders_guided_defaults_and_validates(monkeyp
             screen.query_one("#settings-appearance-animations-enabled", Checkbox).value
             is True
         )
+        # Smooth scrolling renders as a label-cycling toggle Button (not a
+        # Checkbox) — the label comes from _appearance_bool_label.
         assert (
-            screen.query_one("#settings-appearance-smooth-scrolling", Checkbox).value
-            is True
+            str(
+                screen.query_one("#settings-appearance-smooth-scrolling", Button).label
+            )
+            == "Enabled"
         )
         assert screen.query_one("#settings-save-category", Button).disabled is True
         assert screen.query_one("#settings-revert-category", Button).disabled is True

@@ -35,6 +35,7 @@ class SettingsCategoryId(StrEnum):
     INTERNAL_PROMPTS = "internal-prompts"
     IMAGE_GENERATION = "image_generation"
     VIDEO_GENERATION = "video_generation"
+    AGENTS = "agents"
 
 
 class SettingsValidationState(StrEnum):

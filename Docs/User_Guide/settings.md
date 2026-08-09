@@ -108,6 +108,7 @@ unless you run Manual sync from Overview yourself.
 | Data & Privacy | **Privacy & Security** (view) | Secrets, encryption, redaction, and local privacy boundaries. | Read-only here |
 | Troubleshooting | **Diagnostics** (view) | Config validation, logs, and troubleshooting signals. | Read-only here |
 | Troubleshooting | **About** (view) | Version, license, and project links. | Read-only here |
+| Troubleshooting | **Agents** | Named sub-agent definitions the Console supervisor can spawn. | Applies immediately |
 | Expert | **Internal Prompts** | The system prompts the app uses internally (RAG, web search, agents, summarization, more). | Per-item Save/Reset |
 | Expert | **Advanced Config** | Raw TOML view and expert configuration editing. | Validate, then Save |
 | Domain Defaults | **RAG** → [own page](settings/rag.md) | Source search, retrieval, citations, snippets, and Console evidence defaults. | Draft — save with s |
@@ -308,6 +309,44 @@ project links (GitHub, documentation, issues). Read-only. Clicking a link
 opens it in your system browser and confirms with a notification; nothing on
 this page writes config.
 
+### Troubleshooting — Agents
+
+Named sub-agent definitions the Console supervisor can spawn (Ctrl+2 ▸ ask it
+to delegate). A definition is a reusable persona: a name, a one-line
+description the supervisor reads when deciding who to delegate to, and
+instructions — plus optional narrowing of tools and model. It opens with a
+one-line scope note: "Named sub-agents the Console supervisor can spawn.
+Changes apply immediately (stored in agent_runs.db, not config.toml) and take
+effect on the next reply."
+
+| Field | What it does |
+|---|---|
+| **Name** | A lowercase slug (letters, digits, hyphens; starts with a letter; max 64 chars). `general` and `subagent` are reserved and rejected. |
+| **Description** | One line the supervisor reads when choosing a definition (max 200 chars). |
+| **Instructions (appended to the sub-agent prompt)** | **Your text is added to, not swapped for, the built-in sub-agent prompt** — the child still starts from the same base identity every sub-agent gets, with your instructions appended after it. |
+| **Model override** | Empty inherits the parent's model. A non-empty value replaces the model on the **same provider/endpoint** the parent used — it does not switch providers, and nothing here validates the string against that provider's model list. |
+| **Tools (comma-separated; empty = inherit all; names only narrow, never grant)** | Empty means the sub-agent inherits every tool the parent could use. A non-empty list can only remove names from that inherited set — an intersection, never a union — so listing a tool the parent doesn't have access to has no effect. The always-available runtime control tools (`spawn_subagent`, `find_tools`, and similar) aren't ordinary catalog tools and are silently dropped from whatever you type here. If every name you list turns out unavailable (typo'd, or simply not one the parent has), the narrowing can reach zero — the child spawns with no tools at all rather than falling back to the inherited set. |
+| **Enabled** | Off keeps the definition saved but out of the supervisor's roster and the spawn schema. |
+
+Buttons: **New** (clears the form for a fresh definition), **Save** (create or
+update, depending on whether a definition is selected in the list), **Delete**
+(soft-deletes the selected one — re-creating or re-enabling it here restores
+it). A status line under the buttons reports the outcome, including any
+validation error verbatim.
+
+**This is not a draft category.** Unlike the six "Draft — save with s"
+categories, Agents writes straight to the database on every Save or Delete —
+there is no **s**/**r** cycle and nothing to revert. Definitions are read once
+per conversation turn, so an edit takes effect on the **next** reply, never
+the one already streaming.
+
+Past around 20 **enabled** definitions the status line adds a warning —
+"N enabled definitions — every one rides the spawn schema each turn; consider
+disabling some." — because every enabled definition's name and description
+ride the model's context on every turn; it's advisory, not a hard limit.
+Needs a saved (non-temporary) profile database — an in-memory or unsaved
+session shows a notice instead of the panel.
+
 ### Expert — Internal Prompts
 
 The system prompts the app uses internally. Filter with "Search prompts…", then
@@ -507,4 +546,9 @@ not open an editor.
 scope-banner note refreshed against dev @ 7f23e0263 — 2026-08-07 (voice
 profiles slice 4: added pointer-note copy verbatim from
 `speech_tts_settings_panel.py`; not re-driven live, the rest of this page's
-content unchanged from the prior stamp).*
+content unchanged from the prior stamp). Troubleshooting — Agents section
+added against dev @ 3dd3e7431 — 2026-08-09 (fleet PR-1: driven live —
+created, selected, edited, and disabled a real definition in a scratch
+profile, fixing a rendering defect on the Name/Description/Model
+override/Tools fields found along the way; the rest of this page's content
+unchanged from the prior stamp).*

@@ -6,6 +6,9 @@ No Textual, app, DB, or I/O imports — see the vertical-slice spec
 
 from __future__ import annotations
 
+import hashlib
+import json
+import re
 from dataclasses import dataclass, field
 from typing import Callable
 
@@ -222,6 +225,95 @@ class RunBudget:
     # later really executes on its abandoned thread (see
     # `_call_with_timeout`'s docstring).
     max_tool_call_seconds: float = 300.0
+
+
+#: Fleet spec §4: validation caps for user-authored agent definitions.
+#: description rides the spawn tool's schema (re-sent every fence-model
+#: turn); instructions ride every child model turn — both caps are cost
+#: controls, not polish.
+AGENT_DEFINITION_NAME_PATTERN = r"^[a-z][a-z0-9-]{0,63}$"
+AGENT_DEFINITION_RESERVED_NAMES = frozenset({"general", "subagent"})
+AGENT_DEFINITION_DESCRIPTION_MAX_CHARS = 200
+AGENT_DEFINITION_INSTRUCTIONS_MAX_CHARS = 16_000
+
+
+@dataclass(frozen=True)
+class AgentDefinition:
+    """A named, user-authored sub-agent template (fleet spec §4).
+
+    ``instructions`` are APPENDED to the internal ``agents.subagent_system``
+    prompt at spawn time — never a replacement (the base prompt is an
+    identity contract: console_agent_bridge detects sub-agent turns by
+    prefix-matching it). ``tool_allowlist`` only ever narrows the child's
+    inherited allow-list (intersection, never union); empty means inherit.
+    ``model`` overrides the parent's model on the SAME provider endpoint;
+    empty means inherit.
+    """
+
+    name: str
+    description: str = ""
+    instructions: str = ""
+    tool_allowlist: tuple[str, ...] = ()
+    model: str = ""
+    enabled: bool = True
+
+
+def validate_agent_definition(defn: AgentDefinition) -> list[str]:
+    """Return validation errors for ``defn``; empty list means valid."""
+    errors: list[str] = []
+    if not re.fullmatch(AGENT_DEFINITION_NAME_PATTERN, defn.name or ""):
+        errors.append(
+            "name must be a lowercase slug (a-z, 0-9, hyphens; starts with "
+            "a letter; max 64 chars)"
+        )
+    if defn.name in AGENT_DEFINITION_RESERVED_NAMES:
+        errors.append(f"name '{defn.name}' is reserved")
+    if len(defn.description) > AGENT_DEFINITION_DESCRIPTION_MAX_CHARS:
+        errors.append(
+            f"description exceeds {AGENT_DEFINITION_DESCRIPTION_MAX_CHARS} chars"
+        )
+    if "\n" in defn.description:
+        # build_spawn_schema renders description into a "- name — desc"
+        # roster line (Agents/tool_catalog.py); an embedded newline could
+        # forge extra roster lines the supervisor reads as real entries.
+        errors.append("description must be a single line")
+    if not defn.instructions.strip():
+        errors.append("instructions must not be empty")
+    if len(defn.instructions) > AGENT_DEFINITION_INSTRUCTIONS_MAX_CHARS:
+        errors.append(
+            f"instructions exceed {AGENT_DEFINITION_INSTRUCTIONS_MAX_CHARS} chars"
+        )
+    return errors
+
+
+def definition_fingerprint(defn: AgentDefinition) -> str:
+    """16-hex-char content hash of the fields that shape a child run.
+
+    Covers instructions/tool_allowlist/model ONLY — the audit identity of
+    what actually ran (spec §4). description/enabled are presentation.
+    """
+    payload = json.dumps(
+        {
+            "instructions": defn.instructions,
+            "tool_allowlist": sorted(defn.tool_allowlist),
+            "model": defn.model,
+        },
+        sort_keys=True,
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
+
+
+def definition_from_row(row: dict) -> AgentDefinition:
+    """Build an ``AgentDefinition`` from an ``agent_definitions`` DB row
+    (``tool_allowlist`` already JSON-decoded to a list by the DB layer)."""
+    return AgentDefinition(
+        name=row["name"],
+        description=row["description"],
+        instructions=row["instructions"],
+        tool_allowlist=tuple(row["tool_allowlist"]),
+        model=row["model"],
+        enabled=bool(row["enabled"]),
+    )
 
 
 @dataclass

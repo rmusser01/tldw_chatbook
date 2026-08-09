@@ -298,6 +298,7 @@ from .config import (
     load_cli_config_and_ensure_existence,
     persist_cli_config_for_shutdown,
     set_encryption_password,
+    get_config_load_failure,
 )
 from .Event_Handlers import worker_events
 from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import (
@@ -4547,6 +4548,18 @@ class TldwCli(
         phase_start = time.perf_counter()
         self.MediaDatabase = MediaDatabase
         self.app_config = load_settings()
+        # TASK-13157: snapshot any TOML parse failure `load_settings()` just
+        # hit -- captured here (mirroring `_instance_lock_status` below, the
+        # same "detect at __init__, stash, notify once mounted" shape)
+        # because `load_settings()`/`load_cli_config_and_ensure_existence()`
+        # both silently fall back to in-memory defaults on a parse failure
+        # rather than raising; the app has no UI to notify through yet at
+        # this point in construction. `_maybe_warn_config_load_failure`
+        # turns this into a persistent, file-and-error-naming notification
+        # once the initial screen is up -- previously this degradation
+        # (including the resolved data directory silently becoming the
+        # `default_user` profile) had no visible signal at all.
+        self._config_load_failure = get_config_load_failure()
         # RAG-53 (task-7): advisory per-profile instance lock. The profile
         # (and thus its data dir) is final as soon as config is loaded --
         # earliest sound point for this. Detection only: never blocks,
@@ -8586,6 +8599,38 @@ class TldwCli(
         except Exception as e:
             logger.error(f"First-run wizard offer failed: {e}")
 
+    def _maybe_warn_config_load_failure(self) -> None:
+        """Warn (never block) when boot's config load fell back to defaults.
+
+        TASK-13157: a config.toml that fails to parse was previously a
+        completely silent failure -- `load_settings()`/`load_cli_config_and_
+        ensure_existence()` both return bare in-memory defaults with no
+        signal, which a live-verification incident showed can silently
+        resolve the data directory to the `default_user` profile instead of
+        the configured one, with no error, toast, or log line a normal user
+        would ever see. `self._config_load_failure` was snapshotted in
+        `__init__` (before the UI existed to notify through); this surfaces
+        it once the initial screen is up, naming the exact file and parse
+        error so the user knows their saved settings are NOT the ones
+        currently in effect. `timeout=None` only reaches Textual's own
+        5-second default (`App.NOTIFICATION_TIMEOUT`), not "persistent", so
+        this passes an explicit long timeout instead -- this is not a
+        transient event and must not be missed the way the silent fallback
+        it replaces was.
+        """
+        failure = getattr(self, "_config_load_failure", None)
+        if failure is None:
+            return
+        self.notify(
+            f"Your configuration file could not be parsed and was NOT used "
+            f"this session -- running on built-in defaults instead (this may "
+            f"include the wrong user profile). File: {failure.path}  "
+            f"Error: {failure.message}",
+            title="Config file failed to load",
+            severity="error",
+            timeout=60,
+        )
+
     def _maybe_warn_second_instance(self) -> None:
         """Warn (never block) when another instance already holds this profile.
 
@@ -8723,6 +8768,10 @@ class TldwCli(
             self._maybe_warn_second_instance()
         except Exception as e:
             logger.error(f"Second-instance warning failed: {e}")
+        try:
+            self._maybe_warn_config_load_failure()
+        except Exception as e:
+            logger.error(f"Config load failure warning failed: {e}")
 
     async def _run_no_splash_post_mount_setup(self) -> None:
         """Run screen startup and post-mount setup when the splash screen is disabled."""
