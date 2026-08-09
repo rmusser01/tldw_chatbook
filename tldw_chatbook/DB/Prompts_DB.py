@@ -159,6 +159,11 @@ class PromptsDatabase:
     # ping is skipped for a recently-used thread-local connection (see
     # `_get_thread_connection`).
     _LIVENESS_PING_IDLE_SECONDS = 30.0
+    _PROMPT_BROWSE_SORT_COLUMNS = {
+        "last_modified": "p.last_modified",
+        "name": "p.name COLLATE NOCASE",
+    }
+    _PROMPT_BROWSE_SORT_ORDERS = {"asc": "ASC", "desc": "DESC"}
 
     _TABLES_SQL_V1 = """
     PRAGMA foreign_keys = ON;
@@ -2570,6 +2575,120 @@ class PromptsDatabase:
 
             logger.error(f"Error listing prompts: {e}")
             raise DatabaseError(f"Failed to list prompts: {e}") from e
+
+    def browse_prompts(
+        self,
+        *,
+        query: str = "",
+        collection_id: int | None = None,
+        sort_by: str = "last_modified",
+        sort_order: str = "desc",
+        page: int = 1,
+        page_size: int = 50,
+    ) -> tuple[list[dict], int, int, int]:
+        """Browse one exact, stable page of active local Prompts and Recipes.
+
+        Args:
+            query: Case-insensitive literal substring matched against name and details.
+            collection_id: Optional positive local collection identifier.
+            sort_by: ``last_modified`` or ``name``.
+            sort_order: ``asc`` or ``desc``.
+            page: Requested positive one-based page.
+            page_size: Positive page size, capped at 100.
+
+        Returns:
+            A tuple of rows, total pages, resolved current page, and total items.
+
+        Raises:
+            TypeError: If a textual argument has the wrong type.
+            ValueError: If an identifier, sort, page, or page size is invalid.
+            DatabaseError: If SQLite cannot complete the browse operation.
+        """
+        if not isinstance(query, str):
+            raise TypeError("query must be a string.")
+        if collection_id is not None and (
+            type(collection_id) is not int or collection_id <= 0
+        ):
+            raise ValueError("collection_id must be a positive integer or None.")
+        if not isinstance(sort_by, str):
+            raise TypeError("sort_by must be a string.")
+        normalized_sort = sort_by.strip().lower()
+        sort_column = self._PROMPT_BROWSE_SORT_COLUMNS.get(normalized_sort)
+        if sort_column is None:
+            raise ValueError("sort_by must be 'last_modified' or 'name'.")
+        if not isinstance(sort_order, str):
+            raise TypeError("sort_order must be a string.")
+        normalized_order = sort_order.strip().lower()
+        order_sql = self._PROMPT_BROWSE_SORT_ORDERS.get(normalized_order)
+        if order_sql is None:
+            raise ValueError("sort_order must be 'asc' or 'desc'.")
+        if type(page) is not int or page <= 0:
+            raise ValueError("page must be a positive integer.")
+        if type(page_size) is not int or page_size <= 0:
+            raise ValueError("page_size must be a positive integer.")
+
+        normalized_query = query.strip()
+        page_size = min(page_size, 100)
+        join_sql = ""
+        conditions = ["p.deleted = 0"]
+        params: list[Any] = []
+        if collection_id is not None:
+            join_sql = (
+                "JOIN LocalPromptCollectionItems AS pci ON pci.prompt_id = p.id "
+                "JOIN LocalPromptCollections AS pc "
+                "ON pc.collection_id = pci.collection_id AND pc.deleted = 0"
+            )
+            conditions.append("pci.collection_id = ?")
+            params.append(collection_id)
+        if normalized_query:
+            like_pattern = f"%{self._escape_library_prompt_like(normalized_query)}%"
+            conditions.append(
+                "(LOWER(p.name) LIKE LOWER(?) ESCAPE '\\' "
+                "OR LOWER(coalesce(p.details, '')) LIKE LOWER(?) ESCAPE '\\')"
+            )
+            params.extend((like_pattern, like_pattern))
+
+        where_sql = " AND ".join(conditions)
+        try:
+            with self.transaction() as conn:
+                total_items = int(
+                    conn.execute(
+                        f"SELECT COUNT(*) FROM Prompts AS p {join_sql} "
+                        f"WHERE {where_sql}",
+                        tuple(params),
+                    ).fetchone()[0]
+                )
+                total_pages = (
+                    (total_items + page_size - 1) // page_size if total_items else 0
+                )
+                current_page = min(page, total_pages) if total_pages else 1
+                rows = []
+                if total_items:
+                    offset = (current_page - 1) * page_size
+                    cursor = conn.execute(
+                        f"""
+                        SELECT p.id, p.name, p.uuid, p.author, p.details,
+                               p.last_modified, p.version, p.artifact_type,
+                               CASE WHEN length(trim(coalesce(p.system_prompt, ''))) > 0
+                                    THEN 1 ELSE 0 END AS has_system_prompt,
+                               CASE WHEN length(trim(coalesce(p.user_prompt, ''))) > 0
+                                    THEN 1 ELSE 0 END AS has_user_prompt
+                        FROM Prompts AS p
+                        {join_sql}
+                        WHERE {where_sql}
+                        ORDER BY {sort_column} {order_sql}, p.id {order_sql}
+                        LIMIT ? OFFSET ?
+                        """,
+                        tuple(params + [page_size, offset]),
+                    )
+                    rows = [dict(row) for row in cursor.fetchall()]
+            return rows, total_pages, current_page, total_items
+        except sqlite3.Error as e:
+            logger.opt(exception=True).error(
+                "Error browsing prompts "
+                f"(collection_id={collection_id!r}, query_chars={len(normalized_query)}): {e}"
+            )
+            raise DatabaseError(f"Failed to browse prompts: {e}") from e
 
     # ============================= Library read seams (task-1337) =========================================
     #
