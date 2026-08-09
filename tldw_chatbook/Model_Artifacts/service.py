@@ -18,7 +18,7 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import TypeVar
+from typing import Generic, Self, TypeVar
 from urllib.parse import urlsplit
 
 from tldw_chatbook.Utils.atomic_file_ops import atomic_write_json
@@ -888,6 +888,20 @@ class ReconcileReport:
 
 
 @dataclass(frozen=True)
+class ArtifactDependencyHandle:
+    """Verified exact managed dependencies and their payload paths."""
+
+    references: tuple[ArtifactRef, ...]
+    paths: tuple[tuple[ArtifactRef, Path], ...]
+
+    @property
+    def lease_keys(self) -> tuple[ArtifactLeaseKey, ...]:
+        """Return exact dependency lease keys in canonical order."""
+
+        return tuple(reference.lease_key() for reference in self.references)
+
+
+@dataclass(frozen=True)
 class ArtifactHandle:
     """A verified exact artifact closure and its managed payload paths."""
 
@@ -948,26 +962,29 @@ class _ReadinessRecord:
         }
 
 
-class LeasedArtifactHandle:
-    """Own shared operation leases for an already acquired artifact handle."""
+_HandleT = TypeVar("_HandleT", ArtifactHandle, ArtifactDependencyHandle)
+
+
+class _LeasedArtifactHandle(Generic[_HandleT]):
+    """Own shared operation leases for an already acquired handle."""
 
     def __init__(
         self,
-        handle: ArtifactHandle,
+        handle: _HandleT,
         lease_set: ArtifactOperationLeaseSet,
     ) -> None:
         self.handle = handle
         self._lease_set: ArtifactOperationLeaseSet | None = lease_set
 
     def close(self) -> None:
-        """Release the exact shared closure lease set idempotently."""
+        """Release the owned shared lease set idempotently."""
 
         lease_set = self._lease_set
         self._lease_set = None
         if lease_set is not None:
             lease_set.release()
 
-    def __enter__(self) -> LeasedArtifactHandle:
+    def __enter__(self) -> Self:
         """Return this already acquired handle without reacquiring leases."""
 
         if self._lease_set is None:
@@ -990,6 +1007,14 @@ class LeasedArtifactHandle:
             exc.add_note(f"lease context cleanup failed: {cleanup_error!r}")
             for note in getattr(cleanup_error, "__notes__", ()):
                 exc.add_note(note)
+
+
+class LeasedArtifactHandle(_LeasedArtifactHandle[ArtifactHandle]):
+    """Own shared operation leases for an acquired artifact closure."""
+
+
+class LeasedArtifactDependencyHandle(_LeasedArtifactHandle[ArtifactDependencyHandle]):
+    """Own shared operation leases for verified exact dependencies."""
 
 
 class ModelArtifactService:
@@ -2080,6 +2105,50 @@ class ModelArtifactService:
                 paths=paths,
             )
             return LeasedArtifactHandle(handle, lease_set)
+        except BaseException as error:
+            try:
+                lease_set.release()
+            except BaseException as cleanup_error:
+                error.add_note(f"lease rollback cleanup failed: {cleanup_error!r}")
+                for note in getattr(cleanup_error, "__notes__", ()):
+                    error.add_note(note)
+            raise
+
+    def acquire_dependencies(
+        self,
+        references: tuple[ArtifactRef, ...],
+    ) -> LeasedArtifactDependencyHandle:
+        """Verify and lease exact managed dependency artifacts."""
+
+        if type(references) is not tuple:
+            raise TypeError("references must be a tuple")
+        if any(type(reference) is not ArtifactRef for reference in references):
+            raise TypeError("references must contain only ArtifactRef values")
+        ordered = tuple(sorted(set(references)))
+        if not ordered:
+            raise ValueError("references must contain at least one ArtifactRef")
+
+        self._assert_managed_path(self._locks_path)
+        lease_set = ArtifactOperationLeaseSet(
+            self._locks_path,
+            tuple(reference.lease_key() for reference in ordered),
+            LeaseMode.SHARED,
+            timeout_seconds=self._lease_timeout_seconds,
+        )
+        try:
+            lease_set.acquire()
+        except ArtifactLeaseError as error:
+            raise ArtifactStateError(
+                "failed to acquire artifact dependency leases"
+            ) from error
+        try:
+            for reference in ordered:
+                self._verify_installed(reference, ArtifactRole.DEPENDENCY)
+            paths = tuple(
+                (reference, self.artifact_path(reference)) for reference in ordered
+            )
+            handle = ArtifactDependencyHandle(references=ordered, paths=paths)
+            return LeasedArtifactDependencyHandle(handle, lease_set)
         except BaseException as error:
             try:
                 lease_set.release()

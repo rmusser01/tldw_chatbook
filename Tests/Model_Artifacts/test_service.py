@@ -56,6 +56,7 @@ def test_package_exports_the_complete_public_artifact_api() -> None:
         "ArtifactCatalog",
         "ArtifactConflictError",
         "ArtifactDependencyError",
+        "ArtifactDependencyHandle",
         "ArtifactDescriptor",
         "ArtifactDescriptorError",
         "ArtifactDescriptorParseError",
@@ -90,6 +91,7 @@ def test_package_exports_the_complete_public_artifact_api() -> None:
         "InsufficientSpaceError",
         "InstalledArtifact",
         "LeasedArtifactHandle",
+        "LeasedArtifactDependencyHandle",
         "LeaseMode",
         "ModelArtifactService",
         "PreflightNotGrantableError",
@@ -3397,6 +3399,219 @@ def test_acquire_holds_exact_shared_closure_until_idempotent_close(
         timeout_seconds=0.1,
     ):
         pass
+
+
+def test_acquire_dependencies_verifies_and_leases_without_readiness(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = service_module.ModelArtifactService(
+        tmp_path / "store",
+        lease_timeout_seconds=0.01,
+    )
+    dependency_ref = ref("silero-vad", "vad-revision", "int8")
+    dependency = single_file_descriptor(
+        dependency_ref,
+        ArtifactRole.DEPENDENCY,
+        b"dependency",
+    )
+    install_descriptor_payload(service, tmp_path, dependency, b"dependency")
+
+    def reject_state_write(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("dependency acquisition must not write derived state")
+
+    monkeypatch.setattr(service, "activate", reject_state_write)
+    monkeypatch.setattr(service, "_write_readiness", reject_state_write)
+    monkeypatch.setattr(service_module, "atomic_write_json", reject_state_write)
+
+    leased = service.acquire_dependencies((dependency_ref,))
+    assert isinstance(leased, service_module.LeasedArtifactDependencyHandle)
+    assert isinstance(leased.handle, service_module.ArtifactDependencyHandle)
+    assert leased.handle.references == (dependency_ref,)
+    assert leased.handle.paths == (
+        (dependency_ref, service.artifact_path(dependency_ref)),
+    )
+    assert leased.handle.lease_keys == (dependency_ref.lease_key(),)
+    assert service.readiness_path(dependency_ref).exists() is False
+    assert service.active_path(dependency_ref.artifact_id).exists() is False
+
+    with leased as entered:
+        assert entered is leased
+        with pytest.raises(service_module.ArtifactInUseError):
+            service.delete(dependency_ref)
+
+    leased.close()
+    with pytest.raises(service_module.ArtifactStateError, match="closed"):
+        with leased:
+            pass
+
+
+def test_acquire_dependencies_sorts_uniquifies_and_leases_exact_references(
+    tmp_path: Path,
+) -> None:
+    service = service_module.ModelArtifactService(
+        tmp_path / "store",
+        lease_timeout_seconds=0.01,
+    )
+    first_ref = ref("aaa-vad", "first-revision", "int8")
+    second_ref = ref("zzz-tokenizer", "second-revision", "int8")
+    for item, content in (
+        (
+            single_file_descriptor(
+                first_ref,
+                ArtifactRole.DEPENDENCY,
+                b"first",
+            ),
+            b"first",
+        ),
+        (
+            single_file_descriptor(
+                second_ref,
+                ArtifactRole.DEPENDENCY,
+                b"second",
+            ),
+            b"second",
+        ),
+    ):
+        install_descriptor_payload(service, tmp_path, item, content)
+
+    with service.acquire_dependencies(
+        (second_ref, first_ref, second_ref),
+    ) as leased:
+        expected = (first_ref, second_ref)
+        assert leased.handle.references == expected
+        assert leased.handle.paths == tuple(
+            (reference, service.artifact_path(reference)) for reference in expected
+        )
+        for reference in expected:
+            with pytest.raises(service_module.ArtifactInUseError):
+                service.delete(reference)
+
+
+def test_acquire_dependencies_verifies_each_reference_under_its_shared_lease(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = service_module.ModelArtifactService(tmp_path / "store")
+    references = (
+        ref("aaa-vad", "first-revision", "int8"),
+        ref("zzz-tokenizer", "second-revision", "int8"),
+    )
+    for reference, content in zip(references, (b"first", b"second"), strict=True):
+        item = single_file_descriptor(
+            reference,
+            ArtifactRole.DEPENDENCY,
+            content,
+        )
+        install_descriptor_payload(service, tmp_path, item, content)
+
+    original = service._verify_installed
+    verified: list[ArtifactRef] = []
+
+    def verify_under_lease(
+        reference: ArtifactRef,
+        expected_role: ArtifactRole,
+    ) -> None:
+        with pytest.raises(service_module.ArtifactLeaseError):
+            service_module.ArtifactOperationLease(
+                service.locks_path,
+                reference.lease_key(),
+                service_module.LeaseMode.EXCLUSIVE,
+                timeout_seconds=0.01,
+            ).acquire()
+        verified.append(reference)
+        original(reference, expected_role)
+
+    monkeypatch.setattr(service, "_verify_installed", verify_under_lease)
+
+    leased = service.acquire_dependencies(tuple(reversed(references)))
+    leased.close()
+
+    assert verified == list(references)
+
+
+@pytest.mark.parametrize(
+    ("failure", "expected_error"),
+    (
+        ("missing", service_module.ArtifactDependencyError),
+        ("wrong-role", service_module.ArtifactDependencyError),
+        ("corrupt", service_module.ArtifactIntegrityError),
+    ),
+)
+def test_acquire_dependencies_rejects_invalid_exact_dependencies(
+    tmp_path: Path,
+    failure: str,
+    expected_error: type[Exception],
+) -> None:
+    service = service_module.ModelArtifactService(tmp_path / "store")
+    dependency_ref = ref("silero-vad", "vad-revision", "int8")
+    if failure != "missing":
+        role = ArtifactRole.ROOT if failure == "wrong-role" else ArtifactRole.DEPENDENCY
+        dependency = single_file_descriptor(dependency_ref, role, b"dependency")
+        install_descriptor_payload(service, tmp_path, dependency, b"dependency")
+        if failure == "corrupt":
+            (service.artifact_path(dependency_ref) / "model.onnx").write_bytes(
+                b"x" * len(b"dependency")
+            )
+
+    with pytest.raises(expected_error):
+        service.acquire_dependencies((dependency_ref,))
+
+    assert service.readiness_path(dependency_ref).exists() is False
+    assert service.active_path(dependency_ref.artifact_id).exists() is False
+
+
+def test_acquire_dependencies_verification_failure_releases_all_shared_leases(
+    tmp_path: Path,
+) -> None:
+    service = service_module.ModelArtifactService(tmp_path / "store")
+    first_ref = ref("aaa-vad", "first-revision", "int8")
+    second_ref = ref("zzz-tokenizer", "second-revision", "int8")
+    for item, content in (
+        (
+            single_file_descriptor(
+                first_ref,
+                ArtifactRole.DEPENDENCY,
+                b"first",
+            ),
+            b"first",
+        ),
+        (
+            single_file_descriptor(
+                second_ref,
+                ArtifactRole.DEPENDENCY,
+                b"second",
+            ),
+            b"second",
+        ),
+    ):
+        install_descriptor_payload(service, tmp_path, item, content)
+    (service.artifact_path(second_ref) / "model.onnx").write_bytes(b"xxxxxx")
+
+    with pytest.raises(service_module.ArtifactIntegrityError):
+        service.acquire_dependencies((second_ref, first_ref))
+
+    keys = tuple(reference.lease_key() for reference in (first_ref, second_ref))
+    with service_module.ArtifactOperationLeaseSet(
+        service.locks_path,
+        keys,
+        service_module.LeaseMode.EXCLUSIVE,
+        timeout_seconds=0.1,
+    ):
+        pass
+
+
+def test_acquire_dependencies_rejects_invalid_reference_collections(
+    tmp_path: Path,
+) -> None:
+    service = service_module.ModelArtifactService(tmp_path / "store")
+
+    with pytest.raises(TypeError, match="tuple"):
+        service.acquire_dependencies([])  # type: ignore[arg-type]
+    with pytest.raises(TypeError, match="ArtifactRef"):
+        service.acquire_dependencies((object(),))  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="at least one"):
+        service.acquire_dependencies(())
 
 
 def test_closed_leased_handle_cannot_be_reentered(tmp_path: Path) -> None:
