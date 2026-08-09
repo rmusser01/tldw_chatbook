@@ -854,3 +854,13 @@ def test_scope_nouns_exist_for_every_group() -> None:
     for caps in _TYPE_GROUPS.values():
         assert caps.noun_singular, f"{caps.group}: missing noun_singular"
         assert caps.noun_plural, f"{caps.group}: missing noun_plural"
+
+
+def test_get_type_group_xml_is_unsupported_task_3308() -> None:
+    """task-3308 (defer ruling, task-3310 notes): ``.xml`` stays unmapped in
+    ``detect_file_type``, so pre-flight must classify it unsupported -- the
+    honest state while ``XML_Ingestion.py`` remains unwired. If someone
+    wires XML through (extension -> group -> parse), this pin goes red on
+    purpose: retire it together with the deferral."""
+    assert get_type_group("/tmp/feed.xml") == "unsupported"
+    assert get_type_group("/tmp/FEED.XML") == "unsupported"

@@ -1794,3 +1794,23 @@ route the sub-legs through `connect_private_sqlite` with a registered owner
 (`rag.chachanotes_keyword_leg`, read-only URI), add the inventory row, and bump the
 ratchet — which is what the guard existed to make happen, roughly a day later than it
 should have.
+## `Widget.focus()` is deferred — a same-handler capture of `app.focused` sees the old widget
+
+**task-3311, 2026-08-09.** The Ingest Clear handler called `path_input.focus()` and
+then a structural recompose helper that captures `app.focused` to restore focus
+afterwards. In Textual 8, `Widget.focus()` does NOT set focus synchronously — it
+queues `screen.set_focus` through `app.call_later` — so the capture still saw the
+just-clicked Clear button, and the post-recompose restore targeted the NEW Clear
+button, hidden for an empty path. `Screen.set_focus` silently no-ops on a
+non-focusable widget, so focus stayed wherever the recompose prune dropped it: the
+rail search box (typed path tail became a Library search) or nowhere (a leading
+"/" ran the global focus-search binding). Live it presented as a 2-of-4
+intermittent; headless, with a preflight staged, it failed deterministically on
+iteration 0 of an 8-pass loop.
+
+**What to do.** When a handler must hand focus somewhere before code later in the
+SAME handler reads `app.focused`/`screen.focused` (capture-and-restore helpers,
+recompose context savers), use the synchronous `Screen.set_focus(widget)`, not
+`widget.focus()`. And remember `set_focus` on a non-focusable (hidden/disabled)
+widget does nothing and reports nothing — a focus-restore path that can name a
+display-managed widget needs the target to be focusable, or a fallback.

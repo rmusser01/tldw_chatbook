@@ -1485,6 +1485,73 @@ def test_short_ingest_error_leaves_single_prefix_alone():
     assert short_ingest_error(single) == single
 
 
+# --- task-3312 (#2): egress-blocked receipts read as plain language ----------
+
+# The exact text an egress-blocked URL ingest produces today:
+# web_article_ingestion wraps ``EgressBlockedError``'s message, whose remedy
+# tail carries the raw config-key brackets that leaked into the queue row
+# (live 2026-08-08: rendered a literal "\[web_security]" and clipped
+# mid-sentence at "config.toml,").
+_EGRESS_RAW_ERROR = (
+    "URL blocked by egress policy (SSRF guard): Egress blocked (private) "
+    "for http://127.0.0.1:8000 [remedy: add the host to [web_security] "
+    "allowed_hosts in config.toml, or set [web_security] enabled = false]"
+)
+
+
+def test_short_ingest_error_maps_egress_block_to_plain_language():
+    """task-3312 (#2): the queue receipt must match the pre-flight line's
+    plain-language register (task-3305) -- a complete sentence, no policy
+    jargon, no markup-hostile brackets -- while keeping the remedy."""
+    from tldw_chatbook.Library.library_ingest_state import (
+        INGEST_EGRESS_BLOCKED_COPY,
+    )
+
+    short = short_ingest_error(_EGRESS_RAW_ERROR)
+    assert short == INGEST_EGRESS_BLOCKED_COPY
+    # No bracketed config-key syntax to fight the renderer with.
+    assert "[" not in short and "\\" not in short
+    # The remedy survives in plain words.
+    assert "allowed_hosts" in short
+    assert "web_security" in short
+    assert "config.toml" in short
+    # A complete sentence -- the live receipt ended "config.toml,".
+    assert short.endswith(".")
+
+
+def test_short_ingest_error_maps_egress_block_under_pipeline_wrappers():
+    """The pipeline may wrap the egress text in its historical
+    'Failed to … file:' layers; the mapping keys on the egress marker, not
+    on position."""
+    from tldw_chatbook.Library.library_ingest_state import (
+        INGEST_EGRESS_BLOCKED_COPY,
+    )
+
+    wrapped = f"Failed to ingest web file: {_EGRESS_RAW_ERROR}"
+    assert short_ingest_error(wrapped) == INGEST_EGRESS_BLOCKED_COPY
+
+
+def test_failed_queue_row_for_egress_block_carries_the_plain_receipt():
+    """The FAILED queue row (and Home's failed-item line, same helper)
+    renders the plain-language receipt, never the raw policy text."""
+    from tldw_chatbook.Library.library_ingest_state import (
+        INGEST_EGRESS_BLOCKED_COPY,
+    )
+
+    job = _job(
+        job_id="ingest-job-egress",
+        source_path="http://127.0.0.1:8000/page",
+        state=IngestJobState.FAILED,
+        error=_EGRESS_RAW_ERROR,
+    )
+    state = build_library_ingest_state((job,), form=LibraryIngestFormState())
+    (row,) = state.queue_rows
+    assert INGEST_EGRESS_BLOCKED_COPY in row.line
+    assert "SSRF" not in row.line
+    assert "[web_security]" not in row.line
+    assert "[remedy" not in row.line
+
+
 def test_estimate_and_breakdown_suppressed_when_preflight_has_errors():
     """(task-2015) A '0 files' estimate parked under a path error is noise;
     error states render the error + recovery only."""
@@ -2620,3 +2687,56 @@ def test_failed_row_detail_without_basename_echo_passes_through():
     assert state.queue_rows[0].line == (
         "✗ failed · broken.pdf · PDF Extraction Error."
     )
+
+
+# --- task-3308: .xml defers honestly (owner ruling in task-3310's notes) -----
+
+
+def test_xml_only_selection_gates_start_with_honest_copy():
+    """task-3308: an ``.xml``-only staging closes the Start gate and says
+    so in plain terms -- the "XML processing is not yet implemented" raise
+    must stay unreachable from the queue."""
+    preflight = PreflightResult(
+        type_groups={"unsupported": ["/tmp/feed.xml"]},
+        warnings=[],
+        errors=[],
+        total_size=512,
+        truncated=False,
+        total_files=1,
+    )
+    state = build_library_ingest_state(
+        (),
+        form=LibraryIngestFormState(path="/tmp/feed.xml", preflight=preflight),
+    )
+    assert state.start_enabled is False
+    assert state.start_quiet_line == (
+        "Nothing in this selection can be imported — 1 unsupported file."
+    )
+    assert "feed.xml" in state.unsupported_line
+    assert "Unsupported" in state.unsupported_line
+
+
+def test_xml_in_a_mixed_selection_renders_the_will_skip_line():
+    """task-3308: alongside importable files, the ``.xml`` is named on the
+    will-skip line (task-2220's "skipped, never attempted" ruling) and the
+    commit forecast counts it as a skip."""
+    preflight = PreflightResult(
+        type_groups={
+            "generic": ["/tmp/notes.txt"],
+            "unsupported": ["/tmp/feed.xml"],
+        },
+        warnings=[],
+        errors=[],
+        total_size=1024,
+        truncated=False,
+        total_files=2,
+    )
+    state = build_library_ingest_state(
+        (),
+        form=LibraryIngestFormState(path="/tmp", preflight=preflight),
+    )
+    assert state.start_enabled is True
+    assert state.unsupported_line == (
+        "1 unsupported file will be skipped: feed.xml."
+    )
+    assert "1 will skip" in state.commit_summary_line

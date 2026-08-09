@@ -2293,7 +2293,12 @@ def test_action_show_workbench_help_filters_bindings_by_check_action(monkeypatch
     assert "enter" not in keys
     assert "o" not in keys
     # Genuinely active here: Escape moves focus to the rail (list canvas).
-    assert "escape" in keys
+    # task-3312 (#1): advertised exactly ONCE, as the footer set's "esc"
+    # row -- the raw-key dedupe used to keep the BINDINGS spelling too and
+    # F1 listed the same exit twice ("esc: focus rail" + "escape: Focus
+    # rail"; live in Ingest, same mechanism here).
+    assert "esc" in keys
+    assert "escape" not in keys
 
 
 def test_action_show_workbench_help_includes_landing_footer_keys(monkeypatch):

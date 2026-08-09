@@ -869,3 +869,19 @@ def test_persist_allows_whitespace_only_url_payload_to_fail_clearly() -> None:
     db = MediaDatabase(":memory:", client_id="test-empty-url")
     with pytest.raises(FileIngestionError, match="No text could be extracted"):
         persist_parsed_media(payload, db)
+
+
+def test_parse_xml_raises_unsupported_not_not_yet_implemented(
+    tmp_path: Path,
+) -> None:
+    """task-3308: ``parse_local_file_for_ingest`` still carries an
+    ``elif file_type == "xml"`` branch that raises "XML file processing is
+    not yet implemented" -- but no queue path can reach it, because
+    ``detect_file_type`` (the only producer of ``file_type`` for local
+    files) refuses ``.xml`` first with the honest "Unsupported file type"
+    error. Pin the refusal AND that the placeholder text never surfaces."""
+    xml = tmp_path / "feed.xml"
+    xml.write_text("<rss/>", encoding="utf-8")
+    with pytest.raises(FileIngestionError, match="Unsupported file type") as exc:
+        parse_local_file_for_ingest(str(xml), {})
+    assert "not yet implemented" not in str(exc.value)

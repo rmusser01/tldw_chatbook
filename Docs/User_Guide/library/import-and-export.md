@@ -159,6 +159,10 @@ installing.
    "Retry"; the new attempt shows a " · retry 1" suffix. No Retry button
    means the failure is permanent (unsupported type or missing file) — fix
    the source and start a fresh import, and use "Dismiss" to drop the row.
+   A URL your web-security settings refuse fails with a plain receipt:
+   "URL blocked — your web-security settings don't allow fetching this
+   address. To allow it, add the host to allowed_hosts under web_security
+   in config.toml."
 
 ## Keyboard & commands
 
@@ -328,3 +332,15 @@ a translating provider no longer fails transcribe-cpp/parakeet batches
 at dispatch; and an unknown explicit Encoding value degrades to
 replacement characters plus a visible warning instead of failing the
 import)*
+
+*Verified against feat/media-ingest-followups — 2026-08-09 (tasks
+3311/3312/3308: "Clear" now always returns the caret to the path field,
+even mid-relayout, so the next keystrokes build a path instead of running
+a Library search; F1 lists one escape row while the form is open; an
+egress-blocked URL's queue receipt reads in plain language with the
+allowed_hosts remedy intact (no markup artifacts, no clipped sentence);
+the "Some files may fail to import:" dialog never repeats a feature name
+as its own explanation; focused option-fold headers show a structural
+(heavy side-rail) focus cue with no size change; `.xml` files are
+declared unsupported at pre-check and skipped — XML import remains
+deferred)*

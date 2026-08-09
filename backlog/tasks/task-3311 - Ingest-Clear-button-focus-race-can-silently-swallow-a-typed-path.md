@@ -1,17 +1,17 @@
 ---
 id: TASK-3311
-title: >-
-  Ingest Clear-button focus race can silently swallow a typed path
-status: To Do
+title: Ingest Clear-button focus race can silently swallow a typed path
+status: Done
 assignee: []
 created_date: '2026-08-08 00:30'
+updated_date: '2026-08-09 03:58'
 labels:
   - library
   - ingest
   - ux
   - bug
-priority: medium
 dependencies: []
+priority: medium
 ---
 
 ## Description
@@ -21,8 +21,28 @@ Found during the live verification of the 3300-3305 arc (2026-08-08, worktree br
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
-
 <!-- AC:BEGIN -->
-- [ ] #1 After Clear, focus deterministically lands on the path field even when the preflight/warning region relayouts concurrently (looped live or harness reproduction, not a single pass)
-- [ ] #2 A typed leading "/" immediately after Clear edits the path, never triggers the focus-search binding
+- [x] #1 After Clear, focus deterministically lands on the path field even when the preflight/warning region relayouts concurrently (looped live or harness reproduction, not a single pass)
+- [x] #2 A typed leading "/" immediately after Clear edits the path, never triggers the focus-search binding
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Root-cause: Clear press with staged preflight takes the STRUCTURAL branch (type_groups shrink) -> _refresh_library_ingest_canvas_preserving_context captures app.focused = Clear button (path_input.focus() is deferred via app.call_later) -> restore targets the NEW hidden Clear button -> Widget.focus() silently NOPs on a non-focusable widget -> focus adrift (rail search / None).
+2. Fix: focus the path field synchronously (screen.set_focus) BEFORE mutating state, so the structural capture/restore round-trips #library-ingest-path deterministically.
+3. Looped RED test: stage crafted preflight (non-generic group + warning), click Clear, type '/', assert path focused + value=='/' , N iterations; verify RED pre-fix.
+4. Mutation check: revert refocus mechanism -> looped test RED.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Root cause (found via Textual 8.2.8 source + looped harness repro, NOT the warning-relayout hypothesis): with a pre-flight staged, Clear shrinks the type-group set, so _update_library_ingest_dynamic_regions takes the STRUCTURAL branch -> _refresh_library_ingest_canvas_preserving_context. That helper captures app.focused for its post-recompose restore, but Widget.focus() (the old refocus) defers via app.call_later, so at capture time app.focused is still the just-clicked Clear button. The restore then targets the NEW Clear button, hidden for an empty path, and Screen.set_focus silently no-ops on a non-focusable widget -- focus stays wherever the recompose prune's _reset_focus dropped it (measured headless: the rail search box, matching the live symptom; a '/' from a no-focus state runs the global focus-search binding, matching the other).
+
+Fix: handle_library_ingest_clear_path now focuses the path field SYNCHRONOUSLY via Screen.set_focus BEFORE _update_library_ingest_dynamic_regions, so the capture/restore round-trips #library-ingest-path deterministically; every interleaving (Hide/Blur on the button, prune reset, restore) converges on the path field.
+
+Evidence: new Tests/UI/test_library_ingest_clear_focus.py -- an 8-iteration clear-and-type loop staging a warning-bearing preflight (AC#1) plus a leading-slash test (AC#2). RED pre-fix on iteration 0 with focused=LibraryRailSearchInput (the live symptom); GREEN post-fix; mutation check (revert to deferred path_input.focus()) sends both tests RED.
+
+Files: tldw_chatbook/UI/Screens/library_screen.py (Clear handler), Tests/UI/test_library_ingest_clear_focus.py (new). Battery: 433 passed across the ingest keep-green set.
+<!-- SECTION:NOTES:END -->

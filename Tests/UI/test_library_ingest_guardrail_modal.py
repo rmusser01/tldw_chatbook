@@ -549,3 +549,41 @@ def test_submit_clears_the_stale_preflight_summary(tmp_path: Path):
     assert form.title == ""
     assert form.preflight is None, "stale pre-flight summary survived the submit"
     assert form.preflight_checking is False
+
+
+@pytest.mark.asyncio
+async def test_guardrail_warning_line_never_echoes_label_as_its_own_hint():
+    """task-3312 (#3): when the capability hint equals the feature label
+    the line read "- Audio processing (1 file): Audio processing" (live
+    2026-08-08). The echo is suppressed -- same rule the inline pre-flight
+    builder (``build_warning_lines``) already applies. A distinct hint
+    still renders after the colon."""
+    warnings = [
+        {
+            "feature": "audio_processing",
+            "label": "Audio processing",
+            "hint": "Audio processing",
+        },
+        {
+            "feature": "pdf_processing",
+            "label": "PDF processing",
+            "hint": "PDF ingestion",
+        },
+    ]
+    counts = {"audio_processing": 1, "pdf_processing": 2}
+    app = GuardrailApp()
+    async with app.run_test() as pilot:
+        modal = IngestGuardrailModal(warnings, counts)
+        await app.push_screen(modal, lambda result: None)
+        await pilot.pause()
+
+        texts = [
+            str(static.renderable)
+            for static in app.screen.query(".ingest-guardrail-warning Static")
+        ]
+        echo_line = next(t for t in texts if "Audio processing" in t)
+        assert echo_line == "- Audio processing (1 file)", echo_line
+        distinct_line = next(t for t in texts if "PDF processing" in t)
+        assert distinct_line == "- PDF processing (2 files): PDF ingestion", (
+            distinct_line
+        )

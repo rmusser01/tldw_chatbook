@@ -1315,9 +1315,19 @@ class IngestGuardrailModal(ModalScreen[bool]):
                     count = self.affected_counts.get(w["feature"], 0)
                     files_word = "file" if count == 1 else "files"
                     with Vertical(classes="ingest-guardrail-warning"):
-                        yield Static(
-                            f"- {w['label']} ({count} {files_word}): {w['hint']}"
-                        )
+                        # (task-3312 #3) Suppress the hint when it merely
+                        # repeats the label ("- Audio processing (1 file):
+                        # Audio processing" -- live 2026-08-08), the same
+                        # echo rule the inline pre-flight builder applies
+                        # (``build_warning_lines``). NOTE: task-3314
+                        # retires this modal wholesale; this stays a
+                        # minimal line-level fix, not a shared refactor.
+                        label = str(w.get("label") or "").strip()
+                        hint = str(w.get("hint") or "").strip()
+                        line = f"- {label} ({count} {files_word})"
+                        if hint and hint.casefold() != label.casefold():
+                            line += f": {hint}"
+                        yield Static(line)
                         if w.get("command"):
                             yield Button(
                                 "Copy install command",
@@ -1375,6 +1385,24 @@ class IngestGuardrailModal(ModalScreen[bool]):
                 self.notify("Failed to copy command", severity="error")
         else:
             self.notify("Clipboard not available", severity="warning")
+
+
+def _canonical_shortcut_key(key: str) -> str:
+    """Fold a shortcut key label to its canonical dedupe form.
+
+    (task-3312 #1) The footer's shared shortcut sets use display spellings
+    ("esc", "F6") while ``BINDINGS`` uses Textual key names ("escape",
+    "f6"); the F1 panel merges the two sources and must treat those as the
+    SAME key or it advertises one action twice.
+
+    Args:
+        key: A shortcut key label from either source.
+
+    Returns:
+        A casefolded key with the "escape"/"esc" spelling unified.
+    """
+    lowered = key.strip().casefold()
+    return "esc" if lowered == "escape" else lowered
 
 
 class _ParakeetV2NoPendingReportError(RuntimeError):
@@ -13725,11 +13753,19 @@ class LibraryScreen(BaseAppScreen):
         )
 
         footer_shortcuts = self._library_footer_shortcuts_for_current_state()
-        seen_keys = {key for key, _description in footer_shortcuts}
+        # (task-3312 #1) Dedupe on the CANONICAL key, not the raw string:
+        # the shared footer sets spell the exit key "esc" while BINDINGS
+        # entries spell it "escape" (Textual's key name), so a raw-string
+        # comparison kept both and F1 listed the exit twice in Ingest
+        # ("esc: back to hub" + "escape: Back to Library hub" -- live,
+        # 2026-08-08). Case is folded for the same reason ("F6" vs "f6").
+        seen_keys = {
+            _canonical_shortcut_key(key) for key, _description in footer_shortcuts
+        }
         binding_extras = tuple(
             pair
             for pair in self._active_library_binding_shortcuts()
-            if pair[0] not in seen_keys
+            if _canonical_shortcut_key(pair[0]) not in seen_keys
         )
         state = WorkbenchHelpState(
             route_id="library",
@@ -18439,7 +18475,22 @@ class LibraryScreen(BaseAppScreen):
             path_input = None
         if path_input is not None:
             path_input.value = ""
-            path_input.focus()
+            # (task-3311) SYNCHRONOUS focus, before the dynamic-region
+            # update below. ``Widget.focus()`` defers through
+            # ``app.call_later``, so with a pre-flight staged (type-group
+            # set change -> the STRUCTURAL branch) the update's
+            # ``_refresh_library_ingest_canvas_preserving_context`` still
+            # saw the just-clicked Clear button as ``app.focused``,
+            # captured THAT id, and after the full recompose tried to
+            # restore focus onto the new Clear button -- hidden for an
+            # empty path, so ``Screen.set_focus`` silently no-ops on the
+            # non-focusable widget and focus stayed wherever the prune's
+            # ``_reset_focus`` dropped it (live: the rail search box, or
+            # nowhere -- a following "/" then ran the global focus-search
+            # binding). Setting focus through the Screen API updates
+            # ``screen.focused`` immediately, so the capture/restore
+            # round-trips ``#library-ingest-path`` deterministically.
+            self.set_focus(path_input)
         self._update_library_ingest_dynamic_regions()
 
     @on(Button.Pressed, "#ingest-preflight-choose")

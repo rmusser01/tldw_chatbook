@@ -408,3 +408,95 @@ async def test_canvas_action_button_focus_is_glyph_level_and_keeps_its_label():
         # AC#5: dimensional stability.
         assert browse.region == region_before
         assert len(focused_rows) == len(unfocused_rows)
+
+
+# --- task-3312 (#1): F1 lists one escape row ---------------------------------
+
+
+def test_f1_help_in_ingest_lists_exactly_one_escape_row(monkeypatch):
+    """task-3312 (#1): the shared footer set spells the exit key "esc"
+    while the BINDINGS entry spells it "escape", so the key-string dedupe
+    in ``action_show_workbench_help`` missed it and F1 listed the exit
+    twice ("esc: back to hub" + "escape: Back to Library hub"). Exactly
+    one escape row survives -- the footer's, since the footer set leads
+    the panel."""
+    from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+    from tldw_chatbook.UI.Workbench.help import WorkbenchHelpPanel
+
+    app = _build_test_app()
+    screen = LibraryScreen(app)
+    screen._library_selected_row_id = LIBRARY_ROW_INGEST_MEDIA
+
+    pushed = []
+
+    class _FakeApp:
+        def push_screen(self, panel):
+            pushed.append(panel)
+
+    monkeypatch.setattr(
+        LibraryScreen, "app", property(lambda self: _FakeApp()), raising=False
+    )
+
+    screen.action_show_workbench_help()
+
+    assert len(pushed) == 1
+    assert isinstance(pushed[0], WorkbenchHelpPanel)
+    shortcuts = list(pushed[0].state.shortcuts)
+    escape_rows = [
+        (key, description)
+        for key, description in shortcuts
+        if key.strip().casefold() in ("esc", "escape")
+    ]
+    assert escape_rows == [("esc", "back to hub")], shortcuts
+
+
+# --- task-3312 (#4): collapsible panel-header focus is glyph-level -----------
+
+
+@pytest.mark.asyncio
+async def test_options_panel_header_focus_is_glyph_level_under_real_css():
+    """task-3312 (#4): the collapsible options-panel header is a Tab stop
+    whose focus was color-only -- the one focusable the task-3302
+    structural-focus sweep missed. Focused, it must paint a structural
+    (heavy-glyph) cue without eating the ▼/title text and without any
+    dimensional change."""
+    from textual.widgets._collapsible import CollapsibleTitle
+
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        await _enter_ingest_mode(screen, pilot)
+
+        # The generic options panel is always composed, path or no path.
+        title = screen.query_one("#type-group-generic CollapsibleTitle")
+        assert not title.has_focus
+        region_before = title.region
+        unfocused_rows = _plain_rows(title)
+        assert not any(
+            glyph in row for row in unfocused_rows for glyph in HEAVY_GLYPHS
+        ), f"unfocused header already paints heavy glyphs: {unfocused_rows!r}"
+
+        title.focus()
+        await pilot.pause()
+        assert title.has_focus
+        focused_rows = _plain_rows(title)
+
+        assert focused_rows != unfocused_rows, (
+            "focus produced a byte-identical plain-text header -- the "
+            "color-only gap task-3312 (#4) pinned"
+        )
+        assert any(
+            glyph in row for row in focused_rows for glyph in HEAVY_GLYPHS
+        ), f"focused header shows no structural cue: {focused_rows!r}"
+        # The cue must not eat the header text (task-2041's trap).
+        assert any("Plain text" in row for row in focused_rows), (
+            f"focus treatment ate the header title: {focused_rows!r}"
+        )
+        # Dimensional stability: same region, same painted row count.
+        assert title.region == region_before
+        assert len(focused_rows) == len(unfocused_rows)

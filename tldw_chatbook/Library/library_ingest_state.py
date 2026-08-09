@@ -251,6 +251,26 @@ _NESTED_FAILURE_PREFIX_RE = re.compile(
     r"^Failed to \w+(?: [\w.+-]+)? file: (?=Failed to )"
 )
 
+# (task-3312 #2) ``EgressBlockedError``'s message opens with exactly this
+# phrase (``Utils/egress.py``); it is the one marker every egress-refused
+# fetch carries regardless of which pipeline wrapper re-raised it.
+_EGRESS_BLOCKED_MARKER = "Egress blocked"
+
+#: (task-3312 #2) Plain-language receipt for an egress-blocked URL. The raw
+#: policy text ("URL blocked by egress policy (SSRF guard): Egress blocked
+#: (private) for http://… [remedy: add the host to [web_security]
+#: allowed_hosts in config.toml, or set [web_security] enabled = false]")
+#: leaked a markup escape into the queue row (a literal ``\[web_security]``
+#: -- ``rich.markup.escape`` and Textual's content markup disagree about
+#: which brackets needed escaping) and clipped mid-sentence at
+#: "config.toml," (live 2026-08-08). One complete sentence in the
+#: pre-flight lines' register (task-3305), bracket-free, remedy intact.
+INGEST_EGRESS_BLOCKED_COPY = (
+    "URL blocked — your web-security settings don't allow fetching this "
+    "address. To allow it, add the host to allowed_hosts under "
+    "web_security in config.toml."
+)
+
 
 def short_ingest_error(error: str) -> str:
     """Return the short (queue-row) form of an ingest job's error message.
@@ -259,7 +279,9 @@ def short_ingest_error(error: str) -> str:
     ``local_file_ingestion.py``'s "Unsupported file type" error carries --
     that tail is dropped from the queue-row summary so it is not repeated
     on every failure surface. An error without that exact marker passes
-    through whole.
+    through whole. An egress-blocked URL failure is rewritten to
+    :data:`INGEST_EGRESS_BLOCKED_COPY` -- the raw policy text is log
+    material, not a receipt (task-3312 #2).
 
     Single source of truth for BOTH failure-reason surfaces: the Library
     ingest queue row (``_build_queue_row``) and Home's failed-item canvas
@@ -271,11 +293,13 @@ def short_ingest_error(error: str) -> str:
 
     Returns:
         The error up to (excluding) the supported-types marker, right-
-        stripped; the whole error when the marker is absent.
+        stripped; the whole error when the marker is absent; the plain
+        egress receipt when the egress-blocked marker is present.
     """
-    return unwrap_ingest_error(error).split(
-        _SUPPORTED_TYPES_ERROR_MARKER
-    )[0].rstrip()
+    unwrapped = unwrap_ingest_error(error)
+    if _EGRESS_BLOCKED_MARKER in unwrapped:
+        return INGEST_EGRESS_BLOCKED_COPY
+    return unwrapped.split(_SUPPORTED_TYPES_ERROR_MARKER)[0].rstrip()
 
 
 def unwrap_ingest_error(error: str) -> str:

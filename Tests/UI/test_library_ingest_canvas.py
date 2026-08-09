@@ -1979,3 +1979,33 @@ async def test_parakeet_folder_placeholder_is_an_example_not_the_label():
             )
             assert model_dir.placeholder == "/path/to/parakeet-model"
             assert model_dir.placeholder != "Local Parakeet model folder"
+
+
+@pytest.mark.asyncio
+async def test_failed_queue_row_bracket_error_renders_clean():
+    """(task-3312 #2) The queue-row Static rendered ``escape_markup``ed
+    text WITH markup enabled. ``rich.markup.escape`` skips a bracket run
+    that never closes as a tag (``[remedy: … [``) while escaping the inner
+    closed ones (``[keys]``), and Textual's content markup then leaves the
+    FIRST escape's backslash literal -- the live 2026-08-08 receipt showed
+    ``\\[web_security]`` verbatim (REPL-pinned: escape+from_markup on this
+    exact shape leaks). Verbatim ``markup=False`` rendering: byte-identical
+    text, no escape artifacts, nothing swallowed as a tag."""
+    error = (
+        "note [remedy: check [keys] in config.toml, or set [keys] off]"
+    )
+    failed = LibraryIngestJob(
+        job_id="ingest-job-1",
+        source_path="/tmp/[draft] notes.txt",
+        state=IngestJobState.FAILED,
+        error=error,
+    )
+    state = build_library_ingest_state((failed,), form=_default_form())
+    app = _CanvasHost(state)
+    async with app.run_test() as pilot:
+        row = pilot.app.query_one("#library-ingest-row-0", Static)
+        text = row.visual.plain
+        assert "[draft] notes.txt" in text, text
+        assert "\\[" not in text, text
+        # Nothing swallowed as a markup tag: the error text is intact.
+        assert error in text, text

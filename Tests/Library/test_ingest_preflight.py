@@ -508,3 +508,18 @@ class TestUrlProbePlainLanguage:
         assert "failed" in probe.error.lower()
         assert "boom" not in probe.error
         assert "<" not in probe.error
+
+
+def test_xml_file_lands_in_the_unsupported_bucket_task_3308(tmp_path) -> None:
+    """task-3308 (defer ruling, task-3310 notes): an ``.xml`` source is
+    classified unsupported at pre-flight -- never grouped, never raised --
+    so the queue can never hand it to the parse path whose XML branch
+    still says "not yet implemented"."""
+    xml = tmp_path / "feed.xml"
+    xml.write_text("<rss><channel/></rss>")
+
+    result = analyze_path(str(xml))
+
+    assert result.errors == []
+    assert result.type_groups.get("unsupported") == [str(xml)]
+    assert result.total_files == 1

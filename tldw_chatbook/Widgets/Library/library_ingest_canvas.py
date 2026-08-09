@@ -7,7 +7,6 @@ from datetime import datetime, timezone
 from pathlib import PurePath
 from typing import Any
 
-from rich.markup import escape as escape_markup
 from textual import on
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
@@ -74,10 +73,15 @@ class LibraryIngestPreflightSummary(Vertical):
             return
         if state.errors:
             for index, error in enumerate(state.errors):
+                # (task-3312 #2) Verbatim, not escape-then-parse: the
+                # escape_markup/content-markup pairing leaks a literal
+                # backslash for mixed bracket runs (see the queue-row
+                # comment in ``LibraryIngestQueuePanel.compose``).
                 yield Static(
-                    escape_markup(error),
+                    error,
                     id=f"ingest-preflight-error-{index}",
                     classes="library-ingest-quiet-line",
+                    markup=False,
                 )
             if state.errors_are_path_problem:
                 # Re-running the same analysis on the same bad path fails
@@ -98,9 +102,10 @@ class LibraryIngestPreflightSummary(Vertical):
         if state.warning_lines:
             for index, warning in enumerate(state.warning_lines):
                 yield Static(
-                    f"⚠ {escape_markup(warning)}",
+                    f"⚠ {warning}",
                     id=f"ingest-preflight-warning-{index}",
                     classes="library-ingest-quiet-line",
+                    markup=False,
                 )
             # (task-3304, MI-17) The pip command must be recoverable AT the
             # warning -- the guardrail modal used to hold the only copy
@@ -211,11 +216,16 @@ class LibraryIngestQueuePanel(Vertical):
                     classes="library-ingest-batch-header",
                     markup=False,
                 )
-            # A source filename can contain Rich markup syntax (e.g. a
-            # literal "[/bracket]" in the name) -- escape_markup here is
-            # what keeps a hostile filename from raising MarkupError at
-            # mount time (the L3a lesson; mirrors
-            # ``library_rag_history_children``'s escaped Button labels).
+            # A source filename or error can contain markup syntax (a
+            # literal "[/bracket]" in the name, an error quoting config
+            # keys) -- ``markup=False`` below renders it verbatim, which
+            # both keeps a hostile filename from raising MarkupError at
+            # mount time (the L3a lesson) AND never leaks an escape
+            # backslash. The old ``escape_markup``-then-parse pairing did:
+            # rich's escape skips a bracket run that never closes as a tag
+            # while escaping the inner closed ones, and Textual's content
+            # markup then leaves the first escape's backslash literal --
+            # the live "\[web_security]" receipt (task-3312 #2).
             row_classes = "library-ingest-row"
             # (task-2230 a11y) Severity gets a colour IN ADDITION to the
             # glyph+word it already carries -- failed and done rows were
@@ -247,9 +257,10 @@ class LibraryIngestQueuePanel(Vertical):
                 # spacing.
                 row_classes += " library-ingest-row-with-actions"
             yield Static(
-                escape_markup(row.line),
+                row.line,
                 id=f"library-ingest-row-{index}",
                 classes=row_classes,
+                markup=False,
             )
             if row.progress:
                 progress_line = row.progress.get("message") if row.progress else ""
