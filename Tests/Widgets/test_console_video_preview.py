@@ -11,6 +11,7 @@ import pytest
 from loguru import logger
 from PIL import Image
 from textual.app import App, ComposeResult
+from textual.geometry import Region
 from textual.widgets import Button
 from textual.worker import Worker, WorkerState
 
@@ -374,6 +375,225 @@ async def test_resume_generation_rejects_late_old_frame_eof_and_cleanup(monkeypa
         assert app.preview.state == "paused"
 
 
+class _ControllableRegionPreview(ConsoleVideoPreview):
+    force_offscreen = False
+
+    @property
+    def region(self):
+        if self.force_offscreen:
+            return Region(0, -2, 1, 1)
+        return super().region
+
+
+@pytest.mark.asyncio
+async def test_old_timer_callback_cannot_pause_replacement_generation(monkeypatch):
+    entered = [Event(), Event()]
+    releases = [Event(), Event()]
+    sources: list[_Source] = []
+
+    class HeldSource(_Source):
+        def __init__(self, path: str) -> None:
+            super().__init__(path)
+            self.index = len(sources)
+            sources.append(self)
+
+        def iter_frames(self):
+            entered[self.index].set()
+            assert releases[self.index].wait(2.0)
+            if False:
+                yield 0.0, None
+
+    _patch_source(monkeypatch, HeldSource)
+    app = _PreviewApp(preview_class=_ControllableRegionPreview)
+    async with app.run_test() as pilot:
+        await pilot.click(f"#{app.preview.id}")
+        await _wait(entered[0])
+        old_timer = app.preview._offscreen_timer
+        assert old_timer is not None
+        old_callback = old_timer._callback
+        assert old_callback is not None
+
+        await pilot.click(f"#{app.preview.id}")
+        await pilot.click(f"#{app.preview.id}")
+        await _wait(entered[1])
+        replacement_run = app.preview._run
+        replacement_source = app.preview._source
+        replacement_timer = app.preview._offscreen_timer
+        app.preview.force_offscreen = True
+
+        old_callback()
+
+        assert app.preview.state == "playing"
+        assert app.preview._run is replacement_run
+        assert app.preview._source is replacement_source
+        assert app.preview._offscreen_timer is replacement_timer
+        assert ConsoleVideoPreview._active is app.preview
+
+        releases[0].set()
+        releases[1].set()
+        await _wait(sources[0].closed)
+        await _wait(sources[1].closed)
+        await _finish_workers(app, pilot)
+
+
+@pytest.mark.asyncio
+async def test_stale_eof_cannot_pause_replacement_generation(monkeypatch):
+    old_entered = Event()
+    release_old = Event()
+    new_entered = Event()
+    release_new = Event()
+    sources: list[_Source] = []
+
+    class OldEofSource(_Source):
+        def iter_frames(self):
+            old_entered.set()
+            assert release_old.wait(2.0)
+            if False:
+                yield 0.0, None
+
+    class NewSource(_Source):
+        def iter_frames(self):
+            yield 2.0, Image.new("RGB", (2, 2), "blue")
+            new_entered.set()
+            assert release_new.wait(2.0)
+
+    def source_factory(path: str) -> _Source:
+        source = OldEofSource(path) if not sources else NewSource(path)
+        sources.append(source)
+        return source
+
+    _patch_source(monkeypatch, source_factory)
+    app = _PreviewApp()
+    async with app.run_test() as pilot:
+        await pilot.click(f"#{app.preview.id}")
+        await _wait(old_entered)
+        await pilot.click(f"#{app.preview.id}")
+        await pilot.click(f"#{app.preview.id}")
+        await _wait(new_entered)
+        replacement_run = app.preview._run
+        replacement_source = app.preview._source
+
+        release_old.set()
+        await _wait(sources[0].closed)
+        await pilot.pause()
+
+        assert app.preview.state == "playing"
+        assert app.preview._run is replacement_run
+        assert app.preview._source is replacement_source
+        assert app.preview._eligible
+        assert ConsoleVideoPreview._active is app.preview
+
+        release_new.set()
+        await _wait(sources[1].closed)
+        await _finish_workers(app, pilot)
+
+
+@pytest.mark.asyncio
+async def test_stale_decode_failure_cannot_degrade_replacement_generation(
+    monkeypatch,
+):
+    old_entered = Event()
+    release_old = Event()
+    new_entered = Event()
+    release_new = Event()
+    sources: list[_Source] = []
+
+    class OldFailureSource(_Source):
+        def iter_frames(self):
+            old_entered.set()
+            assert release_old.wait(2.0)
+            raise RuntimeError(PRIVATE_ERROR)
+            yield
+
+    class NewSource(_Source):
+        def iter_frames(self):
+            yield 2.0, Image.new("RGB", (2, 2), "blue")
+            new_entered.set()
+            assert release_new.wait(2.0)
+
+    def source_factory(path: str) -> _Source:
+        source = OldFailureSource(path) if not sources else NewSource(path)
+        sources.append(source)
+        return source
+
+    _patch_source(monkeypatch, source_factory)
+    app = _PreviewApp()
+    async with app.run_test() as pilot:
+        await pilot.click(f"#{app.preview.id}")
+        await _wait(old_entered)
+        await pilot.click(f"#{app.preview.id}")
+        await pilot.click(f"#{app.preview.id}")
+        await _wait(new_entered)
+        replacement_run = app.preview._run
+        replacement_source = app.preview._source
+
+        release_old.set()
+        await _wait(sources[0].closed)
+        await pilot.pause()
+
+        assert app.preview.state == "playing"
+        assert app.preview._run is replacement_run
+        assert app.preview._source is replacement_source
+        assert app.preview._eligible
+        assert "preview stopped" not in app.preview._poster_text().lower()
+        assert ConsoleVideoPreview._active is app.preview
+
+        release_new.set()
+        await _wait(sources[1].closed)
+        await _finish_workers(app, pilot)
+
+
+@pytest.mark.asyncio
+async def test_current_run_rejects_wrong_source_for_frame_eof_and_failure(monkeypatch):
+    entered = Event()
+    release = Event()
+    sources: list[_Source] = []
+
+    class HeldSource(_Source):
+        def __init__(self, path: str) -> None:
+            super().__init__(path)
+            sources.append(self)
+
+        def iter_frames(self):
+            entered.set()
+            assert release.wait(2.0)
+            if False:
+                yield 0.0, None
+
+    _patch_source(monkeypatch, HeldSource)
+    app = _PreviewApp()
+    async with app.run_test() as pilot:
+        await pilot.click(f"#{app.preview.id}")
+        await _wait(entered)
+        run = app.preview._run
+        source = app.preview._source
+        timer = app.preview._offscreen_timer
+        wrong_source = _Source("/private/wrong-source.mp4")
+        assert run is not None and source is not None
+
+        assert not app.preview._show_frame(
+            run,
+            wrong_source,
+            9.0,
+            Image.new("RGB", (2, 2), "red"),
+        )
+        assert not app.preview._finish_run(run, wrong_source)
+        assert not app.preview._degrade_run(run, wrong_source)
+
+        assert app.preview.state == "playing"
+        assert app.preview._run is run
+        assert app.preview._source is source
+        assert app.preview._offscreen_timer is timer
+        assert app.preview._position is None
+        assert app.preview._pixels is None
+        assert app.preview._eligible
+        assert ConsoleVideoPreview._active is app.preview
+
+        release.set()
+        await _wait(sources[0].closed)
+        await _finish_workers(app, pilot)
+
+
 @pytest.mark.asyncio
 async def test_immediate_eof_observes_timer_before_decode_and_cleans_every_owner(
     monkeypatch,
@@ -696,6 +916,10 @@ class _OffscreenPreview(ConsoleVideoPreview):
     def screen(self):
         return self._fake_screen
 
+    @property
+    def is_attached(self):
+        return True
+
 
 def _offscreen_widget(monkeypatch, bottom, top, height=24):
     _patch_source(monkeypatch, _Source)
@@ -708,20 +932,24 @@ def _offscreen_widget(monkeypatch, bottom, top, height=24):
         duration_seconds=5.0,
     )
     widget.state = "playing"
+    run = SimpleNamespace(cancelled=Event())
+    source = _Source(PRIVATE_PATH)
+    widget._run = run
+    widget._source = source
     ConsoleVideoPreview._active = widget
-    return widget
+    return widget, run, source
 
 
 def test_offscreen_scroll_pauses(monkeypatch):
-    widget = _offscreen_widget(monkeypatch, bottom=-10, top=-60)
-    widget._pause_if_offscreen()
+    widget, run, source = _offscreen_widget(monkeypatch, bottom=-10, top=-60)
+    widget._pause_if_offscreen(run, source)
     assert widget.state == "paused"
     assert ConsoleVideoPreview._active is None
 
 
 def test_onscreen_does_not_pause(monkeypatch):
-    widget = _offscreen_widget(monkeypatch, bottom=10, top=0)
-    widget._pause_if_offscreen()
+    widget, run, source = _offscreen_widget(monkeypatch, bottom=10, top=0)
+    widget._pause_if_offscreen(run, source)
     assert widget.state == "playing"
 
 

@@ -291,7 +291,7 @@ class ConsoleVideoPreview(Vertical):
         self._source = source
         try:
             self._offscreen_timer = self.set_interval(
-                0.5, self._pause_if_offscreen
+                0.5, partial(self._pause_if_offscreen, run, source)
             )
         except Exception as exc:
             _log_preview_failure("cleanup", exc)
@@ -418,9 +418,13 @@ class ConsoleVideoPreview(Vertical):
 
     # -- off-screen / lifecycle guards ------------------------------------------
 
-    def _pause_if_offscreen(self) -> None:
+    def _pause_if_offscreen(
+        self,
+        run: _PreviewRun,
+        source: AvFrameSource,
+    ) -> None:
         """Pause when the preview's region has left the viewport (AC2)."""
-        if self.state != "playing":
+        if not self._matches(run, source):
             return
         try:
             region = self.region
