@@ -632,11 +632,12 @@ class LazyLiveDictationService:
         ):
             return
         self._dictation_next_sequence += 1
-        self._notify_segment_transcribing(done=True)
         if not (text or "").strip():
+            self._notify_segment_transcribing(done=True)
             self._notify_segment_no_final()
             return
         self._handle_partial_text(text)
+        self._notify_segment_transcribing(done=True)
         self._finalize_current_segment()
 
     def start_dictation(
@@ -1582,6 +1583,16 @@ class LazyLiveDictationService:
                 return DictationResult(transcript="", segments=[], duration=0.0)
             self.state = DictationState.IDLE
 
+        # Quiesce the producer before asking the processing thread to drain.
+        # Otherwise a recorder callback can enqueue PCM after the processor's
+        # final drain and after the deferred handle has been sealed.
+        recorder = self._audio_service
+        if recorder is not None:
+            try:
+                recorder.stop_recording()
+            except Exception:  # noqa: BLE001 - teardown must never raise
+                logger.opt(exception=True).warning("Failed to release audio capture")
+
         # Stop processing
         if self.stop_processing:
             self.stop_processing.set()
@@ -1636,18 +1647,6 @@ class LazyLiveDictationService:
             captured_bytes=self.captured_bytes,
             transcription_complete=transcription_complete,
         )
-
-        # Release capture explicitly. The non-lazy service does this in its own
-        # stop_dictation; this one never did, so every successful stop left the
-        # microphone live. Use the private attribute, not the `audio_service`
-        # property -- reading the property lazily CONSTRUCTS a recorder, which
-        # would open an audio device during teardown.
-        recorder = self._audio_service
-        if recorder is not None:
-            try:
-                recorder.stop_recording()
-            except Exception:  # noqa: BLE001 - teardown must never raise
-                logger.opt(exception=True).warning("Failed to release audio capture")
 
         # Cleanup
         self._cleanup()

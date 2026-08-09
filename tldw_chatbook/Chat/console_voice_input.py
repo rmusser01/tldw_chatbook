@@ -13,6 +13,7 @@ from __future__ import annotations
 # (`monkeypatch.setattr(cvi.importlib.util, "find_spec", ...)` and
 # `monkeypatch.setattr(cvi.sys, "platform", ...)` both mutate the real module
 # objects, which the detection helpers then read).
+import importlib
 import importlib.util  # noqa: F401 - patched seam; see comment above
 import string
 import sys  # noqa: F401 - patched seam; see comment above
@@ -164,6 +165,20 @@ def capture_available() -> bool:
     return any(_module_installed(name) for name in CAPTURE_MODULES)
 
 
+def _faster_whisper_model_is_local(model: str) -> bool:
+    """Resolve a faster-whisper model from local cache without downloading."""
+
+    try:
+        utilities = importlib.import_module("faster_whisper.utils")
+        utilities.download_model(model, local_files_only=True)
+    except Exception:  # noqa: BLE001 - cache misses vary by hub version
+        logger.opt(exception=True).debug(
+            "Faster-whisper retry model is not available in the local cache"
+        )
+        return False
+    return True
+
+
 def probe() -> Availability:
     """Report whether dictation is usable, distinguishing the two failures.
 
@@ -207,6 +222,7 @@ DICTATION_FAST_MODEL_PROVIDER = "faster-whisper"
 #: this; this is only the *unset* default for a dictation capture, and it
 #: never changes what the transcription stack itself uses elsewhere.
 DICTATION_FAST_MODEL_DEFAULT = "base"
+DICTATION_RETRY_FAILED_REASON = "Dictation retry failed."
 
 
 @dataclass(frozen=True)
@@ -2045,10 +2061,17 @@ class ConsoleVoiceInputController:
             from ..STT.dispatch_coordinator import RetryableDictationFailure
 
             if isinstance(exc, RetryableDictationFailure):
-                can_retry = "faster-whisper" in installed_local_providers()
-                if can_retry and service is not None:
+                retry_action = None
+                if (
+                    service is not None
+                    and "faster-whisper" in installed_local_providers()
+                    and _faster_whisper_model_is_local(DICTATION_FAST_MODEL_DEFAULT)
+                ):
+                    transcriber = service.transcription_service
+                    language = getattr(service, "language", DEFAULT_LANGUAGE)
                     retry_action = self._build_faster_whisper_retry(
-                        service,
+                        transcriber,
+                        language,
                         exc.retry_buffer,
                     )
                     with self._state_lock:
@@ -2059,7 +2082,7 @@ class ConsoleVoiceInputController:
                     self._release(service)
                 self._fail(
                     str(exc),
-                    retry_available=can_retry and service is not None,
+                    retry_available=retry_action is not None,
                 )
                 return
             logger.opt(exception=True).warning("Console dictation failed to stop")
@@ -2090,37 +2113,44 @@ class ConsoleVoiceInputController:
 
     @staticmethod
     def _build_faster_whisper_retry(
-        service: Any,
+        transcriber: Any,
+        language: str,
         retry_buffer: Any,
     ) -> Callable[[], str]:
         """Build one replay over exactly the retained logical boundaries."""
 
         def _retry() -> str:
-            source = retry_buffer.source
-            frame_bytes = source.channels * source.sample_width
-            start_frame = 0
-            texts: list[str] = []
-            transcriber = service.transcription_service
-            for end_frame in retry_buffer.segment_end_frames:
-                audio = source.audio[
-                    start_frame * frame_bytes : end_frame * frame_bytes
-                ]
-                start_frame = end_frame
-                if not audio:
-                    continue
-                result = transcriber.transcribe_buffer(
-                    audio_data=audio,
-                    sample_rate=source.sample_rate,
-                    channels=source.channels,
-                    sample_width=source.sample_width,
-                    provider=DICTATION_FAST_MODEL_PROVIDER,
-                    model=DICTATION_FAST_MODEL_DEFAULT,
-                    language=getattr(service, "language", DEFAULT_LANGUAGE),
+            try:
+                source = retry_buffer.source
+                frame_bytes = source.channels * source.sample_width
+                start_frame = 0
+                texts: list[str] = []
+                for end_frame in retry_buffer.segment_end_frames:
+                    audio = source.audio[
+                        start_frame * frame_bytes : end_frame * frame_bytes
+                    ]
+                    start_frame = end_frame
+                    if not audio:
+                        continue
+                    result = transcriber.transcribe_buffer(
+                        audio_data=audio,
+                        sample_rate=source.sample_rate,
+                        channels=source.channels,
+                        sample_width=source.sample_width,
+                        provider=DICTATION_FAST_MODEL_PROVIDER,
+                        model=DICTATION_FAST_MODEL_DEFAULT,
+                        language=language,
+                        local_files_only=True,
+                    )
+                    text = result.get("text", "") if isinstance(result, dict) else ""
+                    if isinstance(text, str) and text.strip():
+                        texts.append(text.strip())
+                return " ".join(texts)
+            except Exception:  # noqa: BLE001 - retry errors are sanitized
+                logger.opt(exception=True).warning(
+                    "Console dictation faster-whisper retry failed"
                 )
-                text = result.get("text", "") if isinstance(result, dict) else ""
-                if isinstance(text, str) and text.strip():
-                    texts.append(text.strip())
-            return " ".join(texts)
+                raise RuntimeError(DICTATION_RETRY_FAILED_REASON) from None
 
         return _retry
 

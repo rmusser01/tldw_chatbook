@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import gc
 import queue
 import subprocess
 import sys
 import threading
 import time
+import weakref
+from types import SimpleNamespace
 
 import pytest
 
@@ -622,6 +625,12 @@ def _controller(monkeypatch, service=None, spawn=None):
     """
     monkeypatch.setattr(cvi, "capture_available", lambda: True)
     monkeypatch.setattr(cvi, "installed_local_providers", lambda: ("faster-whisper",))
+    monkeypatch.setattr(
+        cvi,
+        "_faster_whisper_model_is_local",
+        lambda _model: True,
+        raising=False,
+    )
     _stub_settings(monkeypatch, {"transcription.default_provider": "faster-whisper"})
 
     service = service or FakeDictationService()
@@ -1830,6 +1839,7 @@ class _Transcriber:
                 "provider": provider,
                 "model": model,
                 "language": language,
+                "provider_kwargs": kwargs,
             }
         )
         if self.entered is not None:
@@ -2410,7 +2420,140 @@ def test_retryable_parakeet_failure_exposes_one_bounded_faster_whisper_retry(
         call["provider"] == "faster-whisper" for call in transcriber.buffer_calls
     )
     assert all(call["model"] == "base" for call in transcriber.buffer_calls)
+    assert all(
+        call["provider_kwargs"] == {"local_files_only": True}
+        for call in transcriber.buffer_calls
+    )
     assert controller.retry_available is False
+
+
+def test_retry_closure_does_not_retain_the_finished_dictation_service(monkeypatch):
+    service, transcriber = _retryable_stop_service()
+    service.language = "fr"
+    service_box = [service]
+    monkeypatch.setattr(cvi, "capture_available", lambda: True)
+    monkeypatch.setattr(cvi, "installed_local_providers", lambda: ("faster-whisper",))
+    monkeypatch.setattr(
+        cvi,
+        "_faster_whisper_model_is_local",
+        lambda _model: True,
+        raising=False,
+    )
+    _stub_settings(monkeypatch, {"transcription.default_provider": "parakeet-onnx"})
+
+    def _service_factory(**kwargs):
+        built = service_box.pop()
+        built.kwargs = kwargs
+        return built
+
+    controller = cvi.ConsoleVoiceInputController(
+        emit=lambda _event: None,
+        spawn=lambda thunk: thunk(),
+        service_factory=_service_factory,
+    )
+    monkeypatch.setattr(
+        cvi,
+        "resolve",
+        lambda: cvi.EffectiveConfig(
+            provider="parakeet-onnx",
+            model=None,
+            language="fr",
+            configured_provider="parakeet-onnx",
+            was_overridden=False,
+        ),
+    )
+    controller.start(capture_generation=29)
+    controller.stop()
+    service_ref = weakref.ref(service)
+
+    del service
+    gc.collect()
+
+    assert service_ref() is None
+    assert controller.retry_with_faster_whisper() == "failed segment pending segment"
+    assert all(call["language"] == "fr" for call in transcriber.buffer_calls)
+
+
+def test_retry_execution_failure_is_fixed_and_sanitized(monkeypatch):
+    service, transcriber = _retryable_stop_service()
+    transcriber._error = RuntimeError("native failure at /private/models/secret.bin")
+    monkeypatch.setattr(
+        cvi,
+        "resolve",
+        lambda: cvi.EffectiveConfig(
+            provider="parakeet-onnx",
+            model=None,
+            language="en",
+            configured_provider="parakeet-onnx",
+            was_overridden=False,
+        ),
+    )
+    controller, _events, _ = _controller(monkeypatch, service=service)
+    controller.start(capture_generation=30)
+    controller.stop()
+
+    with pytest.raises(RuntimeError) as caught:
+        controller.retry_with_faster_whisper()
+
+    assert str(caught.value) == "Dictation retry failed."
+    assert caught.value.__cause__ is None
+    assert caught.value.__suppress_context__ is True
+    assert "secret.bin" not in str(caught.value)
+    assert controller.retry_available is False
+
+
+def test_retry_is_not_offered_when_base_model_is_not_cached(monkeypatch):
+    service, transcriber = _retryable_stop_service()
+    monkeypatch.setattr(
+        cvi,
+        "resolve",
+        lambda: cvi.EffectiveConfig(
+            provider="parakeet-onnx",
+            model=None,
+            language="en",
+            configured_provider="parakeet-onnx",
+            was_overridden=False,
+        ),
+    )
+    controller, events, _ = _controller(monkeypatch, service=service)
+    monkeypatch.setattr(cvi, "_faster_whisper_model_is_local", lambda _model: False)
+    controller.start(capture_generation=31)
+    events.clear()
+
+    controller.stop()
+
+    failures = [event for event in events if isinstance(event, cvi.VoiceFailed)]
+    assert failures == [
+        cvi.VoiceFailed(
+            reason="Parakeet transcription failed.",
+            retry_available=False,
+        )
+    ]
+    assert transcriber.buffer_calls == []
+    assert controller.retry_available is False
+
+
+def test_faster_whisper_cache_probe_resolves_without_network(monkeypatch):
+    calls = []
+
+    def _download_model(model, **kwargs):
+        calls.append((model, kwargs))
+        return "/cached/faster-whisper-base"
+
+    monkeypatch.setattr(
+        cvi.importlib,
+        "import_module",
+        lambda name: (
+            SimpleNamespace(download_model=_download_model)
+            if name == "faster_whisper.utils"
+            else None
+        ),
+    )
+    probe = getattr(cvi, "_faster_whisper_model_is_local", None)
+
+    assert callable(probe)
+    assert probe("base") is True
+    assert calls == [("base", {"local_files_only": True})]
 
 
 def test_retryable_failure_without_faster_whisper_is_not_offered(monkeypatch):

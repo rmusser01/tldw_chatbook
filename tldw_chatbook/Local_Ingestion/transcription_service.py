@@ -3534,6 +3534,7 @@ class _LegacyTranscriptionBackend:
         # Get model configuration
         model = model or self.config.get("default_model", "base")
         language = language or self.config.get("default_language", "en")
+        local_files_only = kwargs.pop("local_files_only", False)
 
         # Load model - use the same logic as in _transcribe_with_faster_whisper
         cache_key = f"faster-whisper-{model}"
@@ -3550,7 +3551,7 @@ class _LegacyTranscriptionBackend:
                             device=self.config["device"],
                             compute_type=self.config["compute_type"],
                             download_root=None,
-                            local_files_only=False,
+                            local_files_only=local_files_only,
                         )
                     model_load_time = time.time() - model_load_start
                     logger.info(

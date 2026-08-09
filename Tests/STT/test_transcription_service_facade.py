@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import inspect
+import threading
 from pathlib import Path
+from types import SimpleNamespace
 from typing import get_type_hints
 from unittest.mock import patch
 
@@ -240,6 +242,48 @@ def test_facade_preserves_buffer_arguments_and_provider_specific_kwargs(
             {"model_dir": "/models/parakeet"},
         )
     ]
+
+
+@pytest.mark.parametrize(
+    ("provider_kwargs", "expected_local_only"),
+    [({}, False), ({"local_files_only": True}, True)],
+)
+def test_retained_faster_whisper_buffer_honors_explicit_local_only_without_changing_default(
+    monkeypatch: pytest.MonkeyPatch,
+    provider_kwargs: dict[str, object],
+    expected_local_only: bool,
+) -> None:
+    constructor_calls: list[dict[str, object]] = []
+
+    class _WhisperModel:
+        def __init__(self, _model: str, **kwargs: object) -> None:
+            constructor_calls.append(kwargs)
+
+        def transcribe(self, _audio: object, **_kwargs: object) -> object:
+            return iter(()), SimpleNamespace(language="en")
+
+    monkeypatch.setattr(service_module, "WhisperModel", _WhisperModel)
+    backend = object.__new__(_LegacyTranscriptionBackend)
+    backend.config = {
+        "default_model": "base",
+        "default_language": "en",
+        "device": "cpu",
+        "compute_type": "int8",
+    }
+    backend._model_cache = {}
+    backend._model_cache_lock = threading.Lock()
+
+    backend._transcribe_buffer_with_faster_whisper(
+        b"\x00\x00" * 16,
+        sample_rate=16_000,
+        channels=1,
+        sample_width=2,
+        model="base",
+        language="en",
+        **provider_kwargs,
+    )
+
+    assert constructor_calls[0]["local_files_only"] is expected_local_only
 
 
 class _Dispatcher:

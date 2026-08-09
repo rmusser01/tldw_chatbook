@@ -303,11 +303,21 @@ def test_deferred_ordered_callbacks_preserve_final_and_no_final_events(monkeypat
         model=None,
     )
     sink = _Sink()
-    transcribing: List[bool] = []
-    no_final: List[str] = []
-    _attach(service, sink)
-    service.on_segment_transcribing = transcribing.append
-    service.on_segment_no_final = lambda: no_final.append("blank")
+    events: List[tuple[str, object]] = []
+
+    def _partial(text: str) -> None:
+        sink.partial(text)
+        events.append(("partial", text))
+
+    def _final(text: str) -> None:
+        sink.final(text)
+        events.append(("final", text))
+
+    service.on_partial_transcript = _partial
+    service.on_final_transcript = _final
+    service.on_error = sink.error
+    service.on_segment_transcribing = lambda done: events.append(("done", done))
+    service.on_segment_no_final = lambda: events.append(("no-final", None))
     service.reserve_deferred_dictation(4)
 
     service._transcribe_segment_audio([b"\x01\x00"])
@@ -318,8 +328,15 @@ def test_deferred_ordered_callbacks_preserve_final_and_no_final_events(monkeypat
 
     assert sink.partials == ["first segment"]
     assert sink.finals == ["first segment"]
-    assert transcribing == [False, False, True, True]
-    assert no_final == ["blank"]
+    assert events == [
+        ("done", False),
+        ("done", False),
+        ("partial", "first segment"),
+        ("done", True),
+        ("final", "first segment"),
+        ("done", True),
+        ("no-final", None),
+    ]
 
 
 def test_abandon_cancels_deferred_capture_and_stale_callback_is_fenced(

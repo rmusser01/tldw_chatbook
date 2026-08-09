@@ -113,7 +113,8 @@ class _FakeRecorder:
 
     def feed(self, chunk: bytes) -> None:
         assert self.callback is not None, "recording was never started"
-        self.callback(chunk)
+        if self.is_recording:
+            self.callback(chunk)
 
 
 class _BatchDelayedHandle:
@@ -282,7 +283,10 @@ def test_deferred_stop_joins_only_the_processing_thread_then_waits_off_loop(
     assert handle.wait_entered.wait(timeout=1), "stop never reached deferred wait"
     assert service.processing_thread is not None
     assert service.processing_thread.is_alive() is False
+    assert recorder.is_recording is False
     assert handle.appended == [audio]
+    recorder.feed(b"\x02\x03" * 80)
+    assert service.captured_bytes == len(audio)
     assert stop_thread.is_alive() is True
     assert "result" not in result_box
 
@@ -293,6 +297,7 @@ def test_deferred_stop_joins_only_the_processing_thread_then_waits_off_loop(
     result = result_box["result"]
     assert result.transcription_complete is True
     assert result.transcript == "delayed dictation"
+    assert result.captured_bytes == len(audio)
 
 
 @pytest.mark.parametrize(
