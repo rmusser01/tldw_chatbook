@@ -1788,11 +1788,13 @@ class TestLibraryRagCoverageNote:
     def test_route_note_renders_as_a_sentence_when_nothing_else_to_say(self):
         rows = (self._row(0.6),)
         diagnostics = {
-            LIBRARY_RAG_ROUTE_NOTES_KEY: ["media excluded — semantic only"]
+            LIBRARY_RAG_ROUTE_NOTES_KEY: [
+                "no keyword leg for the selected sources — semantic only"
+            ]
         }
         assert (
             library_rag_coverage_note(diagnostics, rows)
-            == "Media excluded — semantic only."
+            == "No keyword leg for the selected sources — semantic only."
         )
 
     def test_route_note_renders_without_any_coverage_diagnostic(self):

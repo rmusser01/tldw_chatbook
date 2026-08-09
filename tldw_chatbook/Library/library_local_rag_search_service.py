@@ -79,7 +79,7 @@ ROUTE_NOTE_HYBRID_SCOPED = (
     "scope active — semantic only until scope-aware hybrid lands"
 )
 ROUTE_NOTE_HYBRID_NO_KEYWORD_SOURCES = (
-    "selected sources have no keyword index — semantic only"
+    "no keyword leg for the selected sources — semantic only"
 )
 ROUTE_NOTE_SEMANTIC_LEG_EMPTY = "semantic leg empty — keyword-only results"
 # Mirrors `library_rag_state`'s `_OPEN_SOURCE_TYPE_MAP` canonicalization:
@@ -245,19 +245,24 @@ class LibraryLocalRagSearchService:
         through the coverage-note channel rather than silently applied:
 
         - `plain` -> the Library's own four-seam, scope-aware keyword path
-          (`_search_keyword`), NOT the engine's media-only keyword leg: a
-          BM25 profile must not get a strictly worse search in `rag` mode
-          than `search` mode already gives it.
-        - `hybrid`, unscoped, media selected -> the engine's fused hybrid.
+          (`_search_keyword`), NOT the engine's keyword leg: the four-seam
+          path is scope-aware and also searches prompts, so a BM25 profile
+          must not get a strictly worse search in `rag` mode than `search`
+          mode already gives it.
+        - `hybrid`, unscoped, with at least one selected source the engine's
+          FTS leg can serve -> the engine's fused hybrid.
         - `hybrid`, scoped -> semantic. `RAGService.search` RAISES for a
           non-empty `metadata_allowlist` with any non-semantic search type
           (allowlist pushdown is semantic-only), so this is a hard engine
           constraint, not a preference. Extending allowlists to the FTS leg
           is P2.
-        - `hybrid`, media deselected -> semantic. The engine's FTS leg
-          covers media only in P0, so its rows could only be dropped by the
-          source-type post-filter -- running it would spend a query to
-          produce nothing.
+        - `hybrid`, no FTS-servable source selected (in practice: prompts
+          only) -> semantic. The engine's FTS leg covers media, notes and
+          conversations (TASK-3996 added the latter two; before it, this arm
+          fired whenever media was deselected); rows from a source outside
+          the selection could only be dropped by the source-type
+          post-filter, so running the leg would spend a query to produce
+          nothing.
         - `semantic` (and any unknown mode) -> today's exact behavior.
 
         Args:
@@ -815,7 +820,9 @@ def _resolve_profile_search_mode(rag_service: Any) -> str:
     """Map the active profile's default_search_mode to an execution route.
 
     "plain" deliberately routes to the four-seam scope-aware keyword path,
-    NOT the engine's media-only keyword leg (spec: plain-profile routing).
+    NOT the engine's keyword leg (spec: plain-profile routing) -- the
+    four-seam path is scope-aware and covers prompts, neither of which the
+    engine's leg does even now that it spans media, notes and conversations.
     Unknown values -- and any runtime without a profile config at all, which
     includes every pre-profile test fake -- fall back to "semantic", the
     behavior this path had before profiles were honored.
@@ -899,9 +906,13 @@ def _filtered_semantic_rows(
 ) -> list[dict[str, Any]]:
     """Normalize engine results and apply the source-type post-filter.
 
-    Shared by the semantic and hybrid arms: hybrid's FTS-leg rows are
-    stamped with a `media` provenance `source_type` upstream precisely so
-    they survive this same canonicalizing filter instead of vanishing.
+    Shared by the semantic and hybrid arms: hybrid's FTS-leg rows carry a
+    provenance `source_type` stamped upstream (`media`, `note` or
+    `conversation` -- the singular ingestion vocabulary, canonicalized here
+    by `_semantic_row_matches_scope`) precisely so they survive this same
+    filter instead of vanishing. A row whose type is outside the selection
+    is dropped here, which is why the routing gate only runs hybrid when the
+    selection contains something the FTS leg can serve.
     """
     rows = [_semantic_row(item) for item in raw_results or ()]
     if not source_types:

@@ -43,7 +43,7 @@ from Tests.Library.test_library_local_rag_search_service import (
 _ROUTE_NOTES_KEY = "retrieval_route_notes"
 _NOTE_HYBRID_SCOPED = "scope active — semantic only until scope-aware hybrid lands"
 _NOTE_HYBRID_NO_KEYWORD_SOURCES = (
-    "selected sources have no keyword index — semantic only"
+    "no keyword leg for the selected sources — semantic only"
 )
 _NOTE_SEMANTIC_LEG_EMPTY = "semantic leg empty — keyword-only results"
 
@@ -300,9 +300,11 @@ async def test_hybrid_profile_with_only_unservable_sources_stays_semantic():
 
 @pytest.mark.asyncio
 async def test_plain_profile_routes_to_four_seam_keyword_path():
-    """A BM25 Only profile in rag mode must NOT get the engine's media-only
-    keyword leg (a strictly worse version of the Library's own Search mode);
-    it routes through the four-seam, scope-aware keyword path, labeled."""
+    """A BM25 Only profile in rag mode must NOT get the engine's keyword
+    leg (a strictly worse version of the Library's own Search mode: not
+    scope-aware, and no prompts, even now that it spans media, notes and
+    conversations); it routes through the four-seam, scope-aware keyword
+    path, labeled."""
     rag = _ProfileRagService(mode="plain", profile_name="BM25 Only")
     notes = FakeNotesScopeService(
         rows=[{"id": "note-1", "title": "Runbook", "content": "Rotate the credential."}]
