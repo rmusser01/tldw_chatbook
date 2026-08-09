@@ -87,9 +87,17 @@ its name.
   a dedicated test pins the fallback so it cannot silently become the main
   path.
 - Within-leg chunk collapse: `_leg_ranks` keeps the first occurrence per
-  key, so a document's best chunk carries its fusion rank (doc-level fusion,
-  matching the harness's doc-level metrics). The winning chunk row is what
-  displays.
+  key (code-verified: `if k not in ranks` — earliest/best rank wins on
+  dupes), so a document's best chunk carries its fusion rank (doc-level
+  fusion, matching the harness's doc-level metrics). The winning chunk row
+  is what displays.
+- **Fusion-key vocabulary equality (silent-failure guard):** the key
+  compares raw `source_type` strings, so cross-leg merging requires the
+  EXACT ingestion vocabulary — `media` / `note` / `conversation`, singular.
+  Every sub-leg (existing media, new notes/conversations) stamps those
+  values, and a cross-leg merge test per source type pins it — a plural or
+  variant spelling would leave rows present but never merging, silently
+  reverting TASK-3996's purpose.
 - **Display preference for genuinely-merged rows (never-run path goes
   live):** `FusedResult.item` historically prefers `fts_item` — dead code
   until this fix, because the legs never matched. Merged rows now prefer the
@@ -100,6 +108,14 @@ its name.
   preference is aliasing-safe, and P0's hand-built fusion tests (matching
   ids, empty metadata) remain green through the fallback path — protected
   oracles unmodified.
+- **Second never-run path going live — cross-leg citation merge:**
+  `_fuse_hybrid_results` contains an `include_citations and fts_item and
+  vector_item` branch that combines both legs' citations; it has NEVER
+  executed (the legs never matched). Post-3994 it runs with rows it was
+  never exercised against: doc-level keyword citations merged with
+  chunk-level vector citations. Its first-run behavior gets its own test
+  (merged rows carry both legs' citations, no duplication, no crash) before
+  the fix is considered done.
 - P0's `hybrid_fusion.vector_score`/`fts_score` metadata now populates for
   genuinely merged rows; the score-kind bands improve with no further work.
 
@@ -152,7 +168,9 @@ its name.
 3. The real chacha DB filename/path resolver (config.py) for the injected
    default, mirroring `get_media_db_path`.
 4. Whether `_process_keyword_results_with_citations` needs sub-leg-specific
-   citation handling for note/conversation rows or degrades gracefully.
+   citation handling for note/conversation rows or degrades gracefully —
+   AND the exact merge body of the cross-leg citation branch (read it fully;
+   its docstring predates any real execution).
 5. How the harness's canonicalization treats the new note/conversation
    keyword rows (should already work via stamped provenance — verify, since
    the gate's numbers depend on it).
