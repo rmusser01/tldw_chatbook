@@ -7,7 +7,7 @@ from textual import events
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, ScrollableContainer
 from textual.geometry import Region
-from textual.widgets import Button, Input, Select, Static
+from textual.widgets import Button, Input, Select, Static, TextArea
 
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
@@ -46,6 +46,10 @@ from tldw_chatbook.Widgets.Console import (
 )
 from tldw_chatbook.Widgets.Console.console_settings_summary import (
     ConsoleSettingsSummary,
+)
+from tldw_chatbook.Widgets.Console.console_system_prompt_modal import (
+    APPLY_BUTTON_ID as SYSTEM_PROMPT_APPLY_BUTTON_ID,
+    TEXT_AREA_ID as SYSTEM_PROMPT_TEXT_AREA_ID,
 )
 from tldw_chatbook.LLM_Provider_Catalog.model_discovery_contracts import (
     MergedModelEntry,
@@ -3081,8 +3085,8 @@ async def test_console_settings_modal_save_updates_active_summary_only() -> None
 
 
 @pytest.mark.asyncio
-async def test_console_settings_system_prompt_clears_character_template_source() -> None:
-    """Replacing settings directly would leave a manual prompt marked dynamic."""
+async def test_console_settings_save_preserves_omitted_system_prompt_and_source() -> None:
+    """The real general-settings draft omits prompt ownership entirely."""
     app = _build_test_app()
     app.chat_api_provider_value = "llama_cpp"
     app.chat_api_model_value = "model-a"
@@ -3113,20 +3117,79 @@ async def test_console_settings_system_prompt_clears_character_template_source()
             greeting_template="",
             global_default="User",
         )
+        system_prompt_writes: list[str | None] = []
+        roleplay_writes: list[str | None] = []
+        store.persistence = SimpleNamespace(
+            update_conversation_system_prompt=lambda **kwargs: (
+                system_prompt_writes.append(kwargs["system_prompt"]) or True
+            ),
+            update_conversation_roleplay_context=lambda **kwargs: (
+                roleplay_writes.append(kwargs["character_system_template"]) or True
+            ),
+        )
+        session.persisted_conversation_id = "conv-1"
         assert session.character_system_template == "Protect {{user}}."
 
         settings_button = await _visible_console_settings_button(console, pilot)
         settings_button.press()
         modal_screen = await _wait_for_console_settings_modal(host, pilot)
-        modal_screen.dismiss(
-            ConsoleSessionSettings(
-                provider="llama_cpp",
-                model="model-a",
-                system_prompt="Manual prompt.",
-            )
-        )
+        modal_screen.query_one("#console-settings-temperature", Input).value = "0.5"
+        await pilot.click("#console-settings-save")
         await _wait_for_console_top_screen(host, console, pilot)
         await pilot.pause()
+
+        settings = store.session_settings(session.id)
+        assert settings.temperature == 0.5
+        assert settings.system_prompt == "Protect User."
+        assert session.character_system_template == "Protect {{user}}."
+        assert system_prompt_writes == []
+        assert roleplay_writes == []
+
+
+@pytest.mark.asyncio
+async def test_system_prompt_editor_clears_character_template_source() -> None:
+    """The dedicated prompt editor owns explicit prompt replacement."""
+    app = _build_test_app()
+    app.chat_api_provider_value = "llama_cpp"
+    app.chat_api_model_value = "model-a"
+    app.app_config["chat_defaults"] = {
+        "provider": "llama_cpp",
+        "model": "model-a",
+    }
+    app.app_config["api_settings"] = {
+        "llama_cpp": {"api_url": "http://127.0.0.1:9099", "model": "model-a"},
+    }
+    app.providers_models = {"llama_cpp": ["model-a"]}
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        store = console._ensure_console_chat_store()
+        session = store.ensure_session()
+        session.assistant_kind = "character"
+        session.character_name = "Alraune"
+        store.replace_session_settings(
+            session.id,
+            ConsoleSessionSettings(provider="llama_cpp", model="model-a"),
+        )
+        store.seed_character_roleplay(
+            session.id,
+            system_template="Protect {{user}}.",
+            greeting_template="",
+            global_default="User",
+        )
+
+        console.run_worker(
+            console._open_console_system_prompt_editor(), exclusive=False
+        )
+        await pilot.pause(0.2)
+        modal = host.screen_stack[-1]
+        modal.query_one(f"#{SYSTEM_PROMPT_TEXT_AREA_ID}", TextArea).text = (
+            "Manual prompt."
+        )
+        modal.query_one(f"#{SYSTEM_PROMPT_APPLY_BUTTON_ID}", Button).press()
+        await pilot.pause(0.2)
 
         assert store.session_settings(session.id).system_prompt == "Manual prompt."
         assert session.character_system_template is None

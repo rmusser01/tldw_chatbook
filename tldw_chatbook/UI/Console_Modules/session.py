@@ -1254,26 +1254,33 @@ class ConsoleSessionController:
                 )
                 return False
         try:
-            store.set_session_character_name(
-                session_id,
-                seed.name,
-                global_default=global_default,
-            )
             greeting_template = (
                 seed.greeting_template
                 if not store.messages_for_session(session_id)
                 else ""
             )
-            store.seed_character_roleplay(
+            _updated, _greeting, persisted = store.swap_session_character_roleplay(
                 session_id,
+                character_name=seed.name,
                 system_template=seed.system_template,
                 greeting_template=greeting_template,
                 global_default=global_default,
             )
         except Exception:
             logger.opt(exception=True).warning(
-                "Character swap: roleplay template seed failed; continuing."
+                "Character swap: roleplay template seed failed."
             )
+            self.app_instance.notify(
+                "Character changed for this session, but the change could not be saved.",
+                severity="warning",
+            )
+            return False
+        if not persisted:
+            self.app_instance.notify(
+                "Character changed for this session, but the change could not be saved.",
+                severity="warning",
+            )
+            return False
         return True
 
     async def _start_character_console_session(

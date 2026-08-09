@@ -3455,6 +3455,40 @@ def test_character_name_and_seed_are_idempotent_when_unchanged():
     assert store.presentation_context(session.id, "Captain Rowan").character_name == "Alraune"
 
 
+def test_character_roleplay_swap_persists_only_the_final_projection_and_context():
+    """Separate name/template mutations expose a hybrid durable projection."""
+    store, persistence, session, _greeting = _seeded_roleplay_store()
+    persistence.updated_system_prompts.clear()
+    persistence.roleplay_updates.clear()
+
+    updated, greeting, persisted = store.swap_session_character_roleplay(
+        session.id,
+        character_name="Brynn",
+        system_template="Serve {{user}} as {{character}}.",
+        greeting_template="",
+        global_default="Captain Rowan",
+    )
+
+    assert persisted is True
+    assert greeting is None
+    assert updated.character_name == "Brynn"
+    assert updated.character_system_template == "Serve {{user}} as {{character}}."
+    assert updated.settings.system_prompt == "Serve Captain Rowan as Brynn."
+    assert persistence.updated_system_prompts == [
+        {
+            "conversation_id": "conv-1",
+            "system_prompt": "Serve Captain Rowan as Brynn.",
+        }
+    ]
+    assert persistence.roleplay_updates == [
+        {
+            "conversation_id": "conv-1",
+            "user_name_override": None,
+            "character_system_template": "Serve {{user}} as {{character}}.",
+        }
+    ]
+
+
 def test_first_persist_context_failure_is_observable_but_promotion_rolls_back():
     class RefusingPersistence(FakePersistence):
         def update_conversation_roleplay_context(self, **kwargs):

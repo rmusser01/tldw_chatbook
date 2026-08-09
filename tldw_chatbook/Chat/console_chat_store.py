@@ -2003,6 +2003,90 @@ class ConsoleChatStore:
             logger.bind(session_id=session_id).warning(
                 "Failed to persist seeded Console roleplay context."
             )
+        return self._append_character_greeting(
+            session_id,
+            greeting_template=greeting_template,
+            global_default=global_default,
+            source_changed=source_changed,
+        )
+
+    def swap_session_character_roleplay(
+        self,
+        session_id: str,
+        *,
+        character_name: str | None,
+        system_template: str,
+        greeting_template: str,
+        global_default: object,
+    ) -> tuple[ConsoleChatSession, ConsoleChatMessage | None, bool]:
+        """Swap character identity and trusted sources before materializing once.
+
+        The live mutation is intentionally not rolled back when a durable write
+        fails. The returned status lets the UI surface that partial outcome
+        without ever persisting an old-template/new-character projection.
+
+        Args:
+            session_id: Native Console session to rebind.
+            character_name: New character display name.
+            system_template: Trusted raw character system source.
+            greeting_template: Trusted greeting source, or blank to skip seeding.
+            global_default: Current global human display name.
+
+        Returns:
+            The live session, any newly seeded greeting, and whether every
+            required durable write succeeded.
+        """
+        session = self._session_or_raise(session_id)
+        normalized_name = (
+            character_name.strip() if isinstance(character_name, str) else ""
+        )
+        new_name = normalized_name or None
+        source = (
+            system_template
+            if isinstance(system_template, str) and system_template.strip()
+            else None
+        )
+        identity_changed = (
+            session.character_name != new_name
+            or session.character_system_template != source
+        )
+        source_changed = session.character_system_template != source
+        session.character_name = new_name
+        session.character_system_template = source
+        if identity_changed:
+            self._bump_identity_revision(session_id)
+
+        persisted = self._materialize_roleplay_projections(
+            session_id,
+            global_default=global_default,
+        )
+        if not self._persist_roleplay_context(session):
+            persisted = False
+        greeting = self._append_character_greeting(
+            session_id,
+            greeting_template=greeting_template,
+            global_default=global_default,
+            source_changed=source_changed,
+        )
+        if (
+            greeting is not None
+            and self.persistence is not None
+            and not session.ephemeral
+            and greeting.persisted_message_id is None
+        ):
+            persisted = False
+        return session, greeting, persisted
+
+    def _append_character_greeting(
+        self,
+        session_id: str,
+        *,
+        greeting_template: str,
+        global_default: object,
+        source_changed: bool,
+    ) -> ConsoleChatMessage | None:
+        """Append one trusted greeting projection when a source is present."""
+        session = self._session_or_raise(session_id)
         if not isinstance(greeting_template, str) or not greeting_template.strip():
             return None
         context = self.presentation_context(session_id, global_default)

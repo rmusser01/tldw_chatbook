@@ -329,6 +329,59 @@ async def test_character_picker_swap_uses_override_and_only_greets_empty_chat(
     ]
 
 
+def test_character_swap_surfaces_refused_durable_projection(monkeypatch):
+    """A live-first swap must not report clean success after a refused write."""
+    card = _roleplay_card(card_id=8, name="Brynn")
+    screen = _character_screen(monkeypatch, card)
+    store = screen._ensure_console_chat_store()
+    session = store.create_session(
+        settings=ConsoleSessionSettings(
+            provider="openai",
+            model="gpt-4.1",
+            system_prompt="Old Alraune prompt.",
+        ),
+        assistant_kind="character",
+        assistant_id="7",
+        character_id=7,
+        character_name="Alraune",
+    )
+    session.character_system_template = "Old {{character}} prompt."
+    store.append_message(
+        session.id,
+        role=ConsoleMessageRole.USER,
+        content="Keep this chat non-empty.",
+        persist=False,
+    )
+    session.persisted_conversation_id = "conv-1"
+    store.persistence = SimpleNamespace(
+        update_conversation_system_prompt=lambda **_kwargs: False,
+        update_conversation_roleplay_context=lambda **_kwargs: True,
+    )
+    notifications: list[tuple[str, str | None]] = []
+    screen.app_instance.notify = lambda message, **kwargs: notifications.append(
+        (str(message), kwargs.get("severity"))
+    )
+    seed = _character_session_prompt_seed(card, user_name="Captain Rowan")
+
+    swapped = screen._session._swap_console_session_character(
+        store,
+        8,
+        seed,
+        global_default="Captain Rowan",
+    )
+
+    assert swapped is False
+    assert session.character_name == "Brynn"
+    assert session.character_system_template == "Protect {{user}} as {{character}}."
+    assert session.settings.system_prompt == "Protect Captain Rowan as Brynn."
+    assert notifications == [
+        (
+            "Character changed for this session, but the change could not be saved.",
+            "warning",
+        )
+    ]
+
+
 def test_console_engine_and_preview_compose_byte_identical_system_prompts():
     """task-1744: the character-probe engine exists to predict what Console
     actually sends a model, and that prediction is only meaningful if EVERY

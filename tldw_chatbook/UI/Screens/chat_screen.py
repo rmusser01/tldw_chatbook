@@ -1890,9 +1890,6 @@ class ChatScreen(BaseAppScreen):
                     system_prompt=current_system_prompt,
                 )
             )
-            self._session._apply_console_session_system_prompt(
-                result.system_prompt
-            )
             self.run_worker(
                 self._sync_native_console_chat_ui(),
                 exclusive=True,
