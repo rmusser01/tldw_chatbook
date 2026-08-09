@@ -6168,6 +6168,21 @@ Button.mcp-callout {
     min-height: 0;
 }
 
+/* task-3240 fix round 1 (Minor 2): kept in lockstep with the baseline copy
+   in MCPServersMode.DEFAULT_CSS (mcp_servers_mode.py) -- same bug class
+   and same fix as #mcp-detail-builtin-toggles immediately above: without
+   an explicit height override here too, Textual's Vertical default
+   (height: 1fr) would expand this new sibling container (the "Tool
+   gates" checkbox group) to fill the rest of #mcp-detail-scroll, pushing
+   the "Copy client config" Button far below it. The widget-test harness
+   (Tests/UI/test_mcp_servers_mode.py) never loads this bundle, so a
+   regression here would be invisible to those tests -- only a bundled-CSS
+   harness or the live app would catch it. */
+#mcp-detail-tool-gates {
+    height: auto;
+    min-height: 0;
+}
+
 #mcp-detail-toolbar Button {
     height: 1;
     min-height: 1;
