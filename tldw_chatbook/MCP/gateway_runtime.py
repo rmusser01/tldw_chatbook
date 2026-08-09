@@ -6,6 +6,7 @@ import asyncio
 import copy
 import inspect
 import json
+import math
 import re
 from collections.abc import Awaitable, Callable, Iterable
 from typing import TYPE_CHECKING, Any, NoReturn
@@ -14,6 +15,7 @@ from jsonschema import Draft7Validator, Draft202012Validator
 from jsonschema.exceptions import SchemaError
 from mcp_unified.gateway import (
     GatewayJSONValue,
+    GatewayLimits,
     GatewayRequestContext,
     GatewayToolExecutionError,
 )
@@ -32,6 +34,7 @@ if TYPE_CHECKING:
 
 
 _TOOL_NAME = re.compile(r"[A-Za-z0-9_.-]{1,128}\Z")
+_GATEWAY_LIMITS = GatewayLimits()
 _ToolHandler = Callable[..., Awaitable[GatewayJSONValue]]
 _LocalToolHandler = Callable[[dict[str, Any]], ToolResult]
 
@@ -56,6 +59,37 @@ _LOCAL_FAILURES = {
     ),
 }
 _GENERIC_LOCAL_FAILURE = ("local_tool_failed", "Local tool execution failed.")
+
+
+def _is_finite_json_structure(value: object, *, max_depth: int) -> bool:
+    """Match the gateway's finite JSON container and depth rules."""
+    active: set[int] = set()
+    stack: list[tuple[object, int, bool]] = [(value, 1, False)]
+    while stack:
+        current, depth, leaving = stack.pop()
+        if leaving:
+            active.remove(id(current))
+            continue
+        if isinstance(current, (dict, list)):
+            if depth > max_depth or id(current) in active:
+                return False
+            active.add(id(current))
+            stack.append((current, depth, True))
+            children: Iterable[object]
+            if isinstance(current, dict):
+                if any(not isinstance(key, str) for key in current):
+                    return False
+                children = current.values()
+            else:
+                children = current
+            stack.extend((child, depth + 1, False) for child in children)
+            continue
+        if current is None or isinstance(current, (bool, int, str)):
+            continue
+        if isinstance(current, float) and math.isfinite(current):
+            continue
+        return False
+    return True
 
 
 class ChatbookGatewayRuntime:
@@ -171,14 +205,24 @@ class ChatbookGatewayRuntime:
                 raise ValueError("local tool description must be a bounded string")
             if not isinstance(parameters, dict) or parameters.get("type") != "object":
                 raise ValueError("local tool parameters must have type object")
+            if not _is_finite_json_structure(
+                parameters, max_depth=_GATEWAY_LIMITS.max_schema_depth
+            ):
+                raise ValueError("local tool parameters must be valid JSON Schema")
             try:
-                serialized_parameters = json.dumps(parameters, allow_nan=False)
-                roundtripped_parameters = json.loads(serialized_parameters)
-            except (RecursionError, TypeError, ValueError):
-                parameters_are_finite_json = False
-            else:
-                parameters_are_finite_json = roundtripped_parameters == parameters
-            if not parameters_are_finite_json:
+                serialized_parameters = json.dumps(
+                    parameters,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                    allow_nan=False,
+                ).encode("utf-8")
+            except (RecursionError, TypeError, ValueError, UnicodeEncodeError):
+                serialized_parameters = None
+            if (
+                serialized_parameters is None
+                or len(serialized_parameters) > _GATEWAY_LIMITS.max_schema_bytes
+            ):
                 raise ValueError("local tool parameters must be valid JSON Schema")
             if "$schema" in parameters:
                 raise ValueError(

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import copy
 from functools import partial
+import json
 import threading
 from typing import Any
 
@@ -17,6 +18,7 @@ gateway = pytest.importorskip(
 GatewayRequestContext = gateway.GatewayRequestContext
 GatewayToolExecutionError = gateway.GatewayToolExecutionError
 GatewayProtocolConnection = gateway.GatewayProtocolConnection
+GatewayLimits = gateway.GatewayLimits
 PROTOCOL_PROFILES = gateway.PROTOCOL_PROFILES
 
 from tldw_chatbook.MCP.gateway_runtime import ChatbookGatewayRuntime  # noqa: E402
@@ -149,6 +151,16 @@ def _local_registration(
         parameters=schema,  # type: ignore[arg-type]
         handler=local_handler,  # type: ignore[arg-type]
     )
+
+
+def _schema_with_container_depth(depth: int) -> dict[str, Any]:
+    schema: dict[str, Any] = {"type": "object", "properties": {}}
+    current = schema
+    for _ in range(1, depth):
+        child: dict[str, Any] = {}
+        current["default"] = child
+        current = child
+    return schema
 
 
 def test_runtime_requires_one_handler_for_every_expected_builtin() -> None:
@@ -875,6 +887,12 @@ async def test_successful_local_tool_result_content_is_returned_raw() -> None:
 async def test_invalid_local_registration_is_atomic(
     registrations: list[LocalToolRegistration],
 ) -> None:
+    await _assert_invalid_local_registration_is_atomic(registrations)
+
+
+async def _assert_invalid_local_registration_is_atomic(
+    registrations: list[LocalToolRegistration],
+) -> ValueError:
     runtime = _runtime_with_builtins()
 
     with pytest.raises(ValueError) as exc_info:
@@ -896,6 +914,91 @@ async def test_invalid_local_registration_is_atomic(
     assert [
         descriptor["name"] for descriptor in await runtime.list_tools(_context())
     ] == BUILTIN_TOOL_NAMES
+    return exc_info.value
+
+
+@pytest.mark.asyncio
+async def test_unpaired_surrogate_schema_is_rejected_atomically() -> None:
+    raw_value = "\ud800"
+    error = await _assert_invalid_local_registration_is_atomic(
+        [
+            _local_registration(
+                parameters={
+                    "type": "object",
+                    "properties": {},
+                    "description": raw_value,
+                }
+            )
+        ]
+    )
+
+    assert raw_value not in str(error)
+
+
+@pytest.mark.asyncio
+async def test_schema_beyond_public_depth_limit_is_rejected_atomically() -> None:
+    limits = GatewayLimits()
+    assert limits.max_schema_depth < 40
+
+    await _assert_invalid_local_registration_is_atomic(
+        [_local_registration(parameters=_schema_with_container_depth(40))]
+    )
+
+
+@pytest.mark.asyncio
+async def test_schema_above_public_utf8_size_limit_is_rejected_atomically() -> None:
+    limits = GatewayLimits()
+    raw_value = "é" * (limits.max_schema_bytes // 2)
+    schema = {
+        "type": "object",
+        "properties": {},
+        "description": raw_value,
+    }
+    serialized = json.dumps(
+        schema,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    )
+    assert len(serialized) < limits.max_schema_bytes
+    assert len(serialized.encode("utf-8")) > limits.max_schema_bytes
+
+    error = await _assert_invalid_local_registration_is_atomic(
+        [_local_registration(parameters=schema)]
+    )
+    assert raw_value not in str(error)
+
+
+@pytest.mark.parametrize(
+    "schema",
+    [
+        pytest.param(
+            _schema_with_container_depth(GatewayLimits().max_schema_depth),
+            id="maximum-depth",
+        ),
+        pytest.param(
+            {
+                "type": "object",
+                "properties": {},
+                "description": "Normal Unicode: café 🦄",
+            },
+            id="normal-unicode",
+        ),
+    ],
+)
+@pytest.mark.asyncio
+async def test_schema_structure_boundary_controls_publish_unchanged(
+    schema: dict[str, Any],
+) -> None:
+    expected = copy.deepcopy(schema)
+    runtime = _runtime_with_builtins()
+    runtime.register_local_tools([_local_registration(parameters=schema)])
+    runtime.finalize()
+
+    published = await runtime.list_tools(_context())
+    local = next(item for item in published if item["name"] == "local_echo")
+    assert local["inputSchema"] == expected
 
 
 @pytest.mark.asyncio
