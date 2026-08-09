@@ -1521,6 +1521,44 @@ async def test_library_shell_prompts_row_press_renders_list_canvas():
 
 
 @pytest.mark.asyncio
+async def test_library_prompts_restored_create_row_list_dispatches_browse_once():
+    """A restored create-row/list state settles one exact browse request."""
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    service = _FakePromptScopeServiceWithList([{"id": 5, "name": "Restored prompt"}])
+    app.prompt_scope_service = service
+
+    original = LibraryScreen(app)
+    original._library_selected_row_id = LIBRARY_ROW_CREATE_PROMPT
+    original._library_prompts_view = "list"
+    saved_state = original.save_state()
+    restored = LibraryScreen(app)
+    restored.restore_state(saved_state)
+    host = LibraryHarness(app, screen=restored)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _wait_for_selector(screen, pilot, "#library-prompt-row-5")
+        await pilot.pause(0.1)
+
+        assert screen._library_selected_row_id == LIBRARY_ROW_CREATE_PROMPT
+        assert screen._library_prompts_view == "list"
+        assert screen._library_prompt_browse_controller.result.status == "ready"
+        assert service.browse_calls == [
+            {
+                "mode": "local",
+                "query": "",
+                "collection_id": None,
+                "sort_by": "last_modified",
+                "sort_order": "desc",
+                "page": 1,
+                "page_size": 50,
+            }
+        ]
+
+
+@pytest.mark.asyncio
 async def test_library_prompts_enter_flushes_debounce_without_duplicate_call():
     """Enter dispatches the pending token once and cancels its timer."""
     app = _build_test_app()
@@ -1578,7 +1616,7 @@ async def test_library_prompts_retry_recovers_service_error():
 
 @pytest.mark.asyncio
 async def test_library_prompts_browse_failure_keeps_exception_details_out_of_logs():
-    """A browse failure renders fixed recovery without logging private details."""
+    """A failure logs only its fixed operation and exception category."""
     secret = "TASK198_SECRET_PROMPT_BROWSE_PAYLOAD"
 
     class SecretFailingPromptService(_FakePromptScopeServiceWithList):
@@ -1590,7 +1628,13 @@ async def test_library_prompts_browse_failure_keeps_exception_details_out_of_log
     app.prompt_scope_service = SecretFailingPromptService([{"id": 5, "name": "X"}])
     host = LibraryHarness(app)
     logged: list[str] = []
-    sink_id = logger.add(lambda message: logged.append(str(message)))
+    sink_id = logger.add(
+        lambda message: logged.append(str(message)),
+        filter=lambda record: (
+            record["name"]
+            == "tldw_chatbook.UI.Library_Modules.library_prompt_browse_controller"
+        ),
+    )
 
     try:
         async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
@@ -1606,7 +1650,11 @@ async def test_library_prompts_browse_failure_keeps_exception_details_out_of_log
     finally:
         logger.remove(sink_id)
 
-    assert secret not in "".join(logged)
+    joined_logs = "".join(logged)
+    assert secret not in joined_logs
+    assert "Traceback" not in joined_logs
+    assert "Library Prompt browse failed; operation=browse_prompts" in joined_logs
+    assert "exception_type=RuntimeError" in joined_logs
 
 
 @pytest.mark.asyncio

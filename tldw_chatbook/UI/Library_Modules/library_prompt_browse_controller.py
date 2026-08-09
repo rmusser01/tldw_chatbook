@@ -6,6 +6,8 @@ import asyncio
 from collections.abc import Awaitable, Callable
 from typing import Any
 
+from loguru import logger
+
 from ...Library.library_prompts_state import (
     PromptBrowseResult,
     PromptBrowseScope,
@@ -149,7 +151,12 @@ class LibraryPromptBrowseController:
                 )
             except asyncio.CancelledError:
                 raise
-            except Exception:
+            except Exception as exc:
+                logger.warning(
+                    "Library Prompt browse failed; operation=browse_prompts "
+                    "exception_type={}",
+                    type(exc).__name__,
+                )
                 result = build_prompt_browse_error(
                     scope,
                     request_token=request_token,

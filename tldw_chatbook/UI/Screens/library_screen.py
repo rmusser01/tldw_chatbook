@@ -4603,7 +4603,8 @@ class LibraryScreen(BaseAppScreen):
             self.refresh(recompose=True)
         self._refresh_local_source_snapshot()
         if (
-            self._library_selected_row_id == LIBRARY_ROW_BROWSE_PROMPTS
+            self._library_selected_row_id
+            in (LIBRARY_ROW_BROWSE_PROMPTS, LIBRARY_ROW_CREATE_PROMPT)
             and self._library_prompts_view == "list"
         ):
             self._request_library_prompts_browse(
@@ -4729,32 +4730,28 @@ class LibraryScreen(BaseAppScreen):
     def save_state(self) -> dict[str, Any]:
         """Persist Library selection/view state for the next visit.
 
-        Only SELECTION and VIEW state is captured -- never bulk fetched
-        snapshots (``_local_source_records`` and friends re-fetch fresh on
-        the next mount's ``_refresh_local_source_snapshot``, and a restored
-        id may be stale by then) or note editor text (``flush_pending_work``
-        has already persisted any dirty edit to the DB before the app calls
-        this). The ingest form/queue, rail collapse preferences, and search
-        history are deliberately excluded here: they are already persisted
-        elsewhere (the app-owned ingest job registry and the CLI config,
-        respectively) and re-seeding them from this in-memory dict would
-        fight those owners. The RAG results tuple (and its paired retrieval
-        status / recovery state, set together by
+        Only lightweight selection, view, and browse-request scope is captured
+        -- never bulk fetched snapshots (``_local_source_records`` and friends
+        re-fetch fresh on the next mount's ``_refresh_local_source_snapshot``,
+        and a restored id may be stale by then) or note editor text
+        (``flush_pending_work`` has already persisted any dirty edit to the DB
+        before the app calls this). The ingest form/queue, rail collapse
+        preferences, and search history are deliberately excluded here: they
+        are already persisted elsewhere (the app-owned ingest job registry and
+        the CLI config, respectively) and re-seeding them from this in-memory
+        dict would fight those owners. The RAG results tuple (and its paired
+        retrieval status / recovery state, set together by
         ``_apply_library_rag_search_outcome``) are safe to carry verbatim
         because their rows are frozen dataclasses -- copies are taken below
         only to avoid aliasing a live mutable set with the stashed dict.
 
-        The per-pane filter/sort values below (media type cycle, notes
-        sort mode, notes substring filter, prompts sort mode, prompts
-        substring filter, selected prompt id, conversations query) are VIEW
-        state exactly like the selection ids above -- they change what the
-        canvas builders render, not what data is fetched -- so they belong
-        here too (PR #595 shipped the selection/RAG half of this contract
-        but left these out). ``_library_notes_filter_records`` (the
-        substring filter's recomputed result cache) is deliberately NOT
-        persisted -- it is a derived/bulk snapshot like
-        ``_local_source_records``, and restore leaves it ``None`` so the
-        canvas recomputes it fresh from ``_library_notes_filter`` on mount.
+        The media type cycle, notes sort/filter, selected prompt id, and
+        conversations query are view/selection state. The Prompt browse scope
+        is request state instead: its query, collection, sort, and page values
+        define the exact local Prompt service request issued after restore.
+        Only that immutable scope is saved; its result rows are fetched fresh.
+        ``_library_notes_filter_records`` is likewise never persisted because
+        it is a derived/bulk snapshot recomputed from the saved notes filter.
         """
         state = super().save_state()
         state["library_selected_row_id"] = self._library_selected_row_id
