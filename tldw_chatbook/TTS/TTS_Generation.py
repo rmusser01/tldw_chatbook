@@ -14,7 +14,7 @@ from collections.abc import (
 from contextlib import asynccontextmanager, nullcontext
 from contextvars import ContextVar
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from types import MappingProxyType
 from typing import Any, Literal
@@ -90,6 +90,27 @@ TTSSettingsProviderStatus = Literal[
     "superseded",
     "unavailable",
 ]
+
+
+@dataclass(frozen=True, slots=True)
+class AudioCppRuntimeObservation:
+    """One passive, generation-coherent view of audio.cpp runtime state."""
+
+    saved_mode: Literal["external", "managed"]
+    saved_configuration_generation: int
+    applied_mode: Literal["external", "managed"]
+    applied_configuration_generation: int
+    provider_configuration_revision: int
+    pending_configuration: bool
+    process: AudioCppProcessSnapshot
+    catalog_revision: int | None
+    catalog_fresh: bool
+    catalog_observed_at: datetime | None
+    service_closed: bool
+    saved_managed_binary_path: str | None = field(repr=False)
+    saved_managed_server_json_path: str | None = field(repr=False)
+    applied_managed_binary_path: str | None = field(repr=False)
+    applied_managed_server_json_path: str | None = field(repr=False)
 
 
 @dataclass(frozen=True, slots=True)
@@ -524,6 +545,7 @@ class TTSService:
         self._admitted_operations: set[_AdmittedTTSOperation] = set()
         self._settings_generation = 0
         self._settings_persisted_provider_generations: dict[str, int] = {}
+        self._settings_persisted_provider_configs: dict[str, dict[str, Any]] = {}
         self._settings_publication_tasks: set[asyncio.Task[TTSSettingsPublication]] = (
             set()
         )
@@ -533,6 +555,7 @@ class TTSService:
         ] = {}
         self._native_catalog_request_generations: dict[str, int] = {}
         self._native_voice_request_generations: dict[tuple[str, str], int] = {}
+        self._audio_cpp_catalog_process_generation: int | None = None
         candidate_preferences = (
             TTSPreferencesSnapshot.from_settings({})
             if preferences_snapshot is None
@@ -912,6 +935,16 @@ class TTSService:
         except (TypeError, ValueError):
             return
         self._publish_native_capability_snapshot(snapshot)
+        if provider_id == "audio_cpp":
+            supervisor = self._audio_cpp_supervisor
+            process = None if supervisor is None else supervisor.snapshot()
+            self._audio_cpp_catalog_process_generation = (
+                process.process_generation
+                if process is not None
+                and process.state in {"running", "draining"}
+                and process.tts_capability == "available"
+                else None
+            )
 
     def _publish_native_voice_result(
         self,
@@ -1725,6 +1758,98 @@ class TTSService:
             raise RuntimeError("Managed audio.cpp lifecycle is unavailable")
         return supervisor.snapshot()
 
+    async def audio_cpp_runtime_observation(self) -> AudioCppRuntimeObservation:
+        """Return saved, applied, process, and catalog state without provider work."""
+        supervisor = self._audio_cpp_supervisor
+        if supervisor is None:
+            raise RuntimeError("Managed audio.cpp lifecycle is unavailable")
+
+        async with self._request_admission._publication_lock:
+            async with self._request_admission._gate.read():
+                configuration = await self.registry.provider_configuration_snapshot(
+                    "audio_cpp"
+                )
+                saved_generation = self._settings_persisted_provider_generations.get(
+                    "audio_cpp",
+                    0,
+                )
+                saved_config = self._settings_persisted_provider_configs.get(
+                    "audio_cpp"
+                )
+                if saved_config is None:
+                    if (
+                        configuration.staged_config is not None
+                        and configuration.staged_generation == saved_generation
+                    ):
+                        saved_config = dict(configuration.staged_config)
+                    else:
+                        saved_config = dict(configuration.applied_config)
+
+                saved = AudioCppConfig.from_mapping(saved_config)
+                applied = AudioCppConfig.from_mapping(configuration.applied_config)
+                latest_capability = self._native_capability_observations.get(
+                    "audio_cpp"
+                )
+                capability = (
+                    latest_capability
+                    if latest_capability is not None
+                    and latest_capability.snapshot.configuration_revision
+                    == configuration.revision
+                    else None
+                )
+                catalog = (
+                    capability.snapshot.catalog if capability is not None else None
+                )
+                process = supervisor.snapshot()
+                service_closed = self._close_signal.is_set()
+                catalog_fresh = bool(
+                    catalog is not None and catalog.health.fresh and not service_closed
+                )
+                if applied.mode == "managed":
+                    catalog_fresh = bool(
+                        catalog_fresh
+                        and process.state in {"running", "draining"}
+                        and process.tts_capability == "available"
+                        and self._audio_cpp_catalog_process_generation
+                        == process.process_generation
+                    )
+
+                return AudioCppRuntimeObservation(
+                    saved_mode=saved.mode,
+                    saved_configuration_generation=saved_generation,
+                    applied_mode=applied.mode,
+                    applied_configuration_generation=(configuration.applied_generation),
+                    provider_configuration_revision=configuration.revision,
+                    pending_configuration=(
+                        saved_generation != configuration.applied_generation
+                    ),
+                    process=process,
+                    catalog_revision=None if catalog is None else catalog.revision,
+                    catalog_fresh=catalog_fresh,
+                    catalog_observed_at=(
+                        None if capability is None else capability.observed_at
+                    ),
+                    service_closed=service_closed,
+                    saved_managed_binary_path=(
+                        saved.managed_binary_path if saved.mode == "managed" else None
+                    ),
+                    saved_managed_server_json_path=(
+                        saved.managed_server_json_path
+                        if saved.mode == "managed"
+                        else None
+                    ),
+                    applied_managed_binary_path=(
+                        applied.managed_binary_path
+                        if applied.mode == "managed"
+                        else None
+                    ),
+                    applied_managed_server_json_path=(
+                        applied.managed_server_json_path
+                        if applied.mode == "managed"
+                        else None
+                    ),
+                )
+
     async def start_and_test_audio_cpp(self) -> TTSProviderCatalog:
         """Deliberately prepare audio.cpp and refresh its native catalog."""
         return await self.get_catalog("audio_cpp", refresh=True)
@@ -1971,13 +2096,19 @@ class TTSService:
 
             async with self._request_admission._gate.write():
                 for provider_id in provider_configs:
-                    self._settings_persisted_provider_generations[provider_id] = max(
-                        generation,
+                    previous_generation = (
                         self._settings_persisted_provider_generations.get(
                             provider_id,
                             0,
-                        ),
+                        )
                     )
+                    if generation >= previous_generation:
+                        self._settings_persisted_provider_generations[provider_id] = (
+                            generation
+                        )
+                        self._settings_persisted_provider_configs[provider_id] = (
+                            deepcopy(dict(provider_configs[provider_id]))
+                        )
                 transition_failed = False
                 for provider_id, config in provider_configs.items():
                     try:

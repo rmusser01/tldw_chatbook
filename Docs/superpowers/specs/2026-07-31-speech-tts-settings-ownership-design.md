@@ -452,10 +452,17 @@ saved behavior; only their ownership and placement change.
 
 ### CFG-004 — audio.cpp setup
 
-The audio.cpp provider form identifies the mode as **External server** and
-shows the server URL as the primary field. It states that Chatbook connects to
-a server the user starts and owns. It includes all external adapter timeouts
-and bounds from the inventory and excludes every managed-process concept.
+The audio.cpp provider form defaults to **External server** and shows the
+server URL as that mode's primary field. It states that Chatbook connects to a
+server the user starts and owns and includes all external adapter timeouts and
+bounds from the inventory.
+
+TASK-3795 amends the original External-only scope under the approved managed
+lifecycle design. The same form now offers **Managed local server** with a
+user-provided prebuilt binary, existing `server.json`, and bounded lifecycle
+settings. Only the selected mode's primary fields are shown. Settings still
+excludes process status, lifecycle actions, and diagnostics; those belong to
+Speech Lab, and every Settings interaction remains passive.
 
 The privacy notice says that generation sends the submitted text to the
 configured server. It does not imply that loopback is guaranteed because the
@@ -1033,8 +1040,8 @@ The program is complete only when all of the following are true:
 - [ ] **CFG-001 through CFG-011:** Global defaults and the selected provider
   can be edited with local validation, explicit credential intent, truthful
   save/reconfiguration outcomes, and no exact-selection substitution.
-- [ ] **CFG-004:** audio.cpp exposes the complete accepted external adapter
-  configuration and no managed-mode field or action.
+- [ ] **CFG-004:** audio.cpp exposes the complete accepted configuration for
+  the selected External or Managed mode and no process lifecycle action.
 - [ ] **CAT-001:** Mounting, searching, editing, saving, reverting, and restoring
   Settings cause no network request.
 - [ ] **CAT-002 through CAT-006:** Cached exact choices, missing values,
@@ -1087,8 +1094,8 @@ Required automated coverage includes:
    and screen-dismiss paths.
 8. **No hidden network:** instrumented service asserts zero provider calls on
    mount/search/edit/save/revert/default restoration.
-9. **audio.cpp field completeness:** every external adapter setting round-trips
-   with bounds validation; no managed setting is accepted or rendered.
+9. **audio.cpp field completeness:** every selected-mode External or Managed
+   setting round-trips with bounds validation; no process action is rendered.
 10. **Catalog integrity:** fresh/stale/missing/unverified states, model-scoped
     voices, configuration/catalog revisions, and stale async-result rejection.
 11. **Reconfiguration:** only changed provider-global adapter inputs trigger a
@@ -1312,7 +1319,7 @@ Before task creation, the decomposition agent must:
 | Character preview could be mistaken for persistence | CFG-025, STATE-002 | Preview tests; UAT-06/UAT-07 |
 | Credential placeholders could become persisted values | CFG-008, SEC-001, SEC-002 | Credential mutation tests; UAT-08 |
 | External synthesis privacy is implicit | CFG-004, SEC-003, SEC-004, SEC-005 | Redaction tests and synthetic live UAT |
-| Managed audio.cpp could leak into this program | CFG-004, non-goals, release gates | Field completeness/rejection tests; UAT-01 |
+| Managed process actions could leak into Settings | CFG-004, managed-lifecycle amendment, release gates | Field completeness/passivity tests; UAT-01 |
 | Legacy providers could regress during field movement | OWN-005, CFG-003, MIG-003 | Legacy fixtures; UAT-09 |
 
 ## Handoff contract

@@ -39,7 +39,7 @@ automated test node still exists.
 | CFG-001 | Automated | `Tests/UI/test_settings_speech_tts_panel.py::test_global_panel_states_scope_and_mounts_only_selected_provider` | Passing |
 | CFG-002 | Automated | `Tests/UI/test_settings_speech_tts_panel.py::test_audio_cpp_cached_choices_are_revisioned_and_model_scoped` | Passing |
 | CFG-003 | Automated | `Tests/UI/test_settings_speech_tts_panel.py::test_each_provider_form_mounts_its_complete_bounded_inventory` | Passing |
-| CFG-004 | Automated + UAT | `Tests/UI/test_settings_speech_tts_panel.py::test_panel_exposes_path_pickers_and_no_managed_audio_cpp_controls`; UAT-01 | Automated passing; live UAT passed |
+| CFG-004 | Automated + UAT | `Tests/UI/test_settings_speech_tts_panel.py::test_panel_exposes_mode_specific_managed_audio_cpp_setup_controls`; UAT-01 | Automated passing; live UAT passed |
 | CFG-005 | Automated | `Tests/UI/test_settings_speech_tts_panel.py::test_normal_panel_actions_do_not_contact_or_initialize_tts` | Passing |
 | CFG-006 | Automated | `Tests/UI/test_settings_speech_tts_panel.py::test_normal_panel_actions_do_not_contact_or_initialize_tts` | Passing |
 | CFG-007 | Automated | `Tests/UI/test_settings_speech_tts_panel.py::test_saved_but_unavailable_and_reconfiguring_are_not_rendered_ready` | Passing |

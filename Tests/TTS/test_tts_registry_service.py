@@ -48,6 +48,7 @@ from tldw_chatbook.TTS.studio_preferences import (
     StudioTTSPreferencesSnapshot,
 )
 from tldw_chatbook.TTS.TTS_Generation import (
+    AudioCppRuntimeObservation,
     TTSService,
     bind_tts_service,
     close_tts_resources,
@@ -1766,6 +1767,26 @@ def test_default_service_constructs_one_supervisor_without_launch() -> None:
     assert snapshot.process_generation == 0
     assert snapshot.endpoint is None
     assert service.registry._slots["audio_cpp"].active is None
+
+
+@pytest.mark.asyncio
+async def test_default_service_runtime_observation_does_not_materialize_adapter() -> (
+    None
+):
+    service = build_default_tts_service({})
+
+    try:
+        observation = await service.audio_cpp_runtime_observation()
+
+        assert isinstance(observation, AudioCppRuntimeObservation)
+        assert observation.saved_mode == "external"
+        assert observation.applied_mode == "external"
+        assert observation.process.state == "stopped"
+        assert observation.catalog_fresh is False
+        assert service.registry._slots["audio_cpp"].active is None
+    finally:
+        await service.close()
+        await service.wait_closed()
 
 
 @pytest.mark.asyncio

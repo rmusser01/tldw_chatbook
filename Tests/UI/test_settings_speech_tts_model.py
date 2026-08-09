@@ -62,7 +62,7 @@ def _settings() -> dict[str, object]:
     }
 
 
-def test_global_field_inventory_is_bounded_complete_and_has_no_managed_audio_cpp() -> (
+def test_global_field_inventory_is_bounded_complete_and_includes_managed_audio_cpp() -> (
     None
 ):
     assert BUILT_IN_TTS_PROVIDER_ORDER == (
@@ -77,7 +77,13 @@ def test_global_field_inventory_is_bounded_complete_and_has_no_managed_audio_cpp
     assert set(GLOBAL_TTS_PROVIDER_FIELD_IDS) == set(BUILT_IN_TTS_PROVIDER_ORDER)
 
     assert {
+        "mode",
         "base_url",
+        "managed_binary_path",
+        "managed_server_json_path",
+        "managed_startup_timeout_seconds",
+        "managed_health_check_interval_seconds",
+        "managed_termination_grace_seconds",
         "connect_timeout_seconds",
         "synthesis_timeout_seconds",
         "max_input_characters",
@@ -108,10 +114,7 @@ def test_global_field_inventory_is_bounded_complete_and_has_no_managed_audio_cpp
 
     rendered_names = " ".join(GLOBAL_TTS_PROVIDER_FIELD_IDS["audio_cpp"]).lower()
     for forbidden in (
-        "binary",
-        "server.json",
         "bind",
-        "launch",
         "adoption",
         "restart",
         "supervision",

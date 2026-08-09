@@ -70,6 +70,7 @@ from tldw_chatbook.TTS.profile_types import (
     canonical_json_options,
 )
 from tldw_chatbook.TTS.TTS_Generation import (
+    AudioCppRuntimeObservation,
     TTSService,
     bind_tts_service,
     close_tts_resources,
@@ -85,6 +86,7 @@ __all__ = [
     "AudioCppProcessSnapshot",
     "AudioCppProcessState",
     "AudioCppReadyEndpoint",
+    "AudioCppRuntimeObservation",
     "AudioCppTTSCapability",
     "CapabilitySnapshotState",
     "CharacterRef",

@@ -98,8 +98,8 @@ loading the store.
 
 Character authority acquisition, character assignment, roleplay voice routing,
 legacy-provider profile execution, and profile/card portability or
-synchronization remain deferred. This slice also does not manage an audio.cpp
-server process.
+synchronization remain deferred. Voice profiles do not own provider connection
+or process settings; configure those once in **Global Settings → Speech & TTS**.
 
 Profiles are owned locally and contain generation choices, not provider
 connection details. They exclude server origins, credentials and API keys,
@@ -129,13 +129,29 @@ See
 [ADR-028](../../backlog/decisions/028-character-tts-generation-profile-ownership.md)
 for the ownership, privacy, backup, and deferred-scope decisions.
 
-### Using an Existing audio.cpp Server
+### Setting up audio.cpp
 
-Chatbook can connect the Playground to one compatible `audiocpp_server` that
-you start and manage yourself:
+Chatbook supports two explicit audio.cpp connection modes. Open **Global
+Settings → Speech & TTS → audio.cpp** and choose the mode that matches who owns
+the server process:
+
+- **External server** connects to a compatible `audiocpp_server` that you start
+  and manage yourself. Chatbook never stops or adopts that process.
+- **Managed local server** launches and supervises one local process from a
+  prebuilt binary and existing `server.json` that you provide. Chatbook does
+  not download audio.cpp, create or edit its configuration, or automatically
+  restart a failed child.
+
+Managed local server is currently offered on qualified POSIX hosts. On
+Windows, use External server until the native managed-process lifecycle is
+qualified there.
+
+#### External server
+
+To connect to a server you manage yourself:
 
 1. Start your compatible `audiocpp_server` and note its HTTP or HTTPS origin.
-2. Open **Speech Services → TTS Settings → audio.cpp External Server**.
+2. Select **External server** in the audio.cpp global settings.
 3. Enter the server's **Base URL** and review the timeout and safety bounds.
 4. Choose audio.cpp as the default provider. Select **First available** or an
    exact model, then choose **Server default** or an exact voice.
@@ -152,6 +168,62 @@ you start and manage yourself:
    validated, use **Play** or **Export**.
 10. In Console, use **Speak** on a response to synthesize and play it with the
     same saved defaults.
+
+#### Managed local server
+
+Managed mode is for a local build you trust. Review the executable's source and
+provenance before allowing Chatbook to run it, then:
+
+1. Make sure you already have a compatible prebuilt `audiocpp_server` binary
+   and its existing `server.json`. Chatbook never downloads, updates, or edits
+   either artifact.
+2. Select **Managed local server**. Choose **Use detected audiocpp_server** to
+   fill the draft from your command search path, or use **Browse** to select
+   the executable yourself. Detection changes only the unsaved form.
+3. Browse to the existing `server.json`. It must be a strict JSON object that
+   binds exactly to `127.0.0.1` and declares an unused port. Remote or wildcard
+   hosts are intentionally rejected in Managed mode.
+4. Check relative paths in `server.json` yourself. Chatbook launches the child
+   with the JSON file's directory as its working directory, so relative model
+   and resource paths resolve from there.
+5. Review **Advanced** for startup, health-check, shutdown, timeout, response,
+   and catalog safety bounds, then choose **Save Settings**. Saving validates
+   the active Managed fields and persists them; it does not launch, probe, or
+   contact audio.cpp.
+6. Open **Speech Services → Playground**, select audio.cpp, and inspect the
+   runtime card. Choose **Start & Test Connection**. The asynchronous action
+   lazily launches one child, waits for its speech contract, and refreshes the
+   configured multi-model catalog.
+7. Select a model and optional voice, enter text, and choose **Generate
+   Speech**. Chatbook validates the complete WAV before exposing **Play** and
+   **Export**.
+
+The runtime card separates durable and live truth. **Saved generation** is the
+latest configuration on disk, **Active generation** is the configuration held
+by the current adapter, and **Process generation** identifies the exact child.
+If you save new Managed settings while speech or a child is active, that child
+keeps its immutable launch configuration and the card shows the new settings
+as pending. Choose **Restart & Apply Settings** to drain admitted speech, stop
+that exact child, apply the latest saved generation, and start one replacement.
+
+**Shut down server** is a process action and is distinct from playback
+**Stop**. Shutdown drains and reaps the managed child without immediately
+starting another one. A later deliberate Start/Test, catalog refresh, or
+generation request starts it lazily again. Merely opening Settings, mounting
+the Playground, expanding details, or reading diagnostics never launches it.
+
+If a managed child exits unexpectedly or becomes unhealthy, Chatbook marks its
+endpoint and catalog evidence unavailable and does not restart it in a loop.
+Correct the binary/configuration or port problem if needed, then use **Start &
+Test Connection** or **Restart**. The collapsed **Recent managed diagnostics**
+section contains only bounded, best-effort-sanitized in-memory child output.
+Treat it as potentially sensitive; it is cleared when a new process generation
+starts and is never saved to provider settings.
+
+To return to a server you manage yourself, select **External server**, enter its
+origin, and save. If a managed child is still active, Speech Lab shows the
+pending handoff; choose **Apply Settings & Stop Managed Server**. The next
+External test or generation contacts only the saved external origin.
 
 Console offers **Speak** only on completed assistant responses. When selected,
 Chatbook captures the exact visible response and selected variant in a
@@ -191,17 +263,9 @@ audio.cpp server. Chatbook avoids putting that text, the configured origin or
 settings values, credentials, raw remote responses, and unsafe remote
 identifiers in normal UI diagnostics or application logs.
 
-This release does not download, launch, monitor, restart, or stop audio.cpp and
-does not accept a binary path or `server.json` path. User-provided binary plus
-user-provided `server.json` launch and supervision are deferred to later
-managed-mode slices.
-
-Release validation used an isolated clean configuration and a user-owned
-audio.cpp server at `127.0.0.1:8080`. A deterministic Mira Console response
-produced one complete owner-only WAV, played once through `/usr/bin/afplay`, and
-left the same external listener healthy after Chatbook shut down. A later
-post-rebase live rerun was not attempted because no server was listening;
-Chatbook did not start the installed binary.
+External mode preserves its ownership boundary: application shutdown leaves a
+user-owned server running. Managed mode stops only the exact child Chatbook
+launched and never scans for, adopts, or signals another process.
 
 ### AudioBook Generator
 
@@ -1133,6 +1197,11 @@ max_catalog_models = 1000
 max_voices_per_model = 1000
 max_identifier_characters = 256
 ```
+
+Use **Global Settings → Speech & TTS → audio.cpp** to switch to Managed mode
+and choose the executable and `server.json`; the UI validates those artifacts
+without launching them. Dormant External and Managed values are retained when
+you switch modes, but only the selected mode is applied at runtime.
 
 ## Support & Feedback
 

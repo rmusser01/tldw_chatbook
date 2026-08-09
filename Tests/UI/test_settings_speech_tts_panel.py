@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 from textual import on
 from textual.app import App, ComposeResult
-from textual.widgets import Button, Input, Select, Static, Switch
+from textual.widgets import Button, Collapsible, Input, Select, Static, Switch
 
 from Tests.UI.test_destination_shells import (
     DestinationHarness,
@@ -36,6 +36,7 @@ from tldw_chatbook.TTS.adapter_types import (
     TTSProviderCatalog,
     TTSVoiceDiscoveryResult,
 )
+from tldw_chatbook.TTS.audio_cpp_config import AudioCppConfig
 from tldw_chatbook.TTS.audio_cpp_supervisor import AudioCppSupervisor
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 from tldw_chatbook.UI.Lab_Modules import lab_speech_status as lab_speech_status_module
@@ -1150,6 +1151,12 @@ async def test_saved_but_unavailable_and_reconfiguring_are_not_rendered_ready() 
         assert "Reconfiguring" in str(
             app.query_one("#settings-speech-status-provider-runtime").render()
         )
+        pending_copy = str(
+            app.query_one("#settings-speech-save-result", Static).render()
+        )
+        assert "active audio.cpp configuration remains unchanged" in pending_copy
+        assert "Open Speech Lab" in pending_copy
+        assert "apply External mode" in pending_copy
 
         panel.receive_stts_settings_runtime_result(
             STTSSettingsSaveResult(
@@ -1321,6 +1328,55 @@ async def test_real_stylesheet_keeps_fields_usable_and_outer_detail_scrollable()
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("terminal_size", ((120, 40), (80, 24)))
+async def test_real_stylesheet_keeps_managed_setup_reachable_at_supported_widths(
+    terminal_size: tuple[int, int],
+) -> None:
+    host = _StyledDestinationHarness(_build_test_app(), "settings")
+    async with host.run_test(size=terminal_size) as pilot:
+        screen = await _open_speech_tts(host, pilot)
+        configure = screen.query_one("#settings-speech-configure-provider", Select)
+        configure.value = "audio_cpp"
+        await _wait_for_selector(
+            screen,
+            pilot,
+            "#settings-speech-provider-audio_cpp",
+            timeout=4.0,
+        )
+        mode = screen.query_one("#settings-speech-audio_cpp-mode", Select)
+        mode.value = "managed"
+        await pilot.pause()
+
+        binary = screen.query_one(
+            "#settings-speech-audio_cpp-managed-binary-path", Input
+        )
+        browse = screen.query_one(
+            "#settings-speech-audio_cpp-managed-binary-path-browse", Button
+        )
+        binary.scroll_visible(animate=False)
+        await pilot.pause()
+        assert binary.region.width >= 16
+        assert browse.region.y == binary.region.y
+        assert browse.region.x + browse.region.width <= pilot.app.size.width
+
+        advanced = screen.query_one("#settings-speech-audio-cpp-advanced", Collapsible)
+        advanced.collapsed = False
+        await pilot.pause(0.6)
+        grace = screen.query_one(
+            "#settings-speech-audio_cpp-managed-termination-grace-seconds", Input
+        )
+        grace.scroll_visible(animate=False)
+        await pilot.pause()
+        assert grace.region.width >= 16
+        assert 0 <= grace.region.y < pilot.app.size.height
+
+        save = screen.query_one("#settings-speech-save", Button)
+        save.scroll_visible(animate=False)
+        await pilot.pause()
+        assert 0 <= save.region.y < pilot.app.size.height
+
+
+@pytest.mark.asyncio
 async def test_category_reloads_the_latest_runtime_config_snapshot(monkeypatch) -> None:
     monkeypatch.setattr(
         settings_screen_module,
@@ -1378,7 +1434,7 @@ async def test_each_provider_form_mounts_its_complete_bounded_inventory() -> Non
 
 
 @pytest.mark.asyncio
-async def test_panel_exposes_path_pickers_and_no_managed_audio_cpp_controls() -> None:
+async def test_panel_exposes_mode_specific_managed_audio_cpp_setup_controls() -> None:
     host = DestinationHarness(_build_test_app(), "settings")
     async with host.run_test(size=(220, 80)) as pilot:
         screen = await _open_speech_tts(host, pilot)
@@ -1411,34 +1467,69 @@ async def test_panel_exposes_path_pickers_and_no_managed_audio_cpp_controls() ->
         await _wait_for_selector(
             screen, pilot, "#settings-speech-provider-audio_cpp", timeout=4.0
         )
+        mode = screen.query_one("#settings-speech-audio_cpp-mode", Select)
+        external_fields = screen.query_one("#settings-speech-audio-cpp-external-fields")
+        managed_fields = screen.query_one("#settings-speech-audio-cpp-managed-fields")
+        lifecycle_fields = screen.query_one(
+            "#settings-speech-audio-cpp-managed-lifecycle-fields"
+        )
+        assert mode.value == "external"
+        assert external_fields.display is True
+        assert managed_fields.display is False
+        assert lifecycle_fields.display is False
+
+        mode.focus()
+        mode.value = "managed"
+        await pilot.pause()
+
+        assert mode.has_focus is True
+        assert external_fields.display is False
+        assert managed_fields.display is True
+        assert lifecycle_fields.display is True
+        assert screen.query_one(
+            "#settings-speech-audio_cpp-managed-binary-path-browse", Button
+        )
+        assert screen.query_one(
+            "#settings-speech-audio_cpp-managed-server-json-path-browse", Button
+        )
+        assert screen.query_one("#settings-speech-audio-cpp-use-detected", Button)
+        assert (
+            screen.query_one(
+                "#settings-speech-audio_cpp-managed-startup-timeout-seconds",
+                Input,
+            ).value
+            == "30.0"
+        )
+        assert (
+            screen.query_one(
+                "#settings-speech-audio_cpp-managed-health-check-interval-seconds",
+                Input,
+            ).value
+            == "10.0"
+        )
+        assert (
+            screen.query_one(
+                "#settings-speech-audio_cpp-managed-termination-grace-seconds",
+                Input,
+            ).value
+            == "5.0"
+        )
         audio_text = " ".join(
             node.renderable.plain
             if hasattr(node.renderable, "plain")
             else str(node.renderable)
             for node in screen.query("#settings-speech-provider-audio_cpp Static")
         ).lower()
-        for forbidden in (
-            "managed mode",
-            "binary path",
+        for required in (
+            "managed local server",
+            "execute the selected file",
             "server.json",
-            "bind address",
-            "use detected",
-            "launch server",
-            "start & test",
-            "restart server",
-            "supervise",
-            "stop server",
-            "process status",
-            "diagnostics",
+            "127.0.0.1",
+            "working directory",
+            "relative paths",
         ):
-            assert forbidden not in audio_text
+            assert required in audio_text
         for forbidden_id in (
-            "settings-speech-audio-cpp-managed-binary-path",
-            "settings-speech-audio-cpp-managed-server-json-path",
-            "settings-speech-audio-cpp-managed-startup-timeout-seconds",
-            "settings-speech-audio-cpp-managed-health-check-interval-seconds",
-            "settings-speech-audio-cpp-managed-termination-grace-seconds",
-            "settings-speech-audio-cpp-use-detected",
             "settings-speech-audio-cpp-start-test",
             "settings-speech-audio-cpp-restart",
             "settings-speech-audio-cpp-shutdown",
@@ -1446,6 +1537,178 @@ async def test_panel_exposes_path_pickers_and_no_managed_audio_cpp_controls() ->
             "settings-speech-audio-cpp-diagnostics",
         ):
             assert not screen.query(f"#{forbidden_id}")
+
+
+@pytest.mark.asyncio
+async def test_panel_does_not_offer_unqualified_managed_mode_on_windows(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        speech_tts_settings_panel_module,
+        "_AUDIO_CPP_MANAGED_UI_SUPPORTED",
+        False,
+    )
+    app = _PanelHarness(configure_provider="audio_cpp")
+
+    async with app.run_test(size=(150, 60)):
+        mode = app.query_one("#settings-speech-audio_cpp-mode", Select)
+
+        assert [value for _label, value in mode._options] == ["external"]
+        assert mode.value == "external"
+        assert (
+            app.query_one("#settings-speech-audio-cpp-managed-fields").display is False
+        )
+        notice = str(
+            app.query_one(
+                "#settings-speech-audio-cpp-managed-platform-notice",
+                Static,
+            ).render()
+        ).lower()
+        assert "windows" in notice
+        assert "external" in notice
+
+
+@pytest.mark.asyncio
+async def test_use_detected_updates_only_the_unsaved_managed_draft(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    detected = "/opt/homebrew/bin/audiocpp_server"
+    monkeypatch.setattr(
+        speech_tts_settings_panel_module,
+        "detect_audio_cpp_server_binary",
+        lambda: detected,
+    )
+    app = _PanelHarness(configure_provider="audio_cpp")
+
+    async with app.run_test(size=(150, 60)) as pilot:
+        app.query_one("#settings-speech-audio_cpp-mode", Select).value = "managed"
+        await pilot.pause()
+        app.query_one("#settings-speech-audio-cpp-use-detected", Button).press()
+        await pilot.pause()
+
+        assert (
+            app.query_one("#settings-speech-audio_cpp-managed-binary-path", Input).value
+            == detected
+        )
+        assert app.events == []
+        result = str(app.query_one("#settings-speech-save-result", Static).renderable)
+        assert "draft" in result.lower()
+        assert "not started" in result.lower()
+        assert detected not in result
+
+
+@pytest.mark.asyncio
+async def test_failed_detection_preserves_the_existing_binary_draft(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        speech_tts_settings_panel_module,
+        "detect_audio_cpp_server_binary",
+        lambda: None,
+    )
+    app = _PanelHarness(configure_provider="audio_cpp")
+
+    async with app.run_test(size=(150, 60)) as pilot:
+        app.query_one("#settings-speech-audio_cpp-mode", Select).value = "managed"
+        await pilot.pause()
+        binary = app.query_one("#settings-speech-audio_cpp-managed-binary-path", Input)
+        binary.value = "/keep/existing/draft"
+        app.query_one("#settings-speech-audio-cpp-use-detected", Button).press()
+        await pilot.pause()
+
+        assert binary.value == "/keep/existing/draft"
+        assert app.events == []
+        result = str(app.query_one("#settings-speech-save-result", Static).renderable)
+        assert "not found" in result.lower()
+        assert "browse" in result.lower()
+
+
+@pytest.mark.asyncio
+async def test_managed_save_validates_files_without_starting_or_contacting_tts(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    binary = tmp_path / "audiocpp_server"
+    binary.write_bytes(b"synthetic-binary")
+    binary.chmod(0o700)
+    server_json = tmp_path / "server.json"
+    server_json.write_text('{"host":"127.0.0.1","port":19004}', encoding="utf-8")
+    lifecycle_calls: list[str] = []
+
+    async def forbidden_start(self, *_args, **_kwargs):
+        del self
+        lifecycle_calls.append("start")
+        raise AssertionError("Settings started managed audio.cpp")
+
+    monkeypatch.setattr(AudioCppSupervisor, "ensure_running", forbidden_start)
+    app = _PanelHarness(configure_provider="audio_cpp")
+
+    async with app.run_test(size=(150, 60)) as pilot:
+        panel = app.query_one("#panel", SpeechTTSSettingsPanel)
+        app.query_one("#settings-speech-audio_cpp-mode", Select).value = "managed"
+        await pilot.pause()
+        app.query_one(
+            "#settings-speech-audio_cpp-managed-binary-path", Input
+        ).value = str(binary)
+        app.query_one(
+            "#settings-speech-audio_cpp-managed-server-json-path", Input
+        ).value = str(server_json)
+        await pilot.click("#settings-speech-save")
+        await pilot.pause()
+
+        assert lifecycle_calls == []
+        assert len(app.events) == 1
+        saved = app.events[0].settings["audio_cpp"]
+        assert saved["mode"] == "managed"
+        assert saved["base_url"] == AudioCppConfig().base_url
+        assert saved["managed_binary_path"] == str(binary)
+        assert saved["managed_server_json_path"] == str(server_json)
+        panel.receive_stts_settings_save_result(
+            STTSSettingsSaveResult(
+                request_id=app.events[0].request_id or 0,
+                persisted=True,
+                provider_statuses={"audio_cpp": "pending"},
+                provider_configuration_revisions={"audio_cpp": 2},
+                provider_runtime_revisions={"audio_cpp": 1},
+            )
+        )
+        await pilot.pause()
+        pending_copy = str(
+            app.query_one("#settings-speech-save-result", Static).render()
+        )
+        assert "active audio.cpp configuration remains unchanged" in pending_copy
+        assert "restart and apply the saved Managed settings" in pending_copy
+
+
+@pytest.mark.asyncio
+async def test_invalid_managed_binary_is_adjacent_safe_and_posts_no_save(
+    tmp_path: Path,
+) -> None:
+    missing = tmp_path / "private-missing-audiocpp_server"
+    server_json = tmp_path / "server.json"
+    server_json.write_text('{"host":"127.0.0.1","port":19005}', encoding="utf-8")
+    app = _PanelHarness(configure_provider="audio_cpp")
+
+    async with app.run_test(size=(150, 60)) as pilot:
+        app.query_one("#settings-speech-audio_cpp-mode", Select).value = "managed"
+        await pilot.pause()
+        app.query_one(
+            "#settings-speech-audio_cpp-managed-binary-path", Input
+        ).value = str(missing)
+        app.query_one(
+            "#settings-speech-audio_cpp-managed-server-json-path", Input
+        ).value = str(server_json)
+        await pilot.click("#settings-speech-save")
+        await pilot.pause()
+
+        assert app.events == []
+        error = str(
+            app.query_one(
+                "#settings-speech-audio_cpp-managed-binary-path-error", Static
+            ).renderable
+        )
+        assert "executable" in error.lower()
+        assert str(missing) not in error
 
 
 @pytest.mark.asyncio

@@ -194,6 +194,7 @@ def test_tts_package_exports_only_stable_adapter_service_api() -> None:
         "AudioCppProcessSnapshot",
         "AudioCppProcessState",
         "AudioCppReadyEndpoint",
+        "AudioCppRuntimeObservation",
         "AudioCppTTSCapability",
         "CapabilitySnapshotState",
         "CharacterRef",

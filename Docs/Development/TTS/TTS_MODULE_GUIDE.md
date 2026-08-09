@@ -373,13 +373,13 @@ run was unavailable because the installed `audio-cpp 0.4` binary had no
 running process, listener, or healthy endpoint. Chatbook intentionally did not
 launch it; external-process ownership remains with the user.
 
-### Dormant managed audio.cpp runtime core (Slice 4)
+### Managed audio.cpp runtime and UI (Slices 4–5)
 
-External mode remains the default, the current visible Settings and Speech Lab
-experience, and the owner of no server process. Slice 4 adds a dormant Managed
-runtime behind service APIs and tests only. It does not mount a mode selector,
-binary or `server.json` picker, lifecycle action, process status, or diagnostic
-panel. Existing audio.cpp and legacy-provider behavior is unchanged.
+External mode remains the default and owns no server process. Managed mode is
+an explicit alternative in canonical Global Settings, where the user selects a
+trusted prebuilt executable and existing `server.json`. Settings preserves the
+dormant fields for both modes but validates and projects only the selected mode;
+Save is passive and performs no launch, probe, discovery, or synthesis.
 
 The application constructs one provider-specific `AudioCppSupervisor` beside
 the sealed registry and service. A Managed configuration carries one absolute
@@ -458,15 +458,32 @@ signals or adopts that descendant.
 
 Managed mode reuses the existing native HTTP adapter and multi-model catalog.
 It still validates and returns one complete PCM16 WAV item through the
-asynchronous response interface; Slice 4 does not add incremental streaming or
-change playback behavior.
+asynchronous response interface; Managed mode does not add incremental
+streaming or change playback behavior.
 
-Slice 5 owns the Managed Settings and Speech Lab experience, user setup and
-recovery documentation, and live real-binary audible UAT. It must not expose
-Managed mode on Windows until native Windows CI proves direct execution of a
-user-supplied binary, graceful termination and force-kill, sole child reaping,
-and bounded parent-pipe closure. External audio.cpp remains available on
-Windows, and injected supervisor coverage remains mandatory on every platform.
+Speech Lab observes this state through one coherent, passive
+`AudioCppRuntimeObservation`. Its single runtime card shows saved, applied, and
+process generations; process/capability/endpoint state; catalog freshness; and
+pending configuration. It links back to Global Settings rather than duplicating
+durable fields. Start/Test, Restart/Apply, External Apply/Stop, and Shutdown are
+retained asynchronous service actions; incompatible catalog/generation actions
+are disabled while a transition is active, while an existing complete WAV
+remains playable. Playback Stop and managed-process Shutdown are separate
+controls.
+
+The runtime card's details and recent diagnostics disclosures are collapsed by
+default. Full configured paths appear only in the explicit read-only details
+disclosure and are excluded from observation/projection reprs. Diagnostics use
+only the supervisor's bounded, sanitized, memory-only snapshot, identify the
+process generation and stream, and warn that output can still be sensitive.
+Expanding either disclosure is inert: it cannot persist settings, acquire a
+registry lease, or launch a child.
+
+Managed mode must not be exposed on Windows until native Windows CI proves
+direct execution of a user-supplied binary, graceful termination and
+force-kill, sole child reaping, and bounded parent-pipe closure. External
+audio.cpp remains available on Windows, and injected supervisor coverage
+remains mandatory on every platform.
 
 ### Catalog-driven STTS Playground (Slice 3)
 

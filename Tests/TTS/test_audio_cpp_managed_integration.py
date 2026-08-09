@@ -42,6 +42,7 @@ from tldw_chatbook.TTS.effective_settings import (
 )
 from tldw_chatbook.TTS.preferences import TTSPreferencesSnapshot
 from tldw_chatbook.TTS.TTS_Generation import (
+    AudioCppRuntimeObservation,
     TTSService,
     TTSSettingsPersistenceOutcome,
 )
@@ -457,6 +458,140 @@ async def _stage(
         generation=generation,
     )
     service._settings_persisted_provider_generations["audio_cpp"] = generation
+
+
+@pytest.mark.asyncio
+async def test_runtime_observation_is_passive_and_keeps_paths_out_of_repr(
+    tmp_path: Path,
+) -> None:
+    supervisor = _PreparationSupervisor()
+    managed = _managed_config(tmp_path, "passive-observation", 19_121)
+    service, factory_configs = _service(managed, supervisor)
+
+    try:
+        observation = await service.audio_cpp_runtime_observation()
+
+        assert isinstance(observation, AudioCppRuntimeObservation)
+        assert observation.saved_mode == "managed"
+        assert observation.applied_mode == "managed"
+        assert observation.saved_configuration_generation == 0
+        assert observation.applied_configuration_generation == 0
+        assert observation.pending_configuration is False
+        assert observation.process.state == "stopped"
+        assert observation.catalog_revision is None
+        assert observation.catalog_fresh is False
+        assert observation.service_closed is False
+        assert observation.saved_managed_binary_path == managed["managed_binary_path"]
+        assert (
+            observation.applied_managed_server_json_path
+            == managed["managed_server_json_path"]
+        )
+        rendered = repr(observation)
+        assert str(managed["managed_binary_path"]) not in rendered
+        assert str(managed["managed_server_json_path"]) not in rendered
+        assert factory_configs == []
+        assert supervisor.ensure_calls == 0
+        assert supervisor.launches == 0
+    finally:
+        await service.close()
+        await service.wait_closed()
+
+
+@pytest.mark.asyncio
+async def test_runtime_observation_reports_staged_managed_over_applied_external(
+    tmp_path: Path,
+) -> None:
+    supervisor = _PreparationSupervisor()
+    managed = _managed_config(tmp_path, "staged-managed-observation", 19_122)
+    service, factory_configs = _service(_external_config(), supervisor)
+    await _stage(service, managed, generation=7)
+
+    try:
+        observation = await service.audio_cpp_runtime_observation()
+
+        assert observation.saved_mode == "managed"
+        assert observation.applied_mode == "external"
+        assert observation.saved_configuration_generation == 7
+        assert observation.applied_configuration_generation == 0
+        assert observation.pending_configuration is True
+        assert observation.process.state == "stopped"
+        assert observation.saved_managed_binary_path == managed["managed_binary_path"]
+        assert observation.applied_managed_binary_path is None
+        assert factory_configs == []
+        assert supervisor.launches == 0
+    finally:
+        await service.close()
+        await service.wait_closed()
+
+
+@pytest.mark.asyncio
+async def test_runtime_observation_keeps_live_managed_visible_when_external_staged(
+    tmp_path: Path,
+) -> None:
+    supervisor = _PreparationSupervisor()
+    managed = _managed_config(tmp_path, "active-managed-observation", 19_123)
+    service, _factory_configs = _service(managed, supervisor)
+    await service.start_and_test_audio_cpp()
+    await _stage(service, _external_config(), generation=9)
+
+    try:
+        observation = await service.audio_cpp_runtime_observation()
+
+        assert observation.saved_mode == "external"
+        assert observation.applied_mode == "managed"
+        assert observation.saved_configuration_generation == 9
+        assert observation.applied_configuration_generation == 0
+        assert observation.pending_configuration is True
+        assert observation.process.state == "running"
+        assert observation.process.process_generation == 1
+        assert observation.process.tts_capability == "available"
+        assert observation.catalog_revision is not None
+        assert observation.catalog_fresh is True
+    finally:
+        await service.close()
+        await service.wait_closed()
+
+
+@pytest.mark.asyncio
+async def test_runtime_observation_marks_catalog_stale_after_managed_exit(
+    tmp_path: Path,
+) -> None:
+    supervisor = _PreparationSupervisor()
+    managed = _managed_config(tmp_path, "crashed-observation", 19_124)
+    service, _factory_configs = _service(managed, supervisor)
+    await service.start_and_test_audio_cpp()
+    before_exit = await service.audio_cpp_runtime_observation()
+    await supervisor.force_exit()
+
+    try:
+        after_exit = await service.audio_cpp_runtime_observation()
+
+        assert before_exit.catalog_fresh is True
+        assert after_exit.process.state == "unavailable"
+        assert after_exit.catalog_revision == before_exit.catalog_revision
+        assert after_exit.catalog_fresh is False
+    finally:
+        await service.close()
+        await service.wait_closed()
+
+
+@pytest.mark.asyncio
+async def test_runtime_observation_reports_closed_service_without_provider_work(
+    tmp_path: Path,
+) -> None:
+    supervisor = _PreparationSupervisor()
+    managed = _managed_config(tmp_path, "closed-observation", 19_125)
+    service, factory_configs = _service(managed, supervisor)
+    await service.close()
+    await service.wait_closed()
+
+    observation = await service.audio_cpp_runtime_observation()
+
+    assert observation.service_closed is True
+    assert observation.process.state == "stopped"
+    assert observation.catalog_fresh is False
+    assert factory_configs == []
+    assert supervisor.launches == 0
 
 
 @pytest.mark.asyncio

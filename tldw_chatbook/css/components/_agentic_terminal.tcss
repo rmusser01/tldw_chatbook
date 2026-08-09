@@ -5118,6 +5118,17 @@ _CredentialClearModal {
     height: auto;
 }
 
+/* Mode-specific audio.cpp groups remain mounted so switching modes preserves
+   focus and dormant values. They must size to their content; Textual's
+   Vertical default of 1fr would otherwise add hundreds of blank rows and
+   strand Save below the Settings scroll owner. */
+#settings-speech-audio-cpp-external-fields,
+#settings-speech-audio-cpp-managed-fields,
+#settings-speech-audio-cpp-managed-lifecycle-fields {
+    width: 100%;
+    height: auto;
+}
+
 /* Field errors live below their control. As a third child of a Horizontal,
    the shared width:100% status row reduced otherwise usable controls to two
    cells even while empty. */
