@@ -2,7 +2,7 @@
 
 **Date:** 2026-08-09
 
-**Status:** Owner-review corrections applied; pending re-review
+**Status:** Re-review passed; pending owner approval
 
 **Task:** TASK-2512
 
