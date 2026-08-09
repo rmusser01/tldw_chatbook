@@ -14912,7 +14912,11 @@ class LibraryScreen(BaseAppScreen):
         self.refresh(recompose=True)
 
     async def _refresh_library_prompt_detail(
-        self, prompt_id: int, *, open_history: bool = False
+        self,
+        prompt_id: int,
+        *,
+        open_history: bool = False,
+        expected_history_scope: tuple[str, int] | None = None,
     ) -> None:
         """Fetch and store the full detail for a selected Library prompt.
 
@@ -14930,7 +14934,17 @@ class LibraryScreen(BaseAppScreen):
 
         Args:
             prompt_id: The Library prompt id to fetch full detail for.
+            open_history: Whether freshly adopted history starts disclosed.
+            expected_history_scope: Optional exact restore/editor session identity.
+                Generic detail fetches omit this guard.
         """
+        if expected_history_scope is not None and not (
+            self._library_prompt_history_controller.matches_scope(
+                prompt_uuid=expected_history_scope[0],
+                scope_token=expected_history_scope[1],
+            )
+        ):
+            return
         service = getattr(self.app_instance, "prompt_scope_service", None)
         get_prompt = getattr(service, "get_prompt", None)
         if not callable(get_prompt):
@@ -14952,6 +14966,13 @@ class LibraryScreen(BaseAppScreen):
                 f"Failed to load Library prompt detail for {prompt_id!r}."
             )
             detail = None
+        if expected_history_scope is not None and not (
+            self._library_prompt_history_controller.matches_scope(
+                prompt_uuid=expected_history_scope[0],
+                scope_token=expected_history_scope[1],
+            )
+        ):
+            return
         # Discard out-of-order results: the same stale-race guard as
         # ``_refresh_library_note_detail``.
         if (
@@ -15286,7 +15307,12 @@ class LibraryScreen(BaseAppScreen):
                 notify(outcome.message)
             prompt_id = self._selected_prompt_id
             if isinstance(prompt_id, int):
-                await self._refresh_library_prompt_detail(prompt_id, open_history=True)
+                state = self._library_prompt_history_controller.state
+                await self._refresh_library_prompt_detail(
+                    prompt_id,
+                    open_history=bool(state is not None and state.is_open),
+                    expected_history_scope=(request.prompt_uuid, request.scope_token),
+                )
             return
 
     def _enter_library_prompt_create_editor(self) -> None:

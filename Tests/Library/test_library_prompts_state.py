@@ -856,7 +856,8 @@ def test_matching_missing_preview_row_clears_request_and_keeps_prior_selection()
     assert settled.error == "Selected retained version is no longer loaded."
 
 
-def test_matching_restore_identity_or_current_invalidation_settles_retryable_outcome():
+def test_matching_restore_request_uses_service_outcome_after_preview_ui_changes():
+    """The accepted write request, not transient preview UI, owns settlement."""
     state = _loaded_history_state()
     state, preview_request = begin_prompt_history_preview(
         state, change_id=30, source_version=3, request_token=12
@@ -868,17 +869,13 @@ def test_matching_restore_identity_or_current_invalidation_settles_retryable_out
     assert request is not None
     selected = state.selected
     current_changed = replace(state, current_version=5)
+    outcome = format_prompt_history_restore_outcome(error=RuntimeError("ignored"))
 
-    conflict = apply_prompt_history_restore(
-        current_changed,
-        request,
-        format_prompt_history_restore_outcome(error=RuntimeError("ignored")),
-    )
+    settled_current = apply_prompt_history_restore(current_changed, request, outcome)
 
-    assert conflict.restore_request is None
-    assert conflict.selected == selected
-    assert conflict.restore_outcome is not None
-    assert conflict.restore_outcome.kind == "conflict"
+    assert settled_current.restore_request is None
+    assert settled_current.selected == selected
+    assert settled_current.restore_outcome == outcome
 
     state = _loaded_history_state()
     state, preview_request = begin_prompt_history_preview(
@@ -893,19 +890,16 @@ def test_matching_restore_identity_or_current_invalidation_settles_retryable_out
         state, selected=replace(state.selected, source_version=2)
     )
 
-    unavailable = apply_prompt_history_restore(
-        changed_selection,
-        request,
-        format_prompt_history_restore_outcome(error=RuntimeError("ignored")),
+    settled_selection = apply_prompt_history_restore(
+        changed_selection, request, outcome
     )
 
-    assert unavailable.restore_request is None
-    assert unavailable.selected == changed_selection.selected
-    assert unavailable.restore_outcome is not None
-    assert unavailable.restore_outcome.kind == "snapshot_unavailable"
+    assert settled_selection.restore_request is None
+    assert settled_selection.selected == changed_selection.selected
+    assert settled_selection.restore_outcome == outcome
 
 
-def test_closing_history_clears_active_preview_and_restore_requests():
+def test_closing_history_clears_active_preview_request():
     state = _loaded_history_state()
     state, preview_request = begin_prompt_history_preview(
         state, change_id=30, source_version=3, request_token=12
@@ -917,6 +911,9 @@ def test_closing_history_clears_active_preview_and_restore_requests():
         apply_prompt_history_preview(closed_preview, preview_request) == closed_preview
     )
 
+
+def test_closing_history_preserves_and_applies_an_active_conditional_restore():
+    """Collapse clears preview UI without cancelling an accepted DB write."""
     state = _loaded_history_state()
     state, preview_request = begin_prompt_history_preview(
         state, change_id=30, source_version=3, request_token=12
@@ -926,17 +923,25 @@ def test_closing_history_clears_active_preview_and_restore_requests():
         state, request_token=13, dirty=False
     )
     assert restore_request is not None
-    closed_restore = close_prompt_history(state)
 
-    assert closed_restore.restore_request is None
-    assert (
-        apply_prompt_history_restore(
-            closed_restore,
-            restore_request,
-            format_prompt_history_restore_outcome(error=RuntimeError("ignored")),
-        )
-        == closed_restore
+    closed = close_prompt_history(state)
+    outcome = format_prompt_history_restore_outcome(
+        {
+            "outcome": "restored",
+            "source_version": 3,
+            "current_version": 4,
+            "new_version": 5,
+            "retained_current_keywords": False,
+        }
     )
+    settled = apply_prompt_history_restore(closed, restore_request, outcome)
+
+    assert closed.rows == ()
+    assert closed.selected is None
+    assert closed.restore_request == restore_request
+    assert settled.restore_request is None
+    assert settled.restore_outcome == outcome
+    assert settled.restore_refresh_pending is True
 
 
 def test_reload_history_page_clears_page_scope_but_preserves_settled_count():

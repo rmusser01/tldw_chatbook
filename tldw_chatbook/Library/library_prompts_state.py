@@ -308,7 +308,7 @@ def build_prompt_history_state(
 
 
 def close_prompt_history(state: PromptHistoryState) -> PromptHistoryState:
-    """Collapse retained history and invalidate its in-flight page/selection work."""
+    """Collapse page UI without cancelling an accepted conditional restore."""
     return replace(
         state,
         is_open=False,
@@ -319,7 +319,6 @@ def close_prompt_history(state: PromptHistoryState) -> PromptHistoryState:
         selected=None,
         page_request=None,
         preview_request=None,
-        restore_request=None,
         restore_outcome=None,
         error="",
     )
@@ -706,47 +705,9 @@ def apply_prompt_history_restore(
     request: PromptHistoryRestoreRequest,
     outcome: PromptHistoryRestoreOutcome,
 ) -> PromptHistoryState:
-    """Apply a restore outcome only to its still-selected prompt/version/token scope."""
+    """Apply an outcome only to its exact accepted conditional-write request."""
     if state.restore_request != request:
         return state
-    if state.selected is None:
-        unavailable = PromptHistoryRestoreOutcome(
-            "snapshot_unavailable",
-            "This retained version is no longer available. Reload retained history.",
-            True,
-        )
-        return replace(
-            state,
-            restore_request=None,
-            restore_outcome=unavailable,
-            error=unavailable.message,
-        )
-    if (
-        state.selected.prompt_uuid != request.prompt_uuid
-        or state.selected.change_id != request.change_id
-        or state.selected.source_version != request.source_version
-    ):
-        unavailable = PromptHistoryRestoreOutcome(
-            "snapshot_unavailable",
-            "This retained version is no longer available. Reload retained history.",
-            True,
-        )
-        return replace(
-            state,
-            restore_request=None,
-            restore_outcome=unavailable,
-            error=unavailable.message,
-        )
-    if state.current_version != request.expected_current_version:
-        conflict = PromptHistoryRestoreOutcome(
-            "conflict", "This Prompt changed elsewhere. Reload before restoring.", True
-        )
-        return replace(
-            state,
-            restore_request=None,
-            restore_outcome=conflict,
-            error=conflict.message,
-        )
     return replace(
         state,
         restore_request=None,

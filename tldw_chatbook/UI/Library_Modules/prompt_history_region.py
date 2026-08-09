@@ -114,21 +114,42 @@ class LibraryPromptHistoryRegion(Vertical):
         """Request a live sync after an outer canvas recompose mounts this region."""
         self.post_message(self.Ready())
 
-    def _action_scope(self) -> dict[str, str | int] | None:
-        """Capture immutable identity from the currently emitting view model."""
-        state = self.view_model[0]
-        if state is None:
+    @staticmethod
+    def _bind_action_scope(
+        control: Button | Collapsible, state: PromptHistoryState
+    ) -> None:
+        """Bind one immutable render-generation identity to an action control."""
+        control.history_action_scope = (state.prompt_uuid, state.scope_token)
+
+    @staticmethod
+    def _action_scope(control: Button | Collapsible) -> dict[str, str | int] | None:
+        """Read immutable identity from the control that emitted the event."""
+        scope = getattr(control, "history_action_scope", None)
+        if (
+            not isinstance(scope, tuple)
+            or len(scope) != 2
+            or not isinstance(scope[0], str)
+            or type(scope[1]) is not int
+        ):
             return None
         return {
-            "prompt_uuid": state.prompt_uuid,
-            "scope_token": state.scope_token,
+            "prompt_uuid": scope[0],
+            "scope_token": scope[1],
         }
+
+    def _action_button(
+        self, state: PromptHistoryState, label: str, **kwargs: Any
+    ) -> Button:
+        """Build one action button scoped to this compose generation."""
+        button = Button(label, **kwargs)
+        self._bind_action_scope(button, state)
+        return button
 
     def compose(self) -> ComposeResult:
         state, dirty, current_compatible = self.view_model
         if state is None:
             return
-        yield Collapsible(
+        disclosure = Collapsible(
             *self._body_children(
                 state,
                 dirty=dirty,
@@ -138,6 +159,8 @@ class LibraryPromptHistoryRegion(Vertical):
             collapsed=not state.is_open,
             id="library-prompt-history-collapsible",
         )
+        self._bind_action_scope(disclosure, state)
+        yield disclosure
 
     def _body_children(
         self,
@@ -156,7 +179,8 @@ class LibraryPromptHistoryRegion(Vertical):
                         classes="library-prompt-history-error",
                         markup=False,
                     ),
-                    Button(
+                    self._action_button(
+                        state,
                         "Retry count",
                         id="library-prompt-history-retry-count",
                         classes="library-canvas-action",
@@ -182,7 +206,8 @@ class LibraryPromptHistoryRegion(Vertical):
                         classes="library-prompt-history-error",
                         markup=False,
                     ),
-                    Button(
+                    self._action_button(
+                        state,
                         "Retry",
                         id="library-prompt-history-retry-page",
                         classes="library-canvas-action",
@@ -220,6 +245,7 @@ class LibraryPromptHistoryRegion(Vertical):
             )
             button.change_id = row.change_id
             button.source_version = row.version
+            self._bind_action_scope(button, state)
             button.set_class(
                 state.selected is not None
                 and state.selected.change_id == row.change_id
@@ -239,7 +265,8 @@ class LibraryPromptHistoryRegion(Vertical):
             )
         elif state.has_more:
             children.append(
-                Button(
+                self._action_button(
+                    state,
                     "Load older versions",
                     id="library-prompt-history-load-older",
                     classes="library-canvas-action",
@@ -333,7 +360,8 @@ class LibraryPromptHistoryRegion(Vertical):
             restore_reason = "Confirmation creates a new current version."
         children.extend(
             (
-                Button(
+                self._action_button(
+                    state,
                     "Restore selected version…",
                     id="library-prompt-history-restore",
                     classes="library-canvas-action console-action-primary",
@@ -364,7 +392,8 @@ class LibraryPromptHistoryRegion(Vertical):
                 )
             if state.restore_outcome.kind == "snapshot_unavailable":
                 children.append(
-                    Button(
+                    self._action_button(
+                        state,
                         "Reload retained history",
                         id="library-prompt-history-reload",
                         classes="library-canvas-action",
@@ -385,7 +414,7 @@ class LibraryPromptHistoryRegion(Vertical):
     @on(Collapsible.Toggled, "#library-prompt-history-collapsible")
     def _on_disclosure_toggled(self, event: Collapsible.Toggled) -> None:
         event.stop()
-        scope = self._action_scope()
+        scope = self._action_scope(event.collapsible)
         if scope is None:
             return
         if event.collapsible.collapsed:
@@ -396,7 +425,7 @@ class LibraryPromptHistoryRegion(Vertical):
     @on(Button.Pressed, "#library-prompt-history-retry-count")
     def _on_count_retry(self, event: Button.Pressed) -> None:
         event.stop()
-        scope = self._action_scope()
+        scope = self._action_scope(event.button)
         if scope is not None:
             self.post_message(self.CountRetryRequested(**scope))
 
@@ -404,7 +433,7 @@ class LibraryPromptHistoryRegion(Vertical):
     @on(Button.Pressed, "#library-prompt-history-load-older")
     def _on_page_requested(self, event: Button.Pressed) -> None:
         event.stop()
-        scope = self._action_scope()
+        scope = self._action_scope(event.button)
         if scope is not None:
             self.post_message(self.PageRequested(**scope))
 
@@ -413,7 +442,7 @@ class LibraryPromptHistoryRegion(Vertical):
         event.stop()
         change_id = getattr(event.button, "change_id", None)
         source_version = getattr(event.button, "source_version", None)
-        scope = self._action_scope()
+        scope = self._action_scope(event.button)
         if scope is not None and type(change_id) is int and type(source_version) is int:
             self.post_message(
                 self.RowSelected(
@@ -426,13 +455,13 @@ class LibraryPromptHistoryRegion(Vertical):
     @on(Button.Pressed, "#library-prompt-history-restore")
     def _on_restore_requested(self, event: Button.Pressed) -> None:
         event.stop()
-        scope = self._action_scope()
+        scope = self._action_scope(event.button)
         if scope is not None:
             self.post_message(self.RestoreRequested(**scope))
 
     @on(Button.Pressed, "#library-prompt-history-reload")
     def _on_reload_requested(self, event: Button.Pressed) -> None:
         event.stop()
-        scope = self._action_scope()
+        scope = self._action_scope(event.button)
         if scope is not None:
             self.post_message(self.ReloadRequested(**scope))
