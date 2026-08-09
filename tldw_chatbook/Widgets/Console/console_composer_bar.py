@@ -4265,6 +4265,8 @@ class ConsoleComposerBar(Horizontal):
             indicator.styles.width = 0
             clear_button.styles.display = "none"
             self._set_actions_row_width(actions, BASE_ACTIONS_WIDTH)
+        if self._voice_full_width_preparing:
+            self._sync_full_width_voice_presentation(True)
 
     def set_voice_status(
         self,
@@ -4390,11 +4392,23 @@ class ConsoleComposerBar(Horizontal):
                 self.query_one("#console-composer-menu", Button),
                 self.query_one("#console-command-visible-text", Static),
             )
+            attachment_indicator = self.query_one(
+                "#console-attachment-indicator", Static
+            )
+            clear_attachment = self.query_one("#console-clear-attachment", Button)
+            actions = self.query_one("#console-composer-actions", Horizontal)
         except NoMatches:
             return
 
         for control in controls:
             control.styles.display = "none" if active else "block"
+        attachment_visible = not active and self._pending_attachment_label is not None
+        attachment_indicator.styles.display = "block" if attachment_visible else "none"
+        clear_attachment.styles.display = "block" if attachment_visible else "none"
+        self._set_actions_row_width(
+            actions,
+            ATTACHMENT_ACTIONS_WIDTH if attachment_visible else BASE_ACTIONS_WIDTH,
+        )
         self._sync_collapsed_presentation()
         self._sync_send_disabled_reason(
             self._send_disabled_reason,

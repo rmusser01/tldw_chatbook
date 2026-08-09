@@ -294,6 +294,62 @@ async def test_busy_presentation_preserves_draft_and_caret_then_restores_recordi
 
 
 @pytest.mark.asyncio
+async def test_busy_presentation_suppresses_and_restores_staged_attachment():
+    app = ProductionCssComposerApp()
+    async with app.run_test(size=(80, 12)) as pilot:
+        composer = app.query_one(ConsoleComposerBar)
+        indicator = composer.query_one("#console-attachment-indicator", Static)
+        clear_button = composer.query_one("#console-clear-attachment")
+        actions = composer.query_one("#console-composer-actions")
+
+        composer.set_pending_attachment_label("2 files", count=2, total=5)
+        await pilot.pause()
+        assert "2 files" in _painted(indicator)
+        assert _visible(indicator)
+        assert _visible(clear_button)
+        assert str(clear_button.tooltip) == "Remove all 2 pending attachments."
+        assert actions.region.width == 29
+
+        composer.set_voice_status(
+            STATE_PREPARING,
+            message="Local transcription busy — dictation will run next.",
+        )
+        # A production control-bar refresh may reapply this setter while the
+        # deferred capture still owns the full-width preparing presentation.
+        composer.set_pending_attachment_label("2 files", count=2, total=5)
+        await pilot.pause()
+
+        assert not _visible(indicator)
+        assert not _visible(clear_button)
+        assert actions.region.width == 25
+        assert "2 files" in str(indicator.renderable)
+        assert str(clear_button.tooltip) == "Remove all 2 pending attachments."
+
+        expanded = composer.query_one("#console-composer-expanded")
+        collapsed = composer.query_one("#console-composer-collapsed")
+        composer.set_collapsed(True)
+        composer.set_pending_attachment_label("2 files", count=2, total=5)
+        assert not expanded.display
+        assert collapsed.display
+        composer.set_collapsed(False)
+
+        composer.set_voice_status(STATE_LISTENING, elapsed_seconds=0)
+        await pilot.pause()
+
+        assert "2 files" in _painted(indicator)
+        assert _visible(indicator)
+        assert _visible(clear_button)
+        assert str(clear_button.tooltip) == "Remove all 2 pending attachments."
+        assert actions.region.width == 29
+
+        composer.set_pending_attachment_label(None)
+        await pilot.pause()
+        assert not _visible(indicator)
+        assert not _visible(clear_button)
+        assert actions.region.width == 25
+
+
+@pytest.mark.asyncio
 async def test_production_css_busy_status_stays_meaningful_at_narrow_width():
     app = ProductionCssComposerApp()
     async with app.run_test(size=(48, 12)) as pilot:

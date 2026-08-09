@@ -28,6 +28,7 @@ from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
 )
 from tldw_chatbook.Chat import console_voice_input as voice_module
+from tldw_chatbook.Chat.attachment_core import PendingAttachment
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Chat.console_voice_input import VoiceCommand, VoiceFailed
 from tldw_chatbook.UI.Console_Modules import dictation as dictation_module
@@ -184,6 +185,20 @@ class FakeDictationService:
     def emit_error(self, message: str) -> None:
         assert self.on_error is not None, "start_dictation() has not run yet"
         self.on_error(RuntimeError(message))
+
+
+def _staged_image(name: str) -> PendingAttachment:
+    data = f"png-bytes-{name}".encode()
+    return PendingAttachment(
+        file_path=f"/tmp/{name}",
+        display_name=name,
+        file_type="image",
+        insert_mode="attachment",
+        data=data,
+        mime_type="image/png",
+        original_size=len(data),
+        processed_size=len(data),
+    )
 
 
 def _painted(widget) -> str:
@@ -390,6 +405,86 @@ async def test_busy_parakeet_mic_stays_reachable_and_cancels_at_80_columns(
             assert composer.query_one("#console-composer-menu").display
             assert composer.query_one("#console-command-visible-text").display
             assert composer.query_one("#console-send-disabled-reason").display
+    finally:
+        service.start_gate.set()
+
+
+@pytest.mark.asyncio
+async def test_busy_parakeet_mic_stays_reachable_with_staged_attachments(
+    monkeypatch,
+):
+    service = FakeDictationService()
+    service.uses_deferred_dictation = True
+    service.waiting_for_executor = True
+    service.start_gate = threading.Event()
+    _patch_availability(monkeypatch, provider="parakeet-onnx")
+    _install_streaming_session(monkeypatch, service)
+    monkeypatch.setattr(ConsoleHarness, "CSS_PATH", str(_BUNDLED_STYLESHEET))
+    _, host = _ready_host()
+
+    try:
+        async with host.run_test(size=(80, 42)) as pilot:
+            console = await _mounted_console(host, pilot)
+            composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+            store = console._ensure_console_chat_store()
+            session = store.ensure_session()
+            staged = [_staged_image("one.png"), _staged_image("two.png")]
+            for attachment in staged:
+                assert store.add_pending_attachment(session.id, attachment)
+            console._sync_console_composer_action_state(can_save_chatbook=False)
+            await pilot.pause()
+
+            indicator = composer.query_one("#console-attachment-indicator", Static)
+            clear_button = composer.query_one("#console-clear-attachment", Button)
+            actions = composer.query_one("#console-composer-actions")
+            assert "2 files" in _painted(indicator)
+            assert clear_button.display
+            assert str(clear_button.tooltip) == "Remove all 2 pending attachments."
+            assert actions.region.width == 29
+
+            mic = composer.query_one("#console-dictation", Button)
+            mic.press()
+            deadline = time.monotonic() + 4
+            while (
+                time.monotonic() < deadline
+                and composer._voice_preparing_message
+                != "Local transcription busy — dictation will run next."
+            ):
+                await pilot.pause(0.01)
+            # Exercise the production refresh that re-applies the staged label
+            # after sync_dictation_state has restored the busy copy.
+            console._sync_console_composer_action_state(can_save_chatbook=False)
+            await pilot.pause()
+
+            assert "Local transcription busy — dictation will run next." in _painted(
+                composer.query_one("#console-voice-status", Static)
+            )
+            assert not indicator.display
+            assert not clear_button.display
+            assert actions.region.width == 25
+            assert actions.region.right <= composer.region.right <= host.size.width
+            assert mic.region.right <= composer.region.right
+            click_offset = (
+                mic.region.x + mic.region.width // 2,
+                mic.region.y,
+            )
+            hit_widget, _ = host.screen.get_widget_at(*click_offset)
+            assert hit_widget is mic
+
+            deadline = time.monotonic() + 1
+            while time.monotonic() < deadline and mic.has_class("-active"):
+                await pilot.pause(0.01)
+            assert await pilot.click(offset=click_offset) is True
+            await _wait_for_mic_label(composer, pilot, "Dictate")
+            await pilot.pause()
+
+            assert console._console_dictation_state == "idle"
+            assert store.pending_attachments(session.id) == staged
+            assert "2 files" in _painted(indicator)
+            assert indicator.display
+            assert clear_button.display
+            assert str(clear_button.tooltip) == "Remove all 2 pending attachments."
+            assert actions.region.width == 29
     finally:
         service.start_gate.set()
 

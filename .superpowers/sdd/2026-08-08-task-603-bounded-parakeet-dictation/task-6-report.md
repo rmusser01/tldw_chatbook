@@ -214,3 +214,56 @@
   and physical Mic reachability at real production CSS.
 - Known warnings remain the Requests dependency-version warning and pydub's
   Python 3.13 `audioop` deprecation. No new runtime concern was found.
+
+## Review fix round 4
+
+### RED evidence
+
+- Added a real-production-CSS composer regression and an `80x42` mounted
+  Console regression with two real staged `PendingAttachment` values. Before
+  production changes the exact nodes reported `2 failed, 2 warnings in
+  3.15s`: `set_pending_attachment_label` reopened the attachment indicator
+  during the busy presentation, and the staged 29-cell action row pushed Mic
+  out of bounds.
+- The mounted test enters through the real Mic `Button.press()` message path,
+  re-runs the production control-bar refresh while deferred capture is busy,
+  then requires physical hit-testing/clicking for cancel. This isolates the
+  reviewed busy-state geometry from the pre-existing staged-idle 80-column
+  overflow described under Concerns.
+
+### Implementation and GREEN evidence
+
+- Extended the existing full-width presentation helper to hide the attachment
+  indicator and clear control and pin the action row to its 25-cell base width
+  while busy. No attachment content or control state is cleared.
+- On every ordinary repaint, the helper restores the indicator, clear control,
+  and 29-cell attachment action width only when the cached pending label still
+  exists; a cleared label stays hidden at the 25-cell base width.
+- `set_pending_attachment_label` still performs its normal cache, rendered
+  label, tooltip, and count updates first, then re-applies the existing busy
+  suppression when needed. It does not recurse or reconstruct lossy count/
+  total values during restore.
+- Focused direct and mounted nodes after the final assertion additions:
+  `2 passed, 2 warnings in 3.60s`.
+- Fresh scoped completion gate (voice-chip file plus both no-attachment and
+  staged-attachment mounted busy/cancel nodes):
+  `17 passed, 2 warnings in 7.95s`.
+
+### Static checks, self-review, and concerns
+
+- Ruff check and `git diff --check` passed on the three changed Python files.
+  Ruff format check reports the same three starting-commit files as already
+  unformatted; all three also fail when their `HEAD` contents are checked.
+- Rechecked exact busy paint, no-attachment and staged-attachment geometry,
+  repeated production refresh, physical Mic cancellation, attachment object/
+  label/tooltip retention, 25-to-29 width restoration, clearing back to base,
+  and collapsed-parent authority. Textual visibility assertions use the
+  composer's real `display` contract; physical hit-testing independently
+  proves user reachability.
+- Pre-existing out-of-scope observation: at production CSS and 80 columns, a
+  staged attachment already places the ordinary idle Mic outside the viewport
+  before dictation begins. This round deliberately does not alter ordinary
+  attachment layout; it verifies the requested busy-state cancel path by
+  entering through `Button.press()` and physically clicking Mic once busy.
+- Known warnings remain the Requests dependency-version warning and pydub's
+  Python 3.13 `audioop` deprecation.
