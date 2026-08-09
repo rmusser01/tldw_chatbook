@@ -11,9 +11,11 @@ from __future__ import annotations
 import copy
 import json
 import re
+import secrets
 import threading
 import time
 import uuid
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlencode
@@ -66,7 +68,22 @@ _TITLE_CONTROLS = {
     "inputimage": frozenset({"input_image"}),
     "widthheightframes": frozenset({"width", "height", "frames"}),
     "widthheightframesfps": frozenset({"width", "height", "frames", "fps"}),
+    "promptwidthheight": frozenset({"prompt", "width", "height"}),
+    "duration": frozenset({"duration"}),
+    "nativefps": frozenset({"native_fps"}),
 }
+
+
+@dataclass(frozen=True)
+class _PreparedWorkflow:
+    """An immutable record of a graph and the facts it will produce."""
+
+    graph: dict[str, Any]
+    duration_seconds: float | None
+    fps: float | None
+    width: int | None
+    height: int | None
+    resolved_seed: int | None
 
 
 class ComfyUIVideoAdapter:
@@ -119,10 +136,10 @@ class ComfyUIVideoAdapter:
         self._validate_required_nodes(base_url, workflow)
 
         image_name = self._resolve_uploaded_image(request.reference_assets)
-        parameterized = self._parameterize_workflow(workflow, request, image_name)
-        prompt_id = self._queue_prompt(base_url, parameterized)
-        descriptor = self._poll_for_output(base_url, prompt_id, cancel_event)
-        return self._download_output(base_url, descriptor)
+        prepared = self._parameterize_workflow(workflow, request, image_name)
+        prompt_id = self._queue_prompt(base_url, prepared.graph)
+        descriptor = self._poll_for_output(base_url, prompt_id, cancel_event, prepared.graph)
+        return self._download_output(base_url, descriptor, prepared)
 
     # -- configuration / workflows --------------------------------------
 
@@ -242,49 +259,350 @@ class ComfyUIVideoAdapter:
         return set(_TITLE_CONTROLS.get(compact, frozenset()))
 
     @staticmethod
-    def _set_input(inputs: dict[str, Any], fields: tuple[str, ...], value: Any) -> None:
-        """Set the first existing unlinked canonical field, leaving links intact."""
+    def _set_input(inputs: dict[str, Any], fields: tuple[str, ...], value: Any) -> str | None:
+        """Set and return the first direct canonical field, if available."""
         for field in fields:
             if field in inputs and not isinstance(inputs[field], list):
                 inputs[field] = value
-                return
+                return field
+        return None
+
+    @staticmethod
+    def _is_h3_workflow(graph: dict[str, Any]) -> bool:
+        """Return whether a graph exposes the MiniMax H3 fixed-control node."""
+        return any(
+            isinstance(node, dict)
+            and node.get("class_type") == "MiniMaxH3ImageToVideo"
+            for node in graph.values()
+        )
+
+    @staticmethod
+    def _direct_value(inputs: dict[str, Any], fields: tuple[str, ...]) -> Any | None:
+        """Return the first direct input value from a documented field name."""
+        for field in fields:
+            value = inputs.get(field)
+            if field in inputs and not isinstance(value, list):
+                return value
+        return None
+
+    @staticmethod
+    def _require_injection(
+        applied_field: str | None,
+        request_field: str,
+        expected_title: str,
+    ) -> None:
+        """Raise an actionable error for a supplied control that was not set."""
+        if applied_field is None:
+            raise VideoGenerationError(
+                f"ComfyUI {request_field} requires a direct {expected_title!r} control"
+            )
+
+    @staticmethod
+    def _require_direct_value(
+        value: Any | None,
+        request_field: str,
+        expected_title: str,
+    ) -> Any:
+        """Return a direct value or report the documented title that is missing."""
+        if value is None:
+            raise VideoGenerationError(
+                f"ComfyUI {request_field} requires a direct {expected_title!r} control"
+            )
+        return value
+
+    @staticmethod
+    def _require_number(value: Any, request_field: str, expected_title: str) -> float:
+        """Validate a graph default that is expected to be numeric."""
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise VideoGenerationError(
+                f"ComfyUI {request_field} requires a numeric {expected_title!r} control"
+            )
+        return float(value)
+
+    def _set_control(
+        self,
+        graph: dict[str, Any],
+        control: str,
+        fields: tuple[str, ...],
+        value: Any,
+    ) -> str | None:
+        """Set every eligible exact-title control and return one applied field."""
+        applied: str | None = None
+        for node in graph.values():
+            if not isinstance(node, dict) or control not in self._title_controls(node):
+                continue
+            inputs = node.get("inputs")
+            if isinstance(inputs, dict):
+                applied = self._set_input(inputs, fields, value) or applied
+        return applied
+
+    def _h3_generation_inputs(self, graph: dict[str, Any]) -> dict[str, Any]:
+        """Find the H3 generation node and enforce its exact title contract."""
+        for node in graph.values():
+            if not isinstance(node, dict) or node.get("class_type") != "MiniMaxH3ImageToVideo":
+                continue
+            inputs = node.get("inputs")
+            if isinstance(inputs, dict) and {"prompt", "width", "height"} <= self._title_controls(node):
+                return inputs
+        raise VideoGenerationError(
+            "ComfyUI prompt requires a direct 'Prompt Width Height' control"
+        )
+
+    def _h3_control_inputs(
+        self,
+        graph: dict[str, Any],
+        control: str,
+        request_field: str,
+        expected_title: str,
+    ) -> dict[str, Any]:
+        """Return inputs for an exact H3 support control or raise clearly."""
+        for node in graph.values():
+            if not isinstance(node, dict) or control not in self._title_controls(node):
+                continue
+            inputs = node.get("inputs")
+            if isinstance(inputs, dict):
+                return inputs
+        raise VideoGenerationError(
+            f"ComfyUI {request_field} requires a direct {expected_title!r} control"
+        )
+
+    @staticmethod
+    def _parse_ratio(ratio: str) -> float:
+        """Parse a positive numeric ``W:H`` ratio supplied for an H3 graph."""
+        match = re.fullmatch(
+            r"\s*(\d+(?:\.\d+)?)\s*:\s*(\d+(?:\.\d+)?)\s*", ratio
+        )
+        if match is None:
+            raise VideoGenerationError("ComfyUI H3 ratio must be a numeric W:H value")
+        width, height = (float(part) for part in match.groups())
+        if width <= 0 or height <= 0:
+            raise VideoGenerationError("ComfyUI H3 ratio must be a positive numeric W:H value")
+        return width / height
+
+    def _parameterize_h3_workflow(
+        self,
+        graph: dict[str, Any],
+        request: VideoGenRequest,
+        image_name: str | None,
+        resolved_seed: int | None,
+    ) -> _PreparedWorkflow:
+        """Apply and validate the fixed MiniMax H3 workflow control contract."""
+        if request.negative_prompt:
+            raise VideoGenerationError("ComfyUI H3 does not support negative prompt")
+        if image_name is not None:
+            raise VideoGenerationError("ComfyUI H3 does not support input image")
+        if request.extra_params:
+            raise VideoGenerationError("ComfyUI H3 does not support extra params")
+        for field in ("model", "sampler", "steps", "cfg_scale"):
+            if getattr(request, field) is not None:
+                raise VideoGenerationError(
+                    f"ComfyUI H3 does not support {field.replace('_', ' ')}"
+                )
+
+        generation_inputs = self._h3_generation_inputs(graph)
+        self._require_injection(
+            self._set_input(generation_inputs, ("prompt",), request.prompt),
+            "prompt",
+            "Prompt Width Height",
+        )
+        for field, value in (("width", request.width), ("height", request.height)):
+            if value is not None:
+                if isinstance(value, bool) or not isinstance(value, int) or value <= 0 or value % 32:
+                    raise VideoGenerationError(
+                        f"ComfyUI H3 {field} must be a positive multiple of 32"
+                    )
+                self._require_injection(
+                    self._set_input(generation_inputs, (field,), value),
+                    field,
+                    "Prompt Width Height",
+                )
+
+        seed_inputs = self._h3_control_inputs(graph, "seed", "seed", "Seed")
+        if resolved_seed is not None:
+            self._require_injection(
+                self._set_input(seed_inputs, ("noise_seed", "seed"), resolved_seed),
+                "seed",
+                "Seed",
+            )
+        effective_seed = self._require_direct_value(
+            self._direct_value(seed_inputs, ("noise_seed", "seed")), "seed", "Seed"
+        )
+        if isinstance(effective_seed, bool) or not isinstance(effective_seed, int) or effective_seed < 0:
+            raise VideoGenerationError("ComfyUI seed requires a non-negative integer 'Seed' control")
+
+        duration_inputs = self._h3_control_inputs(graph, "duration", "duration", "Duration")
+        if request.duration_seconds is not None:
+            self._require_injection(
+                self._set_input(duration_inputs, ("value", "duration_seconds"), request.duration_seconds),
+                "duration",
+                "Duration",
+            )
+        duration = self._require_number(
+            self._require_direct_value(
+                self._direct_value(duration_inputs, ("value", "duration_seconds")),
+                "duration",
+                "Duration",
+            ),
+            "duration",
+            "Duration",
+        )
+
+        fps_inputs = self._h3_control_inputs(graph, "native_fps", "native FPS", "Native FPS")
+        fps = self._require_number(
+            self._require_direct_value(
+                self._direct_value(fps_inputs, ("fps", "frame_rate")),
+                "native FPS",
+                "Native FPS",
+            ),
+            "native FPS",
+            "Native FPS",
+        )
+        if fps != 24.0:
+            raise VideoGenerationError("ComfyUI H3 native FPS control must be 24")
+        if request.fps is not None and request.fps != 24:
+            raise VideoGenerationError(
+                f"ComfyUI H3 native FPS is 24; requested {request.fps} is unsupported"
+            )
+
+        width = self._require_number(
+            self._require_direct_value(
+                self._direct_value(generation_inputs, ("width",)), "width", "Prompt Width Height"
+            ),
+            "width",
+            "Prompt Width Height",
+        )
+        height = self._require_number(
+            self._require_direct_value(
+                self._direct_value(generation_inputs, ("height",)), "height", "Prompt Width Height"
+            ),
+            "height",
+            "Prompt Width Height",
+        )
+        if not width.is_integer() or not height.is_integer() or width <= 0 or height <= 0:
+            raise VideoGenerationError("ComfyUI H3 dimensions must be positive integers")
+
+        if request.ratio is not None:
+            if request.ratio.strip().lower() == "adaptive":
+                raise VideoGenerationError("ComfyUI H3 ratio cannot be adaptive")
+            expected_ratio = self._parse_ratio(request.ratio)
+            actual_ratio = width / height
+            if abs(actual_ratio - expected_ratio) / expected_ratio > 0.03 + 1e-12:
+                raise VideoGenerationError("ComfyUI H3 ratio is incompatible with effective dimensions")
+
+        save_nodes = [
+            node for node in graph.values()
+            if isinstance(node, dict) and node.get("class_type") == "SaveVideo"
+        ]
+        if not save_nodes:
+            raise VideoGenerationError("ComfyUI H3 requires a SaveVideo MP4 output control")
+        if any(
+            not isinstance(node.get("inputs"), dict)
+            or str(node["inputs"].get("format", "")).lower() != "mp4"
+            for node in save_nodes
+        ):
+            raise VideoGenerationError("ComfyUI H3 SaveVideo format must be MP4")
+        if str(request.format or "").lower() != "mp4":
+            raise VideoGenerationError("ComfyUI H3 supports MP4 output only")
+
+        return _PreparedWorkflow(
+            graph=graph,
+            duration_seconds=duration,
+            fps=fps,
+            width=int(width),
+            height=int(height),
+            resolved_seed=effective_seed,
+        )
+
+    def _parameterize_generic_workflow(
+        self,
+        graph: dict[str, Any],
+        request: VideoGenRequest,
+        image_name: str | None,
+        resolved_seed: int | None,
+    ) -> _PreparedWorkflow:
+        """Apply the existing custom-workflow title convention without silent no-ops."""
+        self._require_injection(
+            self._set_control(graph, "prompt", ("text", "prompt"), request.prompt),
+            "prompt",
+            "Prompt",
+        )
+        if request.negative_prompt is not None:
+            self._require_injection(
+                self._set_control(graph, "negative_prompt", ("text", "prompt"), request.negative_prompt),
+                "negative prompt",
+                "Negative Prompt",
+            )
+        else:
+            self._set_control(graph, "negative_prompt", ("text", "prompt"), "")
+        if resolved_seed is not None:
+            self._require_injection(
+                self._set_control(graph, "seed", ("seed", "noise_seed"), resolved_seed),
+                "seed",
+                "Seed",
+            )
+        for field in ("width", "height"):
+            value = getattr(request, field)
+            if value is not None:
+                self._require_injection(
+                    self._set_control(graph, field, (field,), value),
+                    field,
+                    field.title(),
+                )
+        if request.duration_seconds is not None:
+            duration_applied = self._set_control(
+                graph, "duration", ("value", "duration_seconds"), request.duration_seconds
+            )
+            if duration_applied is None and request.fps is not None:
+                duration_applied = self._set_control(
+                    graph,
+                    "frames",
+                    ("num_frames", "frames", "length", "video_frames"),
+                    request.duration_seconds * request.fps,
+                )
+            self._require_injection(duration_applied, "duration", "Duration or Frames")
+        if request.fps is not None:
+            self._require_injection(
+                self._set_control(graph, "fps", ("fps", "frame_rate"), request.fps),
+                "fps",
+                "FPS",
+            )
+        if image_name is not None:
+            self._require_injection(
+                self._set_control(graph, "input_image", ("image", "image_name"), image_name),
+                "input image",
+                "Input Image",
+            )
+        if request.extra_params:
+            raise VideoGenerationError("ComfyUI custom workflow does not support extra params")
+        for field in ("ratio", "model", "sampler", "steps", "cfg_scale"):
+            if getattr(request, field) is not None:
+                raise VideoGenerationError(
+                    f"ComfyUI custom workflow does not support {field.replace('_', ' ')}"
+                )
+        return _PreparedWorkflow(
+            graph=graph,
+            duration_seconds=None,
+            fps=None,
+            width=None,
+            height=None,
+            resolved_seed=resolved_seed,
+        )
 
     def _parameterize_workflow(
         self,
         workflow: dict[str, Any],
         request: VideoGenRequest,
         image_name: str | None,
-    ) -> dict[str, Any]:
-        """Deep-copy and inject request values into title-addressed graph nodes."""
+    ) -> _PreparedWorkflow:
+        """Deep-copy and strictly inject request values into a workflow graph."""
         graph = copy.deepcopy(workflow)
-        frames = None
-        if request.duration_seconds is not None and request.fps is not None:
-            frames = request.duration_seconds * request.fps
-
-        for node in graph.values():
-            if not isinstance(node, dict):
-                continue
-            inputs = node.get("inputs")
-            if not isinstance(inputs, dict):
-                continue
-            controls = self._title_controls(node)
-            if "prompt" in controls:
-                self._set_input(inputs, ("text", "prompt"), request.prompt)
-            if "negative_prompt" in controls:
-                self._set_input(inputs, ("text", "prompt"), request.negative_prompt or "")
-            if "seed" in controls and request.seed is not None:
-                self._set_input(inputs, ("seed", "noise_seed"), request.seed)
-            if "width" in controls and request.width is not None:
-                self._set_input(inputs, ("width",), request.width)
-            if "height" in controls and request.height is not None:
-                self._set_input(inputs, ("height",), request.height)
-            if "frames" in controls and frames is not None:
-                self._set_input(inputs, ("num_frames", "frames", "length", "video_frames"), frames)
-            if "fps" in controls and request.fps is not None:
-                self._set_input(inputs, ("fps", "frame_rate"), request.fps)
-            if "input_image" in controls and image_name is not None:
-                self._set_input(inputs, ("image", "image_name"), image_name)
-        return graph
+        requested_seed = request.seed
+        if requested_seed is not None and requested_seed < -1:
+            raise VideoGenerationError("ComfyUI seed must be -1 or a non-negative integer")
+        resolved_seed = secrets.randbelow(2**63) if requested_seed == -1 else requested_seed
+        if self._is_h3_workflow(graph):
+            return self._parameterize_h3_workflow(graph, request, image_name, resolved_seed)
+        return self._parameterize_generic_workflow(graph, request, image_name, resolved_seed)
 
     def _resolve_uploaded_image(
         self,
@@ -336,6 +654,7 @@ class ComfyUIVideoAdapter:
         base_url: str,
         prompt_id: str,
         cancel_event: threading.Event | None,
+        _graph: dict[str, Any],
     ) -> dict[str, str]:
         """Poll ``/history/{prompt_id}`` until ComfyUI exposes media output."""
         history_url = f"{base_url}/history/{prompt_id}"
@@ -495,7 +814,12 @@ class ComfyUIVideoAdapter:
             raise VideoGenerationError("ComfyUI history returned no supported video or animated-image output")
         return None
 
-    def _download_output(self, base_url: str, descriptor: dict[str, str]) -> VideoGenResult:
+    def _download_output(
+        self,
+        base_url: str,
+        descriptor: dict[str, str],
+        prepared: _PreparedWorkflow,
+    ) -> VideoGenResult:
         """Fetch one selected ``/view`` output with egress and byte limits."""
         view_url = f"{base_url}/view?{urlencode(descriptor)}"
         try:
@@ -510,4 +834,18 @@ class ComfyUIVideoAdapter:
         normalized_type = (content_type or "").split(";", 1)[0].strip().lower()
         if normalized_type not in _VIDEO_SUFFIX_TYPES.values():
             normalized_type = _VIDEO_SUFFIX_TYPES[Path(descriptor["filename"]).suffix.lower()]
-        return VideoGenResult(content=content, content_type=normalized_type, bytes_len=len(content))
+        if self._is_h3_workflow(prepared.graph) and (
+            Path(descriptor["filename"]).suffix.lower() != ".mp4"
+            or normalized_type != "video/mp4"
+        ):
+            raise VideoGenerationError("ComfyUI H3 workflow did not return an MP4 output")
+        return VideoGenResult(
+            content=content,
+            content_type=normalized_type,
+            bytes_len=len(content),
+            duration_seconds=prepared.duration_seconds,
+            fps=prepared.fps,
+            width=prepared.width,
+            height=prepared.height,
+            resolved_seed=prepared.resolved_seed,
+        )
