@@ -63,9 +63,9 @@ def test_probe_real_clip(video_only_clip):
 def test_frames_flow_from_real_pipeline(video_only_clip):
     probe = probe_file(video_only_clip)
     pipeline = PlayerPipeline(str(video_only_clip), probe, target_fps=10.0)
-    pipeline.start()
+    run = pipeline.start()
     frames = []
-    for index, (pts, data) in enumerate(pipeline.iter_frames()):
+    for index, (pts, data) in enumerate(pipeline.iter_frames(run)):
         frames.append(pts)
         assert len(data) == 64 * 48 * 3
         if index >= 2:
@@ -78,8 +78,8 @@ def test_seek_restarts_at_offset(video_only_clip):
     probe = probe_file(video_only_clip)
     pipeline = PlayerPipeline(str(video_only_clip), probe, target_fps=10.0)
     pipeline.start()
-    pipeline.seek(0.5)
-    pts, _data = next(pipeline.iter_frames())
+    run = pipeline.seek(0.5)
+    pts, _data = next(pipeline.iter_frames(run))
     pipeline.stop()
     assert pts == pytest.approx(0.5, abs=1e-6)
 
@@ -90,9 +90,9 @@ def test_audio_branch_runs_headless(audio_video_clip, monkeypatch):
     probe = probe_file(audio_video_clip)
     assert probe.has_audio is True
     pipeline = PlayerPipeline(str(audio_video_clip), probe, target_fps=10.0)
-    pipeline.start()
+    run = pipeline.start()
     assert pipeline._ffplay is not None
-    pts, data = next(pipeline.iter_frames())
+    pts, data = next(pipeline.iter_frames(run))
     assert pts == pytest.approx(0.0, abs=1e-6)
     assert len(data) == 64 * 48 * 3
     pipeline.stop()
