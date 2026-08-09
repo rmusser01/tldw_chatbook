@@ -69,6 +69,18 @@ class ChatPersistenceService:
             return None
         return version
 
+    def get_conversation_version(self, conversation_id: str) -> int | None:
+        """Return the current positive version for one active conversation."""
+        if type(conversation_id) is not str or not conversation_id:
+            return None
+        conversation = self.db.get_conversation_by_id(conversation_id)
+        if conversation is None or conversation.get("deleted"):
+            return None
+        version = conversation.get("version")
+        if type(version) is not int or version < 1:
+            return None
+        return version
+
     @staticmethod
     def derive_conversation_title(
         *,
@@ -292,6 +304,7 @@ class ChatPersistenceService:
         expected_roleplay_context: ConsoleRoleplayContext | None = None,
         expected_system_prompts: tuple[str | None, ...] | None = None,
         allow_source_owned_repair: bool = False,
+        expected_roleplay_version: int | None = None,
     ) -> bool:
         """Update the persisted system prompt for an existing conversation.
 
@@ -308,6 +321,11 @@ class ChatPersistenceService:
         current_conversation = self.db.get_conversation_by_id(conversation_id)
         if not current_conversation:
             raise ValueError(f"Conversation {conversation_id} not found")
+        if (
+            expected_roleplay_version is not None
+            and current_conversation.get("version") != expected_roleplay_version
+        ):
+            return False
         if (
             expected_roleplay_context is not None
             and parse_console_roleplay_context(current_conversation.get("metadata"))
@@ -451,6 +469,7 @@ class ChatPersistenceService:
         expected_roleplay_template_source: str | None = None,
         expected_message_contents: tuple[str, ...] | None = None,
         allow_source_owned_repair: bool = False,
+        expected_roleplay_version: int | None = None,
     ) -> bool:
         """Update a message's content, optionally its parent/feedback, and its images.
 
@@ -522,6 +541,11 @@ class ChatPersistenceService:
         current_message = self.db.get_message_by_id(message_id)
         if not current_message:
             raise ValueError(f"Message {message_id} not found")
+        if (
+            expected_roleplay_version is not None
+            and current_message.get("version") != expected_roleplay_version
+        ):
+            return False
         if expected_roleplay_template_source is not None:
             current_metadata = MessageMetadata.from_json(
                 current_message.get("metadata_json")

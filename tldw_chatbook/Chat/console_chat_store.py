@@ -94,6 +94,8 @@ class _RoleplaySystemPromptWrite:
     accepts_system_prompt_guard: bool
     accepts_source_owned_repair: bool
     source_owned_repair: bool
+    accepts_roleplay_version_guard: bool
+    expected_roleplay_version: int | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -121,6 +123,8 @@ class _RoleplayMessageProjectionWrite:
     accepts_message_contents_guard: bool
     accepts_source_owned_repair: bool
     source_owned_repair: bool
+    accepts_roleplay_version_guard: bool
+    expected_roleplay_version: int | None
     sync_write: _RoleplaySyncWrite | None = None
 
 
@@ -292,6 +296,9 @@ class ConsoleChatPersistence(Protocol):
             The exact positive integer row version, or ``None`` when the row
             cannot provide a trustworthy version fence.
         """
+
+    def get_conversation_version(self, conversation_id: str) -> int | None:
+        """Return the current positive durable conversation row version."""
 
     def update_conversation_system_prompt(
         self,
@@ -2426,6 +2433,16 @@ class ConsoleChatStore:
         writer = getattr(self.persistence, "update_conversation_system_prompt", None)
         if not callable(writer):
             writer = _refuse_roleplay_projection_write
+        accepts_roleplay_version_guard = self._persistence_accepts_kwarg(
+            writer, "expected_roleplay_version"
+        )
+        expected_roleplay_version = None
+        if source_owned_repair and accepts_roleplay_version_guard:
+            reader = getattr(self.persistence, "get_conversation_version", None)
+            if callable(reader):
+                expected_roleplay_version = reader(session.persisted_conversation_id)
+            if expected_roleplay_version is None:
+                expected_roleplay_version = 0
         previous_candidates = self._roleplay_system_projection_candidates.get(
             session.id, ()
         )
@@ -2454,6 +2471,8 @@ class ConsoleChatStore:
                 writer, "allow_source_owned_repair"
             ),
             source_owned_repair=source_owned_repair,
+            accepts_roleplay_version_guard=accepts_roleplay_version_guard,
+            expected_roleplay_version=expected_roleplay_version,
         )
 
     def _snapshot_roleplay_message_projection_write(
@@ -2469,6 +2488,16 @@ class ConsoleChatStore:
         writer = getattr(self.persistence, "update_message_content", None)
         if not callable(writer):
             return None
+        accepts_roleplay_version_guard = self._persistence_accepts_kwarg(
+            writer, "expected_roleplay_version"
+        )
+        expected_roleplay_version = None
+        if source_owned_repair and accepts_roleplay_version_guard:
+            reader = getattr(self.persistence, "get_message_version", None)
+            if callable(reader):
+                expected_roleplay_version = reader(message.persisted_message_id)
+            if expected_roleplay_version is None:
+                expected_roleplay_version = 0
         metadata_json = (
             message.metadata.to_json()
             if message.metadata is not None and not message.metadata.is_empty
@@ -2513,6 +2542,8 @@ class ConsoleChatStore:
                 writer, "allow_source_owned_repair"
             ),
             source_owned_repair=source_owned_repair,
+            accepts_roleplay_version_guard=accepts_roleplay_version_guard,
+            expected_roleplay_version=expected_roleplay_version,
             sync_write=self._snapshot_roleplay_sync_write(session, message),
         )
 
@@ -2615,6 +2646,10 @@ class ConsoleChatStore:
                     system_kwargs["allow_source_owned_repair"] = (
                         system_write.source_owned_repair
                     )
+                if system_write.accepts_roleplay_version_guard:
+                    system_kwargs["expected_roleplay_version"] = (
+                        system_write.expected_roleplay_version
+                    )
                 if not system_write.writer(
                     **system_kwargs,
                 ):
@@ -2656,6 +2691,10 @@ class ConsoleChatStore:
             if message_write.accepts_source_owned_repair:
                 kwargs["allow_source_owned_repair"] = (
                     message_write.source_owned_repair
+                )
+            if message_write.accepts_roleplay_version_guard:
+                kwargs["expected_roleplay_version"] = (
+                    message_write.expected_roleplay_version
                 )
             try:
                 message_persisted = bool(message_write.writer(**kwargs))

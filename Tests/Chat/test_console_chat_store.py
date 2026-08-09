@@ -3675,7 +3675,7 @@ def test_forced_restored_roleplay_repair_accepts_owned_alpha_ancestor(tmp_path):
         stale_store = ConsoleChatStore(persistence=service)
         stale_session = stale_store.create_session(
             settings=ConsoleSessionSettings(
-                provider="llama_cpp", system_prompt="Speak with Alpha."
+                provider="llama_cpp", system_prompt="Speak with Bravo."
             ),
             assistant_kind="character",
             character_name="Alraune",
@@ -3685,7 +3685,7 @@ def test_forced_restored_roleplay_repair_accepts_owned_alpha_ancestor(tmp_path):
         stale_greeting = stale_store.append_message(
             stale_session.id,
             role=ConsoleMessageRole.ASSISTANT,
-            content="Hello Alpha.",
+            content="Hello Bravo.",
             persist=False,
             metadata=greeting_metadata,
         )
@@ -3695,8 +3695,12 @@ def test_forced_restored_roleplay_repair_accepts_owned_alpha_ancestor(tmp_path):
         stale_plan = stale_store.prepare_session_roleplay_projection_refresh(
             stale_session.id,
             global_default="Bravo",
+            force_persistence=True,
         )
         assert stale_plan is not None
+        assert stale_plan.system_prompt_write is not None
+        assert stale_plan.system_prompt_write.source_owned_repair is True
+        assert stale_plan.message_writes[0].source_owned_repair is True
 
         store = ConsoleChatStore(persistence=service)
         session = store.create_session(
