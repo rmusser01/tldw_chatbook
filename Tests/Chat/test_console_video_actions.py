@@ -14,7 +14,7 @@ from tldw_chatbook.Chat.console_command_grammar import (
 from tldw_chatbook.Chat.console_ephemeral import blocked_reason
 from tldw_chatbook.Chat.console_chat_models import ConsoleChatMessage, ConsoleMessageRole
 from tldw_chatbook.Chat.console_message_actions import ConsoleMessageActionService
-from tldw_chatbook.UI.Console_Modules.message import ConsoleMessageController
+from tldw_chatbook.UI.Console_Modules.wiring import build_console_controllers
 from tldw_chatbook.UI.Screens import chat_screen as chat_screen_module
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.Video_Generation.video_metadata import VideoGenerationMetadata
@@ -72,37 +72,7 @@ def _video_action_screen(tmp_path):
     screen._ensure_console_video_store = lambda: video_store
     screen._sync_native_console_chat_ui = AsyncMock()
     screen.run_worker = lambda awaitable, **_kwargs: pending_workers.append(awaitable)
-
-    def _unreached(*_args, **_kwargs):
-        raise AssertionError("video action test reached an unrelated dependency")
-
-    screen._message = ConsoleMessageController(
-        screen,
-        app_instance=screen.app_instance,
-        chat_store_accessor=lambda: store,
-        current_chat_store_accessor=lambda: store,
-        ensure_console_chat_controller=_unreached,
-        current_chat_controller_accessor=lambda: None,
-        sync_native_console_chat_ui=screen._sync_native_console_chat_ui,
-        active_session_is_ephemeral=_unreached,
-        active_native_console_session=_unreached,
-        current_console_conversation_id=_unreached,
-        active_console_provider_model_display=_unreached,
-        console_initial_session_title_for_workspace=_unreached,
-        console_change_review_run_id=_unreached,
-        open_change_review=_unreached,
-        start_console_transcript_sync_timer=_unreached,
-        clear_native_console_message_selection=_unreached,
-        regenerate_console_generation_variant=_unreached,
-        select_console_generation_variant=_unreached,
-        keep_console_generation_variant=_unreached,
-        handle_console_toggle_image_view=_unreached,
-        invalidate_console_persisted_rows_cache=_unreached,
-        play_console_video=lambda message_id: screen._play_console_video(message_id),
-        save_console_video_copy=(
-            lambda message_id: screen._save_console_video_copy(message_id)
-        ),
-    )
+    build_console_controllers(screen)
     return (
         screen,
         message,
