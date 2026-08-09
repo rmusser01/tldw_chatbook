@@ -101,6 +101,11 @@ ComfyUI exports are read-only evidence: they must not be modified, staged,
 copied into the repository under their original names, included as test
 fixtures, or committed anywhere in Git history.
 
+Both JSON destinations are runtime package data. Wheel and source-distribution
+builds must each contain exactly these two workflow JSON files and no obsolete
+Wan/SVD workflow. A fresh wheel install must be able to resolve and parse both
+through the adapter's confined packaged-workflow loader.
+
 ### 4.2 Source isolation and commit safety
 
 The import procedure is intentionally one-way:
@@ -195,6 +200,12 @@ preserves the public request contract by resolving once to a valid non-negative
 ComfyUI seed, which is returned as `resolved_seed`. The configured default
 workflow changes from `wan22_t2v.json` to `minimax_h3_t2v.json`.
 
+Every effective value is validated even when the request omitted it: width and
+height must be positive integers aligned to 32 pixels, duration must be finite
+and greater than zero, native FPS must remain 24, and seed must be a
+non-negative integer. Invalid graph defaults fail before queueing just like
+invalid supplied values.
+
 The provider-neutral request can also carry `ratio`. For the H3 presets, a
 numeric ratio is treated as a constraint on the effective width and height, not
 as a second competing size control. `16:9` is compatible with the aligned
@@ -241,6 +252,13 @@ result. Console style composition must therefore be regression-tested so its
 positive prompt suffix works with H3 without forwarding a style-only negative
 prompt that the selected workflow cannot consume.
 
+Style compatibility is classified from the selected graph's capability node
+(`class_type == MiniMaxH3ImageToVideo`), not its filename. Classification uses
+the existing confined local/package loader in the already-off-thread generation
+path and performs no ComfyUI network request. Only a negative prompt known to
+come from style composition may be suppressed; an explicit programmatic
+negative prompt reaches the adapter and is rejected by the H3 contract.
+
 The failure names the field and the expected title convention. This turns a
 custom workflow mismatch into an actionable configuration error and prevents a
 packaged filler prompt or stale dimensions from reaching generation unnoticed.
@@ -250,18 +268,25 @@ packaged filler prompt or stale dimensions from reaching generation unnoticed.
 1. Resolve the configured bare JSON filename, preferring the confined user
    workflow directory and falling back to packaged assets.
 2. Parse an API-format JSON object keyed by node id.
-3. Collect every non-empty `class_type` and compare it with real
+3. Validate reference assets. If the graph is H3 and any otherwise-valid image
+   reference is present, reject it before object-info lookup or upload; generic
+   input-image workflows retain their upload path.
+4. Collect every non-empty `class_type` and compare it with real
    `GET /object_info` data.
-4. Validate reference assets and upload a supported local input image through
+5. Upload a supported local input image through
    `POST /upload/image` when the selected custom workflow requires one.
-5. Deep-copy and strictly parameterize the graph.
-6. Submit `POST /prompt` with the graph and client id.
-7. Poll `GET /history/{prompt_id}` until success, terminal failure,
+6. Deep-copy and strictly parameterize the graph.
+7. Submit `POST /prompt` with the graph and client id.
+8. Poll `GET /history/{prompt_id}` until success, terminal failure,
    cancellation, or timeout.
-8. On cancellation, call `POST /interrupt` best-effort and stop locally.
-9. Enumerate the actual output descriptor from history and fetch bytes through
+9. Pending unrelated or preview outputs do not terminate polling. Terminal
+   failure is reported first; a no-supported-output error is raised only after
+   explicit terminal success. Each request and wait receives only the remaining
+   shared deadline budget.
+10. On cancellation, call `POST /interrupt` best-effort and stop locally.
+11. Enumerate the actual output descriptor from history and fetch bytes through
    `GET /view` using its filename, subfolder, and type.
-10. Return a `VideoGenResult` containing bytes, observed content type, byte
+12. Return a `VideoGenResult` containing bytes, observed content type, byte
     length, effective duration/FPS/dimensions/seed, and model metadata only when
     it is actually known from the parameterized graph.
 
@@ -320,6 +345,8 @@ wire rather than invented to match the adapter.
 ### Asset contract tests
 
 - Both shipped files parse as API-format graph objects.
+- Built wheel and sdist inventories contain exactly both H3 JSON assets and no
+  obsolete Wan/SVD workflow; a fresh installed-wheel probe loads both graphs.
 - The default graph does not contain `SpectrumApplyMiniMaxH3`.
 - The Spectrum graph contains and routes through it.
 - Wan/SVD assets are no longer shipped.
@@ -346,7 +373,7 @@ wire rather than invented to match the adapter.
   for the H3 presets.
 - Missing, linked, or misspelled controls fail instead of silently no-oping.
 - `/object_info` validation names all missing classes.
-- Real request signatures and verbatim captured payload shapes for upload,
+- Real request signatures and sanitized live-observed payload shapes for upload,
   submit, history, interrupt, and view.
 - Pending polling, terminal failure, timeout, and cancellation.
 - Output enumeration across the exact real `SaveVideo` history shape.
@@ -379,6 +406,12 @@ Console video-generation tests, architecture/runtime-policy tests that inventory
 workflow assets or adapters, full-tree collection, and the repository's required
 lint/static checks. Compare any unstable failure set against an identical command
 on the baseline rather than comparing raw counts.
+
+For the final-review remediation round, the user explicitly narrows this reach
+to touched-file-related packaging, adapter, asset, config, template, and Console
+tests plus targeted Ruff, `py_compile`, diff, and provenance checks. Do not
+rerun full collection, RuntimePolicy, broad repository suites, or costly live
+generation; the existing recorded UAT remains the live evidence.
 
 ## 10. Future-provider compatibility
 
