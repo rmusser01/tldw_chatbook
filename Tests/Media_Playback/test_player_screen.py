@@ -309,6 +309,55 @@ async def test_real_pump_renders_frame_and_eof_without_worker_error(monkeypatch)
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("failure_phase", ["timer", "pump"])
+async def test_activation_publication_failure_rolls_back_before_worker_cleanup(
+    monkeypatch,
+    failure_phase: str,
+):
+    failure_seen = Event()
+    timers: list[Any] = []
+
+    class PublicationFailurePlayer(_ObservedPlayer):
+        def set_interval(self, *args: Any, **kwargs: Any) -> Any:
+            is_status_timer = len(args) > 1 and args[1] == self._refresh_status
+            if failure_phase == "timer" and is_status_timer:
+                failure_seen.set()
+                raise RuntimeError(PRIVATE_ERROR)
+            timer = super().set_interval(*args, **kwargs)
+            if is_status_timer:
+                timers.append(timer)
+            return timer
+
+        def _start_pump(self, *args: Any) -> None:
+            if failure_phase == "pump":
+                failure_seen.set()
+                raise RuntimeError(PRIVATE_ERROR)
+            super()._start_pump(*args)
+
+    player = PublicationFailurePlayer(PRIVATE_PATH, render_mode="ascii")
+    app = _PlayerApp(player)
+    records: list[str] = []
+    sink = logger.add(lambda message: records.append(str(message)))
+    try:
+        async with app.run_test() as pilot:
+            await _wait(failure_seen)
+            await _wait(_Pipeline.instances[0].stopped)
+            await _finish_workers(app, pilot)
+
+            assert player._pipeline is None
+            assert player._run is None
+            assert player._status_timer is None
+            assert _Pipeline.instances[0].stop_calls == 1
+            assert app.notifications
+            assert "system player" in app.notifications[0].lower()
+            if timers:
+                assert timers[0]._task is None
+    finally:
+        logger.remove(sink)
+    _assert_sanitized(records, "activation")
+
+
+@pytest.mark.asyncio
 async def test_seek_is_nonblocking_single_flight_and_starts_replacement_pump(
     monkeypatch,
 ):
@@ -356,6 +405,53 @@ async def test_seek_is_nonblocking_single_flight_and_starts_replacement_pump(
         assert len(pipeline.runs) == 2
         assert app.player._run is pipeline.runs[1]
         assert not app.player._seek_in_flight
+
+
+@pytest.mark.asyncio
+async def test_replacement_pump_starts_before_seek_flag_is_cleared(monkeypatch):
+    first_pump = Event()
+    replacement_pump = Event()
+    release_first = Event()
+
+    class OrderingPlayer(_ObservedPlayer):
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            self.launch_flags: list[tuple[int, bool]] = []
+            super().__init__(*args, **kwargs)
+
+        def _start_pump(
+            self, token: int, pipeline: _Pipeline, run: PlayerRun
+        ) -> None:
+            self.launch_flags.append((run.generation, self._seek_in_flight))
+            super()._start_pump(token, pipeline, run)
+
+    class OrderingPipeline(_Pipeline):
+        def iter_frames(self, run: PlayerRun):
+            if run.generation == 1:
+                first_pump.set()
+                assert release_first.wait(2.0)
+            else:
+                replacement_pump.set()
+            run.eof = True
+            if False:
+                yield 0.0, b""
+
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.video_player_screen.PlayerPipeline",
+        OrderingPipeline,
+    )
+    player = OrderingPlayer(PRIVATE_PATH, render_mode="ascii")
+    app = _PlayerApp(player)
+    async with app.run_test() as pilot:
+        await _wait(first_pump)
+        player.action_seek_fwd()
+        await _wait(replacement_pump)
+        await pilot.pause()
+
+        assert player.launch_flags == [(1, False), (2, True)]
+        assert not player._seek_in_flight
+
+        release_first.set()
+        await _finish_workers(app, pilot)
 
 
 @pytest.mark.asyncio
@@ -411,6 +507,67 @@ async def test_old_frame_eof_and_failure_after_seek_do_not_replace_new_frame(
     _assert_sanitized(records, "pump")
 
 
+async def _assert_wrong_identity_is_ignored(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    wrong_pipeline: bool,
+) -> None:
+    pump_entered = Event()
+    release = Event()
+
+    class HeldPipeline(_Pipeline):
+        def iter_frames(self, run: PlayerRun):
+            pump_entered.set()
+            assert release.wait(2.0)
+            run.eof = True
+            if False:
+                yield 0.0, b""
+
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.video_player_screen.PlayerPipeline", HeldPipeline
+    )
+    app = _PlayerApp()
+    async with app.run_test() as pilot:
+        await _wait(pump_entered)
+        player = app.player
+        pipeline = player._pipeline
+        run = player._run
+        assert pipeline is not None and run is not None
+        token = player._activation_token
+        candidate_pipeline = HeldPipeline(PRIVATE_PATH, PROBE) if wrong_pipeline else pipeline
+        candidate_run = run if wrong_pipeline else PlayerRun(run.generation, None, 0.0)
+
+        assert not player._render_frame(
+            token,
+            candidate_pipeline,
+            candidate_run,
+            bytes((255, 0, 0)),
+        )
+        assert not player._finish_run(token, candidate_pipeline, candidate_run)
+        assert not player._fail_run(token, candidate_pipeline, candidate_run)
+        assert player._pipeline is pipeline
+        assert player._run is run
+        assert player._status_timer is not None
+        assert player.query_one("#video-player-frame", Static).renderable == ""
+        assert not player._finished
+        assert not app.notifications
+        assert pipeline.stop_calls == 0
+        assert player.is_attached
+
+        release.set()
+        await _finish_workers(app, pilot)
+
+
+@pytest.mark.asyncio
+async def test_same_token_and_run_with_wrong_pipeline_is_ignored(monkeypatch):
+    await _assert_wrong_identity_is_ignored(monkeypatch, wrong_pipeline=True)
+
+
+@pytest.mark.asyncio
+async def test_same_token_and_pipeline_with_wrong_run_is_ignored(monkeypatch):
+    await _assert_wrong_identity_is_ignored(monkeypatch, wrong_pipeline=False)
+
+
 @pytest.mark.asyncio
 async def test_unmount_ignores_late_frame_eof_and_cleanup_is_app_owned(
     monkeypatch,
@@ -452,6 +609,81 @@ async def test_unmount_ignores_late_frame_eof_and_cleanup_is_app_owned(
     assert app.player._pipeline is None
     assert not app.player._finished
     assert BlockedStopPipeline.instances[0].stopped.is_set()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("callback_phase", "expected_callback"),
+    [
+        ("frame", "_render_frame"),
+        ("eof", "_finish_run"),
+        ("failure", "_fail_run"),
+    ],
+)
+async def test_current_pump_bridge_refusal_cleans_pipeline_once_without_ui_fallback(
+    monkeypatch,
+    callback_phase: str,
+    expected_callback: str,
+):
+    pump_entered = Event()
+    release = Event()
+    direct_ui = Event()
+
+    class BridgePlayer(_ObservedPlayer):
+        def _render_frame(self, *args: Any) -> bool:
+            direct_ui.set()
+            return super()._render_frame(*args)
+
+        def _finish_run(self, *args: Any) -> bool:
+            direct_ui.set()
+            return super()._finish_run(*args)
+
+        def _fail_run(self, *args: Any) -> bool:
+            direct_ui.set()
+            return super()._fail_run(*args)
+
+    class RefusedPipeline(_Pipeline):
+        def iter_frames(self, run: PlayerRun):
+            pump_entered.set()
+            assert release.wait(2.0)
+            if callback_phase == "frame":
+                yield 0.0, bytes((1, 2, 3))
+                return
+            if callback_phase == "eof":
+                run.eof = True
+                return
+            raise RuntimeError(PRIVATE_ERROR)
+
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.video_player_screen.PlayerPipeline",
+        RefusedPipeline,
+    )
+    player = BridgePlayer(PRIVATE_PATH, render_mode="ascii")
+    app = _PlayerApp(player)
+    bridge_calls: list[str] = []
+    records: list[str] = []
+    sink = logger.add(lambda message: records.append(str(message)))
+    try:
+        async with app.run_test() as pilot:
+            await _wait(pump_entered)
+
+            def refuse(callback: Any, *args: Any, **kwargs: Any) -> Any:
+                bridge_calls.append(callback.__name__)
+                raise RuntimeError(PRIVATE_ERROR)
+
+            monkeypatch.setattr(app, "call_from_thread", refuse)
+            release.set()
+            await _wait(RefusedPipeline.instances[0].stopped)
+            await pilot.pause()
+
+            assert bridge_calls == [expected_callback]
+            assert not direct_ui.is_set()
+            assert RefusedPipeline.instances[0].stop_calls == 1
+            assert player._pipeline is RefusedPipeline.instances[0]
+            assert player._run is RefusedPipeline.instances[0].runs[0]
+    finally:
+        logger.remove(sink)
+    _assert_sanitized(records, "frame_dispatch")
 
 
 @pytest.mark.asyncio

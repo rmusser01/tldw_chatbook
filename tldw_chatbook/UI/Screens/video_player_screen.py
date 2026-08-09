@@ -51,6 +51,7 @@ _HINTS_NO_SEEK = "space pause · s stop · seek unavailable for this stream · q
 _FAILURE_GUIDANCE = (
     "Video playback stopped. Try Play again or open the video in your system player."
 )
+_BRIDGE_REFUSED = object()
 
 
 def _log_failure(phase: str, exc: BaseException) -> None:
@@ -189,10 +190,16 @@ class VideoPlayerScreen(ModalScreen[None]):
         self._probe = probe
         self._finished = False
         self._started_wall = time.monotonic()
-        self._status_timer = self.set_interval(
-            _STATUS_INTERVAL_SECONDS, self._refresh_status
-        )
-        self._start_pump(token, pipeline, run)
+        try:
+            self._status_timer = self.set_interval(
+                _STATUS_INTERVAL_SECONDS, self._refresh_status
+            )
+            self._start_pump(token, pipeline, run)
+        except Exception as exc:
+            _log_failure("activation", exc)
+            self._invalidate_current()
+            self._notify_and_dismiss(_FAILURE_GUIDANCE, severity="error")
+            return False
         return True
 
     def _activation_failed(self, token: int) -> bool:
@@ -214,6 +221,7 @@ class VideoPlayerScreen(ModalScreen[None]):
         pipeline = self._pipeline
         self._pipeline = None
         self._run = None
+        self._probe = None
         self._seek_in_flight = False
         timer, self._status_timer = self._status_timer, None
         if timer is not None:
@@ -248,7 +256,7 @@ class VideoPlayerScreen(ModalScreen[None]):
             return self.app.call_from_thread(callback, *args)
         except Exception as exc:
             _log_failure("frame_dispatch", exc)
-            return False
+            return _BRIDGE_REFUSED
 
     # -- frame pump (worker thread) -------------------------------------------
 
@@ -277,15 +285,23 @@ class VideoPlayerScreen(ModalScreen[None]):
                     if wait:
                         time.sleep(wait)
                 pipeline.note_rendered(run, pts)
-                if self._bridge(
+                dispatched = self._bridge(
                     self._render_frame, token, pipeline, run, data
-                ) is False:
+                )
+                if dispatched is _BRIDGE_REFUSED:
+                    self._cleanup_pipeline(pipeline)
+                    return
+                if dispatched is False:
                     return
             if run.eof:
-                self._bridge(self._finish_run, token, pipeline, run)
+                dispatched = self._bridge(self._finish_run, token, pipeline, run)
+                if dispatched is _BRIDGE_REFUSED:
+                    self._cleanup_pipeline(pipeline)
         except Exception as exc:
             _log_failure("pump", exc)
-            self._bridge(self._fail_run, token, pipeline, run)
+            dispatched = self._bridge(self._fail_run, token, pipeline, run)
+            if dispatched is _BRIDGE_REFUSED:
+                self._cleanup_pipeline(pipeline)
 
     def _matches(
         self, token: int, pipeline: PlayerPipeline, run: PlayerRun
