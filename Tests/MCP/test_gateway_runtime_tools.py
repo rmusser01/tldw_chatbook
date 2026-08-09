@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+from functools import partial
 from typing import Any
 
 import pytest
@@ -128,6 +129,39 @@ def test_runtime_derives_handler_name_only_when_name_is_none() -> None:
     runtime.finalize()
 
     assert runtime._tool_handlers["derived"] is derived
+
+
+def test_runtime_rejects_implicit_name_for_coroutine_callable_without_name() -> None:
+    runtime = _runtime(_descriptor())
+
+    async def handler() -> None:
+        return None
+
+    nameless_handler = partial(handler)
+    assert not hasattr(nameless_handler, "__name__")
+
+    with pytest.raises(ValueError) as exc_info:
+        runtime.tool()(nameless_handler)
+
+    assert str(exc_info.value) == "tool handler name is invalid"
+    assert len(str(exc_info.value)) <= 512
+
+
+@pytest.mark.asyncio
+async def test_coroutine_callable_without_name_registers_with_explicit_name() -> None:
+    runtime = _runtime(_descriptor("join"))
+
+    async def handler(left: str, right: str) -> str:
+        return left + right
+
+    nameless_handler = partial(handler, "chat")
+    assert not hasattr(nameless_handler, "__name__")
+
+    registered = runtime.tool(name="join")(nameless_handler)
+    runtime.finalize()
+
+    assert registered is nameless_handler
+    assert await runtime.call_tool("join", {"right": "book"}, _context()) == "chatbook"
 
 
 def test_runtime_rejects_handler_without_descriptor() -> None:
