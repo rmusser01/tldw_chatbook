@@ -2427,6 +2427,33 @@ def test_retryable_parakeet_failure_exposes_one_bounded_faster_whisper_retry(
     assert controller.retry_available is False
 
 
+def test_retry_preserves_logical_segment_texts_for_the_console_adapter(monkeypatch):
+    service, transcriber = _retryable_stop_service()
+    monkeypatch.setattr(
+        cvi,
+        "resolve",
+        lambda: cvi.EffectiveConfig(
+            provider="parakeet-onnx",
+            model=None,
+            language="en",
+            configured_provider="parakeet-onnx",
+            was_overridden=False,
+        ),
+    )
+    controller, _events, _ = _controller(monkeypatch, service=service)
+    controller.start(capture_generation=32)
+    controller.stop()
+
+    texts = controller.retry_segments_with_faster_whisper()
+
+    assert texts == ("failed segment", "pending segment")
+    assert [call["audio_data"] for call in transcriber.buffer_calls] == [
+        b"\x01\x00\x02\x00",
+        b"\x03\x00\x04\x00",
+    ]
+    assert controller.retry_available is False
+
+
 def test_retry_closure_does_not_retain_the_finished_dictation_service(monkeypatch):
     service, transcriber = _retryable_stop_service()
     service.language = "fr"

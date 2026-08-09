@@ -374,7 +374,9 @@ class ConsoleComposerBar(Horizontal):
     MAX_DRAFT_ROWS = 4
     COMPOSER_CHROME_ROWS = 4
     VOICE_CHIP_MIN_WIDTH = 24
-    VOICE_CHIP_MAX_WIDTH = 42
+    # Fits the 51-cell shared-executor busy copy plus the chip's cell of
+    # horizontal padding on each side at ordinary Console widths.
+    VOICE_CHIP_MAX_WIDTH = 53
     #: Cell cap for the inline `#console-send-disabled-reason` strip. The
     #: longest copy `build_console_disabled_reason` emits is 49 cells, so 52
     #: renders every reason whole at common widths while the `1fr` draft

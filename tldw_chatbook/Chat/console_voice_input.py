@@ -1364,7 +1364,7 @@ class ConsoleVoiceInputController:
         # processing thread from THIS attempt finally calls one of them (see
         # `start()`'s `capture_generation` parameter).
         self._pending_capture_generation: int | None = None
-        self._retry_action: Callable[[], str] | None = None
+        self._retry_action: Callable[[], tuple[str, ...]] | None = None
 
     @property
     def state(self) -> str:
@@ -1397,6 +1397,11 @@ class ConsoleVoiceInputController:
 
     def retry_with_faster_whisper(self) -> str:
         """Consume the one retained faster-whisper retry and return its text."""
+
+        return " ".join(self.retry_segments_with_faster_whisper())
+
+    def retry_segments_with_faster_whisper(self) -> tuple[str, ...]:
+        """Consume the retry while preserving its logical segment texts."""
 
         with self._state_lock:
             action, self._retry_action = self._retry_action, None
@@ -2116,10 +2121,10 @@ class ConsoleVoiceInputController:
         transcriber: Any,
         language: str,
         retry_buffer: Any,
-    ) -> Callable[[], str]:
+    ) -> Callable[[], tuple[str, ...]]:
         """Build one replay over exactly the retained logical boundaries."""
 
-        def _retry() -> str:
+        def _retry() -> tuple[str, ...]:
             try:
                 source = retry_buffer.source
                 frame_bytes = source.channels * source.sample_width
@@ -2145,7 +2150,7 @@ class ConsoleVoiceInputController:
                     text = result.get("text", "") if isinstance(result, dict) else ""
                     if isinstance(text, str) and text.strip():
                         texts.append(text.strip())
-                return " ".join(texts)
+                return tuple(texts)
             except Exception:  # noqa: BLE001 - retry errors are sanitized
                 logger.opt(exception=True).warning(
                     "Console dictation faster-whisper retry failed"

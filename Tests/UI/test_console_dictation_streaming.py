@@ -61,9 +61,16 @@ class FakeDictationService:
     -- at exactly the moment it wants them.
     """
 
-    def __init__(self, *, started: bool = True, start_error: str = "") -> None:
+    def __init__(
+        self,
+        *,
+        started: bool = True,
+        start_error: str = "",
+        stop_exception: Exception | None = None,
+    ) -> None:
         self.started = started
         self.start_error = start_error
+        self.stop_exception = stop_exception
         self.start_calls = 0
         self.stop_calls = 0
         self.release_calls = 0
@@ -137,6 +144,8 @@ class FakeDictationService:
         self.stop_entered.set()
         if self.stop_gate is not None:
             self.stop_gate.wait(timeout=4)
+        if self.stop_exception is not None:
+            raise self.stop_exception
 
     def emit_partial(self, text: str) -> None:
         assert self.on_partial is not None, "start_dictation() has not run yet"
@@ -841,10 +850,10 @@ def test_streaming_session_delegates_one_shot_retry_state():
             calls.append("clear")
             self.retry_available = False
 
-        def retry_with_faster_whisper(self) -> str:
+        def retry_segments_with_faster_whisper(self) -> tuple[str, ...]:
             calls.append("retry")
             self.retry_available = False
-            return "recovered"
+            return ("recovered",)
 
     session = dictation_module.ConsoleStreamingDictationSession(
         on_event=lambda _session, _event: None,
@@ -856,6 +865,161 @@ def test_streaming_session_delegates_one_shot_retry_state():
     assert session.retry_available is False
     session.clear_retry()
     assert calls == ["retry", "clear"]
+
+
+def test_streaming_retry_merges_prefix_and_classifies_each_logical_segment():
+    events: list = []
+
+    class RetryController:
+        retry_available = True
+
+        def retry_segments_with_faster_whisper(self) -> tuple[str, ...]:
+            self.retry_available = False
+            return ("recovered words", "Console, stop.")
+
+        def clear_retry(self) -> None:
+            self.retry_available = False
+
+    session = dictation_module.ConsoleStreamingDictationSession(
+        on_event=lambda _session, event: events.append(event),
+    )
+    session._controller = RetryController()
+    session._handle_event(voice_module.VoiceFinal("prefix already finalized"))
+    events.clear()
+
+    transcript = session.retry_with_faster_whisper()
+
+    assert transcript == "prefix already finalized recovered words"
+    assert events == [
+        voice_module.VoiceFinal("recovered words"),
+        VoiceCommand("stop"),
+    ]
+    assert session.commands_consumed == 1
+    assert session.retry_available is False
+
+
+def test_streaming_retry_events_keep_the_generation_that_started_the_replay():
+    retry_started = threading.Event()
+    retry_release = threading.Event()
+    events: list = []
+
+    class RetryController:
+        retry_available = True
+
+        def retry_segments_with_faster_whisper(self) -> tuple[str, ...]:
+            retry_started.set()
+            retry_release.wait(timeout=2)
+            self.retry_available = False
+            return ("stale recovered words",)
+
+    session = dictation_module.ConsoleStreamingDictationSession(
+        on_event=lambda _session, event: events.append(event),
+    )
+    session._controller = RetryController()
+    session._capture_generation = 1
+    result: list[str] = []
+    thread = threading.Thread(
+        target=lambda: result.append(session.retry_with_faster_whisper())
+    )
+
+    thread.start()
+    assert retry_started.wait(timeout=2)
+    with session._lock:
+        session._capture_generation = 2
+        session._segments[:] = ["new capture words"]
+    retry_release.set()
+    thread.join(timeout=2)
+
+    assert not thread.is_alive()
+    assert result == ["new capture words"]
+    assert events == []
+    assert session._segments == ["new capture words"]
+
+
+@pytest.mark.asyncio
+async def test_mounted_retry_keeps_prefix_and_routes_retried_stop_command(
+    monkeypatch,
+):
+    from tldw_chatbook.STT.contracts import BufferAudioSource
+    from tldw_chatbook.STT.dispatch_coordinator import (
+        RetryableDictationBuffer,
+        RetryableDictationFailure,
+    )
+
+    class RetryTranscriber:
+        def __init__(self) -> None:
+            self.texts = ["recovered suffix", "Console, stop."]
+            self.calls: list[dict] = []
+
+        def transcribe_buffer(self, **kwargs):
+            self.calls.append(kwargs)
+            return {"text": self.texts.pop(0)}
+
+    retry_buffer = RetryableDictationBuffer(
+        BufferAudioSource(b"\x01\x00\x02\x00\x03\x00\x04\x00", 16_000, 1, 2),
+        (2, 4),
+    )
+    service = FakeDictationService(
+        stop_exception=RetryableDictationFailure(retry_buffer)
+    )
+    service.uses_deferred_dictation = True
+    service.transcription_service = RetryTranscriber()
+    service.language = "en"
+    _patch_availability(monkeypatch, provider="parakeet-onnx")
+    monkeypatch.setattr(
+        voice_module,
+        "installed_local_providers",
+        lambda: ("parakeet-onnx", "faster-whisper"),
+    )
+    monkeypatch.setattr(
+        voice_module,
+        "_faster_whisper_model_is_local",
+        lambda _model: True,
+    )
+    _install_streaming_session(monkeypatch, service)
+    _, host = _ready_host()
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+
+        async def confirm_retry(_dialog):
+            return True
+
+        console.app_instance.push_screen_wait = confirm_retry
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        store = console._ensure_console_chat_store()
+        message_count = len(store.messages_for_session(store.active_session_id))
+        stop_requests = 0
+        original_stop_request = console._dictation._request_console_dictation_stop
+
+        def count_stop_request() -> None:
+            nonlocal stop_requests
+            stop_requests += 1
+            original_stop_request()
+
+        monkeypatch.setattr(
+            console._dictation,
+            "_request_console_dictation_stop",
+            count_stop_request,
+        )
+
+        await pilot.click("#console-dictation")
+        await _wait_for_mic_label(composer, pilot, "Dictating")
+        service.emit_final("prefix already finalized")
+        await pilot.pause()
+        await pilot.pause(0.6)
+        await pilot.click("#console-dictation")
+        await _wait_for_mic_label(composer, pilot, "Dictate")
+
+        assert composer.draft_text() == ("prefix already finalized recovered suffix")
+        assert "Console" not in composer.draft_text()
+        assert stop_requests == 2
+        assert len(store.messages_for_session(store.active_session_id)) == message_count
+        assert len(service.transcription_service.calls) == 2
+        assert all(
+            call["local_files_only"] is True
+            for call in service.transcription_service.calls
+        )
 
 
 @pytest.mark.asyncio
@@ -988,7 +1152,15 @@ async def test_the_transcribing_indication_reverts_on_a_mid_capture_stop(monkeyp
         assert "Transcribing" in _painted(chip)
 
         await pilot.click("#console-dictation")
-        await _wait_for_mic_label(composer, pilot, "Dictate")
+        button = await _wait_for_mic_label(composer, pilot, "Dictate")
+        assert console._console_dictation_state == "idle"
+        assert console._console_dictation_session is None
+        # This fake stop finishes inside Textual's 0.2 s pressed animation.
+        # Button deliberately ignores clicks while its ``-active`` class is
+        # present, so wait for that input animation rather than racing it.
+        assert button.has_class("-active")
+        while button.has_class("-active"):
+            await pilot.pause(0.01)
 
         # A fresh capture must start clean, with no leftover indication.
         await pilot.click("#console-dictation")

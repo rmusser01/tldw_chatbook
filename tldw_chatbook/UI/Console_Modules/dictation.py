@@ -616,9 +616,18 @@ class ConsoleStreamingDictationSession:
         self._controller.clear_retry()
 
     def retry_with_faster_whisper(self) -> str:
-        """Consume the retained replay once and return its transcript."""
+        """Replay logical segments, classify them, and return the full capture."""
 
-        return self._controller.retry_with_faster_whisper()
+        with self._lock:
+            generation = self._capture_generation
+        logical_texts = self._controller.retry_segments_with_faster_whisper()
+        for text in logical_texts:
+            self._handle_event(
+                console_voice_input.classify_segment(text),
+                generation,
+            )
+        with self._lock:
+            return _join_segments(self._segments)
 
     def discard(self) -> None:
         """Release the microphone without the blocking join.

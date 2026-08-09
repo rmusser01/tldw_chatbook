@@ -195,7 +195,7 @@ async def test_preparing_and_error_states_render_their_message():
 @pytest.mark.asyncio
 async def test_busy_dictation_copy_uses_the_existing_chip_and_clears_at_idle():
     app = ComposerApp()
-    async with app.run_test() as pilot:
+    async with app.run_test(size=(80, 12)) as pilot:
         composer = app.query_one(ConsoleComposerBar)
         message = "Local transcription busy — dictation will run next."
 
@@ -204,7 +204,7 @@ async def test_busy_dictation_copy_uses_the_existing_chip_and_clears_at_idle():
         await pilot.pause()
         chip = composer.query_one("#console-voice-status", Static)
 
-        assert str(chip.renderable) == message
+        assert message in _painted(chip)
         assert _visible(chip)
 
         # An ordinary control-bar refresh must not erase the busy status.
