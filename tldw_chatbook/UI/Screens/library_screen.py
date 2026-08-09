@@ -15115,32 +15115,47 @@ class LibraryScreen(BaseAppScreen):
     def _request_library_prompt_history_page(self) -> None:
         self._library_prompt_history_controller.request_page()
 
+    def _library_prompt_history_action_is_current(self, event: Any) -> bool:
+        """Reject semantic actions emitted by an outgoing history region."""
+        return self._library_prompt_history_controller.matches_scope(
+            prompt_uuid=event.prompt_uuid,
+            scope_token=event.scope_token,
+        )
+
     @on(LibraryPromptHistoryRegion.DisclosureOpened)
     def handle_library_prompt_history_opened(
-        self, _event: LibraryPromptHistoryRegion.DisclosureOpened
+        self, event: LibraryPromptHistoryRegion.DisclosureOpened
     ) -> None:
         """Lazy-load the first retained page when the disclosure opens."""
+        if not self._library_prompt_history_action_is_current(event):
+            return
         state = self._library_prompt_history_state
         if state is not None and not state.is_open:
             self._request_library_prompt_history_page()
 
     @on(LibraryPromptHistoryRegion.DisclosureClosed)
     def handle_library_prompt_history_closed(
-        self, _event: LibraryPromptHistoryRegion.DisclosureClosed
+        self, event: LibraryPromptHistoryRegion.DisclosureClosed
     ) -> None:
         """Use the pure close reset when the disclosure collapses."""
+        if not self._library_prompt_history_action_is_current(event):
+            return
         self._library_prompt_history_controller.close()
 
     @on(LibraryPromptHistoryRegion.CountRetryRequested)
     def handle_library_prompt_history_retry_count(
-        self, _event: LibraryPromptHistoryRegion.CountRetryRequested
+        self, event: LibraryPromptHistoryRegion.CountRetryRequested
     ) -> None:
+        if not self._library_prompt_history_action_is_current(event):
+            return
         self._request_library_prompt_history_count()
 
     @on(LibraryPromptHistoryRegion.PageRequested)
     def handle_library_prompt_history_request_page(
-        self, _event: LibraryPromptHistoryRegion.PageRequested
+        self, event: LibraryPromptHistoryRegion.PageRequested
     ) -> None:
+        if not self._library_prompt_history_action_is_current(event):
+            return
         self._request_library_prompt_history_page()
 
     @on(LibraryPromptHistoryRegion.RowSelected)
@@ -15148,6 +15163,8 @@ class LibraryScreen(BaseAppScreen):
         self, event: LibraryPromptHistoryRegion.RowSelected
     ) -> None:
         """Select an already-loaded immutable preview with reducer guards."""
+        if not self._library_prompt_history_action_is_current(event):
+            return
         self._library_prompt_history_controller.select(
             change_id=event.change_id,
             source_version=event.source_version,
@@ -15155,9 +15172,11 @@ class LibraryScreen(BaseAppScreen):
 
     @on(LibraryPromptHistoryRegion.RestoreRequested)
     def handle_library_prompt_history_restore(
-        self, _event: LibraryPromptHistoryRegion.RestoreRequested
+        self, event: LibraryPromptHistoryRegion.RestoreRequested
     ) -> None:
         """Confirm a gated restore without exposing retained Prompt bodies."""
+        if not self._library_prompt_history_action_is_current(event):
+            return
         state = self._library_prompt_history_state
         if state is None or self._library_prompt_block_state is None:
             return
@@ -15206,9 +15225,11 @@ class LibraryScreen(BaseAppScreen):
 
     @on(LibraryPromptHistoryRegion.ReloadRequested)
     def handle_library_prompt_history_reload(
-        self, _event: LibraryPromptHistoryRegion.ReloadRequested
+        self, event: LibraryPromptHistoryRegion.ReloadRequested
     ) -> None:
         """Reset and reload the first retained page without a settled count fetch."""
+        if not self._library_prompt_history_action_is_current(event):
+            return
         self._library_prompt_history_controller.reload_page()
 
     def _confirm_library_prompt_history_restore(
@@ -15956,12 +15977,18 @@ class LibraryScreen(BaseAppScreen):
         new_id = result_id if is_create else prompt_id
         version = result.get("version") if isinstance(result, Mapping) else None
         self._library_prompt_version = (
-            version if version is not None else (self._library_prompt_version or 0) + 1
+            version
+            if version is not None
+            else (1 if is_create else (self._library_prompt_version or 0) + 1)
         )
         patched_detail: dict[str, Any] = (
-            dict(self._library_prompt_detail)
-            if isinstance(self._library_prompt_detail, Mapping)
-            else {}
+            dict(result)
+            if is_create and isinstance(result, Mapping)
+            else (
+                dict(self._library_prompt_detail)
+                if isinstance(self._library_prompt_detail, Mapping)
+                else {}
+            )
         )
         patched_detail["id"] = new_id
         patched_detail["name"] = name
@@ -15985,16 +16012,20 @@ class LibraryScreen(BaseAppScreen):
                 patched_detail["last_modified"] = result["last_modified"]
         elif keywords is not None:
             patched_detail["keywords"] = keywords
-        self._library_prompt_detail = patched_detail
-        self._library_prompt_detached_structured = False
-        self._library_prompt_original_name = name
-        self._library_prompt_dirty = False
+        history_was_open = bool(
+            self._library_prompt_history_state is not None
+            and self._library_prompt_history_state.is_open
+        )
         if is_create:
-            # Adopts the freshly created id -- every subsequent save for
-            # this editor session is now an update against a real row (the
-            # `is_create`/staleness-pre-check-skip branches above only ever
-            # apply once, to the create itself).
-            self._selected_prompt_id = new_id
+            editor_was_armed = self._library_prompt_editor_armed
+            self._adopt_library_prompt_persisted_detail(
+                patched_detail,
+                status=LIBRARY_PROMPT_SAVE_STATUS_COPY["ok"],
+                open_history=history_was_open,
+            )
+            # This success patches the existing editor in place rather than
+            # remounting it, so retain its prior dirty-tracking arm state.
+            self._library_prompt_editor_armed = editor_was_armed
             self._sync_library_prompt_save_action_widgets()
             # Unlike a plain in-place field update (which defers the
             # broader snapshot refresh to when the editor is actually left
@@ -16003,6 +16034,11 @@ class LibraryScreen(BaseAppScreen):
             # must pick up the new row now. Fire-and-forget, mirrors
             # ``_create_library_note``'s equivalent post-create refresh.
             self._refresh_local_source_snapshot()
+        else:
+            self._library_prompt_detail = patched_detail
+            self._library_prompt_detached_structured = False
+            self._library_prompt_original_name = name
+            self._library_prompt_dirty = False
         # Targeted updates only (no recompose): the fields already hold the
         # user's just-saved text, so nothing there needs to change -- only
         # the meta line's version and the status line need to reflect the
@@ -16019,13 +16055,10 @@ class LibraryScreen(BaseAppScreen):
         # "Saved." status, same combined helper the failure branches above
         # use.
         await self._apply_library_prompt_save_outcome("ok")
-        history_was_open = bool(
-            self._library_prompt_history_state is not None
-            and self._library_prompt_history_state.is_open
-        )
-        self._initialize_library_prompt_history(
-            patched_detail, open_history=history_was_open
-        )
+        if not is_create:
+            self._initialize_library_prompt_history(
+                patched_detail, open_history=history_was_open
+            )
         # The broader local-source snapshot (rail badge / list ordering) is
         # deliberately NOT refreshed here -- it would recompose the whole
         # canvas (see the comment above) while this editor is still open

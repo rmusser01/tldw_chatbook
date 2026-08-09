@@ -11,7 +11,6 @@ class PromptRestoreErrorCode(StrEnum):
     EXPECTED_VERSION = "expected_version"
     NAME_CONFLICT = "name_conflict"
     VALIDATION = "validation"
-    KEYWORDS = "keywords"
 
 
 class PromptRestoreError(ValueError):

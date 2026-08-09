@@ -162,3 +162,25 @@ async def test_prompt_history_controller_reload_resets_page_without_refetching_c
     assert service.count_calls == ["prompt-a"]
     assert service.page_calls == [None, None]
     assert controller.state.page_status == "loaded"
+
+
+@pytest.mark.asyncio
+async def test_prompt_history_controller_ignores_absent_row_selection() -> None:
+    """A stale row identity within the current scope is a reducer no-op."""
+    screen = _ScreenStub()
+    service = _HistoryServiceStub()
+    controller = LibraryPromptHistoryController(
+        screen=screen,
+        run_service_call=_call_service,
+        prompt_service=lambda: service,
+        sync_view=lambda _state: None,
+    )
+    controller.initialize({"uuid": "prompt-a", "version": 1})
+    await screen.started.pop()
+    controller.request_page()
+    await screen.started.pop()
+    before = controller.state
+
+    controller.select(change_id=999, source_version=999)
+
+    assert controller.state is before

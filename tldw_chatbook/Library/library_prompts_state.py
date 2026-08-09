@@ -58,7 +58,6 @@ PromptHistoryRestoreKind = Literal[
     "current_unavailable",
     "validation_error",
     "name_conflict",
-    "keyword_error",
     "error",
 ]
 
@@ -188,6 +187,7 @@ class PromptHistoryState:
     preview_request: PromptHistoryPreviewRequest | None = None
     restore_request: PromptHistoryRestoreRequest | None = None
     restore_outcome: PromptHistoryRestoreOutcome | None = None
+    restore_refresh_pending: bool = False
     error: str = ""
     last_request_token: int = -1
 
@@ -548,6 +548,8 @@ def history_restore_gate(
     state: PromptHistoryState, *, dirty: bool
 ) -> PromptHistoryRestoreGate:
     """Return the pure restore gate while leaving history viewing always available."""
+    if state.restore_refresh_pending:
+        return PromptHistoryRestoreGate(False, "Refreshing the restored Prompt…", None)
     if state.selected is None:
         return PromptHistoryRestoreGate(
             False, "Select a retained version to restore.", None
@@ -639,12 +641,6 @@ def format_prompt_history_restore_outcome(
             return PromptHistoryRestoreOutcome(
                 "name_conflict",
                 "Another active Prompt already uses this name. Rename it or choose another retained version, then retry.",
-                False,
-            )
-        if error.code == PromptRestoreErrorCode.KEYWORDS:
-            return PromptHistoryRestoreOutcome(
-                "keyword_error",
-                "This retained version's keywords couldn't be restored. Choose another retained version, then retry.",
                 False,
             )
         return PromptHistoryRestoreOutcome(
@@ -751,7 +747,12 @@ def apply_prompt_history_restore(
             restore_outcome=conflict,
             error=conflict.message,
         )
-    return replace(state, restore_request=None, restore_outcome=outcome)
+    return replace(
+        state,
+        restore_request=None,
+        restore_outcome=outcome,
+        restore_refresh_pending=outcome.kind == "restored",
+    )
 
 
 @dataclass(frozen=True)

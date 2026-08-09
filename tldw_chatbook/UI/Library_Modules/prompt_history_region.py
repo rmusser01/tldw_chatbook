@@ -20,36 +20,62 @@ from ...Library.library_prompts_state import (
 )
 
 
+class _ScopedHistoryAction(Message):
+    """One immutable action captured from a specific history view model."""
+
+    __slots__ = ("_prompt_uuid", "_scope_token")
+
+    def __init__(self, *, prompt_uuid: str, scope_token: int) -> None:
+        self._prompt_uuid = prompt_uuid
+        self._scope_token = scope_token
+        super().__init__()
+
+    @property
+    def prompt_uuid(self) -> str:
+        return self._prompt_uuid
+
+    @property
+    def scope_token(self) -> int:
+        return self._scope_token
+
+
 class LibraryPromptHistoryRegion(Vertical):
     """Recompose and translate events inside the retained-history disclosure."""
 
     class Ready(Message):
         """A freshly mounted region needs the screen's current controller state."""
 
-    class DisclosureOpened(Message):
+    class DisclosureOpened(_ScopedHistoryAction):
         """The retained-history disclosure was opened."""
 
-    class DisclosureClosed(Message):
+    class DisclosureClosed(_ScopedHistoryAction):
         """The retained-history disclosure was closed."""
 
-    class CountRetryRequested(Message):
+    class CountRetryRequested(_ScopedHistoryAction):
         """The scalar history count should be retried."""
 
-    class PageRequested(Message):
+    class PageRequested(_ScopedHistoryAction):
         """The first, retry, or next retained-history page was requested."""
 
-    class RowSelected(Message):
+    class RowSelected(_ScopedHistoryAction):
         """A retained snapshot row was selected."""
 
-        def __init__(self, *, change_id: int, source_version: int) -> None:
+        def __init__(
+            self,
+            *,
+            prompt_uuid: str,
+            scope_token: int,
+            change_id: int,
+            source_version: int,
+        ) -> None:
             self.change_id = change_id
             self.source_version = source_version
-            super().__init__()
+            super().__init__(prompt_uuid=prompt_uuid, scope_token=scope_token)
 
-    class RestoreRequested(Message):
+    class RestoreRequested(_ScopedHistoryAction):
         """The selected retained snapshot should enter confirmation."""
 
-    class ReloadRequested(Message):
+    class ReloadRequested(_ScopedHistoryAction):
         """The retained-history first page should be reset and reloaded."""
 
     view_model: reactive[tuple[PromptHistoryState | None, bool, bool]] = reactive(
@@ -87,6 +113,16 @@ class LibraryPromptHistoryRegion(Vertical):
     def on_mount(self) -> None:
         """Request a live sync after an outer canvas recompose mounts this region."""
         self.post_message(self.Ready())
+
+    def _action_scope(self) -> dict[str, str | int] | None:
+        """Capture immutable identity from the currently emitting view model."""
+        state = self.view_model[0]
+        if state is None:
+            return None
+        return {
+            "prompt_uuid": state.prompt_uuid,
+            "scope_token": state.scope_token,
+        }
 
     def compose(self) -> ComposeResult:
         state, dirty, current_compatible = self.view_model
@@ -349,30 +385,39 @@ class LibraryPromptHistoryRegion(Vertical):
     @on(Collapsible.Toggled, "#library-prompt-history-collapsible")
     def _on_disclosure_toggled(self, event: Collapsible.Toggled) -> None:
         event.stop()
+        scope = self._action_scope()
+        if scope is None:
+            return
         if event.collapsible.collapsed:
-            self.post_message(self.DisclosureClosed())
+            self.post_message(self.DisclosureClosed(**scope))
         else:
-            self.post_message(self.DisclosureOpened())
+            self.post_message(self.DisclosureOpened(**scope))
 
     @on(Button.Pressed, "#library-prompt-history-retry-count")
     def _on_count_retry(self, event: Button.Pressed) -> None:
         event.stop()
-        self.post_message(self.CountRetryRequested())
+        scope = self._action_scope()
+        if scope is not None:
+            self.post_message(self.CountRetryRequested(**scope))
 
     @on(Button.Pressed, "#library-prompt-history-retry-page")
     @on(Button.Pressed, "#library-prompt-history-load-older")
     def _on_page_requested(self, event: Button.Pressed) -> None:
         event.stop()
-        self.post_message(self.PageRequested())
+        scope = self._action_scope()
+        if scope is not None:
+            self.post_message(self.PageRequested(**scope))
 
     @on(Button.Pressed, ".library-prompt-history-row")
     def _on_row_selected(self, event: Button.Pressed) -> None:
         event.stop()
         change_id = getattr(event.button, "change_id", None)
         source_version = getattr(event.button, "source_version", None)
-        if type(change_id) is int and type(source_version) is int:
+        scope = self._action_scope()
+        if scope is not None and type(change_id) is int and type(source_version) is int:
             self.post_message(
                 self.RowSelected(
+                    **scope,
                     change_id=change_id,
                     source_version=source_version,
                 )
@@ -381,9 +426,13 @@ class LibraryPromptHistoryRegion(Vertical):
     @on(Button.Pressed, "#library-prompt-history-restore")
     def _on_restore_requested(self, event: Button.Pressed) -> None:
         event.stop()
-        self.post_message(self.RestoreRequested())
+        scope = self._action_scope()
+        if scope is not None:
+            self.post_message(self.RestoreRequested(**scope))
 
     @on(Button.Pressed, "#library-prompt-history-reload")
     def _on_reload_requested(self, event: Button.Pressed) -> None:
         event.stop()
-        self.post_message(self.ReloadRequested())
+        scope = self._action_scope()
+        if scope is not None:
+            self.post_message(self.ReloadRequested(**scope))

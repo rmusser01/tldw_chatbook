@@ -999,11 +999,6 @@ def test_reload_history_page_clears_page_scope_but_preserves_settled_count():
             PromptRestoreError(PromptRestoreErrorCode.NAME_CONFLICT),
             "name_conflict",
         ),
-        (
-            None,
-            PromptRestoreError(PromptRestoreErrorCode.KEYWORDS),
-            "keyword_error",
-        ),
         (None, ValueError("SECRET adapter value"), "error"),
         (None, ConflictError("SECRET unclassified conflict"), "error"),
         (None, RuntimeError("network"), "error"),

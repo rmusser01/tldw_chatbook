@@ -217,6 +217,15 @@ class LibraryPromptHistoryController:
         if state is not None and state.is_open:
             self._publish(close_prompt_history(state))
 
+    def matches_scope(self, *, prompt_uuid: str, scope_token: int) -> bool:
+        """Return whether a semantic action targets the live Prompt scope."""
+        state = self.state
+        return bool(
+            state is not None
+            and state.prompt_uuid == prompt_uuid
+            and state.scope_token == scope_token
+        )
+
     def reload_page(self) -> None:
         """Reset to page zero and reload without repeating a settled count."""
         state = self.state
@@ -231,6 +240,11 @@ class LibraryPromptHistoryController:
         """Select one already-loaded immutable preview."""
         state = self.state
         if state is None:
+            return
+        if not any(
+            row.change_id == change_id and row.version == source_version
+            for row in state.rows
+        ):
             return
         state, request = begin_prompt_history_preview(
             state,
