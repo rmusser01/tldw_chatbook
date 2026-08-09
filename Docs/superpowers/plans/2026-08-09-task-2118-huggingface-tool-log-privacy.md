@@ -36,7 +36,7 @@
 - Re-inspect: `tldw_chatbook/LLM_Calls/LLM_API_Calls.py:4341-4354`
 - Re-run: focused baselines and the Task 2 logger inventory
 
-- [ ] **Step 1: Require a clean, committed planning baseline**
+- [x] **Step 1: Require a clean, committed planning baseline**
 
 Run:
 
@@ -47,7 +47,7 @@ git log -1 --oneline
 
 Expected: the working tree is clean and the checked-in plan/task record is at `HEAD`. Do not begin implementation with an untracked plan or modified Backlog record, because the later mutation-restoration check relies on a clean tree.
 
-- [ ] **Step 2: Rebase onto the latest dev before touching tests or production**
+- [x] **Step 2: Rebase onto the latest dev before touching tests or production**
 
 Run:
 
@@ -60,7 +60,7 @@ git status --short --branch
 
 Expected: fetch/rebase succeeds, the ancestry command exits 0, and status shows only commits ahead of `origin/dev`. Resolve conflicts against the current privacy/helper contract; do not carry stale log code forward mechanically.
 
-- [ ] **Step 3: Reconcile assumptions and refresh baselines**
+- [x] **Step 3: Reconcile assumptions and refresh baselines**
 
 Re-inspect the two HuggingFace log calls and `safe_llm_request_payload_summary()`, then run:
 
@@ -81,7 +81,7 @@ Expected on the reviewed baseline: 68 privacy tests and 8 HuggingFace tests pass
 - Modify: `Tests/Chat/test_sensitive_llm_logging.py:43-57,682-760`
 - Modify: `tldw_chatbook/LLM_Calls/LLM_API_Calls.py:4341-4354`
 
-- [ ] **Step 1: Add the failing real-function regression test**
+- [x] **Step 1: Add the failing real-function regression test**
 
 Add `"TOOL-SCHEMA-ENUM-CANARY"` and `"HUGGINGFACE-USER-CANARY"` to `CANARIES`, then add this test beside the existing tool-summary and HuggingFace privacy tests:
 
@@ -149,7 +149,7 @@ def test_huggingface_tool_logs_are_names_only(
 
 This drives the production function directly; it does not compose a test or simplified application.
 
-- [ ] **Step 2: Run the targeted test and verify RED**
+- [x] **Step 2: Run the targeted test and verify RED**
 
 Run:
 
@@ -159,7 +159,7 @@ Run:
 
 Expected: `1 failed, 1 passed`. The ordinary case must show the current raw tool-definition/user sentinels in captured logs; the sensitive case must pass because it already omits the tools line and raw payload.
 
-- [ ] **Step 3: Replace only the two unsafe renderings**
+- [x] **Step 3: Replace only the two unsafe renderings**
 
 Replace the ordinary HuggingFace logging block with:
 
@@ -178,13 +178,13 @@ Replace the ordinary HuggingFace logging block with:
 
 Do not change the sensitive metadata branch, helper implementation, request payload, transport, or response handling.
 
-- [ ] **Step 4: Run the targeted test and verify GREEN**
+- [x] **Step 4: Run the targeted test and verify GREEN**
 
 Run the Step 2 command again.
 
 Expected: `2 passed`.
 
-- [ ] **Step 5: Run focused behavior and static gates**
+- [x] **Step 5: Run focused behavior and static gates**
 
 Run:
 
@@ -201,7 +201,7 @@ git diff --check
 
 Expected: 70 privacy tests pass after adding the two parameter cases; 8 HuggingFace tests pass; Ruff lint, all three edited-range format checks, compilation, and diff checks exit 0. Do not run Ruff formatting over either complete file because that would mix pre-existing formatter drift into this security repair.
 
-- [ ] **Step 6: Commit the behavioral repair**
+- [x] **Step 6: Commit the behavioral repair**
 
 ```bash
 git add Tests/Chat/test_sensitive_llm_logging.py tldw_chatbook/LLM_Calls/LLM_API_Calls.py
@@ -215,7 +215,7 @@ git commit -m "fix(llm): redact HuggingFace tool logs"
 - Temporarily modify and restore: `tldw_chatbook/LLM_Calls/LLM_API_Calls.py:4350-4360`
 - Test: `Tests/Chat/test_sensitive_llm_logging.py::test_huggingface_tool_logs_are_names_only`
 
-- [ ] **Step 1: Run the identifier-filtered high-risk candidate inventory**
+- [x] **Step 1: Run the identifier-filtered high-risk candidate inventory**
 
 Run this read-only inventory from the repository root:
 
@@ -267,7 +267,7 @@ Expected after the repair: exactly 35 high-risk candidates across four modules: 
 
 This 35-site list is deliberately only a high-risk candidate inventory. Its identifier spelling filter can miss a body called `request_data`, `data2`, `retry_payload`, or an unrelated alias, so it must not be presented as exhaustive or authoritative AC 4 evidence. Inspect every result in context, retain its classification, and then complete Steps 2 and 3.
 
-- [ ] **Step 2: Enumerate and review every logger call in `LLM_Calls`**
+- [x] **Step 2: Enumerate and review every logger call in `LLM_Calls`**
 
 Run this syntax-complete enumeration for calls rooted at the repository's `logger` or `logging` owners. `owner_root()` follows attribute and call chains, so `logger.opt(...).error(...)` and `logging.getLogger(...).debug(...)` are included:
 
@@ -326,7 +326,7 @@ Expected reviewed inventory: 763 calls across eight modules:
 
 Review every printed source expression at its printed location, including the logger calls that do not contain conventional payload/tool identifiers. Classify whether it can render a provider request body, a tool/schema/definition structure, bounded metadata, response/error data, or unrelated diagnostics. The reviewed result after Task 1 is no additional raw provider request-body dictionary or raw tool/schema/definition structure. Existing raw summarization input/prompt/response diagnostics are not evidence that this narrower AC 4 boundary is clean; preserve their separate ownership and do not silently classify them as safe.
 
-- [ ] **Step 3: Correlate outbound bodies and tool/schema expressions independently of the 35-site filter**
+- [x] **Step 3: Correlate outbound bodies and tool/schema expressions independently of the 35-site filter**
 
 Run this function-scoped correlation. It discovers outbound `json=`, `data=`, and `content=` expressions on request/post/put/patch/stream/send-like calls without filtering their identifier spellings. It prints every logger call in each request-containing function, marks exact body-expression name overlap, and follows only simple same-scope `alias = name` and `alias = name.copy()` relationships. That alias pass is deliberately flow-insensitive and conservative; manual review must resolve reassignments and it must not be described as general data-flow proof.
 
@@ -532,7 +532,7 @@ Expected: ten expressions, all in `LLM_API_Calls.py`: eight constant validation/
 
 These scripts prove the reviewed Python syntax under `LLM_Calls` for calls rooted at `logger`/`logging` and for the listed HTTP method/keyword shapes. They do not prove dynamic runtime values, custom logger aliases, positional/custom transport bodies, or generated code. Record this boundary exactly; the AC 4 conclusion is the combined result of the complete logger review, body/tool correlation, real-function sentinel, and independent mutations—not any single heuristic scan. If an additional AC 4 match exists, add a failing sentinel test and route it through the helper before continuing.
 
-- [ ] **Step 4: Verify the separate privacy follow-up is committed before mutation checks**
+- [x] **Step 4: Verify the separate privacy follow-up is committed before mutation checks**
 
 Run:
 
@@ -544,7 +544,7 @@ git status --short
 
 Expected: the title search returns exactly one generated task file, the log command shows the dedicated planning/follow-up commit, and the working tree is clean. The follow-up's description points backward to TASK-2118; TASK-2118 does not point forward to its later ID.
 
-- [ ] **Step 5: Mutation-check the tool-definition guard**
+- [x] **Step 5: Mutation-check the tool-definition guard**
 
 Temporarily replace only the corrected `HuggingFace Tools` summary with the old line:
 
@@ -560,7 +560,7 @@ Run:
 
 Expected: `1 failed, 1 passed`; inspect the traceback and require the ordinary (`sensitive=False`) case to fail on the planted description/schema or exact names-only assertion. Restore the helper-based implementation with `apply_patch` immediately and rerun the same cache-disabled command for `2 passed`.
 
-- [ ] **Step 6: Mutation-check the Final Payload allowlist**
+- [x] **Step 6: Mutation-check the Final Payload allowlist**
 
 With the tools fix restored, temporarily replace only the corrected Final Payload summary with the prior denylist expression:
 
@@ -574,7 +574,7 @@ Run the same `python -B ... -vv` targeted command.
 
 Expected: `1 failed, 1 passed`; inspect the traceback and require the ordinary (`sensitive=False`) case to fail because `HUGGINGFACE-USER-CANARY` reappears. Restore the helper-based implementation with `apply_patch` immediately and rerun the same cache-disabled command for `2 passed`.
 
-- [ ] **Step 7: Confirm no temporary mutation remains**
+- [x] **Step 7: Confirm no temporary mutation remains**
 
 Run:
 
@@ -592,7 +592,7 @@ Expected: the production/test diff is empty and the working tree is clean; neith
 - Modify: `backlog/tasks/task-2118 - HuggingFace-tools-debug-log-dumps-full-tool-schemas.md`
 - Verify: touched-file and affected-functionality tests plus edited Python static checks
 
-- [ ] **Step 1: Run the touched-file and affected-functionality gates**
+- [x] **Step 1: Run the touched-file and affected-functionality gates**
 
 Run in the foreground and retain exact counts:
 
@@ -610,7 +610,7 @@ git diff --check
 
 Expected: all gates exit 0. Per the user's explicit closeout scope, only tests related to the edited files and affected HuggingFace/logging functionality are completion gates. Do not run a repository-wide test suite, compose a test or simplified application, or perform detached-baseline replay for unrelated failures.
 
-- [ ] **Step 2: Complete Backlog evidence and status through the CLI**
+- [x] **Step 2: Complete Backlog evidence and status through the CLI**
 
 Use `backlog task edit 2118` to:
 
@@ -623,7 +623,7 @@ Use `backlog task edit 2118` to:
 
 If the CLI canonicalizes the task filename, restore the original tracked filename with `apply_patch` so the closeout does not introduce an unrelated rename.
 
-- [ ] **Step 3: Verify task hygiene and commit closeout**
+- [x] **Step 3: Verify task hygiene and commit closeout**
 
 Run:
 
@@ -643,7 +643,7 @@ git add 'backlog/tasks/task-2118 - HuggingFace-tools-debug-log-dumps-full-tool-s
 git commit -m "docs(security): close TASK-2118"
 ```
 
-- [ ] **Step 4: Run fresh post-commit verification**
+- [x] **Step 4: Run fresh post-commit verification**
 
 Run:
 

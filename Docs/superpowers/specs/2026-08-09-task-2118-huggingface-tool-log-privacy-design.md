@@ -11,13 +11,13 @@
 
 `chat_with_huggingface` retains useful debug metadata without serializing tool descriptions, parameter schemas, enum values, or other unapproved request fields. Sensitive requests continue to omit the HuggingFace tools log entirely. Ordinary requests log only the tool names extracted by the existing allowlist helper.
 
-## Verified current state
+## Verified pre-implementation state
 
-- `chat_with_huggingface` currently interpolates `payload["tools"]` directly into the `HuggingFace Tools` debug line when the request is not sensitive.
-- The same ordinary-request block also builds `HuggingFace Final Payload` by excluding only `messages` and `tools`. That is denylist-shaped and can expose any newly added request field by default.
-- `safe_llm_request_payload_summary()` already allowlists scalar request metadata and delegates tool handling to `safe_llm_tool_names()`, which returns recognizable tool names and drops definitions, schemas, and arguments.
-- Sensitive HuggingFace requests currently log only model, streaming state, message count, and content byte count; the tools line is skipped.
-- The focused baseline is green: `Tests/Chat/test_sensitive_llm_logging.py` has 68 passing tests, and the HuggingFace subset of `Tests/Chat/test_chat_functions.py` has 8 passing tests.
+- `chat_with_huggingface` interpolated `payload["tools"]` directly into the `HuggingFace Tools` debug line when the request was not sensitive.
+- The same ordinary-request block also built `HuggingFace Final Payload` by excluding only `messages` and `tools`. That was denylist-shaped and could expose any newly added request field by default.
+- `safe_llm_request_payload_summary()` already allowlisted scalar request metadata and delegated tool handling to `safe_llm_tool_names()`, which returned recognizable tool names and dropped definitions, schemas, and arguments.
+- Sensitive HuggingFace requests logged only model, streaming state, message count, and content byte count; the tools line was skipped.
+- The focused baseline was green: `Tests/Chat/test_sensitive_llm_logging.py` had 68 passing tests, and the HuggingFace subset of `Tests/Chat/test_chat_functions.py` had 8 passing tests.
 - No open pull request or competing remote branch for TASK-2118 was found before the task was claimed.
 
 ## Selected approach
