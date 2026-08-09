@@ -3542,12 +3542,12 @@ with stray left-edge border fragments), and padding 0 1 so the full
 }
 
 .console-transcript-roleplay-user-label {
-    color: $primary;
+    color: $text-primary;
     text-style: bold;
 }
 
 .console-transcript-roleplay-character-label {
-    color: $secondary;
+    color: $text-primary;
     text-style: bold;
 }
 

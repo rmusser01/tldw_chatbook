@@ -328,6 +328,18 @@ async def test_roleplay_tints_and_selected_precedence_are_compositor_painted(the
         assert _painted_background(app, failed_roleplay_row) != _painted_background(
             app, character_row
         )
+        for speaker_kind, row in (
+            ("user", user_row),
+            ("character", character_row),
+        ):
+            label = row.query_one(".console-transcript-speaker-label", Static)
+            foreground, background = _painted_foreground_and_background(app, label)
+            ratio = _contrast(foreground, background)
+            assert ratio >= MIN_SPEAKER_CONTRAST, (
+                f"{speaker_kind} speaker label contrast is {ratio:.2f}:1 under "
+                f"{theme}; expected at least {MIN_SPEAKER_CONTRAST}:1 "
+                f"(foreground={foreground}, background={background})"
+            )
         failed_label = failed_roleplay_row.query_one(
             ".console-transcript-speaker-label", Static
         )
