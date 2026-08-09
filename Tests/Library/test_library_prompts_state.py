@@ -36,6 +36,9 @@ from tldw_chatbook.Prompt_Management.prompt_artifact_models import (
     blank_recipe,
     outcome_first_recipe,
 )
+from tldw_chatbook.Prompt_Management.prompt_normalizers import (
+    normalize_prompt_history_page,
+)
 from tldw_chatbook.Prompt_Management.prompt_source_capabilities import (
     PromptCapabilityError,
     PromptSourceCapabilities,
@@ -450,6 +453,134 @@ def _history_page(
     }
 
 
+def _normalized_history_row(payload: dict[str, object]) -> dict[str, object]:
+    """Produce the real normalized retained-history row shape consumed by state."""
+    return normalize_prompt_history_page(
+        {
+            "items": [
+                {
+                    "change_id": 30,
+                    "entity": "Prompts",
+                    "entity_uuid": HISTORY_UUID,
+                    "operation": "update",
+                    "timestamp": "2026-08-08T12:00:03+00:00",
+                    "version": 3,
+                    "payload": payload,
+                }
+            ],
+            "predecessor": None,
+            "total_count": 1,
+            "has_more": False,
+            "next_before_change_id": None,
+        },
+        backend="local",
+    )["items"][0]
+
+
+def test_history_row_uses_literal_stored_lanes_when_normalized_preview_mismatches():
+    normalized = _normalized_history_row(
+        {
+            "name": "Mismatch",
+            "author": None,
+            "details": "stored metadata",
+            "system_prompt": "  stored system [literal]\n",
+            "user_prompt": "stored user\n\n",
+            "prompt_format": "structured",
+            "prompt_schema_version": 2,
+            "prompt_definition": {
+                "schema_version": 2,
+                "kind": "block_prompt",
+                "lanes": [
+                    {
+                        "id": "system",
+                        "blocks": [
+                            {
+                                "id": "role",
+                                "title": "Role",
+                                "syntax": "freeform",
+                                "content": "definition-derived system",
+                            }
+                        ],
+                    },
+                    {
+                        "id": "user",
+                        "blocks": [
+                            {
+                                "id": "request",
+                                "title": "Request",
+                                "syntax": "freeform",
+                                "content": "definition-derived user",
+                            }
+                        ],
+                    },
+                ],
+            },
+            "artifact_type": "prompt",
+            "keywords": [],
+        }
+    )
+    assert normalized["compatibility_state"] == "compiled_text_mismatch"
+    assert normalized["compiled_system_prompt"] != normalized["system_prompt"]
+
+    row = build_prompt_history_page(
+        _history_page(
+            normalized,
+            total_count=1,
+            has_more=False,
+            next_before_change_id=None,
+        )
+    ).items[0]
+
+    assert row.system_preview == "  stored system [literal]\n"
+    assert row.user_preview == "stored user\n\n"
+
+    fallback = _history_row(change_id=29, version=2)
+    fallback["compiled_system_prompt"] = "compiled fallback"
+    fallback["compiled_user_prompt"] = "compiled fallback user"
+    fallback_row = build_prompt_history_page(
+        _history_page(
+            fallback,
+            total_count=1,
+            has_more=False,
+            next_before_change_id=None,
+        )
+    ).items[0]
+    assert fallback_row.system_preview == "compiled fallback"
+    assert fallback_row.user_preview == "compiled fallback user"
+
+
+def test_history_row_preserves_normalized_unsupported_artifact_raw_identity():
+    normalized = _normalized_history_row(
+        {
+            "name": "Future",
+            "author": None,
+            "details": "",
+            "system_prompt": "stored system",
+            "user_prompt": "stored user",
+            "prompt_format": "structured",
+            "prompt_schema_version": 2,
+            "prompt_definition": None,
+            "artifact_type": "future-artifact",
+            "keywords": [],
+        }
+    )
+    assert normalized["artifact_type"] == "unsupported"
+    assert normalized["artifact_type_raw"] == "future-artifact"
+
+    row = build_prompt_history_page(
+        _history_page(
+            normalized,
+            total_count=1,
+            has_more=False,
+            next_before_change_id=None,
+        )
+    ).items[0]
+
+    assert row.artifact_type == "unsupported"
+    assert row.artifact_type_raw == "future-artifact"
+    assert row.restore_eligible is False
+
+
 def test_history_state_starts_closed_then_counts_and_loads_first_page():
     state = build_prompt_history_state(
         prompt_uuid=HISTORY_UUID, current_version=4, scope_token=10
@@ -607,6 +738,253 @@ def test_history_older_pages_append_in_order_and_reject_duplicate_rows():
                 next_before_change_id=None,
             )
         )
+
+
+def _loaded_history_state(*, has_more: bool = False) -> object:
+    state = build_prompt_history_state(
+        prompt_uuid=HISTORY_UUID, current_version=4, scope_token=10
+    )
+    state, page_request = begin_prompt_history_page(state, request_token=11)
+    return apply_prompt_history_page(
+        state,
+        page_request,
+        build_prompt_history_page(
+            _history_page(
+                _history_row(change_id=40, version=4),
+                _history_row(change_id=30, version=3),
+                total_count=4,
+                has_more=has_more,
+                next_before_change_id=30 if has_more else None,
+            )
+        ),
+    )
+
+
+def test_matching_overlapping_older_page_settles_error_and_preserves_loaded_rows():
+    state = _loaded_history_state(has_more=True)
+    state, preview_request = begin_prompt_history_preview(
+        state, change_id=30, source_version=3, request_token=12
+    )
+    state = apply_prompt_history_preview(state, preview_request)
+    selected = state.selected
+    state, request = begin_prompt_history_page(state, request_token=13)
+    before_rows = state.rows
+
+    settled = apply_prompt_history_page(
+        state,
+        request,
+        build_prompt_history_page(
+            _history_page(
+                _history_row(change_id=30, version=3),
+                total_count=4,
+                has_more=False,
+                next_before_change_id=None,
+            )
+        ),
+    )
+
+    assert settled.page_status == "error"
+    assert settled.page_request is None
+    assert settled.rows == before_rows
+    assert settled.selected == selected
+    assert settled.error == "Retained history page overlaps an already loaded row."
+
+
+def test_matching_cursor_mismatch_settles_error_and_preserves_loaded_rows():
+    state = _loaded_history_state(has_more=True)
+    state, request = begin_prompt_history_page(state, request_token=12)
+    invalidated = replace(state, next_before_change_id=29)
+
+    settled = apply_prompt_history_page(
+        invalidated,
+        request,
+        build_prompt_history_page(
+            _history_page(
+                _history_row(change_id=20, version=2),
+                total_count=4,
+                has_more=False,
+                next_before_change_id=None,
+            )
+        ),
+    )
+
+    assert settled.page_status == "error"
+    assert settled.page_request is None
+    assert settled.rows == state.rows
+    assert settled.error == "Retained history page cursor no longer matches."
+
+
+def test_stale_invalid_page_result_does_nothing_while_current_request_stays_loading():
+    state = _loaded_history_state(has_more=True)
+    state, stale_request = begin_prompt_history_page(state, request_token=12)
+    state, current_request = begin_prompt_history_page(state, request_token=13)
+    invalid_page = build_prompt_history_page(
+        _history_page(
+            _history_row(change_id=30, version=3),
+            total_count=4,
+            has_more=False,
+            next_before_change_id=None,
+        )
+    )
+
+    assert apply_prompt_history_page(state, stale_request, invalid_page) == state
+    assert state.page_request == current_request
+    assert state.page_status == "loading"
+
+
+def test_matching_missing_preview_row_clears_request_and_keeps_prior_selection():
+    state = _loaded_history_state()
+    state, first_request = begin_prompt_history_preview(
+        state, change_id=30, source_version=3, request_token=12
+    )
+    state = apply_prompt_history_preview(state, first_request)
+    selected = state.selected
+    state, request = begin_prompt_history_preview(
+        state, change_id=30, source_version=3, request_token=13
+    )
+    invalidated = replace(state, rows=())
+
+    settled = apply_prompt_history_preview(invalidated, request)
+
+    assert settled.preview_request is None
+    assert settled.selected == selected
+    assert settled.error == "Selected retained version is no longer loaded."
+
+
+def test_matching_restore_identity_or_current_invalidation_settles_retryable_outcome():
+    state = _loaded_history_state()
+    state, preview_request = begin_prompt_history_preview(
+        state, change_id=30, source_version=3, request_token=12
+    )
+    state = apply_prompt_history_preview(state, preview_request)
+    state, request, _ = begin_prompt_history_restore(
+        state, request_token=13, dirty=False
+    )
+    assert request is not None
+    selected = state.selected
+    current_changed = replace(state, current_version=5)
+
+    conflict = apply_prompt_history_restore(
+        current_changed,
+        request,
+        format_prompt_history_restore_outcome(error=RuntimeError("ignored")),
+    )
+
+    assert conflict.restore_request is None
+    assert conflict.selected == selected
+    assert conflict.restore_outcome is not None
+    assert conflict.restore_outcome.kind == "conflict"
+
+    state = _loaded_history_state()
+    state, preview_request = begin_prompt_history_preview(
+        state, change_id=30, source_version=3, request_token=12
+    )
+    state = apply_prompt_history_preview(state, preview_request)
+    state, request, _ = begin_prompt_history_restore(
+        state, request_token=13, dirty=False
+    )
+    assert request is not None and state.selected is not None
+    changed_selection = replace(
+        state, selected=replace(state.selected, source_version=2)
+    )
+
+    unavailable = apply_prompt_history_restore(
+        changed_selection,
+        request,
+        format_prompt_history_restore_outcome(error=RuntimeError("ignored")),
+    )
+
+    assert unavailable.restore_request is None
+    assert unavailable.selected == changed_selection.selected
+    assert unavailable.restore_outcome is not None
+    assert unavailable.restore_outcome.kind == "snapshot_unavailable"
+
+
+def test_closing_history_clears_active_preview_and_restore_requests():
+    state = _loaded_history_state()
+    state, preview_request = begin_prompt_history_preview(
+        state, change_id=30, source_version=3, request_token=12
+    )
+    closed_preview = close_prompt_history(state)
+
+    assert closed_preview.preview_request is None
+    assert (
+        apply_prompt_history_preview(closed_preview, preview_request) == closed_preview
+    )
+
+    state = _loaded_history_state()
+    state, preview_request = begin_prompt_history_preview(
+        state, change_id=30, source_version=3, request_token=12
+    )
+    state = apply_prompt_history_preview(state, preview_request)
+    state, restore_request, _ = begin_prompt_history_restore(
+        state, request_token=13, dirty=False
+    )
+    assert restore_request is not None
+    closed_restore = close_prompt_history(state)
+
+    assert closed_restore.restore_request is None
+    assert (
+        apply_prompt_history_restore(
+            closed_restore,
+            restore_request,
+            format_prompt_history_restore_outcome(error=RuntimeError("ignored")),
+        )
+        == closed_restore
+    )
+
+
+@pytest.mark.parametrize(
+    ("result", "error", "kind"),
+    [
+        (
+            {
+                "outcome": "no_change",
+                "source_version": 3,
+                "current_version": 4,
+                "new_version": 4,
+            },
+            None,
+            "no_change",
+        ),
+        (None, ConflictError("stale", "Prompts", 1), "conflict"),
+        (
+            {"outcome": "snapshot_unavailable", "source_version": 3},
+            None,
+            "snapshot_unavailable",
+        ),
+        (
+            {"outcome": "current_unavailable", "source_version": 3},
+            None,
+            "current_unavailable",
+        ),
+        (None, ValueError("Invalid artifact"), "validation_error"),
+        (None, RuntimeError("network"), "error"),
+    ],
+)
+def test_restore_non_success_outcomes_keep_selected_row_retryable(
+    result: dict[str, object] | None, error: Exception | None, kind: str
+):
+    state = _loaded_history_state()
+    state, preview_request = begin_prompt_history_preview(
+        state, change_id=30, source_version=3, request_token=12
+    )
+    state = apply_prompt_history_preview(state, preview_request)
+    selected = state.selected
+    state, request, _ = begin_prompt_history_restore(
+        state, request_token=13, dirty=False
+    )
+    assert request is not None
+
+    settled = apply_prompt_history_restore(
+        state, request, format_prompt_history_restore_outcome(result, error=error)
+    )
+
+    assert settled.restore_request is None
+    assert settled.restore_outcome is not None
+    assert settled.restore_outcome.kind == kind
+    assert settled.selected == selected
+    assert history_restore_gate(settled, dirty=False).enabled is True
 
 
 def test_history_preview_selection_preserves_literal_preview_and_explicit_source_version():

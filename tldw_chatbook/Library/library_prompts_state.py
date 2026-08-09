@@ -66,6 +66,7 @@ class PromptHistoryRow:
     version: int
     timestamp: str
     artifact_type: str
+    artifact_type_raw: str
     name: str
     author: str
     details: str
@@ -224,14 +225,19 @@ def build_prompt_history_row(record: Mapping[str, Any]) -> PromptHistoryRow:
         version=_history_positive_int(record.get("version"), field="version"),
         timestamp=timestamp,
         artifact_type=_history_text(record.get("artifact_type")) or "prompt",
+        artifact_type_raw=_history_text(record.get("artifact_type_raw")),
         name=_history_text(record.get("name")),
         author=_history_text(record.get("author")),
         details=_history_text(record.get("details")),
         system_preview=_history_text(
-            record.get("compiled_system_prompt", record.get("system_prompt"))
+            record["system_prompt"]
+            if "system_prompt" in record
+            else record.get("compiled_system_prompt")
         ),
         user_preview=_history_text(
-            record.get("compiled_user_prompt", record.get("user_prompt"))
+            record["user_prompt"]
+            if "user_prompt" in record
+            else record.get("compiled_user_prompt")
         ),
         keywords=_history_string_tuple(record.get("keywords")),
         keywords_captured=keywords_captured,
@@ -420,12 +426,22 @@ def apply_prompt_history_page(
     existing_ids = {row.change_id for row in state.rows}
     incoming_ids = {row.change_id for row in page.items}
     if existing_ids.intersection(incoming_ids):
-        return state
+        return replace(
+            state,
+            page_status="error",
+            page_request=None,
+            error="Retained history page overlaps an already loaded row.",
+        )
     if state.rows and (
         request.before_change_id != state.next_before_change_id
         or any(row.change_id >= request.before_change_id for row in page.items)
     ):
-        return state
+        return replace(
+            state,
+            page_status="error",
+            page_request=None,
+            error="Retained history page cursor no longer matches.",
+        )
     rows = state.rows + page.items
     count_updates: dict[str, Any] = {}
     if (
@@ -487,7 +503,11 @@ def apply_prompt_history_preview(
         None,
     )
     if row is None:
-        return state
+        return replace(
+            state,
+            preview_request=None,
+            error="Selected retained version is no longer loaded.",
+        )
     return replace(
         state,
         selected=PromptHistorySelection(
@@ -649,15 +669,46 @@ def apply_prompt_history_restore(
     outcome: PromptHistoryRestoreOutcome,
 ) -> PromptHistoryState:
     """Apply a restore outcome only to its still-selected prompt/version/token scope."""
-    if state.restore_request != request or state.selected is None:
+    if state.restore_request != request:
         return state
+    if state.selected is None:
+        unavailable = PromptHistoryRestoreOutcome(
+            "snapshot_unavailable",
+            "This retained version is no longer available. Reload retained history.",
+            True,
+        )
+        return replace(
+            state,
+            restore_request=None,
+            restore_outcome=unavailable,
+            error=unavailable.message,
+        )
     if (
         state.selected.prompt_uuid != request.prompt_uuid
         or state.selected.change_id != request.change_id
         or state.selected.source_version != request.source_version
-        or state.current_version != request.expected_current_version
     ):
-        return state
+        unavailable = PromptHistoryRestoreOutcome(
+            "snapshot_unavailable",
+            "This retained version is no longer available. Reload retained history.",
+            True,
+        )
+        return replace(
+            state,
+            restore_request=None,
+            restore_outcome=unavailable,
+            error=unavailable.message,
+        )
+    if state.current_version != request.expected_current_version:
+        conflict = PromptHistoryRestoreOutcome(
+            "conflict", "This Prompt changed elsewhere. Reload before restoring.", True
+        )
+        return replace(
+            state,
+            restore_request=None,
+            restore_outcome=conflict,
+            error=conflict.message,
+        )
     return replace(state, restore_request=None, restore_outcome=outcome)
 
 
