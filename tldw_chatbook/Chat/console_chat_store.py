@@ -1899,10 +1899,11 @@ class ConsoleChatStore:
         self._materialize_stream_buffer(message)
         if message.status in {"pending", "streaming"}:
             raise ValueError("Wait for response to finish before editing this message.")
-        if (
+        provenance_cleared = (
             message.metadata is not None
             and message.metadata.template_kind == "character_greeting"
-        ):
+        )
+        if provenance_cleared:
             # An edit turns the row into ordinary user-owned content. Never
             # infer provenance later from matching text; clear it at the one
             # explicit ownership-transfer boundary.
@@ -1921,8 +1922,13 @@ class ConsoleChatStore:
             )
             message.content = message.variants.current.content
         self._bump_message_speech_revision(message.id)
-        self._bump_payload_revision(self._message_session_index[message.id])
-        self._persist_existing_message(message)
+        if provenance_cleared:
+            self._bump_identity_revision(self._message_session_index[message.id])
+        else:
+            self._bump_payload_revision(self._message_session_index[message.id])
+        self._persist_existing_message(
+            message, force_metadata_write=provenance_cleared
+        )
         return self._snapshot(message)
 
     def presentation_context(
@@ -1985,10 +1991,13 @@ class ConsoleChatStore:
     ) -> ConsoleChatMessage | None:
         """Seed trusted character system/greeting sources into a fresh session."""
         session = self._session_or_raise(session_id)
-        session.character_system_template = (
+        source = (
             system_template if isinstance(system_template, str) and system_template.strip() else None
         )
-        self._bump_identity_revision(session_id)
+        source_changed = session.character_system_template != source
+        session.character_system_template = source
+        if source_changed:
+            self._bump_identity_revision(session_id)
         self._materialize_roleplay_projections(session_id, global_default=global_default)
         if not self._persist_roleplay_context(session):
             logger.bind(session_id=session_id).warning(
@@ -2013,10 +2022,47 @@ class ConsoleChatStore:
             ),
         )
 
+    def set_session_character_name(
+        self,
+        session_id: str,
+        character_name: str | None,
+        *,
+        global_default: object,
+    ) -> tuple[ConsoleChatSession, bool]:
+        """Set character identity through the projection revision seam."""
+        session = self._session_or_raise(session_id)
+        normalized = character_name.strip() if isinstance(character_name, str) else ""
+        new_name = normalized or None
+        if session.character_name == new_name:
+            return session, True
+        session.character_name = new_name
+        self._bump_identity_revision(session_id)
+        persisted = self._materialize_roleplay_projections(
+            session_id, global_default=global_default
+        )
+        return session, persisted
+
     def _bump_identity_revision(self, session_id: str) -> None:
         session = self._session_or_raise(session_id)
         session.identity_revision += 1
         self._bump_payload_revision(session_id)
+
+    def _clear_character_greeting_provenance(
+        self, message: ConsoleChatMessage
+    ) -> bool:
+        """Revoke trusted greeting provenance after a generated replacement wins."""
+        if (
+            message.metadata is None
+            or message.metadata.template_kind != "character_greeting"
+        ):
+            return False
+        message.metadata = replace(
+            message.metadata,
+            template_kind="",
+            template_source="",
+        )
+        self._bump_identity_revision(self._message_session_index[message.id])
+        return True
 
     @staticmethod
     def _is_named_character_session(session: ConsoleChatSession) -> bool:
@@ -2107,13 +2153,12 @@ class ConsoleChatStore:
         if self.persistence is None or message.persisted_message_id is None:
             return True
         try:
-            self._persist_existing_message(message)
+            return self._persist_existing_message(message)
         except Exception:
             logger.bind(message_id=message.id).exception(
                 "Failed to persist Console roleplay message projection."
             )
             return False
-        return True
 
     def _persist_session_system_prompt(
         self, session: ConsoleChatSession, system_prompt: str | None
@@ -2704,8 +2749,12 @@ class ConsoleChatStore:
             message.variants.selected_index = len(message.variants.variants) - 1
         message.content = message.variants.current.content
         self._bump_message_speech_revision(message.id)
-        self._bump_payload_revision(self._message_session_index[message.id])
-        self._persist_existing_message(message)
+        provenance_cleared = self._clear_character_greeting_provenance(message)
+        if not provenance_cleared:
+            self._bump_payload_revision(self._message_session_index[message.id])
+        self._persist_existing_message(
+            message, force_metadata_write=provenance_cleared
+        )
         return self._snapshot(message)
 
     def begin_variant_stream(self, message_id: str) -> ConsoleChatMessage:
@@ -2774,8 +2823,12 @@ class ConsoleChatStore:
         message.content = message.variants.current.content
         message.status = "complete"
         self._bump_message_speech_revision(message.id)
-        self._bump_payload_revision(self._message_session_index[message.id])
-        self._persist_existing_message(message)
+        provenance_cleared = self._clear_character_greeting_provenance(message)
+        if not provenance_cleared:
+            self._bump_payload_revision(self._message_session_index[message.id])
+        self._persist_existing_message(
+            message, force_metadata_write=provenance_cleared
+        )
         return self._snapshot(message)
 
     def select_variant(
@@ -3161,10 +3214,11 @@ class ConsoleChatStore:
             )
             if callable(update_system_prompt):
                 try:
-                    update_system_prompt(
+                    if not update_system_prompt(
                         conversation_id=session.persisted_conversation_id,
                         system_prompt=normalized,
-                    )
+                    ):
+                        persisted = False
                 except Exception:
                     persisted = False
                     logger.bind(
@@ -3640,12 +3694,13 @@ class ConsoleChatStore:
         message: ConsoleChatMessage,
         *,
         update_feedback: bool = False,
-    ) -> None:
+        force_metadata_write: bool = False,
+    ) -> bool:
         if self.persistence is None:
-            return
+            return True
         if message.persisted_message_id is None:
             self._persist_pending_message_if_ready(message)
-            return
+            return True
         update_kwargs: dict[str, Any] = dict(
             message_id=message.persisted_message_id,
             content=message.content,
@@ -3686,14 +3741,16 @@ class ConsoleChatStore:
             update_kwargs["metadata_json"] = message.video_metadata.to_json()
         elif (
             message.metadata is not None
-            and not message.metadata.is_empty
+            and (force_metadata_write or not message.metadata.is_empty)
             and self._persistence_accepts_kwarg(
                 self.persistence.update_message_content, "metadata_json"
             )
         ):
             update_kwargs["metadata_json"] = message.metadata.to_json()
-        self.persistence.update_message_content(**update_kwargs)
+        if not self.persistence.update_message_content(**update_kwargs):
+            return False
         self._enqueue_sync_v2_message_if_ready(message)
+        return True
 
     def _persist_pending_message_if_ready(self, message: ConsoleChatMessage) -> None:
         if (

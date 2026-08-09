@@ -665,6 +665,7 @@ class FakePersistence:
         feedback=None,
         update_parent=False,
         update_feedback=False,
+        metadata_json=None,
     ):
         self.updated_messages.append(
             {
@@ -676,6 +677,7 @@ class FakePersistence:
                 "feedback": feedback,
                 "update_parent": update_parent,
                 "update_feedback": update_feedback,
+                "metadata_json": metadata_json,
             }
         )
         return True
@@ -3353,3 +3355,116 @@ def test_refresh_roleplay_projections_is_idempotent_when_values_are_current():
     assert persisted is True
     assert store.payload_revision(session.id) == revision
     assert len(persistence.updated_messages) == update_count
+
+
+def test_editing_derived_greeting_persists_cleared_metadata():
+    store, persistence, _session, greeting = _seeded_roleplay_store()
+
+    store.update_message_content(greeting.id, "Hello there.")
+
+    assert persistence.updated_messages[-1]["metadata_json"] == MessageMetadata().to_json()
+
+
+def test_falsy_projection_write_reports_unpersisted_without_sync():
+    class RefusingPersistence(FakePersistence):
+        def update_message_content(self, **kwargs):
+            super().update_message_content(**kwargs)
+            return False
+
+    persistence = RefusingPersistence()
+    store, _unused, session, _greeting = _seeded_roleplay_store()
+    store.persistence = persistence
+
+    _updated, persisted = store.set_session_user_display_name_override(
+        session.id, "Rowan", global_default="User"
+    )
+
+    assert persisted is False
+
+
+def test_falsy_system_prompt_write_reports_unpersisted():
+    class RefusingPersistence(FakePersistence):
+        def update_conversation_system_prompt(self, **kwargs):
+            return False
+
+    persistence = RefusingPersistence()
+    store = ConsoleChatStore(persistence=persistence)
+    session = store.create_session(settings=ConsoleSessionSettings(provider="llama_cpp"))
+    store.persist_session_if_needed(session.id)
+
+    _updated, persisted = store.set_session_system_prompt(session.id, "Be concise.")
+
+    assert persisted is False
+
+
+def test_successful_regeneration_clears_greeting_provenance():
+    store, persistence, _session, greeting = _seeded_roleplay_store()
+
+    store.begin_variant_stream(greeting.id)
+    store.append_stream_chunk(greeting.id, "A generated reply.")
+    completed = store.finalize_variant_stream(greeting.id)
+
+    assert completed.metadata == MessageMetadata()
+    assert persistence.updated_messages[-1]["metadata_json"] == MessageMetadata().to_json()
+
+
+def test_stopped_regeneration_restores_greeting_provenance():
+    store, _persistence, _session, greeting = _seeded_roleplay_store()
+
+    store.begin_variant_stream(greeting.id)
+    restored = store.mark_message_stopped(greeting.id)
+
+    assert restored.metadata is not None
+    assert restored.metadata.template_kind == "character_greeting"
+
+
+def test_identity_revisions_track_provenance_and_character_name_changes():
+    store, _persistence, session, greeting = _seeded_roleplay_store()
+    identity_before = session.identity_revision
+    payload_before = store.payload_revision(session.id)
+
+    store.update_message_content(greeting.id, "Manual greeting.")
+
+    assert session.identity_revision == identity_before + 1
+    assert store.payload_revision(session.id) == payload_before + 1
+    store.set_session_character_name(session.id, "Nyx", global_default="User")
+    assert session.identity_revision == identity_before + 2
+    assert store.payload_revision(session.id) == payload_before + 2
+
+
+def test_character_name_and_seed_are_idempotent_when_unchanged():
+    store, _persistence, session, _greeting = _seeded_roleplay_store()
+    revision = session.identity_revision
+    payload = store.payload_revision(session.id)
+
+    store.set_session_character_name(session.id, "Alraune", global_default="User")
+    store.seed_character_roleplay(
+        session.id,
+        system_template="Speak with {{user}}.",
+        greeting_template="",
+        global_default="User",
+    )
+
+    assert session.identity_revision == revision
+    assert store.payload_revision(session.id) == payload
+    assert store.presentation_context(session.id, "Captain Rowan").character_name == "Alraune"
+
+
+def test_first_persist_context_failure_is_observable_but_promotion_rolls_back():
+    class RefusingPersistence(FakePersistence):
+        def update_conversation_roleplay_context(self, **kwargs):
+            return False
+
+    persistence = RefusingPersistence()
+    store = ConsoleChatStore(persistence=persistence)
+    saved = store.create_session()
+    saved.user_display_name_override = "Rowan"
+    assert store.persist_session_if_needed(saved.id) == "conv-1"
+    assert saved.persisted_conversation_id == "conv-1"
+
+    temporary = store.create_session(ephemeral=True)
+    temporary.user_display_name_override = "Rowan"
+    with pytest.raises(RuntimeError, match="roleplay context"):
+        store.promote_ephemeral_session(temporary.id)
+    assert temporary.ephemeral is True
+    assert temporary.persisted_conversation_id is None
