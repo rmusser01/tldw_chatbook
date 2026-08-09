@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import copy
 import json
+import math
 import re
 import secrets
 import threading
@@ -132,9 +133,10 @@ class ComfyUIVideoAdapter:
             raise VideoGenerationError(f"unsupported output format: {output_format}")
 
         base_url = self._base_url()
-        workflow_name = (self._config.comfyui_default_workflow or DEFAULT_COMFYUI_WORKFLOW).strip()
-        workflow = self._load_workflow(workflow_name)
+        workflow = self._load_workflow(self._workflow_name())
         self._validate_reference_assets(request.reference_assets)
+        if request.reference_assets and self._is_h3_workflow(workflow):
+            raise VideoGenerationError("ComfyUI H3 does not support input image")
         self._validate_required_nodes(base_url, workflow)
 
         image_name = self._resolve_uploaded_image(request.reference_assets)
@@ -144,6 +146,16 @@ class ComfyUIVideoAdapter:
         return self._download_output(base_url, descriptor, prepared)
 
     # -- configuration / workflows --------------------------------------
+
+    def _workflow_name(self) -> str:
+        """Return the configured bare workflow filename or the shipped default."""
+        return (
+            self._config.comfyui_default_workflow or DEFAULT_COMFYUI_WORKFLOW
+        ).strip()
+
+    def selected_workflow_is_h3(self) -> bool:
+        """Classify the configured graph without contacting ComfyUI."""
+        return self._is_h3_workflow(self._load_workflow(self._workflow_name()))
 
     def _base_url(self) -> str:
         """Return a normalized configured ComfyUI HTTP(S) base URL."""
@@ -321,6 +333,20 @@ class ComfyUIVideoAdapter:
             )
         return float(value)
 
+    @staticmethod
+    def _require_h3_dimension(value: Any, field: str) -> int:
+        """Validate one direct H3 dimension at the graph/request boundary."""
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, int)
+            or value <= 0
+            or value % 32
+        ):
+            raise VideoGenerationError(
+                f"ComfyUI H3 {field} must be a positive integer and multiple of 32"
+            )
+        return value
+
     def _set_control(
         self,
         graph: dict[str, Any],
@@ -409,10 +435,7 @@ class ComfyUIVideoAdapter:
         )
         for field, value in (("width", request.width), ("height", request.height)):
             if value is not None:
-                if isinstance(value, bool) or not isinstance(value, int) or value <= 0 or value % 32:
-                    raise VideoGenerationError(
-                        f"ComfyUI H3 {field} must be a positive multiple of 32"
-                    )
+                self._require_h3_dimension(value, field)
                 self._require_injection(
                     self._set_input(generation_inputs, (field,), value),
                     field,
@@ -448,6 +471,10 @@ class ComfyUIVideoAdapter:
             "duration",
             "Duration",
         )
+        if not math.isfinite(duration) or duration <= 0:
+            raise VideoGenerationError(
+                "ComfyUI H3 duration must be finite and greater than 0"
+            )
 
         fps_inputs = self._h3_control_inputs(graph, "native_fps", "native FPS", "Native FPS")
         fps = self._require_number(
@@ -466,22 +493,22 @@ class ComfyUIVideoAdapter:
                 f"ComfyUI H3 native FPS is 24; requested {request.fps} is unsupported"
             )
 
-        width = self._require_number(
+        width = self._require_h3_dimension(
             self._require_direct_value(
-                self._direct_value(generation_inputs, ("width",)), "width", "Prompt Width Height"
+                self._direct_value(generation_inputs, ("width",)),
+                "width",
+                "Prompt Width Height",
             ),
             "width",
-            "Prompt Width Height",
         )
-        height = self._require_number(
+        height = self._require_h3_dimension(
             self._require_direct_value(
-                self._direct_value(generation_inputs, ("height",)), "height", "Prompt Width Height"
+                self._direct_value(generation_inputs, ("height",)),
+                "height",
+                "Prompt Width Height",
             ),
             "height",
-            "Prompt Width Height",
         )
-        if not width.is_integer() or not height.is_integer() or width <= 0 or height <= 0:
-            raise VideoGenerationError("ComfyUI H3 dimensions must be positive integers")
 
         if request.ratio is not None:
             if request.ratio.strip().lower() == "adaptive":
@@ -510,8 +537,8 @@ class ComfyUIVideoAdapter:
             graph=graph,
             duration_seconds=duration,
             fps=fps,
-            width=int(width),
-            height=int(height),
+            width=width,
+            height=height,
             resolved_seed=effective_seed,
         )
 
@@ -671,7 +698,10 @@ class ComfyUIVideoAdapter:
         """Poll ``/history/{prompt_id}`` until ComfyUI exposes media output."""
         history_url = f"{base_url}/history/{prompt_id}"
         deadline = time.monotonic() + self._timeout()
-        while time.monotonic() < deadline:
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
             if cancel_event is not None and cancel_event.is_set():
                 self._interrupt(base_url)
                 raise VideoGenerationError("ComfyUI video generation cancelled by user")
@@ -679,7 +709,7 @@ class ComfyUIVideoAdapter:
                 history = fetch_json(
                     method="GET",
                     url=history_url,
-                    timeout=self._timeout(),
+                    timeout=remaining,
                     trusted_origins=self._trusted_origins(base_url),
                 )
             except (ImageGenerationError, httpx.HTTPStatusError) as exc:
@@ -689,10 +719,14 @@ class ComfyUIVideoAdapter:
             descriptor = self._find_output_descriptor(history, prompt_id, graph)
             if descriptor is not None:
                 return descriptor
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            wait_seconds = min(1.0, remaining)
             if cancel_event is not None:
-                cancel_event.wait(1.0)
+                cancel_event.wait(wait_seconds)
             else:
-                time.sleep(1.0)
+                time.sleep(wait_seconds)
         raise VideoGenerationError("timed out waiting for ComfyUI video result")
 
     def _interrupt(self, base_url: str) -> None:
@@ -812,39 +846,38 @@ class ComfyUIVideoAdapter:
             return None
         ComfyUIVideoAdapter._raise_for_terminal_history_status(entry)
         outputs = entry.get("outputs")
-        if not isinstance(outputs, dict):
-            return None
-        for node_id in ComfyUIVideoAdapter._output_node_ids(graph):
-            node_output = outputs.get(node_id)
-            if not isinstance(node_output, dict):
-                continue
-            for descriptors in node_output.values():
-                if not isinstance(descriptors, list):
+        if isinstance(outputs, dict):
+            for node_id in ComfyUIVideoAdapter._output_node_ids(graph):
+                node_output = outputs.get(node_id)
+                if not isinstance(node_output, dict):
                     continue
-                for descriptor in descriptors:
-                    if not isinstance(descriptor, dict):
+                for descriptors in node_output.values():
+                    if not isinstance(descriptors, list):
                         continue
-                    filename = descriptor.get("filename")
-                    subfolder = descriptor.get("subfolder", "")
-                    output_type = descriptor.get("type", "output")
-                    if not isinstance(filename, str) or not filename.strip():
-                        continue
-                    if subfolder is None:
-                        subfolder = ""
-                    if output_type is None:
-                        output_type = "output"
-                    if not isinstance(subfolder, str) or not isinstance(output_type, str):
-                        continue
-                    filename = filename.strip()
-                    suffix = Path(filename).suffix.lower()
-                    if suffix not in _VIDEO_SUFFIX_TYPES:
-                        continue
-                    return {
-                        "filename": filename,
-                        "subfolder": subfolder,
-                        "type": output_type or "output",
-                    }
-        if outputs or ComfyUIVideoAdapter._is_terminal_success(entry):
+                    for descriptor in descriptors:
+                        if not isinstance(descriptor, dict):
+                            continue
+                        filename = descriptor.get("filename")
+                        subfolder = descriptor.get("subfolder", "")
+                        output_type = descriptor.get("type", "output")
+                        if not isinstance(filename, str) or not filename.strip():
+                            continue
+                        if subfolder is None:
+                            subfolder = ""
+                        if output_type is None:
+                            output_type = "output"
+                        if not isinstance(subfolder, str) or not isinstance(output_type, str):
+                            continue
+                        filename = filename.strip()
+                        suffix = Path(filename).suffix.lower()
+                        if suffix not in _VIDEO_SUFFIX_TYPES:
+                            continue
+                        return {
+                            "filename": filename,
+                            "subfolder": subfolder,
+                            "type": output_type or "output",
+                        }
+        if ComfyUIVideoAdapter._is_terminal_success(entry):
             raise VideoGenerationError("ComfyUI history returned no supported video or animated-image output")
         return None
 

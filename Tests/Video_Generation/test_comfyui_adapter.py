@@ -127,10 +127,13 @@ def _object_info_for(workflow):
     return {node["class_type"]: {} for node in workflow.values()}
 
 
-def test_submits_title_parameterized_workflow_polls_and_downloads(adapter, json_recorder, monkeypatch):
+def test_submits_packaged_workflow_through_observed_history_shape(
+    adapter, json_recorder, monkeypatch
+):
     calls, routes = json_recorder
-    graph = _h3_workflow()
-    _install_workflow(adapter, monkeypatch, graph)
+    graph = adapter._load_workflow("minimax_h3_t2v.json")
+    original_prompt = graph["105:104"]["inputs"]["prompt"]
+
     def fetch_bytes(
         url: str,
         *,
@@ -146,8 +149,46 @@ def test_submits_title_parameterized_workflow_polls_and_downloads(adapter, json_
     routes[("GET", "/object_info")] = _object_info_for(graph)
     routes[("POST", "/prompt")] = {"prompt_id": "job-1"}
     routes[("GET", "/history/job-1")] = [
-        {},
-        {"job-1": {"outputs": {"save": {"videos": [{"filename": "clip.mp4", "subfolder": "out", "type": "output"}]}}}},
+        {
+            "job-1": {
+                "outputs": {
+                    "preview": {
+                        "images": [
+                            {
+                                "filename": "preview.png",
+                                "subfolder": "",
+                                "type": "temp",
+                            }
+                        ]
+                    }
+                },
+                "status": {
+                    "completed": False,
+                    "status_str": "running",
+                    "messages": [],
+                },
+            }
+        },
+        {
+            "job-1": {
+                "outputs": {
+                    "92": {
+                        "images": [
+                            {
+                                "filename": "clip.mp4",
+                                "subfolder": "video",
+                                "type": "output",
+                            }
+                        ]
+                    }
+                },
+                "status": {
+                    "completed": True,
+                    "status_str": "success",
+                    "messages": [],
+                },
+            }
+        },
     ]
     monkeypatch.setattr("time.sleep", lambda _seconds: None)
 
@@ -160,14 +201,14 @@ def test_submits_title_parameterized_workflow_polls_and_downloads(adapter, json_
     assert submit["url"] == "http://127.0.0.1:8188/prompt"
     assert submit["json"]["client_id"]
     sent = submit["json"]["prompt"]
-    assert sent["gen"]["inputs"]["prompt"] == "a lighthouse in a storm"
-    assert sent["seed"]["inputs"]["noise_seed"] == 41
-    assert sent["gen"]["inputs"]["width"] == 640
-    assert sent["gen"]["inputs"]["height"] == 352
-    assert sent["duration"]["inputs"]["value"] == 2
-    assert sent["video"]["inputs"]["fps"] == 24
-    assert sent["gen"]["inputs"]["length"] == ["expr", 1]
-    assert graph["gen"]["inputs"]["prompt"] == "safe placeholder"
+    assert sent["105:104"]["inputs"]["prompt"] == "a lighthouse in a storm"
+    assert sent["105:15"]["inputs"]["noise_seed"] == 41
+    assert sent["105:104"]["inputs"]["width"] == 640
+    assert sent["105:104"]["inputs"]["height"] == 352
+    assert sent["105:111"]["inputs"]["value"] == 2
+    assert sent["105:91"]["inputs"]["fps"] == 24
+    assert sent["105:104"]["inputs"]["length"] == ["105:107", 1]
+    assert graph["105:104"]["inputs"]["prompt"] == original_prompt
     assert all(call["trusted_origins"] == frozenset({"127.0.0.1"}) for call in calls)
     histories = [call for call in calls if "/history/job-1" in call["url"]]
     assert len(histories) == 2
@@ -286,6 +327,34 @@ def test_uploads_image_asset_and_injects_uploaded_filename(adapter, json_recorde
     assert uploads == [image]
     submit = next(call for call in calls if call["method"] == "POST" and call["url"].endswith("/prompt"))
     assert submit["json"]["prompt"]["8"]["inputs"]["image"] == "upload.png"
+
+
+def test_h3_reference_image_is_rejected_before_remote_side_effects(adapter, monkeypatch):
+    effects: list[str] = []
+    resolve_uploaded_image = adapter._resolve_uploaded_image
+    monkeypatch.setattr(
+        adapter,
+        "_validate_required_nodes",
+        lambda *_args: effects.append("object_info"),
+    )
+    monkeypatch.setattr(
+        adapter,
+        "_resolve_uploaded_image",
+        lambda assets: effects.append("resolve") or resolve_uploaded_image(assets),
+    )
+    monkeypatch.setattr(
+        adapter,
+        "_upload_image",
+        lambda _asset: effects.append("upload") or "upload.png",
+    )
+    image = ResolvedReferenceAsset(
+        "first_frame", b"png-bytes", "image/png", "source.png"
+    )
+
+    with pytest.raises(VideoGenerationError, match="input image"):
+        adapter.generate(_request(reference_assets=(image,)))
+
+    assert effects == []
 
 
 def test_upload_uses_multipart_endpoint_and_trusted_origin(adapter, monkeypatch):
@@ -416,6 +485,11 @@ def test_unsupported_reference_and_bad_output_are_clear(adapter, json_recorder, 
     routes[("GET", "/object_info")] = _object_info_for(graph)
     routes[("POST", "/prompt")] = {"prompt_id": "job-5"}
     routes[("GET", "/history/job-5")] = {"job-5": {"outputs": {"save": {"images": [{"filename": "plain.png", "subfolder": "", "type": "output"}]}}}}
+    routes[("GET", "/history/job-5")]["job-5"]["status"] = {
+        "completed": True,
+        "status_str": "success",
+        "messages": [],
+    }
     with pytest.raises(VideoGenerationError, match="video or animated"):
         adapter.generate(_request())
 
@@ -503,8 +577,7 @@ def test_save_video_output_skips_malformed_or_unsupported_descriptors(adapter, d
     graph = _h3_workflow()
     history = {"job": {"outputs": {"save": {"files": [descriptor]}}}}
 
-    with pytest.raises(VideoGenerationError, match="no supported video or animated-image output"):
-        adapter._find_output_descriptor(history, "job", graph)
+    assert adapter._find_output_descriptor(history, "job", graph) is None
 
 
 @pytest.mark.parametrize(
@@ -550,6 +623,57 @@ def test_terminal_success_without_media_fails_without_waiting(adapter):
 
     with pytest.raises(VideoGenerationError, match="no supported video or animated-image output"):
         adapter._find_output_descriptor(history, "job-7", graph)
+
+
+def test_poll_timeout_is_bounded_by_remaining_deadline(adapter, monkeypatch):
+    adapter._config.comfyui_timeout_seconds = 2
+    now = [0.0]
+    request_timeouts: list[float] = []
+    sleeps: list[float] = []
+
+    def fake_fetch_json(*, timeout, **_kwargs):
+        request_timeouts.append(timeout)
+        now[0] += min(0.6, timeout)
+        return {
+            "job-timeout": {
+                "outputs": {
+                    "preview": {
+                        "images": [
+                            {
+                                "filename": "preview.png",
+                                "subfolder": "",
+                                "type": "temp",
+                            }
+                        ]
+                    }
+                },
+                "status": {
+                    "completed": False,
+                    "status_str": "running",
+                    "messages": [],
+                },
+            }
+        }
+
+    def fake_sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+        now[0] += seconds
+
+    monkeypatch.setattr(cva, "fetch_json", fake_fetch_json)
+    monkeypatch.setattr(cva.time, "monotonic", lambda: now[0])
+    monkeypatch.setattr(cva.time, "sleep", fake_sleep)
+
+    with pytest.raises(VideoGenerationError, match="timed out"):
+        adapter._poll_for_output(
+            "http://127.0.0.1:8188",
+            "job-timeout",
+            None,
+            _h3_workflow(),
+        )
+
+    assert now[0] == pytest.approx(2.0)
+    assert request_timeouts == pytest.approx([2.0, 0.4])
+    assert sleeps == pytest.approx([1.0])
 
 
 def test_h3_preparation_applies_request_and_reports_effective_values(adapter):
@@ -601,6 +725,65 @@ def test_h3_defaults_are_reported_without_modifying_graph(adapter):
     assert prepared.graph is not workflow
 
 
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("width", 0),
+        ("width", 865),
+        ("width", 864.0),
+        ("height", -32),
+        ("height", 481),
+        ("height", 480.0),
+    ],
+)
+def test_h3_rejects_invalid_effective_dimension_defaults(adapter, field, value):
+    graph = _h3_workflow()
+    graph["gen"]["inputs"][field] = value
+
+    with pytest.raises(
+        VideoGenerationError,
+        match=rf"{field}.*positive integer.*multiple of 32",
+    ):
+        adapter._parameterize_workflow(graph, _request(), None)
+
+
+@pytest.mark.parametrize("duration", [0, -1, float("nan"), float("inf"), float("-inf")])
+def test_h3_rejects_invalid_effective_duration_defaults(adapter, duration):
+    graph = _h3_workflow()
+    graph["duration"]["inputs"]["value"] = duration
+
+    with pytest.raises(VideoGenerationError, match="duration.*finite.*greater than 0"):
+        adapter._parameterize_workflow(graph, _request(), None)
+
+
+@pytest.mark.parametrize(
+    ("node_id", "field", "value", "match"),
+    [
+        ("seed", "noise_seed", -1, "seed.*non-negative integer"),
+        ("seed", "noise_seed", 1.5, "seed.*non-negative integer"),
+        ("video", "fps", 23, "native FPS.*24"),
+    ],
+)
+def test_h3_rejects_invalid_omitted_seed_and_fps_defaults(
+    adapter, node_id, field, value, match
+):
+    graph = _h3_workflow()
+    graph[node_id]["inputs"][field] = value
+
+    with pytest.raises(VideoGenerationError, match=match):
+        adapter._parameterize_workflow(graph, _request(), None)
+
+
+@pytest.mark.parametrize("duration", [0, -1, float("nan"), float("inf")])
+def test_h3_rejects_invalid_supplied_duration(adapter, duration):
+    with pytest.raises(VideoGenerationError, match="duration.*finite.*greater than 0"):
+        adapter._parameterize_workflow(
+            _h3_workflow(),
+            _request(duration_seconds=duration),
+            None,
+        )
+
+
 def test_generic_custom_workflow_keeps_documented_title_controls(adapter):
     prepared = adapter._parameterize_workflow(
         _custom_workflow(),
@@ -643,9 +826,22 @@ def test_h3_allows_the_exact_three_percent_ratio_boundary(adapter):
     assert (prepared.width, prepared.height) == (864, 480)
 
 
-@pytest.mark.parametrize("field, value", [("width", 1279), ("height", 703)])
-def test_h3_requires_supplied_dimensions_to_be_multiples_of_32(adapter, field, value):
-    with pytest.raises(VideoGenerationError, match=f"{field}.*multiple of 32"):
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("width", 0),
+        ("width", 1279),
+        ("width", 1280.0),
+        ("height", -32),
+        ("height", 703),
+        ("height", 704.0),
+    ],
+)
+def test_h3_rejects_invalid_supplied_dimensions(adapter, field, value):
+    with pytest.raises(
+        VideoGenerationError,
+        match=f"{field}.*positive integer.*multiple of 32",
+    ):
         adapter._parameterize_workflow(_h3_workflow(), _request(**{field: value}), None)
 
 
