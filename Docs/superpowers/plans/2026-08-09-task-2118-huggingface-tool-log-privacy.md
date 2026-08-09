@@ -19,7 +19,7 @@
 - ADR required: no new ADR
 - ADR path: `backlog/decisions/029-local-private-data-boundary.md`
 - Reason: ADR-029 already excludes provider payloads and tool definitions from persistent logs while permitting bounded metadata such as tool names. This task applies that accepted contract.
-- Latest-dev reconciliation: rebased onto `origin/dev` at `a33a6a6f8`; the two unsafe HuggingFace log calls and existing helper contract are unchanged. Fresh baselines are 68 passing privacy tests and 8 passing HuggingFace chat-function tests. Ruff lint and compilation are green. Both complete Python files have pre-existing formatter drift, while the three ranges this task will edit are formatter-clean; use range checks to avoid an unrelated whole-file rewrite.
+- Latest-dev reconciliation: rebased onto `origin/dev` at `727565e73`; the two unsafe HuggingFace log calls and existing helper contract are unchanged. Fresh baselines are 68 passing privacy tests and 8 passing HuggingFace chat-function tests. The expanded logger inventory remains 35 candidates across four modules. Ruff lint and compilation are green. Both complete Python files have pre-existing formatter drift, while the three ranges this task will edit are formatter-clean; use range checks to avoid an unrelated whole-file rewrite.
 
 ## File map
 
@@ -398,6 +398,7 @@ Run:
 ../../.venv/bin/python -m ruff format --check --range=675-820 Tests/Chat/test_sensitive_llm_logging.py
 git diff --check
 git status --short --branch
+git merge-base --is-ancestor 727565e73 HEAD
 ```
 
-Expected: all focused/static gates pass, the worktree is clean, and `origin/dev` is an ancestor of `HEAD`.
+Expected: all focused/static gates pass, the worktree is clean, and the reviewed dev baseline `727565e73` is an ancestor of `HEAD`. A later PR integration pass must fetch/rebase current `origin/dev` again rather than treating this recorded commit as permanently latest.
