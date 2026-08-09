@@ -147,18 +147,11 @@ class AvFrameSource:
             # Pause/stop abandoned the iterator mid-stream -- normal path.
             logger.debug("AvFrameSource: iteration abandoned (pause/stop)")
             raise
-        except Exception as exc:
-            logger.warning(
-                "AvFrameSource: decode stopped early (error_type={})",
-                type(exc).__name__,
-            )
 
     def close(self) -> None:
-        if self._container is not None:
-            try:
-                self._container.close()
-            except Exception:
-                pass
+        container = self._container
         self._container = None
         self._stream = None
         self._opened = False
+        if container is not None:
+            container.close()
