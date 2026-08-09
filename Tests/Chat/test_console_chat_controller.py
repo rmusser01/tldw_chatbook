@@ -30,6 +30,7 @@ from tldw_chatbook.Chat.console_chat_models import (
 )
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+from tldw_chatbook.Chat.message_metadata import MessageMetadata
 from tldw_chatbook.MCP.permission_store import EffectiveToolState
 
 
@@ -193,6 +194,79 @@ class FakePersistence:
             }
         )
         return True
+
+
+def _roleplay_controller_fixture() -> tuple[
+    ConsoleChatController, ConsoleChatStore, object
+]:
+    """Build a character chat whose trusted projections still say User."""
+    store = ConsoleChatStore()
+    settings = ConsoleSessionSettings(
+        provider="llama_cpp", system_prompt="Speak with User."
+    )
+    session = store.create_session(
+        settings=settings,
+        assistant_kind="character",
+        character_name="Alraune",
+    )
+    session.character_system_template = "Speak with {{user}}."
+    store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="Hello User.",
+        metadata=MessageMetadata(
+            template_kind="character_greeting",
+            template_source="Hello {{user}}.",
+        ),
+    )
+    session.user_display_name_override = "Captain Rowan"
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=StreamingGateway(),
+        system_prompt="Speak with User.",
+        global_user_display_name=lambda: "User",
+    )
+    return controller, store, session
+
+
+def test_roleplay_provider_messages_use_live_system_and_greeting_projection():
+    controller, store, session = _roleplay_controller_fixture()
+    store.append_message(
+        session.id,
+        role=ConsoleMessageRole.USER,
+        content="Say {{user}} literally",
+    )
+    store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="Generated {{user}} literally",
+    )
+
+    payload = controller._provider_messages_for_session(session.id)
+
+    assert payload[0]["role"] == "system"
+    assert payload[0]["content"].startswith("Speak with Captain Rowan.\n\n")
+    assert payload[0]["content"].endswith("Hello Captain Rowan.")
+    assert payload[1]["content"] == "Say {{user}} literally"
+    assert payload[2]["content"] == "Generated {{user}} literally"
+    assert all("Hello User" not in row["content"] for row in payload)
+
+
+@pytest.mark.asyncio
+async def test_roleplay_context_snapshot_matches_live_send_projection():
+    controller, store, session = _roleplay_controller_fixture()
+    store.append_message(
+        session.id,
+        role=ConsoleMessageRole.USER,
+        content="Continue",
+    )
+
+    expected = controller._provider_messages_for_session(session.id)
+    snapshot = await controller.build_context_snapshot(draft="")
+
+    assert snapshot.next_send_payload["messages"] == expected
+    assert snapshot.next_send_payload["system"] == [expected[0]]
+    assert snapshot.current_messages[0].content == "Hello Captain Rowan."
 
 
 def test_controller_creates_and_switches_sessions():

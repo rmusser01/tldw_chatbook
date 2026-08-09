@@ -86,7 +86,10 @@ from ...Chat.citation_trace_repository import ActiveCitationTraceState
 from ...Chat.console_chat_controller import ConsoleChatController
 from ...Chat.console_roleplay_identity import (
     ChatDisplayNameError,
+    ConsoleMessagePresentation,
+    ConsolePresentationContext,
     normalize_chat_display_name,
+    resolve_console_message_presentation,
 )
 from ...Chat.prompt_history import PromptHistory
 from ...Chat.console_cost_tracker import (
@@ -2018,6 +2021,22 @@ class ChatScreen(BaseAppScreen):
             )
         except ChatDisplayNameError:
             return "User"
+
+    def _console_message_presentation(
+        self, message: ConsoleChatMessage
+    ) -> ConsoleMessagePresentation:
+        """Resolve one active-session message for every visible action surface."""
+        return resolve_console_message_presentation(
+            message, self._console_presentation_context()
+        )
+
+    def _console_presentation_context(self) -> ConsolePresentationContext:
+        """Return the active Console session's live roleplay context."""
+        session = self._session._active_native_console_session()
+        store = self._ensure_console_chat_store()
+        return store.presentation_context(
+            session.id, self._global_chat_display_name()
+        )
 
     def _sync_console_identity_surfaces(self) -> None:
         """Refresh mounted surfaces derived from active chat presentation."""
@@ -4496,6 +4515,7 @@ class ChatScreen(BaseAppScreen):
                 rag_capture_provider=self._capture_console_staged_rag,
                 default_session_settings=self._session._default_console_session_settings,
                 library_provider_factory=self._console_library_provider_factory,
+                global_user_display_name=self._global_chat_display_name,
             )
         self._console_chat_controller.on_submission_accepted = (
             self._on_console_submission_accepted

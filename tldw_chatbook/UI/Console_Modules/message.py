@@ -130,6 +130,7 @@ from ...Chat.console_command_grammar import (
     GENERATE_IMAGE_COMMAND_HANDLER_ID,
     GENERATE_VIDEO_COMMAND_HANDLER_ID,
 )
+from ...Chat.console_roleplay_identity import ConsoleMessagePresentation
 from ...Chat.console_ephemeral import blocked_reason
 from ...Chat.console_image_view import IMAGE_CACHE_MAX_ENTRIES
 from ...Chat.console_message_actions import ConsoleActionResult, ConsoleMessageActionService
@@ -1139,7 +1140,15 @@ class ConsoleMessageController:
             )
             return True
 
+        presentation = self._console_message_presentation(message)
         result = self._console_message_action_service.dispatch(action_id, message)
+        if result.clipboard_text is not None:
+            result = replace(result, clipboard_text=presentation.content)
+        if (
+            action_id in {"edit", "continue", "speak"}
+            and result.target_content is not None
+        ):
+            result = replace(result, target_content=presentation.content)
         self._last_console_action = result
         if action_id == "view-original-attempt" and result.status == "completed":
             controller = self._ensure_console_chat_controller()
@@ -1165,14 +1174,24 @@ class ConsoleMessageController:
             )
 
             try:
-                speech_snapshot = store.issue_tts_message_speech_snapshot(message.id)
+                speech_snapshot = store.issue_tts_message_speech_snapshot(
+                    message.id,
+                    presentation_context=self._screen._console_presentation_context(),
+                )
             except ConsoleSpeechSnapshotRejected as error:
                 self.app_instance.notify(str(error), severity="warning")
                 return True
+
+            def validate_speech_snapshot(snapshot):
+                return store.validate_tts_message_speech_snapshot(
+                    snapshot,
+                    presentation_context=self._screen._console_presentation_context(),
+                )
+
             self.app_instance.post_message(
                 TTSMessageSpeechRequestEvent(
                     speech_snapshot,
-                    store.validate_tts_message_speech_snapshot,
+                    validate_speech_snapshot,
                 )
             )
             # task-559 unit 2: track this message as "speaking" so the
@@ -1384,30 +1403,28 @@ class ConsoleMessageController:
         self.app_instance.notify(result.visible_copy, severity=severity)
         return True
 
-    @staticmethod
-    def _console_message_role_label(message: ConsoleChatMessage) -> str:
+    def _console_message_presentation(
+        self, message: ConsoleChatMessage
+    ) -> ConsoleMessagePresentation:
+        """Delegate to the screen-owned active-session presentation resolver."""
+        return self._screen._console_message_presentation(message)
+
+    def _console_message_role_label(self, message: ConsoleChatMessage) -> str:
         """Return a user-facing role label for a Console transcript message."""
-        role = (
-            message.role.value if hasattr(message.role, "value") else str(message.role)
-        )
-        return role.title()
+        return self._console_message_presentation(message).speaker_label
 
-    @staticmethod
-    def _console_message_content(message: ConsoleChatMessage) -> str:
+    def _console_message_content(self, message: ConsoleChatMessage) -> str:
         """Return the currently visible content for a Console transcript message."""
-        if message.variants is not None:
-            return message.variants.current.content
-        return message.content
+        return self._console_message_presentation(message).content
 
-    @classmethod
     def _console_message_excerpt(
-        cls,
+        self,
         message: ConsoleChatMessage,
         *,
         max_length: int = 120,
     ) -> str:
         """Return a single-line excerpt for selected-message context surfaces."""
-        normalized = " ".join(cls._console_message_content(message).split())
+        normalized = " ".join(self._console_message_content(message).split())
         if len(normalized) <= max_length:
             return normalized
         return f"{normalized[: max(0, max_length - 1)].rstrip()}…"

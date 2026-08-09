@@ -91,6 +91,17 @@ def test_console_chatbook_artifact_payload_marks_console_saved_artifact():
     assert metadata["model"] == "test-model"
 
 
+def test_console_chatbook_payload_preserves_resolved_character_identity():
+    payload = console_chatbook_artifact_payload(
+        title="Console message",
+        message_text="Hello Captain Rowan.",
+        message_role="Alraune",
+    )
+
+    assert payload["metadata"]["content"] == "Hello Captain Rowan."
+    assert payload["metadata"]["message_role"] == "Alraune"
+
+
 def test_console_artifact_owner_resolution_uses_persisted_message_revision_and_body():
     expected_request = object()
     repository = SimpleNamespace(

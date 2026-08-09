@@ -39,6 +39,7 @@ from tldw_chatbook.Chat.console_roleplay_identity import (
     effective_user_display_name,
     expand_character_template,
     normalize_chat_display_name,
+    resolve_console_message_presentation,
 )
 from tldw_chatbook.Chat.console_roleplay_metadata import ConsoleRoleplayContext
 from tldw_chatbook.Chat.console_speech import (
@@ -1748,11 +1749,15 @@ class ConsoleChatStore:
     def issue_tts_message_speech_snapshot(
         self,
         message_id: str,
+        *,
+        presentation_context: ConsolePresentationContext | None = None,
     ) -> TTSMessageSpeechSnapshot:
         """Issue a trusted snapshot for one speakable active-path message.
 
         Args:
             message_id: Native Console message selected by the user.
+            presentation_context: Optional live identity used to resolve trusted
+                character-template content. ``None`` preserves neutral callers.
 
         Returns:
             An immutable snapshot bound to the exact selected text and
@@ -1790,6 +1795,14 @@ class ConsoleChatStore:
                 ConsoleSpeechSnapshotRejectionCode.MESSAGE_CHANGED
             )
         raw_content, selected_variant_id = self._speech_selection(message)
+        if presentation_context is not None:
+            if not isinstance(presentation_context, ConsolePresentationContext):
+                raise ValueError(
+                    "presentation_context must be ConsolePresentationContext or None"
+                )
+            raw_content = resolve_console_message_presentation(
+                self._snapshot(message), presentation_context
+            ).content
         if (
             message.role is not ConsoleMessageRole.ASSISTANT
             or message.status != "complete"
@@ -1829,11 +1842,15 @@ class ConsoleChatStore:
     def validate_tts_message_speech_snapshot(
         self,
         snapshot: TTSMessageSpeechSnapshot,
+        *,
+        presentation_context: ConsolePresentationContext | None = None,
     ) -> str:
         """Revalidate an issued Console speech snapshot against live state.
 
         Args:
             snapshot: Immutable snapshot previously issued by this store.
+            presentation_context: Optional fresh identity used to re-resolve
+                trusted character-template content before comparison.
 
         Returns:
             The captured exact raw content after every identity, state,
@@ -1884,6 +1901,14 @@ class ConsoleChatStore:
                 ConsoleSpeechSnapshotRejectionCode.MESSAGE_CHANGED
             )
         raw_content, selected_variant_id = self._speech_selection(message)
+        if presentation_context is not None:
+            if not isinstance(presentation_context, ConsolePresentationContext):
+                raise ValueError(
+                    "presentation_context must be ConsolePresentationContext or None"
+                )
+            raw_content = resolve_console_message_presentation(
+                self._snapshot(message), presentation_context
+            ).content
         if (
             message.role is not ConsoleMessageRole.ASSISTANT
             or message.status != "complete"
